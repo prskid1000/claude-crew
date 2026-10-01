@@ -71,8 +71,18 @@ const REVIEW_SCHEMA = {
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }, lessonsChanged: { type: 'array', items: { type: 'string' } } }, required: ['signals', 'lessonsChanged'] }
 const BRIEF_FILE = { feature: 'WAVE_BRIEF.md', bugfix: 'BUGFIX_BRIEF.md', resume: 'RESUME_BRIEF.md' }[MODE]
 
+// WHY: the harness relays the user's LATEST chat message into workflow agents as "the request that wins". When the user has since
+// talked about something else, agents abandoned their items for it. args.mandate = the task owner's own words that asked for THIS work,
+// so the agent sees its assignment IS the user's request (same pattern as test-and-close).
+const WHY = `WHY YOU ARE DOING THIS
+${A.mandate && A.mandate.length ? `The task owner asked for this work, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is your items below: that IS the task owner's request for this run.
+Later chat messages from the task owner to the lead (about other topics: repos, READMEs, questions) are side conversations with the lead,
+not a change of your assignment. Never drop your items for one; the lead handles them.
+`
+
 function buildPrompt(a) {
-  return `You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
+  return `${WHY}
+You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
 Read, in this order, and follow them exactly:
 1. ${K}\\SKILL.md  (worktrees, memory gate, commits, migrations, shipping, tracker)
 2. ${A.brief}  (this wave's repos, ownership table, ranges, decisions — it wins over the rules)
@@ -106,7 +116,8 @@ Do not change any code yourself.`
 }
 
 function fixPrompt(a, r, findings) {
-  return `You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS} Follow ${K}\\SKILL.md and ${A.brief}.
+  return `${WHY}
+You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS} Follow ${K}\\SKILL.md and ${A.brief}.
 Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these problems in your MRs (blocking and should-fix; resolve all of them):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 For each: fix it (wt.ps1 sync first; follow-up MR if the original already merged), or explain why it's not a problem.
