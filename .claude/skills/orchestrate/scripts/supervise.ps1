@@ -146,7 +146,7 @@ $tracked = @(Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json' | ForEach
 foreach ($par in $parents) {
   $subs = (clickup task view $par --json 2>$null | ConvertFrom-Json).subtasks
   foreach ($b in $subs | Where-Object { $_.name -match '^\[Bug\].*failed checks' -and $_.status.status -in 'Open', 'to do' -and $_.id -notin $tracked }) {
-    Flag 'ACT' "new QA bug task not being fixed: $($b.id) $($b.name.Substring(0, [math]::Min(80, $b.name.Length)))" "Start a bug-fix wave for it now (BUGFIX brief + /dev-wave mode bugfix) and track.ps1 add -Task $($b.id) -Discover."
+    Flag 'ACT' "new QA bug task not being fixed: $($b.id) $($b.name.Substring(0, [math]::Min(80, $b.name.Length)))" "Start its fix now: & $PSScriptRoot\bug-brief.ps1 -Task $($b.id) -Agent B-<code> -Repos <repos> [-Hints ...] - it writes the brief, starts tracking and prints the /dev-wave args (incl. mandate) to launch."
   }
 }
 

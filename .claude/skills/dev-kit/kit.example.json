@@ -4,9 +4,43 @@
   "githubHost": "github.com",
   "gitlabGroup": "<your-gitlab-group>",
   "reposRoot": "C:\\src",
-  "worktreeRoots": ["C:\\src-wt"],
-  "trackerRepos": ["backend", "frontend", "mobile-app"],
-  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
-  "protectedBranches": ["staging"],
-  "driveParent": "<Google Drive folder or shared-drive id for tester guides>"
+  "worktreeRoots": [
+    "C:\\src-wt"
+  ],
+  "trackerRepos": [
+    "backend",
+    "frontend",
+    "mobile-app"
+  ],
+  "repoAliases": {
+    "api": "backend",
+    "web": "frontend",
+    "app": "mobile-app"
+  },
+  "protectedBranches": [
+    "staging"
+  ],
+  "driveParent": "<Google Drive folder or shared-drive id for tester guides>",
+  "repos": [
+    {
+      "name": "backend",
+      "aliases": [
+        "api"
+      ],
+      "checkout": "<workspace>\\repos\\backend",
+      "target": "main"
+    },
+    {
+      "name": "web",
+      "aliases": [
+        "ui"
+      ],
+      "checkout": "<workspace>\\repos\\web",
+      "target": "main",
+      "linkFrom": "<a worktree whose node_modules can be linked (optional)>"
+    }
+  ],
+  "bugfixMandate": [
+    "<the task owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"
+  ]
 }

@@ -94,6 +94,10 @@ QA: add the environment to `qa-kit\targets.local.json`; app testing: point `andr
 analysts, applies lesson changes, promotes lessons seen ≥ 3× into SKILL.md / rules, and lists script or default changes for
 approval (`{ applyScripts: true }` to apply them). Every agent reads its skill's `LESSONS.md` before starting.
 
+**New QA bug task → fix wave in one step:** `scripts\bug-brief.ps1 -Task <id> -Agent B-<code> -Repos backend,web [-Hints ...]` writes the brief from the task's failed checks (repos + mandate from `dev-kit\kit.local.json`), starts tracking and prints the /dev-wave args. Add only your judgement as `-Hints`.
+
+**Always pass `mandate`** (the task owner's own words that asked for the work) to /dev-wave and /test-and-close: workflow agents otherwise drop their items for a later, unrelated chat message.
+
 ## Supervising (the coordinator works like a human lead)
 After launching workflows, keep ONE heartbeat running in the coordinator session (never several crons; one `/loop` or one cron job) — `/loop 15m supervise the running waves` — and each round. Keep the heartbeat prompt **generic** (what is running comes from
 `supervise.ps1`, not from the prompt): a prompt that lists run ids goes stale within the hour as waves finish and new ones start.

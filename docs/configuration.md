@@ -18,6 +18,8 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | Key | Default | Used by | Meaning |
 |---|---|---|---|
 | `gitHost` | `gitlab.com` | devtools.py, track.ps1, wave-report.ps1 | GitLab host. For self-hosted GitLab the scripts also set `GITLAB_HOST` for `glab` |
+| `repos` | - | bug-brief.ps1 | Repos for generated bug-fix briefs: `[{ name, aliases[], checkout, target, linkFrom? }]` |
+| `bugfixMandate` | - | bug-brief.ps1 | The task owner's own words asking for QA bugs to be fixed; passed to /dev-wave as `mandate` |
 | `githubHost` | `github.com` | devtools.py | GitHub (Enterprise) host |
 | `gitlabGroup` | none | track.ps1 | Group (or `group/subgroup`) for short MR refs `<repo>!<iid>`. Without it, refs must be `<group/repo>!<iid>` |
 | `reposRoot` | `<workspace>` | track.ps1, kitconfig | Folder holding the main checkouts (`<reposRoot>\<repo>`). `track.ps1 -MergeAfter` schedules merges from there |
