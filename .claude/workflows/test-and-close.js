@@ -11,7 +11,8 @@ export const meta = {
 }
 
 /*
-args = the run's run.json (write it to <runDir>\run.json too — finalize.ps1 reads it), plus runDir:
+args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker run for queued items; item claims keep runs apart)  (short form: run.json is read from runDir - preferred, keeps launches/notifications small)
+or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 reads it), plus runDir:
 {
   runDir: 'C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-epic-x',
   kitDir: 'C:\\work\\.claude',               // optional: absolute path of this kit (recommended); default '.claude' = relative to the workspace root
@@ -27,10 +28,21 @@ args = the run's run.json (write it to <runDir>\run.json too — finalize.ps1 re
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'driver1', notes: 'own vehicle 57' } ],
   items: [ { code: 'F2', title: '...', guideFile: 'C:\\...\\F2.txt', lane: 'web'|'api'|'app',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
-             retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [] } ],
+             retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
+             model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high' } ],   // optional; default: retests on web/api -> sonnet
 }
 */
-const R = args || {}
+// Short form (saves tokens: big args are echoed back in every launch/notification): args = { runDir, only?: ['GT5','APP2B'], lanes? }
+// -> a tiny agent reads <runDir>\run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
+let R = args || {}
+if (R.runDir && !Array.isArray(R.items)) {
+  const got = await agent(`Read the file ${R.runDir}\\run.json with the Read tool and return its complete content, unchanged, as the string field "json". Do nothing else.`,
+    { label: 'load-run', phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model: 'haiku', effort: 'low' })
+  if (!got || !got.json) throw new Error(`could not read ${R.runDir}\\run.json`)
+  const file = JSON.parse(got.json)
+  R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
+}
+if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = ABS ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.'
@@ -42,14 +54,33 @@ const RT = (R.runtimeDir || `${KIT}\\..\\.claude-runtime`).replace(/[\\/]+$/, ''
 // ES module imports need a file:// URL of the absolute path
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/scripts/web/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
   : `<file:/// URL of the absolute path of ${KIT}\\skills\\qa-kit\\scripts\\web\\browser.mjs>`
-if (!R.runDir || !Array.isArray(R.items)) throw new Error('args.runDir and args.items[] are required (see the header of this file)')
+if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: either args.items[] or a <runDir>\\run.json (see the header of this file)')
 const outDir = (it) => `${R.runDir}\\${it.code}`
 const LANES = R.lanes || []
+const OWNER = R.instance || 'w1'   // worker instance: extra test-and-close runs for queued items use w2, w3 ... (item claims keep them apart)
+// Memory seat + item claim (qa-seat.ps1): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
+function seatBlock(it, label) {
+  const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
+  return `
+SEAT (memory + item claim) - your FIRST command, before anything else:
+  & ${Q}\\qa-seat.ps1 acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
+  exit 0 = go. exit 2 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
+  exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
+  Your LAST command before returning (also on errors): & ${Q}\\qa-seat.ps1 release -Agent "${label}"`
+}
+// Model per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
+// first-time guides and app lanes keep the default (strongest) model.
+function modelFor(it) {
+  if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
+  if (it.retest && it.lane !== 'app') return { model: 'sonnet' }
+  return it.effort ? { effort: it.effort } : {}
+}
 
 const CHECKS_SCHEMA = {
   type: 'object',
   properties: {
     code: { type: 'string' },
+    skipped: { type: 'boolean', description: 'true ONLY when qa-seat.ps1 answered ALREADY (another worker owns this item)' },
     checks: {
       type: 'array',
       items: {
@@ -164,6 +195,7 @@ Package code: ${it.code}. Output folder: ${outDir(it)} (create shots\\, evidence
 Tasks covered (tag each check with its task id):
 ${(it.subtasks || []).map((s) => `  - ${s.id}: ${s.name}${s.mrs ? `  (MRs: ${s.mrs})` : ''}`).join('\n')}
 ${it.retest ? 'This is a RETEST of a fix: re-run the failed checks named in the task plus a short regression around them.' : ''}
+${seatBlock(it, `test:${it.code}`)}
 ${COMMON}
 ${laneBlock(it, ports, L)}
 ${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') : ''}
@@ -207,6 +239,7 @@ Tasks and MRs: ${(it.subtasks || []).map((s) => `${s.id}${s.mrs ? ` (MRs: ${s.mr
 
 FAILED CHECKS:
 ${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}`).join('\n')}
+${seatBlock(it, `verify:${it.code}`)}
 ${COMMON}
 ${laneBlock(it, ports, L)}
 Return one verdict per check id.`
@@ -230,11 +263,12 @@ async function runItem(it, idx, L) {
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
-  let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester' })
+  let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
+  if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
   if (!res || ntShare(res) > 0.25) {
     log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
     const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
-    const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester' })
+    const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
     if (again && ntShare(again) < ntShare(res)) res = again
   }
   if (!res) return { code: it.code, error: 'test agent returned nothing' }
@@ -260,7 +294,7 @@ async function runItem(it, idx, L) {
 
   const fails = res.checks.filter((c) => c.result === 'FAIL')
   if (fails.length) {
-    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier' })
+    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier', ...modelFor(it) })
     const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
     for (const c of fails) {
       const x = byId[c.id]
@@ -274,7 +308,7 @@ async function runItem(it, idx, L) {
   const n = (k) => res.checks.filter((c) => c.result === k).length
   const line = `${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, pending ${n('PENDING')}`
   if (it.skipClose) { log(`${line} (publish left to the lead)`); return { code: it.code, summary: line, result: res } }
-  const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'sonnet', effort: 'low' })
+  const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))
   return { code: it.code, summary: line, finalize: fin, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
@@ -292,7 +326,7 @@ async function pool(list, size, offset, laneOf) {
     const L = laneOf ? laneOf(w) : null
     if (L && L.name) {
       await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}\\phone.ps1 release -Agent qa-${L.name}`,
-        { label: `release:${L.name}`, phase: 'Close', model: 'sonnet', effort: 'low' }).catch(() => null)
+        { label: `release:${L.name}`, phase: 'Close', model: 'haiku', effort: 'low' }).catch(() => null)
       log(`lane ${L.name} (${L.serial}) released`)
     }
   }
@@ -312,7 +346,7 @@ const parts = await Promise.all([
   app.length ? pool(app, LANES.length, 200, (w) => LANES[w]) : [],
 ])
 const all = parts.flat().filter(Boolean)
-log('DONE: ' + all.map((r) => r.summary || `${r.code}: ${r.error}`).join(' | '))
+log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit)
 phase('Learn')

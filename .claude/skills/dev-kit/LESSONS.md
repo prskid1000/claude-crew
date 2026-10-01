@@ -4,6 +4,13 @@ Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)
 Project-specific lessons go under a `## Project: <name>` heading below the general ones.
 
 ## General
+- A new helper/member inserted between an existing Javadoc/JSDoc and its method steals the doc comment (review nits in Java and TS): add new members above the doc block or below the method. (2×)
+- `track.ps1 add -Discover` can find no MRs right after `devtools.py mr` (search lag): pass `-Mrs <repo>!<iid>` explicitly as well. (4×)
+- A client flag like "already on server" must not trust the 200 of a queueing endpoint (it only stores the request for later processing): fix it server side (fall back to the latest earlier request for the same id) and test the failed-then-resubmitted case. (2×)
+- A local-DB schema bump or a new sync-derived field in a mobile app needs a forced full sync on upgrade (migration + wipe fallback reset the sync cursor), else the delta sync never backfills records already on the phone; verify by upgrading in place over an old APK. (2×)
+- Feature/isolation gates (hide new behaviour where it is off): gate only what the new feature introduced (not older security checks), grep every consumer of a gated API or seeded row (a role hidden in one list but not in other filters), give each gate on and off tests, and set remembered flags on every known session, not only a fresh sign-in. (4× review findings)
+- A global style rule with `!important` can beat a component library's variant (e.g. danger buttons): fix a feature's dialogs in the component's own, more specific style. A crash seen on one screen can come from a shared component: trace the stack first.
+- Swapping a shared helper into a module can change behaviour the brief says to keep: diff outputs for edge cases (zero sizes, special units) or get a product decision.
 - The guard can false-positive on PowerShell commands whose text holds slash paths or arrows; put such text in a script file via the Write tool and run that. Use the Edit tool, not sed/python/heredoc, for CRLF files and anything with backslashes.
 - A web app with no unit-test target makes the `check.ps1` test step fail: keep logic in exported pure functions; specs are type-checked, or bundled with esbuild (through gate.ps1) and run under node with a tiny shim. (5×)
 - `board.ps1 check` prints ok but can leave `$LASTEXITCODE` null/stale, so `-ne 0` guards falsely stop: test its output text or `-gt 0`. (4×)

@@ -51,6 +51,9 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
   }
 }
 ```
+Top-level `keepFreeGB` (default `8`): `qa-seat.ps1` lets a new tester/verifier start only while free RAM minus its need
+(web ~1.5 GB, API ~0.4 GB) stays at or above it; the supervisor's capacity flag uses the same value.
+
 Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>\tokens`, web logins in `<runtime>\sessions`.
 Evidence files never contain passwords or auth headers (`[redacted]`).
 
@@ -100,12 +103,16 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 `/dev-wave` (`.claude/workflows/dev-wave.js`):
 ```js
 { brief: 'C:\\...\\wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
-  agents: [ { id: 'X1', items: 'A3, A4', area: 'order form', note: '' } ],
+  agents: [ { id: 'X1', items: 'A3, A4', area: 'order form', note: '', model: 'sonnet', effort: 'medium' } ],   // model/effort optional (default: strongest)
   kitDir: 'C:\\work\\.claude', runtimeDir: 'C:\\work\\.claude-runtime' }   // kitDir/runtimeDir optional, recommended
 ```
 
-`/test-and-close` (`.claude/workflows/test-and-close.js`): the run's `run.json` plus `runDir` (and optional `kitDir`). Full shape in
-the header comment of the workflow file; `finalize.ps1` reads the same `run.json` from the run folder.
+`/test-and-close` (`.claude/workflows/test-and-close.js`): preferably the short form
+`{ runDir, kitDir?, only?: ['F1'], lanes?, instance?: 'w2' }` - a tiny (haiku) agent reads `<runDir>\run.json`, `only` keeps those item
+codes, `instance` names an extra worker run (item claims keep runs apart). Or the full `run.json` object plus `runDir` (and optional
+`kitDir`). Full shape in the header comment of the workflow file; `finalize.ps1` reads the same `run.json` from the run folder.
+Items may carry `model: 'sonnet'|'opus'|'haiku'` and `effort: 'low'|'medium'|'high'`; without them, narrow web/API retests use sonnet and
+everything else the default (strongest) model.
 
 `/kit-retro`: `{ applyScripts: false, kitDir, runtimeDir }` — all optional.
 

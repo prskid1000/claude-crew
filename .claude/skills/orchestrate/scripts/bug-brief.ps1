@@ -88,9 +88,14 @@ $dir = Join-Path $rt 'briefs'; New-Item -ItemType Directory -Force $dir | Out-Nu
 $out = Join-Path $dir "$Task.md"
 Set-Content $out $md -Encoding utf8
 $m = if ($Mandate) { $Mandate } elseif ($cfg.bugfixMandate) { @($cfg.bugfixMandate) } else { Write-Warning 'no mandate: pass -Mandate or set kit.local.json "bugfixMandate" (agents drop their items for later chat messages without one)'; @() }
-$wfArgs = [ordered]@{ brief = $out; run = $runName; mode = 'bugfix'; review = $true; mandate = $m; agents = @(@{ id = $Agent; items = "$Task $ids"; area = (($checks | ForEach-Object screen) -join '; ').Substring(0, [math]::Min(160, (($checks | ForEach-Object screen) -join '; ').Length)) }) }
-"brief: $out ($($checks.Count) checks: $ids)"
+# model suggestion: one cosmetic check (label / colour / i18n / raw key / date format / typo / alignment) -> sonnet; anything else keeps the default (strongest)
+$cosmetic = '(?i)label|translation|i18n|raw (translation )?key|colou?r|date format|typo|spelling|alignment|padding|wording|icon'
+$suggest = if ($checks.Count -le 2 -and -not @($checks | Where-Object { ($_.screen + ' ' + $_.saw) -notmatch $cosmetic }).Count) { 'sonnet' } else { $null }
+$agentArgs = [ordered]@{ id = $Agent; items = "$Task $ids" }; if ($suggest) { $agentArgs.model = $suggest }
+$wfArgs = [ordered]@{ brief = $out; run = $runName; mode = 'bugfix'; review = $true; mandate = $m; agents = @($agentArgs) }
+$wfArgs.agents[0].area = (($checks | ForEach-Object screen) -join '; ').Substring(0, [math]::Min(160, (($checks | ForEach-Object screen) -join '; ').Length))
+"brief: $out ($($checks.Count) checks: $ids; model: $(if ($suggest) { "$suggest (small/cosmetic)" } else { 'default (strongest)' }))"
 "Workflow args (scriptPath $claude\workflows\dev-wave.js):"
 $wfArgs | ConvertTo-Json -Depth 5 -Compress
-& (Join-Path $PSScriptRoot 'track.ps1') add -Task $Task -Discover | Out-Null
-"tracking $Task (-Discover)"
+$tf = Join-Path $rt "tracking\$Task.json"
+if (Test-Path $tf) { "already tracked: $Task" } else { & (Join-Path $PSScriptRoot 'track.ps1') add -Task $Task -Discover | Out-Null; "tracking $Task (-Discover)" }

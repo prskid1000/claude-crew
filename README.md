@@ -46,10 +46,12 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
   `lbcheck.py` (Liquibase replay: duplicate columns/tables, missing rollbacks), `keepboth.py` (append-only conflict resolver), `kitconfig.ps1`.
 - **orchestrate** — the coordinator playbook and templates (wave / bug-fix / resume briefs, MR body, task solution), plus
   `supervise.ps1` (heartbeat with ACT/WATCH flags and `-AutoFix`), `board.ps1` (agent board), `track.ps1` (moves tracker tasks when all MRs merge; ordered merges),
+  `bug-brief.ps1` (QA bug task → bug-fix brief + tracking + ready /dev-wave args, with a model suggestion),
   `wave-report.ps1` (journal-based wave summary), `status.ps1` (HTML dashboard), `cleanup.ps1` (self-cleaning), `learn.ps1` and `retro-nudge.ps1` (self-improvement).
 - **qa-kit** — QA rules (verdicts, shared-environment etiquette), the **evidence standard**, a tester-guide template, and tools:
   `api.ps1` (any API as any configured user; evidence envelopes with secrets redacted), `web/browser.mjs` (long-lived logged-in headless Chrome sessions via puppeteer-core, shared logins, failure capture, element highlighting),
-  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/wait/log/photo), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc, tracker comments, bug tasks), `autoclose.ps1` (safety net).
+  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/wait/log/photo), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc, tracker comments, bug tasks), `autoclose.ps1` (safety net),
+  `qa-seat.ps1` (memory seats + item claims: QA concurrency follows free RAM, extra worker runs never test the same item).
 - **android-swarm** — parallel emulators for any APK (React Native or native): `phone.ps1` leases, `app-build.ps1` (through the gate, from the latest merged branch),
   `swarm-up/-down/-slim/-arrange`, `app-mode`/`app-launch` (Release or Metro), `swarm-avd.ps1` (create all lanes from one template; reset cold/snapshots/wipe/recreate).
 - **tech-audit** — static audit of one module for bugs, performance and tech debt with strict false-positive discipline; fixed 23-key findings schema, validator and styled summary.
@@ -85,6 +87,11 @@ flowchart LR
 - **One machine, many agents.** Every heavy command goes through the gate. A build starts only if
   `available RAM − memory promised to running builds − its estimate ≥ keep-free`. Estimates are learned per project and command kind.
   Emulators take turns in the same queue.
+- **Memory seats and extra workers.** QA testers take a memory seat (`qa-seat.ps1`) before they start, so the number of parallel
+  QA agents grows and shrinks with free RAM. When a run has queued items and room, the supervisor suggests an extra worker run;
+  item claims keep workers from testing the same item.
+- **Per-agent model choice.** Mechanical steps (load-run, close, ship, release) run on haiku, narrow retests on sonnet, and you can
+  set `model`/`effort` per dev agent (`agents[].model`) or per QA item; real code changes keep the strongest model.
 - **Isolation.** One worktree per agent per repo, claims on the board (worktrees, phones, browser ports), contracts between agents
   in `<brief>.contracts.md`, which agents re-read before every push.
 - **Supervision.** The coordinator keeps one heartbeat (`/loop 15m`) running `supervise.ps1 -AutoFix`. It covers workflows (idle or
@@ -157,6 +164,10 @@ Optional, per feature:
    open review findings) and follow up (fix wave, deploy, QA).
 
 Bug-fix waves use `mode: 'bugfix'` with `BUGFIX_BRIEF.md`; stopped agents continue with `mode: 'resume'`.
+For a `[Bug] … failed checks` task from QA, one command writes the brief, starts tracking and prints the /dev-wave args
+(including `mandate` and a `model` suggestion: sonnet for one or two cosmetic checks):
+`& C:\work\.claude\skills\orchestrate\scripts\bug-brief.ps1 -Task <task id> -Agent B-ORD -Repos api,web`.
+Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area: 'label typo', model: 'sonnet' }`).
 
 ### Test and close a deployed batch
 1. Create a run folder `C:\work\.claude-runtime\qa-runs\2026-10-01-orders\` with the tester guides (exported to text) and `run.json`:
@@ -168,10 +179,13 @@ Bug-fix waves use `mode: 'bugfix'` with `BUGFIX_BRIEF.md`; stopped agents contin
      "items": [ { "code": "F1", "title": "Order form", "guideFile": "C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-orders\\F1.txt",
                   "lane": "web", "subtasks": [ { "id": "<task id>", "name": "Order form", "mrs": "!101" } ] } ] }
    ```
-2. Run `/test-and-close` with that object plus `"runDir"` and `"kitDir"`, and start the safety net in the background:
+2. Run `/test-and-close` with the short form `{ runDir: '<run dir>', kitDir: 'C:\work\.claude' }` (a tiny agent reads `run.json`;
+   `only: ['F1']` runs a subset) or with the whole object plus `"runDir"` and `"kitDir"`, and start the safety net in the background:
    `& C:\work\.claude\skills\qa-kit\scripts\autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir>`.
 3. Each package ends with a Google Doc (verdict banner, results table, failures with screenshots, evidence index), a comment
    on every task, closed tasks, and a `[Bug] … failed checks` task for confirmed failures, which feeds the next bug-fix wave.
+4. Testers wait for a memory seat, so parallelism follows free RAM. When the supervisor flags spare capacity, add a worker:
+   `/test-and-close { runDir, kitDir, instance: 'w2', only: ['F4','F5'] }` - item claims stop two runs testing the same item.
 
 ### Phones
 ```powershell

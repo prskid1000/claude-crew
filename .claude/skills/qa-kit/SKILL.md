@@ -24,13 +24,17 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
 | Several phones in parallel | `..\android-swarm\` (its SKILL.md) |
 | Publish one package | `scripts\finalize.ps1 -RunDir <run> -Code <code>` |
 | Run a whole batch | `/test-and-close` (`.claude\workflows\test-and-close.js`) + `scripts\autoclose.ps1` safety net |
+| Memory seat + item claim | `scripts\qa-seat.ps1 acquire / release / status` (every tester/verifier runs it first; see below) |
+
+## Memory seats and extra workers
+Every tester/verifier first runs `scripts\qa-seat.ps1 acquire` (the workflow tells it how): it waits its fair turn while free RAM would drop under `keepFreeGB` (targets.local.json, default 8) and claims its item. So a run's `webParallel` is only a cap - real concurrency follows memory, and an extra worker run (`/test-and-close { runDir, kitDir, instance: 'w2', only: [...] }`, suggested by the supervisor's capacity flag) never tests an item another worker owns. Items can carry `model`/`effort`; narrow web/API retests default to sonnet.
 
 ## A run, end to end
 1. **Run folder**: `<workspace>\.claude-runtime\qa-runs\<date>-<name>\` with `run.json` (shape: header of `test-and-close.js`).
    One item per tester guide: `{code, title, guideFile, lane: web|api|app, subtasks:[{id,name,mrs}], retest?, only?, dups?}`.
    Export Google-Doc guides to text: `cd <run>; gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o <code>.txt`
    (`gws -o` only writes inside the current directory).
-2. **Workflow**: `/test-and-close` (or the Workflow tool with `scriptPath = <workspace>\.claude\workflows\test-and-close.js`), `args` = the run.json object + `runDir`.
+2. **Workflow**: `/test-and-close` (or the Workflow tool with `scriptPath = <workspace>\.claude\workflows\test-and-close.js`), `args` = `{ runDir, kitDir }` (short form: a tiny agent reads `<runDir>\run.json`; add `only: [codes]` to run a subset) or the full run.json object + `runDir`.
    Per item: test → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → close (finalize).
    Results with > 50% NOT_TESTED are never published.
 3. **Safety net** (background): `autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run>`. It publishes only packages whose

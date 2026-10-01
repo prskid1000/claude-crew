@@ -150,6 +150,27 @@ foreach ($par in $parents) {
   }
 }
 
+# 7. capacity: scale QA workers with memory. Seats (qa-kit\scripts\qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
+#    so shrinking is automatic. Growing: if a QA run has items nobody has started and memory has room, say how many extra workers fit.
+$keepFree = try { $v = (Get-Content (Join-Path $skills 'qa-kit\targets.local.json') -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
+$freeNow = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+$seatDir = Join-Path $rt 'qa-seats'
+$seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count
+$waitNow = @(Get-ChildItem (Join-Path $seatDir 'wait') -Filter *.json -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddMinutes(-3) }).Count
+L "qa seats: $seatsNow taken, $waitNow waiting for memory; free RAM $freeNow GB"
+foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-8) }) {
+  $run = try { Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { $null }
+  if (-not $run) { continue }
+  $queued = @($run.items | Where-Object { $_.lane -ne 'app' -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and
+      -not (Test-Path (Join-Path $seatDir "claims\$($rd.Name)__$($_.code).json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\shots")) } | ForEach-Object code)
+  if (-not $queued) { continue }
+  $room = [math]::Floor(($freeNow - $keepFree) / 1.5)          # a web tester needs ~1.5 GB; keep keepFreeGB free
+  if ($room -ge 2 -and $waitNow -eq 0) {
+    $n = [math]::Min($room, $queued.Count)
+    Flag 'INFO' "capacity: $($rd.Name) has $($queued.Count) queued item(s) ($($queued -join ', ')) and room for ~$room more QA agents ($freeNow GB free)" "Add workers: Workflow test-and-close with args { runDir: '$($rd.FullName)', kitDir: '$($KitConf.Kit)', instance: 'w<next>', webParallel: $n, only: [$(($queued | ForEach-Object { "'$_'" }) -join ', ')] } - item claims stop two runs testing the same item."
+  } elseif ($freeNow -lt $keepFree) { Flag 'WATCH' "memory tight ($freeNow GB free): QA seats are holding new agents back" 'Do not launch more agents until it recovers; close big apps if it persists.' }
+}
+
 $out = [pscustomobject]@{ at = $now.ToString('s'); summary = @($lines); flags = @($flags) }
 if ($Json) { $out | ConvertTo-Json -Depth 4; exit 0 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines

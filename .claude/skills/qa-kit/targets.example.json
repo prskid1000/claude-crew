@@ -1,6 +1,7 @@
 {
   "_readme": "Copy to targets.local.json (git-ignored) and fill in. One entry per TEST environment (never production). Passwords live ONLY in targets.local.json. users: <key used with api.ps1 -As / browser.mjs as> -> [login, password].",
   "default": "my-staging",
+  "keepFreeGB": 8,
   "targets": {
     "my-staging": {
       "web": "https://staging.example.com",

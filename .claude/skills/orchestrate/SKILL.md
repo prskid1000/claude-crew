@@ -96,6 +96,8 @@ approval (`{ applyScripts: true }` to apply them). Every agent reads its skill's
 
 **New QA bug task → fix wave in one step:** `scripts\bug-brief.ps1 -Task <id> -Agent B-<code> -Repos backend,web [-Hints ...]` writes the brief from the task's failed checks (repos + mandate from `dev-kit\kit.local.json`), starts tracking and prints the /dev-wave args. Add only your judgement as `-Hints`.
 
+**Scale with memory, pick models by difficulty:** QA concurrency follows free RAM, not a fixed number: every tester takes a memory seat (`qa-kit\scripts\qa-seat.ps1`), and when the supervisor's INFO capacity flag says a run has queued items and room, launch an extra worker (`/test-and-close { runDir, kitDir, instance: 'w2', only: [...] }`) - item claims keep workers apart. Launch `/test-and-close` with the short form `{ runDir, kitDir }` (run.json is read by a tiny agent) to keep launches and notifications small. Models: mechanical steps (load-run, close, ship, release) run on haiku; narrow web/API retests default to sonnet; set `agents[].model` (dev-wave) or item `model`/`effort` (run.json) where a task is clearly small - `bug-brief.ps1` suggests sonnet for one or two cosmetic checks. Real code changes and first-time guides keep the strongest model.
+
 **Always pass `mandate`** (the task owner's own words that asked for the work) to /dev-wave and /test-and-close: workflow agents otherwise drop their items for a later, unrelated chat message.
 
 ## Supervising (the coordinator works like a human lead)

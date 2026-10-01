@@ -80,6 +80,10 @@ Later chat messages from the task owner to the lead (about other topics: repos, 
 not a change of your assignment. Never drop your items for one; the lead handles them.
 `
 
+// Model per agent: agents[].model / .effort (bug-brief.ps1 suggests one: a single cosmetic check -> sonnet). Default = the strongest model.
+// Haiku is used only for mechanical steps (ship); code changes need a model that won't cost a review round.
+const modelOf = (a) => ({ ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) })
+
 function buildPrompt(a) {
   return `${WHY}
 You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
@@ -140,7 +144,7 @@ log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'of
 
 const results = await pipeline(
   A.agents,
-  (a) => agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'dev-agent' }),
+  (a) => agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) }),
   async (r, a) => {
     if (!r) return { id: a.id, error: 'agent returned nothing' }
     if (!REVIEW || !r.mrs.length) return { id: a.id, report: r, findings: [] }
@@ -153,7 +157,7 @@ const results = await pipeline(
     const blocking = x.findings.filter((f) => f.severity !== 'nit')
     if (!blocking.length) {
       if (!REVIEW || !x.report.mrs.some((m) => !m.merged)) return x
-      const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, model: 'sonnet', effort: 'low' })
+      const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, model: 'haiku', effort: 'low' })
       // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
       if (!r3) return x
       const merged = new Set(r3.mrs.filter((m) => m.merged).map((m) => m.url))
@@ -161,7 +165,7 @@ const results = await pipeline(
         summary: `${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
     }
     log(`${a.id}: ${blocking.length} blocking review finding(s) -> fix round`)
-    const r2 = await agent(fixPrompt(a, x.report, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'dev-agent' })
+    const r2 = await agent(fixPrompt(a, x.report, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
     if (!r2) return { ...x, fixed: false }
     // merge, don't replace: the fix agent reports only its fixes, the build report holds the items done
     const uniq = (a) => [...new Set(a)]

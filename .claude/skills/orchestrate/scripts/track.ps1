@@ -55,11 +55,13 @@ switch ($Action) {
   'add' {
     if (-not $Task) { throw 'add needs -Task' }
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('s') } }
+    $before = @($o.mrs).Count
     $o.mrs = @(@($o.mrs) + @($Mrs -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique)
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
     if ($Discover) { $o.discover = $true }
     if ($MergeAfter) { $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique) }
-    $o.done = $false; Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
+    if (-not $o.done -or @($o.mrs).Count -gt $before) { $o.done = $false }   # a finished task stays finished unless new MRs were added
+    Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
   }
   'show' { foreach ($f in Get-ChildItem $dir -Filter '*.json') { $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') } }
   'run' {
