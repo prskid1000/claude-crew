@@ -42,6 +42,9 @@ Org settings the scripts read (git host, GitLab group, repos root, tracker repos
 - Large files (payloads, logs) → upload to Drive and share links only.
 - Rules and naming: `skills\qa-kit\reference\evidence-standard.md`.
 
+## Command labels (suggested convention)
+Descriptions shown for tool calls (Bash/PowerShell `description`) are short and a little fun: one fitting emoji + 3-7 plain words, e.g. `🛰️ Supervisor sweep with auto-fixes`, `🧪 Test the new checker`, `🚀 Push the kit to GitHub`. Never emoji-only, never vague.
+
 ## Org specifics (fill in)
 - Products / repos and what each one is: `<repo> — <one line>`.
 - Test environments (names only; URLs and logins go in `targets.local.json`): `<my-staging>`.

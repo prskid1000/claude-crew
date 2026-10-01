@@ -32,7 +32,7 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
 ### Workflows (`.claude/workflows/`)
 | Command | What it runs |
 |---|---|
-| `/dev-wave` | One dev agent per area in parallel → independent review per agent → one fix round for blocking/should-fix findings → merges scheduled after a clean review → Learn step |
+| `/dev-wave` | One dev agent per area in parallel → independent review per agent → CI gate (MR pipelines checked before merge; failed jobs become blocking findings) → one fix round for blocking/should-fix findings → merges scheduled after a clean review and green pipelines → Learn step |
 | `/test-and-close` | Web pool + API pool + one agent per Android lane → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → publish (Drive + Google Doc + tracker comment/close + bug task) → Learn step |
 | `/kit-retro` | 4 parallel analysts (dev, QA, speed, docs) mine signals, guard blocks, gate history and QA runs → one maintainer applies lesson/rule changes and lists script changes for approval |
 
@@ -43,14 +43,14 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
   `gate.ps1` (memory gate: fair queue per owner, learned per-project peaks, dynamic heap caps, backfilling),
   `wt.ps1` (worktrees with junction-linked `node_modules`/`.venv`, rebase, hook-safe commits, safe removal),
   `guard.ps1` (PreToolUse guard), `devtools.py` (MR/PR create, merge-when-green on GitLab/GitHub, tracker comments/statuses, Google Doc publishing),
-  `lbcheck.py` (Liquibase replay: duplicate columns/tables, missing rollbacks), `keepboth.py` (append-only conflict resolver), `kitconfig.ps1`.
+  `pipe-wait.ps1` (waits for MR pipelines; JSON with the failed job and error tail), `lbcheck.py` (Liquibase replay: duplicate columns/tables, missing rollbacks, empty rollbacks on changeSets marked irreversible), `keepboth.py` (append-only conflict resolver), `kitconfig.ps1`.
 - **orchestrate** — the coordinator playbook and templates (wave / bug-fix / resume briefs, MR body, task solution), plus
   `supervise.ps1` (heartbeat with ACT/WATCH flags and `-AutoFix`), `board.ps1` (agent board), `track.ps1` (moves tracker tasks when all MRs merge; ordered merges),
   `bug-brief.ps1` (QA bug task → bug-fix brief + tracking + ready /dev-wave args, with a model suggestion),
   `wave-report.ps1` (journal-based wave summary), `status.ps1` (HTML dashboard), `cleanup.ps1` (self-cleaning), `learn.ps1` and `retro-nudge.ps1` (self-improvement).
 - **qa-kit** — QA rules (verdicts, shared-environment etiquette), the **evidence standard**, a tester-guide template, and tools:
   `api.ps1` (any API as any configured user; evidence envelopes with secrets redacted), `web/browser.mjs` (long-lived logged-in headless Chrome sessions via puppeteer-core, shared logins, failure capture, element highlighting),
-  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/wait/log/photo), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc, tracker comments, bug tasks), `autoclose.ps1` (safety net),
+  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/shotmark/wait/log/photo), `annotate.ps1` (box / arrow / label on any screenshot), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc, tracker comments, bug tasks), `autoclose.ps1` (safety net),
   `qa-seat.ps1` (memory seats + item claims: QA concurrency follows free RAM, extra worker runs never test the same item).
 - **android-swarm** — parallel emulators for any APK (React Native or native): `phone.ps1` leases, `app-build.ps1` (through the gate, from the latest merged branch),
   `swarm-up/-down/-slim/-arrange`, `app-mode`/`app-launch` (Release or Metro), `swarm-avd.ps1` (create all lanes from one template; reset cold/snapshots/wipe/recreate).
@@ -92,6 +92,12 @@ flowchart LR
   item claims keep workers from testing the same item.
 - **Per-agent model choice.** Mechanical steps (load-run, close, ship, release) run on haiku, narrow retests on sonnet, and you can
   set `model`/`effort` per dev agent (`agents[].model`) or per QA item; real code changes keep the strongest model.
+- **CI gate before merge.** After a clean review, a cheap agent waits for the MR pipelines (`pipe-wait.ps1`); a failed pipeline
+  goes back to the dev agent as a blocking finding (failed job + error tail) for the fix round, so nothing is scheduled to merge on red.
+- **Irreversible-rollback check.** `lbcheck.py` flags a Liquibase changeSet whose comment says it is not reversible / irreversible /
+  has no rollback unless it carries a non-empty `<rollback>` (an empty tag fails CI just like a missing one).
+- **Evidence marking.** FAIL screenshots are marked so the reviewer sees the defect at once: `annotate.ps1` (box / arrow / label on
+  any image), `ui.ps1 shotmark` (Android screenshot + box around elements by text or #id in one go), `mark()` in `browser.mjs` (web).
 - **Isolation.** One worktree per agent per repo, claims on the board (worktrees, phones, browser ports), contracts between agents
   in `<brief>.contracts.md`, which agents re-read before every push.
 - **Supervision.** The coordinator keeps one heartbeat (`/loop 15m`) running `supervise.ps1 -AutoFix`. It covers workflows (idle or

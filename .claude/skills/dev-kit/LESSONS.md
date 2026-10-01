@@ -4,6 +4,7 @@ Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)
 Project-specific lessons go under a `## Project: <name>` heading below the general ones.
 
 ## General
+- (fixed in kit) A Liquibase changeSet commented 'not reversible' with an EMPTY `<rollback/>` failed the CI changelog check: lbcheck.py now flags missing or empty rollbacks on changeSets marked irreversible. Agents stopped at 'MR opened' and nobody saw failed pipelines: dev-wave now waits for MR pipelines (pipe-wait.ps1, cheap 'ci' step) and sends failures to the fix round.
 - A new helper/member inserted between an existing Javadoc/JSDoc and its method steals the doc comment (review nits in Java and TS): add new members above the doc block or below the method. (2×)
 - `track.ps1 add -Discover` can find no MRs right after `devtools.py mr` (search lag): pass `-Mrs <repo>!<iid>` explicitly as well. (4×)
 - A client flag like "already on server" must not trust the 200 of a queueing endpoint (it only stores the request for later processing): fix it server side (fall back to the latest earlier request for the same id) and test the failed-then-resubmitted case. (2×)

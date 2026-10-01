@@ -81,6 +81,19 @@ def walk(path, fname):
         return
     ts = re.match(r'(\d{14})', os.path.basename(fname))
     report = bool(ts) and ts.group(1) >= SINCE
+    if report:
+        # CI rule: a changeSet whose comment (XML comment or <comment>) says it is not reversible must still carry a NON-EMPTY
+        # <rollback> (an empty <rollback/> is rejected too). The XML parser drops comments, so check the raw text per changeSet.
+        try:
+            raw = open(path, encoding='utf-8', errors='replace').read()
+        except OSError:
+            raw = ''
+        for m in re.finditer(r'<changeSet\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</changeSet>', raw, re.S):
+            body = m.group(2)
+            rb = re.search(r'<rollback\s*/>|<rollback\b[^>]*>(.*?)</rollback>', body, re.S)
+            empty_rb = rb is None or not (rb.group(1) or '').strip()
+            if re.search(r'not\s+reversible|irreversible|non-reversible|cannot\s+be\s+(rolled|reverted)|no\s+rollback', body, re.I) and empty_rb:
+                issues.append(f'{fname} {m.group(1)}: marked not reversible but its <rollback> is missing or empty (CI changelog checks reject both): write a real rollback (reverse update / restore statement), not an empty tag')
     for node in root:
         t = local(node.tag)
         if t == 'changeSet':

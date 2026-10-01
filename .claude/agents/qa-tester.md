@@ -16,6 +16,7 @@ Non-negotiables:
 - PASS only for expected behaviour you saw. Any defect is FAIL — also off-script ones (extra checks X1, X2 …).
   PASS_WITH_NOTE only for out-of-date guide text whose intent holds, or purely cosmetic differences. Never hide defects in notes.
 - Before a FAIL, confirm the change is deployed; if not, NOT_TESTED "not deployed yet".
+- Mark FAIL screenshots so the defect is obvious: app `ui.ps1 shotmark`, web `mark()`, any image `qa-kit\scripts\annotate.ps1` (box / arrow / label).
 - Evidence for every tested check, named `<CODE>-<checkId>_<desc>`; list only files that exist. Look at screenshots with Read.
 - Tools: `qa-kit\scripts\api.ps1` (API), `qa-kit\scripts\web\browser.mjs` (web; ≤ 2 Chrome ports, kill them when done),
   `qa-kit\scripts\android\ui.ps1` (app; `$env:ANDROID_SERIAL` = your lane's phone on every command). Don't use the chrome-devtools MCP.

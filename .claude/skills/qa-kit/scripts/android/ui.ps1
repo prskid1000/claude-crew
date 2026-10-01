@@ -10,6 +10,7 @@ Android UI helper for any app on an emulator or device (via uiautomator + adb in
   & ... ui.ps1 key 4                       # keyevent (4 = BACK, 66 = ENTER)
   & ... ui.ps1 swipe 640 2000 640 800      # scroll
   & ... ui.ps1 shot T3_after_save [<dir>]  # PNG screenshot (default dir: <.claude-runtime>\shots\<serial>)
+  & ... ui.ps1 shotmark T3_total "Total|#save_btn" ["wrong total"] [<dir>]   # screenshot + red box/label on those elements, one go
   & ... ui.ps1 wait "Welcome" 30           # wait up to N s for a text
   & ... ui.ps1 log ReactNativeJS           # recent logcat lines for a tag (clear with: adb logcat -c)
   & ... ui.ps1 photo [shutterId] [okText]  # after tapping the app's camera icon: press the shutter, accept the photo
@@ -28,7 +29,8 @@ function Get-Nodes {
   $x.SelectNodes('//node') | ForEach-Object {
     $t = if ($_.text) { $_.text } elseif ($_.'content-desc') { $_.'content-desc' } else { '' }
     if ($_.bounds -match '\[(\d+),(\d+)\]\[(\d+),(\d+)\]') {
-      [pscustomobject]@{ text = $t; rid = $_.'resource-id'; cls = $_.class; x = [int](([int]$Matches[1] + [int]$Matches[3]) / 2); y = [int](([int]$Matches[2] + [int]$Matches[4]) / 2) }
+      [pscustomobject]@{ text = $t; rid = $_.'resource-id'; cls = $_.class; x = [int](([int]$Matches[1] + [int]$Matches[3]) / 2); y = [int](([int]$Matches[2] + [int]$Matches[4]) / 2)
+        l = [int]$Matches[1]; t = [int]$Matches[2]; w = [int]$Matches[3] - [int]$Matches[1]; h = [int]$Matches[4] - [int]$Matches[2] }
     }
   }
 }
@@ -54,6 +56,22 @@ switch ($Action) {
     $f = Join-Path $dir "$Arg.png"
     & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
     "saved $f"
+  }
+  'shotmark' {
+    # one go: screenshot + red box (and label) around the element found by text or #resource-id. Arg = name, Arg2 = text or #id,
+    # Arg3 = label (default: the element text), Arg4 = dir. Several elements: separate with ' | ' in Arg2.
+    $dir = if ($Arg4) { $Arg4 } else { Join-Path $rt "shots\$tag" }
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $f = Join-Path $dir "$Arg.png"
+    $all = Get-Nodes
+    $rects = foreach ($want in ($Arg2 -split '\s*\|\s*')) {
+      $n = if ($want -like '#*') { $all | Where-Object { $_.rid -like "*$($want.TrimStart('#'))" } | Select-Object -First 1 }
+           else { ($all | Where-Object { $_.text -eq $want } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$want*" } | Select-Object -First 1) }
+      if ($n) { "$($n.l - 6),$($n.t - 6),$($n.w + 12),$($n.h + 12),$(if ($Arg3) { $Arg3 } else { $n.text })" } else { Write-Warning "NOT FOUND: $want (screenshot taken without a mark for it)" }
+    }
+    & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
+    if ($rects) { & (Join-Path (Split-Path $PSScriptRoot) 'annotate.ps1') -In $f -Rect @($rects) | Out-Null }
+    "saved $f$(if ($rects) { " with $(@($rects).Count) mark(s)" })"
   }
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))

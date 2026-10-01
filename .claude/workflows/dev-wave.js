@@ -130,6 +130,20 @@ orchestrate\\scripts\\track.ps1 add -Task <bug id> -MergeAfter '<web/app MR>><AP
 }
 
 // review passed (or was off for this agent): schedule the merges — the build agent deliberately left them open
+const CI_SCHEMA = {
+  type: 'object',
+  properties: { done: { type: 'boolean' }, mrs: { type: 'array', items: { type: 'object', properties: { mr: { type: 'string' }, status: { type: 'string' }, job: { type: 'string' }, error: { type: 'string' } }, required: ['mr', 'status'] } } },
+  required: ['done', 'mrs'],
+}
+// CI gate before shipping: agents stop at "MR opened", so nobody saw a failed pipeline (a lint/schema check failure sat unnoticed until
+// the tracker flagged it). A cheap agent waits for the pipelines with pipe-wait.ps1; failures go back to the dev agent as blocking findings.
+function ciPrompt(r) {
+  const urls = r.mrs.filter((m) => !m.merged).map((m) => m.url).join(',')
+  return `Run exactly this PowerShell command and return its JSON output as the result (fields done, mrs). Nothing else.${PATHS}
+& ${K}\\scripts\\pipe-wait.ps1 -Mrs ${urls} -MaxMinutes 8
+If the JSON says "done": false, run the same command again (at most 3 times in total) and return the last JSON.`
+}
+
 function shipPrompt(a, r) {
   return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (the review found nothing blocking):
 ${r.mrs.filter((m) => !m.merged).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
@@ -155,6 +169,14 @@ const results = await pipeline(
     if (!x || x.error) return x
     // should-fix findings get the fix round too (no deferrals): a should-fix once reopened a permission gap on merge
     const blocking = x.findings.filter((f) => f.severity !== 'nit')
+    if (!blocking.length && REVIEW && x.report.mrs.some((m) => !m.merged)) {
+      const ci = await agent(ciPrompt(x.report), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, model: 'haiku', effort: 'low' })
+      for (const m of ((ci && ci.mrs) || []).filter((m) => m.status === 'failed')) {
+        blocking.push({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking', problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
+          fix: 'Reproduce the failing CI job locally through the gate (check.ps1 / lbcheck.py for changelog checks), fix the cause, push, and make sure the pipeline goes green.' })
+      }
+      if (blocking.length) log(`${a.id}: ${blocking.length} failed pipeline(s) -> fix round`)
+    }
     if (!blocking.length) {
       if (!REVIEW || !x.report.mrs.some((m) => !m.merged)) return x
       const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, model: 'haiku', effort: 'low' })

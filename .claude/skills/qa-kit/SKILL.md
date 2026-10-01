@@ -26,6 +26,12 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
 | Run a whole batch | `/test-and-close` (`.claude\workflows\test-and-close.js`) + `scripts\autoclose.ps1` safety net |
 | Memory seat + item claim | `scripts\qa-seat.ps1 acquire / release / status` (every tester/verifier runs it first; see below) |
 
+## Marking evidence (show the reviewer where to look)
+- **App:** `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]` takes the screenshot and boxes the element(s) in one go.
+- **Web:** `mark(page, selector)` before the screenshot (`unmark` after), or annotate afterwards.
+- **Any image:** `scripts\annotate.ps1 -In <file> -Rect 'x,y,w,h,label' -Arrow 'x1,y1,x2,y2,label' -Text 'x,y,text'` (overwrites in place, keeps the evidence name).
+Mark every FAIL screenshot (red box on the wrong value / missing element); PASS shots only when the point isn't obvious.
+
 ## Memory seats and extra workers
 Every tester/verifier first runs `scripts\qa-seat.ps1 acquire` (the workflow tells it how): it waits its fair turn while free RAM would drop under `keepFreeGB` (targets.local.json, default 8) and claims its item. So a run's `webParallel` is only a cap - real concurrency follows memory, and an extra worker run (`/test-and-close { runDir, kitDir, instance: 'w2', only: [...] }`, suggested by the supervisor's capacity flag) never tests an item another worker owns. Items can carry `model`/`effort`; narrow web/API retests default to sonnet.
 
