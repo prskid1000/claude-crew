@@ -164,6 +164,9 @@ foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction 
   $queued = @($run.items | Where-Object { $_.lane -ne 'app' -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and
       -not (Test-Path (Join-Path $seatDir "claims\$($rd.Name)__$($_.code).json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\shots")) } | ForEach-Object code)
   if (-not $queued) { continue }
+  # a run launched before seats/claims existed: its agents don't claim items, so an extra worker would test the same items twice
+  $legacy = @($run.items | Where-Object { (Test-Path (Join-Path $rd.FullName "$($_.code)\shots")) -and -not (Test-Path (Join-Path $seatDir "claims\$($rd.Name)__$($_.code).json")) }).Count
+  if ($legacy) { continue }
   $room = [math]::Floor(($freeNow - $keepFree) / 1.5)          # a web tester needs ~1.5 GB; keep keepFreeGB free
   if ($room -ge 2 -and $waitNow -eq 0) {
     $n = [math]::Min($room, $queued.Count)
