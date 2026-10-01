@@ -1,0 +1,14 @@
+# local config with secrets / machine values (copy the *.example.json files)
+settings.local.json
+*.local.json
+skills/dev-kit/kit.local.json
+skills/qa-kit/targets.local.json
+skills/android-swarm/swarm.config.json
+skills/android-swarm/swarm.json
+skills/android-swarm/apk/
+skills/android-swarm/*.log
+skills/qa-kit/scripts/web/node_modules/
+agent-memory-local/
+scheduled_tasks.lock
+**/__pycache__/
+# runtime output lives outside .claude, in <workspace>\.claude-runtime\ (or $env:CLAUDE_RUNTIME)

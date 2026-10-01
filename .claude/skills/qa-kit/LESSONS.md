@@ -1,0 +1,19 @@
+# QA lessons (self-improving — read before testing)
+
+Maintained by each `/test-and-close` learn step and `/kit-retro`. Newest first inside each section. Keep each line
+actionable; `(n×)` = times observed. Lessons that stay true for a while get promoted into SKILL.md by `/kit-retro`.
+UI gotchas for one product go under a `## Project: <name> (target <target>)` heading (selectors, test accounts to use or never touch,
+app login steps) — never passwords; those live only in `targets.local.json`.
+
+## General
+- (fixed in kit) finalize warned on valid files (pdf/csv exports, `_verify_` without nn) and skipped evidence saved outside shots\/evidence\ or given as absolute paths: finalize now collects listed evidence from anywhere under the run dir and drops helper scripts.
+- (7×) Evidence hygiene: finalize warns on off-standard names (CODE-ID_NN_slug) and on files listed in results.json but missing (helper .mjs scripts, absolute paths). Save evidence into the item folder with the standard name, list only files that exist, relative names.
+- (2×) The test web app can be redeployed mid-run: re-check the bundle version/timestamp before finalising FAILs and re-run them on the new build.
+- (25×) Testers hid real defects in PASS_WITH_NOTE / findings. Any 5xx, stuck flow or unsaved data is FAIL — the note audit will reclassify it anyway, so report it right the first time.
+- Test environments often run an older build than the target branch. Before a FAIL, check the change is deployed (endpoint exists, web bundle contains the change); otherwise NOT_TESTED "not deployed yet".
+- Small/cheap close agents sometimes refuse to publish; that's why `autoclose.ps1` exists — always start it for a run.
+- Guides go stale when later packages change screens; test the same intent on the current screen and say so (PASS_WITH_NOTE), not FAIL.
+- Keep web agents to ≤ 2 Chrome ports; killSession() when done — other sessions run Maven/Angular builds.
+- Component-library dropdown menus that open on HOVER (e.g. ng-zorro `nz-dropdown`) need `hoverSel(page, selector)`; menu items render in an overlay container (`.cdk-overlay-container`), not under the trigger.
+- A "Enable notifications" toast can cover the header's right side; browser.mjs grants the permission so it doesn't appear.
+- Use a secondary test user for per-user preference checks, and keep one tenant/account with the feature OFF for "nothing else changed" (R) checks; never change its settings.

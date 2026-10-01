@@ -1,0 +1,27 @@
+[
+  {
+    "id": "UOM-BUG-002",
+    "module": "Double UOM",
+    "layer": "Java API",
+    "type": "Bug",
+    "in_scope": "Yes",
+    "subtype": "Pricing",
+    "title": "case_unit_price never populated on order lines",
+    "area": "Sale Orders / Pricing",
+    "severity": "Critical",
+    "current": "case_unit_price is NULL on all sampled order lines; only unit_price (each price) is populated.",
+    "expected": "When a Double UOM product has a Case Price defined, case_unit_price should be populated on the order line.",
+    "business_impact": "High - case pricing is not applied to orders, risking revenue loss or incorrect invoicing.",
+    "root_cause": "The pricing calculation endpoint does not return or apply case pricing.",
+    "why_today": "(inferred) enableCasePricing defaults OFF and case price is derived from each price x factor, so case_unit_price was never wired into the order-creation pricing flow.",
+    "why_not_prod": "(inferred) Most tenants keep case pricing OFF, so invoices compute from each price x factor and stay correct; only tenants using independent case prices are affected.",
+    "customer_impact": "Tenants using independent case pricing get wrong order/invoice values.",
+    "db_migration": "No",
+    "suggested_fix": "Extend pricing logic to look up and apply case price when the order line has case_quantity > 0.",
+    "code_location": "POST /api/products/price; order pricing service",
+    "product_decision": "Yes",
+    "effort": "Medium",
+    "existing_notes": "Evidence: order-line sample shows 100% NULL case_unit_price.",
+    "source": "Double UOM doc"
+  }
+]

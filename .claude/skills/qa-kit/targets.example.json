@@ -1,0 +1,50 @@
+{
+  "_readme": "Copy to targets.local.json (git-ignored) and fill in. One entry per TEST environment (never production). Passwords live ONLY in targets.local.json. users: <key used with api.ps1 -As / browser.mjs as> -> [login, password].",
+  "default": "my-staging",
+  "targets": {
+    "my-staging": {
+      "web": "https://staging.example.com",
+      "api": "https://staging-api.example.com",
+      "apiPattern": "/api/",
+      "defaultTenant": "",
+      "tenantHeader": "",
+      "auth": {
+        "type": "login",
+        "path": "/api/authenticate",
+        "contentType": "json",
+        "body": { "username": "{user}", "password": "{pass}", "tenant": "{tenant}", "rememberMe": true },
+        "tokenField": "id_token",
+        "header": "Authorization: Bearer {token}"
+      },
+      "webLogin": {
+        "path": "/login",
+        "fields": { "#username": "{user}", "#password": "{pass}" },
+        "rememberMeLabel": "Remember me",
+        "submit": "button[type=submit]",
+        "tokenKeys": ["access_token"]
+      },
+      "users": {
+        "admin": ["qa-admin", "<password>"],
+        "tester2": ["qa-tester-2", "<password>"],
+        "qa-driver-1": ["qa-driver-1", "<password>"]
+      }
+    },
+    "oauth-service": {
+      "api": "https://api.staging.example.com",
+      "auth": { "type": "login", "path": "/oauth/token", "contentType": "form",
+                "body": { "grant_type": "password", "username": "{user}", "password": "{pass}", "client_id": "<client id>" },
+                "tokenField": "access_token" },
+      "users": { "admin": ["svc-qa", "<password>"] }
+    },
+    "static-token-api": {
+      "api": "https://api.staging.example.com",
+      "auth": { "type": "token", "header": "X-Api-Key: {token}" },
+      "users": { "admin": ["", "<api key>"] }
+    },
+    "basic-auth-api": {
+      "api": "https://legacy.staging.example.com",
+      "auth": { "type": "basic" },
+      "users": { "admin": ["qa-user", "<password>"] }
+    }
+  }
+}

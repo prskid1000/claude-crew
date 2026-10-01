@@ -1,0 +1,27 @@
+# Dev lessons (self-improving — read before starting)
+
+Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)` = times observed.
+Project-specific lessons go under a `## Project: <name>` heading below the general ones.
+
+## General
+- The guard can false-positive on PowerShell commands whose text holds slash paths or arrows; put such text in a script file via the Write tool and run that. Use the Edit tool, not sed/python/heredoc, for CRLF files and anything with backslashes.
+- A web app with no unit-test target makes the `check.ps1` test step fail: keep logic in exported pure functions; specs are type-checked, or bundled with esbuild (through gate.ps1) and run under node with a tiny shim. (5×)
+- `board.ps1 check` prints ok but can leave `$LASTEXITCODE` null/stale, so `-ne 0` guards falsely stop: test its output text or `-gt 0`. (4×)
+- Git Bash `python`/`py` can be a broken pyenv .bat shim (`python -c` multi-line fails; emoji hit cp1252): write a .py file in the scratchpad, run it from PowerShell with PYTHONIOENCODING=utf-8, or use `node -e`. (14×)
+- (fixed in kit) `wt.ps1 commit` stages everything (`git add -A`) unless `-NoStage`. (3×)
+- `devtools.py merge-wait` needs a background timeout of 3600000 and a log file (10 min kills it mid-pipeline); prefer `devtools.py merge` (schedules and returns). `devtools.py doc` handles absolute paths itself (fixed in kit). (2× each)
+- Duplicate dev agents (SendMessage to a workflow agent's ID spawns a copy) share one worktree and interleave edits; relay via contracts.md. Husky v8 `core.hooksPath=.husky/_` skips hooks (wt.ps1 falls back to .husky). (3×; commits made with skipped hooks can fail CI init: recommit)
+- Heap caps are dynamic and learned PER PROJECT (main repo + subproject folder, e.g. `backend/services/api`; worktrees share their main repo's profile): a new project starts at Gradle 12 / Maven 8 / Node 4 GB, then learned peak × 1.25 (never below 4 GB, never above the start), shrunk toward 4 GB when memory is tight. JVMs run G1 with tight free-ratios so the learned peak can fall. Inherited -Xmx (e.g. a user `MAVEN_OPTS=-Xmx16g`, which once made one `mvn test` take 6 GB) is always overridden.
+- Claude Code sets `NoDefaultCurrentDirectoryInExePath=1`: bare `gradlew.bat` / `mvnw.cmd` aren't found in the current dir. Use `.\gradlew.bat` (the gate and stack.ps1 add `.\` automatically).
+- `check.ps1` typecheck is incremental (cache in `.claude-runtime\tsbuild`): 16 s → 6 s on a large Angular app. Don't pass your own `--incremental`.
+- The memory gate learns real peaks per build kind (`%TEMP%\claude-build-gate\history.json`); long waits print the biggest memory users — if an IDE or another session hogs RAM, say so instead of retrying.
+- Six parallel Maven JVMs hit 100% RAM; every build goes through the gate (the guard hook blocks ungated builds).
+- Worktree hooks were silently skipped (`core.hooksPath` missing in worktrees) → always `wt.ps1 commit`.
+- One agent popped another's `git stash` → stash is blocked by the guard; use WIP commits.
+- A hook/side effect added after a service call must check the call really took effect (a cancel method that silently returns for an already-paid record once caused double billing): reload state, test the status, add a test for the no-op branch.
+- Agents can report before the API pipeline finishes; web MRs must merge after their API MR: the coordinator confirms the merge before QA, and consumers are registered with `track.ps1 add -MergeAfter '<web>!<iid>><api>!<iid>'`. (6×)
+- Forms that rebuild a payload from visible fields wipe stored values on update: prefill from the existing record and send unchanged values back; the API must not clear fields that are absent. Skip idempotent syncs when the request equals stored values. (3×)
+- When widening a status filter or adding report columns, keep old exclusions and update every report definition sharing the summary. (2×)
+- Signed numeric inputs need a signed keyboard on React Native (`decimal-pad` has no minus key); test typed input, not just a set value.
+- A main checkout on another branch links the wrong `node_modules` versions into a worktree: `wt.ps1 new ... -LinkFrom <a checkout of the target branch>`.
+- Merge API MRs first, then web/app; test-environment deploys lag — call stale deploys out instead of "fixing" them.

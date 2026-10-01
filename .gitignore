@@ -1,0 +1,13 @@
+# local config with secrets / machine values
+*.local.json
+**/settings.local.json
+.claude/skills/android-swarm/swarm.config.json
+.claude/skills/android-swarm/swarm.json
+.claude/skills/android-swarm/apk/
+*.log
+node_modules/
+__pycache__/
+.claude/agent-memory-local/
+.claude/scheduled_tasks.lock
+# runtime output (never commit)
+.claude-runtime/

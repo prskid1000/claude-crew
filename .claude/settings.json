@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Edit(/.claude-runtime/**)",
+      "PowerShell(& *.claude\\skills\\*)",
+      "PowerShell(& '*.claude\\skills\\*)",
+      "PowerShell(python *.claude\\skills\\*)",
+      "PowerShell(node *)",
+      "PowerShell(git status*)",
+      "PowerShell(git log*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git fetch*)",
+      "PowerShell(git show*)",
+      "PowerShell(git branch*)",
+      "PowerShell(git worktree list*)",
+      "PowerShell(git -C *)",
+      "PowerShell(glab mr *)",
+      "PowerShell(glab api *)",
+      "PowerShell(glab auth status*)",
+      "PowerShell(gh pr *)",
+      "PowerShell(gh auth status*)",
+      "PowerShell(clickup task view *)",
+      "PowerShell(clickup comment list *)",
+      "PowerShell(gws drive files export *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git fetch*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git -C *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(grep *)",
+      "Bash(find *)"
+    ],
+    "deny": [
+      "Bash(git stash*)",
+      "PowerShell(git stash*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\retro-nudge.ps1"],
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\cleanup.ps1", "-IfDue", "-Quiet"],
+            "timeout": 600,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\dev-kit\\scripts\\guard.ps1"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

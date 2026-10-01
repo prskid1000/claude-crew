@@ -1,0 +1,12 @@
+{
+  "_readme": "Optional. Copy to kit.local.json (git-ignored) and fill what applies; every key has a default. Read by dev-kit\\scripts\\kitconfig.ps1 (PowerShell scripts), devtools.py and guard.ps1. See docs/configuration.md.",
+  "gitHost": "gitlab.com",
+  "githubHost": "github.com",
+  "gitlabGroup": "<your-gitlab-group>",
+  "reposRoot": "C:\\src",
+  "worktreeRoots": ["C:\\src-wt"],
+  "trackerRepos": ["backend", "frontend", "mobile-app"],
+  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
+  "protectedBranches": ["staging"],
+  "driveParent": "<Google Drive folder or shared-drive id for tester guides>"
+}

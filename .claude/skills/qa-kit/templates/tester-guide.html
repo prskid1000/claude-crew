@@ -1,0 +1,51 @@
+<!--
+Tester guide template (Google-Docs friendly: inline styles only). Fill the {{...}} parts, keep the structure, then publish:
+  python <workspace>\.claude\skills\dev-kit\scripts\devtools.py doc "<CODE> <title> - Tester guide" <file.html>
+Check ids: T1.. web/API, L1.. mobile app, R1.. regression ("nothing else changed"), X1.. reserved for off-script defects.
+One check = one observable result. QA agents test exactly these rows, so make "Expected" concrete and checkable.
+-->
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#111827;font-size:10.5pt">
+<p style="font-size:9pt;color:#6b7280;margin:0">TESTER GUIDE · {{date}}</p>
+<h1 style="font-size:20pt;margin:2px 0 8px 0">{{CODE}} — {{title}}</h1>
+
+<table style="border-collapse:collapse;width:100%;margin-bottom:10px">
+<tr><td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:22%"><b>Tasks</b></td><td style="border:1px solid #d1d5db;padding:6px 8px">{{ClickUp links}}</td></tr>
+<tr><td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc"><b>MRs</b></td><td style="border:1px solid #d1d5db;padding:6px 8px">{{MR links, merge state}}</td></tr>
+<tr><td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc"><b>Environment</b></td><td style="border:1px solid #d1d5db;padding:6px 8px">{{web URL / API URL / app build}} · tenant/account: {{...}}</td></tr>
+<tr><td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc"><b>Who is affected</b></td><td style="border:1px solid #d1d5db;padding:6px 8px">{{roles / tenants / settings that turn it on}}</td></tr>
+</table>
+
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">What changed</h2>
+<ul><li>{{user-visible change}}</li></ul>
+
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Setup and test data</h2>
+<ol><li>{{settings to enable, data to create (prefix QA-{{CODE}}), logins}}</li></ol>
+
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Checks</h2>
+<table style="border-collapse:collapse;width:100%">
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#1f3a68;color:#fff;width:6%"><b>ID</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#1f3a68;color:#fff;width:14%"><b>Where</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#1f3a68;color:#fff;width:40%"><b>Steps</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#1f3a68;color:#fff;width:40%"><b>Expected</b></td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px"><b>T1</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{screen / endpoint}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{1. … 2. …}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{exact observable result}}</td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px"><b>R1</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{unaffected tenant / role}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{same flow where the feature is OFF}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">Behaves exactly as before.</td>
+</tr>
+</table>
+
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Not covered / needs a live check</h2>
+<ul><li>{{e.g. real printer, push notification on a physical device, third-party callback}}</li></ul>
+
+<p style="font-size:8pt;color:#9ca3af;margin-top:18px">Evidence expected per check: see the QA evidence standard (screenshot of the result; request/response JSON for backend checks).</p>
+</body></html>

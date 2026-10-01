@@ -1,0 +1,22 @@
+{
+  "_readme": "Copy to swarm.config.json (git-ignored) and point 'app' at the app you are testing. Lanes = AVD names in avdDir (create them with swarm-avd.ps1 create). Each lane has its own test login ('user', a user key in qa-kit targets.local.json) and 'notes' printed by phone.ps1 acquire. 'headless' (top level or per lane) boots without windows. Passwords never go here.",
+  "avdDir": "C:\\Android\\avd",
+  "keepFreeGB": 12,
+  "headless": false,
+  "lanes": [
+    { "name": "Falcon",  "port": 5556, "user": "qa-driver-1", "notes": "test account 1, data prefix QA-L1-", "headless": false },
+    { "name": "Kestrel", "port": 5558, "user": "qa-driver-2", "notes": "test account 2, data prefix QA-L2-" },
+    { "name": "Osprey",  "port": 5560, "user": "qa-driver-3", "notes": "test account 3, data prefix QA-L3-" }
+  ],
+  "app": {
+    "kind": "react-native",
+    "package": "com.example.app",
+    "appDir": "C:\\src\\example-app\\app",
+    "devClientScheme": "exp+example-app",
+    "metroPort": 8081,
+    "buildTask": "assembleRelease",
+    "buildArgs": "-PreactNativeArchitectures=x86_64 -Dorg.gradle.workers.max=4",
+    "apkGlob": "app\\build\\outputs\\apk\\release\\*.apk",
+    "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"]
+  }
+}
