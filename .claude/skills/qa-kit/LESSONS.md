@@ -22,3 +22,4 @@ app login steps) — never passwords; those live only in `targets.local.json`.
 - Component-library dropdown menus that open on HOVER (e.g. ng-zorro `nz-dropdown`) need `hoverSel(page, selector)`; menu items render in an overlay container (`.cdk-overlay-container`), not under the trigger.
 - A "Enable notifications" toast can cover the header's right side; browser.mjs grants the permission so it doesn't appear.
 - Use a secondary test user for per-user preference checks, and keep one tenant/account with the feature OFF for "nothing else changed" (R) checks; never change its settings.
+- (fixed in kit) api.ps1 crashed on a binary response (image/file download) and, called from Git Bash, a /api/... path arrived as C:/Program Files/Git/api/... (MSYS path conversion). Binary bodies are saved next to the evidence as <Save>.body.<ext> with a text stub in the JSON; MSYS-mangled paths are restored.

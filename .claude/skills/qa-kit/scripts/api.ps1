@@ -24,6 +24,8 @@ param(
   [int]$TimeoutSec = 180
 )
 $ErrorActionPreference = 'Stop'
+# Git Bash (MSYS) rewrites a '/api/x' argument to 'C:/Program Files/Git/api/x' before pwsh sees it: undo that
+if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
 $here = Split-Path $MyInvocation.MyCommand.Path
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($MyInvocation.MyCommand.Path -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }   # runtime output lives outside .claude
 $cfgFile = Join-Path (Split-Path $here) 'targets.local.json'
@@ -89,6 +91,16 @@ $res = Call $tok
 if ($res[0] -eq 401 -and $t.auth.type -eq 'login') { $tok = Login; $sw.Restart(); $res = Call $tok }
 $sw.Stop()
 $status, $content, $ctype = $res
+# binary responses (image/PDF/file downloads) come back as byte[]: keep the bytes as a file, put a text stub in the evidence/output
+if ($content -is [byte[]]) {
+  $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
+  if ($Save) {
+    $bdir = if ($OutDir) { $OutDir } else { Join-Path $rt 'evidence' }; New-Item -ItemType Directory -Force $bdir | Out-Null
+    $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '.bin' } }
+    $bf = Join-Path $bdir "$Save.body$ext"; [IO.File]::WriteAllBytes($bf, $bytes); $content += " saved to $bf"
+  }
+}
+
 
 if ($Save) {
   # Evidence envelope per reference\evidence-standard.md: meta + request (secrets redacted) + response
