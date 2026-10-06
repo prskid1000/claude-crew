@@ -58,7 +58,8 @@ Every tester/verifier first runs `scripts\qa-seat.ps1 acquire` (the workflow tel
 - **FAIL**: any defect, inside or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck/blocked flow, data changed wrongly
   or not saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
 - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" doesn't.
-- **PENDING**: tested later in another lane (e.g. the app part of a web package). Its task stays open.
+- **PENDING**: tested later in another lane (e.g. the app part of a web package). Its task stays open. When the run has phone lanes,
+  the workflow adds an app follow-up item `<code>A` for exactly the PENDING checks and runs it on the phones in the same run.
 - **findings**: context only (test-data notes, guide drift). Never defects.
 - Before calling a FAIL, confirm the change is deployed (stale builds are common on test environments).
 - The workflow's **note audit** re-reads every PASS_WITH_NOTE and finding; real defects become FAIL and get verified and a bug task.

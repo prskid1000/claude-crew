@@ -363,6 +363,25 @@ const parts = await Promise.all([
   app.length ? pool(app, LANES.length, 200, (w) => LANES[w]) : [],
 ])
 const all = parts.flat().filter(Boolean)
+
+// App follow-ups: a web/api item whose checks came back PENDING (device steps) gets an app item for exactly those checks,
+// run on the phones now instead of waiting for the lead. It is appended to run.json first (finalize looks items up there).
+const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
+  const it = R.items.find((x) => x.code === r.code)
+  if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
+  return { ...it, code: `${it.code}A`, title: `${it.title} — app checks ${r.pending.join(', ')}`, lane: 'app', only: r.pending,
+    taskFiles: [...(it.taskFiles || []), `${outDir(it)}\\results.json`],
+    extra: `${it.extra || ''} The web/API pass (${it.code}) left ${r.pending.join(', ')} PENDING for a device: test exactly those on your phone. Earlier results: ${outDir(it)}\\results.json.` }
+}).filter(Boolean) : []
+if (followUps.length) {
+  await agent(`Append these items to the "items" array of ${R.runDir}\\run.json without changing anything else, in PowerShell:
+$f = '${R.runDir}\\run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
+foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j.items += $n } }
+[IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
+Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+  log(`app follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
+  all.push(...(await pool(followUps, LANES.length, 300, (w) => LANES[w])).filter(Boolean))
+}
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit)
