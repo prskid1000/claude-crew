@@ -78,7 +78,15 @@ switch ($Action) {
         Save $o
         if (-not @($o.mrs).Count) { continue }
         $cur = (clickup task view $o.task --json 2>$null | ConvertFrom-Json).status.status
-        if ($cur -notin 'for review', 'in review') { continue }   # its agent hasn't finished shipping yet
+        if ($cur -notin 'for review', 'in review') {
+          # Its agent may still be shipping (more MRs to come) - or it shipped but failed to set the review status (a wrong
+          # tracker command can leave a task untouched for hours). Once every discovered MR has been merged for 20 min, complete it.
+          $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
+          if (-not $allMerged) { $o.Remove('allMergedAt'); Save $o; continue }
+          if (-not $o.allMergedAt) { $o.allMergedAt = (Get-Date).ToString('s'); Save $o; continue }
+          if (((Get-Date) - [datetime]$o.allMergedAt).TotalMinutes -lt 20) { continue }
+          if (-not $Quiet) { "NOTE $($o.task): status '$cur' was never set to review, but all MRs merged 20+ min ago - completing it" }
+        }
       }
       # ordered merges: '<dependent>><dependency>' -> when the dependency merged, schedule the dependent (merge-when-green)
       foreach ($pair in @($o.mergeAfter)) {

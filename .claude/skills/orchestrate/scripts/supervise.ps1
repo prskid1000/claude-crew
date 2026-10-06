@@ -43,7 +43,9 @@ foreach ($w in $wfDirs) {
   foreach ($r in $res.Values) {
     [void]$doneLabels.Add([string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label)
     $sum = [string]$r.result.summary + [string]$r.result.error
-    if ($sum -match '(?i)duplicate|collid|another (agent|writer)|halted|stopped editing') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (board.ps1 check).' }
+    # an agent whose MRs all merged shipped fine: a mention of "another agent" (e.g. a shared scratch file) is not a live collision
+    $shipped = $r.result.mrs -and -not @($r.result.mrs | Where-Object { -not $_.merged }).Count
+    if (-not $shipped -and $sum -match '(?i)duplicate|collid|another (agent|writer)|halted|stopped editing') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (board.ps1 check).' }
     if ($r.result -and $r.result.mrs -and @($r.result.mrs).Count -eq 0 -and $sum -match '(?i)not done|no MRs') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) finished without MRs" 'Resume it (dev-wave mode resume) unless it was deliberately stopped.' }
   }
 }
