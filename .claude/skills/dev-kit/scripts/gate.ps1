@@ -1,4 +1,5 @@
-﻿<#
+﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+<#
 Machine-wide memory gate for heavy builds and tests, so parallel agents (plus other Claude sessions, IDEs,
 emulators and browsers) never run the machine out of RAM. Stack-agnostic: Maven, Gradle/Android, .NET,
 Angular/Node/React Native, Python, Go, Rust, CMake.

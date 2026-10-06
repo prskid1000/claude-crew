@@ -1,3 +1,4 @@
+#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
 <#
 One-page status of everything the kit is doing: memory + running gated builds, worktrees (branch, dirty, ahead/behind),
 QA runs (per package verdicts, published or not), the learning loop (signals, guard blocks, last retro).

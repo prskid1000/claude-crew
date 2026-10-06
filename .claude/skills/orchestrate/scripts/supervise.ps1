@@ -1,4 +1,5 @@
-﻿<#
+﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+<#
 Coordinator's periodic check-up (what a human lead would look at every 10-15 minutes). Prints a compact digest and a list
 of FLAGS with a suggested action each. The coordinator (main session) runs it on a loop and acts on the flags.
 

@@ -1,4 +1,5 @@
-﻿<#
+﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+<#
 Tracker automation: tie a ClickUp task to its MRs, and let the supervisor (-AutoFix) move the task when they are all merged —
 so nobody has to watch pipelines and flip statuses by hand.
 
