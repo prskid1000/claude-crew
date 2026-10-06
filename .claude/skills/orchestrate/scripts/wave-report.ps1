@@ -33,8 +33,10 @@ foreach ($x in $results) {
     'learn' { $learn = $x.r }
   }
 }
-# a blocking finding counts as fixed when that agent had a fix: round
-$open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not ($_.severity -eq 'blocking' -and $agents[$_.agent].fixedRound) })
+# A non-nit finding (blocking or should-fix) counts as addressed when that agent had a fix: round - the fix round answers every
+# non-nit finding (fix, or a reasoned rebuttal in its summary). Listed separately so the lead can still read what was done.
+$addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.agent].fixedRound })
+$open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
 New-Item -ItemType Directory -Force (Join-Path $rt 'waves') | Out-Null
 $out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $rt "waves\$Run.json")
@@ -47,6 +49,7 @@ foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -an
   $m.merged = ((glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json).state -eq 'merged') } } }
 foreach ($k in $agents.Keys) { $a = $agents[$k]; '{0,-4} MRs {1}/{2} merged | done [{3}] | deferred {4}{5}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $($a.note.Substring(0, [math]::Min(80, $a.note.Length)))" }) }
 foreach ($k in $qa.Keys) { $q = $qa[$k]; '{0,-5} {1}/{2} pass, {3} fail, {4} not tested{5}' -f $k, $q.pass, $q.checks, $q.fail, $q.notTested, $(if ($q.Contains('published')) { " | published: $($q.published)" }) }
+if ($addressed.Count) { "--- review findings addressed in the fix round ($($addressed.Count)) - see each agent's fix-round summary"; $addressed | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line)" } }
 if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(([string]$_.problem).Substring(0, [math]::Min(150, ([string]$_.problem).Length)))" } }
 if ($learn) { "--- learn: $($learn.signals) signal(s); lessons: $(@($learn.lessonsChanged).Count)" }
 "saved: $(Join-Path $rt "waves\$Run.json")"
