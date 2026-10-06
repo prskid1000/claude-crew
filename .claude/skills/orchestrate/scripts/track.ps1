@@ -110,7 +110,14 @@ switch ($Action) {
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
       if ($held) { if (-not $Quiet) { "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))" }; continue }
       foreach ($s in $o.onMerged) { clickup status set $s $o.task 2>&1 | Out-Null }
-      clickup comment add $o.task "All MRs merged ($($o.mrs -join ', ')). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." 2>&1 | Out-Null
+      $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
+      $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
+      clickup comment add $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." 2>&1 | Out-Null
+      # the task must also carry its agent's solution + testing steps (an agent that got the tracker syntax wrong posted nothing)
+      $cmts = @(clickup comment list $o.task --json 2>$null | ConvertFrom-Json) | ForEach-Object { [string]$_.comment_text } | Where-Object { $_ -notmatch '^All MRs merged' }
+      if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide' })) {
+        "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"
+      }
       $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); Save $o
       "DONE $($o.task): all $(@($o.mrs).Count) MRs merged -> status $($o.onMerged -join ' -> ')"
     }
