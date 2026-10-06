@@ -117,7 +117,19 @@ switch ($Action) {
       # the task must also carry its agent's solution + testing steps (an agent that got the tracker syntax wrong posted nothing)
       $cmts = @(clickup comment list $o.task --json 2>$null | ConvertFrom-Json) | ForEach-Object { [string]$_.comment_text } | Where-Object { $_ -notmatch '^All MRs merged' }
       if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide' })) {
-        "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"
+        # agents often get the comment wrong: post the live checks from the dev agent's own report (workflow journal) instead of flagging
+        $proj = $KitConf.ClaudeProjectDir
+        $steps = @(Get-ChildItem $proj -Recurse -Filter 'journal.jsonl' -File | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
+            foreach ($line in Get-Content $_.FullName) {
+              $j = try { $line | ConvertFrom-Json } catch { $null }
+              if ($j.type -eq 'result' -and @($j.result.done) -match [regex]::Escape($o.task) -and @($j.result.needsLiveCheck).Count) { @($j.result.needsLiveCheck) }
+            } } | Where-Object { $_ } | Select-Object -Unique)
+        if ($steps.Count) {
+          clickup comment add $o.task ("How to test (from the dev agent's report; run after the next deploy of $($urls -join ' , ')):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) 2>&1 | Out-Null
+          "COMMENTED $($o.task): posted $($steps.Count) how-to-test step(s) from the agent's report (its own testing comment was missing)"
+        } else {
+          "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"
+        }
       }
       $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); Save $o
       "DONE $($o.task): all $(@($o.mrs).Count) MRs merged -> status $($o.onMerged -join ' -> ')"

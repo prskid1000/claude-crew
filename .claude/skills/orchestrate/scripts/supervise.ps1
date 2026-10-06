@@ -184,7 +184,7 @@ if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands
 if ($AutoFix) {
   $S = Split-Path $PSCommandPath
   foreach ($l in @(& "$S\track.ps1" run)) {
-    if ($l -match '^DONE') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l 'Post the solution, MR links and how-to-test steps on the task (clickup comment add <id> "<text>").' }
     elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline or was closed: look at it and get it fixed (the agent may have stopped).' }
   }
