@@ -123,6 +123,14 @@ Other agents merge all the time; a stale base means avoidable conflicts.
   `promoted` once **all** your MRs are merged. **Never set `in test`**: that happens after deployment.
 - Don't change other people's tasks, or tasks already in a testing status.
 - New tasks go under the epic named in the brief, assigned to the requester.
+- **Exact `clickup` commands** (there is no `task update` and no `task comment`; guessing them prints usage and does nothing):
+  - status: `clickup task edit <id> --status "<review status>"` (or `clickup status set "<status>" <id>`); use your list's review
+    status name. The coordinator's tracker only promotes a task that is already in a review status, so set it.
+  - comment: `clickup comment add <id> "<text>"`; for long or multi-line text write it to a file and pass `(Get-Content <file> -Raw)`.
+  - subtask: `clickup task create --list-id <list> --parent <id> ...`. A subtask can't have subtasks: link it instead with
+    `clickup task edit <id> --links-to <other id>`.
+- **Claude Code's built-in "Remove-Item on system path … is blocked"** sometimes fires on PowerShell commands that contain
+  escaped quotes such as `"\"X\""`, even with no delete. Put that text in a file (or a `.ps1` script) and pass it from there.
 
 ## 10. Final reply to the coordinator (≤ 200 words)
 MRs merged · done / deferred item ids with reasons · settings or data to seed · what still needs a live check ·
