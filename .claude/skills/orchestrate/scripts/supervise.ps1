@@ -187,7 +187,7 @@ $tracked = @(Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json' | ForEach
 $openRuns = @{}
 foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }) {
   try { $rj = Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { continue }
-  $left = @($rj.items | Where-Object { -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) }).Count
+  $left = @($rj.items | Where-Object { -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\held.json")) }).Count   # held.json = skipClose item finished
   if ($left -and $rj.tracker.parent) { $openRuns[$rj.tracker.parent] = "$($rd.Name) ($left item(s) left)" }
 }
 foreach ($par in $parents) {
@@ -210,7 +210,7 @@ L "qa seats: $seatsNow taken, $waitNow waiting for memory; free RAM $freeNow GB"
 foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-8) }) {
   $run = try { Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { $null }
   if (-not $run) { continue }
-  $queued = @($run.items | Where-Object { $_.lane -ne 'app' -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and
+  $queued = @($run.items | Where-Object { $_.lane -ne 'app' -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\held.json")) -and
       -not (Test-Path (Join-Path $seatDir "claims\$($rd.Name)__$($_.code).json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\shots")) } | ForEach-Object code)
   if (-not $queued) { continue }
   # a run launched before seats/claims existed: its agents don't claim items, so an extra worker would test the same items twice

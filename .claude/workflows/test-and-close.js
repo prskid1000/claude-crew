@@ -30,6 +30,8 @@ or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
              model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high' } ],   // optional; default: retests on web/api -> sonnet
+  // skipClose: test + verify only; results.json + held.json are written for the lead to publish later (finalize.ps1 -Code).
+  // Items sharing one task don't need it: finalize keeps the task open until every item on it is published.
 }
 */
 // Short form (saves tokens: big args are echoed back in every launch/notification): args = { runDir, only?: ['GT5','APP2B'], lanes? }
@@ -311,7 +313,18 @@ async function runItem(it, idx, L) {
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
   const line = `${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, pending ${n('PENDING')}`
-  if (it.skipClose) { log(`${line} (publish left to the lead)`); return { code: it.code, summary: line, result: res } }
+  if (it.skipClose) {
+    // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
+    // finalize.ps1 -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.
+    await agent(`Write two files with the Write tool, content exactly as given, change nothing, then return ok=true.
+1. ${outDir(it)}\\results.json:
+${JSON.stringify(res)}
+2. ${outDir(it)}\\held.json:
+${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: new Date().toISOString() })}`,
+      { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+    log(`${line} (results saved; publish left to the lead)`)
+    return { code: it.code, summary: line, result: res }
+  }
   const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))
   return { code: it.code, summary: line, finalize: fin, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }

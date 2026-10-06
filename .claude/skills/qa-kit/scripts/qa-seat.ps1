@@ -57,6 +57,7 @@ switch ($Action) {
       $cf = Join-Path $claims "$(Safe $run)__$(Safe $Code).json"
       $verdict = Locked {
         if (Test-Path (Join-Path $RunDir "$Code\finalize.json")) { return "ALREADY: $Code was finished and published" }
+        if (Test-Path (Join-Path $RunDir "$Code\held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         if (Test-Path $cf) {
           $c = Get-Content $cf -Raw | ConvertFrom-Json
           if ($c.owner -ne $Owner -and ((Get-Date) - [datetime]$c.since).TotalHours -lt 6) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
