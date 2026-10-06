@@ -6,6 +6,7 @@ UI gotchas for one product go under a `## Project: <name> (target <target>)` hea
 app login steps) — never passwords; those live only in `targets.local.json`.
 
 ## General
+- (fixed in kit) Short-form `/test-and-close { runDir }`: the small load-run agent sometimes returned run.json without `items[]`, so workers died at start. The loader now validates items[] and retries once on a stronger model; if it still fails, pass the full run.json object as args.
 - (fixed in kit) Reviewers could not tell what a FAIL screenshot was about: `annotate.ps1` (box / arrow / label on any screenshot, one call) and `ui.ps1 shotmark` (screenshot + box on elements by text / #id) now exist. Mark every FAIL screenshot.
 - (fixed in kit) finalize warned on valid files (pdf/csv exports, `_verify_` without nn) and skipped evidence saved outside shots\/evidence\ or given as absolute paths: finalize now collects listed evidence from anywhere under the run dir and drops helper scripts.
 - (7×) Evidence hygiene: finalize warns on off-standard names (CODE-ID_NN_slug) and on files listed in results.json but missing (helper .mjs scripts, absolute paths). Save evidence into the item folder with the standard name, list only files that exist, relative names.

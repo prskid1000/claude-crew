@@ -36,10 +36,14 @@ or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 
 // -> a tiny agent reads <runDir>\run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
 let R = args || {}
 if (R.runDir && !Array.isArray(R.items)) {
-  const got = await agent(`Read the file ${R.runDir}\\run.json with the Read tool and return its complete content, unchanged, as the string field "json". Do nothing else.`,
-    { label: 'load-run', phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model: 'haiku', effort: 'low' })
-  if (!got || !got.json) throw new Error(`could not read ${R.runDir}\\run.json`)
-  const file = JSON.parse(got.json)
+  // A small model sometimes returns run.json truncated or re-shaped (items missing) - validate, then retry once on a stronger model.
+  const loadRun = async (model, label) => {
+    const got = await agent(`Read the file ${R.runDir}\\run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
+      { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model, effort: 'low' })
+    try { const f = JSON.parse((got && got.json) || ''); return Array.isArray(f.items) && f.items.length ? f : null } catch (e) { return null }
+  }
+  const file = (await loadRun('haiku', 'load-run')) || (await loadRun('sonnet', 'load-run-retry'))
+  if (!file) throw new Error(`could not read a valid ${R.runDir}\\run.json (items[] missing after retry) - pass the full run.json object as args instead`)
   R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
