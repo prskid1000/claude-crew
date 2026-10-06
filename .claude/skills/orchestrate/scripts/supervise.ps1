@@ -54,7 +54,23 @@ $entries = @(Get-ChildItem $board -Filter '*.json' | ForEach-Object { Get-Conten
 $active = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 20 })
 $stale = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -ge 20 -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
 L "board: $($active.Count) active, $($stale.Count) stale"
-foreach ($g in $active | Group-Object agent | Where-Object Count -gt 1) { Flag 'ACT' "DUPLICATE agent $($g.Name) active in $($g.Count) sessions" 'Stop the newer copy (TaskStop the resumed task, never the workflow agent); never SendMessage a workflow agent by id.' }
+foreach ($g in $active | Group-Object agent | Where-Object Count -gt 1) {
+  # an agent that joined the board twice (same run) leaves its first entry behind: if only the newest entry still beats
+  # it is a re-join, not two copies -> mark the old entries left instead of an ACT flag
+  $byBeat = @($g.Group | Sort-Object { [datetime]$_.beat } -Descending); $newest = [datetime]$byBeat[0].beat
+  $old = @($byBeat | Select-Object -Skip 1)
+  # superseded = same run AND (it stopped beating 5+ min before the newest, OR it never beat after joining and joined within 2 min
+  # of the newest entry: the same agent ran `board join` twice). A resumed copy joins much later and keeps beating -> real duplicate.
+  $superseded = { param($o) $o.run -eq $byBeat[0].run -and ((($newest - [datetime]$o.beat).TotalMinutes -ge 5) -or
+      ((([datetime]$o.beat - [datetime]$o.joined).TotalSeconds -lt 5) -and [math]::Abs(([datetime]$o.joined - [datetime]$byBeat[0].joined).TotalMinutes) -le 2)) }
+  $rejoin = -not @($old | Where-Object { -not (& $superseded $_) }).Count
+  if ($rejoin) {
+    if ($AutoFix) { foreach ($o in $old) { $f = Join-Path $board "$($o.session).json"; if (Test-Path $f) { $j = Get-Content $f -Raw | ConvertFrom-Json; $j.status = 'left'; $j | ConvertTo-Json | Set-Content $f } }; Flag 'INFO' "auto-fixed: $($g.Name) re-joined the board; $($old.Count) old entry/entries marked left" 'Nothing to do.' }
+    else { Flag 'WATCH' "$($g.Name) has $($g.Count) board entries but only the newest beats (re-join, not a duplicate)" 'Run supervise with -AutoFix to tidy the board.' }
+    continue
+  }
+  Flag 'ACT' "DUPLICATE agent $($g.Name) active in $($g.Count) sessions" 'Stop the newer copy (TaskStop the resumed task, never the workflow agent); never SendMessage a workflow agent by id.'
+}
 # skip board entries whose agent the workflow journal shows as active (testers don't heartbeat during long checks)
 $liveNames = @($liveLabels | ForEach-Object { (($_ -split ':')[-1] -split '@')[0] })
 # agents whose workflow step finished (no copy still running) just forgot to `leave`: close their entry instead of flagging
@@ -115,6 +131,29 @@ if (Test-Path $adb) {
       $state.idleSince.Remove($sr) | Out-Null
       Flag 'INFO' "auto-fixed: shut down unleased emulator $sr ($lane): app closed for $idleFor min" 'Agents get phones with phone.ps1 acquire.'
     } else { Flag $(if ($idleFor -ge 10) { 'ACT' } else { 'WATCH' }) "unleased emulator $sr ($lane): app closed for $idleFor min" "& $(Join-Path $swarm 'swarm-down.ps1') -Lanes $lane -KeepBrowsers (or run supervise with -AutoFix)." }
+  }
+  # 3c. crashed / hung emulators. Emulators run without a console window (swarm-up.ps1), so a dead one is invisible: its
+  # processes stay up holding RAM while adb shows it offline or not at all. Kill: (a) emulator/qemu processes of a lane whose
+  # serial is not 'device' and whose newest process is older than 8 min (normal boot < 6 min); (b) an emulator.exe whose qemu
+  # child is gone (qemu crashed) for 2+ min.
+  if ($swarmCfg) {
+    $adbState = @{}; foreach ($ln in @(& $adb devices 2>$null)) { if ($ln -match '^(emulator-\d+)\s+(\S+)') { $adbState[$Matches[1]] = $Matches[2] } }
+    $emuProcs = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'emulator%' OR Name LIKE 'qemu-system%'" -ErrorAction SilentlyContinue)
+    foreach ($ln in $swarmCfg.lanes) {
+      $sr = "emulator-$($ln.port)"
+      $mine = @($emuProcs | Where-Object { $_.CommandLine -match "-port\s+$($ln.port)\b" })
+      if (-not $mine.Count) { continue }
+      $youngest = [int](($mine | ForEach-Object { ($now - $_.CreationDate).TotalMinutes } | Measure-Object -Minimum).Minimum)
+      $qemu = @($mine | Where-Object Name -like 'qemu-system*')
+      $why = if ($adbState[$sr] -ne 'device' -and $youngest -ge 8) { "adb shows it '$(if ($adbState[$sr]) { $adbState[$sr] } else { 'absent' })' $youngest min after start (crashed or hung)" }
+             elseif (-not $qemu.Count -and $youngest -ge 2) { "emulator.exe is up but its qemu process is gone (crashed)" }
+      if (-not $why) { continue }
+      $leased = Test-Path (Join-Path $leaseDir "$($ln.name).json")
+      if ($AutoFix) {
+        $mine | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Flag 'INFO' "auto-fixed: killed dead emulator $sr ($($ln.name)): $why$(if ($leased) { '; its lease holder re-boots it on its next phone.ps1 acquire' })" 'Nothing to do.'
+      } else { Flag 'ACT' "dead emulator $sr ($($ln.name)): $why" "Kill it: & $(Join-Path $swarm 'swarm-down.ps1') -Lanes $($ln.name) -KeepBrowsers (or run supervise with -AutoFix)." }
+    }
   }
 }
 $state | ConvertTo-Json -Depth 4 | Set-Content $stateFile

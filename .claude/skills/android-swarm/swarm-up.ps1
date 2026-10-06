@@ -33,6 +33,15 @@ foreach ($name in $Lanes) {
   $l = $all | Where-Object name -eq $name | Select-Object -First 1
   if (-not $l) { throw "unknown lane $name (swarm.config.json lanes: $($all.name -join ', '))" }
   $serial = "emulator-$($l.port)"
+  # leftovers on this port while adb doesn't show it as 'device': still booting (< 8 min) -> just wait for it;
+  # older -> crashed/hung (invisible: no console window) -> kill before booting a fresh one on the same port
+  $left = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'emulator%' OR Name LIKE 'qemu-system%'" | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" })
+  if ($left.Count -and -not ((& $adb devices) -match "^$serial\s+device")) {
+    $age = [int](($left | ForEach-Object { ((Get-Date) - $_.CreationDate).TotalMinutes } | Measure-Object -Minimum).Minimum)
+    if ($age -lt 8 -and @($left | Where-Object Name -like 'qemu-system*').Count) { "$name is already booting ($age min) ..."; $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }; continue }
+    Write-Warning "$name`: killing a dead/hung emulator on port $($l.port) (adb not 'device' after $age min)"
+    $left | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep 2
+  }
   if (-not ((& $adb devices) -match "^$serial\s+device")) {
     # fair turn + memory check through the machine-wide gate (same queue as builds), then boot
     & $gate -Dir $c.dir -Cmd "exit 0 #emulator $name" -NeedGB 4.5 -WaitMinutes 30 | Select-Object -Last 1
@@ -41,8 +50,11 @@ foreach ($name in $Lanes) {
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
     $noWin = -not $ShowAll -and ($Headless -or $l.headless -or ($c.headless -and $l.headless -ne $false)); if ($noWin) { $a += '-no-window' }
-    # start via WMI so the emulator is not a child of this shell (a tool timeout would otherwise kill it)
-    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('"' + $c.emulator + '" ' + ($a -join ' ')); CurrentDirectory = (Split-Path $c.emulator) }
+    # start via WMI so the emulator is not a child of this shell (a tool timeout would otherwise kill it).
+    # SW_HIDE: no console/terminal window per emulator (they piled up and stayed open after the phone exited). The phone's own
+    # window belongs to the qemu child process and still shows unless -no-window. (WMI rejects CREATE_NO_WINDOW: ReturnValue 21.)
+    $si = New-CimInstance -CimClass (Get-CimClass -ClassName Win32_ProcessStartup) -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('"' + $c.emulator + '" ' + ($a -join ' ')); CurrentDirectory = (Split-Path $c.emulator); ProcessStartupInformation = $si }
     if ($r.ReturnValue -ne 0) { throw "could not start $name ($($r.ReturnValue))" }
     "$name booting on $serial ..."
     # long-lived gate ledger entry: builds see the emulator's memory as promised while it boots (removed when it exits)
@@ -52,16 +64,25 @@ foreach ($name in $Lanes) {
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }
 }
+$ready = @()
 foreach ($o in $out) {
-  & $adb -s $o.serial wait-for-device
-  for ($i = 0; $i -lt 120; $i++) { if ((& $adb -s $o.serial shell getprop sys.boot_completed 2>$null) -match '1') { break }; Start-Sleep 3 }
+  # bounded wait (no `adb wait-for-device`: it blocks forever when the emulator dies during boot)
+  $booted = $false
+  for ($i = 0; $i -lt 120; $i++) { if ((& $adb -s $o.serial shell getprop sys.boot_completed 2>$null) -match '1') { $booted = $true; break }; Start-Sleep 3 }
+  if (-not $booted) {
+    Write-Warning "$($o.lane) did not finish booting in 6 min: killing it (a hidden emulator would otherwise keep its RAM)"
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'emulator%' OR Name LIKE 'qemu-system%'" | Where-Object { $_.CommandLine -match "-port\s+$($o.port)\b" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    continue
+  }
+  $ready += $o
   if (-not ((& $adb -s $o.serial shell 'cat /sdcard/.qa-slimmed 2>/dev/null') -match 'slimmed')) { & "$($c.dir)\swarm-slim.ps1" -Serial $o.serial }
   foreach ($k in 'window_animation_scale', 'transition_animation_scale', 'animator_duration_scale') { & $adb -s $o.serial shell settings put global $k 0 }
   "$($o.lane) ready: $($o.serial)"
 }
+$out = $ready
 $out | ConvertTo-Json | Set-Content "$($c.dir)\swarm.json" -Encoding utf8
 foreach ($i in 1..3) { Start-Sleep 4; & "$($c.dir)\swarm-arrange.ps1" | Out-Null }
 & "$($c.dir)\swarm-arrange.ps1"
 if ($Mode -eq 'Metro' -and -not (Get-NetTCPConnection -LocalPort $c.app.metroPort -State Listen -ErrorAction SilentlyContinue)) { & "$($c.dir)\metro-start.ps1" }
-if ($Mode -ne 'None') { & "$($c.dir)\app-mode.ps1" -Mode $Mode -Serials $out.serial }
+if ($Mode -ne 'None' -and $out) { & "$($c.dir)\app-mode.ps1" -Mode $Mode -Serials $out.serial }
 "swarm.json written; free RAM now $(FreeGB) GB"

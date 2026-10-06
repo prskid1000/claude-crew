@@ -2,6 +2,8 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) The supervisor raised ACT DUPLICATE for a tester that simply ran `board join` twice seconds apart (the first entry never beat again). Same-run entries that stopped beating 5+ min before the newest, or never beat and joined within 2 min of it, now count as a re-join and are marked left with -AutoFix; a resumed copy that keeps beating is still ACT.
+
 - (fixed in kit) Token + capacity work: cheap mechanical steps (close, ship, release, load-run) run on haiku; /test-and-close accepts the short form `{ runDir }` and reads run.json via a tiny agent (huge args were echoed in every launch and notification); per-agent/item model choice (dev-wave `agents[].model`, bug-brief.ps1 suggests sonnet for one cosmetic check, QA retests default to sonnet); qa-seat.ps1 memory seats + item claims (concurrency follows free RAM, keepFreeGB default 8; extra worker runs are safe); supervise capacity flag; bug-brief.ps1 turns a QA bug task into brief + args in one step; `track.ps1 add` no longer reopens finished tasks.
 - (fixed in kit, 2nd try) A prompt rule was not enough: the harness tells workflow agents the user's LATEST message wins, so a dev-wave agent did an unrequested chat task instead of its bug fix. dev-wave takes `args.mandate` (the task owner's own words for this work) and opens every build/fix prompt with a WHY section, like test-and-close. ALWAYS pass mandate when launching /dev-wave.
 - (fixed in kit) After a wave finishes run `cleanup.ps1 -WorktreeIdleHours 0`: merged worktrees (remote branch deleted, clean) go at once; open MRs are protected by their remote branch. Cleanup also stops idle Gradle/Kotlin daemons (GBs each) and test browsers when no QA agent is active.

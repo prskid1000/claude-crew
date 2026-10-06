@@ -1,6 +1,7 @@
 ﻿<#
 Builds the test APK of the app in swarm.config.json (or -AppDir) through the machine-wide memory gate, and copies it
-to apk\app.apk (+ apk\app-<commit>.apk).
+to apk\app.apk (+ apk\app-<commit>.apk). apk\app.apk is installed on every lane by phone.ps1, so a build of any other
+checkout (-AppDir pointing at a worktree / feature branch) only writes apk\app-<branch>-<commit>.apk unless -Shared.
 - react-native: release build with the JS bundle inside (no Metro / dev menu / LogBox) - steadier automated testing.
 - native (Kotlin/Java): runs app.buildTask (default assembleDebug).
 Rebuild whenever the app code changes. Always test the APK of the branch under test.
@@ -12,7 +13,8 @@ param(
   [switch]$Clean,
   [string]$JavaHome,               # default: a JDK 17/21 found on the machine (24+ breaks some native steps)
   [switch]$NoUpdate,               # default: fast-forward a clean checkout to its upstream first, so the APK has the latest merges
-  [switch]$DevClient               # react-native: build the Expo dev client (debug variant) -> apk\base.apk, used by -Mode Metro
+  [switch]$DevClient,              # react-native: build the Expo dev client (debug variant) -> apk\base.apk, used by -Mode Metro
+  [switch]$Shared                  # with -AppDir on a side checkout: still publish it as apk\app.apk for every lane
 )
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
@@ -72,6 +74,16 @@ $apk = Get-ChildItem (Join-Path $android 'app\build\outputs\apk') -Recurse -Filt
 if (-not $apk) { throw "no APK built by this run under $android\app\build\outputs\apk" }
 New-Item -ItemType Directory -Force "$($c.dir)\apk" | Out-Null
 $name = if ($DevClient) { 'base' } elseif ($Task -eq $c.app.buildTask) { 'app' } else { 'app-' + ($Task -replace '^assemble', '').ToLower() }
+# apk\app.apk is what phone.ps1 installs on EVERY lane: only a build of the configured checkout may replace it.
+# A side checkout (another worktree / feature branch) gets its own file, so it can't push an older app onto the other lanes.
+$sideBuild = (Resolve-Path $AppDir).Path.TrimEnd('\') -ne (Resolve-Path $c.app.appDir).Path.TrimEnd('\')
+if ($sideBuild -and -not $Shared) {
+  $own = "$name-$(($branch -replace '[^\w.-]', '_'))-$commit.apk"
+  Copy-Item $apk.FullName "$($c.dir)\apk\$own" -Force
+  "Done in $([int]((Get-Date) - $t0).TotalMinutes) min: apk\$own ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
+  "Side-checkout build: NOT published as apk\$name.apk (the lanes keep their build). Install it on YOUR leased phone only: adb -s <serial> install -r `"$($c.dir)\apk\$own`"  (-Shared to publish it to every lane)"
+  return
+}
 Copy-Item $apk.FullName "$($c.dir)\apk\$name.apk" -Force
 Copy-Item $apk.FullName "$($c.dir)\apk\$name-$commit.apk" -Force
 "Done in $([int]((Get-Date) - $t0).TotalMinutes) min: apk\$name.apk ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
