@@ -56,6 +56,13 @@ foreach ($s in $steps) {
     $cmd = $cmd -replace '\{tests\}', $Tests
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
+  if ($cmd -match '\{sln\}') {
+    # .NET: the solution in the stack dir, else the single project there (a test project folder has only its .csproj)
+    $sln = @(Get-ChildItem -LiteralPath $st.dir -Filter *.sln -File -ErrorAction SilentlyContinue)
+    if (-not $sln.Count) { $sln = @(Get-ChildItem -LiteralPath $st.dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
+    if ($sln.Count -ne 1) { throw "[check] $($st.dir): expected one .sln (or one project file), found $($sln.Count) - pass -Dir to the folder that has it" }
+    $cmd = $cmd.Replace('{sln}', $sln[0].FullName)
+  }
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $s -eq 'lint' -and $Step -eq 'quick') {
       # quick lint = files changed against the merge base, so it stays fast

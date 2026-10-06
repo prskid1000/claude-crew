@@ -4,6 +4,8 @@ Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)
 Project-specific lessons go under a `## Project: <name>` heading below the general ones.
 
 ## General
+- (fixed in kit) .NET checks never ran through check.ps1: stack.ps1's dotnet commands use a `{sln}` placeholder that check.ps1 never filled ("MSB1009: Project file does not exist. Switch: {sln}"). check.ps1 now fills it with the .sln in the stack dir, else its single project file.
+- A squash merge makes an agent's own commits look "not in main" (`merge-base --is-ancestor` is false) even when their content is. Compare trees (`git diff <branch> origin/main -- <path>`), not commit ancestry, before assuming a fix round didn't land.
 - (fixed in kit) A Liquibase changeSet commented 'not reversible' with an EMPTY `<rollback/>` failed the CI changelog check: lbcheck.py now flags missing or empty rollbacks on changeSets marked irreversible. Agents stopped at 'MR opened' and nobody saw failed pipelines: dev-wave now waits for MR pipelines (pipe-wait.ps1, cheap 'ci' step) and sends failures to the fix round.
 - A new helper/member inserted between an existing Javadoc/JSDoc and its method steals the doc comment (review nits in Java and TS): add new members above the doc block or below the method. (2×)
 - `track.ps1 add -Discover` can find no MRs right after `devtools.py mr` (search lag): pass `-Mrs <repo>!<iid>` explicitly as well. (4×)
