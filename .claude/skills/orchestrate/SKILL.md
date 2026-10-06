@@ -10,6 +10,8 @@ Nothing project-specific is hard-coded: stacks are detected from marker files, t
 dependencies from the main checkout. Project facts (repos, target branches, environments, accounts, product rules)
 go in the wave **brief** / QA **run.json**, in memory, or in the repo's own `CLAUDE.md`.
 
+> Launch the kit workflows by path, not by name: `Workflow({ scriptPath: "<kit>\workflows\dev-wave.js", args })`. Named lookup only searches the *current* working directory's `.claude\workflows`, so after a `cd` into a repo `Workflow({ name: "dev-wave" })` fails with "not found".
+
 ## What lives where (standard `.claude/` layout)
 ```
 <workspace>\.claude\
