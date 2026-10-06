@@ -23,6 +23,11 @@ You do two jobs at once: run the agents AND continuously improve the kit (`<work
   a crash, a slow step), fix the script/rule/template in `.claude` in the same session, re-test it, and record it in the skill's
   LESSONS.md (mark lessons "fixed in kit" when the script now handles it). Prefer making the tool handle it over telling agents to.
 - **Keep the docs true:** when you change a script's behaviour, update its SKILL.md / ORCHESTRATE playbook / agent definitions together.
+- **Keep a public mirror in sync (if you publish the kit):** when your live kit has a sanitised public copy (like this repo), port every
+  kit change into it in the same session, without being asked: make the same edit by hand (never copy live files over it: they hold
+  logins, tenants, hosts and org paths; the public copy uses generic paths via kitconfig / `<workspace>`), write lessons generically
+  (no org/tenant/product names, dates or task ids), parse-check changed scripts, scan the diff for org terms, then commit with a
+  no-reply author email and push. Never publish `*.local.json`, `swarm.config.json` or org-only skills.
 - **Be proactive — the user should never have to point it out.** Each round also ask: what did I do by hand, what is idle or
   wasted, what friction did agents report? Automate it in the kit (supervisor `-AutoFix`, a workflow stage, `cleanup.ps1`, a script)
   in the same round. A flag that needs a human is a last resort; safe actions must run themselves.
