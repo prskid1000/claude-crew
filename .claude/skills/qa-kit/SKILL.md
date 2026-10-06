@@ -23,6 +23,7 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
 | Drive an Android app | `scripts\android\ui.ps1` (dump / tap / tapid / type / swipe / shot / wait / log), with `$env:ANDROID_SERIAL` set |
 | Several phones in parallel | `..\android-swarm\` (its SKILL.md) |
 | Publish one package | `scripts\finalize.ps1 -RunDir <run> -Code <code>` |
+| Is a fix live on the test env? | `scripts\deployed.ps1 -Mrs <repo>!<iid>,... [-Target <env>]` (CI deploy job + branch ancestry; never hold an item as "not deployed" without it) |
 | Run a whole batch | `/test-and-close` (`.claude\workflows\test-and-close.js`) + `scripts\autoclose.ps1` safety net |
 | Memory seat + item claim | `scripts\qa-seat.ps1 acquire / release / status` (every tester/verifier runs it first; see below) |
 

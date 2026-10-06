@@ -183,7 +183,23 @@ if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands
 # 5. ONE heartbeat does the housekeeping too (no separate crons): tracker statuses, stale board entries, due cleanup
 if ($AutoFix) {
   $S = Split-Path $PSCommandPath
-  foreach ($l in @(& "$S\track.ps1" run)) { if ($l -match '^DONE') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' } elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline or was closed: look at it and get it fixed (the agent may have stopped).' } }
+  foreach ($l in @(& "$S\track.ps1" run)) {
+    if ($l -match '^DONE') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l 'Post the solution, MR links and how-to-test steps on the task (clickup comment add <id> "<text>").' }
+    elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline or was closed: look at it and get it fixed (the agent may have stopped).' }
+  }
+  # promoted tasks whose MRs went live on a test environment: QA can start now (never guess "not deployed yet" by hand)
+  $D = Join-Path (Split-Path (Split-Path $S)) 'qa-kit\scripts\deployed.ps1'
+  foreach ($f in Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json') {
+    $o = Get-Content $f.FullName -Raw | ConvertFrom-Json -AsHashtable
+    if (-not $o.done -or $o.liveOn -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
+    $rows = @(& $D -Mrs (@($o.mrs) -join ',') -Json | ConvertFrom-Json)
+    $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
+    if ($live.Count) {
+      $o.liveOn = @($live); $o | ConvertTo-Json -Depth 5 | Set-Content $f.FullName
+      Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" 'Ready for QA: add it to a /test-and-close run (retest its failed checks) unless a run already covers it.'
+    }
+  }
   foreach ($s in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 }) {   # finished without `leave`
     $f = Join-Path $board "$($s.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }
   }

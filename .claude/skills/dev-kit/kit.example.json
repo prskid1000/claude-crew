@@ -28,7 +28,14 @@
         "api"
       ],
       "checkout": "<workspace>\\repos\\backend",
-      "target": "main"
+      "target": "main",
+      "deploys": [
+        {
+          "target": "staging",
+          "branch": "staging",
+          "job": "deploy-staging"
+        }
+      ]
     },
     {
       "name": "web",
@@ -37,7 +44,14 @@
       ],
       "checkout": "<workspace>\\repos\\web",
       "target": "main",
-      "linkFrom": "<a worktree whose node_modules can be linked (optional)>"
+      "linkFrom": "<a worktree whose node_modules can be linked (optional)>",
+      "deploys": [
+        {
+          "target": "staging",
+          "branch": "staging",
+          "job": "deploy-staging"
+        }
+      ]
     }
   ],
   "bugfixMandate": [
