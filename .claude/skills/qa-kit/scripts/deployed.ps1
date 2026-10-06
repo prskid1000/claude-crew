@@ -8,7 +8,8 @@ the deploy branch AND of a pipeline on that branch whose deploy job succeeded.
   & $D -Mrs backend!812 -Target staging -Json       # machine-readable
 
 Deploy targets come from dev-kit\kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
-"job": "deploy-staging" }]. A repo without deploys reports NO-TARGET.
+"job": "deploy-staging" }]. A repo deployed by hand (no CI job) uses { "target": ..., "awsStack": "<CloudFormation stack>", "region": ... }:
+live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json)
@@ -32,6 +33,14 @@ $out = foreach ($m in @($Mrs -split '\s*,\s*' | Where-Object { $_ })) {
   $deps = @($r.deploys | Where-Object { -not $Target -or $_.target -eq $Target })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
+    if ($d.awsStack) {   # deployed by hand (no CI job): live only if the CloudFormation stack was updated after the merge
+      $upd = aws cloudformation describe-stacks --region $(if ($d.region) { $d.region } else { 'eu-west-1' }) --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus]' --output text 2>$null
+      if (-not $upd) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)" }; continue }
+      $at, $st = "$upd" -split '\s+'
+      if ([datetimeoffset]$at -gt [datetimeoffset]$mr.merged_at -and $st -match 'COMPLETE$' -and $st -notmatch 'ROLLBACK') { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "stack $($d.awsStack) updated $at after the merge (by hand: confirm the build was from the merged branch)" } }
+      else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" } }
+      continue
+    }
     if (-not (IsAncestor $p $sha $d.branch)) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "not on $($d.branch) yet" }; continue }
     $hit = $null
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10")) {
