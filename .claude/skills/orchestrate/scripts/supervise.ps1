@@ -32,6 +32,12 @@ foreach ($w in $wfDirs) {
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' })
   if ($done -and (($now - $w.LastWriteTime).TotalHours -gt 2)) { continue }
   $running = @($started | Where-Object { -not $res.ContainsKey($_.agentId) })
+  # An agent that died on an API error (e.g. 529 Overloaded) never writes a result and would look "running" forever. If a later
+  # agent for the same item (label "<stage>:<code>[@lane]") has already finished, the workflow moved on: treat it as superseded.
+  $itemOf = { param($label) (([string]$label -split ':', 2)[-1] -split '@')[0] }
+  $finishedAt = @{}
+  foreach ($s in $started) { if ($res.ContainsKey($s.agentId)) { $k = & $itemOf $s.label; $i = [array]::IndexOf($started, $s); if (-not $finishedAt.ContainsKey($k) -or $finishedAt[$k] -lt $i) { $finishedAt[$k] = $i } } }
+  $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
   foreach ($a in $running) {
     $tf = Get-ChildItem $w.FullName -Recurse -File -Filter "*$($a.agentId)*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
