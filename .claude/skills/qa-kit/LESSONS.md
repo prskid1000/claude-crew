@@ -6,6 +6,7 @@ UI gotchas for one product go under a `## Project: <name> (target <target>)` hea
 app login steps) — never passwords; those live only in `targets.local.json`.
 
 ## General
+- (fixed in kit) Two test-and-close workers mapped their first app item to lane 1 and leased it under the same id, so both "owned" the phone (the board CLAIM caught it). Phone leases are now per worker (`qa-<instance>-<lane>`), so the second waits in the fair queue, and extra workers start on lane (instance-1).
 - (fixed in kit) A web item finished with device checks PENDING and the run ended with them untested until the lead added an app item by hand. The workflow now appends an app follow-up `<code>A` (only = the PENDING checks) to run.json and runs it on the phones in the same run.
 - (fixed in kit) `skipClose` items saved nothing to disk (verdicts only in the workflow's return value) and never got a finalize.json, so the supervisor kept their run "unfinished" and held its bug batch. They now write `<code>\results.json` + `held.json`, which supervise and qa-seat treat as finished. Items that share one task don't need skipClose: finalize already keeps the task open until all of them are published.
 - (fixed in kit) Short-form `/test-and-close { runDir }`: the small load-run agent sometimes returned run.json without `items[]`, so workers died at start. The loader now validates items[] and retries once on a stronger model; if it still fails, pass the full run.json object as args.

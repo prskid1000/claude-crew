@@ -164,11 +164,17 @@ BROWSER (web)
   s.net.failed = 4xx/5xx API calls + JS errors (failure evidence).
 - Your Chrome ports: ${ports}. Memory is shared: at most 2 ports open at once; killSession() each port when you finish.`
 
+// Phone lease id per worker instance: two test-and-close workers mapping an item to the same lane must not share one lease
+// (both "own" the phone and drive it at once). With distinct ids the second waits in phone.ps1's fair queue.
+const LEASE = (L) => `qa-${OWNER}-${L.name}`
+// Extra workers start on a different lane (w2 -> lane 2, w3 -> lane 3 ...) so they rarely queue behind w1's phones.
+const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) || 1) - 1)
+const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
   return `
 ANDROID APP — YOUR PHONE: lane ${L.n} "${L.name}", adb serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
 Other agents test on other phones at the same time. You own this phone through a lease — nobody else boots or shuts it for you:
-- FIRST get it:  & ${SWARM}\\phone.ps1 acquire -Agent qa-${L.name} -Lane ${L.name}
+- FIRST get it:  & ${SWARM}\\phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}
   It returns at once if the phone is yours already; otherwise it waits its fair turn and boots the phone when memory allows (about a minute),
   installs the current test APK if the phone has an older one ("installed: updated" = log in again), and prints {serial,...}.
 - START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never touch other serials, never run swarm-up/down/app-mode,
@@ -176,7 +182,7 @@ Other agents test on other phones at the same time. You own this phone through a
 - UI: ${Q}\\android\\ui.ps1 (dump | tap <text> | tapid <id> | tapxy x y | type <text> | key <code> | swipe | shot <name> <dir> | wait <text> | log <tag>).
   shot straight into <outDir>\\shots with the <CODE>-<checkId>_ prefix. Relaunch / clear the app: & ${SWARM}\\app-launch.ps1 -Serial ${L.serial} [-Clear]
 - Phone etiquette: keep OUR APP open only while you test on the phone. Before long non-phone work (> 10 min: API calls, web UI in the
-  browser, reading code, preparing data) hand the phone back:  & ${SWARM}\\phone.ps1 release -Agent qa-${L.name}
+  browser, reading code, preparing data) hand the phone back:  & ${SWARM}\\phone.ps1 release -Agent ${LEASE(L)}
   (closes the app; the phone shuts down to free memory unless another agent is waiting for it). When you need it again, acquire it again
   (same command as above; the app stays installed and logged in). The workflow releases it after the lane's last item.
 - Prefix your data "QA-L${L.n}-<CODE>". Don't change environment-wide settings from an app lane (other phones depend on them):
@@ -342,7 +348,7 @@ async function pool(list, size, offset, laneOf) {
     // App lane has nothing left to test: give its phone lease back now (the phone shuts down unless another agent waits for it)
     const L = laneOf ? laneOf(w) : null
     if (L && L.name) {
-      await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}\\phone.ps1 release -Agent qa-${L.name}`,
+      await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}\\phone.ps1 release -Agent ${LEASE(L)}`,
         { label: `release:${L.name}`, phase: 'Close', model: 'haiku', effort: 'low' }).catch(() => null)
       log(`lane ${L.name} (${L.serial}) released`)
     }
@@ -360,7 +366,7 @@ log(`run ${R.runDir}: web ${web.length} (x${R.webParallel || 5}), api ${api.leng
 const parts = await Promise.all([
   web.length ? pool(web, R.webParallel || 5, 0) : [],
   api.length ? pool(api, R.apiParallel || 5, 100) : [],
-  app.length ? pool(app, LANES.length, 200, (w) => LANES[w]) : [],
+  app.length ? pool(app, LANES.length, 200, laneFor) : [],
 ])
 const all = parts.flat().filter(Boolean)
 
@@ -380,7 +386,7 @@ foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j
 [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
 Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
   log(`app follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
-  all.push(...(await pool(followUps, LANES.length, 300, (w) => LANES[w])).filter(Boolean))
+  all.push(...(await pool(followUps, LANES.length, 300, laneFor)).filter(Boolean))
 }
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
