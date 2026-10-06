@@ -49,6 +49,8 @@ if (R.runDir && !Array.isArray(R.items)) {
   R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
+// run-level skipClose (args or run.json) holds every item; it used to be read per item only, so a run-level flag was silently ignored
+if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = ABS ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.'

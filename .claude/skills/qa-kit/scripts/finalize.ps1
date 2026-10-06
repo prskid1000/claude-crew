@@ -7,7 +7,7 @@ never comments/closes a subtask twice.
   & <workspace>\.claude\skills\qa-kit\scripts\finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force]
 
 Run dir layout (see the qa-kit SKILL.md):
-  run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus}, driveParent, items[] }
+  run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus, closeWithNotTested?}, driveParent, items[] }
   <code>\results.json            { code, checks[], findings[], setup_changes[], data_created[] }
   <code>\shots\*.jpeg|png  <code>\evidence\*.json
 Writes <code>\report.html and <code>\finalize.json.
@@ -121,6 +121,8 @@ foreach ($st in @($item.subtasks)) {
     # a task shared by several items (e.g. one feature, one guide per dev group) closes only when the last of them has finalized
     $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
     if ($others.Count) { $rec.waitingFor = $others }
+    # NOT_TESTED checks keep the task open (e.g. a dependency not deployed yet): closing would hide the untested part
+    elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested"; $null = clickup comment add $st.id "Not closed: $nt check(s) could not be tested yet (see the report). Retest them once their blocker is resolved." 2>&1 }
     elseif (-not $pend) { $null = clickup status set $closeStatus $st.id 2>&1; $rec.closed = $true }
   }
   $out.subtasks += $rec

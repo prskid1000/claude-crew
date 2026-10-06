@@ -41,7 +41,7 @@ Every tester/verifier first runs `scripts\qa-seat.ps1 acquire` (the workflow tel
    One item per tester guide: `{code, title, guideFile, lane: web|api|app, subtasks:[{id,name,mrs}], retest?, only?, dups?}`.
    Several items may share one task (e.g. a guide split by `only` into web + app parts): finalize keeps the task open until every
    item on it is published, so no `skipClose` is needed for that. `skipClose: true` = test + verify only; the verdicts are saved to
-   `<code>\results.json` + `held.json` and the lead publishes later with `finalize.ps1 -RunDir <run> -Code <code>`.
+   `<code>\results.json` + `held.json` and the lead publishes later with `finalize.ps1 -RunDir <run> -Code <code>`. `skipClose` works per item or for the whole run (`args.skipClose` / run.json). Finalize never closes a task that has NOT_TESTED checks (it comments "not closed" instead) unless run.json `tracker.closeWithNotTested` is true.
    Export Google-Doc guides to text: `cd <run>; gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o <code>.txt`
    (`gws -o` only writes inside the current directory).
 2. **Workflow**: `/test-and-close` (or the Workflow tool with `scriptPath = <workspace>\.claude\workflows\test-and-close.js`), `args` = `{ runDir, kitDir }` (short form: a tiny agent reads `<runDir>\run.json`; add `only: [codes]` to run a subset) or the full run.json object + `runDir`.
