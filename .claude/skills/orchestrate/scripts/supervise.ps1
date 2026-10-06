@@ -182,8 +182,7 @@ if ($AutoFix) {
 # 6. new bug tasks raised by QA that no bug-fix agent owns yet (parents taken from the QA runs' tracker config)
 $parents = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).tracker.parent } catch {} } | Where-Object { $_ } | Select-Object -Unique)
 $tracked = @(Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json' | ForEach-Object BaseName)
-# While a QA run under the same parent still has unfinished items (no <code>\finalize.json, touched in the last 3 h), its bugs are
-# batched: WATCH now, one ACT listing them all when the run is done -> one fix wave instead of several overlapping ones.
+# New QA bug tasks are fixed at once, all open ones in ONE wave. $openRuns only adds a note that a run is still testing.
 $openRuns = @{}
 foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }) {
   try { $rj = Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { continue }
@@ -195,8 +194,10 @@ foreach ($par in $parents) {
   $new = @($subs | Where-Object { $_.name -match '^\[Bug\].*failed checks' -and $_.status.status -in 'Open', 'to do' -and $_.id -notin $tracked })
   if (-not $new.Count) { continue }
   $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
-  if ($openRuns[$par]) { Flag 'WATCH' "$($new.Count) new QA bug task(s) waiting for run $($openRuns[$par]) to finish: $list" 'Batch them: start ONE fix wave when the run is done (bug-brief.ps1 per task, then a single /dev-wave).' }
-  else { Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed: $list" "Start the fixes now as one wave: & $PSScriptRoot\bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <repos> [-Hints ...] per task (writes the brief, starts tracking, prints /dev-wave args incl. mandate), then launch a single /dev-wave." }
+  # Fix at once (the owner's standing mandate: QA bugs are fixed without waiting to be asked) - but as ONE wave for every bug open
+  # right now, not one wave per bug. A still-running QA run is only mentioned: later bugs from it go into the next wave.
+  $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
+  Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "Start the fixes now as ONE wave: & $PSScriptRoot\bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <repos> [-Hints ...] per task (writes the brief, starts tracking, prints /dev-wave args incl. mandate), combine the briefs into one file with a section per agent, then launch a single /dev-wave."
 }
 
 # 7. capacity: scale QA workers with memory. Seats (qa-kit\scripts\qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
