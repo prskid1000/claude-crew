@@ -1,4 +1,4 @@
-﻿<#
+<#
 Writes a bug-fix wave brief from a QA-raised "[Bug] … failed checks" task, so the coordinator only adds judgement (hints, overlaps),
 not boilerplate. It pulls the failed checks (id, screen, what was seen) from the task, adds the repo table, the evidence/guide location
 of the QA run that raised it, ownership, branch/board/merge rules, and prints the /dev-wave args to launch (incl. mandate).
@@ -46,6 +46,7 @@ foreach ($fin in Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter finali
 }
 $evidence = if ($runItem) { "Evidence + exported guide: ``$($runItem.FullName)\`` and ``$(Split-Path $runItem.FullName)\guides\$($runItem.Name).txt``." } else { 'Evidence: the results doc linked in the task.' }
 
+$Repos = @($Repos -split '\s*,\s*' | Where-Object { $_ })   # "api,web" passed as one string (variables, other shells) works like api,web
 $rows = foreach ($spec in $Repos) {
   $r, $branch = $spec -split '@', 2
   $repo = @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0]

@@ -1,4 +1,4 @@
-﻿<#
+<#
 Publishes one tested package of a QA run: Drive folder with all evidence, a Google Doc report (anyone with the
 link can view), one comment per tracker subtask with the doc link, closes each subtask, and opens a
 "[Bug] ... failed checks" task for confirmed failures. Safe to re-run: reuses the folder, uploads only new files,
@@ -83,8 +83,9 @@ Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $r
 
 # 3. Google Doc
 $doc = Invoke-Gws @('drive', 'files', 'create', '--json', (@{ name = "$title $Code - Test Results ($Date)"; mimeType = 'application/vnd.google-apps.document'; parents = @($map.folderId) } | ConvertTo-Json -Compress), '--upload', "$Code/report.html", '--upload-content-type', 'text/html', '--params', $P)
-Share $doc.id
-$docUrl = "https://docs.google.com/document/d/$($doc.id)/edit"
+if ($doc.id) { Share $doc.id; $docUrl = "https://docs.google.com/document/d/$($doc.id)/edit" }
+elseif ($prev.doc -and $prev.doc -notmatch '/d//') { Write-Warning "Google Doc create failed - keeping the previous report $($prev.doc)"; $docUrl = $prev.doc }
+else { throw "Google Doc create failed and there is no previous report - fix gws auth and re-run (nothing was posted to the tracker)" }
 
 # 4. Tracker, per subtask
 $out = [ordered]@{ folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @() }
@@ -95,7 +96,18 @@ foreach ($st in @($item.subtasks)) {
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $fails = @($mine | Where-Object { $_.result -eq 'FAIL' }); $nt = Cnt $mine 'NOT_TESTED'; $pend = Cnt $mine 'PENDING'
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $fails.Count; notTested = $nt; pending = $pend; bug = $null; closed = $false }
   if (-not $NoTracker) {
-    if ($prev -and @($prev.subtasks | Where-Object { $_.id -eq $st.id -and $_.closed }).Count) { $out.subtasks += $rec; continue }
+    $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
+    if ($prevRec.closed) { $out.subtasks += $rec; continue }
+    # re-run of a task kept open (NOT_TESTED) or waiting for a sibling item: never a second bug task or results comment,
+    # only re-check whether it can close now
+    if ($prevRec) {
+      $rec.bug = $prevRec.bug
+      $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
+      if ($others.Count) { $rec.waitingFor = $others }
+      elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested" }
+      elseif (-not $pend) { $null = clickup status set $closeStatus $st.id 2>&1; $rec.closed = $true }
+      $out.subtasks += $rec; continue
+    }
     $icon = if ($fails.Count) { '❌' } elseif ($nt -or $pend) { '⚠️' } else { '✅' }
     $msg = "$icon " + $(if ($item.retest) { "Retest of the fix ($Date): $pass of $($mine.Count) checks pass" } else { "Test results ($($run.target), $Date): $pass of $($mine.Count) checks pass" })
     if ($fails.Count) { $msg += ", $($fails.Count) failed ($(($fails | ForEach-Object id) -join ', '))" }
