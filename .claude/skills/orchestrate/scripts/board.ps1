@@ -1,4 +1,4 @@
-﻿<#
+<#
 Shared agent board: every agent (in any workflow or session) says what it's working on, so concurrent agents see each other,
 duplicates are caught at once, and two agents never write the same worktree.
 
@@ -27,13 +27,22 @@ $staleMin = 20
 function All { foreach ($f in Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue) { try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; $e | Add-Member -Force NoteProperty file $f.FullName; $e } catch {} } }
 function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
 function Norm($p) { if (-not $p) { return }; if ($p -match '[\\/:]') { [IO.Path]::GetFullPath($p).TrimEnd('\').ToLower() } else { $p.ToLower() } }   # paths or plain claims (emulator-5556, chrome:9601)
+# "86abc F2, X1, X2" -> 86abc F2, 86abc X1, 86abc X2: bug-fix items list check ids after their task id, and two bug tasks both have an X1
+function ItemKeys($s) {
+  $task = $null
+  foreach ($t in @($s -split '\s*,\s*' | Where-Object { $_ })) {
+    if ($t -match '^(?<task>\S+)\s+(?<check>.+)$') { $task = $Matches.task; $t.ToLower() }
+    elseif ($task -and $t -match '^[A-Za-z]{0,3}\d+[a-z]?$') { "$task $t".ToLower() }
+    else { $t.ToLower() }
+  }
+}
 function Warnings($me, $act) {
   foreach ($o in $act | Where-Object { $_.session -ne $me.session }) {
     if ($o.agent -eq $me.agent -and (-not $me.run -or $o.run -eq $me.run)) { "DUPLICATE: agent $($o.agent) is also active in session $($o.session) (joined $(([datetime]$o.joined).ToString('HH:mm'))). The newer session must stop without writing." }
     $shared = @($o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -in @($me.worktrees | ForEach-Object { Norm $_ }) }
     if ($shared) { "CLAIM: $($o.agent) also claims $($shared -join ', ') (worktree / phone / port). Don't both use it - tell the coordinator." }
     if ($me.run -and $o.run -eq $me.run -and $me.items -and $o.items) {
-      $common = @($me.items -split '\s*,\s*') | Where-Object { $_ -and $_ -in @($o.items -split '\s*,\s*') }
+      $theirs = @(ItemKeys $o.items); $common = @(ItemKeys $me.items) | Where-Object { $_ -in $theirs }
       if ($common) { "AREA: $($o.agent) also lists $($common -join ', ')." }
     }
   }
