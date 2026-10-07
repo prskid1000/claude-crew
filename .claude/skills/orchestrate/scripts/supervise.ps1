@@ -230,7 +230,7 @@ if ($AutoFix) {
       Flag 'INFO' "LIVE $($o.task) on $($live -join ', '), already in QA run $($covered -join ', ')" 'Covered; nothing to do.'
     }
     elseif ($live.Count) {
-      Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" 'Ready for QA: add it to a /test-and-close run (retest its failed checks) unless a run already covers it.'
+      Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
   }
   foreach ($s in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 }) {   # finished without `leave`

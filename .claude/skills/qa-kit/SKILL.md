@@ -24,6 +24,7 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
 | Several phones in parallel | `..\android-swarm\` (its SKILL.md) |
 | Publish one package | `scripts\finalize.ps1 -RunDir <run> -Code <code>` |
 | Is a fix live on the test env? | `scripts\deployed.ps1 -Mrs <repo>!<iid>,... [-Target <env>]` (CI deploy job + branch ancestry or same file content; never hold an item as "not deployed" without it) |
+| Retest a bug task whose fix went live | `scriptsdd-retest.ps1 -RunDir <run> -Task <bug> -Code <code>R -Mrs <repo>!<iid>` (guide = the bug task; checks from its name), then `/test-and-close { runDir, only: [<code>R], instance: w<next> }` |
 | Run a whole batch | `/test-and-close` (`.claude\workflows\test-and-close.js`) + `scripts\autoclose.ps1` safety net |
 | Memory seat + item claim | `scripts\qa-seat.ps1 acquire / release / status` (every tester/verifier runs it first; see below) |
 
