@@ -45,6 +45,7 @@ Run scripts from **PowerShell** (node, python, gws, clickup, glab, gh are on its
 | 1 | Brief | Fill `templates\WAVE_BRIEF.md` in the scratchpad: repos + targets, ownership, migration ranges, contracts | — |
 | 2 | Build | `/dev-wave` with args `{ brief, agents:[{id, items, area}], mode, review, kitDir }` — or Agent tool, type `dev-agent`, prompt "Follow the brief <path>. You are X3 …" | — |
 | 3 | Relay | Append decisions/contracts to `<brief>.contracts.md` (agents re-read it before every push). **Never SendMessage a `/dev-wave` agent by ID** (the `guard-sendmessage.ps1` PreToolUse hook blocks it) — it spawns a duplicate in the same worktree. SendMessage only for agents you spawned yourself with the Agent tool | — |
+| 3b | Merge hold | A repo whose target deploys on merge and the user wants to approve: launch `/dev-wave` with `holdMerge: [<repo>]` (or `true`). Its MRs stay open, reviewed and green; ask the user, then merge. |
 | 4 | Ship | Agents merge producers first (DB/API), then clients; tracker → review → promoted | — |
 | 5 | Deploy | **A human** deploys to the test environment | `android-swarm\app-build.ps1` from the merged branch (phones: the app agents lease and boot them themselves) |
 | 6 | Test | — | Run folder `<workspace>\.claude-runtime\qa-runs\<date>-<name>\` + `run.json`; `/test-and-close` with that object (+ `kitDir`) as args; start `qa-kit\scripts\autoclose.ps1` |
