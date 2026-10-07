@@ -118,7 +118,7 @@ foreach ($st in @($item.subtasks)) {
         "- Original task: $(TaskUrl $st.id)`n- Results doc (screenshots, request/response JSON): $docUrl`n" + $(if ($guideUrl) { "- Tester guide (check ids refer to it): $guideUrl`n" } else { '' }) + "`n" +
         (($fails | ForEach-Object { "### $($_.id) — $($_.screen)`n**Steps:** $($_.what_was_done)`n`n**Saw:** $($_.observed)`n`n**Independent re-test:** $(if ($_.verify) { $_.verify } else { 'not re-tested' })`n`n**Evidence:** $((@($_.evidence) | ForEach-Object { if ($map.files[$_]) { "[$_]($($map.files[$_].link))" } else { $_ } }) -join ', ')`n" }) -join "`n") +
         "`n## Expected`nAs described in the tester guide for each check id."
-      $base = ($st.name -replace '^\[(Bug|Feature)\]\s*', '' -replace '\s*\((API|Web|App)[^)]*\)\s*$', '').Trim()
+      $base = ($st.name -replace '^\[(Bug|Feature)\]\s*', '' -replace '\s+[-—]\s+failed checks\b.*$', '' -replace '\s*\((API|Web|App)[^)]*\)\s*$', '').Trim()   # a retested bug task keeps one "failed checks" suffix
       if ($base.Length -gt 90) { $base = $base.Substring(0, 87) + '...' }
       $nm = "[Bug] $base — failed checks $(($fails | ForEach-Object id) -join ', ')"
       $a = @('task', 'create', '--list-id', $tr.list, '--name', $nm, '--markdown-description', $body, '--priority', '2', '--json')

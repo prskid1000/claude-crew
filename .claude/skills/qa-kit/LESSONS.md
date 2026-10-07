@@ -6,6 +6,7 @@ UI gotchas for one product go under a `## Project: <name> (target <target>)` hea
 app login steps) — never passwords; those live only in `targets.local.json`.
 
 ## General
+- (fixed in kit) Bug-task titles grew each retest round ("... - failed checks X2, X3 - X1 — failed checks X4, X5"). finalize now drops everything from the first "failed checks" in the source task name before adding the new list.
 - (fixed in kit) A re-run of finalize on an item kept open by a NOT_TESTED check raised a SECOND bug task, posted a second results comment, and (its Google Doc create failed) overwrote the report link with an empty one. finalize now treats a subtask already in finalize.json as published (reuses its bug, only re-checks whether it can close) and keeps the previous report when the doc create fails.
 - (fixed in kit) deployed.ps1 said NOT-DEPLOYED for MRs that were live: the deploy branch got main through a squashed "merge main into staging" commit, so the MR merge commits were not ancestors. It now also accepts "MR on its target branch + its files identical on the deploy ref". A manual server deploy (no branch update) still reads NOT-DEPLOYED: trust the owner and say so in the run context.
 - (fixed in kit) Two test-and-close workers mapped their first app item to lane 1 and leased it under the same id, so both "owned" the phone (the board CLAIM caught it). Phone leases are now per worker (`qa-<instance>-<lane>`), so the second waits in the fair queue, and extra workers start on lane (instance-1).
