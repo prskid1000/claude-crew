@@ -43,6 +43,23 @@ function Save($o) {
   $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
   $o | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir "$($o.task).json")
 }
+# "<label>" of a still-running dev-wave stage (build:/review:/fix:<agent>) whose agent owns this MR, else $null.
+# Reads <runtime>\waves\<run>.json (supervise refreshes them for every running workflow before calling `track run`).
+function InFlight($ref) {
+  if ($ref -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $null }
+  $pat = "/$([regex]::Escape($Matches.r))/-/merge_requests/$($Matches.i)(\D|$)"
+  foreach ($f in Get-ChildItem (Join-Path $rt 'waves') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-12) }) {
+    $w = Get-Content $f.FullName -Raw | ConvertFrom-Json
+    if (-not @($w.running).Count) { continue }
+    foreach ($p in $w.agents.PSObject.Properties) {
+      if (@($p.Value.mrs | ForEach-Object { "$($_.url)$_" }) -match $pat) {
+        $lbl = @($w.running) | Where-Object { $_ -match "^(build|review|fix|ship|ci):$([regex]::Escape($p.Name))$" } | Select-Object -First 1
+        if ($lbl) { return "$lbl ($($w.run))" }
+      }
+    }
+  }
+  $null
+}
 function MrState($ref) {
   if ($ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return 'bad-ref' }
   $proj = ProjPath $Matches.repo
@@ -95,6 +112,10 @@ switch ($Action) {
       foreach ($pair in @($o.mergeAfter)) {
         if ($pair -notmatch '^(?<dep>[^>]+)>(?<on>.+)$') { continue }
         $dep = $Matches.dep.Trim(); $on = $Matches.on.Trim()
+        # never merge an MR whose dev-wave agent is still in build/review/fix: the wave's own ship step merges it after a clean review
+        # (merge-after once merged a dependent MR mid-review and a blocking regression landed on the target branch)
+        $owner = InFlight $dep
+        if ($owner) { if (-not $Quiet) { "HOLD $($o.task): $dep waits for its review ($owner still running)" }; continue }
         if ((MrState $on) -eq 'merged' -and (MrState $dep) -eq 'opened' -and $dep -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$') {
           $wt = Join-Path $KitConf.ReposRoot (($Matches.repo -split '/')[-1])   # a checkout of that repo (devtools reads its origin remote)
           $res = if (-not (Test-Path $wt)) { "no checkout at $wt - set ""reposRoot"" in kit.local.json" } else { python (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\devtools.py') merge $wt $Matches.iid 2>&1 }
@@ -112,6 +133,9 @@ switch ($Action) {
           if (@($w.running).Count) { & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }   # refresh: the wave may have ended
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
       if ($held) { if (-not $Quiet) { "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))" }; continue }
+      # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
+      $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
+      if ($busy) { if (-not $Quiet) { "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix" }; continue }
       foreach ($s in $o.onMerged) { clickup status set $s $o.task 2>&1 | Out-Null }
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
       $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })

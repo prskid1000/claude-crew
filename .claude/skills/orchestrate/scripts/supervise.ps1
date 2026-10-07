@@ -40,6 +40,11 @@ foreach ($w in $wfDirs) {
   foreach ($s in $started) { if ($res.ContainsKey($s.agentId)) { $k = & $itemOf $s.label; $i = [array]::IndexOf($started, $s); if (-not $finishedAt.ContainsKey($k) -or $finishedAt[$k] -lt $i) { $finishedAt[$k] = $i } } }
   $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
+  # keep <runtime>\waves\<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
+  # agent is still in review or fix (a wave nobody had reported on yet was invisible to it, and merge-after merged mid-review)
+  if ($AutoFix -and $running.Count -and @($started | Where-Object { $_.label -match '^(build|review|fix):' }).Count) {
+    & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.Name *> $null
+  }
   foreach ($a in $running) {
     $tf = Get-ChildItem $w.FullName -Recurse -File -Filter "*$($a.agentId)*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     $idle = if ($tf) { [int]($now - $tf.LastWriteTime).TotalMinutes } else { -1 }
@@ -202,6 +207,7 @@ if ($AutoFix) {
   }
   foreach ($l in @(& "$S\track.ps1" run)) {
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l 'Post the solution, MR links and how-to-test steps on the task (clickup comment add <id> "<text>").' }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w.-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
