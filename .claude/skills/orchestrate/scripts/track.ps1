@@ -50,6 +50,8 @@ function MrState($ref) {
   $m = glab api "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)" 2>$null | ConvertFrom-Json
   if (-not $m) { return 'unknown' }
   if ($m.state -eq 'opened' -and $m.head_pipeline.status -in 'failed', 'canceled') { return "opened (pipeline $($m.head_pipeline.status))" }
+  # a conflicting MR never merges, even with merge-when-green set (a sibling MR rewrote the same lines): someone must rebase it
+  if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
 switch ($Action) {
@@ -101,7 +103,7 @@ switch ($Action) {
         if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }; if ($o.mrs -notcontains $on) { $o.mrs = @(@($o.mrs) + $on) }
       }
       $states = @{}; foreach ($m in $o.mrs) { $states[$m] = MrState $m }
-      $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed' })
+      $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
       # hold while a still-running wave has a blocking review finding on one of these MRs (its fix MR is on the way)
