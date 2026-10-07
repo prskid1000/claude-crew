@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
-Is a merged MR live on a test environment? Answers from the CI, not from memory: the MR's merge commit must be an ancestor of
-the deploy branch AND of a pipeline on that branch whose deploy job succeeded.
+Is a merged MR live on a test environment? Answers from the CI, not from memory: the MR's merge commit must be on
+the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "On" = an ancestor, or (squashed "merge main
+into staging" / cherry-picks) the MR is on its target branch and none of its files differ between that branch and the deploy ref.
 
   $D = '<kit>\skills\qa-kit\scripts\deployed.ps1'
   & $D -Mrs backend!812,web!415                     # one line per MR per deploy target, exit 0 when every MR is live
@@ -23,6 +24,17 @@ function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliase
 $memo = @{}
 function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = glab api $path 2>$null | ConvertFrom-Json }; $memo[$path] }
 function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
+# A squashed "merge main into staging" (or a cherry-pick) carries the MR's content without its commit: ancestry says no.
+# Fallback: the MR is on its target branch (e.g. main) and none of its files differ between that branch and $ref.
+function ContentOn($p, $mr, $sha, $ref) {
+  if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
+  $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
+  if (-not $files.Count) { return $false }
+  $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
+  if (-not $cmp) { return $false }
+  -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
+}
+function OnRef($p, $mr, $sha, $ref) { (IsAncestor $p $sha $ref) -or (ContentOn $p $mr $sha $ref) }
 
 $out = foreach ($m in @($Mrs -split '\s*,\s*' | Where-Object { $_ })) {
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
@@ -43,12 +55,12 @@ $out = foreach ($m in @($Mrs -split '\s*,\s*' | Where-Object { $_ })) {
       else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" } }
       continue
     }
-    if (-not (IsAncestor $p $sha $d.branch)) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "not on $($d.branch) yet" }; continue }
+    if (-not (OnRef $p $mr $sha $d.branch)) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "not on $($d.branch) yet" }; continue }
     $hit = $null
     # a pipeline created before the merge cannot contain it: skip those without asking for their jobs
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
       $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
-      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (IsAncestor $p $sha $pl.sha))) { $hit = $job; break }
+      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha))) { $hit = $job; break }
     }
     if ($hit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "$($d.job) finished $($hit.finished_at)" } }
     else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "on $($d.branch), but no successful $($d.job) includes it yet" } }
