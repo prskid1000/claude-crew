@@ -2,6 +2,7 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) supervise kept raising ACT for a conflicted MR while an agent was already rebasing it. An ATTENTION (conflict / failed pipeline) whose MR source branch is checked out in an active board agent's worktree is now INFO "being handled by <agent>".
 - (fixed in kit) An MR set to merge-when-green sat unmerged with a green pipeline because a sibling MR in a parallel wave rewrote the same lines (merge conflict); nothing flagged it, it surfaced only in another agent's report. track.ps1 now reports `opened (conflict)` as ATTENTION and supervise raises ACT to resume the owner with RESUME_BRIEF. Brief overlapping agents to rebase only after the sibling merges (one conflict resolution, not two).
 - (fixed in kit) cleanup.ps1 reported the same old session temp dirs as "freed" on every run: it counted the size first and deleted with [IO.Directory]::Delete, which throws on read-only files (the error was swallowed). It now deletes with Remove-Item -Force, counts only what was removed, and lists FAILED paths.
 - (fixed in kit) bug-brief.ps1 always used a repo's default target, but one repo can ship two products from different branches (a QA bug on the second product needs the other branch). `-Repos web@main` now overrides the target, and the brief warns not to borrow deps linked for the default branch.

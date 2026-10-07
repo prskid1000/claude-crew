@@ -187,9 +187,25 @@ if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands
 # 5. ONE heartbeat does the housekeeping too (no separate crons): tracker statuses, stale board entries, due cleanup
 if ($AutoFix) {
   $S = Split-Path $PSCommandPath
+  # who (an active board agent, heartbeat < 30 min) has this MR's source branch checked out in one of its worktrees?
+  function OwnerOf($repo, $iid) {
+    $proj = if ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $repo }
+    $src = (glab api "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid" 2>$null | ConvertFrom-Json).source_branch
+    if (-not $src) { return $null }
+    foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 30 })) {
+      foreach ($w in @($e.worktrees)) {
+        $paths = if ([IO.Path]::IsPathRooted("$w")) { @("$w") } else { @($KitConf.WorktreeRoots | ForEach-Object { Join-Path $_ "$w" }) }
+        foreach ($wp in $paths) { if ((Test-Path $wp) -and (git -C $wp branch --show-current 2>$null) -eq $src) { return $e.agent } }
+      }
+    }
+    $null
+  }
   foreach ($l in @(& "$S\track.ps1" run)) {
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l 'Post the solution, MR links and how-to-test steps on the task (clickup comment add <id> "<text>").' }
+    elseif ($l -match '^ATTENTION .* (?<repo>[\w.-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
+      Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
+    }
     elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline, was closed or has merge conflicts (a sibling MR changed the same lines): get it fixed or rebased (resume its agent with RESUME_BRIEF; the agent may have stopped).' }
   }
   # promoted tasks whose MRs went live on a test environment: QA can start now (never guess "not deployed yet" by hand)
