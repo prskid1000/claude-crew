@@ -4,6 +4,7 @@ Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)
 Project-specific lessons go under a `## Project: <name>` heading below the general ones.
 
 ## General
+- (fixed in kit) GitLab drops "merge when pipeline succeeds" when new commits are pushed after scheduling (an agent rebased and force-pushed after `devtools.py merge`; the MR then sat open with a green pipeline while the agent reported "scheduled"). devtools.py merge now records the intent in <runtime>/automerge.json and `track.ps1 run` (every supervise round) re-arms it until the MR merges or closes.
 - A Spring bean given a second (package-private, test-only) constructor without `@Autowired` on the real one built and passed unit tests but crashed app startup ("No default constructor found") and failed the deploy. When a bean has 2+ constructors, mark the injected one `@Autowired`; unit tests that call constructors directly never catch it.
 - (fixed in kit) A repo with no MR CI (deploy-only pipelines) never gets an MR pipeline, so `devtools.py merge` set merge-when-pipeline-succeeds and the MR waited forever. merge/merge_when_green now merge directly when the MR has no pipeline and its head commit is > 5 min old (younger: returns WAIT, run again).
 - (fixed in kit) guard.ps1 blocked a read-only `Get-Process java,node,msbuild` as an ungated heavy build: `msbuild\b` matched the word anywhere. msbuild now counts only when it is run as a command (start of a segment, after & ; | ( or a quote).

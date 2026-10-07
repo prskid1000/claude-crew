@@ -140,6 +140,20 @@ def mr_create(worktree, title, body_md, tgt=None):
     return m[-1] if m else out
 
 
+def _remember_automerge(ref):
+    """GitLab drops 'merge when pipeline succeeds' when new commits are pushed (e.g. a rebase after scheduling).
+    Record the intent in <runtime>/automerge.json; track.ps1 run (every supervise round) re-arms it until the MR merges."""
+    rt = os.environ.get('CLAUDE_RUNTIME') or os.path.join(re.sub(r'[\\/]\.claude[\\/].*$', '', os.path.abspath(__file__)), '.claude-runtime')
+    path = os.path.join(rt, 'automerge.json')
+    try:
+        data = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {}
+        data[ref] = time.strftime('%Y-%m-%dT%H:%M:%S')
+        os.makedirs(rt, exist_ok=True)
+        json.dump(data, open(path, 'w', encoding='utf-8'), indent=1)
+    except Exception:
+        pass
+
+
 def auto_merge(worktree, iid):
     """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge).
     Returns at once, so an agent never has to sit through a long pipeline. Merges straight away if it is already green."""
@@ -175,6 +189,7 @@ def auto_merge(worktree, iid):
         if out.get('state') == 'merged':
             return 'merged'
         if out.get('merge_when_pipeline_succeeds'):
+            _remember_automerge(f'{proj}!{iid}')
             return f'scheduled: GitLab merges !{iid} automatically when the pipeline ({st}) succeeds'
         return f'not merged: {str(out)[:300]}'
     out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch', '--auto'], cwd=worktree)

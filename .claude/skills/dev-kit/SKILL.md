@@ -33,7 +33,7 @@ $K = '<workspace>\.claude\skills\dev-kit\scripts'; $B = '<workspace>\.claude\ski
 & $K\wt.ps1 sync -Dir <wt>; & $K\check.ps1 -Dir <wt>\<module>    # 6. rebase + re-check before push
 git -C <wt> push -u origin <branch>
 python $K\devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
-python $K\devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once
+python $K\devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once (the supervisor re-arms it if a later push drops it)
 & <workspace>\.claude\skills\orchestrate\scripts\track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. the coordinator's heartbeat promotes the task when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board
 ```

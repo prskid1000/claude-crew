@@ -1,4 +1,4 @@
-﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
 <#
 Tracker automation: tie a ClickUp task to its MRs, and let the supervisor (-AutoFix) move the task when they are all merged —
 so nobody has to watch pipelines and flip statuses by hand.
@@ -85,6 +85,26 @@ switch ($Action) {
   }
   'show' { foreach ($f in Get-ChildItem $dir -Filter '*.json') { $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') } }
   'run' {
+    # Re-arm merge-when-green that GitLab dropped: a push after scheduling (rebase, review fix) cancels it, and the MR then sits
+    # open with a green pipeline. Intents come from devtools.py merge (<runtime>\automerge.json); merged/closed ones are forgotten.
+    $amf = Join-Path $rt 'automerge.json'
+    if (Test-Path $amf) {
+      $am = Get-Content $amf -Raw | ConvertFrom-Json -AsHashtable; $keep = @{}
+      foreach ($ref in @($am.Keys)) {
+        if ($ref -notmatch '^(?<proj>.+)!(?<iid>\d+)$') { continue }
+        $enc = $Matches.proj -replace '/', '%2F'; $iid = $Matches.iid
+        $m = glab api "projects/$enc/merge_requests/$iid" 2>$null | ConvertFrom-Json
+        if (-not $m) { $keep[$ref] = $am[$ref]; continue }
+        if ($m.state -ne 'opened') { continue }
+        $keep[$ref] = $am[$ref]
+        if ($m.merge_when_pipeline_succeeds -or $m.draft -or $m.has_conflicts -or $m.detailed_merge_status -eq 'conflict' -or $m.head_pipeline.status -in 'failed', 'canceled') { continue }
+        $a = @('-X', 'PUT', "projects/$enc/merge_requests/$iid/merge", '-f', 'squash=true', '-f', 'should_remove_source_branch=true')
+        if ($m.head_pipeline.status -ne 'success') { $a += @('-f', 'merge_when_pipeline_succeeds=true') }
+        $r = glab api @a 2>$null | ConvertFrom-Json
+        "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
+      }
+      $keep | ConvertTo-Json | Set-Content $amf -Encoding utf8
+    }
     foreach ($f in Get-ChildItem $dir -Filter '*.json') {
       $o = Get-Content $f.FullName -Raw | ConvertFrom-Json -AsHashtable; if ($o.done) { continue }
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
