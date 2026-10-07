@@ -90,7 +90,10 @@ $doneNames = @($doneLabels | ForEach-Object { (($_ -split ':')[-1] -split '@')[0
 foreach ($s in $stale | Where-Object { $_.agent -in $doneNames }) {
   if ($AutoFix) { $f = Join-Path $board "$($s.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }; Flag 'INFO' "auto-fixed: board entry $($s.agent) marked left (its workflow step finished)" 'Nothing to do.' }
 }
-foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames }) { Flag 'WATCH' "board entry $($s.agent) ($($s.run)) has no heartbeat for $([int]($now - [datetime]$s.beat).TotalMinutes) min" 'It may have finished without leaving, or be stuck. Cross-check with the workflow journal.' }
+foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames }) {
+  # -AutoFix marks entries silent >= 2 h as left later in this same run: report that, not a WATCH for something already handled
+  if ($AutoFix -and ($now - [datetime]$s.beat).TotalHours -ge 2) { Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) silent $([int]($now - [datetime]$s.beat).TotalMinutes) min -> marked left" 'Nothing to do.'; continue }
+  Flag 'WATCH' "board entry $($s.agent) ($($s.run)) has no heartbeat for $([int]($now - [datetime]$s.beat).TotalMinutes) min" 'It may have finished without leaving, or be stuck. Cross-check with the workflow journal.' }
 
 # 3. memory gate
 $ledger = Join-Path $env:TEMP 'claude-build-gate'
