@@ -3,6 +3,7 @@ oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) A wave merged web fixes into a branch whose CI deploys on merge, and the user had not approved deploying. dev-wave now takes holdMerge: [repos] (or true): those MRs are opened, reviewed and kept green but never merged; the coordinator asks the user, then merges.
 - (fixed in kit) bug-brief.ps1 -Repos "api,python" passed from a variable arrived as one name ("unknown repo"); it now splits comma lists itself.
 - (fixed in kit) Merge-after (`track.ps1 -MergeAfter dependent>dependency`) scheduled a dependent MR the moment its dependency merged, while that MR's own dev-wave review was still running: a java + web MR merged mid-review and the review then found a blocking regression already on the target branch; the task was even promoted. track.ps1 now holds merge-after and promotion while the MR's agent is in build/review/fix (InFlight, from waves\<run>.json), and supervise -AutoFix refreshes waves\<run>.json for every running dev wave before calling the tracker.
 - (fixed in kit) supervise kept raising ACT for a conflicted MR while an agent was already rebasing it. An ATTENTION (conflict / failed pipeline) whose MR source branch is checked out in an active board agent's worktree is now INFO "being handled by <agent>".

@@ -16,6 +16,8 @@ args = {
   mode: 'feature' | 'bugfix' | 'resume',           // default 'feature'
   review: true,                                    // independent MR review + one fix round (default true)
   agents: [ { id: 'X1', items: 'A3, A4', area: 'planner timeline', note: 'optional extra instructions' }, ... ],
+  holdMerge: ['web'],                              // optional: repos whose MRs are opened + reviewed but NEVER merged by the wave
+                                                   // (their target branch deploys on merge and the user wants to approve it); true = all repos
   kitDir: 'C:\\work\\.claude',                     // optional: absolute path of this kit (recommended). Default '.claude' = relative
                                                    // to the workspace root, where Claude Code (and every agent's shell) starts
   runtimeDir: 'C:\\work\\.claude-runtime',         // optional: default <kitDir>\\..\\.claude-runtime (or $env:CLAUDE_RUNTIME in scripts)
@@ -34,6 +36,11 @@ if (!A.brief || !Array.isArray(A.agents) || !A.agents.length) throw new Error('a
 const MODE = A.mode || 'feature'
 const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
 const REVIEW = A.review !== false
+// Merges into a branch that deploys on merge need the user's yes: held repos keep their MRs open (reviewed, green) for the coordinator.
+const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.holdMerge : [])
+const HOLD_NOTE = HOLD.length
+  ? `\nMERGE HOLD: never merge or schedule a merge (no devtools.py merge, no track.ps1 -MergeAfter) for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')}: their target deploys on merge and the user approves that. Leave them open and green; report merged=false and say "held for approval".`
+  : ''
 
 const REPORT = {
   type: 'object',
@@ -103,7 +110,7 @@ ${REVIEW
     ? `Do the whole job: implement, run the gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges
 (no devtools.py merge): an independent review runs first and the workflow schedules the merges once it is clean (or after your fix round).
 Report merged=false for every MR.`
-    : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}
+    : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
 Return the report.`
 }
 
@@ -126,7 +133,7 @@ Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these p
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 For each: fix it (wt.ps1 sync first; follow-up MR if the original already merged), or explain why it's not a problem.
 Run the gated checks, push, then schedule the merges yourself now (devtools.py merge, producers first; dependents via
-orchestrate\\scripts\\track.ps1 add -Task <bug id> -MergeAfter '<web/app MR>><API MR>'), and return the updated report.`
+orchestrate\\scripts\\track.ps1 add -Task <bug id> -MergeAfter '<web/app MR>><API MR>'), and return the updated report.${HOLD_NOTE}`
 }
 
 // review passed (or was off for this agent): schedule the merges — the build agent deliberately left them open
@@ -151,7 +158,7 @@ Producers first: run python ${K}\\scripts\\devtools.py merge <repo checkout or w
 (worktrees: ${r.worktrees.join(', ')}). For consumer MRs (web/app) that depend on an API MR in this list, do not merge them yourself:
 register the order with & ${ORCH}\\track.ps1 add -Task <the ClickUp task id in the MR title/branch>
 -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>' (the tracker schedules it once the API MR merged). Independent consumer
-MRs: devtools.py merge them now. Change no code. Return the report with the same MRs (merged=false unless GitLab already says merged).`
+MRs: devtools.py merge them now. Change no code. Return the report with the same MRs (merged=false unless GitLab already says merged).${HOLD_NOTE}`
 }
 
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'off'}, brief ${A.brief}`)
