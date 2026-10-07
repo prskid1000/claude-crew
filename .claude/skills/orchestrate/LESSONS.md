@@ -2,6 +2,7 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) bug-brief.ps1 -Repos "api,python" passed from a variable arrived as one name ("unknown repo"); it now splits comma lists itself.
 - (fixed in kit) Merge-after (`track.ps1 -MergeAfter dependent>dependency`) scheduled a dependent MR the moment its dependency merged, while that MR's own dev-wave review was still running: a java + web MR merged mid-review and the review then found a blocking regression already on the target branch; the task was even promoted. track.ps1 now holds merge-after and promotion while the MR's agent is in build/review/fix (InFlight, from waves\<run>.json), and supervise -AutoFix refreshes waves\<run>.json for every running dev wave before calling the tracker.
 - (fixed in kit) supervise kept raising ACT for a conflicted MR while an agent was already rebasing it. An ATTENTION (conflict / failed pipeline) whose MR source branch is checked out in an active board agent's worktree is now INFO "being handled by <agent>".
 - (fixed in kit) An MR set to merge-when-green sat unmerged with a green pipeline because a sibling MR in a parallel wave rewrote the same lines (merge conflict); nothing flagged it, it surfaced only in another agent's report. track.ps1 now reports `opened (conflict)` as ATTENTION and supervise raises ACT to resume the owner with RESUME_BRIEF. Brief overlapping agents to rebase only after the sibling merges (one conflict resolution, not two).
