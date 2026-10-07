@@ -1,4 +1,4 @@
-# C- (fixed in kit) board.ps1 raised AREA warnings for every agent in a bug-fix wave: items like "<task> F2, X1, X2" were split on commas, so X1 of two different bug tasks looked shared. Bare check ids now inherit the task id before them. Also: dev-wave agents are reachable from the coordinator with SendMessage to their agentId (the workflow transcript dir holds agent-<id>.meta.json with description build:<agent>) - use it to relay an overlap split, and write it to <brief>.contracts.md too.
+# C- (fixed in kit) board.ps1 raised AREA warnings for every agent in a bug-fix wave: items like "<task> F2, X1, X2" were split on commas, so X1 of two different bug tasks looked shared. Bare check ids now inherit the task id before them. NEVER SendMessage a workflow agent (its agentId from agent-<id>.meta.json): it resumes a SECOND copy that writes the same worktree (happened again - duplicate tests, broken validation). Relay through <brief>.contracts.md only; guard-sendmessage.ps1 (PreToolUse hook) now blocks such sends.
 oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.

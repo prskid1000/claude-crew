@@ -44,7 +44,7 @@ Run scripts from **PowerShell** (node, python, gws, clickup, glab, gh are on its
 | 0 | Scope | Read the epic/sheet; group work **by area, not item count** (disjoint screens/packages per agent) | Note which items need app / web / API testing |
 | 1 | Brief | Fill `templates\WAVE_BRIEF.md` in the scratchpad: repos + targets, ownership, migration ranges, contracts | — |
 | 2 | Build | `/dev-wave` with args `{ brief, agents:[{id, items, area}], mode, review, kitDir }` — or Agent tool, type `dev-agent`, prompt "Follow the brief <path>. You are X3 …" | — |
-| 3 | Relay | Append decisions/contracts to `<brief>.contracts.md` (agents re-read it before every push). **Never SendMessage a `/dev-wave` agent by ID** — it spawns a duplicate in the same worktree. SendMessage only for agents you spawned yourself with the Agent tool | — |
+| 3 | Relay | Append decisions/contracts to `<brief>.contracts.md` (agents re-read it before every push). **Never SendMessage a `/dev-wave` agent by ID** (the `guard-sendmessage.ps1` PreToolUse hook blocks it) — it spawns a duplicate in the same worktree. SendMessage only for agents you spawned yourself with the Agent tool | — |
 | 4 | Ship | Agents merge producers first (DB/API), then clients; tracker → review → promoted | — |
 | 5 | Deploy | **A human** deploys to the test environment | `android-swarm\app-build.ps1` from the merged branch (phones: the app agents lease and boot them themselves) |
 | 6 | Test | — | Run folder `<workspace>\.claude-runtime\qa-runs\<date>-<name>\` + `run.json`; `/test-and-close` with that object (+ `kitDir`) as args; start `qa-kit\scripts\autoclose.ps1` |
