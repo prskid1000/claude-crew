@@ -2,6 +2,9 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) supervise -AutoFix took > 2 min (longer than the agent's shell timeout) because deployed.ps1 made 100+ sequential git-host API calls: every merged-not-yet-live task × deploy target × 10 pipelines (jobs + merge_base each), every round. deployed.ps1 now memoises API calls within a run and skips pipelines created before the merge; supervise re-checks a task's deploy at most every 10 min (liveCheckedAt). Sweep: > 120 s -> ~50 s.
+- (fixed in kit) supervise raised ACT LIVE for tasks a QA run had already tested and closed. A LIVE task that any qa-runs\*\run.json already lists is now INFO ("already in QA run ..."), not ACT.
+
 - (fixed in kit) A bug task stayed open for hours after its MR merged: the agent guessed a non-existent tracker command, never set the review status, and track.ps1 only completes tasks already in review. track.ps1 now completes a discovered task once all its MRs have been merged for 20 min; dev-kit SKILL.md lists the exact tracker commands. Also: supervise no longer flags "collision" for agents whose MRs all merged (a shared scratch file is not a live collision).
 - (fixed in kit, corrected) Do NOT hold QA bugs until their run finishes: owners want them fixed at once, and waiting contradicts a standing bug-fix mandate. The supervisor flags ACT for every untracked QA bug right away, listed together: write one brief per task (bug-brief.ps1), combine them into one file with a section per agent, launch ONE /dev-wave; bugs filed later go into the next wave.
 - (fixed in kit) The supervisor raised ACT DUPLICATE for a tester that simply ran `board join` twice seconds apart (the first entry never beat again). Same-run entries that stopped beating 5+ min before the newest, or never beat and joined within 2 min of it, now count as a re-join and are marked left with -AutoFix; a resumed copy that keeps beating is still ACT.

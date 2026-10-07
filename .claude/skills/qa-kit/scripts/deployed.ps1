@@ -19,8 +19,10 @@ if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
-function Api($path) { glab api $path 2>$null | ConvertFrom-Json }
-function IsAncestor($p, $sha, $ref) { (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
+# memoised: supervise checks many MRs on the same branches/pipelines each round (unmemoised: 100+ sequential API calls, > 2 min)
+$memo = @{}
+function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = glab api $path 2>$null | ConvertFrom-Json }; $memo[$path] }
+function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
 
 $out = foreach ($m in @($Mrs -split '\s*,\s*' | Where-Object { $_ })) {
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
@@ -43,7 +45,8 @@ $out = foreach ($m in @($Mrs -split '\s*,\s*' | Where-Object { $_ })) {
     }
     if (-not (IsAncestor $p $sha $d.branch)) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "not on $($d.branch) yet" }; continue }
     $hit = $null
-    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10")) {
+    # a pipeline created before the merge cannot contain it: skip those without asking for their jobs
+    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
       $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
       if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (IsAncestor $p $sha $pl.sha))) { $hit = $job; break }
     }
