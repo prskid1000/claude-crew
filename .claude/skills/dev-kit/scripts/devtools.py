@@ -155,7 +155,21 @@ def auto_merge(worktree, iid):
         if st in ('failed', 'canceled'):
             return f'PIPELINE {st}: fix it, do not merge'
         args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true']
-        if st != 'success':
+        # A repo without MR CI never gets a pipeline: merge_when_pipeline_succeeds would then wait forever.
+        # No pipeline at all on the MR and the head commit pushed > 5 min ago = no CI for MRs -> merge now.
+        no_ci = False
+        if st is None:
+            pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
+            sha = m.get('sha') or ''
+            c = _json(_run([GLAB, 'api', f'projects/{enc}/repository/commits/{sha}'])) if sha else {}
+            when = c.get('committed_date') or c.get('created_at')
+            if not pls and when:
+                from datetime import datetime, timezone
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds()
+                no_ci = age > 300
+            if not pls and not no_ci:
+                return f'WAIT: no pipeline on !{iid} yet (pushed < 5 min ago); run merge again in a few minutes'
+        if st != 'success' and not no_ci:
             args += ['-f', 'merge_when_pipeline_succeeds=true']
         out = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
         if out.get('state') == 'merged':
@@ -193,6 +207,10 @@ def merge_when_green(worktree, iid, timeout_min=90):
             return 'CONFLICT: wt.ps1 sync, resolve (keepboth.py for append-only files), re-check, push --force-with-lease to YOUR branch'
         if bad:
             return f'PIPELINE {st}: fix it, do not merge'
+        if host == 'gitlab' and st is None:   # no MR CI in this repo: auto_merge() decides (merges once no pipeline is coming)
+            res = auto_merge(worktree, iid)
+            if not res.startswith('WAIT'):
+                return res
         if ok:
             if host == 'gitlab':
                 return _run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge',

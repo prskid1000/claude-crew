@@ -6,7 +6,8 @@ of the QA run that raised it, ownership, branch/board/merge rules, and prints th
   $BB = '<workspace>\.claude\skills\orchestrate\scripts\bug-brief.ps1'
   & $BB -Task 86abc123 -Agent B-CHK -Repos api,web [-Hints 'X3: reuse the existing time zone helper'] [-Range 20260101000000-20260101005959]
 
-Repos: names or aliases from kit.local.json "repos" (each: { name, checkout, target, linkFrom?, aliases[] }). The brief lands next to the
+Repos: names or aliases from kit.local.json "repos" (each: { name, checkout, target, linkFrom?, aliases[] }); `name@branch` overrides the
+target for this bug (e.g. web@main when the same repo ships two products from different branches). The brief lands next to the
 other briefs (<runtime>\briefs\<task>.md); the script prints the path and the Workflow args JSON.
 Mandate: kit.local.json "bugfixMandate" (the task owner's own words asking the coordinator to fix QA bugs), else -Mandate.
 #>
@@ -45,10 +46,13 @@ foreach ($fin in Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter finali
 }
 $evidence = if ($runItem) { "Evidence + exported guide: ``$($runItem.FullName)\`` and ``$(Split-Path $runItem.FullName)\guides\$($runItem.Name).txt``." } else { 'Evidence: the results doc linked in the task.' }
 
-$rows = foreach ($r in $Repos) {
+$rows = foreach ($spec in $Repos) {
+  $r, $branch = $spec -split '@', 2
   $repo = @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0]
   if (-not $repo) { throw "unknown repo '$r' (kit.local.json repos: $(@($cfg.repos.name) -join ', '))" }
-  "| $($repo.name) | ``$($repo.checkout)`` | ``$($repo.target)`` | $(if ($repo.linkFrom) { "``$($repo.linkFrom)`` (-LinkFrom)" } else { 'main checkout' }) |"
+  # an overridden target must not borrow deps linked for the default target (different package versions break builds)
+  $deps = if ($branch -and $branch -ne $repo.target) { "a checkout on ``$branch`` (not ``$($repo.linkFrom)``, which is on ``$($repo.target)``; wt.ps1 warns on a mismatch)" } elseif ($repo.linkFrom) { "``$($repo.linkFrom)`` (-LinkFrom)" } else { 'main checkout' }
+  "| $($repo.name) | ``$($repo.checkout)`` | ``$(if ($branch) { $branch } else { $repo.target })`` | $deps |"
 }
 $ids = ($checks | ForEach-Object id) -join ', '
 $slugAgent = $Agent.ToLower()
