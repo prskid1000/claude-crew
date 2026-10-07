@@ -36,9 +36,11 @@ $now = Get-Date; $freed = 0L; $actions = New-Object System.Collections.ArrayList
 function Size($p) { if (Test-Path $p -PathType Leaf) { (Get-Item $p).Length } else { (Get-ChildItem $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum } }
 function Gone($path, $why) {
   if (-not (Test-Path $path)) { return }
-  $sz = [long](Size $path); $script:freed += $sz
+  $sz = [long](Size $path)
+  # Remove-Item -Force also clears read-only files ([IO.Directory]::Delete threw on them and the same dirs were "freed" every run)
+  if (-not $DryRun) { try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop } catch { [void]$actions.Add(('  FAILED    {0}  ({1}): {2}' -f $path, $why, $_.Exception.Message)); return } }
+  $script:freed += $sz
   [void]$actions.Add(('{0,8:N1} MB  {1}  ({2})' -f ($sz / 1MB), $path, $why))
-  if (-not $DryRun) { if (Test-Path $path -PathType Container) { [IO.Directory]::Delete($path, $true) } else { [IO.File]::Delete($path) } }
 }
 function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours }
 

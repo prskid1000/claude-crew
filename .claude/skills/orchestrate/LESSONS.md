@@ -2,6 +2,7 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) cleanup.ps1 reported the same old session temp dirs as "freed" on every run: it counted the size first and deleted with [IO.Directory]::Delete, which throws on read-only files (the error was swallowed). It now deletes with Remove-Item -Force, counts only what was removed, and lists FAILED paths.
 - (fixed in kit) bug-brief.ps1 always used a repo's default target, but one repo can ship two products from different branches (a QA bug on the second product needs the other branch). `-Repos web@main` now overrides the target, and the brief warns not to borrow deps linked for the default branch.
 - (fixed in kit) supervise raised ACT "collision/halt" for three healthy build agents: its pattern matched a bare "duplicate", and bug-fix summaries are full of duplicate orders/lines/names. It now matches only agent-coordination wording (duplicate agent/copy/writer, collided with another agent, another writer, halted, stopped editing).
 - (fixed in kit) RAM hit 91% while idle Gradle + Kotlin daemons held ~6 GB; supervise only flagged it and ran cleanup when due. supervise -AutoFix now runs cleanup.ps1 immediately at >= 85% RAM (it stops idle daemons and stale browsers) and reports what it freed.
