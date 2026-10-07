@@ -4,6 +4,7 @@ Maintained by each `/dev-wave` learn step and `/kit-retro`. Newest first. `(n×)
 Project-specific lessons go under a `## Project: <name>` heading below the general ones.
 
 ## General
+- (fixed in kit) guard.ps1 blocked a read-only `Get-Process java,node,msbuild` as an ungated heavy build: `msbuild\b` matched the word anywhere. msbuild now counts only when it is run as a command (start of a segment, after & ; | ( or a quote).
 - (fixed in kit) .NET checks never ran through check.ps1: stack.ps1's dotnet commands use a `{sln}` placeholder that check.ps1 never filled ("MSB1009: Project file does not exist. Switch: {sln}"). check.ps1 now fills it with the .sln in the stack dir, else its single project file.
 - A squash merge makes an agent's own commits look "not in main" (`merge-base --is-ancestor` is false) even when their content is. Compare trees (`git diff <branch> origin/main -- <path>`), not commit ancestry, before assuming a fix round didn't land.
 - (fixed in kit) A Liquibase changeSet commented 'not reversible' with an EMPTY `<rollback/>` failed the CI changelog check: lbcheck.py now flags missing or empty rollbacks on changeSets marked irreversible. Agents stopped at 'MR opened' and nobody saw failed pipelines: dev-wave now waits for MR pipelines (pipe-wait.ps1, cheap 'ci' step) and sends failures to the fix round.

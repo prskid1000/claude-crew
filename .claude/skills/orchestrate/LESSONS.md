@@ -2,6 +2,9 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) supervise raised ACT "collision/halt" for three healthy build agents: its pattern matched a bare "duplicate", and bug-fix summaries are full of duplicate orders/lines/names. It now matches only agent-coordination wording (duplicate agent/copy/writer, collided with another agent, another writer, halted, stopped editing).
+- (fixed in kit) RAM hit 91% while idle Gradle + Kotlin daemons held ~6 GB; supervise only flagged it and ran cleanup when due. supervise -AutoFix now runs cleanup.ps1 immediately at >= 85% RAM (it stops idle daemons and stale browsers) and reports what it freed.
+
 - (fixed in kit) supervise -AutoFix took > 2 min (longer than the agent's shell timeout) because deployed.ps1 made 100+ sequential git-host API calls: every merged-not-yet-live task × deploy target × 10 pipelines (jobs + merge_base each), every round. deployed.ps1 now memoises API calls within a run and skips pipelines created before the merge; supervise re-checks a task's deploy at most every 10 min (liveCheckedAt). Sweep: > 120 s -> ~50 s.
 - (fixed in kit) supervise raised ACT LIVE for tasks a QA run had already tested and closed. A LIVE task that any qa-runs\*\run.json already lists is now INFO ("already in QA run ..."), not ACT.
 

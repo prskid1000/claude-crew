@@ -37,7 +37,8 @@ if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?!-with-lease)|\s-f\b)' -
 $gated = $cmd -match 'gate\.ps1|check\.ps1|app-build\.ps1'
 $heavy = $cmd -match '(^|[\s;&|(''"])(\.\\)?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
          $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
-         $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|msbuild\b|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b)'
+         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or   # run as a command, not a name in a list (Get-Process java,msbuild)
+         $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b)'
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the machine-wide memory gate: & $K\check.ps1 -Dir <module> [-Step test -Tests X | -Step build], or $K\gate.ps1 -Dir <dir> -Cmd '<cmd>' for anything else."
 }
