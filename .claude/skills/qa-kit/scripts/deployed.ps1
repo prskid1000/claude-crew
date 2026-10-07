@@ -27,6 +27,9 @@ function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api 
 # A squashed "merge main into staging" (or a cherry-pick) carries the MR's content without its commit: ancestry says no.
 # Fallback: the MR is on its target branch (e.g. main) and none of its files differ between that branch and $ref.
 function ContentOn($p, $mr, $sha, $ref) {
+  # cheap guard first (supervise runs this for many MRs): a ref last committed before the merge cannot hold it
+  $head = Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))"
+  if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
   if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
   $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
   if (-not $files.Count) { return $false }
