@@ -156,6 +156,9 @@ switch ($Action) {
       # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
       if ($o.wave) { $wf = Join-Path $rt "waves\$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { if (-not $Quiet) { "HOLD $($o.task): wave $($o.wave) is still fixing it" }; continue } }
       if ($busy) { if (-not $Quiet) { "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix" }; continue }
+      # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)
+      $now = [string](clickup task view $o.task --json 2>$null | ConvertFrom-Json).status.status
+      if ($now -match '^(closed|complete|done|in test|for test)$') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       foreach ($s in $o.onMerged) { clickup status set $s $o.task 2>&1 | Out-Null }
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
       $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
