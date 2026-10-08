@@ -3,6 +3,8 @@ oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) `pwsh -File track.ps1 -Mrs 'repo!1','repo!2'` stored the refs WITH their quotes, so the task could never be promoted. NormRef now strips quotes; deployed.ps1 had the same quote bug. Any kit script taking MR refs must trim quotes.
+
 - (fixed in kit) A skipClose /test-and-close run tested and verified everything, then crashed at the hold step: the script built held.json with `new Date()`, which workflow scripts forbid (breaks resume). Only the rarely used skipClose path had it, so it went unnoticed. The hold agent now stamps the time itself. Never read the clock in a workflow script (Date.now / new Date); resume a crashed run with resumeFromRunId after the fix: finished agents replay from cache.
 
 - (fixed in kit) A wave merged web fixes into a branch whose CI deploys on merge, and the user had not approved deploying. dev-wave now takes holdMerge: [repos] (or true): those MRs are opened, reviewed and kept green but never merged; the coordinator asks the user, then merges.

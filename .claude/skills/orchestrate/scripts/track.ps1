@@ -29,7 +29,7 @@ $alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PS
 function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($group) { "$group/$repo" } else { $null } }
 # agents write refs loosely (web!6122, api!8201, a full MR URL): normalise to <repo>!<iid>
 function NormRef($r) {
-  $r = "$r".Trim()
+  $r = "$r".Trim().Trim("'", '"')   # pwsh -File passes 'a!1','b!2' with the quotes
   if ($r -match "://[^/]+/$groupRx(?<repo>[\w./-]+?)/-/merge_requests/(?<iid>\d+)") { $r = "$($Matches.repo)!$($Matches.iid)" }
   if ($r -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$' -and $alias[$Matches.repo]) { $r = "$($alias[$Matches.repo])!$($Matches.iid)" }
   $r
