@@ -39,7 +39,7 @@ const REVIEW = A.review !== false
 // Merges into a branch that deploys on merge need the user's yes: held repos keep their MRs open (reviewed, green) for the coordinator.
 const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.holdMerge : [])
 const HOLD_NOTE = HOLD.length
-  ? `\nMERGE HOLD: never merge or schedule a merge (no devtools.py merge, no track.ps1 -MergeAfter) for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')}: their target deploys on merge and the user approves that. Leave them open and green; report merged=false and say "held for approval".`
+  ? `\nMERGE HOLD: never merge or schedule a merge (no devtools.py merge, no track.ps1 -MergeAfter) for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')}: the user approves merges there (its branch feeds a deploy). Leave them open and green; report merged=false and say "held for approval".`
   : ''
 
 const REPORT = {
