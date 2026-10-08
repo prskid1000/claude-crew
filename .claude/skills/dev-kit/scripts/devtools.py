@@ -181,6 +181,14 @@ def auto_merge(worktree, iid):
                 from datetime import datetime, timezone
                 age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds()
                 no_ci = age > 300
+                if not no_ci:
+                    # callers (the dev-wave ship step) run merge ONCE: a WAIT left a reviewed no-CI MR open for good.
+                    # Wait out the 5 min here, then decide again (a pipeline may have appeared meanwhile).
+                    time.sleep(max(0, 310 - age))
+                    pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
+                    if pls:
+                        st = 'running'
+                    no_ci = not pls
             if not pls and not no_ci:
                 return f'WAIT: no pipeline on !{iid} yet (pushed < 5 min ago); run merge again in a few minutes'
         if st != 'success' and not no_ci:
