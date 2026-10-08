@@ -17,7 +17,7 @@ Config (skills\dev-kit\kit.local.json): gitHost, gitlabGroup, trackerRepos (sear
 e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges). GitLab + ClickUp CLIs (glab, clickup).
 Files: <.claude-runtime>\tracking\<task>.json. supervise.ps1 -AutoFix calls `run` every round.
 #>
-param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @())
+param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave)
 $ErrorActionPreference = 'SilentlyContinue'
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
 $dir = Join-Path $rt 'tracking'; New-Item -ItemType Directory -Force $dir | Out-Null
@@ -154,7 +154,7 @@ switch ($Action) {
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
       if ($held) { if (-not $Quiet) { "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))" }; continue }
       # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
-      $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
+      if ($o.wave) { $wf = Join-Path $rt "waves\$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { if (-not $Quiet) { "HOLD $($o.task): wave $($o.wave) is still fixing it" }; continue } }
       if ($busy) { if (-not $Quiet) { "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix" }; continue }
       foreach ($s in $o.onMerged) { clickup status set $s $o.task 2>&1 | Out-Null }
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
@@ -162,13 +162,13 @@ switch ($Action) {
       clickup comment add $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." 2>&1 | Out-Null
       # the task must also carry its agent's solution + testing steps (an agent that got the tracker syntax wrong posted nothing)
       $cmts = @(clickup comment list $o.task --json 2>$null | ConvertFrom-Json) | ForEach-Object { [string]$_.comment_text } | Where-Object { $_ -notmatch '^All MRs merged' }
-      if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide' })) {
+      if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide|live check' })) {
         # agents often get the comment wrong: post the live checks from the dev agent's own report (workflow journal) instead of flagging
         $proj = $KitConf.ClaudeProjectDir
         $steps = @(Get-ChildItem $proj -Recurse -Filter 'journal.jsonl' -File | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {
               $j = try { $line | ConvertFrom-Json } catch { $null }
-              if ($j.type -eq 'result' -and @($j.result.done) -match [regex]::Escape($o.task) -and @($j.result.needsLiveCheck).Count) { @($j.result.needsLiveCheck) }
+              # agents list item ids (B1) in done, not task ids: also match the agent by one of this task's MR urls
             } } | Where-Object { $_ } | Select-Object -Unique)
         if ($steps.Count) {
           clickup comment add $o.task ("How to test (from the dev agent's report; run after the next deploy of $($urls -join ' , ')):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) 2>&1 | Out-Null
