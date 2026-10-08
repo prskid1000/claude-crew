@@ -219,17 +219,17 @@ if ($AutoFix) {
   foreach ($f in Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json') {
     $o = Get-Content $f.FullName -Raw | ConvertFrom-Json -AsHashtable
     if (-not $o.done -or $o.liveOn -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
+    if ($o.qaCovered) { continue }
     if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt 10) { continue }   # deploys take > 10 min; don't re-ask the git host every run
+    # a QA run already has it (often closed already): nothing to launch, so skip the git-host deploy lookup (10+ calls per task)
+    $covered = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape($o.task) } | ForEach-Object { $_.Directory.Name })
+    if ($covered.Count) { $o.qaCovered = @($covered); $o | ConvertTo-Json -Depth 5 | Set-Content $f.FullName; continue }
     $rows = @(& $D -Mrs (@($o.mrs) -join ',') -Json | ConvertFrom-Json)
     $o.liveCheckedAt = $now.ToString('o')
     $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
     if ($live.Count) { $o.liveOn = @($live) }
     $o | ConvertTo-Json -Depth 5 | Set-Content $f.FullName
-    $covered = if ($live.Count) { @(Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape($o.task) } | ForEach-Object { $_.Directory.Name }) } else { @() }
-    if ($live.Count -and $covered.Count) {   # a QA run already has it (often closed already): nothing to launch
-      Flag 'INFO' "LIVE $($o.task) on $($live -join ', '), already in QA run $($covered -join ', ')" 'Covered; nothing to do.'
-    }
-    elseif ($live.Count) {
+    if ($live.Count) {
       Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
   }
