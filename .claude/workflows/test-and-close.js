@@ -328,7 +328,8 @@ async function runItem(it, idx, L) {
 1. ${outDir(it)}\\results.json:
 ${JSON.stringify(res)}
 2. ${outDir(it)}\\held.json:
-${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: new Date().toISOString() })}`,
+${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
+Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
     return { code: it.code, summary: line, result: res }
