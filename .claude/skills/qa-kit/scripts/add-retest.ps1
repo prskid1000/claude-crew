@@ -18,7 +18,8 @@ $ErrorActionPreference = 'Stop'
 $t = clickup task view $Task --json | ConvertFrom-Json
 if (-not $t.id) { throw "cannot read task $Task (clickup auth?)" }
 $c = clickup comment list $Task --json 2>$null | ConvertFrom-Json
-if (-not $Only -and $t.name -match 'failed checks\s+(?<ids>.+)$') { $Only = @($Matches.ids -split '\s*,\s*' | Where-Object { $_ }) }
+# greedy: older bug titles carry several "failed checks" parts; the last one is the current list
+if (-not $Only -and $t.name -match '.*failed checks\s+(?<ids>.+)$') { $Only = @($Matches.ids -split '\s*,\s*' | Where-Object { $_ }) }
 if (-not $Title) { $Title = "RETEST $($t.name -replace '^\[Bug\]\s*', '')" }
 $md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status.status)`n`n" +
   "RETEST of the fix: run the failed checks ($($Only -join ', ')) again on the deployed build, same steps and data where possible. " +
