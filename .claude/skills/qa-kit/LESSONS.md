@@ -6,6 +6,7 @@ UI gotchas for one product go under a `## Project: <name> (target <target>)` hea
 app login steps) — never passwords; those live only in `targets.local.json`.
 
 ## General
+- (fixed in kit) `pwsh -File deployed.ps1 -Mrs 'a!1','b!2'` reported BAD-REF for every MR: -File passes the quotes literally. deployed.ps1 now strips quotes and splits on commas/spaces. Also: a consumer can reach a test environment through an automated release while its producer is still undeployed - before testing, run deployed.ps1 for EVERY repo of the task, not just the one you expect to be live.
 - A server-side config check (model, temperature, fallback) is NOT_TESTED from the API lane and keeps the task open after every bug on it is fixed. Close it by verifying the config in the deployed code plus its unit tests (run the repo validation script directly when pytest is not in the linked venv), say which env overrides could not be seen, then close.
 - (fixed in kit) Bug-task titles grew each retest round ("... - failed checks X2, X3 - X1 — failed checks X4, X5"). finalize now drops everything from the first "failed checks" in the source task name before adding the new list.
 - (fixed in kit) A re-run of finalize on an item kept open by a NOT_TESTED check raised a SECOND bug task, posted a second results comment, and (its Google Doc create failed) overwrote the report link with an empty one. finalize now treats a subtask already in finalize.json as published (reuses its bug, only re-checks whether it can close) and keeps the previous report when the doc create fails.
