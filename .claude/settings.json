@@ -6,6 +6,12 @@
       "PowerShell(& *.claude\\skills\\*)",
       "PowerShell(& '*.claude\\skills\\*)",
       "PowerShell(python *.claude\\skills\\*)",
+      "PowerShell(& *.claude/skills/*)",
+      "PowerShell(& '*.claude/skills/*)",
+      "PowerShell(python *.claude/skills/*)",
+      "PowerShell(python3 *.claude/skills/*)",
+      "Bash(pwsh *.claude/skills/*)",
+      "Bash(python3 *.claude/skills/*)",
       "PowerShell(node *)",
       "PowerShell(git status*)",
       "PowerShell(git log*)",
@@ -47,14 +53,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\retro-nudge.ps1"],
+            "command": "pwsh",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/retro-nudge.ps1"],
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\cleanup.ps1", "-IfDue", "-Quiet"],
+            "command": "pwsh",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/cleanup.ps1", "-IfDue", "-Quiet"],
             "timeout": 600,
             "async": true
           }
@@ -67,8 +73,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\dev-kit\\scripts\\guard.ps1"],
+            "command": "pwsh",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/dev-kit/scripts/guard.ps1"],
             "timeout": 10
           }
         ]
@@ -78,8 +84,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\guard-sendmessage.ps1"],
+            "command": "pwsh",
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/guard-sendmessage.ps1"],
             "timeout": 10
           }
         ]
