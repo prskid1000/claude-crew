@@ -70,7 +70,9 @@
             "command": "powershell.exe",
             "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\dev-kit\\scripts\\guard.ps1"],
             "timeout": 10
-          },
+          }
+        ]
+      },
       {
         "matcher": "SendMessage",
         "hooks": [
@@ -80,8 +82,6 @@
             "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}\\.claude\\skills\\orchestrate\\scripts\\guard-sendmessage.ps1"],
             "timeout": 10
           }
-        ]
-      }
         ]
       }
     ]
