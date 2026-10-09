@@ -51,7 +51,10 @@
           "branch": "staging",
           "job": "deploy-staging"
         }
-      ]
+      ],
+      "linkFromByTarget": {
+        "<other target branch>": "<a checkout of that branch with its own install (e.g. git worktree add --detach + frozen-lockfile install)>"
+      }
     }
   ],
   "bugfixMandate": [
