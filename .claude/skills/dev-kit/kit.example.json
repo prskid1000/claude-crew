@@ -1,11 +1,11 @@
 {
-  "_readme": "Optional. Copy to kit.local.json (git-ignored) and fill what applies; every key has a default. Read by dev-kit\\scripts\\kitconfig.ps1 (PowerShell scripts), devtools.py and guard.ps1. See docs/configuration.md.",
+  "_readme": "Optional. Copy to kit.local.json (git-ignored) and fill what applies; every key has a default. Read by dev-kit/scripts/kitconfig.ps1 (PowerShell scripts), devtools.py and guard.ps1. Paths: forward slashes work on every OS (Windows: C:/src). See docs/configuration.md.",
   "gitHost": "gitlab.com",
   "githubHost": "github.com",
   "gitlabGroup": "<your-gitlab-group>",
-  "reposRoot": "C:\\src",
+  "reposRoot": "/path/to/src",
   "worktreeRoots": [
-    "C:\\src-wt"
+    "/path/to/src-wt"
   ],
   "trackerRepos": [
     "backend",
@@ -62,7 +62,7 @@
       "aliases": [
         "api"
       ],
-      "checkout": "<workspace>\\repos\\backend",
+      "checkout": "<workspace>/repos/backend",
       "target": "main",
       "deploys": [
         {
@@ -77,7 +77,7 @@
       "aliases": [
         "ui"
       ],
-      "checkout": "<workspace>\\repos\\web",
+      "checkout": "<workspace>/repos/web",
       "target": "main",
       "linkFrom": "<a worktree whose node_modules can be linked (optional)>",
       "deploys": [

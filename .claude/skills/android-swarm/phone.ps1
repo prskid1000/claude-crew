@@ -29,7 +29,8 @@ $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')
 function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally { $mutex.ReleaseMutex() } }
 function Lease($name) { $f = Join-Path $dir "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
 function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
-function ApkStamp { $a = Get-Item "$($c.dir)\apk\app.apk" -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
+. (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
+function ApkStamp { $a = Get-Item (Join-Path $c.dir 'apk/app.apk') -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
 
 switch ($Action) {
   'status' {
@@ -62,7 +63,7 @@ switch ($Action) {
         # (a release or memory). If nothing is leased, nothing will free up: take the lane and let the gate queue the boot.
         $up = @($free | Where-Object { Running $_ })
         $pick = if ($up) { $up[0] } else {
-          $freeGB = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+          $freeGB = Get-FreeGB
           $someLeased = @($lanes | Where-Object { Lease $_.name }).Count
           if ($freeGB - 4.5 -ge $c.keepFreeGB -or -not $someLeased) { $free[0] } else { $script:why = "only $freeGB GB free (a phone needs 4.5 + $($c.keepFreeGB) kept free)"; $null }
         }
@@ -79,13 +80,13 @@ switch ($Action) {
     }
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
     $serial = "emulator-$($got.port)"
-    if (-not (Running $got)) { & "$($c.dir)\swarm-up.ps1" -Lanes $got.name -Mode None | Select-Object -Last 2 | Out-Host }
+    if (-not (Running $got)) { & (Join-Path $c.dir 'swarm-up.ps1') -Lanes $got.name -Mode None | Select-Object -Last 2 | Out-Host }
     if (-not (Running $got)) { Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force }; throw "$($got.name) did not boot (memory turn or emulator problem); lease released" }
     $installed = 'kept'
     if (-not $NoInstall -and $c.app.kind -and (ApkStamp)) {
       $onPhone = ((& $adb -s $serial shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim()
       if ($onPhone -ne (ApkStamp)) {
-        & "$($c.dir)\app-mode.ps1" -Mode Release -Serials $serial | Out-Host
+        & (Join-Path $c.dir 'app-mode.ps1') -Mode Release -Serials $serial | Out-Host
         & $adb -s $serial shell "echo $(ApkStamp) > /sdcard/.qa-apk-stamp"
         $installed = 'updated (the app may need a fresh login)'
       }
@@ -106,7 +107,7 @@ switch ($Action) {
         @(Get-ChildItem $waitDir -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
       }
       if ($Keep -or $waiting) { "$($l.name) released (kept running: $(if ($Keep) { '-Keep' } else { "$waiting agent(s) waiting" }))" }
-      elseif (Running $l) { & "$($c.dir)\swarm-down.ps1" -Lanes $l.name -KeepBrowsers | Out-Null; "$($l.name) released and shut down" }
+      elseif (Running $l) { & (Join-Path $c.dir 'swarm-down.ps1') -Lanes $l.name -KeepBrowsers | Out-Null; "$($l.name) released and shut down" }
       else { "$($l.name) released" }
     }
   }
