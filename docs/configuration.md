@@ -163,7 +163,8 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 `/dev-wave` (`.claude/workflows/dev-wave.js`):
 ```js
 { brief: '<abs path>/wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
-  agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', model: 'sonnet', effort: 'medium' } ],   // model/effort optional (default: strongest)
+  agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', complex: false, model: '', effort: 'medium' } ],   // complex/model/effort optional
+  complex: ['X1'], models: { build: 'sonnet', review: 'sonnet' },   // optional (see Models by stage)
   kitDir: '<workspace>/.claude', runtimeDir: '<workspace>/.claude-runtime' }   // kitDir/runtimeDir optional, recommended
 ```
 
@@ -171,10 +172,27 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 `{ runDir, kitDir?, only?: ['F1'], lanes?, instance?: 'w2' }` - a tiny (haiku) agent reads `<runDir>/run.json`, `only` keeps those item
 codes, `instance` names an extra worker run (item claims keep runs apart). Or the full `run.json` object plus `runDir` (and optional
 `kitDir`). Full shape in the header comment of the workflow file; `finalize.ps1` reads the same `run.json` from the run folder.
-Items may carry `model: 'sonnet'|'opus'|'haiku'` and `effort: 'low'|'medium'|'high'`; without them, narrow web/API retests use sonnet and
-everything else the default (strongest) model.
+Items may carry `model: 'sonnet'|'opus'|'haiku'` and `effort: 'low'|'medium'|'high'` (the test step) and `verifyModel`; without them,
+narrow web/API retests use sonnet and first-time guides the default (strongest) model. run.json (or args) `models` overrides a stage.
 
-`/kit-retro`: `{ applyScripts: false, kitDir, runtimeDir }` — all optional.
+`/kit-retro`: `{ applyScripts: false, kitDir, runtimeDir, models: { analyse, apply } }` — all optional.
+
+### Models by stage
+
+Defaults (a stage set to `''` gets no model option = the session's model, normally the strongest):
+
+| Workflow | Stage (label) | Default | Override |
+|---|---|---|---|
+| dev-wave | build, fix | `sonnet`; **strongest** when the agent is marked complex (`agents[].complex: true` or `args.complex: ['X1']`, from the brief's Complex column) | `agents[].model`/`effort`; `models.build` / `models.complex` |
+| dev-wave | review | `sonnet` | `models.review` |
+| dev-wave | ci (pipeline wait), ship, learn | `haiku` | `models.ci` / `models.ship` / `models.learn` |
+| test-and-close | test | strongest; narrow web/API retests `sonnet` | item `model`/`effort` |
+| test-and-close | verify, audit | `sonnet` | item `verifyModel`; `models.verify` / `models.audit` |
+| test-and-close | load-run, close, hold, release, add-followups, learn | `haiku` (load-run retries on sonnet) | `models.close` / `models.hold` / `models.learn` |
+| kit-retro | analyse, apply | session model | `models.analyse` / `models.apply` |
+
+`bug-brief.ps1` marks a bug agent `complex: true` when the task has more than 2 failed checks or any check that isn't cosmetic.
+Measure the effect with `kit-cost.ps1 -Steps` (label, agent type, model and prompt size of every step).
 
 Workflow scripts can't read the filesystem, so they don't know where the kit is: without `kitDir` they hand agents paths
 relative to the workspace root (`.claude\skills\...`) and tell them so. Passing the absolute `kitDir` is more robust.

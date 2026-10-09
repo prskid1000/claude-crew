@@ -13,10 +13,12 @@ args (all optional): {
   applyScripts: false,                 // true = also apply proposed script/default edits (otherwise listed for approval)
   kitDir: 'C:/work/.claude',         // absolute path of this kit (recommended); default '.claude' relative to the workspace root
   runtimeDir: 'C:/work/.claude-runtime',   // default <kitDir>/../.claude-runtime
+  models: { analyse: 'sonnet', apply: '' },  // optional stage models (default: the session's model for both)
 }
 */
 const A = args || {}
 const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
+const pick = (stage) => ((A.models || {})[stage] ? { model: A.models[stage] } : {})
 const RT = (A.runtimeDir || `${C}/../.claude-runtime`).replace(/[\\/]+$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -78,7 +80,7 @@ Find RECURRING patterns (≥ 2 occurrences) and clear wins. For each, propose th
   (project-specific lessons go under that project's heading; audit false-positive lessons go to the project profile in tech-audit);
 - promote-to-rule: a lesson seen ≥ 3× and still true → a short rule in the relevant SKILL.md or rules/*.md (and remove it from LESSONS.md);
 - script-change / default-change / template-change: describe precisely what to change and why (file, function, new value).
-Every proposal needs evidence with counts. Do not edit anything. Prefer fewer, sharper proposals.`, { label: `analyse:${l.key}`, phase: 'Analyse', schema: PROPOSALS })))
+Every proposal needs evidence with counts. Do not edit anything. Prefer fewer, sharper proposals.`, { label: `analyse:${l.key}`, phase: 'Analyse', schema: PROPOSALS, ...pick('analyse') })))
 
 const all = found.filter(Boolean).flatMap((f) => f.proposals)
 log(`analysts proposed ${all.length} change(s)`)
@@ -100,7 +102,7 @@ Steps:
 4. Write the report to ${RT}/learning/retro-<yyyy-MM-dd-HHmm>.md: what changed and why (with evidence), what awaits approval, what was rejected.
 5. Run ${C}/skills/orchestrate/scripts/cleanup.ps1 -Quiet and include the freed space in the report.
 6. Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${RT}/learning/last-retro.txt so the next retro and the session nudge count only new signals.
-Return the lists and the report path.`, { label: 'apply', phase: 'Apply', schema: RESULT })
+Return the lists and the report path.`, { label: 'apply', phase: 'Apply', schema: RESULT, ...pick('apply') })
 
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)
 return res

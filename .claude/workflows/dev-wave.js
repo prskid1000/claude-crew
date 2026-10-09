@@ -15,7 +15,12 @@ args = {
   brief: 'C:/.../scratchpad/wave-brief.md',     // filled from .claude/skills/orchestrate/templates/WAVE_BRIEF.md or BUGFIX_BRIEF.md (required)
   mode: 'feature' | 'bugfix' | 'resume',           // default 'feature'
   review: true,                                    // independent MR review + one fix round (default true)
-  agents: [ { id: 'X1', items: 'A3, A4', area: 'planner timeline', note: 'optional extra instructions' }, ... ],
+  agents: [ { id: 'X1', items: 'A3, A4', area: 'planner timeline', note: 'optional extra instructions',
+              complex: true,               // optional: build/fix on the strongest model (default: sonnet); or list ids in args.complex
+              model: 'opus', effort: 'high' } ],   // optional: explicit build/fix model/effort (wins over complex)
+  complex: ['X1'],                                 // optional: agent ids whose items the brief marks complex
+  models: { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '' },  // optional stage overrides
+                                                   // ('' = no model option = the session's default, i.e. the strongest)
   holdMerge: ['web'],                              // optional: repos whose MRs are opened + reviewed but NEVER merged by the wave
                                                    // (their target branch deploys on merge and the user wants to approve it); true = all repos
   kitDir: 'C:/work/.claude',                     // optional: absolute path of this kit (recommended). Default '.claude' = relative
@@ -91,9 +96,13 @@ cleaning folders (the kit runtime folder holds live QA runs and tracking; a wave
 deploys. Mention it in your report and let the lead do it.
 `
 
-// Model per agent: agents[].model / .effort (bug-brief.ps1 suggests one: a single cosmetic check -> sonnet). Default = the strongest model.
-// Haiku is used only for mechanical steps (ship); code changes need a model that won't cost a review round.
-const modelOf = (a) => ({ ...(a.model ? { model: a.model } : {}), ...(a.effort ? { effort: a.effort } : {}) })
+// Model by stage (args.models overrides any stage): build/fix = sonnet unless the item is marked complex (agents[].complex or
+// args.complex: the strongest model, i.e. no model option); review = sonnet; mechanical steps (ci, ship, learn) = haiku.
+// agents[].model / .effort win for that agent's build and fix (bug-brief.ps1 marks complex bugs).
+const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', ...(A.models || {}) }
+const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+const isComplex = (a) => a.complex === true || [].concat(A.complex || []).includes(a.id)
+const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ? 'complex' : 'build')), ...(a.effort ? { effort: a.effort } : {}) })
 
 function buildPrompt(a) {
   return `${WHY}
@@ -150,7 +159,7 @@ A consumer (web/app) MR that depends on an API MR in this list: don't merge it; 
 MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged).${HOLD_NOTE}`
 }
 
-log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'off'}, brief ${A.brief}`)
+log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'off'}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
 
 const results = await pipeline(
   A.agents,
@@ -158,7 +167,7 @@ const results = await pipeline(
   async (r, a) => {
     if (!r) return { id: a.id, error: 'agent returned nothing' }
     if (!REVIEW || !r.mrs.length) return { id: a.id, report: r, findings: [] }
-    const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'mr-reviewer' })
+    const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'mr-reviewer', ...pick('review') })
     return { id: a.id, report: r, findings: (rv && rv.findings) || [] }
   },
   async (x, a) => {
@@ -166,7 +175,7 @@ const results = await pipeline(
     // should-fix findings get the fix round too (no deferrals): a should-fix once reopened a permission gap on merge
     const blocking = x.findings.filter((f) => f.severity !== 'nit')
     if (!blocking.length && REVIEW && x.report.mrs.some((m) => !m.merged)) {
-      const ci = await agent(ciPrompt(x.report), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, model: 'haiku', effort: 'low' })
+      const ci = await agent(ciPrompt(x.report), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, ...pick('ci'), effort: 'low' })
       for (const m of ((ci && ci.mrs) || []).filter((m) => m.status === 'failed')) {
         blocking.push({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking', problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
           fix: 'Reproduce the failing CI job locally through the gate (check.ps1 / lbcheck.py for changelog checks), fix the cause, push, and make sure the pipeline goes green.' })
@@ -175,7 +184,7 @@ const results = await pipeline(
     }
     if (!blocking.length) {
       if (!REVIEW || !x.report.mrs.some((m) => !m.merged)) return x
-      const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, model: 'haiku', effort: 'low' })
+      const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
       // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
       if (!r3) return x
       const merged = new Set(r3.mrs.filter((m) => m.merged).map((m) => m.url))
@@ -223,6 +232,6 @@ ${JSON.stringify(outcome).slice(0, 60000)}
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
 3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
-Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
+Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return outcome
