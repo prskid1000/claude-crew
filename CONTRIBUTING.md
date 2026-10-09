@@ -6,12 +6,12 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    specific goes in a git-ignored `*.local.json`, in `CLAUDE.md`, or in your own skills. Examples use `example.com`,
    `com.example.app`, `qa-user-1`, `<your-gitlab-group>`.
 2. **No hard-coded paths.** Scripts derive the kit from their own location (`$PSScriptRoot` / `kitconfig.ps1`), the
-   workspace is the parent of `.claude`, runtime output goes to `$env:CLAUDE_RUNTIME` or `<workspace>\.claude-runtime`.
+   workspace is the parent of `.claude`, runtime output goes to `$env:CLAUDE_RUNTIME` or `<workspace>/.claude-runtime`. Build paths with `Join-Path` (never `"$dirile"` for a native command or `& "$Kx.ps1"`: on Linux/macOS that is parsed as modulemmand) and use `sysinfo.ps1` for RAM, processes, links and temp.
 3. **Keep the docs true.** When a script's behaviour changes, update its `SKILL.md`, the orchestrate playbook, the agent
    definitions and `docs/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`.
 4. **Check before you open a PR:**
    ```powershell
-   # every PowerShell script parses (and the hook scripts also under Windows PowerShell 5.1)
+   # every PowerShell script parses (pwsh 7 on Windows, Linux or macOS)
    Get-ChildItem .claude -Recurse -Filter *.ps1 | ForEach-Object { $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e); if ($e) { "$($_.Name): $($e[0].Message)" } }
    node --check .claude/skills/qa-kit/scripts/web/browser.mjs
    python -m py_compile .claude/skills/dev-kit/scripts/devtools.py   # and the other .py files

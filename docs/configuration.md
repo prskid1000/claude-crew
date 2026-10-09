@@ -185,5 +185,6 @@ relative to the workspace root (`.claude\skills\...`) and tell them so. Passing 
 | `SessionStart` | `orchestrate/scripts/retro-nudge.ps1` | one-line nudge to run `/kit-retro` once ≥ 15 signals piled up |
 | `SessionStart` (async) | `orchestrate/scripts/cleanup.ps1 -IfDue -Quiet` | daily self-cleaning |
 
-They run with Windows PowerShell 5.1 (`powershell.exe`, always present on Windows) in exec form, with the path built from
-`${CLAUDE_PROJECT_DIR}` — so the kit must sit in the `.claude` folder of the project you open in Claude Code.
+They run with PowerShell 7 (`pwsh`, on `PATH` on Windows, Linux and macOS) in exec form, with the path built from
+`${CLAUDE_PROJECT_DIR}/.claude/...` (forward slashes work on every OS) — so the kit must sit in the `.claude` folder of
+the project you open in Claude Code. The permission allow-list carries both `\` and `/` forms of the kit script paths.
