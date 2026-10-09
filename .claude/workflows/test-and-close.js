@@ -12,21 +12,21 @@ export const meta = {
 
 /*
 args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker run for queued items; item claims keep runs apart)  (short form: run.json is read from runDir - preferred, keeps launches/notifications small)
-or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 reads it), plus runDir:
+or the full run.json object (write it to <runDir>/run.json too — finalize.ps1 reads it), plus runDir:
 {
-  runDir: 'C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-epic-x',
-  kitDir: 'C:\\work\\.claude',               // optional: absolute path of this kit (recommended); default '.claude' = relative to the workspace root
+  runDir: 'C:/work/.claude-runtime/qa-runs/2026-10-01-epic-x',
+  kitDir: 'C:/work/.claude',               // optional: absolute path of this kit (recommended); default '.claude' = relative to the workspace root
   title: 'Product X epic',                   // used in doc names and bug titles
-  target: 'my-staging',                      // name in skills\qa-kit\targets.local.json
+  target: 'my-staging',                      // name in skills/qa-kit/targets.local.json
   tester: 'Full Name',
   mandate: ['<the user request, verbatim>', '...'],   // why the agents are doing this; stops them declining
   context: 'deployed builds, tenants/accounts to use, existing test data, known changed screens ...',
-  contextFiles: ['C:\\...\\product-rules.md'],        // optional: files every tester reads first
+  contextFiles: ['C:/.../product-rules.md'],        // optional: files every tester reads first
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
   tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // backend = kit.local.json tracker.type (tracker.ps1)
   webParallel: 5, apiParallel: 5,
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
-  items: [ { code: 'F2', title: '...', guideFile: 'C:\\...\\F2.txt', lane: 'web'|'api'|'app',
+  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
              model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high' } ],   // optional; default: retests on web/api -> sonnet
@@ -35,17 +35,17 @@ or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 
 }
 */
 // Short form (saves tokens: big args are echoed back in every launch/notification): args = { runDir, only?: ['GT5','APP2B'], lanes? }
-// -> a tiny agent reads <runDir>\run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
+// -> a tiny agent reads <runDir>/run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
 let R = args || {}
 if (R.runDir && !Array.isArray(R.items)) {
   // A small model sometimes returns run.json truncated or re-shaped (items missing) - validate, then retry once on a stronger model.
   const loadRun = async (model, label) => {
-    const got = await agent(`Read the file ${R.runDir}\\run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
+    const got = await agent(`Read the file ${R.runDir}/run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
       { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model, effort: 'low' })
     try { const f = JSON.parse((got && got.json) || ''); return Array.isArray(f.items) && f.items.length ? f : null } catch (e) { return null }
   }
   const file = (await loadRun('haiku', 'load-run')) || (await loadRun('sonnet', 'load-run-retry'))
-  if (!file) throw new Error(`could not read a valid ${R.runDir}\\run.json (items[] missing after retry) - pass the full run.json object as args instead`)
+  if (!file) throw new Error(`could not read a valid ${R.runDir}/run.json (items[] missing after retry) - pass the full run.json object as args instead`)
   R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
@@ -53,17 +53,18 @@ if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.in
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
-const PATHS = ABS ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.'
-const QA = `${KIT}\\skills\\qa-kit`                 // SKILL.md = QA rules, targets.local.json = environments
-const Q = `${QA}\\scripts`
-const SWARM = `${KIT}\\skills\\android-swarm`
-const ORCH = `${KIT}\\skills\\orchestrate\\scripts`
-const RT = (R.runtimeDir || `${KIT}\\..\\.claude-runtime`).replace(/[\\/]+$/, '')
+const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.') +
+  '\nPowerShell commands below (& <script>.ps1 ...) need pwsh 7: use the PowerShell tool if you have one, otherwise run them from Bash as pwsh -NoProfile -Command "<command>" (Linux/macOS). Forward-slash paths work on every OS.'
+const QA = `${KIT}/skills/qa-kit`                 // SKILL.md = QA rules, targets.local.json = environments
+const Q = `${QA}/scripts`
+const SWARM = `${KIT}/skills/android-swarm`
+const ORCH = `${KIT}/skills/orchestrate/scripts`
+const RT = (R.runtimeDir || `${KIT}/../.claude-runtime`).replace(/[\\/]+$/, '')
 // ES module imports need a file:// URL of the absolute path
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/scripts/web/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
-  : `<file:/// URL of the absolute path of ${KIT}\\skills\\qa-kit\\scripts\\web\\browser.mjs>`
-if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: either args.items[] or a <runDir>\\run.json (see the header of this file)')
-const outDir = (it) => `${R.runDir}\\${it.code}`
+  : `<file:/// URL of the absolute path of ${KIT}/skills/qa-kit/scripts/web/browser.mjs>`
+if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: either args.items[] or a <runDir>/run.json (see the header of this file)')
+const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
 const OWNER = R.instance || 'w1'   // worker instance: extra test-and-close runs for queued items use w2, w3 ... (item claims keep them apart)
 // Memory seat + item claim (qa-seat.ps1): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
@@ -71,10 +72,10 @@ function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
   return `
 SEAT (memory + item claim) - your FIRST command, before anything else:
-  & ${Q}\\qa-seat.ps1 acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
+  & ${Q}/qa-seat.ps1 acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
   exit 0 = go. exit 2 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
   exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
-  Your LAST command before returning (also on errors): & ${Q}\\qa-seat.ps1 release -Agent "${label}"`
+  Your LAST command before returning (also on errors): & ${Q}/qa-seat.ps1 release -Agent "${label}"`
 }
 // Model per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
 // first-time guides and app lanes keep the default (strongest) model.
@@ -132,39 +133,39 @@ WHY YOU ARE DOING THIS
 ${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${R.mandate.map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
 Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
 
-AGENT BOARD — join first: & ${ORCH}\\board.ps1 join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
+AGENT BOARD — join first: & ${ORCH}/board.ps1 join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
 
-RULES — read ${QA}\\SKILL.md first (verdicts, evidence, shared-environment etiquette). The key points:
+RULES — read ${QA}/SKILL.md first (verdicts, evidence, shared-environment etiquette). The key points:
 - PASS only when you saw the expected behaviour. Any defect is FAIL — inside or outside the guide's steps (off-script defects
   become extra checks X1, X2 ...). PASS_WITH_NOTE only for out-of-date guide text whose intent still holds, or purely cosmetic
   differences. findings are context only, never defects. NOT_TESTED only when truly impossible here (say why and what you tried).
 - If a check fails, first confirm its change is actually deployed; not deployed = NOT_TESTED "not deployed yet", not FAIL.
-- Evidence per ${QA}\\reference\\evidence-standard.md: names <CODE>-<checkId>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg); UI -> JPEG in <outDir>\\shots (mark() the element, look at it with Read);
-  backend -> api.ps1 -Save <CODE>-<checkId>_<desc> -OutDir <outDir>\\evidence. List only files that exist.
+- Evidence per ${QA}/reference/evidence-standard.md: names <CODE>-<checkId>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg); UI -> JPEG in <outDir>/shots (mark() the element, look at it with Read);
+  backend -> api.ps1 -Save <CODE>-<checkId>_<desc> -OutDir <outDir>/evidence. List only files that exist.
 - Shared environment: create your own data prefixed "QA-<CODE>", delete only what you created, restore any setting you change
   (list it in setup_changes). Never deactivate or re-password test logins.
 - Time box ~10 min per check; keep each script run under ~2 min and print progress.
 
 ENVIRONMENT AND CONTEXT
-- Target "${R.target || '(default)'}" in ${QA}\\targets.local.json (URLs, users; passwords only there).
+- Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there).
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}
-- LEAD NOTES: ${R.runDir}\\lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
+- LEAD NOTES: ${R.runDir}/lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
   you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
   continue with other checks and look there again before marking anything NOT_TESTED for that reason.
 
 TOOLS
-- API as any configured user: PowerShell & '${Q}\\api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method GET|POST|PUT|PATCH|DELETE -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
+- API as any configured user: PowerShell & '${Q}/api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method GET|POST|PUT|PATCH|DELETE -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
   (prints "HTTP <status>" then the body).
 - Code: read the CURRENT code on the deployed branch (the guide may describe screens later work changed). If a literal step no longer
   applies, test the same intent on the current screen and record PASS_WITH_NOTE explaining it.
 - Run scripts from PowerShell (node, python, glab/gh and your tracker/report CLIs are on its PATH). The tracker (any backend) is
-  & '${KIT}\\skills\\dev-kit\\scripts\\tracker.ps1' view|comments <id> — never call a tracker CLI directly.`
+  & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view|comments <id> — never call a tracker CLI directly.`
 
 const WEB = (ports) => `
 BROWSER (web)
 - Do NOT use the chrome-devtools MCP tools; do NOT touch Android emulators / adb.
-- Drive your own headless Chrome via ${Q}\\web\\browser.mjs — read its header first. Put .mjs scripts in <outDir>\\scripts, run: node <file>.mjs
+- Drive your own headless Chrome via ${Q}/web/browser.mjs — read its header first. Put .mjs scripts in <outDir>/scripts, run: node <file>.mjs
   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, settle, token, killSession } from '${BROWSER}'
   const s = await session({ port, target: '${R.target || ''}', tenant, as })  -> {page, net, done}. One port per tenant+user; end scripts with await s.done().
   s.net.failed = 4xx/5xx API calls + JS errors (failure evidence).
@@ -180,15 +181,15 @@ function appBlock(L) {
   return `
 ANDROID APP — YOUR PHONE: lane ${L.n} "${L.name}", adb serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
 Other agents test on other phones at the same time. You own this phone through a lease — nobody else boots or shuts it for you:
-- FIRST get it:  & ${SWARM}\\phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}
+- FIRST get it:  & ${SWARM}/phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}
   It returns at once if the phone is yours already; otherwise it waits its fair turn and boots the phone when memory allows (about a minute),
   installs the current test APK if the phone has an older one ("installed: updated" = log in again), and prints {serial,...}.
 - START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never touch other serials, never run swarm-up/down/app-mode,
   never kill emulators or processes you didn't start, never adb kill-server.
-- UI: ${Q}\\android\\ui.ps1 (dump | tap <text> | tapid <id> | tapxy x y | type <text> | key <code> | swipe | shot <name> <dir> | wait <text> | log <tag>).
-  shot straight into <outDir>\\shots with the <CODE>-<checkId>_ prefix. Relaunch / clear the app: & ${SWARM}\\app-launch.ps1 -Serial ${L.serial} [-Clear]
+- UI: ${Q}/android/ui.ps1 (dump | tap <text> | tapid <id> | tapxy x y | type <text> | key <code> | swipe | shot <name> <dir> | wait <text> | log <tag>).
+  shot straight into <outDir>/shots with the <CODE>-<checkId>_ prefix. Relaunch / clear the app: & ${SWARM}/app-launch.ps1 -Serial ${L.serial} [-Clear]
 - Phone etiquette: keep OUR APP open only while you test on the phone. Before long non-phone work (> 10 min: API calls, web UI in the
-  browser, reading code, preparing data) hand the phone back:  & ${SWARM}\\phone.ps1 release -Agent ${LEASE(L)}
+  browser, reading code, preparing data) hand the phone back:  & ${SWARM}/phone.ps1 release -Agent ${LEASE(L)}
   (closes the app; the phone shuts down to free memory unless another agent is waiting for it). When you need it again, acquire it again
   (same command as above; the app stays installed and logged in). The workflow releases it after the lane's last item.
 - Prefix your data "QA-L${L.n}-<CODE>". Don't change environment-wide settings from an app lane (other phones depend on them):
@@ -209,7 +210,7 @@ function testPrompt(it, ports, L) {
 
 GUIDE: ${it.title}
 Guide text (read it fully first): ${it.guideFile}
-Package code: ${it.code}. Output folder: ${outDir(it)} (create shots\\, evidence\\, scripts\\). Reuse valid evidence already there.
+Package code: ${it.code}. Output folder: ${outDir(it)} (create shots/, evidence/, scripts/). Reuse valid evidence already there.
 Tasks covered (tag each check with its task id):
 ${(it.subtasks || []).map((s) => `  - ${s.id}: ${s.name}${s.mrs ? `  (MRs: ${s.mrs})` : ''}`).join('\n')}
 ${it.retest ? 'This is a RETEST of a fix: re-run the failed checks named in the task plus a short regression around them.' : ''}
@@ -234,9 +235,9 @@ function auditPrompt(it, res) {
 - A DEFECT is: 5xx or unexpected 4xx; crash; stuck/blocking flow; data changed wrongly or not saved; wrong records affected; broken
   navigation; a missing screen the feature needs — whether or not it's in the guide's scope.
 - NOT defects: test-data/setup notes, tester mistakes, intended product decisions, platform limits, config missing on the test environment.
-${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (the tracker (tracker.ps1): & '${KIT}\\skills\\dev-kit\\scripts\\tracker.ps1' view ${R.tracker.parent} lists its subtasks).` : ''}
+${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (the tracker (tracker.ps1): & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view ${R.tracker.parent} lists its subtasks).` : ''}
 - Return {id, defect, reason} per note check; defects that sit only in findings -> newDefects (screen, what_was_done, observed with the exact
-  failing call/message, evidence file names that exist in ${outDir(it)}\\shots or evidence).
+  failing call/message, evidence file names that exist in ${outDir(it)}/shots or evidence).
 - You may read evidence, code, or call the API read-only (GET). Change nothing.
 
 PASS_WITH_NOTE checks:
@@ -265,9 +266,9 @@ Return one verdict per check id.`
 
 function finalPrompt(it, res) {
   return `Publish the test results of package ${it.code}.${PATHS}
-1. Write this JSON exactly as given to ${outDir(it)}\\results.json (Write tool; change nothing):
+1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
-2. Run in PowerShell (timeout 600000): & '${Q}\\finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
+2. Run in PowerShell (timeout 600000): & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
    It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on
    and closes the tasks through the tracker (tracker.ps1), and opens a bug task for confirmed failures.
 3. If it errors, fix only data problems in results.json (e.g. drop a missing evidence file name) and run it once more. Don't edit finalize.ps1.
@@ -330,9 +331,9 @@ async function runItem(it, idx, L) {
     // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
     // finalize.ps1 -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.
     await agent(`Write two files with the Write tool, content exactly as given, change nothing, then return ok=true.
-1. ${outDir(it)}\\results.json:
+1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
-2. ${outDir(it)}\\held.json:
+2. ${outDir(it)}/held.json:
 ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
@@ -356,7 +357,7 @@ async function pool(list, size, offset, laneOf) {
     // App lane has nothing left to test: give its phone lease back now (the phone shuts down unless another agent waits for it)
     const L = laneOf ? laneOf(w) : null
     if (L && L.name) {
-      await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}\\phone.ps1 release -Agent ${LEASE(L)}`,
+      await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}/phone.ps1 release -Agent ${LEASE(L)}`,
         { label: `release:${L.name}`, phase: 'Close', model: 'haiku', effort: 'low' }).catch(() => null)
       log(`lane ${L.name} (${L.serial}) released`)
     }
@@ -384,12 +385,12 @@ const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length
   const it = R.items.find((x) => x.code === r.code)
   if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
   return { ...it, code: `${it.code}A`, title: `${it.title} — app checks ${r.pending.join(', ')}`, lane: 'app', only: r.pending,
-    taskFiles: [...(it.taskFiles || []), `${outDir(it)}\\results.json`],
-    extra: `${it.extra || ''} The web/API pass (${it.code}) left ${r.pending.join(', ')} PENDING for a device: test exactly those on your phone. Earlier results: ${outDir(it)}\\results.json.` }
+    taskFiles: [...(it.taskFiles || []), `${outDir(it)}/results.json`],
+    extra: `${it.extra || ''} The web/API pass (${it.code}) left ${r.pending.join(', ')} PENDING for a device: test exactly those on your phone. Earlier results: ${outDir(it)}/results.json.` }
 }).filter(Boolean) : []
 if (followUps.length) {
-  await agent(`Append these items to the "items" array of ${R.runDir}\\run.json without changing anything else, in PowerShell:
-$f = '${R.runDir}\\run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
+  await agent(`Append these items to the "items" array of ${R.runDir}/run.json without changing anything else, in PowerShell:
+$f = '${R.runDir}/run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
 foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j.items += $n } }
 [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
 Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
@@ -406,12 +407,12 @@ ${JSON.stringify(all).slice(0, 60000)}
 
 1. For every notable event (failures, retries, NOT_TESTED causes, audit reclassifications, verify "not reproduced", review findings,
    deferrals, anything that cost time or worked unusually well) append ONE signal line with
-   & ${ORCH}\\learn.ps1 -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref <id> -Source workflow
+   & ${ORCH}/learn.ps1 -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref <id> -Source workflow
    (skill: qa-kit or another kit skill / project name; kinds: friction, failure, defect-missed, false-positive, stale-env, flaky, idea, win).
-2. Read ${QA}\\LESSONS.md and the recent signals (learn.ps1 -Show -Last 200). If a pattern now
+2. Read ${QA}/LESSONS.md and the recent signals (learn.ps1 -Show -Last 200). If a pattern now
    occurred ≥ 2 times and isn't a lesson yet, add it (newest first, one actionable line, "(n×)" count, project heading if project-specific);
    if an existing lesson recurred, bump its count. Keep the file under ~40 lines. Don't touch SKILL.md (that's /kit-retro's job).
-3. Clean up what this run produced: & ${ORCH}\\cleanup.ps1 -Quiet  (kills leftover headless browsers > 3 h, expired logins/tokens,
+3. Clean up what this run produced: & ${ORCH}/cleanup.ps1 -Quiet  (kills leftover headless browsers > 3 h, expired logins/tokens,
    stale temp, finished worktrees; only kit-created things). Then: Get-Content (Join-Path ${RT} cleanup.log) -Tail 15 and mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
