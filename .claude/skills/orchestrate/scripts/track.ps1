@@ -54,7 +54,15 @@ function InFlight($ref) {
     foreach ($p in $w.agents.PSObject.Properties) {
       if (@($p.Value.mrs | ForEach-Object { "$($_.url)$_" }) -match $pat) {
         $lbl = @($w.running) | Where-Object { $_ -match "^(build|review|fix|ship|ci):$([regex]::Escape($p.Name))$" } | Select-Object -First 1
-        if ($lbl) { return "$lbl ($($w.run))" }
+        if ($lbl) {
+          # the saved report goes stale once its workflow ends (supervise only refreshes RUNNING workflows): refresh before holding
+          if ($f.LastWriteTime -lt (Get-Date).AddMinutes(-5)) {
+            & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.run *> $null
+            $w2 = Get-Content $f.FullName -Raw | ConvertFrom-Json
+            if (-not (@($w2.running) -contains $lbl)) { continue }
+          }
+          return "$lbl ($($w.run))"
+        }
       }
     }
   }

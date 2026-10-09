@@ -3,6 +3,8 @@ oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) After a dev wave ENDED, track.ps1 kept holding its MRs as 'waits for its review (fix:<agent> still running)': waves\<run>.json is only refreshed by supervise for RUNNING workflows, so a finished wave's file stayed 'running'. InFlight now refreshes a report older than 5 min (wave-report.ps1) before it holds.
+
 - (rule added) An agent Wrote (overwrote) the wave's contracts file to publish its shapes for a sibling agent and silently deleted the coordinator's scope note added a minute earlier. dev-kit SKILL §8 now says: append only, never overwrite the contracts file. Coordinator: re-check your note is still there after agents publish.
 
 - (fixed in kit) The tracker moved a task QA had already Closed back to 'promoted': a fix wave registered its MRs on the parent task, and when they merged track.ps1 set onMerged blindly. It now keeps any status already past promoted (closed/complete/done/in test/for test) and just marks the entry done.
