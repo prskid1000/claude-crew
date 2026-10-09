@@ -108,6 +108,8 @@ Other agents merge all the time; a stale base means avoidable conflicts.
 1. Re-read `<brief>.contracts.md` next to your brief (if it exists): the coordinator appends cross-agent contracts there during
    the wave — field names, ownership, merge order. Follow them. Then `wt.ps1 sync`, then re-run `check.ps1` (and `-Step migrations`).
    If another writer appears in your worktree (changes you didn't make), stop writing and tell the coordinator.
+   Writing to the contracts file yourself (shapes for a sibling agent): **append only** (Edit at the end, or `Add-Content`), never
+   Write/overwrite the whole file: the coordinator and other agents keep notes there and an overwrite silently deletes them.
 2. Push and open one MR/PR per repo: `devtools.py mr`. Title `feat: <summary> - <CODE> (CU-<task>) (<Repo>)`.
    Body: fill `<workspace>\.claude\skills\orchestrate\templates\MR_BODY.md` (devtools warns on missing sections and adds the footer).
    Tracker solution comment: `templates\TASK_SOLUTION.md`.

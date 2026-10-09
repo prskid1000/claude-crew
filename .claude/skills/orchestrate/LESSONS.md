@@ -3,6 +3,8 @@ oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.
 
+- (rule added) An agent Wrote (overwrote) the wave's contracts file to publish its shapes for a sibling agent and silently deleted the coordinator's scope note added a minute earlier. dev-kit SKILL §8 now says: append only, never overwrite the contracts file. Coordinator: re-check your note is still there after agents publish.
+
 - (fixed in kit) The tracker moved a task QA had already Closed back to 'promoted': a fix wave registered its MRs on the parent task, and when they merged track.ps1 set onMerged blindly. It now keeps any status already past promoted (closed/complete/done/in test/for test) and just marks the entry done.
 
 - (fixed in kit) Two false ACT flags after a skipClose QA run: (1) a bug task whose fix wave started from the QA evidence BEFORE finalize raised the task showed as 'not being fixed', and tracking it with an already-merged MR would have promoted it early -> new `track.ps1 add -Task <bug> -Wave <run>` holds it until that wave ends; (2) 'no solution/testing comment' ignored a lead comment worded 'Live check ...' and its journal fallback only matched agents whose done list held the task id (agents list item ids) -> it now accepts 'live check' and matches agents by their MR urls.
