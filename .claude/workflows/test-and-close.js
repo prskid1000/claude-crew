@@ -25,6 +25,8 @@ or the full run.json object (write it to <runDir>/run.json too — finalize.ps1 
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
   tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // backend = kit.local.json tracker.type (tracker.ps1)
   webParallel: 5, apiParallel: 5,
+  verify: true,                              // false = no independent re-test of FAILs: they go straight to bug tasks (args or run.json)
+  learn: true,                               // 'auto' = learn step only when the run had failures / NOT_TESTED / retries / errors
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
   items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
@@ -68,7 +70,9 @@ const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/scripts/web/browser.mjs
 if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: either args.items[] or a <runDir>/run.json (see the header of this file)')
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
-const OWNER = R.instance || 'w1'   // worker instance: extra test-and-close runs for queued items use w2, w3 ... (item claims keep them apart)
+const OWNER = R.instance || 'w1'
+const VERIFY = R.verify !== false
+const LEARN = R.learn === undefined ? true : R.learn   // worker instance: extra test-and-close runs for queued items use w2, w3 ... (item claims keep them apart)
 // Memory seat + item claim (qa-seat.ps1): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
@@ -270,6 +274,7 @@ async function runItem(it, idx, L) {
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
+  let retried = false
   let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
   if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
   if (!res || ntShare(res) > 0.25) {
@@ -277,6 +282,7 @@ async function runItem(it, idx, L) {
     const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
     const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
     if (again && ntShare(again) < ntShare(res)) res = again
+    retried = true
   }
   if (!res) return { code: it.code, error: 'test agent returned nothing' }
   if (ntShare(res) > 0.5) {
@@ -300,7 +306,8 @@ async function runItem(it, idx, L) {
   }
 
   const fails = res.checks.filter((c) => c.result === 'FAIL')
-  if (fails.length) {
+  if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
+  if (fails.length && VERIFY) {
     const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier', ...(it.verifyModel ? { model: it.verifyModel } : pick('verify')), ...(it.effort ? { effort: it.effort } : {}) })
     const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
     for (const c of fails) {
@@ -325,11 +332,12 @@ ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', 
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
-    return { code: it.code, summary: line, result: res }
+    return { code: it.code, summary: line, result: res, eventful: true }
   }
   const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))
-  return { code: it.code, summary: line, finalize: fin, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
+  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduced/.test(c.observed || '')) || !(fin && fin.ok)
+  return { code: it.code, summary: line, finalize: fin, eventful, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 
 // Simple worker pools: web and API pools run in parallel; app guides run one per phone.
@@ -357,6 +365,7 @@ const web = R.items.filter((it) => (it.lane || 'web') === 'web')
 const api = R.items.filter((it) => it.lane === 'api')
 const app = R.items.filter((it) => it.lane === 'app')
 if (app.length && !LANES.length) throw new Error('app items need args.lanes (one per phone lane + its login); phones need not be running: agents lease and boot them (phone.ps1)')
+log(`verify ${VERIFY ? 'on' : 'off'}, learn ${LEARN}`)
 log(`run ${R.runDir}: web ${web.length} (x${R.webParallel || 5}), api ${api.length} (x${R.apiParallel || 5}), app ${app.length} (${LANES.length} phones)`)
 
 const parts = await Promise.all([
@@ -386,8 +395,16 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
 }
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
-// LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit)
+// LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
+// learn: 'auto' runs it only when something happened worth learning from; a clean run just gets the cleanup.
 phase('Learn')
+const eventful = all.some((r) => r.error || r.eventful)
+if (LEARN === false || (LEARN === 'auto' && !eventful)) {
+  await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
+& ${ORCH}/cleanup.ps1 -Quiet`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
+  log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean run'}); cleanup ran`)
+  return all
+}
 const learned = await agent(`You maintain the kit's memory. This QA run just finished.${PATHS}
 Outcome (JSON):
 ${JSON.stringify(all).slice(0, 60000)}

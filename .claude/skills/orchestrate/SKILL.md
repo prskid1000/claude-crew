@@ -14,6 +14,8 @@ Always pass `kitDir` (absolute) and `mandate` (the owner's own words that asked 
 latest chat message). /test-and-close takes the short form `{ runDir, kitDir }` (run.json is read from the run folder).
 Models: builds run on sonnet unless the brief marks the agent complex (`agents[].complex: true` → strongest); review/verify/audit sonnet;
 mechanical steps haiku. Override per agent (`model`) or per stage (`models: {...}`) — docs/configuration.md.
+Cheaper runs: dev-wave `review: 'auto'` (small, non-sensitive diffs skip review), `learn: 'auto'` (learn only after trouble);
+test-and-close `verify: false` (FAILs go straight to bug tasks, no re-test).
 
 | # | Step | Dev side | QA side |
 |---|---|---|---|

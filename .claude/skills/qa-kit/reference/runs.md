@@ -22,7 +22,8 @@ Every tester/verifier first runs `scripts/qa-seat.ps1 acquire` (the workflow tel
    Guides can be Markdown/text files (`guideFile`) or, with `gdocs`, Google Docs exported to text:
    `cd <run>; gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o <code>.txt` (`gws -o` only writes inside the current directory).
 2. **Workflow**: `/test-and-close` (or the Workflow tool with `scriptPath = <workspace>/.claude/workflows/test-and-close.js`), `args` = `{ runDir, kitDir }` (short form: a tiny agent reads `<runDir>/run.json`; add `only: [codes]` to run a subset) or the full run.json object + `runDir`.
-   Per item: test → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → close (finalize).
+   Per item: test → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL (skipped with `verify: false` in args
+   or run.json: FAILs then go straight to bug tasks) → close (finalize). `learn: 'auto'` runs the learn step only after trouble.
    Results with > 50% NOT_TESTED are never published.
 3. **Safety net** (background): `autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run>`. It publishes only packages whose
    close step returned `ok=false`, so nothing is published twice.

@@ -14,7 +14,11 @@ export const meta = {
 args = {
   brief: 'C:/.../scratchpad/wave-brief.md',     // filled from .claude/skills/orchestrate/templates/WAVE_BRIEF.md or BUGFIX_BRIEF.md (required)
   mode: 'feature' | 'bugfix' | 'resume',           // default 'feature'
-  review: true,                                    // independent MR review + one fix round (default true)
+  review: true,                                    // independent MR review + one fix round (default true); false = none;
+                                                   // 'auto' = skip it for an agent whose MRs change < 40 lines in total and touch no
+                                                   // migration / security-sensitive file (the build agent reports changedLines + changedFiles)
+  learn: true,                                     // learn step (signals + lessons) at the end (default true); 'auto' = only when the
+                                                   // wave had errors, deferrals, review findings or fix rounds (else just a cheap cleanup)
   agents: [ { id: 'X1', items: 'A3, A4', area: 'planner timeline', note: 'optional extra instructions',
               complex: true,               // optional: build/fix on the strongest model (default: sonnet); or list ids in args.complex
               model: 'opus', effort: 'high' } ],   // optional: explicit build/fix model/effort (wins over complex)
@@ -42,6 +46,12 @@ if (!A.brief || !Array.isArray(A.agents) || !A.agents.length) throw new Error('a
 const MODE = A.mode || 'feature'
 const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
 const REVIEW = A.review !== false
+const REVIEW_AUTO = A.review === 'auto'
+const LEARN = A.learn === undefined ? true : A.learn
+// review: 'auto' skips the review only for small, low-risk changes; a missing diff report always gets reviewed
+const SENSITIVE = /(^|[\\/])(db|migrations?|changelog|liquibase|flyway|alembic)([\\/.]|$)|\.sql$|auth|security|permission|role|acl|passw|secret|token|crypto|oauth|login|session|policy|csrf|cors/i
+const smallChange = (r) => Number.isFinite(r.changedLines) && r.changedLines < 40 && Array.isArray(r.changedFiles) && r.changedFiles.length > 0 &&
+  !r.changedFiles.some((p) => SENSITIVE.test(p))
 // Merges into a branch that deploys on merge need the user's yes: held repos keep their MRs open (reviewed, green) for the coordinator.
 const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.holdMerge : [])
 const HOLD_NOTE = HOLD.length
@@ -59,6 +69,8 @@ const REPORT = {
     seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
     foreignHooks: { type: 'array', items: { type: 'string' }, description: 'one-line hooks left in another agent area' },
     summary: { type: 'string', description: '<=200 words' },
+    changedLines: { type: 'number', description: 'added + removed lines over all your MRs (git diff --numstat origin/<target>...HEAD)' },
+    changedFiles: { type: 'array', items: { type: 'string' }, description: 'repo-relative paths changed by your MRs' },
   },
   required: ['mrs', 'worktrees', 'done', 'deferred', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary'],
 }
@@ -114,7 +126,8 @@ Worktree name prefix: ${a.id.toLowerCase()}; your migration range is in the brie
 ${a.note || ''}
 ${REVIEW
     ? `Do the whole job: implement, gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges (no devtools.py
-merge): a review runs first and the workflow merges after it. Report merged=false for every MR.`
+merge): a review runs first and the workflow merges after it. Report merged=false for every MR.${REVIEW_AUTO ? `
+Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
 Return the report.`
 }
@@ -159,7 +172,7 @@ A consumer (web/app) MR that depends on an API MR in this list: don't merge it; 
 MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged).${HOLD_NOTE}`
 }
 
-log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'off'}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
+log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, learn ${LEARN}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
 
 const results = await pipeline(
   A.agents,
@@ -167,6 +180,7 @@ const results = await pipeline(
   async (r, a) => {
     if (!r) return { id: a.id, error: 'agent returned nothing' }
     if (!REVIEW || !r.mrs.length) return { id: a.id, report: r, findings: [] }
+    if (REVIEW_AUTO && smallChange(r)) { log(`${a.id}: review skipped (auto: ${r.changedLines} changed lines, nothing sensitive)`); return { id: a.id, report: r, findings: [], reviewSkipped: true } }
     const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'mr-reviewer', ...pick('review') })
     return { id: a.id, report: r, findings: (rv && rv.findings) || [] }
   },
@@ -219,8 +233,16 @@ const outcome = {
   openFindings: out.flatMap((x) => (x.fixed ? [] : (x.findings || []).filter((f) => f.severity !== 'nit'))),
 }
 
-// LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit)
+// LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
+// learn: 'auto' runs it only when something happened worth learning from; a clean wave just gets the cleanup.
 phase('Learn')
+const eventful = out.some((x) => x.error || x.fixed !== undefined || (x.findings || []).length || (x.report && x.report.deferred.length)) || outcome.openFindings.length > 0
+if (LEARN === false || (LEARN === 'auto' && !eventful)) {
+  await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
+& ${ORCH}/cleanup.ps1 -Quiet`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
+  log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean wave'}); cleanup ran`)
+  return outcome
+}
 const learned = await agent(`You maintain the kit's memory. This dev wave just finished.${PATHS}
 Outcome (JSON):
 ${JSON.stringify(outcome).slice(0, 60000)}
