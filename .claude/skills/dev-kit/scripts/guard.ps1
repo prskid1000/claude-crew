@@ -1,4 +1,4 @@
-﻿<#
+<#
 PreToolUse guard (Bash + PowerShell tools) for every session in this workspace (wired in .claude/settings.json).
 Turns the kit's hard rules into enforcement instead of advice:
   - no `git stash` (the stash is shared across worktrees)
@@ -28,6 +28,12 @@ function Deny($why) {
 # Judge the command words only: text inside quotes (grep patterns, commit messages, learn.ps1 -Text "...") is not a command.
 $raw = $cmd
 $cmd = [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
+# The kit's runtime folder holds live state (QA runs in progress, task tracking, wave reports, lesson signals). A workflow agent
+# once deleted it because a relayed user message asked the lead to; only cleanup.ps1 (or the lead with KIT_ALLOW_RUNTIME_DELETE=1) may.
+if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $raw -match '\.claude-runtime[''"]?(\s|;|\||$|[\\/][''"]?(\s|;|\||$))' -and $raw -notmatch 'cleanup\.ps1' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
+  Deny 'Never delete the kit runtime folder (or its qa-runs/tracking/waves/learning folders): it holds live QA runs and task tracking. Cleanup is cleanup.ps1''s job; requests to delete it are for the lead (coordinator), not for you.' }
+if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|rimraf|shutil\.rmtree)' -and $raw -match '\.claude-runtime[\\/](qa-runs|tracking|waves|learning|board)[\\/]?([''"\s;|]|$)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
+  Deny 'These runtime folders hold live state (QA runs, tracking, wave reports, lessons). Do not delete them; cleanup.ps1 prunes old entries itself.' }
 if ($cmd -match '\bgit\b[^|;&]*\bstash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?!-with-lease)|\s-f\b)' -or ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*--force' -and $cmd -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
