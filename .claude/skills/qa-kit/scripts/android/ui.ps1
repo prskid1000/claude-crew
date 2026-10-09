@@ -17,7 +17,8 @@ Android UI helper for any app on an emulator or device (via uiautomator + adb in
 #>
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
-$adb = if ($env:ANDROID_HOME) { "$env:ANDROID_HOME\platform-tools\adb.exe" } else { "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" }
+. (Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)))) 'dev-kit/scripts/sysinfo.ps1')
+$adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))   # ANDROID_HOME / ANDROID_SDK_ROOT / OS default
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($MyInvocation.MyCommand.Path -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }   # runtime output lives outside .claude
 $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $tmp = Join-Path $rt "android"; New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -70,6 +71,7 @@ switch ($Action) {
       if ($n) { "$($n.l - 6),$($n.t - 6),$($n.w + 12),$($n.h + 12),$(if ($Arg3) { $Arg3 } else { $n.text })" } else { Write-Warning "NOT FOUND: $want (screenshot taken without a mark for it)" }
     }
     & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
+    if ($rects -and -not $KitIsWindows) { Write-Warning 'marks need annotate.ps1 (Windows only): screenshot saved unmarked - name the element in the check note'; $rects = $null }
     if ($rects) { & (Join-Path (Split-Path $PSScriptRoot) 'annotate.ps1') -In $f -Rect @($rects) | Out-Null }
     "saved $f$(if ($rects) { " with $(@($rects).Count) mark(s)" })"
   }

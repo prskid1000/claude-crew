@@ -2,7 +2,8 @@
 Safety net for test-and-close.js: watches the workflow's journal and publishes a package ONLY when the workflow's
 own close step finished without publishing (ok=false, e.g. a small close agent refused). Never double-publishes.
 
-  Start-Process pwsh -WindowStyle Hidden -ArgumentList '-File','<workspace>\.claude\skills\qa-kit\scripts\autoclose.ps1','-Journal','<workflow transcript dir>','-RunDir','<run dir>'
+  Windows:      Start-Process pwsh -WindowStyle Hidden -ArgumentList '-File','<workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1','-Journal','<workflow transcript dir>','-RunDir','<run dir>'
+  Linux/macOS:  nohup pwsh -File <workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir> >/dev/null 2>&1 &
 
 Merges verify verdicts into the checks, writes <run>\<code>\results.json, runs finalize.ps1 once per code.
 Skips packages with > 50% NOT_TESTED. Logs to <run>\autoclose.log; remembers handled codes in <run>\autoclose_done.txt.

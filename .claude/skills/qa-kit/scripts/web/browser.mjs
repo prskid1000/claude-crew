@@ -1,42 +1,58 @@
 // Headless-browser helper for testing any web app. Targets (URL, login form, users) come from
-// <workspace>\.claude\skills\qa-kit\targets.local.json — nothing app-specific lives here.
+// <workspace>/.claude/skills/qa-kit/targets.local.json — nothing app-specific lives here.
 //
 // FAST PATH: session() keeps ONE logged-in headless Chrome alive per port, so each script reconnects in ~1 s
 // instead of relaunching and logging in again.
 //
-//   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession } from 'file:///C:/work/.claude/skills/qa-kit/scripts/web/browser.mjs'   // the absolute file URL of this file
+//   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession } from 'file:///<workspace>/.claude/skills/qa-kit/scripts/web/browser.mjs'   // the absolute file URL of this file (Windows: file:///C:/...)
 //   const s = await session({ port: 9401, target: 'my-staging', tenant: 'acme', as: 'admin' })  // one port per target+tenant+user
 //   await go(s.page, '/projects')
 //   console.log((await text(s.page)).slice(0, 2000))
 //   await clickText(s.page, 'Filter')
 //   await setInput(s.page, 'input[placeholder="Select date"]', '29/09/2026 13:45')   // inputs & date pickers: type + Enter
 //   await mark(s.page, '.ant-table-row:first-child')                  // red outline on what matters (removed after the shot)
-//   await shot(s.page, 'C:/.../shots/F2-T3_01_filter-applied.jpeg')   // names: <CODE>-<check>_<nn>_<what> (evidence-standard.md)
+//   await shot(s.page, '<run>/F2/shots/F2-T3_01_filter-applied.jpeg')   // names: <CODE>-<check>_<nn>_<what> (evidence-standard.md)
 //   console.log(JSON.stringify(s.net.failed))     // 4xx/5xx API calls + JS errors seen in THIS script = failure evidence
-//   if (s.net.failed.length) saveNet(s, 'C:/.../evidence/F2-T3_02_failed-calls.json')
+//   if (s.net.failed.length) saveNet(s, '<run>/F2/evidence/F2-T3_02_failed-calls.json')
 // A login made on one port is saved (8 h) and reused by other ports/agents for the same target+tenant+user.
 //   await s.done()                                // disconnect; Chrome stays alive for the next script
 //   // completely finished: await killSession(9401)
 //
 // Every wait is capped at 20 s, so a wrong selector fails fast instead of hanging.
 // Real mouse clicks are used throughout: Angular/React/ng-zorro/MUI controls often ignore synthetic el.click().
-// Run scripts from PowerShell: node <file>.mjs (node is on the PowerShell PATH, not git-bash's).
+// Run scripts with: node <file>.mjs (on Windows from PowerShell: node is on its PATH, not git-bash's). Linux/macOS: Chrome, Edge or
+// Chromium is found in the usual install folders or on PATH; set CHROME_PATH to pick another one.
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const CFG = JSON.parse(readFileSync(new globalThis.URL('../../targets.local.json', import.meta.url), 'utf8'))
 // runtime output lives outside .claude: <parent of .claude>\.claude-runtime
 const RUNTIME = process.env.CLAUDE_RUNTIME || fileURLToPath(import.meta.url).replace(/[\\/]\.claude[\\/].*$/, '') + '/.claude-runtime'
 const PROFILES = `${RUNTIME}/chrome-profiles`
+// Chrome/Edge/Chromium: $CHROME_PATH first, then the usual install folders per OS, then the PATH (Linux package names)
+const onPath = (names) => (process.env.PATH || '').split(delimiter).filter(Boolean).flatMap((d) => names.map((n) => join(d, n)))
 const BROWSERS = [
   process.env.CHROME_PATH,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  ...(process.platform === 'win32' ? [
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  ] : process.platform === 'darwin' ? [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    `${homedir()}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ] : [
+    '/opt/google/chrome/chrome',
+    '/opt/microsoft/msedge/msedge',
+    ...onPath(['google-chrome', 'google-chrome-stable', 'microsoft-edge', 'microsoft-edge-stable', 'chromium', 'chromium-browser']),
+    '/snap/bin/chromium',
+  ]),
 ].filter(Boolean)
 const CHROME = BROWSERS.find((p) => existsSync(p))
 const VIEW = { width: 1600, height: 1000 }

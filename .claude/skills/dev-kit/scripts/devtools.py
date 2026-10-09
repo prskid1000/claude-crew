@@ -17,7 +17,8 @@ Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy k
                                            markdown = the file is kept under <runtime>\\docs and its path printed
   "driveParent": "<Drive folder id>"   default parent folder for `doc` (gdocs)
   "gitHost": "gitlab.example.com"      self-hosted GitLab (default gitlab.com); "githubHost" likewise (default github.com)
-Windows: run from PowerShell (python hangs in git-bash). CLIs (pwsh, glab, gh, gws) are resolved with shutil.which.
+Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs (pwsh, glab, gh, gws) are resolved with
+shutil.which, so the same names work on every OS.
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time
 
