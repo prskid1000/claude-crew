@@ -17,7 +17,7 @@ param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix)   #
 $ErrorActionPreference = 'SilentlyContinue'
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
 $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>\skills
-. (Join-Path $skills 'dev-kit\scripts\kitconfig.ps1')
+. (Join-Path $skills 'dev-kit\scripts\tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
 $swarm = Join-Path $skills 'android-swarm'
 $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
@@ -210,7 +210,7 @@ if ($AutoFix) {
   foreach ($l in @(& "$S\track.ps1" run)) {
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
-    elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l 'Post the solution, MR links and how-to-test steps on the task (clickup comment add <id> "<text>").' }
+    elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') comment <id> <file.md>)." }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w.-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
     }
@@ -254,8 +254,8 @@ foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | Where-Objec
   if ($left -and $rj.tracker.parent) { $openRuns[$rj.tracker.parent] = "$($rd.Name) ($left item(s) left)" }
 }
 foreach ($par in $parents) {
-  $subs = (clickup task view $par --json 2>$null | ConvertFrom-Json).subtasks
-  $new = @($subs | Where-Object { $_.name -match '^\[Bug\].*failed checks' -and $_.status.status -in 'Open', 'to do' -and $_.id -notin $tracked })
+  $subs = try { (Get-TrackerTask $par).subtasks } catch { @() }
+  $new = @($subs | Where-Object { $_.name -match '^\[Bug\].*failed checks' -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
   if (-not $new.Count) { continue }
   $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
   # Fix at once (the owner's standing mandate: QA bugs are fixed without waiting to be asked) - but as ONE wave for every bug open

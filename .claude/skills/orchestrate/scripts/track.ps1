@@ -1,27 +1,29 @@
 #Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
 <#
-Tracker automation: tie a ClickUp task to its MRs, and let the supervisor (-AutoFix) move the task when they are all merged —
+Tracker automation: tie a tracker task to its MRs, and let the supervisor (-AutoFix) move the task when they are all merged —
 so nobody has to watch pipelines and flip statuses by hand.
 
   $T = '<workspace>\.claude\skills\orchestrate\scripts\track.ps1'
   & $T add  -Task abc123 -Mrs backend!101,frontend!202 [-OnMerged "for review,promoted"]   # add MRs (repeatable; merges lists)
-  & $T add  -Task abc124 -Discover                 # find the task's MRs itself (CU-<id> in title/branch) on every run;
-                                                  # completes only once the task is already 'for review' (its agent sets that after all MRs)
+  & $T add  -Task abc124 -Discover                 # find the task's MRs itself (<tracker tag><id>, e.g. CU-<id>, in title/branch) on every run;
+                                                  # completes only once the task is already in review (its agent sets that after all MRs)
   & $T add  -Task abc125 -MergeAfter 'frontend!203>backend!102'   # schedule the web merge only once the API MR merged
   & $T show                     # tracked tasks and MR states
   & $T run                      # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
 
 Holds (no status change) while a still-running wave's saved report (<runtime>\waves\*.json) has a blocking review finding on one of the MRs.
-MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted".
+MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
+are mapped by tracker.statuses; a backend's own status names work too).
 Config (skills\dev-kit\kit.local.json): gitHost, gitlabGroup, trackerRepos (searched by -Discover), repoAliases (short names agents use,
-e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges). GitLab + ClickUp CLIs (glab, clickup).
+e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit\scripts\tracker.ps1). glab for MRs.
 Files: <.claude-runtime>\tracking\<task>.json. supervise.ps1 -AutoFix calls `run` every round.
 #>
 param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave)
 $ErrorActionPreference = 'SilentlyContinue'
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
 $dir = Join-Path $rt 'tracking'; New-Item -ItemType Directory -Force $dir | Out-Null
-. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerTask, Set-TrackerStatus, ...
+function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { '' } }
 if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 $group = $KitConf.GitlabGroup
 $groupRx = if ($group) { '(?:' + [regex]::Escape($group) + '/)?' } else { '' }
@@ -121,13 +123,13 @@ switch ($Action) {
         if (-not @($KitConf.TrackerRepos).Count) { if (-not $Quiet) { "ATTENTION $($o.task): -Discover needs ""trackerRepos"" in kit.local.json" } }
         foreach ($r in @($KitConf.TrackerRepos)) {
           $pp = ProjPath $r; if (-not $pp) { continue }
-          $found = @(glab api "projects/$($pp -replace '/', '%2F')/merge_requests?search=CU-$($o.task)&in=title,source_branch&state=all&per_page=50" 2>$null | ConvertFrom-Json | Where-Object { $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" })
+          $found = @(glab api "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString("$($KitConf.TrackerTag)$($o.task)"))&in=title,source_branch&state=all&per_page=50" 2>$null | ConvertFrom-Json | Where-Object { $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" })
           $o.mrs = @(@($o.mrs) + $found | Where-Object { $_ } | Select-Object -Unique)
         }
         Save $o
         if (-not @($o.mrs).Count) { continue }
-        $cur = (clickup task view $o.task --json 2>$null | ConvertFrom-Json).status.status
-        if ($cur -notin 'for review', 'in review') {
+        $cur = TaskStatus $o.task
+        if (-not (Test-TrackerStatus $cur 'review')) {
           # Its agent may still be shipping (more MRs to come) - or it shipped but failed to set the review status (a wrong
           # tracker command can leave a task untouched for hours). Once every discovered MR has been merged for 20 min, complete it.
           $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
@@ -167,14 +169,14 @@ switch ($Action) {
       $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($busy) { if (-not $Quiet) { "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix" }; continue }
       # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)
-      $now = [string](clickup task view $o.task --json 2>$null | ConvertFrom-Json).status.status
-      if ($now -match '^(closed|complete|done|in test|for test)$') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
-      foreach ($s in $o.onMerged) { clickup status set $s $o.task 2>&1 | Out-Null }
+      $now = TaskStatus $o.task
+      if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
+      foreach ($s in $o.onMerged) { try { $null = Set-TrackerStatus $o.task $s } catch { if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s': $_" } } }
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
       $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
-      clickup comment add $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." 2>&1 | Out-Null
+      try { $null = Add-TrackerComment $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
       # the task must also carry its agent's solution + testing steps (an agent that got the tracker syntax wrong posted nothing)
-      $cmts = @(clickup comment list $o.task --json 2>$null | ConvertFrom-Json) | ForEach-Object { [string]$_.comment_text } | Where-Object { $_ -notmatch '^All MRs merged' }
+      $cmts = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text } | Where-Object { $_ -notmatch '^All MRs merged' }
       if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide|live check' })) {
         # agents often get the comment wrong: post the live checks from the dev agent's own report (workflow journal) instead of flagging
         $proj = $KitConf.ClaudeProjectDir
@@ -186,7 +188,7 @@ switch ($Action) {
               if ($j.type -eq 'result' -and $mine -and @($j.result.needsLiveCheck).Count) { @($j.result.needsLiveCheck) }
             } } | Where-Object { $_ } | Select-Object -Unique)
         if ($steps.Count) {
-          clickup comment add $o.task ("How to test (from the dev agent's report; run after the next deploy of $($urls -join ' , ')):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) 2>&1 | Out-Null
+          try { $null = Add-TrackerComment $o.task ("How to test (from the dev agent's report; run after the next deploy of $($urls -join ' , ')):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) } catch {}
           "COMMENTED $($o.task): posted $($steps.Count) how-to-test step(s) from the agent's report (its own testing comment was missing)"
         } else {
           "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"
