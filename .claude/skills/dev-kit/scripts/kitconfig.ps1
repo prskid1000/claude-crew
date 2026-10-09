@@ -19,6 +19,18 @@ function Get-KitValue([string]$Name, $Default) {
   if ($__cfg -and ($__cfg.PSObject.Properties.Name -contains $Name) -and $null -ne $__cfg.$Name -and "$($__cfg.$Name)" -ne '') { return $__cfg.$Name }
   $Default
 }
+# Nested keys: Get-KitSetting 'tracker.type' 'clickup'
+function Get-KitSetting([string]$Path, $Default) {
+  $cur = $__cfg
+  foreach ($part in $Path -split '\.') {
+    if ($null -eq $cur -or -not ($cur.PSObject.Properties.Name -contains $part)) { return $Default }
+    $cur = $cur.$part
+  }
+  if ($null -eq $cur -or "$cur" -eq '') { return $Default }
+  $cur
+}
+# reports: "gdocs" (Google Docs via the gws CLI) or "markdown" (files in the run folder); default gdocs only when gws is installed
+$__reportType = [string](Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }))
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
@@ -33,6 +45,9 @@ $KitConf = [pscustomobject]@{
   TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos track.ps1 -Discover searches for CU-<task> MRs
   RepoAliases       = (Get-KitValue 'repoAliases' $null)          # e.g. { "api": "backend", "web": "frontend" }
   ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # extra shared branches besides main/master/develop/release/*
+  TrackerType       = ([string](Get-KitSetting 'tracker.type' 'clickup')).ToLower()   # clickup | github | gitlab | jira | none (skills\dev-kit\scripts\tracker.ps1)
+  ReportType        = $__reportType.ToLower()                     # gdocs | markdown (qa-kit finalize.ps1, devtools.py doc)
+  MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # cleanup.ps1 keeps this many QA browser profiles when no QA seat is active
   # Claude Code keeps this workspace's sessions (workflow journals) in ~/.claude/projects/<workspace path with non-alphanumerics as '-'>
   ClaudeProjectDir  = (Join-Path $env:USERPROFILE ('.claude\projects\' + ($__ws -replace '[^A-Za-z0-9]', '-')))
 }
