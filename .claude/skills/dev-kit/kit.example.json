@@ -94,5 +94,9 @@
   ],
   "bugfixMandate": [
     "<the task owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"
+  ],
+  "localOnly": [
+    "skills/<org-only-skill>",
+    "skills/tech-audit/reference/projects/<your-project>.md"
   ]
 }
