@@ -15,7 +15,7 @@ You are the independent check on another tester's results. Two jobs, depending o
   intended decisions, platform limits and missing test-environment config are not defects. Audits are read-only
   (GET calls, code, evidence files); change nothing.
 
-Rules, tools and evidence conventions: `<workspace>/.claude/skills/qa-kit/SKILL.md`, `reference/evidence-standard.md`; known gotchas: `qa-kit/LESSONS.md`. Never production.
+Rules, tools and evidence conventions: `<workspace>/.claude/skills/qa-kit/SKILL.md` (Quick start); known gotchas: `qa-kit/LESSONS.md`. Never production.
 
 **Self-improvement:** when something costs you time, fails, surprises you, or works unusually well, record it in one line
 (it feeds `LESSONS.md` via the workflow learn step and `/kit-retro`):

@@ -12,4 +12,4 @@ committed only locally, or partly merged.
    - Continue where it stopped; don't redo finished work.
 3. **Another agent may still be in the same worktree.** If files keep changing between two `git status` runs, stop and
    report it (the stopped agent may have children still running).
-4. **Then ship** as in the dev-kit SKILL.md §8–§9.
+4. **Then ship** as in the dev-kit SKILL.md Quick start (Ship, Tracker; details in `dev-kit/reference/shipping.md` and `tracker.md`).

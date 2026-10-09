@@ -103,7 +103,7 @@ Read, in this order, and follow them exactly:
 2. ${A.brief}  (this wave's repos, ownership table, ranges, decisions — it wins over the rules)
 ${MODE === 'resume' ? `3. ${T}/RESUME_BRIEF.md  (work out what's already done before editing)\n` : ''}
 YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
-Agent board: join first with -Agent ${a.id} -Run ${RUN} (dev-kit SKILL §1b) and -Contracts <the brief path>.contracts.md if it exists; on DUPLICATE stop without writing.
+Agent board: join first with -Agent ${a.id} -Run ${RUN} (dev-kit SKILL Quick start) and -Contracts <the brief path>.contracts.md if it exists; on DUPLICATE stop without writing.
 Worktree name prefix: ${a.id.toLowerCase()}. Use your own migration range from the brief's table.
 ${a.note || ''}
 Scripts: ${K}/scripts (wt.ps1, stack.ps1, check.ps1, gate.ps1, devtools.py, keepboth.py, lbcheck.py). Run them from PowerShell.
@@ -124,7 +124,7 @@ Agent ${a.id} (items ${a.items}, area ${a.area}) opened these MRs:
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Read each MR's diff (GitLab: glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"; GitHub: gh pr diff <n> -R <owner/repo>)
 and the surrounding code. Review against: the items asked (${a.items}) and the wave brief ${A.brief};
-the rules in ${K}/SKILL.md §5 (scope, additive changes, no removed features) and §6 (migrations).
+the rules in ${K}/SKILL.md Quick start (scope, additive changes, no removed features) and ${K}/reference/migrations.md.
 Report only real problems: bugs, regressions for existing users/tenants, missing migration rollback, breaking API changes,
 scope creep, removed inputs. "blocking" = must be fixed before this ships; do not pad with style nits.
 Do not change any code yourself.`

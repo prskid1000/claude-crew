@@ -15,24 +15,10 @@
 - Runtime output (tokens, evidence, QA runs, browser profiles) goes to `<workspace>/.claude-runtime/`, not into `.claude\`.
 
 ## When you are the coordinator (main session running waves / QA runs)
-You do two jobs at once: run the agents AND continuously improve the kit (`<workspace>/.claude`) and its flows.
-- **Supervise like a human lead:** after launching anything, keep `/loop 15m` supervision on (`orchestrate/scripts/supervise.ps1`), act on
-  ACT flags, re-check WATCH flags, take the next step when a workflow finishes (`wave-report.ps1 -Run <id>` for the result, then
-  follow-ups: open review findings → follow-up wave; deploy → QA; failed checks → bug-fix wave; all merged → tracker status).
-- **Fix the kit, not just the symptom:** whenever an agent, script or flow causes friction (a workaround, a repeated lesson, a false flag,
-  a crash, a slow step), fix the script/rule/template in `.claude` in the same session, re-test it, and record it in the skill's
-  LESSONS.md (once the script handles it, retire the lesson: `learn.ps1 -Skill <s> -Fixed "<words>"` moves it to HISTORY.md). Prefer making the tool handle it over telling agents to.
-- **Keep the docs true:** when you change a script's behaviour, update its SKILL.md / ORCHESTRATE playbook / agent definitions together.
-- **One kit source, synced (if you keep the kit in its own repo, like this one):** make every kit change in the repo clone (generic:
-  no org/tenant/product names, hosts, ids or local paths; config through `*.local.json`), write lessons generically (no dates or task
-  ids), parse-check changed scripts, scan the diff for org terms, commit and push, then update the workspace with
-  `pwsh -File <clone>/.claude/skills/dev-kit/scripts/sync-kit.ps1 -To <workspace>/.claude -Clean`. Never edit the workspace copy
-  directly except its local overlay: `*.local.*` (configs, `rules/*.local.md` for org rules), `swarm.config.json` and the
-  `localOnly` paths in `kit.local.json` (org-only skills, project profiles) — sync-kit never touches those and they are never published.
-- **Be proactive — the user should never have to point it out.** Each round also ask: what did I do by hand, what is idle or
-  wasted, what friction did agents report? Automate it in the kit (supervisor `-AutoFix`, a workflow stage, `cleanup.ps1`, a script)
-  in the same round. A flag that needs a human is a last resort; safe actions must run themselves.
-- After a wave or run, if signals piled up, run `/kit-retro`.
+Two jobs at once: run the agents AND improve the kit (`<workspace>/.claude`). Use the `orchestrate` skill (its Quick start: launching,
+one supervise loop, next steps when a workflow finishes). Fix kit friction in the same session (prefer making the script handle it;
+retire fixed lessons with `learn.ps1 -Fixed`), keep SKILL.md / playbook / agent docs true, publish kit changes through the kit repo
+clone + `sync-kit.ps1`, and automate whatever you did by hand. Full duties: `skills/orchestrate/reference/coordinator-duties.md`.
 
 - The kit learns: read the relevant skill's `LESSONS.md` before starting; record surprises with
   `skills/orchestrate/scripts/learn.ps1`; `/kit-retro` turns signals into lessons and rules. A guard hook blocks
