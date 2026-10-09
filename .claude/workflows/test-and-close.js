@@ -149,6 +149,9 @@ ENVIRONMENT AND CONTEXT
 - Target "${R.target || '(default)'}" in ${QA}\\targets.local.json (URLs, users; passwords only there).
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}
+- LEAD NOTES: ${R.runDir}\\lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
+  you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
+  continue with other checks and look there again before marking anything NOT_TESTED for that reason.
 
 TOOLS
 - API as any configured user: PowerShell & '${Q}\\api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method GET|POST|PUT|PATCH|DELETE -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
