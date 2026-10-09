@@ -29,10 +29,10 @@ $Reads = [ordered]@{
   'dev-agent (build)' = @{ files = 'agents/dev-agent.md', 'skills/dev-kit/LESSONS.md', 'skills/dev-kit/SKILL.md'; step = 'build:X1' }
   'dev-agent (fix)'   = @{ files = 'agents/dev-agent.md', 'skills/dev-kit/LESSONS.md', 'skills/dev-kit/SKILL.md'; step = 'fix:X2' }
   'mr-reviewer'       = @{ files = 'agents/mr-reviewer.md', 'skills/dev-kit/LESSONS.md', 'skills/dev-kit/SKILL.md'; step = 'review:X1' }
-  'qa-tester (web)'   = @{ files = 'agents/qa-tester.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md', 'skills/qa-kit/reference/evidence-standard.md'; step = 'test:W1' }
-  'qa-tester (app)'   = @{ files = 'agents/qa-tester.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md', 'skills/qa-kit/reference/evidence-standard.md'; step = 'test:P1@Falcon' }
-  'qa-verifier'       = @{ files = 'agents/qa-verifier.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md', 'skills/qa-kit/reference/evidence-standard.md'; step = 'verify:W1' }
-  'coordinator'       = @{ files = 'skills/orchestrate/SKILL.md', 'skills/orchestrate/LESSONS.md'; step = '' }
+  'qa-tester (web)'   = @{ files = 'agents/qa-tester.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md'; step = 'test:W1' }
+  'qa-tester (app)'   = @{ files = 'agents/qa-tester.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md'; step = 'test:P1@Falcon' }
+  'qa-verifier'       = @{ files = 'agents/qa-verifier.md', 'skills/qa-kit/LESSONS.md', 'skills/qa-kit/SKILL.md'; step = 'verify:W1' }
+  'coordinator'       = @{ files = 'skills/orchestrate/SKILL.md', 'skills/orchestrate/LESSONS.md', 'skills/orchestrate/reference/coordinator-duties.md'; step = '' }
 }
 $calls = @((node (Join-Path $PSScriptRoot 'kit-cost.mjs') $kit | ConvertFrom-Json).calls)
 if (-not $calls.Count) { throw 'kit-cost.mjs rendered no prompts (node missing or a workflow failed)' }

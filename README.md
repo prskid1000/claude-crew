@@ -245,13 +245,14 @@ claude-crew/
 │   ├── agents/                   dev-agent · mr-reviewer · qa-tester · qa-verifier
 │   ├── rules/                    multi-agent.md (always) · db-migrations.md (by path)
 │   ├── workflows/                dev-wave.js · test-and-close.js · kit-retro.js
-│   └── skills/
-│       ├── dev-kit/              SKILL.md, LESSONS.md, kit.example.json, scripts/
-│       ├── orchestrate/          SKILL.md, LESSONS.md, templates/, scripts/
-│       ├── qa-kit/               SKILL.md, LESSONS.md, targets.example.json, reference/, templates/, scripts/{web,android,lib}
-│       ├── android-swarm/        SKILL.md, LESSONS.md, swarm.example.json, avd-template.ini, *.ps1
-│       └── tech-audit/           SKILL.md, reference/ (schema, example, project template), scripts/
-├── docs/configuration.md
+│   └── skills/                   each SKILL.md = a short Quick start + reference/*.md read only when needed;
+│       │                         LESSONS.md = active rules (≤ 40 lines), HISTORY.md = retired lessons (agents never read it)
+│       ├── dev-kit/              SKILL.md, LESSONS.md, HISTORY.md, reference/, kit.example.json, scripts/
+│       ├── orchestrate/          SKILL.md, LESSONS.md, HISTORY.md, reference/, templates/, scripts/
+│       ├── qa-kit/               SKILL.md, LESSONS.md, HISTORY.md, targets.example.json, reference/, templates/, scripts/{web,android,lib}
+│       ├── android-swarm/        SKILL.md, LESSONS.md, HISTORY.md, reference/, swarm.example.json, avd-template.ini, *.ps1
+│       └── tech-audit/           SKILL.md, reference/ (full guide, schema, example, project template), scripts/
+├── docs/configuration.md · docs/kit-cost.md (token budget)
 ├── examples/rules/               path-scoped rule examples (Java backend, Angular frontend)
 ├── README.md · CONTRIBUTING.md · LICENSE
 <workspace>/.claude-runtime/      created at run time: board, tracking, learning, qa-runs, tokens, sessions, logs (never commit)

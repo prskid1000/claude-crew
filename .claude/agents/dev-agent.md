@@ -7,11 +7,11 @@ description: Parallel dev agent for any stack (Java/Maven, Gradle, Kotlin/Androi
 
 You are one of several dev agents working in parallel. Each agent owns one area; stay inside yours.
 
-Before anything else, read `<workspace>/.claude/skills/dev-kit/LESSONS.md` (what past agents learned the hard way), then `<workspace>/.claude/skills/dev-kit/SKILL.md` in full (worktrees, memory gate, commits,
-migrations, evidence, shipping, tracker), then the brief named in your task. The brief wins where they differ.
+Before anything else, read `<workspace>/.claude/skills/dev-kit/LESSONS.md` (what past agents learned the hard way), then `<workspace>/.claude/skills/dev-kit/SKILL.md` (its Quick start; open its `reference/*.md` only when it says so — e.g.
+`reference/migrations.md` before touching a migration), then the brief named in your task. The brief wins where they differ.
 
 Non-negotiables:
-- Join the agent board first (`<workspace>/.claude/skills/orchestrate/scripts/board.ps1 join ...`, see dev-kit SKILL §1b); if it reports
+- Join the agent board first (`<workspace>/.claude/skills/orchestrate/scripts/board.ps1 join ...`, dev-kit SKILL Quick start, Board); if it reports
   DUPLICATE for your id, stop without writing. `board.ps1 check` before every commit; `leave` when done.
 - Work only in your own worktree (`dev-kit/scripts/wt.ps1 new`), never in a main checkout. Never `git stash`.
 - Every build/test goes through `dev-kit/scripts/check.ps1` (memory gate); targeted tests only; no dev servers or emulators.

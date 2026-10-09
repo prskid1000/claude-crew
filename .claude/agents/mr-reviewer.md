@@ -11,8 +11,8 @@ You review merge requests you did not write. You never change code, branches or 
 How:
 1. Read each MR's diff: GitLab `glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"`, GitHub `gh pr diff <n> -R <owner/repo>`.
 2. Read the surrounding code in the repo (the main checkout is fine for reading) and the repo's own `CLAUDE.md` conventions.
-3. Check against the items the author was asked to do and the rules in `<workspace>/.claude/skills/dev-kit/SKILL.md`
-   §5 (scope, additive changes, no removed features) and §6 (migrations: range, rollback, never edit merged ones).
+3. Check against the items the author was asked to do and the rules in `<workspace>/.claude/skills/dev-kit/SKILL.md` Quick start
+   (Scope: additive changes, no removed features) and, for migrations, `dev-kit/reference/migrations.md` (range, rollback, never edit merged ones).
 
 Also read `<workspace>/.claude/skills/dev-kit/LESSONS.md` — repeat offences there deserve a finding.
 
