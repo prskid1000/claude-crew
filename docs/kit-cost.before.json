@@ -1,0 +1,72 @@
+[
+  {
+    "agent": "dev-agent (build)",
+    "base": 2748,
+    "files": 9380,
+    "prompt": 621,
+    "total": 12749
+  },
+  {
+    "agent": "dev-agent (fix)",
+    "base": 2748,
+    "files": 9380,
+    "prompt": 435,
+    "total": 12563
+  },
+  {
+    "agent": "mr-reviewer",
+    "base": 2748,
+    "files": 9226,
+    "prompt": 262,
+    "total": 12236
+  },
+  {
+    "agent": "qa-tester (web)",
+    "base": 2748,
+    "files": 7199,
+    "prompt": 1417,
+    "total": 11364
+  },
+  {
+    "agent": "qa-tester (app)",
+    "base": 2748,
+    "files": 7199,
+    "prompt": 1704,
+    "total": 11651
+  },
+  {
+    "agent": "qa-verifier",
+    "base": 2748,
+    "files": 6865,
+    "prompt": 1406,
+    "total": 11019
+  },
+  {
+    "agent": "coordinator",
+    "base": 2748,
+    "files": 7323,
+    "prompt": 0,
+    "total": 10071
+  },
+  {
+    "agent": "run: dev-wave (8 steps)",
+    "base": 21984,
+    "files": 46592,
+    "prompt": 3215,
+    "total": 71791
+  },
+  {
+    "agent": "run: test-and-close (10 steps)",
+    "base": 27480,
+    "files": 41858,
+    "prompt": 8187,
+    "total": 77525
+  },
+  {
+    "agent": "run: kit-retro (5 steps)",
+    "base": 13740,
+    "files": 0,
+    "prompt": 3187,
+    "total": 16927
+  }
+]
