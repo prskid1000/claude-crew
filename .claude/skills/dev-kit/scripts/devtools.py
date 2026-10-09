@@ -3,28 +3,33 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
 
   python devtools.py task <taskId>                                  summary: name | status | url | parent
   python devtools.py subtasks <parentId> [status ...]               id | status | name
-  python devtools.py newtask <listId> <parentId|-> <assigneeId|-> "<name>" <desc.md>
-  python devtools.py status <taskId> "<status>"
+  python devtools.py newtask <listId|-> <parentId|-> <assignee|-> "<name>" <desc.md>
+  python devtools.py status <taskId> "<status>"                     logical (review, promoted, inTest, closed) or the tracker's own name
   python devtools.py comment <taskId> <file.md | "text">
-  python devtools.py finish <taskId> <guideUrl> <solution.md> ["for review"]   guide link on top + comments + status
+  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + comments + status
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
   python devtools.py merge <worktree> <iid>                         squash-merge once the pipeline is green (polls)
-  python devtools.py doc "<title>" <file.html> [driveFolderId]      Google Doc, anyone-with-link can view; prints URL
+  python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
 
 Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy kit.example.json):
-  "driveParent": "<Drive folder id>"   default parent folder for `doc`
+  "tracker": { "type": "clickup|github|gitlab|jira|none", ... }   task commands go through tracker.ps1 (default clickup)
+  "reports": { "type": "gdocs|markdown" }  `doc`: gdocs = Google Doc via gws (default when gws is installed);
+                                           markdown = the file is kept under <runtime>\\docs and its path printed
+  "driveParent": "<Drive folder id>"   default parent folder for `doc` (gdocs)
   "gitHost": "gitlab.example.com"      self-hosted GitLab (default gitlab.com); "githubHost" likewise (default github.com)
-Tracker commands use the ClickUp CLI (`clickup`); swap the functions in the ClickUp section to use another tracker.
-Windows: run from PowerShell (python hangs in git-bash). CLIs (clickup, glab, gh, gws) are resolved with shutil.which.
+Windows: run from PowerShell (python hangs in git-bash). CLIs (pwsh, glab, gh, gws) are resolved with shutil.which.
 """
-import json, os, re, shutil, subprocess, sys, time
+import json, os, re, shutil, subprocess, sys, tempfile, time
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the dev-kit skill folder
 try:
     CFG = json.load(open(os.path.join(KIT, 'kit.local.json'), encoding='utf-8'))
 except Exception:
     CFG = {}
-CU, GLAB, GH, GWS = (shutil.which(x) for x in ('clickup', 'glab', 'gh', 'gws'))
+GLAB, GH, GWS = (shutil.which(x) for x in ('glab', 'gh', 'gws'))
+REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or (CFG.get('reports') or {}).get('type') or ('gdocs' if GWS else 'markdown')).lower()
+WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(KIT)))   # <workspace>\.claude\skills\dev-kit -> <workspace>
+RUNTIME = os.environ.get('CLAUDE_RUNTIME') or os.path.join(WORKSPACE, '.claude-runtime')
 
 
 def _run(cmd, cwd=None):
@@ -47,46 +52,78 @@ def _text(arg):
     return open(arg, encoding='utf-8').read() if os.path.isfile(arg) else arg
 
 
-# ---------- ClickUp ----------
+# ---------- Tracker (tracker.ps1: clickup | github | gitlab | jira | none, from kit.local.json "tracker") ----------
+TRACKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tracker.ps1')
+PWSH = shutil.which('pwsh') or shutil.which('powershell')
+TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {}).get('type') or 'clickup').lower()
+
+
+def _tracker(*args):
+    """Run tracker.ps1 <verb> ...; long texts go through a temp file (tracker.ps1 reads a file path as its content)."""
+    tmp = []
+    try:
+        argv = []
+        for x in args:
+            x = str(x)
+            if (len(x) > 200 or '\n' in x) and (not argv or argv[-1] != '-Name'):   # free text only; a name stays an argument
+                fd, p = tempfile.mkstemp(suffix='.md')
+                with os.fdopen(fd, 'w', encoding='utf-8', newline='') as fh:
+                    fh.write(x)
+                tmp.append(p)
+                x = p
+            argv.append(x)
+        return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', TRACKER, *argv])
+    finally:
+        for p in tmp:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def task(tid):
-    return _json(_run([CU, 'task', 'view', tid, '--json']))
+    """{ id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description }"""
+    return _json(_tracker('view', tid))
 
 
 def task_url(tid):
-    return f'https://app.clickup.com/t/{tid}'
+    return _tracker('url', tid).strip()
 
 
 def subtasks(parent, statuses=None):
+    want = {s.lower() for s in statuses} if statuses else None
     out = []
     for s in task(parent).get('subtasks') or []:
-        st = (s.get('status') or {}).get('status')
-        if not statuses or st in statuses:
-            out.append((s['id'], st, s['name']))
+        st = s.get('status') or ''
+        if not want or st.lower() in want:
+            out.append((str(s['id']), st, s.get('name') or ''))
     return out
 
 
-def new_task(list_id, parent, assignee, name, desc_md):
-    cmd = [CU, 'task', 'create', '--list-id', list_id, '--name', name, '--markdown-description', desc_md, '--priority', '2', '--json']
+def new_task(list_id, parent, assignee, name, desc_md, priority='2'):
+    args = ['create', '-Name', name, '-Description', desc_md, '-Priority', priority]
+    if list_id and list_id != '-':
+        args += ['-List', list_id]
     if parent and parent != '-':
-        cmd += ['--parent', parent]
+        args += ['-Parent', parent]
     if assignee and assignee != '-':
-        cmd += ['--assignee', assignee]
-    return _json(_run(cmd)).get('id')
+        args += ['-Assignee', assignee]
+    return _json(_tracker(*args)).get('id')
 
 
 def set_status(tid, status):
-    return _run([CU, 'status', 'set', status, tid])
+    """status: a logical name (review, promoted, inTest, closed, ... mapped by tracker.statuses) or the tracker's own name."""
+    return _tracker('status', tid, status)
 
 
 def comment(tid, text):
-    return _run([CU, 'comment', 'add', tid, text])
+    return _tracker('comment', tid, text)
 
 
-def finish(tid, guide_url, solution_md, status='for review'):
-    t = task(tid)
-    md = t.get('markdown_description') or t.get('description') or ''
+def finish(tid, guide_url, solution_md, status='review'):
+    md = task(tid).get('description') or ''
     if guide_url not in md:
-        _run([CU, 'task', 'edit', tid, '--markdown-description', f'Testing guide: {guide_url}\n\n{md}'])
+        _tracker('describe', tid, f'Testing guide: {guide_url}\n\n{md}')
     comment(tid, solution_md)
     comment(tid, f'How to test: follow the tester guide {guide_url}.')
     set_status(tid, status)
@@ -121,8 +158,9 @@ def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - see .claude/skills/orchestrate/templates/MR_BODY.md', file=sys.stderr)
-    if 'clickup.com' not in body_md:
-        print('[mr] body has no tracker (ClickUp) link', file=sys.stderr)
+    link = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/'}.get(TRACKER_TYPE)
+    if link and link not in body_md:
+        print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
     if FOOTER not in body_md:
         body_md = body_md.rstrip() + '\n\n' + FOOTER + '\n'
     host, _ = remote(worktree)
@@ -243,7 +281,7 @@ def merge_when_green(worktree, iid, timeout_min=90):
     return 'TIMEOUT waiting for pipeline'
 
 
-# ---------- Google Docs ----------
+# ---------- Documents (reports.type: gdocs = Google Docs via gws, markdown = files under <runtime>\docs) ----------
 def gws(*args, params=None, body=None, upload=None):
     cmd = [GWS, *args]
     if params is not None:
@@ -255,8 +293,24 @@ def gws(*args, params=None, body=None, upload=None):
     return _json(_run(cmd))
 
 
+def keep_doc(title, path):
+    """markdown reports: keep a copy under <runtime>\\docs (worktrees get removed) and return its path."""
+    d = os.path.join(RUNTIME, 'docs')
+    os.makedirs(d, exist_ok=True)
+    slug = re.sub(r'[^A-Za-z0-9]+', '-', title).strip('-')[:80] or 'doc'
+    dst = os.path.join(d, slug + os.path.splitext(path)[1])
+    if os.path.abspath(dst) != os.path.abspath(path):
+        shutil.copyfile(path, dst)
+    return dst
+
+
 def make_doc(title, html_path, parent=None):
-    """Upload HTML as a Google Doc shared anyone-with-link (reader). Avoid '&' in titles."""
+    """Publish a document. gdocs: upload HTML (or Markdown text) as a Google Doc shared anyone-with-link (reader); avoid '&' in titles.
+    markdown: keep the file (.md or .html) and return its path - attach it with tracker.ps1 attach <task> <path>."""
+    if REPORT_TYPE != 'gdocs':
+        return keep_doc(title, html_path)
+    if not GWS:
+        raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
     body = {'name': title, 'mimeType': 'application/vnd.google-apps.document'}
     parent = parent or CFG.get('driveParent')
     if parent:
@@ -280,7 +334,7 @@ if __name__ == '__main__':
     cmd = a[0] if a else ''
     if cmd == 'task':
         t = task(a[1])
-        print(' | '.join([t.get('name', ''), (t.get('status') or {}).get('status', ''), task_url(a[1]), str(t.get('parent') or '')]))
+        print(' | '.join([t.get('name') or '', t.get('status') or '', t.get('url') or task_url(a[1]), str(t.get('parent') or '')]))
     elif cmd == 'subtasks':
         for row in subtasks(a[1], a[2:] or None):
             print(' | '.join(row))

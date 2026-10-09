@@ -30,7 +30,7 @@ function Get-KitSetting([string]$Path, $Default) {
   $cur
 }
 # reports: "gdocs" (Google Docs via the gws CLI) or "markdown" (files in the run folder); default gdocs only when gws is installed
-$__reportType = [string](Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }))
+$__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'clickup' })).ToLower()
 # tag that ties branches/MR titles to a task (fix/<tag><id>-slug); track.ps1 -Discover searches MRs for <tag><id>
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
