@@ -12,3 +12,5 @@ agent-memory-local/
 scheduled_tasks.lock
 **/__pycache__/
 # runtime output lives outside .claude, in <workspace>\.claude-runtime\ (or $env:CLAUDE_RUNTIME)
+*.local.*
+rules/*.local.md
