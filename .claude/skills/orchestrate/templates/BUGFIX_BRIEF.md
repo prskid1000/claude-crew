@@ -4,10 +4,10 @@ Read `<workspace>\.claude\skills\dev-kit\SKILL.md` first.
 
 **Bugs:** <task ids / URLs>   **Repos + targets:** <repo → target branch>   **Environment:** <URLs, account>
 
-1. **Read the bug.** `python <workspace>\.claude\skills\dev-kit\scripts\devtools.py task <id>`, `clickup comment list <id>`.
-   Check ids (T1, L4, X2 …) refer to the tester guide linked in the original task; export it with
-   `gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o guide.txt` (run in the output folder).
-   The QA evidence (screenshots, request/response JSON) is linked from the results doc.
+1. **Read the bug.** `& <workspace>\.claude\skills\dev-kit\scripts\tracker.ps1 view <id>` and `... tracker.ps1 comments <id>`.
+   Check ids (T1, L4, X2 …) refer to the tester guide linked or attached on the original task (a Markdown file, or a Google Doc:
+   `gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o guide.txt` in the output folder).
+   The QA evidence (screenshots, request/response JSON) is linked from the results report (Google Doc, or report.md in the QA run folder).
 2. **Classify each check**; change code only for real bugs:
    - **Real bug** → find the root cause, fix it, add a test.
    - **Stale deploy** → the fix exists on the target branch but the environment runs an older build

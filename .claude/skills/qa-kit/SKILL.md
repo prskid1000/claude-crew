@@ -1,6 +1,6 @@
 ---
 name: qa-kit
-description: QA rules and tools for testing deployed work on a test environment (never production) — API calls as any configured user with saved request/response evidence, headless logged-in browser for any web app, Android UI driving, honest verdicts (defects are never notes), publishing results to a Google Doc + ClickUp with bug tasks. Use when testing tasks/guides on staging, verifying fixes, collecting evidence, or running /test-and-close.
+description: QA rules and tools for testing deployed work on a test environment (never production) — API calls as any configured user with saved request/response evidence, headless logged-in browser for any web app, Android UI driving, honest verdicts (defects are never notes), publishing results (Google Doc or Markdown report) to the issue tracker (ClickUp / GitHub / GitLab / Jira / none) with bug tasks. Use when testing tasks/guides on staging, verifying fixes, collecting evidence, or running /test-and-close.
 ---
 
 # QA rules (every tester, verifier and auditor agent)
@@ -13,7 +13,8 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
    It's the only place passwords live. Auth styles: login (JSON or form body), static token, basic, none.
 2. `cd scripts\web; npm ci` (installs `puppeteer-core`; uses the installed Chrome/Edge).
 3. Android: in `..\android-swarm\`, `Copy-Item swarm.example.json swarm.config.json` and set `app`.
-4. Check CLI auth: `gws`, `clickup task view <id> --json`, `glab auth status` / `gh auth status`.
+4. Check auth: the tracker (`..\dev-kit\scripts\tracker.ps1 view <id>`; backend = kit.local.json `tracker.type`), `gws` only when
+   `reports.type` is `gdocs`, `glab auth status` / `gh auth status`.
 
 ## Tools
 | Need | Tool |
@@ -22,7 +23,8 @@ results to the tracker, and raise bug tasks for confirmed failures. Works for we
 | Drive a web UI | `scripts\web\browser.mjs` — `session()` keeps one logged-in headless Chrome per port (logins shared across ports); `mark()` highlights, `shot()` checks names, `saveNet()` saves failed calls |
 | Drive an Android app | `scripts\android\ui.ps1` (dump / tap / tapid / type / swipe / shot / wait / log), with `$env:ANDROID_SERIAL` set |
 | Several phones in parallel | `..\android-swarm\` (its SKILL.md) |
-| Publish one package | `scripts\finalize.ps1 -RunDir <run> -Code <code>` |
+| Publish one package | `scripts\finalize.ps1 -RunDir <run> -Code <code> [-Report gdocs\|markdown]` — `gdocs`: Drive evidence + Google Doc; `markdown`: `<code>\report.md` beside the evidence, carried by the tracker comment (kit.local.json `reports.type`) |
+| Read / update a task | `..\dev-kit\scripts\tracker.ps1 view / comments / comment / status / create / attach` (never a tracker CLI directly) |
 | Is a fix live on the test env? | `scripts\deployed.ps1 -Mrs <repo>!<iid>,... [-Target <env>]` (CI deploy job + branch ancestry or same file content; never hold an item as "not deployed" without it) |
 | Retest a bug task whose fix went live | `scripts\add-retest.ps1 -RunDir <run> -Task <bug> -Code <code>R -Mrs <repo>!<iid>` (guide = the bug task; checks from its name), then `/test-and-close { runDir, only: [<code>R], instance: w<next> }` |
 | Run a whole batch | `/test-and-close` (`.claude\workflows\test-and-close.js`) + `scripts\autoclose.ps1` safety net |
@@ -43,8 +45,8 @@ Every tester/verifier first runs `scripts\qa-seat.ps1 acquire` (the workflow tel
    Several items may share one task (e.g. a guide split by `only` into web + app parts): finalize keeps the task open until every
    item on it is published, so no `skipClose` is needed for that. `skipClose: true` = test + verify only; the verdicts are saved to
    `<code>\results.json` + `held.json` and the lead publishes later with `finalize.ps1 -RunDir <run> -Code <code>`. `skipClose` works per item or for the whole run (`args.skipClose` / run.json). Finalize never closes a task that has NOT_TESTED checks (it comments "not closed" instead) unless run.json `tracker.closeWithNotTested` is true.
-   Export Google-Doc guides to text: `cd <run>; gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o <code>.txt`
-   (`gws -o` only writes inside the current directory).
+   Guides can be Markdown/text files (`guideFile`) or, with `gdocs`, Google Docs exported to text:
+   `cd <run>; gws drive files export --params '{"fileId":"<id>","mimeType":"text/plain"}' -o <code>.txt` (`gws -o` only writes inside the current directory).
 2. **Workflow**: `/test-and-close` (or the Workflow tool with `scriptPath = <workspace>\.claude\workflows\test-and-close.js`), `args` = `{ runDir, kitDir }` (short form: a tiny agent reads `<runDir>\run.json`; add `only: [codes]` to run a subset) or the full run.json object + `runDir`.
    Per item: test → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → close (finalize).
    Results with > 50% NOT_TESTED are never published.

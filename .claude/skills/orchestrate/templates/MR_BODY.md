@@ -1,5 +1,5 @@
 ## Task
-<ClickUp URL> — <one-line goal>
+<tracker task URL> — <one-line goal>
 
 ## What changed
 - <behaviour change 1, in user terms>
@@ -17,7 +17,7 @@
 1. <environment + login>
 2. <steps>
 3. Expected: <result>
-Tester guide: <Google Doc link, if any>
+Tester guide: <link or attached file, if any>
 
 ## Related
 - Sibling MRs: <web !n / app !n> (merge order: API first)

@@ -6,6 +6,7 @@ UI gotchas for one product go under a `## Project: <name> (target <target>)` hea
 app login steps) — never passwords; those live only in `targets.local.json`.
 
 ## General
+- (fixed in kit) A finalize re-run on an already-closed subtask overwrote its finalize.json record with an empty one (bug id lost, closed=false), so later steps saw an open task without a bug. The first run's record is now kept.
 - (2×) Silent 200-with-empty-data bugs (a batch call returning rowCount 0) and 5xx dismissed as "just restart it" both need proof: save the failing request/response and check the observability tool before calling it infra; an unverified 5xx is FAIL.
 - (2×) Screenshot/canvas-capture checks: time them per screen (a light screen took 5 s, a long list 77-128 s against a 30 s tool timeout) and don't blame host CPU without a re-run at low load. A guide scenario for a screen that does not host the component must be reported, not silently moved to another screen.
 - (2×) LLM-driven checks (an AI decider/assistant) are intermittent (one check approved without confirmation in ~6 of 14 runs): run each such check 5-14 times and record every run; keep the first and each deviating run as evidence.

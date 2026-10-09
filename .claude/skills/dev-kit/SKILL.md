@@ -1,6 +1,6 @@
 ---
 name: dev-kit
-description: Rules and scripts for a dev agent working in parallel with others on any stack (Java/Maven, Gradle, Kotlin/Android, React Native, Angular/React/Node, .NET, Python, Go, Rust) — worktrees with linked deps, stack-detected build/test through a machine-wide memory gate, hook-safe commits, DB migration rules (Liquibase/EF/Flyway/Alembic), MR create + merge-when-green, ClickUp. Use when implementing and shipping code in a worktree, or whenever building/testing a repo in this workspace.
+description: Rules and scripts for a dev agent working in parallel with others on any stack (Java/Maven, Gradle, Kotlin/Android, React Native, Angular/React/Node, .NET, Python, Go, Rust) — worktrees with linked deps, stack-detected build/test through a machine-wide memory gate, hook-safe commits, DB migration rules (Liquibase/EF/Flyway/Alembic), MR create + merge-when-green, issue tracker (ClickUp / GitHub / GitLab / Jira / none via tracker.ps1). Use when implementing and shipping code in a worktree, or whenever building/testing a repo in this workspace.
 ---
 
 # Rules for every parallel dev agent (read fully before starting)
@@ -13,7 +13,7 @@ the repos with their target branches, your branch, your worktree name, your migr
 Where the brief differs from this file, the brief wins. The repo's own `CLAUDE.md` / README conventions also apply.
 
 All scripts below are PowerShell, in `<workspace>\.claude\skills\dev-kit\scripts` (call it `$K`). Run them from PowerShell:
-node, python, gws, clickup, glab and gh are on the PowerShell PATH, and `python` hangs in git-bash.
+node, python, glab and gh (plus gws / the tracker CLI when configured) are on the PowerShell PATH, and `python` hangs in git-bash.
 `<workspace>` = the folder that holds `.claude` (the scripts work it out themselves). Org settings (git host/group, where repos and
 worktrees live, protected branches) come from `kit.local.json` next to this file (copy `kit.example.json`).
 
@@ -110,28 +110,32 @@ Other agents merge all the time; a stale base means avoidable conflicts.
    If another writer appears in your worktree (changes you didn't make), stop writing and tell the coordinator.
    Writing to the contracts file yourself (shapes for a sibling agent): **append only** (Edit at the end, or `Add-Content`), never
    Write/overwrite the whole file: the coordinator and other agents keep notes there and an overwrite silently deletes them.
-2. Push and open one MR/PR per repo: `devtools.py mr`. Title `feat: <summary> - <CODE> (CU-<task>) (<Repo>)`.
+2. Push and open one MR/PR per repo: `devtools.py mr`. Title `feat: <summary> - <CODE> (<tag><task>) (<Repo>)` (`<tag>` = kit.local.json
+   `tracker.branchTag`, e.g. `CU-`; the coordinator's track.ps1 finds your MRs by it).
    Body: fill `<workspace>\.claude\skills\orchestrate\templates\MR_BODY.md` (devtools warns on missing sections and adds the footer).
    Tracker solution comment: `templates\TASK_SOLUTION.md`.
 3. **In a reviewed `/dev-wave`, don't schedule merges yourself**: open the MRs and stop; the workflow schedules them after a clean review
    (or you do it at the end of your fix round). Merging before review shipped a double-billing bug once.
    **Merge producers before consumers**: DB/API/library first, then web/app/clients. `devtools.py merge <wt> <iid>` asks GitLab/GitHub
    to squash-merge as soon as the pipeline is green and returns at once (no waiting; `merge-wait` is the old blocking mode). Post your
-   ClickUp comment right after scheduling; the coordinator verifies the merge. On conflict: `wt.ps1 sync`, resolve, re-check, `push --force-with-lease` to
+   tracker comment right after scheduling; the coordinator verifies the merge. On conflict: `wt.ps1 sync`, resolve, re-check, `push --force-with-lease` to
    **your** branch. Never force-push a target branch.
 4. Several MRs are fine for a big stream; merge each before starting the next.
 
-## 9. Tracker (ClickUp)
-- `in progress` at start → review status once the MRs are open and the guide is posted (`devtools.py finish`) →
-  `promoted` once **all** your MRs are merged. **Never set `in test`**: that happens after deployment.
+## 9. Tracker
+The backend (ClickUp, GitHub issues, GitLab issues, Jira or none) is set once in kit.local.json `tracker.type`; you always use
+**`scripts\tracker.ps1`** (or the `devtools.py` task commands, which call it) — never a tracker CLI directly.
+- `inProgress` at start → `review` once the MRs are open and the guide is posted (`devtools.py finish`) →
+  `promoted` once **all** your MRs are merged. **Never set `inTest`**: that happens after deployment.
+  Use these logical names; `tracker.statuses` maps them to the board's own names.
 - Don't change other people's tasks, or tasks already in a testing status.
 - New tasks go under the epic named in the brief, assigned to the requester.
-- **Exact `clickup` commands** (there is no `task update` and no `task comment`; guessing them prints usage and does nothing):
-  - status: `clickup task edit <id> --status "<review status>"` (or `clickup status set "<status>" <id>`); use your list's review
-    status name. The coordinator's tracker only promotes a task that is already in a review status, so set it.
-  - comment: `clickup comment add <id> "<text>"`; for long or multi-line text write it to a file and pass `(Get-Content <file> -Raw)`.
-  - subtask: `clickup task create --list-id <list> --parent <id> ...`. A subtask can't have subtasks: link it instead with
-    `clickup task edit <id> --links-to <other id>`.
+- **Commands** (`$TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'`):
+  - read: `& $TR view <id>` (JSON incl. subtasks, description) · `& $TR comments <id>`
+  - status: `& $TR status <id> review` — the coordinator's track.ps1 only promotes a task that is already in review, so set it.
+  - comment: `& $TR comment <id> <file.md>` (a file for long or multi-line text; plain text works for one line).
+  - subtask: `& $TR create -List <list> -Parent <id> -Name "<name>" -Description <file.md>` (prints `{ id, url }`).
+  - file (guide, report): `& $TR attach <id> <file> -Text "<comment>"`. Add `-DryRun` to see the call without making it.
 - **Claude Code's built-in "Remove-Item on system path … is blocked"** sometimes fires on PowerShell commands that contain
   escaped quotes such as `"\"X\""`, even with no delete. Put that text in a file (or a `.ps1` script) and pass it from there.
 
