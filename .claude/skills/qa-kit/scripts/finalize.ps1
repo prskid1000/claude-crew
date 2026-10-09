@@ -105,7 +105,8 @@ foreach ($st in @($item.subtasks)) {
       $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
       if ($others.Count) { $rec.waitingFor = $others }
       elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested" }
-      elseif (-not $pend) { $null = clickup status set $closeStatus $st.id 2>&1; $rec.closed = $true }
+      elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
+    elseif (-not $pend) { $null = clickup status set $closeStatus $st.id 2>&1; $rec.closed = $true }
       $out.subtasks += $rec; continue
     }
     $icon = if ($fails.Count) { '❌' } elseif ($nt -or $pend) { '⚠️' } else { '✅' }
@@ -124,9 +125,11 @@ foreach ($st in @($item.subtasks)) {
       $a = @('task', 'create', '--list-id', $tr.list, '--name', $nm, '--markdown-description', $body, '--priority', '2', '--json')
       if ($tr.parent) { $a += @('--parent', $tr.parent) }
       if ($tr.owner) { $a += @('--assignee', $tr.owner) }
-      $bug = clickup @a 2>$null | ConvertFrom-Json
-      $rec.bug = $bug.id
-      $msg += ". Failed part moved to $(TaskUrl $bug.id)"
+      $bug = try { clickup @a 2>$null | ConvertFrom-Json } catch { $null }
+      # ClickUp refuses a subtask whose parent lives in another list (run list != parent's list): retry without the parent
+      if (-not $bug.id -and $tr.parent) { $b = @($a | Select-Object -First ($a.IndexOf('--parent'))) + @($a | Select-Object -Skip ($a.IndexOf('--parent') + 2)); $bug = try { clickup @b 2>$null | ConvertFrom-Json } catch { $null }; if ($bug.id) { $null = clickup comment add $bug.id "Related: $(TaskUrl $tr.parent) (could not be created as its subtask: it is in another list)." 2>&1 } }
+      if ($bug.id) { $rec.bug = $bug.id; $msg += ". Failed part moved to $(TaskUrl $bug.id)" }
+      else { $rec.bugError = 'bug task could not be created'; Write-Warning "$($st.id): could not create the bug task for $(($fails | ForEach-Object id) -join ', ') - task kept open" }
     }
     $msg += ". Full report with screenshots and API evidence: $docUrl"
     $null = clickup comment add $st.id $msg 2>&1
@@ -135,6 +138,7 @@ foreach ($st in @($item.subtasks)) {
     if ($others.Count) { $rec.waitingFor = $others }
     # NOT_TESTED checks keep the task open (e.g. a dependency not deployed yet): closing would hide the untested part
     elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested"; $null = clickup comment add $st.id "Not closed: $nt check(s) could not be tested yet (see the report). Retest them once their blocker is resolved." 2>&1 }
+    elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
     elseif (-not $pend) { $null = clickup status set $closeStatus $st.id 2>&1; $rec.closed = $true }
   }
   $out.subtasks += $rec

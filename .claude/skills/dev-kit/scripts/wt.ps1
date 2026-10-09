@@ -44,6 +44,18 @@ switch ($Action) {
     if ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
+    # no -LinkFrom: use kit.local.json repos[].linkFromByTarget[<target>] (or linkFrom when <target> is the repo's default target).
+    # One repo can ship several products from different branches; linking the main checkout's installs (another branch) gave
+    # agents silently wrong dependency versions.
+    if (-not $LinkFrom) {
+      $kc = Join-Path (Split-Path $PSScriptRoot) 'kit.local.json'
+      if (Test-Path $kc) {
+        $rp = (Resolve-Path $Repo).Path.TrimEnd('\')
+        $r = @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
+        $cand = if ($r.linkFromByTarget -and $r.linkFromByTarget.$Target) { $r.linkFromByTarget.$Target } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
+        if ($cand -and (Test-Path $cand)) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
+      }
+    }
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
     $links = @()
     # node_modules next to every tracked package.json
