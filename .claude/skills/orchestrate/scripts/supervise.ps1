@@ -1,4 +1,4 @@
-﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
 <#
 Coordinator's periodic check-up (what a human lead would look at every 10-15 minutes). Prints a compact digest and a list
 of FLAGS with a suggested action each. The coordinator (main session) runs it on a loop and acts on the flags.
@@ -89,9 +89,11 @@ foreach ($g in $active | Group-Object agent | Where-Object Count -gt 1) {
   Flag 'ACT' "DUPLICATE agent $($g.Name) active in $($g.Count) sessions" 'Stop the newer copy (TaskStop the resumed task, never the workflow agent); never SendMessage a workflow agent by id.'
 }
 # skip board entries whose agent the workflow journal shows as active (testers don't heartbeat during long checks)
-$liveNames = @($liveLabels | ForEach-Object { (($_ -split ':')[-1] -split '@')[0] })
+# a label "verify:W1" may be on the board as "W1" or "W1-verify" (QA verifiers): accept both forms
+function LabelNames($l) { $p = $l -split ':'; $n = ($p[-1] -split '@')[0]; @($n) + $(if ($p.Count -gt 1) { "$n-$($p[0])" }) }
+$liveNames = @($liveLabels | ForEach-Object { LabelNames $_ })
 # agents whose workflow step finished (no copy still running) just forgot to `leave`: close their entry instead of flagging
-$doneNames = @($doneLabels | ForEach-Object { (($_ -split ':')[-1] -split '@')[0] } | Where-Object { $_ -and $_ -notin $liveNames })
+$doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames })
 foreach ($s in $stale | Where-Object { $_.agent -in $doneNames }) {
   if ($AutoFix) { $f = Join-Path $board "$($s.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }; Flag 'INFO' "auto-fixed: board entry $($s.agent) marked left (its workflow step finished)" 'Nothing to do.' }
 }

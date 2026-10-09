@@ -3,6 +3,8 @@ oordination lessons (self-improving — read before planning a wave or a QA run)
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) A finished QA verifier's board entry stayed WATCH 'no heartbeat' for 30+ min: supervise only auto-closes entries whose name equals the workflow label's agent (verify:X -> 'X'), but QA verifiers join the board as 'X-verify'. LabelNames() now yields both forms, so such entries are marked left automatically.
+
 - (fixed in kit) After a dev wave ENDED, track.ps1 kept holding its MRs as 'waits for its review (fix:<agent> still running)': waves\<run>.json is only refreshed by supervise for RUNNING workflows, so a finished wave's file stayed 'running'. InFlight now refreshes a report older than 5 min (wave-report.ps1) before it holds.
 
 - (rule added) An agent Wrote (overwrote) the wave's contracts file to publish its shapes for a sibling agent and silently deleted the coordinator's scope note added a minute earlier. dev-kit SKILL §8 now says: append only, never overwrite the contracts file. Coordinator: re-check your note is still there after agents publish.
