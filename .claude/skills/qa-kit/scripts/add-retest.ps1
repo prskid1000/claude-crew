@@ -15,16 +15,17 @@ param(
   [string]$Title, [string]$Mrs = '', [string[]]$Only, [ValidateSet('web', 'api', 'app')][string]$Lane = 'web'
 )
 $ErrorActionPreference = 'Stop'
-$t = clickup task view $Task --json | ConvertFrom-Json
-if (-not $t.id) { throw "cannot read task $Task (clickup auth?)" }
-$c = clickup comment list $Task --json 2>$null | ConvertFrom-Json
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\tracker.ps1')   # tracker.type in kit.local.json
+$t = Get-TrackerTask $Task
+if (-not $t.name) { throw "cannot read task $Task (tracker $($KitConf.TrackerType): CLI auth / config?)" }
+$c = @(try { Get-TrackerComments $Task } catch { @() })
 # greedy: older bug titles carry several "failed checks" parts; the last one is the current list
 if (-not $Only -and $t.name -match '.*failed checks\s+(?<ids>.+)$') { $Only = @($Matches.ids -split '\s*,\s*' | Where-Object { $_ }) }
 if (-not $Title) { $Title = "RETEST $($t.name -replace '^\[Bug\]\s*', '')" }
-$md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status.status)`n`n" +
+$md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status)`n`n" +
   "RETEST of the fix: run the failed checks ($($Only -join ', ')) again on the deployed build, same steps and data where possible. " +
-  "Check the fix is deployed first (deployed.ps1 -Mrs $Mrs); not deployed = NOT_TESTED.`n`n## Description`n`n$($t.markdown_description ?? $t.description)`n`n## Comments (oldest first)`n"
-foreach ($x in @($c) | Sort-Object { [long]$_.date }) { $md += "`n---`n**$($x.user.username)**`n`n$($x.comment_text)`n" }
+  "Check the fix is deployed first (deployed.ps1 -Mrs $Mrs); not deployed = NOT_TESTED.`n`n## Description`n`n$($t.description)`n`n## Comments (oldest first)`n"
+foreach ($x in $c) { $md += "`n---`n**$($x.user)** $($x.date)`n`n$($x.text)`n" }
 New-Item -ItemType Directory -Force "$RunDir\tasks" | Out-Null
 $gf = "$RunDir\tasks\$Task.md"; Set-Content $gf $md -Encoding utf8
 $r = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
