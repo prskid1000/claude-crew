@@ -1,4 +1,4 @@
-﻿<#
+<#
 Self-cleaning for the kit: removes temp things the kit's own scripts, agents and workflows produce, and logs what it freed.
 Runs automatically: at the end of every workflow (Learn step) and once a day from the SessionStart hook (-IfDue, in the background).
 
@@ -8,7 +8,8 @@ Runs automatically: at the end of every workflow (Learn step) and once a day fro
 
 What it cleans (only kit-created things; never repos, never anything in use):
   - headless test browsers (runtime\chrome-profiles) running > 3 h, or > 30 min when no QA agent is active on the board;
-    then their profile folders idle > 1 day
+    then their profile folders idle > 1 day; and when no QA seat/agent is active, only the cleanup.maxBrowserProfiles
+    (kit.local.json, default 4) most recently used profiles are kept - a profile in use is never removed
   - idle Gradle / Kotlin compile daemons (GBs each) when no gated Gradle build is running
   - shared web logins (runtime\sessions) > 8 h, API tokens > 3 days
   - loose evidence / android shots / temp xml in runtime > 14 / 3 days
@@ -56,6 +57,16 @@ foreach ($c in $chromes | Where-Object { $_.ParentProcessId -notin $chromes.Proc
 }
 $inUse = @($chromes | ForEach-Object { if ($_.CommandLine -match 'chrome-profiles[\\/](\d+)') { $Matches[1] } } | Sort-Object -Unique)
 foreach ($p in Get-ChildItem $profiles -Directory) { if ($p.Name -notin $inUse -and (Old $p 24)) { Gone $p.FullName 'idle browser profile' } }
+# cap: with no QA seat taken (qa-seat.ps1; seats older than 3 h are stale) and no QA agent on the board, keep the N most recently used
+$seatsActive = @(Get-ChildItem (Join-Path $rt 'qa-seats\seats') -Filter '*.json' | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }).Count
+$maxProfiles = [math]::Max(0, [int]$KitConf.MaxBrowserProfiles)
+if (-not $seatsActive -and -not $qaActive) {
+  # Chrome rewrites "Local State" when a profile is used/closed; the folder's own time is the fallback
+  $left = @(Get-ChildItem $profiles -Directory | Where-Object { Test-Path $_.FullName } | ForEach-Object {
+      $ls = Get-Item (Join-Path $_.FullName 'Local State') -Force
+      [pscustomobject]@{ dir = $_; used = $(if ($ls) { $ls.LastWriteTime } else { $_.LastWriteTime }) } } | Sort-Object used -Descending)
+  foreach ($x in @($left | Select-Object -Skip $maxProfiles)) { if ($x.dir.Name -notin $inUse) { Gone $x.dir.FullName "browser profile beyond the newest $maxProfiles (cleanup.maxBrowserProfiles)" } }
+}
 
 # 1b. idle Gradle / Kotlin daemons (they keep GBs after a build) - only when no gated Gradle build is running
 $gradleBusy = @(Get-ChildItem (Join-Path $env:TEMP 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json' |
