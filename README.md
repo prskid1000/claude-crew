@@ -105,7 +105,8 @@ flowchart LR
   finished agents), the board (duplicates, stale entries), the gate (queue, waits, repeated failures), RAM/disk, guard blocks and
   phone leases. It also runs the tracker and cleanup.
 - **Self-improvement.** `learn.ps1` signals → workflow Learn steps → `LESSONS.md` (≥ 2×) → `/kit-retro` promotes stable lessons
-  (≥ 3×) into rules; guard blocks and gate history feed the same loop.
+  (≥ 3×) into rules; guard blocks and gate history feed the same loop. `LESSONS.md` holds only active rules (≤ 40 lines,
+  `learn.ps1 -Trim`); fixed and old lessons move verbatim to `HISTORY.md` next to it, which agents never read.
 
 ## Prerequisites
 
@@ -217,6 +218,7 @@ QA agents do the same with their own id; the supervisor releases leases whose ho
 & <workspace>/.claude/skills/orchestrate/scripts/status.ps1 -Open -Watch     # live HTML dashboard
 & <workspace>/.claude/skills/orchestrate/scripts/cleanup.ps1 -DryRun         # what self-cleaning would remove
 & <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Stats            # signals since the last retro
+& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill dev-kit -Fixed "<words>"   # the kit handles it now: lesson -> HISTORY.md
 ```
 Run `/kit-retro` after a wave or when the session-start nudge says signals piled up (`{ applyScripts: true }` also applies script changes).
 

@@ -28,7 +28,7 @@ Data sources (read what exists; missing files just mean no data yet):
 - <OS temp folder>/claude-build-gate/history.json ([IO.Path]::GetTempPath(): %TEMP% on Windows, $TMPDIR or /tmp elsewhere) — per build kind: peak GB, seconds, ok — slow or failing kinds, estimates drifting
 - ${RT}/qa-runs/*/ — run.json, <code>/results.json, finalize.json, autoclose.log: NOT_TESTED reasons, audit reclassifications, verify "not reproduced" rates
 - ${RT}/audits/ — tech-audit findings and review outcomes, if any
-- Current kit: ${C}/skills/*/SKILL.md, ${C}/skills/*/LESSONS.md, ${C}/skills/tech-audit/reference/projects/*.md, ${C}/rules/*.md, ${C}/agents/*.md, ${C}/workflows/*.js`
+- Current kit: ${C}/skills/*/SKILL.md, ${C}/skills/*/LESSONS.md (active rules; ${C}/skills/*/HISTORY.md = moved/fixed lessons: read it only to spot a fixed problem that came back), ${C}/skills/tech-audit/reference/projects/*.md, ${C}/rules/*.md, ${C}/agents/*.md, ${C}/workflows/*.js`
 
 const PROPOSALS = {
   type: 'object',
@@ -93,7 +93,9 @@ ${JSON.stringify(all, null, 1)}
 Steps:
 1. Dedupe and resolve conflicts; drop low-confidence proposals without evidence.
 2. APPLY directly: add/update/remove-lesson and promote-to-rule changes (LESSONS.md, SKILL.md, rules/*.md, tech-audit project profiles).
-   Keep LESSONS.md under ~40 lines each: newest first, merge duplicates, drop lessons that were promoted or are obsolete.
+   LESSONS.md holds only active rules, newest first, one line each, merged duplicates. Use ${C}/skills/orchestrate/scripts/learn.ps1:
+   -Skill <s> -Lesson "(n×) <line>" [-Project <p>] to add, -Fixed "<words>" for a lesson the kit now handles or that was promoted/obsolete
+   (moved verbatim to HISTORY.md), then -Skill <s> -Trim for every skill you touched (enforces ≤ 40 lines; never delete lessons by hand).
 3. ${A.applyScripts ? 'ALSO APPLY script-change / default-change / template-change proposals, then re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check-style check every changed .js/.mjs; revert any change that breaks parsing.' : 'Do NOT apply script-change / default-change / template-change: list them for approval with the exact edit.'}
 4. Write the report to ${RT}/learning/retro-<yyyy-MM-dd-HHmm>.md: what changed and why (with evidence), what awaits approval, what was rejected.
 5. Run ${C}/skills/orchestrate/scripts/cleanup.ps1 -Quiet and include the freed space in the report.

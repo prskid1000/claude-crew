@@ -11,7 +11,8 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    command breaks off Windows, and `& "$K\x.ps1"` is parsed as module\command there), and use `dev-kit/scripts/sysinfo.ps1`
    for RAM, processes, directory links, temp folder, Python and the Android SDK instead of CIM, `%TEMP%` or `cmd /c`.
 3. **Keep the docs true.** When a script's behaviour changes, update its `SKILL.md`, the orchestrate playbook, the agent
-   definitions and `docs/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`.
+   definitions and `docs/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`
+   (active rules only, ≤ 40 lines: add with `learn.ps1 -Lesson`, retire with `learn.ps1 -Fixed`; moved lines live in `HISTORY.md`).
 4. **Check before you open a PR:**
    ```powershell
    # every PowerShell script parses (pwsh 7 on Windows, Linux or macOS)
