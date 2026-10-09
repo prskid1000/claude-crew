@@ -93,6 +93,8 @@ flowchart LR
   item claims keep workers from testing the same item.
 - **Model by stage.** Builds run on sonnet unless an agent is marked `complex` (strongest model); review, QA verify and note audit
   on sonnet; mechanical steps (load-run, ci, ship, close, hold, release, learn) on haiku. Override per agent/item (`model`) or per stage (`models`).
+- **Optional stages.** `/dev-wave` `review: 'auto'` skips the review for small, non-sensitive diffs and `learn: 'auto'` learns only
+  after trouble; `/test-and-close` `verify: false` sends FAILs straight to bug tasks without the independent re-test.
 - **CI gate before merge.** After a clean review, a cheap agent waits for the MR pipelines (`pipe-wait.ps1`); a failed pipeline
   goes back to the dev agent as a blocking finding (failed job + error tail) for the fix round, so nothing is scheduled to merge on red.
 - **Irreversible-rollback check.** `lbcheck.py` flags a Liquibase changeSet whose comment says it is not reversible / irreversible /

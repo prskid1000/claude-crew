@@ -162,7 +162,7 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 
 `/dev-wave` (`.claude/workflows/dev-wave.js`):
 ```js
-{ brief: '<abs path>/wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
+{ brief: '<abs path>/wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true | false | 'auto', learn: true | false | 'auto',
   agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', complex: false, model: '', effort: 'medium' } ],   // complex/model/effort optional
   complex: ['X1'], models: { build: 'sonnet', review: 'sonnet' },   // optional (see Models by stage)
   kitDir: '<workspace>/.claude', runtimeDir: '<workspace>/.claude-runtime' }   // kitDir/runtimeDir optional, recommended
@@ -176,6 +176,14 @@ Items may carry `model: 'sonnet'|'opus'|'haiku'` and `effort: 'low'|'medium'|'hi
 narrow web/API retests use sonnet and first-time guides the default (strongest) model. run.json (or args) `models` overrides a stage.
 
 `/kit-retro`: `{ applyScripts: false, kitDir, runtimeDir, models: { analyse, apply } }` — all optional.
+
+Optional stages:
+
+| Arg | Values (default first) | Effect |
+|---|---|---|
+| dev-wave `review` | `true` · `false` · `'auto'` | `'auto'` skips the MR review (and so the fix round) for an agent whose MRs change < 40 lines in total and touch no migration / SQL / changelog or security-sensitive path (auth, permission, role, token, secret, session, ...); the build agent reports `changedLines` + `changedFiles`, and a missing report means the review runs. The CI wait and ship steps still run. |
+| dev-wave / test-and-close `learn` | `true` · `false` · `'auto'` | `'auto'` runs the learn step only when the run had errors, deferrals, review findings, fix rounds (dev) or FAIL / NOT_TESTED / retries / note-audit or verify changes / a failed close (QA); otherwise (and with `false`) a haiku step just runs `cleanup.ps1`. |
+| test-and-close `verify` (args or run.json) | `true` · `false` | `false` skips the independent re-test of FAILs: they are published as FAIL (`re-test: not re-tested (verify: false)`) and get their bug task straight away. The note audit still runs. |
 
 ### Models by stage
 

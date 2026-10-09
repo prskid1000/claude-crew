@@ -1,26 +1,29 @@
 // Renders every prompt a kit workflow builds, by running the workflow with mock agents and sample args.
 // Used by kit-cost.ps1 (token budget per agent type); also a cheap behaviour check: the label/model/agentType of every
 // step is printed, so a prompt refactor can be diffed against the previous version.
-//   node kit-cost.mjs <kitDir> [--steps]     -> JSON { calls: [{ wf, label, agentType, model, effort, bytes }] }
+//   node kit-cost.mjs <kitDir> [--prompts] [--clean] [--set <wf>.<arg>=<json>]...  -> JSON { calls: [{ wf, label, agentType, model, effort, bytes }], logs }
+//   --clean: reviews find nothing and every QA check passes (exercises learn: 'auto'); --set dev-wave.review='"auto"' overrides a sample arg
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const kit = (process.argv[2] || '.claude').replace(/[\\/]+$/, '')
 const MR = (repo, n) => ({ url: `https://git.example.com/acme/${repo}/-/merge_requests/${n}`, repo, merged: false })
-const report = (id) => ({ mrs: [MR('api', id === 'X2' ? 2 : 1)], worktrees: [`${id.toLowerCase()}-api`], done: ['A1'], deferred: [], needsLiveCheck: ['open the form and save'], seed: [], foreignHooks: [], summary: 'implemented, checks green' })
+const CLEAN = process.argv.includes('--clean')
+const report = (id) => ({ mrs: [MR('api', id === 'X2' ? 2 : 1)], worktrees: [`${id.toLowerCase()}-api`], done: ['A1'], deferred: [], needsLiveCheck: ['open the form and save'], seed: [], foreignHooks: [], summary: 'implemented, checks green',
+  changedLines: id === 'X2' ? 12 : 30, changedFiles: id === 'X2' ? ['src/auth/LoginService.java'] : ['web/src/order-form.ts'] })
 
 function mock(label, opts) {
   const [kind, rest = ''] = label.split(':'); const id = rest.split('@')[0]
   switch (kind) {
     case 'build': case 'fix': case 'ship': return report(id)
-    case 'review': return { findings: id === 'X2' ? [{ mr: MR('api', 2).url, file: 'src/Order.java', line: 10, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] : [] }
+    case 'review': return { findings: id === 'X2' && !CLEAN ? [{ mr: MR('api', 2).url, file: 'src/Order.java', line: 10, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] : [] }
     case 'ci': return { done: true, mrs: [{ mr: MR('api', 1).url, status: 'success' }] }
     case 'learn': return { signals: 1, lessonsChanged: [] }
     case 'test': case 'retest': return { code: id, checks: [
       { id: 'T1', subtask_id: 't1', screen: 'Orders', result: 'PASS', what_was_done: 'saved', observed: 'saved', evidence: [`${id}-T1_01_saved.jpeg`] },
-      { id: 'T2', subtask_id: 't1', screen: 'Orders', result: 'PASS_WITH_NOTE', what_was_done: 'opened', observed: 'label differs', evidence: [] },
-      { id: 'T3', subtask_id: 't1', screen: 'Orders', result: 'FAIL', what_was_done: 'cancelled', observed: 'PUT /api/orders -> 500', evidence: [] }],
-      findings: ['seed data was old'], setup_changes: [], data_created: [] }
+      ...(CLEAN ? [] : [{ id: 'T2', subtask_id: 't1', screen: 'Orders', result: 'PASS_WITH_NOTE', what_was_done: 'opened', observed: 'label differs', evidence: [] },
+      { id: 'T3', subtask_id: 't1', screen: 'Orders', result: 'FAIL', what_was_done: 'cancelled', observed: 'PUT /api/orders -> 500', evidence: [] }])],
+      findings: CLEAN ? [] : ['seed data was old'], setup_changes: [], data_created: [] }
     case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
     case 'verify': return { verdicts: [{ id: 'T3', confirmed: true, observed: '500 again', evidence: [] }] }
     case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
@@ -41,7 +44,11 @@ const SAMPLE = {
   'kit-retro': { kitDir: kit },
 }
 
-const calls = []
+for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--set') {
+  const [, wf, key, val] = process.argv[++i].match(/^([\w-]+)\.(\w+)=(.*)$/)
+  SAMPLE[wf][key] = JSON.parse(val)
+}
+const calls = [], logs = []
 for (const wf of Object.keys(SAMPLE)) {
   const src = readFileSync(join(kit, 'workflows', `${wf}.js`), 'utf8').replace(/^export const meta/m, 'const meta')
   const body = new Function('args', 'agent', 'pipeline', 'parallel', 'log', 'phase', `return (async () => {\n${src}\n})()`)
@@ -51,7 +58,7 @@ for (const wf of Object.keys(SAMPLE)) {
   }
   const pipeline = async (items, ...stages) => Promise.all(items.map(async (it) => { let r = it; for (const [i, s] of stages.entries()) r = i === 0 ? await s(it) : await s(r, it); return r }))
   const parallel = async (fns) => Promise.all(fns.map((f) => f()))
-  await body(JSON.parse(JSON.stringify(SAMPLE[wf])), agent, pipeline, parallel, () => {}, () => {})
+  await body(JSON.parse(JSON.stringify(SAMPLE[wf])), agent, pipeline, parallel, (m) => logs.push(`${wf}: ${m}`), () => {})
 }
 const keep = process.argv.includes('--prompts')
-console.log(JSON.stringify({ calls: calls.map(({ prompt, ...c }) => (keep ? { ...c, prompt } : c)) }))
+console.log(JSON.stringify({ calls: calls.map(({ prompt, ...c }) => (keep ? { ...c, prompt } : c)), logs }))
