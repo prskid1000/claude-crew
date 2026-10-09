@@ -36,10 +36,12 @@ Org settings the scripts read (git host, GitLab group, repos root, tracker repos
 - **Branch:** feature → `f/CU-<task-id>-<slug>` (a tracker id prefix lets the tracker link the branch), bugfix → `fix/...`, refactor → `refactor/...`.
 - **Commit** in Conventional Commits: `feat(scope):` / `fix(scope):` / `refactor(scope):`.
 - **MRs:** one per repo; cross-link MRs when a task spans repos; always include the task URL.
+- **New tracker task?** Set its owner/assignee to the person who asked you to create it.
 
 ## Testing evidence
 - UI changes → screenshots; backend-only changes → API request/response JSON (`skills\qa-kit\scripts\api.ps1 -Save`).
 - Large files (payloads, logs) → upload to Drive and share links only.
+- Collect everything in one Google Doc (anyone with the link can view) and attach it to the task.
 - Rules and naming: `skills\qa-kit\reference\evidence-standard.md`.
 
 ## Command labels (suggested convention)
