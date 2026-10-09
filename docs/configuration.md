@@ -205,6 +205,18 @@ Measure the effect with `kit-cost.ps1 -Steps` (label, agent type, model and prom
 Workflow scripts can't read the filesystem, so they don't know where the kit is: without `kitDir` they hand agents paths
 relative to the workspace root (`.claude\skills\...`) and tell them so. Passing the absolute `kitDir` is more robust.
 
+## Coordinator script output
+
+Scripts the coordinator runs every round print a compact form by default; add `-Detail` for the long form (`-Json` where offered is unchanged):
+
+| Script | Default | `-Detail` / other |
+|---|---|---|
+| `orchestrate/scripts/supervise.ps1` | digest + flags | `-Brief`: flags only, one line each (auto-fixed INFO counted), or `ok: N running, mem X%` |
+| `orchestrate/scripts/wave-report.ps1 -Run <id>` | totals line + only agents/packages/findings that need the lead | every agent and package, done lists, deferral reasons, live checks, full findings + fixes |
+| `orchestrate/scripts/track.ps1 show` / `run` | open tasks / actions only (HOLD lines counted) | finished tasks / every HOLD line (supervise uses `run -Detail`) |
+| `qa-kit/scripts/deployed.ps1 -Mrs ...` | one summary line + the MRs that are NOT live | one line per MR per target |
+| `orchestrate/scripts/kit-cost.ps1` | token table per agent type | `-Baseline <json>`, `-Steps`, `-Live` |
+
 ## Operating systems
 
 The scripts run with PowerShell 7 (`pwsh`) on Windows, Linux and macOS. Everything OS-specific goes through

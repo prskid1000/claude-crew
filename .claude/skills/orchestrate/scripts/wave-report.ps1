@@ -2,11 +2,13 @@
 Readable summary of a finished (or running) workflow, built from its journal — the reliable source; the Workflow tool's
 notification text is truncated and not plain JSON. Works for /dev-wave, /test-and-close and /kit-retro runs.
 
-  & <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run wf_de575b4e-f98 [-Session <id>] [-Json]
-  -> prints per-agent status, MRs, done/deferred, OPEN review findings (non-nit, not fixed by a fix: round), QA verdicts per package,
-     learn-step changes; writes the same as JSON to <.claude-runtime>/waves/<run>.json for later rounds / follow-up briefs.
+  & <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run wf_de575b4e-f98 [-Session <id>] [-Detail] [-Json]
+  -> default (compact): one totals line, then only what needs the lead: agents with unmerged MRs / deferrals / notes, QA packages
+     with FAIL or NOT_TESTED, OPEN review findings (non-nit, not fixed by a fix: round), learn-step changes.
+     -Detail: every agent and package, done lists, deferral reasons, live checks, full findings with their fix.
+     Always writes the full JSON to <.claude-runtime>/waves/<run>.json for later rounds / follow-up briefs.
 #>
-param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json)
+param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
@@ -47,9 +49,25 @@ if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
 # (glab talks to the host it is logged in to; self-hosted: GITLAB_HOST / kit.local.json "gitHost")
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
   $m.merged = ((glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json).state -eq 'merged') } } }
-foreach ($k in $agents.Keys) { $a = $agents[$k]; '{0,-4} MRs {1}/{2} merged | done [{3}] | deferred {4}{5}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $($a.note.Substring(0, [math]::Min(80, $a.note.Length)))" }) }
-foreach ($k in $qa.Keys) { $q = $qa[$k]; '{0,-5} {1}/{2} pass, {3} fail, {4} not tested{5}' -f $k, $q.pass, $q.checks, $q.fail, $q.notTested, $(if ($q.Contains('published')) { " | published: $($q.published)" }) }
-if ($addressed.Count) { "--- review findings addressed in the fix round ($($addressed.Count)) - see each agent's fix-round summary"; $addressed | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line)" } }
-if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(([string]$_.problem).Substring(0, [math]::Min(150, ([string]$_.problem).Length)))" } }
+function Sum($xs, $k) { [int](@($xs | ForEach-Object { $_[$k] }) | Measure-Object -Sum).Sum }
+$cut = { param($s, $n) $s = [string]$s; $s.Substring(0, [math]::Min($n, $s.Length)) }
+if ($Detail) {
+  foreach ($k in $agents.Keys) { $a = $agents[$k]; '{0,-4} MRs {1}/{2} merged | done [{3}] | deferred {4}{5}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $(& $cut $a.note 80)" })
+    foreach ($d in @($a.deferred)) { "       deferred $($d.id): $($d.reason)" }
+    foreach ($c in @($a.needsLiveCheck)) { "       live check: $c" } }
+  foreach ($k in $qa.Keys) { $q = $qa[$k]; '{0,-5} {1}/{2} pass, {3} fail, {4} not tested{5}' -f $k, $q.pass, $q.checks, $q.fail, $q.notTested, $(if ($q.Contains('published')) { " | published: $($q.published)" }) }
+  if ($addressed.Count) { "--- review findings addressed in the fix round ($($addressed.Count)) - see each agent's fix-round summary"; $addressed | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line)" } }
+  if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $($_.problem)`n      fix: $($_.fix)" } }
+} else {
+  $am = @($agents.Values | ForEach-Object { @($_.mrs) }); $qv = @($qa.Values)
+  $parts = @()
+  if ($agents.Count) { $parts += "agents $($agents.Count): MRs $(@($am | Where-Object merged).Count)/$($am.Count) merged, done $(@($agents.Values | ForEach-Object { @($_.done) }).Count), deferred $(@($agents.Values | ForEach-Object { @($_.deferred) }).Count), findings open $($open.Count) / addressed $($addressed.Count)" }
+  if ($qa.Count) { $parts += "QA $($qa.Count) pkg: pass $((Sum $qv 'pass'))/$((Sum $qv 'checks')), fail $((Sum $qv 'fail')), not tested $((Sum $qv 'notTested')), published $(@($qv | Where-Object { $_.Contains('published') -and $_.published }).Count)/$($qa.Count)" }
+  if ($parts) { $parts -join ' | ' }
+  foreach ($k in $agents.Keys) { $a = $agents[$k]; $um = @($a.mrs | Where-Object { -not $_.merged }).Count
+    if ($um -or @($a.deferred).Count -or $a.note) { '  {0}: {1}{2}{3}' -f $k, $(if ($um) { "$um MR(s) not merged " }), $(if (@($a.deferred).Count) { "deferred $(@($a.deferred | ForEach-Object id) -join ',') " }), $(if ($a.note) { "| $(& $cut $a.note 80)" }) } }
+  foreach ($k in $qa.Keys) { $q = $qa[$k]; if ($q.fail -or $q.notTested -or ($q.Contains('published') -and -not $q.published)) { '  {0}: fail {1}, not tested {2}{3}' -f $k, $q.fail, $q.notTested, $(if ($q.Contains('published') -and -not $q.published) { ', NOT published' }) } }
+  if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(& $cut $_.problem 100)" } }
+}
 if ($learn) { "--- learn: $($learn.signals) signal(s); lessons: $(@($learn.lessonsChanged).Count)" }
-"saved: $(Join-Path $rt "waves\$Run.json")"
+if ($Detail) { "saved: $(Join-Path $rt "waves\$Run.json")" } else { "(full: -Detail or waves\$Run.json)" }

@@ -4,7 +4,7 @@ The full text behind the short "When you are the coordinator" block in `rules/mu
 don't load it every session). Read it when you start coordinating, and before publishing a kit change.
 
 You do two jobs at once: run the agents AND continuously improve the kit (`<workspace>/.claude`) and its flows.
-- **Supervise like a human lead:** after launching anything, keep `/loop 15m` supervision on (`orchestrate/scripts/supervise.ps1`), act on
+- **Supervise like a human lead:** after launching anything, keep one `/loop 30m` heartbeat on (`orchestrate/scripts/supervise.ps1 -AutoFix -Brief`; completion notifications cover finished workflows), act on
   ACT flags, re-check WATCH flags, take the next step when a workflow finishes (`wave-report.ps1 -Run <id>` for the result, then
   follow-ups: open review findings → follow-up wave; deploy → QA; failed checks → bug-fix wave; all merged → tracker status).
 - **Fix the kit, not just the symptom:** whenever an agent, script or flow causes friction (a workaround, a repeated lesson, a false flag,
