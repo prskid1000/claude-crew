@@ -5,17 +5,17 @@ and opens a "[Bug] ... failed checks" task for confirmed failures. Safe to re-ru
 Report output (kit.local.json "reports": { "type": ... }, or -Report):
   gdocs     Drive folder with all evidence + a Google Doc report (anyone with the link can view), via the gws CLI;
             reuses the folder and uploads only new files on a re-run. Default when gws is installed.
-  markdown  <code>\report.md (+ report.html) next to the evidence in the run folder; the tracker comment carries the
+  markdown  <code>/report.md (+ report.html) next to the evidence in the run folder; the tracker comment carries the
             report (GitHub/GitLab: its text; ClickUp/Jira: the file attached; none: logged). Default without gws.
-Tracker: skills\dev-kit\scripts\tracker.ps1 (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
+Tracker: skills/dev-kit/scripts/tracker.ps1 (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
 
-  & <workspace>\.claude\skills\qa-kit\scripts\finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown]
+  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown]
 
 Run dir layout (see the qa-kit SKILL.md):
   run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus, closeWithNotTested?}, driveParent, items[] }
-  <code>\results.json            { code, checks[], findings[], setup_changes[], data_created[] }
-  <code>\shots\*.jpeg|png  <code>\evidence\*.json
-Writes <code>\report.html (+ report.md for markdown) and <code>\finalize.json. tracker.closeStatus may be a logical status (closed).
+  <code>/results.json            { code, checks[], findings[], setup_changes[], data_created[] }
+  <code>/shots/*.jpeg|png  <code>/evidence/*.json
+Writes <code>/report.html (+ report.md for markdown) and <code>/finalize.json. tracker.closeStatus may be a logical status (closed).
 Subtasks that still have PENDING checks (tested later in another lane) get a comment but stay open.
 #>
 param(
@@ -60,7 +60,7 @@ function TaskUrl($id) { Get-TrackerUrl $id }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }
 $P = '{"fields":"id,webViewLink","supportsAllDrives":true}'
 
-# 1. Evidence: Drive folder + uploads (gdocs) or the run folder itself (markdown; links are relative to <code>\report.md)
+# 1. Evidence: Drive folder + uploads (gdocs) or the run folder itself (markdown; links are relative to <code>/report.md)
 $map = [ordered]@{ folderId = $null; folderLink = $null; files = [ordered]@{}; local = ($rtype -ne 'gdocs') }
 $files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match '^\.(jpe?g|png|json|log|csv|txt|pdf|mp4|html|xlsx?)$' })
 if ($map.local) {
@@ -84,7 +84,7 @@ foreach ($x in $files) {
   if ($r.id) { $map.files[$x.Name] = @{ id = $r.id; link = $r.webViewLink } }
 }
 
-# 2. Styled report (lib\report.ps1) + evidence-name check (reference\evidence-standard.md)
+# 2. Styled report (lib/report.ps1) + evidence-name check (reference/evidence-standard.md)
 . (Join-Path $PSScriptRoot 'lib/report.ps1')
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }

@@ -5,10 +5,10 @@ Automates the one conflict rule that is always safe: a deploy-branch file that i
 same file on the source branch (it came in through an earlier squashed/cherry-picked merge) takes the source's current version.
 Any other conflict stops the script with the list, for a human or agent to resolve.
 
-  & <kit>\skills\dev-kit\scripts\deploy-merge.ps1 -Repo <main checkout> -To staging/<product> [-From main] [-Push] [-Check <dir to compile>]
+  & <kit>/skills/dev-kit/scripts/deploy-merge.ps1 -Repo <main checkout> -To staging/<product> [-From main] [-Push] [-Check <dir to compile>]
 
 Steps: fresh worktree from origin/<To> (wt.ps1 new), merge --no-ff origin/<From>, auto-resolve as above, commit with hooks
-(wt.ps1 commit), optional compile (check.ps1 -Dir <worktree>\<Check>), then with -Push a plain (fast-forward) push to <To>.
+(wt.ps1 commit), optional compile (check.ps1 -Dir <worktree>/<Check>), then with -Push a plain (fast-forward) push to <To>.
 Without -Push it stops after the commit so you can look first. Prints the worktree; remove it afterwards with wt.ps1 remove.
 #>
 param(

@@ -1,7 +1,7 @@
 ﻿<#
 Installs the app under test on the swarm phones in the chosen mode:
-  Release - apk\app.apk (build it with app-build.ps1).
-  Metro   - react-native only: apk\base.apk (Expo dev client) + adb reverse to the shared Metro (metro-start.ps1).
+  Release - apk/app.apk (build it with app-build.ps1).
+  Metro   - react-native only: apk/base.apk (Expo dev client) + adb reverse to the shared Metro (metro-start.ps1).
 Both should be signed with the same key, so switching keeps the app's data.
 #>
 param(

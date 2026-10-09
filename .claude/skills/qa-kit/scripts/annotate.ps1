@@ -4,8 +4,8 @@ Works on PNG/JPEG from any source (web, Android, desktop). Pure PowerShell + Sys
 Windows only: .NET supports System.Drawing only there. On Linux/macOS mark the element before the shot instead
 (browser.mjs mark() before shot(); Android shots stay unmarked - name the element in the check note).
 
-  $A = '<workspace>\.claude\skills\qa-kit\scripts\annotate.ps1'
-  & $A -In shots\GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing' -Text '40,40,Expected: wraps inside A4'
+  $A = '<workspace>/.claude/skills/qa-kit/scripts/annotate.ps1'
+  & $A -In shots/GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing' -Text '40,40,Expected: wraps inside A4'
   -Rect 'x,y,w,h[,label]'      -Arrow 'x1,y1,x2,y2[,label]' (tip at x2,y2)      -Text 'x,y,text'      (each repeatable / comma lists)
   -Out <file>  default: overwrites -In (keep the evidence name); -Color red|orange|green|blue (default red); -Scale for very large shots.
 Coordinates are image pixels (Android: uiautomator bounds are already pixels; web: CSS px x devicePixelRatio).

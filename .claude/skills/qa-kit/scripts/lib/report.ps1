@@ -1,8 +1,8 @@
 # Builds the QA results report: Build-QaReport = styled HTML (tuned for Google Docs import: inline styles only, tables for layout),
-# Build-QaReportMd = the same content as Markdown (reports.type "markdown"; evidence links relative to <code>\report.md).
-# Dot-sourced by finalize.ps1:  . "$S\lib\report.ps1";  $html = Build-QaReport -Title ... -Code ... -Item ... -Res ... -Map ... -Run ...
+# Build-QaReportMd = the same content as Markdown (reports.type "markdown"; evidence links relative to <code>/report.md).
+# Dot-sourced by finalize.ps1:  . "$S/lib/report.ps1";  $html = Build-QaReport -Title ... -Code ... -Item ... -Res ... -Map ... -Run ...
 # $Map.files[<name>] = { id (Drive file id, gdocs only), link }; $Map.local = evidence stays in the run folder.
-# Task links use Get-TrackerUrl (dev-kit\scripts\tracker.ps1) when the caller dot-sourced it.
+# Task links use Get-TrackerUrl (dev-kit/scripts/tracker.ps1) when the caller dot-sourced it.
 function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
 
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }

@@ -1,16 +1,16 @@
 <#
 Git worktrees for parallel agents, for any repo and stack.
 
-  $K = '<workspace>\.claude\skills\dev-kit\scripts'
-  & $K\wt.ps1 new    -Repo <main checkout> -Branch <branch> -Target <target branch> -Name <agent prefix> [-LinkFrom <checkout>]
-  & $K\wt.ps1 sync   -Dir <worktree>                 # fetch + rebase onto the target (do it before editing, before push, before merge)
-  & $K\wt.ps1 commit -Dir <worktree> -Message "<msg>" # commit with the repo's hooks really running (fixes .husky in worktrees)
-  & $K\wt.ps1 status -Dir <worktree>                 # branch, target, ahead/behind, dirty files, linked deps
-  & $K\wt.ps1 remove -Dir <worktree> [-Force]        # unlink deps safely, then remove the worktree
-  & $K\wt.ps1 list   -Repo <main checkout>
+  $K = '<workspace>/.claude/skills/dev-kit/scripts'
+  & $K/wt.ps1 new    -Repo <main checkout> -Branch <branch> -Target <target branch> -Name <agent prefix> [-LinkFrom <checkout>]
+  & $K/wt.ps1 sync   -Dir <worktree>                 # fetch + rebase onto the target (do it before editing, before push, before merge)
+  & $K/wt.ps1 commit -Dir <worktree> -Message "<msg>" # commit with the repo's hooks really running (fixes .husky in worktrees)
+  & $K/wt.ps1 status -Dir <worktree>                 # branch, target, ahead/behind, dirty files, linked deps
+  & $K/wt.ps1 remove -Dir <worktree> [-Force]        # unlink deps safely, then remove the worktree
+  & $K/wt.ps1 list   -Repo <main checkout>
 
 new:
-- creates <Root>\<Name>-<repo folder name> (Root = $env:CLAUDE_WT_ROOT, or "<repo's parent>-wt") on a new branch from origin/<Target>;
+- creates <Root>/<Name>-<repo folder name> (Root = $env:CLAUDE_WT_ROOT, or "<repo's parent>-wt") on a new branch from origin/<Target>;
 - links installed dependencies from -LinkFrom (default: the main checkout) as junctions (Windows) or symlinks (Linux/macOS),
   so nothing is reinstalled:
   every node_modules next to a tracked package.json, and every .venv next to pyproject.toml/requirements.txt;

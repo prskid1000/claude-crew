@@ -4,7 +4,7 @@ Machine-wide memory gate for heavy builds and tests, so parallel agents (plus ot
 emulators and browsers) never run the machine out of RAM. Stack-agnostic: Maven, Gradle/Android, .NET,
 Angular/Node/React Native, Python, Go, Rust, CMake.
 
-  & <workspace>\.claude\skills\dev-kit\scripts\gate.ps1 -Dir <dir> -Cmd "<command>"
+  & <workspace>/.claude/skills/dev-kit/scripts/gate.ps1 -Dir <dir> -Cmd "<command>"
 
 Usually you call check.ps1, which detects the command and runs it through this gate for you.
 

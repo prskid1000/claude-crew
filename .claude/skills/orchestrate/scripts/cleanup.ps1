@@ -2,16 +2,16 @@
 Self-cleaning for the kit: removes temp things the kit's own scripts, agents and workflows produce, and logs what it freed.
 Runs automatically: at the end of every workflow (Learn step) and once a day from the SessionStart hook (-IfDue, in the background).
 
-  & <workspace>\.claude\skills\orchestrate\scripts\cleanup.ps1            # clean now
+  & <workspace>/.claude/skills/orchestrate/scripts/cleanup.ps1            # clean now
   & ... cleanup.ps1 -DryRun                                              # show what would go, delete nothing
   & ... cleanup.ps1 -IfDue                                               # only if the last cleanup was > 20 h ago
 
 What it cleans (only kit-created things; never repos, never anything in use):
-  - headless test browsers (runtime\chrome-profiles) running > 3 h, or > 30 min when no QA agent is active on the board;
+  - headless test browsers (runtime/chrome-profiles) running > 3 h, or > 30 min when no QA agent is active on the board;
     then their profile folders idle > 1 day; and when no QA seat/agent is active, only the cleanup.maxBrowserProfiles
     (kit.local.json, default 4) most recently used profiles are kept - a profile in use is never removed
   - idle Gradle / Kotlin compile daemons (GBs each) when no gated Gradle build is running
-  - shared web logins (runtime\sessions) > 8 h, API tokens > 3 days
+  - shared web logins (runtime/sessions) > 8 h, API tokens > 3 days
   - loose evidence / android shots / temp xml in runtime > 14 / 3 days
   - QA run folders > 30 days (results.json, finalize.json and report.html are kept as a record)
   - tsc incremental caches > 30 days; gate ledger entries of dead builds

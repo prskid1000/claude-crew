@@ -3,7 +3,7 @@
 Coordinator's periodic check-up (what a human lead would look at every 10-15 minutes). Prints a compact digest and a list
 of FLAGS with a suggested action each. The coordinator (main session) runs it on a loop and acts on the flags.
 
-  & <workspace>\.claude\skills\orchestrate\scripts\supervise.ps1 [-Session <claude session id>] [-Json]
+  & <workspace>/.claude/skills/orchestrate/scripts/supervise.ps1 [-Session <claude session id>] [-Json]
 
 Looks at:
   - workflows of this project (journal.jsonl): agents running / finished, per-agent idle time (transcript not written)
@@ -41,7 +41,7 @@ foreach ($w in $wfDirs) {
   foreach ($s in $started) { if ($res.ContainsKey($s.agentId)) { $k = & $itemOf $s.label; $i = [array]::IndexOf($started, $s); if (-not $finishedAt.ContainsKey($k) -or $finishedAt[$k] -lt $i) { $finishedAt[$k] = $i } } }
   $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
-  # keep <runtime>\waves\<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
+  # keep <runtime>/waves/<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
   # agent is still in review or fix (a wave nobody had reported on yet was invisible to it, and merge-after merged mid-review)
   if ($AutoFix -and $running.Count -and @($started | Where-Object { $_.label -match '^(build|review|fix):' }).Count) {
     & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.Name *> $null
@@ -122,7 +122,7 @@ $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'
 if (Test-Path $adb) {
   $serials = @(& $adb devices 2>$null | Where-Object { $_ -match '^(emulator-\d+)\s+device' } | ForEach-Object { $Matches[1] })
   $swarmCfg = try { Get-Content (Join-Path $swarm 'swarm.config.json') -Raw | ConvertFrom-Json } catch { $null }
-  # Agents own phones through leases (android-swarm\phone.ps1 acquire/release): they boot, wait and shut down phones themselves.
+  # Agents own phones through leases (android-swarm/phone.ps1 acquire/release): they boot, wait and shut down phones themselves.
   # The supervisor is only the safety net: (1) a lease whose holder is gone (no live workflow step on that lane, not active on the
   # board, older than 30 min) is released, which shuts the phone down; (2) a running phone with NO lease (booted by hand) and our
   # app closed for 10 min is shut down.
@@ -267,7 +267,7 @@ foreach ($par in $parents) {
   Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "Start the fixes now as ONE wave: & $(Join-Path $PSScriptRoot 'bug-brief.ps1') -Task <id> -Agent B-<code> -Repos <repos> [-Hints ...] per task (writes the brief, starts tracking, prints /dev-wave args incl. mandate), combine the briefs into one file with a section per agent, then launch a single /dev-wave."
 }
 
-# 7. capacity: scale QA workers with memory. Seats (qa-kit\scripts\qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
+# 7. capacity: scale QA workers with memory. Seats (qa-kit/scripts/qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
 #    so shrinking is automatic. Growing: if a QA run has items nobody has started and memory has room, say how many extra workers fit.
 $keepFree = try { $v = (Get-Content (Join-Path $skills 'qa-kit\targets.local.json') -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
 $freeNow = Get-FreeGB

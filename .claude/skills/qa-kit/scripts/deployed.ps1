@@ -4,11 +4,11 @@ Is a merged MR live on a test environment? Answers from the CI, not from memory:
 the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "On" = an ancestor, or (squashed "merge main
 into staging" / cherry-picks) the MR is on its target branch and none of its files differ between that branch and the deploy ref.
 
-  $D = '<kit>\skills\qa-kit\scripts\deployed.ps1'
+  $D = '<kit>/skills/qa-kit/scripts/deployed.ps1'
   & $D -Mrs backend!812,web!415                     # one line per MR per deploy target, exit 0 when every MR is live
   & $D -Mrs backend!812 -Target staging -Json       # machine-readable
 
-Deploy targets come from dev-kit\kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
+Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
 "job": "deploy-staging" }]. A repo deployed by hand (no CI job) uses { "target": ..., "awsStack": "<CloudFormation stack>", "region": ... }:
 live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.

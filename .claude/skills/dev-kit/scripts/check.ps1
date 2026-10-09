@@ -2,14 +2,14 @@
 One command for "does my change build and pass?" in any repo. Detects the stack (stack.ps1), fills in the
 command and runs it through the memory gate (gate.ps1).
 
-  $K = '<workspace>\.claude\skills\dev-kit\scripts'
-  & $K\check.ps1 -Dir <dir>                                   # quick: compile + typecheck + lint (whatever the stack has)
-  & $K\check.ps1 -Dir <dir> -Step test -Tests "FooTest,BarTest"
-  & $K\check.ps1 -Dir <dir> -Step test -Tests "src/a.spec.ts"
-  & $K\check.ps1 -Dir <dir> -Step lint -Files "src/a.ts src/b.ts"
-  & $K\check.ps1 -Dir <dir> -Step build                       # full build (heavy, use before shipping only)
-  & $K\check.ps1 -Dir <dir> -Step migrations                  # Liquibase sanity check, if the repo has master.xml
-  & $K\check.ps1 -Dir <dir> -Show                             # print what would run
+  $K = '<workspace>/.claude/skills/dev-kit/scripts'
+  & $K/check.ps1 -Dir <dir>                                   # quick: compile + typecheck + lint (whatever the stack has)
+  & $K/check.ps1 -Dir <dir> -Step test -Tests "FooTest,BarTest"
+  & $K/check.ps1 -Dir <dir> -Step test -Tests "src/a.spec.ts"
+  & $K/check.ps1 -Dir <dir> -Step lint -Files "src/a.ts src/b.ts"
+  & $K/check.ps1 -Dir <dir> -Step build                       # full build (heavy, use before shipping only)
+  & $K/check.ps1 -Dir <dir> -Step migrations                  # Liquibase sanity check, if the repo has master.xml
+  & $K/check.ps1 -Dir <dir> -Show                             # print what would run
 
 -Dir is the folder with the build file (pom.xml, package.json, *.sln, pyproject.toml, ...), or anything below it.
 Tests are targeted: -Step test needs -Tests unless you pass -AllTests (full suites are slow and eat RAM).

@@ -2,8 +2,8 @@
 Detects the build stack of a directory from its marker files and returns the commands for it.
 Works for any repo — nothing project-specific lives here.
 
-  & <workspace>\.claude\skills\dev-kit\scripts\stack.ps1 -Dir <dir>            # table: stack, dir, commands
-  & <workspace>\.claude\skills\dev-kit\scripts\stack.ps1 -Dir <dir> -Json      # same, as JSON (for agents/scripts)
+  & <workspace>/.claude/skills/dev-kit/scripts/stack.ps1 -Dir <dir>            # table: stack, dir, commands
+  & <workspace>/.claude/skills/dev-kit/scripts/stack.ps1 -Dir <dir> -Json      # same, as JSON (for agents/scripts)
 
 Looks in -Dir first, then walks up to the git root, and uses the nearest match.
 Commands use placeholders filled by check.ps1: {tests} (test filter), {files} (paths), {sln} (solution file).

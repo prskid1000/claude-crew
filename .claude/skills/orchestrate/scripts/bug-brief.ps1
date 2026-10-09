@@ -3,12 +3,12 @@ Writes a bug-fix wave brief from a QA-raised "[Bug] … failed checks" task, so 
 not boilerplate. It pulls the failed checks (id, screen, what was seen) from the task, adds the repo table, the evidence/guide location
 of the QA run that raised it, ownership, branch/board/merge rules, and prints the /dev-wave args to launch (incl. mandate).
 
-  $BB = '<workspace>\.claude\skills\orchestrate\scripts\bug-brief.ps1'
+  $BB = '<workspace>/.claude/skills/orchestrate/scripts/bug-brief.ps1'
   & $BB -Task 86abc123 -Agent B-CHK -Repos api,web [-Hints 'X3: reuse the existing time zone helper'] [-Range 20260101000000-20260101005959]
 
 Repos: names or aliases from kit.local.json "repos" (each: { name, checkout, target, linkFrom?, aliases[] }); `name@branch` overrides the
 target for this bug (e.g. web@main when the same repo ships two products from different branches). The brief lands next to the
-other briefs (<runtime>\briefs\<task>.md); the script prints the path and the Workflow args JSON.
+other briefs (<runtime>/briefs/<task>.md); the script prints the path and the Workflow args JSON.
 Mandate: kit.local.json "bugfixMandate" (the task owner's own words asking the coordinator to fix QA bugs), else -Mandate.
 #>
 param(
@@ -20,7 +20,7 @@ param(
   [string[]]$Mandate = @()
 )
 $ErrorActionPreference = 'Stop'
-$kit = Split-Path (Split-Path $PSScriptRoot)                     # ...\.claude\skills
+$kit = Split-Path (Split-Path $PSScriptRoot)                     # .../.claude/skills
 $claude = Split-Path $kit
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path $claude) '.claude-runtime' }
 $cfgFile = Join-Path $kit 'dev-kit\kit.local.json'

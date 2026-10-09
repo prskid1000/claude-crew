@@ -2,8 +2,8 @@
 Shared agent board: every agent (in any workflow or session) says what it's working on, so concurrent agents see each other,
 duplicates are caught at once, and two agents never write the same worktree.
 
-  $B = '<workspace>\.claude\skills\orchestrate\scripts\board.ps1'
-  & $B join  -Agent A1 -Area "checkout form + view" -Items "FEAT-12,FEAT-13" -Claims <wt root>\a1-backend,<wt root>\a1-frontend [-Run checkout-v2] [-Contracts <file>]
+  $B = '<workspace>/.claude/skills/orchestrate/scripts/board.ps1'
+  & $B join  -Agent A1 -Area "checkout form + view" -Items "FEAT-12,FEAT-13" -Claims <wt root>/a1-backend,<wt root>/a1-frontend [-Run checkout-v2] [-Contracts <file>]
         (-Claims = anything exclusive: worktree paths, emulator serials like emulator-5556, browser ports like chrome:9601)
         -> prints a SESSION token (keep it), the other active agents, warnings, and the contracts file to follow
   & $B beat  -Session <token> [-Status "testing web"]   # heartbeat; do it when you start a build/test or push (cheap)

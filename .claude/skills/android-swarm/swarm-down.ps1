@@ -1,6 +1,6 @@
 ﻿<#
 Stops the swarm emulators cleanly (snapshot saved), removes adb reverse rules and, by default, kills leftover
-headless test browsers started by qa-kit\scripts\web\browser.mjs (runtime\chrome-profiles). Nothing else is touched.
+headless test browsers started by qa-kit/scripts/web/browser.mjs (runtime/chrome-profiles). Nothing else is touched.
 #>
 param([string[]]$Lanes, [switch]$KeepBrowsers)
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')

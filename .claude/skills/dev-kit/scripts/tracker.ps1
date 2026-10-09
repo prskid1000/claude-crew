@@ -3,7 +3,7 @@ Tracker adapter: one small verb set for every issue tracker the kit talks to. Sc
 tracker CLI, so the kit works with ClickUp, GitHub issues, GitLab issues, Jira - or no tracker at all.
 
 As a script (structured results print as JSON):
-  $TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'
+  $TR = '<workspace>/.claude/skills/dev-kit/scripts/tracker.ps1'
   & $TR view <id>                        # { id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description }
   & $TR status <id> <status>             # logical name (review, promoted, inTest, closed, ...) or the tracker's own status name
   & $TR comment <id> <text | file.md>
@@ -26,7 +26,7 @@ Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issue
   gitlab   glab api issues in tracker.repo (group/project), same label/state model; host from gitHost
   jira     REST v3 with $env:JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN; status = the transition whose name (or target
            status) matches; -List = project key; descriptions/comments are sent as plain-paragraph ADF
-  none     no tracker: every call is logged and kept in <runtime>\tracker-none\ (create returns LOCAL-<n>), nothing fails
+  none     no tracker: every call is logged and kept in <runtime>/tracker-none/ (create returns LOCAL-<n>), nothing fails
 Logical statuses (tracker.statuses overrides any; a value may be a list - the first name is set, all names match):
   open, inProgress, review, promoted, inTest, closed
 Works in PowerShell 7 (jira attachments need it); the rest also runs in Windows PowerShell 5.1.
