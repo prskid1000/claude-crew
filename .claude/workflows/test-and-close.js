@@ -29,7 +29,9 @@ or the full run.json object (write it to <runDir>/run.json too — finalize.ps1 
   items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
-             model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high' } ],   // optional; default: retests on web/api -> sonnet
+             model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high',     // optional, the TEST step; default: retests on web/api -> sonnet
+             verifyModel: 'opus' } ],                                           // optional, the VERIFY step (default models.verify)
+  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku' },   // optional stage overrides ('' = session default)
   // skipClose: test + verify only; results.json + held.json are written for the lead to publish later (finalize.ps1 -Code).
   // Items sharing one task don't need it: finalize keeps the task open until every item on it is published.
 }
@@ -77,7 +79,10 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
   exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
   Your LAST command before returning (also on errors): & ${Q}/qa-seat.ps1 release -Agent "${label}"`
 }
-// Model per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
+// Model by stage (R.models overrides): verify + audit = sonnet; close, hold, release, follow-ups, learn = haiku.
+const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', ...(R.models || {}) }
+const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+// TEST step per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
 // first-time guides and app lanes keep the default (strongest) model.
 function modelFor(it) {
   if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
@@ -282,7 +287,7 @@ async function runItem(it, idx, L) {
 
   // Note audit: real defects hidden in notes/findings become FAIL (or new X checks) so they get verified and a bug task.
   if (res.checks.some((c) => c.result === 'PASS_WITH_NOTE') || (res.findings || []).length) {
-    const a = await agent(auditPrompt(it, res), { label: `audit:${it.code}`, phase: 'Verify', schema: AUDIT_SCHEMA, agentType: 'qa-verifier', model: 'sonnet' })
+    const a = await agent(auditPrompt(it, res), { label: `audit:${it.code}`, phase: 'Verify', schema: AUDIT_SCHEMA, agentType: 'qa-verifier', ...pick('audit') })
     for (const d of (a && a.reclassify) || []) {
       const c = res.checks.find((x) => x.id === d.id)
       if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.observed = `${c.observed} | Note audit: a defect, not a note: ${d.reason}` }
@@ -296,7 +301,7 @@ async function runItem(it, idx, L) {
 
   const fails = res.checks.filter((c) => c.result === 'FAIL')
   if (fails.length) {
-    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier', ...modelFor(it) })
+    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier', ...(it.verifyModel ? { model: it.verifyModel } : pick('verify')), ...(it.effort ? { effort: it.effort } : {}) })
     const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
     for (const c of fails) {
       const x = byId[c.id]
@@ -318,11 +323,11 @@ ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
 ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
-      { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+      { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
     return { code: it.code, summary: line, result: res }
   }
-  const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+  const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))
   return { code: it.code, summary: line, finalize: fin, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
@@ -395,6 +400,6 @@ ${JSON.stringify(all).slice(0, 60000)}
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
 3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
-Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
+Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return all

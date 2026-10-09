@@ -12,6 +12,8 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
 **Launching:** always by path — `Workflow({ scriptPath: "<kit>/workflows/dev-wave.js", args })` (named lookup breaks after a `cd`).
 Always pass `kitDir` (absolute) and `mandate` (the owner's own words that asked for the work: without it agents drop their items for the
 latest chat message). /test-and-close takes the short form `{ runDir, kitDir }` (run.json is read from the run folder).
+Models: builds run on sonnet unless the brief marks the agent complex (`agents[].complex: true` → strongest); review/verify/audit sonnet;
+mechanical steps haiku. Override per agent (`model`) or per stage (`models: {...}`) — docs/configuration.md.
 
 | # | Step | Dev side | QA side |
 |---|---|---|---|

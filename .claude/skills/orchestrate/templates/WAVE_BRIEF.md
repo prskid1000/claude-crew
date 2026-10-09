@@ -14,10 +14,10 @@ Read `<workspace>/.claude/skills/dev-kit/SKILL.md` first. This brief adds wave-s
 | <app> | `<repos root>/<repo>` | `<branch>` | | |
 
 ## Ownership (stay in your area; add only one-line hooks elsewhere and say so)
-| Agent | Items | Area (screens / packages / files) | Repos | Migration range |
-|---|---|---|---|---|
-| X1 | … | … | api, web | 2026MMDD100000–2026MMDD105959 |
-| X2 | … | … | app | — |
+| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Complex? (strongest model) |
+|---|---|---|---|---|---|
+| X1 | … | … | api, web | 2026MMDD100000–2026MMDD105959 | yes: new data flow |
+| X2 | … | … | app | — | no (sonnet) |
 
 - **Migration ranges**: non-overlapping per agent, never reused from an earlier wave.
 - **Known overlaps**: <"X1 and X2 both touch screen S: X1 = tab A, X2 = export option">.

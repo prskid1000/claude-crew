@@ -95,13 +95,14 @@ $dir = Join-Path $rt 'briefs'; New-Item -ItemType Directory -Force $dir | Out-Nu
 $out = Join-Path $dir "$Task.md"
 Set-Content $out $md -Encoding utf8
 $m = if ($Mandate) { $Mandate } elseif ($cfg.bugfixMandate) { @($cfg.bugfixMandate) } else { Write-Warning 'no mandate: pass -Mandate or set kit.local.json "bugfixMandate" (agents drop their items for later chat messages without one)'; @() }
-# model suggestion: one cosmetic check (label / colour / i18n / raw key / date format / typo / alignment) -> sonnet; anything else keeps the default (strongest)
+# model: dev-wave builds on sonnet unless the agent is marked complex (strongest model). Complex = more than 2 failed checks, or any
+# check that isn't cosmetic (label / colour / i18n / raw key / date format / typo / alignment ...): logic, data or crash bugs.
 $cosmetic = '(?i)label|translation|i18n|raw (translation )?key|colou?r|date format|typo|spelling|alignment|padding|wording|icon'
-$suggest = if ($checks.Count -le 2 -and -not @($checks | Where-Object { ($_.screen + ' ' + $_.saw) -notmatch $cosmetic }).Count) { 'sonnet' } else { $null }
-$agentArgs = [ordered]@{ id = $Agent; items = "$Task $ids" }; if ($suggest) { $agentArgs.model = $suggest }
+$complex = $checks.Count -gt 2 -or @($checks | Where-Object { ($_.screen + ' ' + $_.saw) -notmatch $cosmetic }).Count
+$agentArgs = [ordered]@{ id = $Agent; items = "$Task $ids" }; if ($complex) { $agentArgs.complex = $true }
 $wfArgs = [ordered]@{ brief = $out; run = $runName; mode = 'bugfix'; review = $true; mandate = $m; agents = @($agentArgs) }
 $wfArgs.agents[0].area = (($checks | ForEach-Object screen) -join '; ').Substring(0, [math]::Min(160, (($checks | ForEach-Object screen) -join '; ').Length))
-"brief: $out ($($checks.Count) checks: $ids; model: $(if ($suggest) { "$suggest (small/cosmetic)" } else { 'default (strongest)' }))"
+"brief: $out ($($checks.Count) checks: $ids; model: $(if ($complex) { 'strongest (complex: true)' } else { 'sonnet (small/cosmetic)' }))"
 "Workflow args (scriptPath $claude\workflows\dev-wave.js):"
 $wfArgs | ConvertTo-Json -Depth 5 -Compress
 $tf = Join-Path $rt "tracking\$Task.json"

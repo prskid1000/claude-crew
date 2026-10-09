@@ -91,8 +91,8 @@ flowchart LR
 - **Memory seats and extra workers.** QA testers take a memory seat (`qa-seat.ps1`) before they start, so the number of parallel
   QA agents grows and shrinks with free RAM. When a run has queued items and room, the supervisor suggests an extra worker run;
   item claims keep workers from testing the same item.
-- **Per-agent model choice.** Mechanical steps (load-run, close, ship, release) run on haiku, narrow retests on sonnet, and you can
-  set `model`/`effort` per dev agent (`agents[].model`) or per QA item; real code changes keep the strongest model.
+- **Model by stage.** Builds run on sonnet unless an agent is marked `complex` (strongest model); review, QA verify and note audit
+  on sonnet; mechanical steps (load-run, ci, ship, close, hold, release, learn) on haiku. Override per agent/item (`model`) or per stage (`models`).
 - **CI gate before merge.** After a clean review, a cheap agent waits for the MR pipelines (`pipe-wait.ps1`); a failed pipeline
   goes back to the dev agent as a blocking finding (failed job + error tail) for the fix round, so nothing is scheduled to merge on red.
 - **Irreversible-rollback check.** `lbcheck.py` flags a Liquibase changeSet whose comment says it is not reversible / irreversible /
@@ -181,9 +181,9 @@ Optional, per feature:
 
 Bug-fix waves use `mode: 'bugfix'` with `BUGFIX_BRIEF.md`; stopped agents continue with `mode: 'resume'`.
 For a `[Bug] … failed checks` task from QA, one command writes the brief, starts tracking and prints the /dev-wave args
-(including `mandate` and a `model` suggestion: sonnet for one or two cosmetic checks):
+(including `mandate` and `complex: true` unless the bug is one or two cosmetic checks):
 `& <workspace>/.claude/skills/orchestrate/scripts/bug-brief.ps1 -Task <task id> -Agent B-ORD -Repos api,web`.
-Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area: 'label typo', model: 'sonnet' }`).
+Agents build on sonnet by default; mark hard ones `complex: true` (strongest model) or set `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area: 'pricing engine', complex: true }`).
 
 ### Test and close a deployed batch
 1. Create a run folder `<workspace>/.claude-runtime/qa-runs/2026-10-01-projects/` with the tester guides (exported to text) and `run.json`:
