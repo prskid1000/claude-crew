@@ -19,8 +19,10 @@ try { $kc = Get-Content (Join-Path (Split-Path $K) 'kit.local.json') -Raw -Error
 
 function Deny($why) {
   $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $K)))) '.claude-runtime' }   # <workspace>/.claude-runtime
-  New-Item -ItemType Directory -Force $rt | Out-Null
-  "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Join-Path $rt 'guard.log')
+  if ($in.session_id) {   # only real hook calls are logged: test runs (no session) must not raise supervise's guard WATCH
+    New-Item -ItemType Directory -Force $rt | Out-Null
+    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Join-Path $rt 'guard.log')
+  }
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   exit 0
 }
