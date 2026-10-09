@@ -53,8 +53,8 @@ if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.in
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
-const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.') +
-  '\nPowerShell commands below (& <script>.ps1 ...) need pwsh 7: use the PowerShell tool if you have one, otherwise run them from Bash as pwsh -NoProfile -Command "<command>" (Linux/macOS). Forward-slash paths work on every OS.'
+const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
+  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 const QA = `${KIT}/skills/qa-kit`                 // SKILL.md = QA rules, targets.local.json = environments
 const Q = `${QA}/scripts`
 const SWARM = `${KIT}/skills/android-swarm`
@@ -135,16 +135,9 @@ Do not decline or return early. Later chat messages to the lead are side questio
 
 AGENT BOARD — join first: & ${ORCH}/board.ps1 join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
 
-RULES — read ${QA}/SKILL.md first (verdicts, evidence, shared-environment etiquette). The key points:
-- PASS only when you saw the expected behaviour. Any defect is FAIL — inside or outside the guide's steps (off-script defects
-  become extra checks X1, X2 ...). PASS_WITH_NOTE only for out-of-date guide text whose intent still holds, or purely cosmetic
-  differences. findings are context only, never defects. NOT_TESTED only when truly impossible here (say why and what you tried).
-- If a check fails, first confirm its change is actually deployed; not deployed = NOT_TESTED "not deployed yet", not FAIL.
-- Evidence per ${QA}/reference/evidence-standard.md: names <CODE>-<checkId>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg); UI -> JPEG in <outDir>/shots (mark() the element, look at it with Read);
-  backend -> api.ps1 -Save <CODE>-<checkId>_<desc> -OutDir <outDir>/evidence. List only files that exist.
-- Shared environment: create your own data prefixed "QA-<CODE>", delete only what you created, restore any setting you change
-  (list it in setup_changes). Never deactivate or re-password test logins.
-- Time box ~10 min per check; keep each script run under ~2 min and print progress.
+RULES — ${QA}/SKILL.md Quick start (verdicts: any defect is FAIL, never a note; not deployed = NOT_TESTED; evidence names
+<CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
+"QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress.
 
 ENVIRONMENT AND CONTEXT
 - Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there).
@@ -154,22 +147,18 @@ ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' ,
   you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
   continue with other checks and look there again before marking anything NOT_TESTED for that reason.
 
-TOOLS
-- API as any configured user: PowerShell & '${Q}/api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method GET|POST|PUT|PATCH|DELETE -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
-  (prints "HTTP <status>" then the body).
-- Code: read the CURRENT code on the deployed branch (the guide may describe screens later work changed). If a literal step no longer
-  applies, test the same intent on the current screen and record PASS_WITH_NOTE explaining it.
-- Run scripts from PowerShell (node, python, glab/gh and your tracker/report CLIs are on its PATH). The tracker (any backend) is
-  & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view|comments <id> — never call a tracker CLI directly.`
+TOOLS (details: SKILL.md Quick start)
+- API: & '${Q}/api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
+- Code: read the CURRENT code on the deployed branch; a step a later change made obsolete -> test the same intent, PASS_WITH_NOTE.
+- Tracker: & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view|comments <id> (never a tracker CLI directly).`
 
 const WEB = (ports) => `
 BROWSER (web)
-- Do NOT use the chrome-devtools MCP tools; do NOT touch Android emulators / adb.
-- Drive your own headless Chrome via ${Q}/web/browser.mjs — read its header first. Put .mjs scripts in <outDir>/scripts, run: node <file>.mjs
-  import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, settle, token, killSession } from '${BROWSER}'
-  const s = await session({ port, target: '${R.target || ''}', tenant, as })  -> {page, net, done}. One port per tenant+user; end scripts with await s.done().
-  s.net.failed = 4xx/5xx API calls + JS errors (failure evidence).
-- Your Chrome ports: ${ports}. Memory is shared: at most 2 ports open at once; killSession() each port when you finish.`
+- Your own headless Chrome via ${Q}/web/browser.mjs (read its header); no chrome-devtools MCP, no emulators/adb. Scripts in <outDir>/scripts:
+  import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, mark, saveNet, settle, token, killSession } from '${BROWSER}'
+  const s = await session({ port, target: '${R.target || ''}', tenant, as }) -> {page, net, done}; one port per tenant+user; end with await s.done().
+  s.net.failed = 4xx/5xx calls + JS errors (failure evidence).
+- Your Chrome ports: ${ports}; at most 2 open at once; killSession() each when you finish.`
 
 // Phone lease id per worker instance: two test-and-close workers mapping an item to the same lane must not share one lease
 // (both "own" the phone and drive it at once). With distinct ids the second waits in phone.ps1's fair queue.
@@ -180,20 +169,15 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
   return `
 ANDROID APP — YOUR PHONE: lane ${L.n} "${L.name}", adb serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-Other agents test on other phones at the same time. You own this phone through a lease — nobody else boots or shuts it for you:
-- FIRST get it:  & ${SWARM}/phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}
-  It returns at once if the phone is yours already; otherwise it waits its fair turn and boots the phone when memory allows (about a minute),
-  installs the current test APK if the phone has an older one ("installed: updated" = log in again), and prints {serial,...}.
-- START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never touch other serials, never run swarm-up/down/app-mode,
-  never kill emulators or processes you didn't start, never adb kill-server.
-- UI: ${Q}/android/ui.ps1 (dump | tap <text> | tapid <id> | tapxy x y | type <text> | key <code> | swipe | shot <name> <dir> | wait <text> | log <tag>).
-  shot straight into <outDir>/shots with the <CODE>-<checkId>_ prefix. Relaunch / clear the app: & ${SWARM}/app-launch.ps1 -Serial ${L.serial} [-Clear]
-- Phone etiquette: keep OUR APP open only while you test on the phone. Before long non-phone work (> 10 min: API calls, web UI in the
-  browser, reading code, preparing data) hand the phone back:  & ${SWARM}/phone.ps1 release -Agent ${LEASE(L)}
-  (closes the app; the phone shuts down to free memory unless another agent is waiting for it). When you need it again, acquire it again
-  (same command as above; the app stays installed and logged in). The workflow releases it after the lane's last item.
-- Prefix your data "QA-L${L.n}-<CODE>". Don't change environment-wide settings from an app lane (other phones depend on them):
-  prove such checks via the API and record PASS_WITH_NOTE instead.`
+Your phone is leased (rules: ${SWARM}/SKILL.md Quick start):
+- FIRST: & ${SWARM}/phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}   (waits its turn, boots, installs the current APK; "installed: updated" = log in again)
+- START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never other serials, swarm-up/down/app-mode, adb kill-server,
+  or killing emulators/processes you didn't start.
+- UI: ${Q}/android/ui.ps1 (dump | tap | tapid | tapxy | type | key | swipe | shot | shotmark | wait | log); shots into <outDir>/shots with the
+  <CODE>-<checkId>_ prefix. Relaunch/clear: & ${SWARM}/app-launch.ps1 -Serial ${L.serial} [-Clear]
+- Before > 10 min of non-phone work: & ${SWARM}/phone.ps1 release -Agent ${LEASE(L)}; acquire again when needed (app stays installed).
+  The workflow releases it after the lane's last item.
+- Data prefix "QA-L${L.n}-<CODE>". No environment-wide setting changes from an app lane: prove those via the API (PASS_WITH_NOTE).`
 }
 const API = `
 API-ONLY LANE
@@ -248,9 +232,7 @@ ${finds || '(none)'}`
 }
 
 function verifyPrompt(it, fails, ports, L) {
-  return `You are an independent QA verifier. Another tester reported these checks as FAILED. Re-test each from scratch and decide if the failure is real.
-Be skeptical of the first tester (wrong control, wrong record, stale screen, script error) — read the current code to know what should happen —
-but if the behaviour really differs from the guide's Expected, confirm it.
+  return `Verify these FAILED checks from scratch (your agent definition: be skeptical of the first tester, confirm a real difference from Expected).
 
 GUIDE: ${it.title}   Guide text: ${it.guideFile}
 Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<checkId>_verify_<desc>.jpeg/.json.
@@ -405,16 +387,14 @@ const learned = await agent(`You maintain the kit's memory. This QA run just fin
 Outcome (JSON):
 ${JSON.stringify(all).slice(0, 60000)}
 
-1. For every notable event (failures, retries, NOT_TESTED causes, audit reclassifications, verify "not reproduced", review findings,
-   deferrals, anything that cost time or worked unusually well) append ONE signal line with
-   & ${ORCH}/learn.ps1 -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref <id> -Source workflow
-   (skill: qa-kit or another kit skill / project name; kinds: friction, failure, defect-missed, false-positive, stale-env, flaky, idea, win).
+1. One signal per notable event (failures, retries, NOT_TESTED causes, audit reclassifications, verify "not reproduced", anything that
+   cost time or worked unusually well):
+   & ${ORCH}/learn.ps1 -Skill <qa-kit|other skill|project> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. Read ${QA}/LESSONS.md (active rules; never HISTORY.md) and the recent signals (learn.ps1 -Show -Last 200). A pattern seen ≥ 2 times
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
-3. Clean up what this run produced: & ${ORCH}/cleanup.ps1 -Quiet  (kills leftover headless browsers > 3 h, expired logins/tokens,
-   stale temp, finished worktrees; only kit-created things). Then: Get-Content (Join-Path ${RT} cleanup.log) -Tail 15 and mention what was freed.
+3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return all

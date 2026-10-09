@@ -18,8 +18,8 @@ args (all optional): {
 const A = args || {}
 const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const RT = (A.runtimeDir || `${C}/../.claude-runtime`).replace(/[\\/]+$/, '')
-const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.') +
-  '\nPowerShell commands below (& <script>.ps1 ...) need pwsh 7: use the PowerShell tool if you have one, otherwise run them from Bash as pwsh -NoProfile -Command "<command>" (Linux/macOS). Forward-slash paths work on every OS.'
+const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
+  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 const SOURCES = `${PATHS}
 Data sources (read what exists; missing files just mean no data yet):
 - ${RT}/learning/signals.jsonl — raw signals {at, skill, kind, text, ref, source}; only those after ${RT}/learning/last-retro.txt are new
@@ -88,7 +88,7 @@ phase('Apply')
 const res = await agent(`You are the kit maintainer (kit: ${C}). Apply this retrospective.${PATHS}
 
 Proposals from 4 analysts (may overlap or conflict):
-${JSON.stringify(all, null, 1)}
+${JSON.stringify(all)}
 
 Steps:
 1. Dedupe and resolve conflicts; drop low-confidence proposals without evidence.

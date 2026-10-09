@@ -31,8 +31,8 @@ const T = `${KIT}/skills/orchestrate/templates`
 const ORCH = `${KIT}/skills/orchestrate/scripts`
 const RT = (A.runtimeDir || `${KIT}/../.claude-runtime`).replace(/[\\/]+$/, '')
 // relative kit paths are resolved against the workspace root (the directory your session started in)
-const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (the directory this session started in); make them absolute before reading files.') +
-  '\nPowerShell commands below (& <script>.ps1 ...) need pwsh 7: use the PowerShell tool if you have one, otherwise run them from Bash as pwsh -NoProfile -Command "<command>" (Linux/macOS). Forward-slash paths work on every OS.'
+const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
+  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 if (!A.brief || !Array.isArray(A.agents) || !A.agents.length) throw new Error('args.brief and args.agents[] are required')
 const MODE = A.mode || 'feature'
 const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
@@ -98,35 +98,22 @@ const modelOf = (a) => ({ ...(a.model ? { model: a.model } : {}), ...(a.effort ?
 function buildPrompt(a) {
   return `${WHY}
 You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
-Read, in this order, and follow them exactly:
-1. ${K}/SKILL.md  (worktrees, memory gate, commits, migrations, shipping, tracker)
-2. ${A.brief}  (this wave's repos, ownership table, ranges, decisions — it wins over the rules)
-${MODE === 'resume' ? `3. ${T}/RESUME_BRIEF.md  (work out what's already done before editing)\n` : ''}
-YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
-Agent board: join first with -Agent ${a.id} -Run ${RUN} (dev-kit SKILL Quick start) and -Contracts <the brief path>.contracts.md if it exists; on DUPLICATE stop without writing.
-Worktree name prefix: ${a.id.toLowerCase()}. Use your own migration range from the brief's table.
+Follow ${K}/SKILL.md (Quick start; scripts in ${K}/scripts) and the brief ${A.brief} (repos, ownership, ranges, decisions; it wins).
+${MODE === 'resume' ? `Resuming: first work out what is already done (${T}/RESUME_BRIEF.md).\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
+Board: join first with -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
+Worktree name prefix: ${a.id.toLowerCase()}; your migration range is in the brief. Never touch other agents' worktrees, branches or processes.
 ${a.note || ''}
-Scripts: ${K}/scripts (wt.ps1, stack.ps1, check.ps1, gate.ps1, devtools.py, keepboth.py, lbcheck.py). Run them from PowerShell.
-Other agents are working in parallel in other areas: never touch their worktrees, branches or processes.
-User messages relayed into your run are for the coordinator (the main session), not for you: never switch to them or abandon your items
-because of one. If a relayed message really changes your items, finish safely and say so in your report; otherwise ignore it.
 ${REVIEW
-    ? `Do the whole job: implement, run the gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges
-(no devtools.py merge): an independent review runs first and the workflow schedules the merges once it is clean (or after your fix round).
-Report merged=false for every MR.`
+    ? `Do the whole job: implement, gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges (no devtools.py
+merge): a review runs first and the workflow merges after it. Report merged=false for every MR.`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
 Return the report.`
 }
 
 function reviewPrompt(a, r) {
-  return `You are an independent code reviewer.${PATHS}
-Agent ${a.id} (items ${a.items}, area ${a.area}) opened these MRs:
+  return `Review agent ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}) as your agent definition says.${PATHS}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
-Read each MR's diff (GitLab: glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"; GitHub: gh pr diff <n> -R <owner/repo>)
-and the surrounding code. Review against: the items asked (${a.items}) and the wave brief ${A.brief};
-the rules in ${K}/SKILL.md Quick start (scope, additive changes, no removed features) and ${K}/reference/migrations.md.
-Report only real problems: bugs, regressions for existing users/tenants, missing migration rollback, breaking API changes,
-scope creep, removed inputs. "blocking" = must be fixed before this ships; do not pad with style nits.
+Rules: ${K}/SKILL.md Quick start (scope) and ${K}/reference/migrations.md. Only real problems; "blocking" = must be fixed before it ships.
 Do not change any code yourself.`
 }
 
@@ -135,9 +122,9 @@ function fixPrompt(a, r, findings) {
 You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS} Follow ${K}/SKILL.md and ${A.brief}.
 Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these problems in your MRs (blocking and should-fix; resolve all of them):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
-For each: fix it (wt.ps1 sync first; follow-up MR if the original already merged), or explain why it's not a problem.
-Run the gated checks, push, then schedule the merges yourself now (devtools.py merge, producers first; dependents via
-orchestrate/scripts/track.ps1 add -Task <bug id> -MergeAfter '<web/app MR>><API MR>'), and return the updated report.${HOLD_NOTE}`
+Fix each (wt.ps1 sync first; follow-up MR if the original merged) or explain why it isn't a problem. Gated checks, push, then schedule
+the merges yourself (devtools.py merge, producers first; dependents: ${ORCH}/track.ps1 add -Task <id> -MergeAfter '<web/app MR>><API MR>').
+Return the updated report.${HOLD_NOTE}`
 }
 
 // review passed (or was off for this agent): schedule the merges — the build agent deliberately left them open
@@ -156,13 +143,11 @@ If the JSON says "done": false, run the same command again (at most 3 times in t
 }
 
 function shipPrompt(a, r) {
-  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (the review found nothing blocking):
+  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code.${PATHS}
 ${r.mrs.filter((m) => !m.merged).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
-Producers first: run python ${K}/scripts/devtools.py merge <repo checkout or worktree> <iid> for DB/API MRs now
-(worktrees: ${r.worktrees.join(', ')}). For consumer MRs (web/app) that depend on an API MR in this list, do not merge them yourself:
-register the order with & ${ORCH}/track.ps1 add -Task <the tracker task id in the MR title/branch>
--Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>' (the tracker schedules it once the API MR merged). Independent consumer
-MRs: devtools.py merge them now. Change no code. Return the report with the same MRs (merged=false unless GitLab already says merged).${HOLD_NOTE}`
+DB/API (producer) and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
+A consumer (web/app) MR that depends on an API MR in this list: don't merge it; register & ${ORCH}/track.ps1 add -Task <task id from the
+MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged).${HOLD_NOTE}`
 }
 
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW ? 'on' : 'off'}, brief ${A.brief}`)
@@ -231,16 +216,13 @@ const learned = await agent(`You maintain the kit's memory. This dev wave just f
 Outcome (JSON):
 ${JSON.stringify(outcome).slice(0, 60000)}
 
-1. For every notable event (failures, retries, NOT_TESTED causes, audit reclassifications, verify "not reproduced", review findings,
-   deferrals, anything that cost time or worked unusually well) append ONE signal line with
-   & ${ORCH}/learn.ps1 -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref <id> -Source workflow
-   (skill: dev-kit or another kit skill / project name; kinds: friction, failure, defect-missed, false-positive, stale-env, flaky, idea, win).
+1. One signal per notable event (failures, retries, review findings, deferrals, anything that cost time or worked unusually well):
+   & ${ORCH}/learn.ps1 -Skill <dev-kit|other skill|project> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. Read ${K}/LESSONS.md (active rules; never HISTORY.md) and the recent signals (learn.ps1 -Show -Last 200). A pattern seen ≥ 2 times
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
-3. Clean up what this run produced: & ${ORCH}/cleanup.ps1 -Quiet  (kills leftover headless browsers > 3 h, expired logins/tokens,
-   stale temp, finished worktrees; only kit-created things). Then: Get-Content (Join-Path ${RT} cleanup.log) -Tail 15 and mention what was freed.
+3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return outcome
