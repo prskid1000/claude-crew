@@ -103,7 +103,7 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 `/dev-wave` (`.claude/workflows/dev-wave.js`):
 ```js
 { brief: 'C:\\...\\wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
-  agents: [ { id: 'X1', items: 'A3, A4', area: 'order form', note: '', model: 'sonnet', effort: 'medium' } ],   // model/effort optional (default: strongest)
+  agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', model: 'sonnet', effort: 'medium' } ],   // model/effort optional (default: strongest)
   kitDir: 'C:\\work\\.claude', runtimeDir: 'C:\\work\\.claude-runtime' }   // kitDir/runtimeDir optional, recommended
 ```
 

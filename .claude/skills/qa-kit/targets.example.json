@@ -27,7 +27,7 @@
       "users": {
         "admin": ["qa-admin", "<password>"],
         "tester2": ["qa-tester-2", "<password>"],
-        "qa-driver-1": ["qa-driver-1", "<password>"]
+        "qa-user-1": ["qa-user-1", "<password>"]
       }
     },
     "oauth-service": {

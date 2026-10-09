@@ -4,9 +4,9 @@
   "keepFreeGB": 12,
   "headless": false,
   "lanes": [
-    { "name": "Falcon",  "port": 5556, "user": "qa-driver-1", "notes": "test account 1, data prefix QA-L1-", "headless": false },
-    { "name": "Kestrel", "port": 5558, "user": "qa-driver-2", "notes": "test account 2, data prefix QA-L2-" },
-    { "name": "Osprey",  "port": 5560, "user": "qa-driver-3", "notes": "test account 3, data prefix QA-L3-" }
+    { "name": "Falcon",  "port": 5556, "user": "qa-user-1", "notes": "test account 1, data prefix QA-L1-", "headless": false },
+    { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "test account 2, data prefix QA-L2-" },
+    { "name": "Osprey",  "port": 5560, "user": "qa-user-3", "notes": "test account 3, data prefix QA-L3-" }
   ],
   "app": {
     "kind": "react-native",

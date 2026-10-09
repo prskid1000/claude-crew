@@ -63,7 +63,7 @@ $K = '<workspace>\.claude\skills\dev-kit\scripts'; $Q = '<workspace>\.claude\ski
 & $K\check.ps1 -Dir <wt>\<module>                              # compile + typecheck + lint (gated)
 & $K\check.ps1 -Dir <wt>\<module> -Step test -Tests "OrderServiceTest"
 & $K\check.ps1 -Dir <wt>\<module> -Step migrations
-& $K\wt.ps1 commit -Dir <wt> -Message "feat(orders): ..."
+& $K\wt.ps1 commit -Dir <wt> -Message "feat(projects): ..."
 python $K\devtools.py mr <wt> "feat: ... (CU-123) (API)" body.md
 python $K\devtools.py merge <wt> <iid>
 & $Q\api.ps1 -Target <t> -As admin -Path '/api/health' -Save T1_health -OutDir <run>\T1\evidence

@@ -3,9 +3,9 @@ Call any HTTP API as any configured test user, and optionally save {request, res
 Targets (base URLs, auth style, users) come from ..\targets.local.json (copy targets.example.json).
 
   $Q = '<workspace>\.claude\skills\qa-kit\scripts'
-  & $Q\api.ps1 -Path '/api/orders?size=5'                                   # default target, user 'admin'
-  & $Q\api.ps1 -Target my-staging -As tester2 -Tenant acme -Method POST -Path '/api/orders' -Body '{"x":1}'
-  & $Q\api.ps1 -Path '/api/orders/42' -Save T3_order_after_edit -OutDir <run>\T3\evidence
+  & $Q\api.ps1 -Path '/api/projects?size=5'                                   # default target, user 'admin'
+  & $Q\api.ps1 -Target my-staging -As tester2 -Tenant acme -Method POST -Path '/api/projects' -Body '{"x":1}'
+  & $Q\api.ps1 -Path '/api/projects/42' -Save T3_project_after_edit -OutDir <run>\T3\evidence
 
 Prints "HTTP <status>" then the response body. Logs in once per target+tenant+user and caches the token
 (re-login on 401). Auth types: login (json or form body, token from tokenField), token (static), basic, none.

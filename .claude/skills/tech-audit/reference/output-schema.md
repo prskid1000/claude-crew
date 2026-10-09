@@ -5,13 +5,13 @@ Each finding is a JSON object with **exactly these 23 string keys** (use `""` wh
 | Key | Meaning | Allowed values / format |
 |-----|---------|--------------------------|
 | `id` | Unique finding id | `<MODULE-ABBR>-<BUG\|PERF\|REF\|GAP\|UX\|RPT>-NNN` e.g. `UOM-BUG-001`, `AM-PERF-03` |
-| `module` | Human module name | e.g. `Double UOM`, `Checkout`, `Invoice Export` |
+| `module` | Human module name | e.g. `Notifications`, `Search`, `CSV Export` |
 | `layer` | Where it lives | `Web UI` \| `Java API` \| `.NET API` \| `Python` \| `Node API` \| `Mobile` \| `Desktop` \| `DB` \| `Jobs` \| `Integration` \| `Cross-cutting` (add the project's own layer names if it has others) |
 | `type` | Finding type | `Bug` \| `Performance` \| `Tech Debt` \| `Functional Gap` \| `UX` \| `Reporting` |
 | `in_scope` | In this exercise? | `Yes` for Bug/Performance/Tech Debt; `No` otherwise |
-| `subtype` | Short category | e.g. `Data Integrity`, `Validation`, `Pricing`, `Concurrency`, `Memory leak`, `Schema/Migration`, `Dead code`, `API contract`, `RxJS`, `Render perf` |
+| `subtype` | Short category | e.g. `Data Integrity`, `Validation`, `Calculation`, `Concurrency`, `Memory leak`, `Schema/Migration`, `Dead code`, `API contract`, `RxJS`, `Render perf` |
 | `title` | Concise finding title | one line |
-| `area` | Screen / component / table | e.g. `Sale Orders / Order Entry`, `payment-list.component.ts` |
+| `area` | Screen / component / table | e.g. `Settings / Profile`, `user-list.component.ts` |
 | `severity` | Impact level | `Critical` \| `High` \| `Medium` \| `Low` (map gap/UX priority: Must-Have→High, Nice-to-Have→Low) |
 | `current` | Current behaviour / the problem | 1–2 sentences. Prefix `(unverified)` if not confirmed in code/data |
 | `expected` | Correct behaviour | 1–2 sentences |

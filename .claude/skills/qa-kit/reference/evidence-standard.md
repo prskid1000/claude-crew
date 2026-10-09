@@ -20,9 +20,9 @@ Every tested check leaves evidence that a reviewer, developer or customer can un
 | `checkId` | exactly as in the guide; `X1`… for off-script defects | `T4`, `L2`, `X1` |
 | `_verify` | only for the independent verifier's evidence | |
 | `nn` | 2-digit step order inside the check (optional after `_verify`) | `01`, `02` |
-| `what` | lowercase-kebab, ≤ 40 chars, says what is shown | `order-saved-toast`, `before-edit`, `after-edit`, `500-on-save` |
+| `what` | lowercase-kebab, ≤ 40 chars, says what is shown | `record-saved-toast`, `before-edit`, `after-edit`, `500-on-save` |
 
-Good: `F2-T4_01_before-edit.jpeg`, `F2-T4_02_after-edit.jpeg`, `F2-T4_03_put-order.json`, `F2-X1_01_500-on-cancel.json`.
+Good: `F2-T4_01_before-edit.jpeg`, `F2-T4_02_after-edit.jpeg`, `F2-T4_03_put-project.json`, `F2-X1_01_500-on-cancel.json`.
 Bad: `screenshot1.png`, `F2 T4.jpeg`, `test.json`, `F2-T4_final_FINAL.jpeg`.
 
 ## 3. What each verdict needs
@@ -47,7 +47,7 @@ Bad: `screenshot1.png`, `F2 T4.jpeg`, `test.json`, `F2-T4_final_FINAL.jpeg`.
 {
   "meta":     { "code": "F2", "check": "T4", "target": "my-staging", "tenant": "acme", "user": "admin",
                 "at": "2026-10-01T09:14:03Z", "durationMs": 412, "tool": "api.ps1" },
-  "request":  { "method": "PUT", "url": "https://.../api/sale-orders", "headers": { "Authorization": "[redacted]" }, "body": { } },
+  "request":  { "method": "PUT", "url": "https://.../api/projects", "headers": { "Authorization": "[redacted]" }, "body": { } },
   "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": { } }
 }
 ```
@@ -66,4 +66,4 @@ Bad: `screenshot1.png`, `F2 T4.jpeg`, `test.json`, `F2-T4_final_FINAL.jpeg`.
 
 ## 6. In results.json
 - `evidence`: file names only (no paths), in step order, only files that exist.
-- `observed` for a FAIL: what you saw + the failing call in one line: `PUT /api/sale-orders → 500 "NullPointerException at ..."`.
+- `observed` for a FAIL: what you saw + the failing call in one line: `PUT /api/projects → 500 "NullPointerException at ..."`.

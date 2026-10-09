@@ -160,9 +160,9 @@ Optional, per feature:
 2. Run it:
    ```
    /dev-wave
-   args: { brief: 'C:\work\briefs\wave-orders.md', kitDir: 'C:\work\.claude',
-           agents: [ { id: 'X1', items: 'ORD-12, ORD-13', area: 'order form + API' },
-                     { id: 'X2', items: 'ORD-20', area: 'invoice export' } ] }
+   args: { brief: 'C:\work\briefs\wave-projects.md', kitDir: 'C:\work\.claude',
+           agents: [ { id: 'X1', items: 'PRJ-12, PRJ-13', area: 'project form + API' },
+                     { id: 'X2', items: 'PRJ-20', area: 'report export' } ] }
    ```
 3. Keep one heartbeat on: `/loop 15m supervise the running waves`. Each round runs
    `& C:\work\.claude\skills\orchestrate\scripts\supervise.ps1 -AutoFix` and acts on ACT flags.
@@ -176,14 +176,14 @@ For a `[Bug] … failed checks` task from QA, one command writes the brief, star
 Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area: 'label typo', model: 'sonnet' }`).
 
 ### Test and close a deployed batch
-1. Create a run folder `C:\work\.claude-runtime\qa-runs\2026-10-01-orders\` with the tester guides (exported to text) and `run.json`:
+1. Create a run folder `C:\work\.claude-runtime\qa-runs\2026-10-01-projects\` with the tester guides (exported to text) and `run.json`:
    ```json
-   { "title": "Orders epic", "target": "my-staging", "tester": "QA team",
-     "mandate": ["Test the orders epic on staging and close what passes"],
+   { "title": "Projects epic", "target": "my-staging", "tester": "QA team",
+     "mandate": ["Test the projects epic on staging and close what passes"],
      "tracker": { "list": "<list id>", "parent": "<epic id>", "owner": "<user id>", "closeStatus": "Closed" },
-     "lanes": [ { "n": 1, "name": "Falcon", "serial": "emulator-5556", "user": "qa-driver-1" } ],
-     "items": [ { "code": "F1", "title": "Order form", "guideFile": "C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-orders\\F1.txt",
-                  "lane": "web", "subtasks": [ { "id": "<task id>", "name": "Order form", "mrs": "!101" } ] } ] }
+     "lanes": [ { "n": 1, "name": "Falcon", "serial": "emulator-5556", "user": "qa-user-1" } ],
+     "items": [ { "code": "F1", "title": "Project form", "guideFile": "C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-projects\\F1.txt",
+                  "lane": "web", "subtasks": [ { "id": "<task id>", "name": "Project form", "mrs": "!101" } ] } ] }
    ```
 2. Run `/test-and-close` with the short form `{ runDir: '<run dir>', kitDir: 'C:\work\.claude' }` (a tiny agent reads `run.json`;
    `only: ['F1']` runs a subset) or with the whole object plus `"runDir"` and `"kitDir"`, and start the safety net in the background:
