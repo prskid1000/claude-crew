@@ -13,7 +13,8 @@ Looks at:
   - phones: agents lease them (phone.ps1); with -AutoFix orphan leases are released and unleased idle phones shut down after 10 min
 FLAG levels: ACT (do something now), WATCH (check again next round), INFO.
 #>
-param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix)   # -AutoFix: perform SAFE fixes itself (idle emulators) instead of only flagging
+param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix,   # -AutoFix: perform SAFE fixes itself (idle emulators) instead of only flagging
+  [string]$MarkStopped)   # -MarkStopped <run id>: the lead stopped that workflow (TaskStop); its unfinished steps are no longer listed as running
 $ErrorActionPreference = 'SilentlyContinue'
 $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
 . (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
@@ -27,7 +28,11 @@ function L($s) { [void]$lines.Add($s) }
 # 1. workflows (newest first, this project's sessions)
 $proj = $KitConf.ClaudeProjectDir   # this workspace's Claude Code sessions
 $wfDirs = Get-ChildItem $proj -Directory | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents\workflows') -Directory } | Sort-Object LastWriteTime -Descending | Select-Object -First 6
+# a stopped workflow (TaskStop) leaves started-but-unfinished steps in its journal forever: the lead marks it once, it is skipped after
+$stoppedDir = Join-Path $rt 'stopped'
+if ($MarkStopped) { New-Item -ItemType Directory -Force $stoppedDir | Out-Null; Set-Content (Join-Path $stoppedDir $MarkStopped) (Get-Date).ToString('s'); "marked $MarkStopped as stopped" }
 foreach ($w in $wfDirs) {
+  if (Test-Path (Join-Path $stoppedDir $w.Name)) { continue }
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
   $ev = @(Get-Content $j | ForEach-Object { $_ | ConvertFrom-Json })
   $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($r in $ev | Where-Object type -eq 'result') { $res[$r.agentId] = $r }

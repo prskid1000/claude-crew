@@ -121,6 +121,7 @@ Each round:
    truncated, don't parse it). Reconcile (MRs merged? tracker status? lessons recorded?), turn open should-fix findings into a follow-up
    wave (one group per file owner), then start the next step
    (QA after deploy, bug-fix wave from failed checks, app lane when the APK is built).
+Stopped a workflow yourself (TaskStop)? Run `supervise.ps1 -MarkStopped <run id>` once so its unfinished steps stop showing as running.
 5. Stop the loop when nothing is running.
 
 ## Self-cleaning
