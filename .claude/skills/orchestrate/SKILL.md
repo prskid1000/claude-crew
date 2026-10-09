@@ -33,10 +33,11 @@ test-and-close `verify: false` (FAILs go straight to bug tasks, no re-test).
 Stopped agents (usage limit, RAM, user): `templates/RESUME_BRIEF.md`, or `/dev-wave` with `mode: 'resume'`; they continue from their worktrees.
 ~15 parallel dev agents is fine: they queue on the machine-wide memory gate. Expect hours for big waves.
 
-**Supervising:** ONE heartbeat for the whole session, generic prompt (what runs comes from the script, not the prompt):
-`/loop 15m` → `& <kit>/skills/orchestrate/scripts/supervise.ps1 -Session <this session id> -AutoFix`. Act on **ACT** flags (each prints
-its action), re-check **WATCH** next round, leave healthy agents alone. When a workflow finishes: `wave-report.ps1 -Run <wf id>`
-(never parse the truncated notification), reconcile, then the next step: open findings → follow-up wave, deploy → QA, failed checks →
+**Supervising:** ONE cheap heartbeat for the whole session, generic prompt (what runs comes from the script, not the prompt):
+`/loop 30m` → `& <kit>/skills/orchestrate/scripts/supervise.ps1 -Session <this session id> -AutoFix -Brief` (prints only flags, or one
+"ok: N running, mem X%" line; drop `-Brief` for the full digest). Don't poll for results: workflow completion notifications wake you.
+Act on **ACT** flags (each prints its action), re-check **WATCH** next round, leave healthy agents alone. When a workflow finishes:
+`wave-report.ps1 -Run <wf id>` (compact; `-Detail` for everything; never parse the truncated notification), reconcile, then the next step: open findings → follow-up wave, deploy → QA, failed checks →
 bug-fix wave (`scripts/bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per bug, ONE wave for all open bugs). Stopped a workflow
 yourself? `supervise.ps1 -MarkStopped <run id>`. Stop the loop when nothing runs.
 

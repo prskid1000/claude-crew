@@ -5,7 +5,8 @@ the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "
 into staging" / cherry-picks) the MR is on its target branch and none of its files differ between that branch and the deploy ref.
 
   $D = '<kit>/skills/qa-kit/scripts/deployed.ps1'
-  & $D -Mrs backend!812,web!415                     # one line per MR per deploy target, exit 0 when every MR is live
+  & $D -Mrs backend!812,web!415                     # compact: one summary line + a line per MR/target NOT live; exit 0 when every MR is live
+  & $D -Mrs backend!812,web!415 -Detail             # one line per MR per deploy target, live ones too
   & $D -Mrs backend!812 -Target staging -Json       # machine-readable
 
 Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
@@ -13,7 +14,7 @@ Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": 
 live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.
 #>
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json)
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\kitconfig.ps1')
 if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
@@ -70,5 +71,12 @@ $out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"'
     else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "on $($d.branch), but no successful $($d.job) includes it yet" } }
   }
 }
-if ($Json) { $out | ConvertTo-Json -Depth 3 } else { $out | ForEach-Object { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail } }
+$row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
+if ($Json) { $out | ConvertTo-Json -Depth 3 }
+elseif ($Detail) { $out | ForEach-Object $row }
+else {
+  $live = @($out | Where-Object state -eq 'DEPLOYED')
+  "deployed: $($live.Count)/$(@($out).Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
+  $out | Where-Object state -ne 'DEPLOYED' | ForEach-Object $row
+}
 exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })

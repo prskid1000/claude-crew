@@ -82,7 +82,7 @@ flowchart LR
   B1 & Q & V -.signals.-> L[(learning signals)]
   L --> K[/kit-retro/] -->|LESSONS.md, rules| C
   G{{memory gate}} --- B1 & B2 & B3 & Q
-  S[[supervise.ps1 /loop 15m]] --- C
+  S[[supervise.ps1 -Brief /loop 30m]] --- C
 ```
 
 - **One machine, many agents.** Every heavy command goes through the gate. A build starts only if
@@ -103,7 +103,8 @@ flowchart LR
   any image), `ui.ps1 shotmark` (Android screenshot + box around elements by text or #id in one go), `mark()` in `browser.mjs` (web).
 - **Isolation.** One worktree per agent per repo, claims on the board (worktrees, phones, browser ports), contracts between agents
   in `<brief>.contracts.md`, which agents re-read before every push.
-- **Supervision.** The coordinator keeps one heartbeat (`/loop 15m`) running `supervise.ps1 -AutoFix`. It covers workflows (idle or
+- **Supervision.** The coordinator keeps one cheap heartbeat (`/loop 30m`) running `supervise.ps1 -AutoFix -Brief` (flags only, or one
+  `ok` line) and relies on workflow completion notifications. It covers workflows (idle or
   finished agents), the board (duplicates, stale entries), the gate (queue, waits, repeated failures), RAM/disk, guard blocks and
   phone leases. It also runs the tracker and cleanup.
 - **Self-improvement.** `learn.ps1` signals → workflow Learn steps → `LESSONS.md` (≥ 2×) → `/kit-retro` promotes stable lessons
@@ -176,7 +177,7 @@ Optional, per feature:
            agents: [ { id: 'X1', items: 'PRJ-12, PRJ-13', area: 'project form + API' },
                      { id: 'X2', items: 'PRJ-20', area: 'report export' } ] }
    ```
-3. Keep one heartbeat on: `/loop 15m supervise the running waves`. Each round runs
+3. Keep one heartbeat on: `/loop 30m supervise the running waves` (`supervise.ps1 -AutoFix -Brief`). Each round runs
    `& <workspace>/.claude/skills/orchestrate/scripts/supervise.ps1 -AutoFix` and acts on ACT flags.
 4. When it finishes: `& <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run <workflow id>` (MRs, done/deferred,
    open review findings) and follow up (fix wave, deploy, QA).

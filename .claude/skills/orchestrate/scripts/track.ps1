@@ -8,8 +8,9 @@ so nobody has to watch pipelines and flip statuses by hand.
   & $T add  -Task abc124 -Discover                 # find the task's MRs itself (<tracker tag><id>, e.g. CU-<id>, in title/branch) on every run;
                                                   # completes only once the task is already in review (its agent sets that after all MRs)
   & $T add  -Task abc125 -MergeAfter 'frontend!203>backend!102'   # schedule the web merge only once the API MR merged
-  & $T show                     # tracked tasks and MR states
-  & $T run                      # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
+  & $T show [-Detail]           # open tracked tasks and MR states (-Detail: finished ones too)
+  & $T run [-Detail]            # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
+                                # (prints actions only; HOLD lines are counted unless -Detail - supervise uses -Detail)
 
 Holds (no status change) while a still-running wave's saved report (<runtime>/waves/*.json) has a blocking review finding on one of the MRs.
 MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
@@ -18,11 +19,14 @@ Config (skills/dev-kit/kit.local.json): gitHost, gitlabGroup, trackerRepos (sear
 e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit/scripts/tracker.ps1). glab for MRs.
 Files: <.claude-runtime>/tracking/<task>.json. supervise.ps1 -AutoFix calls `run` every round.
 #>
-param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave)
+param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 $dir = Join-Path $rt 'tracking'; New-Item -ItemType Directory -Force $dir | Out-Null
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerTask, Set-TrackerStatus, ...
+$script:holds = 0
+# HOLD = waiting by design (review/fix still running): listed with -Detail, otherwise only counted at the end of `run`
+function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { '' } }
 if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 $group = $KitConf.GitlabGroup
@@ -94,7 +98,11 @@ switch ($Action) {
     if (-not $o.done -or @($o.mrs).Count -gt $before) { $o.done = $false }   # a finished task stays finished unless new MRs were added
     Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
   }
-  'show' { foreach ($f in Get-ChildItem $dir -Filter '*.json') { $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') } }
+  'show' {
+    $all = @(Get-ChildItem $dir -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+    foreach ($o in $all | Where-Object { $Detail -or -not $_.done }) { "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') }
+    if (-not $Detail) { "($(@($all | Where-Object done).Count) finished task(s) hidden; -Detail lists them)" }
+  }
   'run' {
     # Re-arm merge-when-green that GitLab dropped: a push after scheduling (rebase, review fix) cancels it, and the MR then sits
     # open with a green pipeline. Intents come from devtools.py merge (<runtime>/automerge.json); merged/closed ones are forgotten.
@@ -146,7 +154,7 @@ switch ($Action) {
         # never merge an MR whose dev-wave agent is still in build/review/fix: the wave's own ship step merges it after a clean review
         # (merge-after once merged a dependent MR mid-review and a blocking regression landed on the target branch)
         $owner = InFlight $dep
-        if ($owner) { if (-not $Quiet) { "HOLD $($o.task): $dep waits for its review ($owner still running)" }; continue }
+        if ($owner) { Hold "HOLD $($o.task): $dep waits for its review ($owner still running)"; continue }
         if ((MrState $on) -eq 'merged' -and (MrState $dep) -eq 'opened' -and $dep -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$') {
           $wt = Join-Path $KitConf.ReposRoot (($Matches.repo -split '/')[-1])   # a checkout of that repo (devtools reads its origin remote)
           $res = if (-not (Test-Path $wt)) { "no checkout at $wt - set ""reposRoot"" in kit.local.json" } else { python (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\devtools.py') merge $wt $Matches.iid 2>&1 }
@@ -163,11 +171,11 @@ switch ($Action) {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }   # refresh: the wave may have ended
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
-      if ($held) { if (-not $Quiet) { "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))" }; continue }
+      if ($held) { Hold "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))"; continue }
       # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
-      if ($o.wave) { $wf = Join-Path $rt "waves\$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { if (-not $Quiet) { "HOLD $($o.task): wave $($o.wave) is still fixing it" }; continue } }
+      if ($o.wave) { $wf = Join-Path $rt "waves\$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue } }
       $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
-      if ($busy) { if (-not $Quiet) { "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix" }; continue }
+      if ($busy) { Hold "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix"; continue }
       # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)
       $now = TaskStatus $o.task
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
@@ -197,5 +205,6 @@ switch ($Action) {
       $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); Save $o
       "DONE $($o.task): all $(@($o.mrs).Count) MRs merged -> status $($o.onMerged -join ' -> ')"
     }
+    if ($script:holds) { "HOLD: $($script:holds) task(s) waiting for their review/fix round (-Detail lists them)" }
   }
 }

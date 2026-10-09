@@ -3,7 +3,9 @@
 Coordinator's periodic check-up (what a human lead would look at every 10-15 minutes). Prints a compact digest and a list
 of FLAGS with a suggested action each. The coordinator (main session) runs it on a loop and acts on the flags.
 
-  & <workspace>/.claude/skills/orchestrate/scripts/supervise.ps1 [-Session <claude session id>] [-Json]
+  & <workspace>/.claude/skills/orchestrate/scripts/supervise.ps1 [-Session <claude session id>] [-AutoFix] [-Brief] [-Json]
+  -Brief: only the flags, one line each (auto-fixed INFO lines counted), or one line "ok: N running, mem X%" when nothing needs you -
+          the cheap form for a /loop heartbeat. Without it: the full digest + flags.
 
 Looks at:
   - workflows of this project (journal.jsonl): agents running / finished, per-agent idle time (transcript not written)
@@ -14,14 +16,15 @@ Looks at:
 FLAG levels: ACT (do something now), WATCH (check again next round), INFO.
 #>
 param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix,   # -AutoFix: perform SAFE fixes itself (idle emulators) instead of only flagging
-  [string]$MarkStopped)   # -MarkStopped <run id>: the lead stopped that workflow (TaskStop); its unfinished steps are no longer listed as running
+  [string]$MarkStopped,   # -MarkStopped <run id>: the lead stopped that workflow (TaskStop); its unfinished steps are no longer listed as running
+  [switch]$Brief)         # -Brief: flags only, one line each (or one 'ok' line) - for the /loop heartbeat
 $ErrorActionPreference = 'SilentlyContinue'
 $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
 . (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
 . (Join-Path $skills 'dev-kit/scripts/sysinfo.ps1')   # RAM / processes on Windows, Linux and macOS
 $rt = $KitConf.Runtime   # $env:CLAUDE_RUNTIME, else <workspace>/.claude-runtime
 $swarm = Join-Path $skills 'android-swarm'
-$now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
+$runTotal = 0; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
 function L($s) { [void]$lines.Add($s) }
 
@@ -45,6 +48,7 @@ foreach ($w in $wfDirs) {
   $finishedAt = @{}
   foreach ($s in $started) { if ($res.ContainsKey($s.agentId)) { $k = & $itemOf $s.label; $i = [array]::IndexOf($started, $s); if (-not $finishedAt.ContainsKey($k) -or $finishedAt[$k] -lt $i) { $finishedAt[$k] = $i } } }
   $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
+  $runTotal += $running.Count
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
   # keep <runtime>/waves/<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
   # agent is still in review or fix (a wave nobody had reported on yet was invisible to it, and merge-after merged mid-review)
@@ -215,7 +219,7 @@ if ($AutoFix) {
     }
     $null
   }
-  foreach ($l in @(& (Join-Path $S 'track.ps1') run)) {
+  foreach ($l in @(& (Join-Path $S 'track.ps1') run -Detail)) {   # -Detail: HOLD lines become INFO flags
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') comment <id> <file.md>)." }
@@ -298,6 +302,16 @@ foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction 
 
 $out = [pscustomobject]@{ at = $now.ToString('s'); summary = @($lines); flags = @($flags) }
 if ($Json) { $out | ConvertTo-Json -Depth 4; exit 0 }
+if ($Brief) {
+  # one line per flag that needs the lead; auto-fixed INFO lines only counted; nothing to do -> a single 'ok' line
+  $auto = @($flags | Where-Object { $_.level -eq 'INFO' -and $_.what -match '^auto-fixed' }).Count
+  $show = @($flags | Where-Object { -not ($_.level -eq 'INFO' -and $_.what -match '^auto-fixed') } | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] })
+  $tail = if ($auto) { " ($auto auto-fixed)" } else { '' }
+  if (-not @($show | Where-Object level -ne 'INFO').Count) { "ok: $runTotal running, mem $pct%$tail" }
+  $show | ForEach-Object { "[$($_.level)] $($_.what) -> $($_.action)" }
+  if (@($show | Where-Object level -ne 'INFO').Count -and $tail) { "(+$auto auto-fixed)" }
+  $global:LASTEXITCODE = 0; exit 0
+}
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }
 $global:LASTEXITCODE = 0
