@@ -13,7 +13,7 @@ Copy to `<project>.md`. Keep it factual and short; it's read at the start of eve
 - Docs / knowledge base / MCP tools / decision records that say what's *meant* to happen.
 
 ## Live / test data (read-only)
-- How to query a test environment (DB MCP, API target in `qa-kit\targets.local.json`, ...). Never production writes.
+- How to query a test environment (DB MCP, API target in `qa-kit/targets.local.json`, ...). Never production writes.
 
 ## Findings output
 - Output folder, id prefix convention, workbook generator (if any).

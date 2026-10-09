@@ -1,14 +1,14 @@
 # Workspace instructions (template — edit for your org)
 
 This file is loaded into every Claude Code session started in this workspace. Keep it short: global rules here,
-everything long goes into skills (loaded on demand) or path-scoped rules (`rules\*.md`).
-**Never put passwords, tokens or API keys here** — test logins live only in `skills\qa-kit\targets.local.json` (git-ignored).
+everything long goes into skills (loaded on demand) or path-scoped rules (`rules/*.md`).
+**Never put passwords, tokens or API keys here** — test logins live only in `skills/qa-kit/targets.local.json` (git-ignored).
 
 ## Multi-agent work (any repo, any stack)
-See `.claude\rules\multi-agent.md` (always loaded). Playbook: the `orchestrate` skill. Workflows: `/dev-wave`, `/test-and-close`,
+See `.claude/rules/multi-agent.md` (always loaded). Playbook: the `orchestrate` skill. Workflows: `/dev-wave`, `/test-and-close`,
 `/kit-retro`. Subagent types: `dev-agent`, `mr-reviewer`, `qa-tester`, `qa-verifier`.
 Org settings the scripts read (issue tracker, report output, git host, GitLab group, repos root, tracker repos, protected
-branches) go in `skills\dev-kit\kit.local.json` (copy `kit.example.json`; see `docs/configuration.md`).
+branches) go in `skills/dev-kit/kit.local.json` (copy `kit.example.json`; see `docs/configuration.md`).
 
 ## CLIs
 
@@ -17,7 +17,7 @@ branches) go in `skills\dev-kit\kit.local.json` (copy `kit.example.json`; see `d
 | CLI | Purpose | Auth check |
 |-----|---------|------------|
 | `glab` (or `gh`) | GitLab (GitHub) — clone, push branches, open MRs/PRs | `glab auth status` / `gh auth status` |
-| tracker | Tasks, comments, statuses — always through `skills\dev-kit\scripts\tracker.ps1` (backend: `tracker.type` = clickup / github / gitlab / jira / none) | `tracker.ps1 view <id>` |
+| tracker | Tasks, comments, statuses — always through `skills/dev-kit/scripts/tracker.ps1` (backend: `tracker.type` = clickup / github / gitlab / jira / none) | `tracker.ps1 view <id>` |
 | `gws` (optional) | Google Workspace — only when `reports.type` is `gdocs` (tester guides and QA reports as Google Docs) | resolve with `shutil.which()` on Windows |
 | `<your-cli>` | <purpose, e.g. cloud logs / observability queries> | `<auth check command>` |
 
@@ -26,8 +26,8 @@ branches) go in `skills\dev-kit\kit.local.json` (copy `kit.example.json`; see `d
 ## Tracker workflow (example — adapt the status names to your board)
 1. **Start:** set the task to `in progress` and write the problem in the task description.
 2. **Open MRs:** put the task link and a short solution summary in each MR description, then set the task to `in review`.
-3. **Comment on the task:** the solution and the MR links (`skills\orchestrate\templates\TASK_SOLUTION.md`).
-4. **Testing instructions:** a comment for a simple change; a tester guide (`skills\qa-kit\templates\tester-guide.html` or a
+3. **Comment on the task:** the solution and the MR links (`skills/orchestrate/templates/TASK_SOLUTION.md`).
+4. **Testing instructions:** a comment for a simple change; a tester guide (`skills/qa-kit/templates/tester-guide.html` or a
    Markdown file, published with `devtools.py doc` — a Google Doc or a file attached to the task, per `reports.type`) for a complex one.
 5. **After the MRs merge:** `promoted` (the coordinator's `track.ps1` does this automatically).
 6. **After deployment:** `in test` — set by a person, never before deployment.
@@ -39,10 +39,10 @@ branches) go in `skills\dev-kit\kit.local.json` (copy `kit.example.json`; see `d
 - **New tracker task?** Set its owner/assignee to the person who asked you to create it.
 
 ## Testing evidence
-- UI changes → screenshots; backend-only changes → API request/response JSON (`skills\qa-kit\scripts\api.ps1 -Save`).
+- UI changes → screenshots; backend-only changes → API request/response JSON (`skills/qa-kit/scripts/api.ps1 -Save`).
 - Large files (payloads, logs) → keep them as files (Drive links with `gdocs`, the QA run folder with `markdown`), never paste them.
 - Collect everything in one report (Google Doc or Markdown, per `reports.type`) and attach/link it on the task.
-- Rules and naming: `skills\qa-kit\reference\evidence-standard.md`.
+- Rules and naming: `skills/qa-kit/reference/evidence-standard.md`.
 
 ## Command labels (suggested convention)
 Descriptions shown for tool calls (Bash/PowerShell `description`) are short and a little fun: one fitting emoji + 3-7 plain words, e.g. `🛰️ Supervisor sweep with auto-fixes`, `🧪 Test the new checker`, `🚀 Push the kit to GitHub`. Never emoji-only, never vague.
@@ -51,4 +51,4 @@ Descriptions shown for tool calls (Bash/PowerShell `description`) are short and 
 - Products / repos and what each one is: `<repo> — <one line>`.
 - Test environments (names only; URLs and logins go in `targets.local.json`): `<my-staging>`.
 - Code conventions: add path-scoped rules to `rules\` (examples in the repo's `examples/rules/`).
-- On-demand references (database access, observability queries, ...): add them as skills under `skills\<name>\SKILL.md`.
+- On-demand references (database access, observability queries, ...): add them as skills under `skills/<name>/SKILL.md`.

@@ -5,7 +5,7 @@ Every tested check leaves evidence that a reviewer, developer or customer can un
 
 ## 1. Where
 ```
-<run dir>\<CODE>\
+<run dir>/<CODE>/
 ├── shots\       screenshots (.jpeg web, .png app), short screen recordings (.mp4)
 ├── evidence\    API / network / DB / log evidence (.json, .log)
 └── scripts\     the scripts you ran (kept, never published)

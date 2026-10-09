@@ -31,7 +31,7 @@ Each finding is a JSON object with **exactly these 23 string keys** (use `""` wh
 ## Validation
 
 ```powershell
-python <workspace>\.claude\skills\tech-audit\scripts\validate.py <module>.json
+python <workspace>/.claude/skills/tech-audit/scripts/validate.py <module>.json
 ```
 Checks the exact key set, string values, allowed vocab, unique ids, triage columns on in-scope findings, empty analysis on
 out-of-scope ones, and the severity cap on `(unverified)` findings. Must print `schema problems: none`.

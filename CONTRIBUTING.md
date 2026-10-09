@@ -6,7 +6,10 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    specific goes in a git-ignored `*.local.json`, in `CLAUDE.md`, or in your own skills. Examples use `example.com`,
    `com.example.app`, `qa-user-1`, `<your-gitlab-group>`.
 2. **No hard-coded paths.** Scripts derive the kit from their own location (`$PSScriptRoot` / `kitconfig.ps1`), the
-   workspace is the parent of `.claude`, runtime output goes to `$env:CLAUDE_RUNTIME` or `<workspace>/.claude-runtime`. Build paths with `Join-Path` (never `"$dirile"` for a native command or `& "$Kx.ps1"`: on Linux/macOS that is parsed as modulemmand) and use `sysinfo.ps1` for RAM, processes, links and temp.
+   workspace is the parent of `.claude`, runtime output goes to `$env:CLAUDE_RUNTIME` or `<workspace>/.claude-runtime`.
+   Scripts run on Windows, Linux and macOS (pwsh 7): build paths with `Join-Path` (a `"$dir\file"` argument to a native
+   command breaks off Windows, and `& "$K\x.ps1"` is parsed as module\command there), and use `dev-kit/scripts/sysinfo.ps1`
+   for RAM, processes, directory links, temp folder, Python and the Android SDK instead of CIM, `%TEMP%` or `cmd /c`.
 3. **Keep the docs true.** When a script's behaviour changes, update its `SKILL.md`, the orchestrate playbook, the agent
    definitions and `docs/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`.
 4. **Check before you open a PR:**

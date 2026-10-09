@@ -8,45 +8,47 @@ description: Rules and scripts for a dev agent working in parallel with others o
 You're one of several agents working at the same time, on any stack (Java, Kotlin/Android, React Native,
 Angular/React/Node, .NET, Python, Go, ...). Each agent owns one area of the code; stay inside yours.
 
-Your **brief** (from `<workspace>\.claude\skills\orchestrate\templates\` WAVE_BRIEF / BUGFIX_BRIEF / RESUME_BRIEF) gives you: your items, your area,
+Your **brief** (from `<workspace>/.claude/skills/orchestrate/templates/` WAVE_BRIEF / BUGFIX_BRIEF / RESUME_BRIEF) gives you: your items, your area,
 the repos with their target branches, your branch, your worktree name, your migration range and your tracker task.
 Where the brief differs from this file, the brief wins. The repo's own `CLAUDE.md` / README conventions also apply.
 
-All scripts below are PowerShell, in `<workspace>\.claude\skills\dev-kit\scripts` (call it `$K`). Run them from PowerShell:
+All scripts below are PowerShell, in `<workspace>/.claude/skills/dev-kit/scripts` (call it `$K`). Run them from PowerShell:
 node, python, glab and gh (plus gws / the tracker CLI when configured) are on the PowerShell PATH, and `python` hangs in git-bash.
+Linux/macOS: the same scripts run with `pwsh` (from Bash: `pwsh -NoProfile -Command "& <script>.ps1 ..."`); use `python3`.
+Forward-slash paths work everywhere; OS specifics (RAM, processes, links, temp) live in `scripts/sysinfo.ps1`.
 `<workspace>` = the folder that holds `.claude` (the scripts work it out themselves). Org settings (git host/group, where repos and
 worktrees live, protected branches) come from `kit.local.json` next to this file (copy `kit.example.json`).
 
 ## The loop, in one screen
 
 ```powershell
-$K = '<workspace>\.claude\skills\dev-kit\scripts'; $B = '<workspace>\.claude\skills\orchestrate\scripts\board.ps1'
+$K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/skills/orchestrate/scripts/board.ps1'
 & $B join -Agent <id> -Run <wave> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md   # 0. board: SESSION token + who else is active
-& $K\wt.ps1 new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>   # 1. worktree (deps linked)
-& $K\wt.ps1 sync -Dir <wt>                                       # 2. rebase onto latest target - before editing
-& $K\stack.ps1 -Dir <wt>\<module>                                # 3. see what build/test commands this module uses
+& $K/wt.ps1 new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>   # 1. worktree (deps linked)
+& $K/wt.ps1 sync -Dir <wt>                                       # 2. rebase onto latest target - before editing
+& $K/stack.ps1 -Dir <wt>/<module>                                # 3. see what build/test commands this module uses
 #    ... edit ...
-& $K\check.ps1 -Dir <wt>\<module>                                # 4. compile + typecheck + lint (gated)
-& $K\check.ps1 -Dir <wt>\<module> -Step test -Tests "<names>"    #    targeted tests only
-& $K\check.ps1 -Dir <wt>\<module> -Step migrations               #    if you touched DB migrations
-& $K\wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
-& $K\wt.ps1 sync -Dir <wt>; & $K\check.ps1 -Dir <wt>\<module>    # 6. rebase + re-check before push
+& $K/check.ps1 -Dir <wt>/<module>                                # 4. compile + typecheck + lint (gated)
+& $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "<names>"    #    targeted tests only
+& $K/check.ps1 -Dir <wt>/<module> -Step migrations               #    if you touched DB migrations
+& $K/wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
+& $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. rebase + re-check before push
 git -C <wt> push -u origin <branch>
-python $K\devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
-python $K\devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once (the supervisor re-arms it if a later push drops it)
-& $K\deploy-merge.ps1 -Repo <checkout> -To staging/<product> -Check <module> [-Push]   # coordinator: merge main into a deploy branch; auto-resolves add/add conflicts left by an earlier squashed merge
-& <workspace>\.claude\skills\orchestrate\scripts\track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. the coordinator's heartbeat promotes the task when all merge
+python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
+python $K/devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once (the supervisor re-arms it if a later push drops it)
+& $K/deploy-merge.ps1 -Repo <checkout> -To staging/<product> -Check <module> [-Push]   # coordinator: merge main into a deploy branch; auto-resolves add/add conflicts left by an earlier squashed merge
+& <workspace>/.claude/skills/orchestrate/scripts/track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. the coordinator's heartbeat promotes the task when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board
 ```
 
 ## 1. Worktrees and dependencies
 - **One worktree per repo**, via `wt.ps1 new`. It branches from `origin/<target>`, records the target, links
-  installed `node_modules` / `.venv` from the main checkout as junctions and copies missing `.husky/_`.
+  installed `node_modules` / `.venv` from the main checkout as junctions (Windows) or symlinks (Linux/macOS; also added to `.git/info/exclude`) and copies missing `.husky/_`.
 - **If it warns that dependencies differ,** the source checkout is on another branch with other versions: pass
   `-LinkFrom <a checkout of the target branch>` (the brief names one if there is a known good source).
 - **Never install into a linked folder** (`npm/yarn/pnpm install`, `pip install`): it writes into the source checkout.
   If you really need a new dependency, say so in your final reply instead.
-- **Remove** with `wt.ps1 remove -Dir <wt>` (unlinks the junctions first, never deletes through them).
+- **Remove** with `wt.ps1 remove -Dir <wt>` (unlinks the junctions/symlinks first, never deletes through them).
 
 ## 1b. The agent board (other agents and workflows run at the same time)
 - `board.ps1 join` first: keep the SESSION token it prints. It lists the other active agents and their areas, and warns on
@@ -87,7 +89,7 @@ Other agents merge all the time; a stale base means avoidable conflicts.
 - **Use only your assigned range** for ids/timestamps, so parallel agents never collide.
 - **Never edit a migration that has already merged**; add a new one.
 - **Liquibase**: file `YYYYMMDDHHMMSS_desc.xml` inside your range, first changeSet `tagDatabase`, a `<rollback>` on every
-  schema/data changeSet, append the include to `master.xml`. On rebase conflicts in `master.xml`: `python $K\keepboth.py <file>`.
+  schema/data changeSet, append the include to `master.xml`. On rebase conflicts in `master.xml`: `python $K/keepboth.py <file>`.
   Before every push: `check.ps1 -Step migrations` must print `ISSUES 0` (no duplicate addColumn/createTable). To replace an
   existing empty table, drop it behind a `preConditions onFail=MARK_RAN` guard with a rollback that recreates it.
 - **EF Core**: one migration per agent, named with your range prefix; after a rebase, if the model snapshot conflicts, regenerate your migration on top.
@@ -96,13 +98,13 @@ Other agents merge all the time; a stale base means avoidable conflicts.
 - Unsure what's deployed? Check the environment's DB read-only (e.g. a read-only database MCP server or SQL client) before adding a column.
 
 ## 7. Evidence and environments
-- UI change → screenshots. Backend change → request/response JSON (`<workspace>\.claude\skills\qa-kit\scripts\api.ps1 -Save`).
+- UI change → screenshots. Backend change → request/response JSON (`<workspace>/.claude/skills/qa-kit/scripts/api.ps1 -Save`).
 - Test against the environment named in the brief. **Never touch production.**
 - **Stale deploy**: if a check fails only because the environment runs an older build (404 / 405 / "No static resource" on
   an endpoint that exists on the target branch), call it a stale deploy and don't change code.
-- Tester guide: fill `<workspace>\.claude\skills\qa-kit\templates\tester-guide.html` (check ids T/L/R, concrete Expected) and publish it
+- Tester guide: fill `<workspace>/.claude/skills/qa-kit/templates/tester-guide.html` (check ids T/L/R, concrete Expected) and publish it
   with `devtools.py doc` (anyone with the link can view). Say what still needs a live check.
-- Evidence names and formats: `qa-kit\reference\evidence-standard.md`.
+- Evidence names and formats: `qa-kit/reference/evidence-standard.md`.
 
 ## 8. Ship it yourself
 1. Re-read `<brief>.contracts.md` next to your brief (if it exists): the coordinator appends cross-agent contracts there during
@@ -112,8 +114,8 @@ Other agents merge all the time; a stale base means avoidable conflicts.
    Write/overwrite the whole file: the coordinator and other agents keep notes there and an overwrite silently deletes them.
 2. Push and open one MR/PR per repo: `devtools.py mr`. Title `feat: <summary> - <CODE> (<tag><task>) (<Repo>)` (`<tag>` = kit.local.json
    `tracker.branchTag`, e.g. `CU-`; the coordinator's track.ps1 finds your MRs by it).
-   Body: fill `<workspace>\.claude\skills\orchestrate\templates\MR_BODY.md` (devtools warns on missing sections and adds the footer).
-   Tracker solution comment: `templates\TASK_SOLUTION.md`.
+   Body: fill `<workspace>/.claude/skills/orchestrate/templates/MR_BODY.md` (devtools warns on missing sections and adds the footer).
+   Tracker solution comment: `templates/TASK_SOLUTION.md`.
 3. **In a reviewed `/dev-wave`, don't schedule merges yourself**: open the MRs and stop; the workflow schedules them after a clean review
    (or you do it at the end of your fix round). Merging before review shipped a double-billing bug once.
    **Merge producers before consumers**: DB/API/library first, then web/app/clients. `devtools.py merge <wt> <iid>` asks GitLab/GitHub
@@ -124,13 +126,13 @@ Other agents merge all the time; a stale base means avoidable conflicts.
 
 ## 9. Tracker
 The backend (ClickUp, GitHub issues, GitLab issues, Jira or none) is set once in kit.local.json `tracker.type`; you always use
-**`scripts\tracker.ps1`** (or the `devtools.py` task commands, which call it) — never a tracker CLI directly.
+**`scripts/tracker.ps1`** (or the `devtools.py` task commands, which call it) — never a tracker CLI directly.
 - `inProgress` at start → `review` once the MRs are open and the guide is posted (`devtools.py finish`) →
   `promoted` once **all** your MRs are merged. **Never set `inTest`**: that happens after deployment.
   Use these logical names; `tracker.statuses` maps them to the board's own names.
 - Don't change other people's tasks, or tasks already in a testing status.
 - New tasks go under the epic named in the brief, assigned to the requester.
-- **Commands** (`$TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'`):
+- **Commands** (`$TR = '<workspace>/.claude/skills/dev-kit/scripts/tracker.ps1'`):
   - read: `& $TR view <id>` (JSON incl. subtasks, description) · `& $TR comments <id>`
   - status: `& $TR status <id> review` — the coordinator's track.ps1 only promotes a task that is already in review, so set it.
   - comment: `& $TR comment <id> <file.md>` (a file for long or multi-line text; plain text works for one line).
@@ -145,5 +147,5 @@ hooks you left in another agent's area · dependencies you needed but didn't ins
 
 ## 11. Learn
 Read `LESSONS.md` (next to this file) before you start. When something costs you time, fails, or works unusually well, record
-one line: `& <workspace>\.claude\skills\orchestrate\scripts\learn.ps1 -Skill dev-kit -Kind <kind> -Text "<what + fix>"`.
+one line: `& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill dev-kit -Kind <kind> -Text "<what + fix>"`.
 The guard hook blocks `git stash`, `--no-verify`, force-pushes to shared branches and ungated heavy builds — its message tells you the right command.

@@ -1,6 +1,6 @@
 # Wave brief: <wave name>, <date>
 
-Read `<workspace>\.claude\skills\dev-kit\SKILL.md` first. This brief adds wave-specific rules and wins where the two differ.
+Read `<workspace>/.claude/skills/dev-kit/SKILL.md` first. This brief adds wave-specific rules and wins where the two differ.
 
 **Item source:** <spreadsheet path + sheet, or tracker epic URL>. Each item has an ID, a work package, a severity and why it's open.
 **Decisions:** <memory file / decisions doc>. They are final; don't re-ask.
@@ -9,9 +9,9 @@ Read `<workspace>\.claude\skills\dev-kit\SKILL.md` first. This brief adds wave-s
 ## Repos
 | Repo | Main checkout | Target branch | Link deps from (if not the main checkout) | Notes |
 |---|---|---|---|---|
-| <api> | `C:\src\<repo>` | `main` | | migrations: Liquibase / EF / Flyway / Alembic / none |
-| <web> | `C:\src\<repo>` | `<branch>` | `C:\src\<checkout on target>` | |
-| <app> | `C:\src\<repo>` | `<branch>` | | |
+| <api> | `<repos root>/<repo>` | `main` | | migrations: Liquibase / EF / Flyway / Alembic / none |
+| <web> | `<repos root>/<repo>` | `<branch>` | `<repos root>/<checkout on target>` | |
+| <app> | `<repos root>/<repo>` | `<branch>` | | |
 
 ## Ownership (stay in your area; add only one-line hooks elsewhere and say so)
 | Agent | Items | Area (screens / packages / files) | Repos | Migration range |
