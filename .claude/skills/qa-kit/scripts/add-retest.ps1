@@ -3,11 +3,11 @@
 Adds a RETEST item for a bug task whose fix went live (supervise: "[ACT] LIVE <task>: ... Ready for QA") to an existing QA run,
 so the retest is one command + one /test-and-close launch instead of hand-editing run.json.
 
-  & <kit>\skills\qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task <bug task id> -Code H2R -Title "RETEST ..." -Mrs "web-code!6178" [-Only X1,X2] [-Lane web|api|app]
+  & <kit>/skills/qa-kit/scripts/add-retest.ps1 -RunDir <run> -Task <bug task id> -Code H2R -Title "RETEST ..." -Mrs "web-code!6178" [-Only X1,X2] [-Lane web|api|app]
   then: Workflow test-and-close { runDir: <run>, only: ['H2R'], instance: 'w<next>' }
 
 The guide is the bug task itself (description = the failed checks with steps + evidence, comments = the fix and how to test),
-written to <run>\tasks\<task>.md. -Only defaults to the check ids in the task name ("... failed checks X1, X2").
+written to <run>/tasks/<task>.md. -Only defaults to the check ids in the task name ("... failed checks X1, X2").
 Re-running with the same -Code replaces that item.
 #>
 param(

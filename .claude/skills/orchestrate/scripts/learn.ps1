@@ -2,7 +2,7 @@
 Record one learning signal (anything that cost time, failed, surprised you, or worked unusually well).
 Signals are raw observations; /kit-retro and each workflow's learn step turn recurring ones into LESSONS.md entries.
 
-  $L = '<workspace>\.claude\skills\orchestrate\scripts\learn.ps1'
+  $L = '<workspace>/.claude/skills/orchestrate/scripts/learn.ps1'
   & $L -Skill dev-kit -Kind friction -Text "wt.ps1 new warned deps differ for frontend; -LinkFrom <checkout of the target branch> fixed it"
   & $L -Skill qa-kit  -Kind defect-missed -Text "tester marked 500 on save as PASS_WITH_NOTE; audit caught it" -Ref F2-T4
   & $L -Show [-Last 30]          # print recent signals

@@ -3,7 +3,7 @@ Boots N emulators (lanes from swarm.config.json) for parallel app testing, one a
 boot (quick-boot snapshot) -> wait -> slim once -> grant the app's permissions -> install the app in the chosen mode
 -> write swarm.json (lane, serial). Agents then target their phone with $env:ANDROID_SERIAL=<serial>.
 
-  & <workspace>\.claude\skills\android-swarm\swarm-up.ps1 -Count 3 -Mode Release
+  & <workspace>/.claude/skills/android-swarm/swarm-up.ps1 -Count 3 -Mode Release
   -Mode Release : the built APK (app-build.ps1). Preferred for automated testing.
   -Mode Metro   : React Native dev client + one shared Metro (while the app code is still changing).
   -Mode None    : boot + slim only.   (-Mode Embedded = Release, the old name)

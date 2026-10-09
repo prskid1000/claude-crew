@@ -3,7 +3,7 @@
 Tracker automation: tie a tracker task to its MRs, and let the supervisor (-AutoFix) move the task when they are all merged —
 so nobody has to watch pipelines and flip statuses by hand.
 
-  $T = '<workspace>\.claude\skills\orchestrate\scripts\track.ps1'
+  $T = '<workspace>/.claude/skills/orchestrate/scripts/track.ps1'
   & $T add  -Task abc123 -Mrs backend!101,frontend!202 [-OnMerged "for review,promoted"]   # add MRs (repeatable; merges lists)
   & $T add  -Task abc124 -Discover                 # find the task's MRs itself (<tracker tag><id>, e.g. CU-<id>, in title/branch) on every run;
                                                   # completes only once the task is already in review (its agent sets that after all MRs)
@@ -11,12 +11,12 @@ so nobody has to watch pipelines and flip statuses by hand.
   & $T show                     # tracked tasks and MR states
   & $T run                      # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
 
-Holds (no status change) while a still-running wave's saved report (<runtime>\waves\*.json) has a blocking review finding on one of the MRs.
+Holds (no status change) while a still-running wave's saved report (<runtime>/waves/*.json) has a blocking review finding on one of the MRs.
 MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
 are mapped by tracker.statuses; a backend's own status names work too).
-Config (skills\dev-kit\kit.local.json): gitHost, gitlabGroup, trackerRepos (searched by -Discover), repoAliases (short names agents use,
-e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit\scripts\tracker.ps1). glab for MRs.
-Files: <.claude-runtime>\tracking\<task>.json. supervise.ps1 -AutoFix calls `run` every round.
+Config (skills/dev-kit/kit.local.json): gitHost, gitlabGroup, trackerRepos (searched by -Discover), repoAliases (short names agents use,
+e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit/scripts/tracker.ps1). glab for MRs.
+Files: <.claude-runtime>/tracking/<task>.json. supervise.ps1 -AutoFix calls `run` every round.
 #>
 param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -46,7 +46,7 @@ function Save($o) {
   $o | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir "$($o.task).json")
 }
 # "<label>" of a still-running dev-wave stage (build:/review:/fix:<agent>) whose agent owns this MR, else $null.
-# Reads <runtime>\waves\<run>.json (supervise refreshes them for every running workflow before calling `track run`).
+# Reads <runtime>/waves/<run>.json (supervise refreshes them for every running workflow before calling `track run`).
 function InFlight($ref) {
   if ($ref -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $null }
   $pat = "/$([regex]::Escape($Matches.r))/-/merge_requests/$($Matches.i)(\D|$)"
@@ -97,7 +97,7 @@ switch ($Action) {
   'show' { foreach ($f in Get-ChildItem $dir -Filter '*.json') { $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') } }
   'run' {
     # Re-arm merge-when-green that GitLab dropped: a push after scheduling (rebase, review fix) cancels it, and the MR then sits
-    # open with a green pipeline. Intents come from devtools.py merge (<runtime>\automerge.json); merged/closed ones are forgotten.
+    # open with a green pipeline. Intents come from devtools.py merge (<runtime>/automerge.json); merged/closed ones are forgotten.
     $amf = Join-Path $rt 'automerge.json'
     if (Test-Path $amf) {
       $am = Get-Content $amf -Raw | ConvertFrom-Json -AsHashtable; $keep = @{}

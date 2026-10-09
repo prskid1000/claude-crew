@@ -2,9 +2,9 @@
 Readable summary of a finished (or running) workflow, built from its journal — the reliable source; the Workflow tool's
 notification text is truncated and not plain JSON. Works for /dev-wave, /test-and-close and /kit-retro runs.
 
-  & <workspace>\.claude\skills\orchestrate\scripts\wave-report.ps1 -Run wf_de575b4e-f98 [-Session <id>] [-Json]
+  & <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run wf_de575b4e-f98 [-Session <id>] [-Json]
   -> prints per-agent status, MRs, done/deferred, OPEN review findings (non-nit, not fixed by a fix: round), QA verdicts per package,
-     learn-step changes; writes the same as JSON to <.claude-runtime>\waves\<run>.json for later rounds / follow-up briefs.
+     learn-step changes; writes the same as JSON to <.claude-runtime>/waves/<run>.json for later rounds / follow-up briefs.
 #>
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json)
 $ErrorActionPreference = 'SilentlyContinue'

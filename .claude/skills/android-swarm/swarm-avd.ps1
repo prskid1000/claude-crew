@@ -3,7 +3,7 @@ Create the swarm emulators in one go, and reset/restore a broken one. All lanes 
 (Pixel 10 Pro skin, 1280x2856 @ 480 dpi, Android 36.1 Google Play x86_64, 4 GB RAM, 4 cores, 16 GB data, GPU host,
 GPS on, back camera = virtual scene, device frame on). Keep the resolution: ui.ps1 notes and coordinates assume it.
 
-  $A = '<workspace>\.claude\skills\android-swarm\swarm-avd.ps1'
+  $A = '<workspace>/.claude/skills/android-swarm/swarm-avd.ps1'
   & $A list                                   # lanes, AVD present?, running?, leased by?
   & $A create [-Lanes Falcon,Kestrel,Osprey]  # create every missing lane AVD (all lanes in swarm.config.json by default)
   & $A reset -Lanes Osprey -Level cold        # 1. stuck boot / "offline" in adb: cold boot, ignore the quick-boot snapshot
@@ -13,7 +13,7 @@ GPS on, back camera = virtual scene, device frame on). Keep the resolution: ui.p
 
 After wipe/recreate the phone is new: on the next boot swarm-up slims it again, and phone.ps1 acquire reinstalls the test APK
 (the app's login is gone - log in again). A lane leased by an agent is refused unless -Force.
-No Android command-line tools needed: an AVD is <name>.ini + <name>.avd\config.ini; the emulator builds the disks on first boot.
+No Android command-line tools needed: an AVD is <name>.ini + <name>.avd/config.ini; the emulator builds the disks on first boot.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('list', 'create', 'reset')][string]$Action,

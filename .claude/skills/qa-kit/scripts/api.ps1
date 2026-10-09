@@ -2,10 +2,10 @@
 Call any HTTP API as any configured test user, and optionally save {request, response} JSON as evidence.
 Targets (base URLs, auth style, users) come from ..\targets.local.json (copy targets.example.json).
 
-  $Q = '<workspace>\.claude\skills\qa-kit\scripts'
-  & $Q\api.ps1 -Path '/api/projects?size=5'                                   # default target, user 'admin'
-  & $Q\api.ps1 -Target my-staging -As tester2 -Tenant acme -Method POST -Path '/api/projects' -Body '{"x":1}'
-  & $Q\api.ps1 -Path '/api/projects/42' -Save T3_project_after_edit -OutDir <run>\T3\evidence
+  $Q = '<workspace>/.claude/skills/qa-kit/scripts'
+  & $Q/api.ps1 -Path '/api/projects?size=5'                                   # default target, user 'admin'
+  & $Q/api.ps1 -Target my-staging -As tester2 -Tenant acme -Method POST -Path '/api/projects' -Body '{"x":1}'
+  & $Q/api.ps1 -Path '/api/projects/42' -Save T3_project_after_edit -OutDir <run>/T3/evidence
 
 Prints "HTTP <status>" then the response body. Logs in once per target+tenant+user and caches the token
 (re-login on 401). Auth types: login (json or form body, token from tokenField), token (static), basic, none.
@@ -19,7 +19,7 @@ param(
   [string]$As = 'admin',
   [string]$Tenant = $null,
   [string]$Save = $null,            # evidence file name, without .json
-  [string]$OutDir = $null,          # default: <.claude-runtime>\evidence
+  [string]$OutDir = $null,          # default: <.claude-runtime>/evidence
   [hashtable]$Headers = @{},
   [int]$TimeoutSec = 180
 )
@@ -103,7 +103,7 @@ if ($content -is [byte[]]) {
 
 
 if ($Save) {
-  # Evidence envelope per reference\evidence-standard.md: meta + request (secrets redacted) + response
+  # Evidence envelope per reference/evidence-standard.md: meta + request (secrets redacted) + response
   if (-not $OutDir) { $OutDir = Join-Path $rt 'evidence' }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
   function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { $s | ConvertFrom-Json } catch { $s } }

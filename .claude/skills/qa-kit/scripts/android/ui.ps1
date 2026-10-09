@@ -2,14 +2,14 @@
 Android UI helper for any app on an emulator or device (via uiautomator + adb input).
 
   $env:ANDROID_SERIAL = 'emulator-5556'      # ALWAYS set your own phone first when several devices are attached
-  & <workspace>\.claude\skills\qa-kit\scripts\android\ui.ps1 dump                 # visible texts with @(x,y) centre, [edit], #resource-id
+  & <workspace>/.claude/skills/qa-kit/scripts/android/ui.ps1 dump                 # visible texts with @(x,y) centre, [edit], #resource-id
   & ... ui.ps1 tap "Start shift"           # tap by text (exact, then contains)
   & ... ui.ps1 tapid "login_button"        # tap by resource-id (suffix match)
   & ... ui.ps1 tapxy 640 1400
   & ... ui.ps1 type "hello world"          # into the focused field
   & ... ui.ps1 key 4                       # keyevent (4 = BACK, 66 = ENTER)
   & ... ui.ps1 swipe 640 2000 640 800      # scroll
-  & ... ui.ps1 shot T3_after_save [<dir>]  # PNG screenshot (default dir: <.claude-runtime>\shots\<serial>)
+  & ... ui.ps1 shot T3_after_save [<dir>]  # PNG screenshot (default dir: <.claude-runtime>/shots/<serial>)
   & ... ui.ps1 shotmark T3_total "Total|#save_btn" ["wrong total"] [<dir>]   # screenshot + red box/label on those elements, one go
   & ... ui.ps1 wait "Welcome" 30           # wait up to N s for a text
   & ... ui.ps1 log ReactNativeJS           # recent logcat lines for a tag (clear with: adb logcat -c)

@@ -1,13 +1,13 @@
 <#
 Shared kit configuration. Dot-source it from any kit script:
 
-  . (Join-Path <path to skills\dev-kit\scripts> 'kitconfig.ps1')      # sets $KitConf
+  . (Join-Path <path to skills/dev-kit/scripts> 'kitconfig.ps1')      # sets $KitConf
 
 Everything is derived from where the kit lives, so the kit works in any workspace:
-  Kit        = the .claude folder (this file is <Kit>\skills\dev-kit\scripts\kitconfig.ps1)
+  Kit        = the .claude folder (this file is <Kit>/skills/dev-kit/scripts/kitconfig.ps1)
   Workspace  = the parent of .claude (the folder you open Claude Code in)
-  Runtime    = $env:CLAUDE_RUNTIME, else <Workspace>\.claude-runtime (tokens, evidence, QA runs, logs - never inside .claude)
-Org-specific values come from <Kit>\skills\dev-kit\kit.local.json (copy kit.example.json; git-ignored). Every key is optional.
+  Runtime    = $env:CLAUDE_RUNTIME, else <Workspace>/.claude-runtime (tokens, evidence, QA runs, logs - never inside .claude)
+Org-specific values come from <Kit>/skills/dev-kit/kit.local.json (copy kit.example.json; git-ignored). Every key is optional.
 #>
 $__devkit = Split-Path $PSScriptRoot
 $__kit = Split-Path (Split-Path $__devkit)
@@ -41,14 +41,14 @@ $KitConf = [pscustomobject]@{
   Workspace         = $__ws
   Runtime           = $(if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $__ws '.claude-runtime' })
   ConfigFile        = $__cfgFile
-  ReposRoot         = $__repos                                    # where the main checkouts live (<ReposRoot>\<repo>)
+  ReposRoot         = $__repos                                    # where the main checkouts live (<ReposRoot>/<repo>)
   WorktreeRoots     = $__wtRoots                                  # where wt.ps1 puts worktrees (default <ReposRoot>-wt)
   GitHost           = [string](Get-KitValue 'gitHost' 'gitlab.com')   # GitLab host (self-hosted: gitlab.example.com)
   GitlabGroup       = [string](Get-KitValue 'gitlabGroup' '')     # group for short MR refs <repo>!<iid>
   TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos track.ps1 -Discover searches for <TrackerTag><task> MRs
   RepoAliases       = (Get-KitValue 'repoAliases' $null)          # e.g. { "api": "backend", "web": "frontend" }
   ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # extra shared branches besides main/master/develop/release/*
-  TrackerType       = $__trType                                   # clickup | github | gitlab | jira | none (skills\dev-kit\scripts\tracker.ps1)
+  TrackerType       = $__trType                                   # clickup | github | gitlab | jira | none (skills/dev-kit/scripts/tracker.ps1)
   TrackerTag        = $__trTag                                    # branch/MR tag before the task id: CU- (clickup), GH-, GL-, '' (jira keys, none)
   ReportType        = $__reportType.ToLower()                     # gdocs | markdown (qa-kit finalize.ps1, devtools.py doc)
   MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # cleanup.ps1 keeps this many QA browser profiles when no QA seat is active

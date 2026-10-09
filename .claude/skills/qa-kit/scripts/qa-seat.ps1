@@ -6,11 +6,11 @@ QA seats: lets a QA run use as many parallel agents as memory allows, and makes 
   - Item claim: the first worker to claim <run>/<code> owns the item; another worker instance (an extra test-and-close launched by the
     coordinator for queued items) gets ALREADY and skips it. Claims end when the item's finalize.json exists or after 6 h.
 
-  $S = '<workspace>\.claude\skills\qa-kit\scripts\qa-seat.ps1'
+  $S = '<workspace>/.claude/skills/qa-kit/scripts/qa-seat.ps1'
   & $S acquire -Agent test:GT7 -Kind web [-RunDir <runDir> -Code GT7 -Owner w1]   # exit 0 = go; 2 = still waiting, call again; 3 = ALREADY (skip item)
   & $S release -Agent test:GT7
   & $S status                                                                        # seats, waiters, claims, free RAM
-Needs per kind: web 1.5 GB (a Chrome session), api 0.4 GB, verify = same as its kind. keepFreeGB from qa-kit\targets.local.json
+Needs per kind: web 1.5 GB (a Chrome session), api 0.4 GB, verify = same as its kind. keepFreeGB from qa-kit/targets.local.json
 "keepFreeGB" or 8. -WaitMinutes (default 8) keeps one call under the tool timeout: on exit 2 just run the same command again.
 #>
 param(

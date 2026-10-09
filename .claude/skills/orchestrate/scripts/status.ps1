@@ -2,9 +2,9 @@
 <#
 One-page status of everything the kit is doing: memory + running gated builds, worktrees (branch, dirty, ahead/behind),
 QA runs (per package verdicts, published or not), the learning loop (signals, guard blocks, last retro).
-Writes <.claude-runtime>\dashboard.html (auto-refreshes every 60 s in the browser).
+Writes <.claude-runtime>/dashboard.html (auto-refreshes every 60 s in the browser).
 
-  & <workspace>\.claude\skills\orchestrate\scripts\status.ps1 [-Open] [-Watch] [-WorktreeRoot <folder with worktrees>]
+  & <workspace>/.claude/skills/orchestrate/scripts/status.ps1 [-Open] [-Watch] [-WorktreeRoot <folder with worktrees>]
 -Watch regenerates every 60 s until stopped (run it in the background during a wave).
 -WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt, the wt.ps1 default).
 #>

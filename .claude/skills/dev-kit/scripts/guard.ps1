@@ -1,12 +1,12 @@
 ﻿<#
-PreToolUse guard (Bash + PowerShell tools) for every session in this workspace (wired in .claude\settings.json).
+PreToolUse guard (Bash + PowerShell tools) for every session in this workspace (wired in .claude/settings.json).
 Turns the kit's hard rules into enforcement instead of advice:
   - no `git stash` (the stash is shared across worktrees)
   - no `--no-verify` / hook skipping
   - no force-push to a protected branch (main, master, develop, release/*, plus kit.local.json "protectedBranches")
   - heavy builds/tests go through the memory gate (check.ps1 / gate.ps1), not straight to mvn/gradle/dotnet/ng/jest/...
 Reads the hook JSON on stdin; prints a deny decision with the reason, or nothing (= allow).
-Every block is logged to <.claude-runtime>\guard.log so /kit-retro can learn from repeated mistakes.
+Every block is logged to <.claude-runtime>/guard.log so /kit-retro can learn from repeated mistakes.
 #>
 $ErrorActionPreference = 'SilentlyContinue'
 $in = [Console]::In.ReadToEnd() | ConvertFrom-Json

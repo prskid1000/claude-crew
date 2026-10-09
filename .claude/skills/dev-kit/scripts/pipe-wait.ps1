@@ -2,7 +2,7 @@
 Waits for merge-request pipelines and reports them as JSON (one line), so a cheap agent (or a script) can route CI failures back to
 the dev agent instead of scheduling a merge that will never happen.
 
-  & <workspace>\.claude\skills\dev-kit\scripts\pipe-wait.ps1 -Mrs https://gitlab.example.com/group/api/-/merge_requests/12,https://... [-MaxMinutes 8]
+  & <workspace>/.claude/skills/dev-kit/scripts/pipe-wait.ps1 -Mrs https://gitlab.example.com/group/api/-/merge_requests/12,https://... [-MaxMinutes 8]
 
 Output: {"done":true|false,"mrs":[{"mr":url,"status":"success|failed|running|...","job":"<failed job>","error":"<last error lines>"}]}
 done=false = some pipelines still running after -MaxMinutes (call again). Exit 0 always (read the JSON). GitLab (glab) MRs only.

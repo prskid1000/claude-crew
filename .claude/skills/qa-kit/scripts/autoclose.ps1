@@ -5,8 +5,8 @@ own close step finished without publishing (ok=false, e.g. a small close agent r
   Windows:      Start-Process pwsh -WindowStyle Hidden -ArgumentList '-File','<workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1','-Journal','<workflow transcript dir>','-RunDir','<run dir>'
   Linux/macOS:  nohup pwsh -File <workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir> >/dev/null 2>&1 &
 
-Merges verify verdicts into the checks, writes <run>\<code>\results.json, runs finalize.ps1 once per code.
-Skips packages with > 50% NOT_TESTED. Logs to <run>\autoclose.log; remembers handled codes in <run>\autoclose_done.txt.
+Merges verify verdicts into the checks, writes <run>/<code>/results.json, runs finalize.ps1 once per code.
+Skips packages with > 50% NOT_TESTED. Logs to <run>/autoclose.log; remembers handled codes in <run>/autoclose_done.txt.
 #>
 param([Parameter(Mandatory)][string]$Journal, [Parameter(Mandatory)][string]$RunDir, [int]$EveryMinutes = 4, [int]$MaxHours = 12)
 $S = Split-Path $MyInvocation.MyCommand.Path

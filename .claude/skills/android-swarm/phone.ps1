@@ -1,9 +1,9 @@
 ﻿<#
 Phone leases: an app-testing agent owns its phone end to end. The coordinator never boots or shuts phones for a run.
 
-  $P = '<workspace>\.claude\skills\android-swarm\phone.ps1'
+  $P = '<workspace>/.claude/skills/android-swarm/phone.ps1'
   & $P acquire -Agent APP1 [-Lane Falcon] [-WaitMinutes 90]   # wait for a free lane (fair FIFO), boot it through the memory gate,
-                                                              # install the current apk\app.apk if the phone has an older one;
+                                                              # install the current apk/app.apk if the phone has an older one;
                                                               # prints JSON {lane, serial, port, installed}
   & $P release -Agent APP1 [-Keep]    # close our app, free the lease; the phone shuts down unless another agent is waiting for it (or -Keep)
   & $P status                         # leases, waiting agents, running phones
