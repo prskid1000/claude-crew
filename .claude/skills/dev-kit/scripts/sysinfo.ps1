@@ -14,7 +14,8 @@ Cross-platform system helpers (Windows, Linux, macOS) for the kit scripts. Dot-s
   Get-DirLinks -Dir <d> [-Depth 4]         # directory links (junctions / symlinks) below <d>, without following them
   Resolve-Tool <name>...        # first command that exists (e.g. Resolve-Tool python3 python), as a full path, or $null
   Get-Python                    # 'python' on Windows, else python3 (or python when that is the only one)
-  Start-KitBackground -FilePath <exe> -ArgumentList <args> [-WorkingDirectory <d>]   # detached; hidden window on Windows
+  Start-Detached -FilePath <exe> -ArgumentList <args> [-WorkingDirectory <d>] [-Log <file>]   # outlives the shell (hidden window on Windows)
+  Get-PortPids <port> / Test-PortListening <port>   # who listens on a local TCP port / is anything listening
   Get-AndroidSdk                # ANDROID_HOME / ANDROID_SDK_ROOT, else the OS default SDK folder
   Get-ExeName <name>            # <name>.exe on Windows, <name> elsewhere
 
@@ -112,12 +113,30 @@ function Resolve-Tool {
 # Python 3 launcher: 'python' on Windows (python3 there is often the Store stub), python3 first elsewhere
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
-function Start-KitBackground([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory = (Get-Location).Path) {
-  if ($KitIsWindows) { Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -PassThru }
-  else {
-    $log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log"
-    Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
-  }
+# Starts a program that outlives this shell (and a tool timeout): hidden window on Windows; on Linux/macOS through
+# `setsid nohup` (plain nohup where setsid is missing, e.g. macOS) with output to -Log (default: a kit-bg-*.log in the OS temp)
+function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {
+  if ($KitIsWindows) { $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden; return }
+  if (-not $Log) { $Log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log" }
+  $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.UseShellExecute = $false
+  $script = 'cd "$1" || exit 1; log=$2; shift 2; if command -v setsid >/dev/null 2>&1; then setsid nohup "$@" >"$log" 2>&1 </dev/null & else nohup "$@" >"$log" 2>&1 </dev/null & fi'
+  foreach ($a in @('-c', $script, 'sh', $WorkingDirectory, $Log, $FilePath) + @($ArgumentList)) { $psi.ArgumentList.Add([string]$a) }
+  ([Diagnostics.Process]::Start($psi)).WaitForExit()
+}
+
+# Process ids listening on a local TCP port (Get-NetTCPConnection on Windows, lsof or fuser elsewhere)
+function Get-PortPids([int]$Port) {
+  if ($KitIsWindows) { return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique) }
+  if (Resolve-Tool lsof) { return @(lsof -t -nP -iTCP:$Port -sTCP:LISTEN 2>$null | ForEach-Object { [int]$_ } | Select-Object -Unique) }
+  if (Resolve-Tool fuser) { return @(("$(fuser -n tcp $Port 2>$null)" -split '\s+') | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
+  @()
+}
+
+# $true when something accepts connections on localhost:<Port>
+function Test-PortListening([int]$Port) {
+  if ($KitIsWindows) { return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) }
+  $t = [Net.Sockets.TcpClient]::new()
+  try { $t.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $t.Connected } catch { $false } finally { $t.Dispose() }
 }
 
 function Get-AndroidSdk {

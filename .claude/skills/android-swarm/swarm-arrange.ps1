@@ -2,6 +2,8 @@ param([int]$Gap = 16, [double]$HeightShare = 0.78)   # every window gets the sam
 # Places the running swarm emulator windows side by side in the CENTRE of the MAIN monitor,
 # in lane order (swarm.config.json lanes). Works in physical pixels, so display scaling is handled.
 # Run any time the windows get lost or overlap. Other monitors are ignored.
+# Windows only (Win32 window APIs): on Linux/macOS it does nothing - place the windows by hand or boot with -Headless.
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { 'window arranging is Windows-only (Win32 APIs): skipped - place emulator windows by hand or use swarm-up.ps1 -Headless'; return }
 Add-Type @'
 using System; using System.Runtime.InteropServices;
 public class SwarmWin {

@@ -14,8 +14,8 @@ if ($Mode -eq 'Embedded') { $Mode = 'Release' }
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 $adb = $c.adb; $pkg = $c.app.package; $mp = $c.app.metroPort
 if ($Mode -eq 'Metro' -and $c.app.kind -ne 'react-native') { throw 'Metro mode is only for react-native apps' }
-if (-not $Serials) { $Serials = (Get-Content "$($c.dir)\swarm.json" -Raw | ConvertFrom-Json).serial }
-$apk = if ($Mode -eq 'Release') { "$($c.dir)\apk\app.apk" } else { "$($c.dir)\apk\base.apk" }
+if (-not $Serials) { $Serials = (Get-Content (Join-Path $c.dir 'swarm.json') -Raw | ConvertFrom-Json).serial }
+$apk = Join-Path $c.dir $(if ($Mode -eq 'Release') { 'apk/app.apk' } else { 'apk/base.apk' })
 if (-not (Test-Path $apk)) { throw "$apk missing$(if ($Mode -eq 'Release') { ' - run app-build.ps1' } else { ' - put the dev-client APK there' })" }
 foreach ($s in $Serials) {
   $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1
@@ -24,5 +24,5 @@ foreach ($s in $Serials) {
   if ($Mode -eq 'Metro') { & $adb -s $s reverse "tcp:$mp" "tcp:$mp" | Out-Null } else { & $adb -s $s reverse --remove "tcp:$mp" 2>$null | Out-Null }
   & $adb -s $s shell "echo $Mode > /sdcard/.qa-app-mode"
   "$s : $Mode app installed ($r)"
-  if ($Launch) { & "$($c.dir)\app-launch.ps1" -Serial $s }
+  if ($Launch) { & (Join-Path $c.dir 'app-launch.ps1') -Serial $s }
 }

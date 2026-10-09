@@ -19,7 +19,7 @@ app (`kind` react-native | native, package, appDir, build task/args, APK glob, p
 | `app-mode.ps1 -Mode Release\|Metro` | install that mode's APK on all phones (Metro = React Native dev client `apk\base.apk` + adb reverse) |
 | `app-launch.ps1 -Serial <s> [-Clear]` | (re)start the app the right way for the phone's mode; `-Clear` wipes app data and re-grants permissions |
 | `metro-start.ps1` | React Native only: one shared Metro (no watching, capped workers), bundle pre-warmed |
-| `swarm-arrange.ps1` | windows side by side, centred on the main monitor (DPI-aware) |
+| `swarm-arrange.ps1` | windows side by side, centred on the main monitor (DPI-aware). Windows only (Win32 APIs): on Linux/macOS it prints a note and does nothing |
 | `swarm-slim.ps1 -Serial <s>` | one-time: disable heavy Google extras, no animations, screen on, no lock (undo: `adb shell pm enable <pkg>`) |
 | `swarm-down.ps1` | stop the emulators (snapshot saved) and leftover headless test browsers |
 
@@ -31,7 +31,12 @@ Native Kotlin/Java apps use Release only (`buildTask` e.g. `assembleDebug`, `apk
 
 Memory + coordination: each emulator boot takes a fair turn in the machine-wide gate (same queue as builds) and stays registered in its
 ledger while running, so builds account for it. QA agents claim their phone on the agent board (`-Claims emulator-55xx`).
-Manual use (a person testing by hand): `phone.ps1 acquire -Agent manual -Lane <name>` … `phone.ps1 release -Agent manual`; a manual lease is never reclaimed by the supervisor. AVD images live in `avdDir` (default `$env:ANDROID_AVD_HOME`, else `%USERPROFILE%\.android\avd`).
+Manual use (a person testing by hand): `phone.ps1 acquire -Agent manual -Lane <name>` … `phone.ps1 release -Agent manual`; a manual lease is never reclaimed by the supervisor. AVD images live in `avdDir` (default `$env:ANDROID_AVD_HOME`, else `~/.android/avd`).
+
+Linux / macOS: the SDK is `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`, else `~/Android/Sdk` (Linux) or `~/Library/Android/sdk` (macOS);
+emulators start detached through `setsid`/`nohup` (log: `emulator-<lane>.log` next to the scripts) and need hardware acceleration
+(KVM on Linux). `avd-template.ini` is an x86_64 image: on Apple-silicon Macs change `abi.type`, `hw.cpu.arch` and `image.sysdir.1`
+to the arm64-v8a image before `swarm-avd.ps1 create`.
 
 Phone in use = it is leased (`<runtime>\phones\<lane>.json`). Agents release before long non-phone work (API, web UI, code, data prep)
 and acquire again later. `supervise.ps1 -AutoFix` is only the safety net: it releases a lease whose holder is gone (crashed) and shuts an

@@ -25,8 +25,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 $adb = $c.adb
+. (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
 $sdk = Split-Path (Split-Path $c.adb)
-$avdHome = if ($c.avdDir) { $c.avdDir } elseif ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { "$env:USERPROFILE\.android\avd" }
+$avdHome = if ($c.avdDir) { $c.avdDir } elseif ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { (Join-Path $HOME '.android/avd') }
 $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 $template = Join-Path $c.dir 'avd-template.ini'
 $all = @($c.lanes | Where-Object { -not $Lanes -or $Lanes -contains $_.name })
@@ -40,12 +41,14 @@ function New-Avd($name) {
   if (-not (Test-Path $sys)) { throw "system image missing: $sys - install it in Android Studio (SDK Manager > SDK Platforms > Android 36.1 > Google Play x86_64)" }
   $d = Join-Path $avdHome "$name.avd"
   New-Item -ItemType Directory -Force $d | Out-Null
-  $tpl.Replace('{{NAME}}', $name).Replace('{{SDK}}', $sdk) | Set-Content (Join-Path $d 'config.ini') -Encoding ascii -NoNewline
+  $cfg = $tpl.Replace('{{NAME}}', $name).Replace('{{SDK}}', $sdk)
+  if (-not $KitIsWindows) { $cfg = $cfg.Replace('\', '/') }   # the template uses Windows separators; the Linux/macOS emulator needs /
+  $cfg | Set-Content (Join-Path $d 'config.ini') -Encoding ascii -NoNewline
   $target = if ($tpl -match '(?m)^target=(.+)$') { $Matches[1].Trim() } else { 'android-36.1' }
-  @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd\$name.avd", "target=$target") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
+  @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd$([IO.Path]::DirectorySeparatorChar)$name.avd", "target=$target") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
   "$name created in $avdHome (first boot builds its disks: a few minutes)"
 }
-function Stop-Lane($l) { if (Running $l) { & "$($c.dir)\swarm-down.ps1" -Lanes $l.name -KeepBrowsers | Select-Object -First 1 } }
+function Stop-Lane($l) { if (Running $l) { & (Join-Path $c.dir 'swarm-down.ps1') -Lanes $l.name -KeepBrowsers | Select-Object -First 1 } }
 
 switch ($Action) {
   'list' {
@@ -60,7 +63,7 @@ switch ($Action) {
       if (Test-Path (Join-Path $avdHome "$($l.name).avd\config.ini")) { "$($l.name) exists - kept (use reset -Level recreate to rebuild it)"; continue }
       New-Avd $l.name; $made += $l.name
     }
-    if ($made -and -not $NoBoot) { & "$($c.dir)\swarm-up.ps1" -Lanes $made -Mode None -ColdBoot | Select-Object -Last 3 }
+    if ($made -and -not $NoBoot) { & (Join-Path $c.dir 'swarm-up.ps1') -Lanes $made -Mode None -ColdBoot | Select-Object -Last 3 }
   }
   'reset' {
     if (-not $Lanes) { throw 'reset needs -Lanes (it never resets every phone by accident)' }
@@ -84,7 +87,7 @@ switch ($Action) {
         }
       }
       Remove-Item (Join-Path $rt "phones\$($l.name).json") -Force -ErrorAction SilentlyContinue   # any lease on a reset phone is void
-      if (-not $NoBoot) { & "$($c.dir)\swarm-up.ps1" -Lanes $l.name -Mode None -ColdBoot | Select-Object -Last 2 }
+      if (-not $NoBoot) { & (Join-Path $c.dir 'swarm-up.ps1') -Lanes $l.name -Mode None -ColdBoot | Select-Object -Last 2 }
     }
   }
 }

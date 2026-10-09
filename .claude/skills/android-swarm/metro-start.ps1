@@ -6,14 +6,14 @@ Stops only whatever listens on the Metro port.
 param([string]$AppDir, [int]$Port, [int]$MaxWorkers = 4, [switch]$ClearCache)   # -Port: default swarm.config.json app.metroPort
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
+. (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
 if (-not $AppDir) { $AppDir = $c.app.appDir }
 if (-not $Port) { $Port = $c.app.metroPort }
-$log = "$($c.dir)\metro.log"
-Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; "stopped old Metro pid $_" }
+$log = Join-Path $c.dir 'metro.log'
+Get-PortPids $Port | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; "stopped old Metro pid $_" }
 $flags = "--port $Port --max-workers $MaxWorkers" + $(if ($ClearCache) { ' --clear' } else { '' })
 $cmd = "Set-Location '$AppDir'; `$env:CI='1'; npx expo start $flags *>&1 | Out-File -FilePath '$log' -Encoding utf8"
-Start-Process pwsh -ArgumentList '-NoProfile', '-Command', $cmd -WindowStyle Hidden
+Start-Detached -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-Command', $cmd -WorkingDirectory $AppDir   # hidden on Windows, setsid/nohup elsewhere
 "Metro starting (workers $MaxWorkers, log $log) ..."
 $ready = $false
 for ($i = 0; $i -lt 90; $i++) { try { if ((Invoke-WebRequest "http://localhost:$Port/status" -TimeoutSec 3 -UseBasicParsing).Content -match 'running') { $ready = $true; break } } catch {}; Start-Sleep 2 }
