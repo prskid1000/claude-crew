@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
     { title: 'Verify', detail: 'note audit + independent re-test of every FAIL' },
-    { title: 'Close', detail: 'Drive + Google Doc + tracker comment/close + bug task for confirmed failures' },
+    { title: 'Close', detail: 'report (Google Doc or Markdown, per reports.type) + tracker comment/close + bug task for confirmed failures' },
     { title: 'Learn', detail: 'signals + LESSONS.md updates from this run' },
   ],
 }
@@ -23,7 +23,7 @@ or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 
   context: 'deployed builds, tenants/accounts to use, existing test data, known changed screens ...',
   contextFiles: ['C:\\...\\product-rules.md'],        // optional: files every tester reads first
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
-  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'Closed' },
+  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // backend = kit.local.json tracker.type (tracker.ps1)
   webParallel: 5, apiParallel: 5,
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
   items: [ { code: 'F2', title: '...', guideFile: 'C:\\...\\F2.txt', lane: 'web'|'api'|'app',
@@ -158,7 +158,8 @@ TOOLS
   (prints "HTTP <status>" then the body).
 - Code: read the CURRENT code on the deployed branch (the guide may describe screens later work changed). If a literal step no longer
   applies, test the same intent on the current screen and record PASS_WITH_NOTE explaining it.
-- Run scripts from PowerShell (node, python, gws, clickup, glab are on its PATH).`
+- Run scripts from PowerShell (node, python, glab/gh and your tracker/report CLIs are on its PATH). The tracker (any backend) is
+  & '${KIT}\\skills\\dev-kit\\scripts\\tracker.ps1' view|comments <id> — never call a tracker CLI directly.`
 
 const WEB = (ports) => `
 BROWSER (web)
@@ -233,7 +234,7 @@ function auditPrompt(it, res) {
 - A DEFECT is: 5xx or unexpected 4xx; crash; stuck/blocking flow; data changed wrongly or not saved; wrong records affected; broken
   navigation; a missing screen the feature needs — whether or not it's in the guide's scope.
 - NOT defects: test-data/setup notes, tester mistakes, intended product decisions, platform limits, config missing on the test environment.
-${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (clickup task view ${R.tracker.parent} --json).` : ''}
+${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (the tracker (tracker.ps1): & '${KIT}\\skills\\dev-kit\\scripts\\tracker.ps1' view ${R.tracker.parent} lists its subtasks).` : ''}
 - Return {id, defect, reason} per note check; defects that sit only in findings -> newDefects (screen, what_was_done, observed with the exact
   failing call/message, evidence file names that exist in ${outDir(it)}\\shots or evidence).
 - You may read evidence, code, or call the API read-only (GET). Change nothing.
@@ -267,7 +268,8 @@ function finalPrompt(it, res) {
 1. Write this JSON exactly as given to ${outDir(it)}\\results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
 2. Run in PowerShell (timeout 600000): & '${Q}\\finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
-   It uploads evidence to Drive, builds the shared Google Doc, comments on and closes the tasks, and opens a bug task for confirmed failures.
+   It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on
+   and closes the tasks through the tracker (tracker.ps1), and opens a bug task for confirmed failures.
 3. If it errors, fix only data problems in results.json (e.g. drop a missing evidence file name) and run it once more. Don't edit finalize.ps1.
 Return ok=true/false and the script's output.`
 }
