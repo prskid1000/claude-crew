@@ -9,8 +9,9 @@ Writes <.claude-runtime>\dashboard.html (auto-refreshes every 60 s in the browse
 -WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt, the wt.ps1 default).
 #>
 param([switch]$Open, [switch]$Watch, [string[]]$WorktreeRoot = @())
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
-. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts/kitconfig.ps1')
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts/sysinfo.ps1')
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
 $out = Join-Path $rt 'dashboard.html'
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
@@ -26,12 +27,12 @@ function Build {
   A "<p style='font-size:9pt;color:#6b7280;margin:0'>KIT STATUS · $(Get-Date -Format 'd MMM yyyy HH:mm:ss') · refreshes every 60 s</p><h1 style='font-size:20pt;margin:2px 0 8px 0'>Agents, builds and QA</h1>"
 
   # Memory + gate
-  $mem = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory; $tot = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
-  $avail = [math]::Round($mem.AvailableMBytes / 1KB, 1); $pct = [int](100 * (1 - $avail / $tot))
+  $mem = Get-SysMem; $tot = $mem.TotalGB
+  $avail = $mem.AvailGB; $pct = [int](100 * (1 - $avail / $tot))
   $bar = if ($pct -gt 85) { '#b91c1c' } elseif ($pct -gt 70) { '#b7791f' } else { '#1e7b34' }
   A "<h2 style='$h2'>Memory and builds</h2><p>RAM in use <b>$pct%</b> · $avail GB available of $([math]::Round($tot)) GB</p>"
   A "<div style='background:#e5e7eb;height:10px;width:100%'><div style='background:$bar;height:10px;width:$pct%'></div></div>"
-  $ledger = Join-Path $env:TEMP 'claude-build-gate'
+  $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
   $running = @(Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue })
   if ($running.Count) { A '<p><b>Running gated builds</b></p>'; Table @('Kind', 'Est. GB', 'Started', 'Dir', 'Command') ($running | ForEach-Object { , @((Esc $_.kind), $_.need, (Esc $_.started), (Esc $_.dir), (Esc ($_.cmd.Substring(0, [math]::Min(90, $_.cmd.Length))))) }) }
   else { A '<p>No gated builds running.</p>' }

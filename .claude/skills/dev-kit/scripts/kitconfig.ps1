@@ -53,5 +53,5 @@ $KitConf = [pscustomobject]@{
   ReportType        = $__reportType.ToLower()                     # gdocs | markdown (qa-kit finalize.ps1, devtools.py doc)
   MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # cleanup.ps1 keeps this many QA browser profiles when no QA seat is active
   # Claude Code keeps this workspace's sessions (workflow journals) in ~/.claude/projects/<workspace path with non-alphanumerics as '-'>
-  ClaudeProjectDir  = (Join-Path $env:USERPROFILE ('.claude\projects\' + ($__ws -replace '[^A-Za-z0-9]', '-')))
+  ClaudeProjectDir  = (Join-Path (Join-Path $HOME '.claude/projects') ($__ws -replace '[^A-Za-z0-9]', '-'))
 }

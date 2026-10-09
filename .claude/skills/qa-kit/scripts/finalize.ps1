@@ -51,7 +51,7 @@ foreach ($c in @($res.checks)) {
 $fin = "$D\finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
-$tester = if ($run.tester) { $run.tester } else { $env:USERNAME }
+$tester = if ($run.tester) { $run.tester } else { [Environment]::UserName }
 $tr = $run.tracker
 Set-Location $RunDir   # gws reads/writes only inside the current directory
 function Invoke-Gws($a) { $out = & gws @a 2>$null; (($out | Where-Object { $_ -notmatch '^Using keyring' }) -join "`n") | ConvertFrom-Json }
@@ -85,7 +85,7 @@ foreach ($x in $files) {
 }
 
 # 2. Styled report (lib\report.ps1) + evidence-name check (reference\evidence-standard.md)
-. "$PSScriptRoot\lib\report.ps1"
+. (Join-Path $PSScriptRoot 'lib/report.ps1')
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId) { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }

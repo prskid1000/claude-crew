@@ -10,12 +10,13 @@ Usually you call check.ps1, which detects the command and runs it through this g
 
 There is no fixed limit on parallel builds. A build starts only when
     available RAM - (memory still promised to running builds) - (this build's estimate)  >=  KeepFreeGB
-- available RAM = Windows "Available" (free + standby), the number Task Manager shows;
+- available RAM = free + reclaimable cache (Windows "Available" as Task Manager shows it, Linux MemAvailable, macOS free +
+  inactive pages), read through sysinfo.ps1 so the gate runs on Windows, Linux and macOS;
 - KeepFreeGB default = 15% of total RAM (min 6 GB); override with -KeepFreeGB or $env:CLAUDE_GATE_KEEP_FREE_GB;
 - the estimate is LEARNED per PROJECT: each build's peak working set is recorded per command kind + repo (history.json) and the next
   estimate is the recent peak + 15%; until there are 2 samples, a built-in default per kind is used;
 - "promised" = for each gated build still running, max(0, its estimate - what its process tree uses now);
-- running builds are listed in a shared ledger in %TEMP%\claude-build-gate; dead entries are dropped;
+- running builds are listed in a shared ledger in <OS temp folder>/claude-build-gate; dead entries are dropped;
 - starts are decided one at a time, under a named mutex, from a FAIR QUEUE: the owner (agent / worktree) with the fewest
   builds started in the last 30 min goes first, then the longest-waiting; a smaller build may backfill only while the head of
   the queue doesn't fit and has waited < 20 min. Owner = $env:CLAUDE_AGENT, else the worktree prefix (x1-backend -> x1).
@@ -31,7 +32,7 @@ param(
   [Parameter(Mandatory)][string]$Cmd,
   [string]$Dir = (Get-Location).Path,
   [int]$WaitMinutes = 90,
-  [double]$KeepFreeGB = $(if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [math]::Max(6, [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB * 0.15)) }),
+  [double]$KeepFreeGB = $(if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { -1 }),   # -1 = 15% of total RAM, min 6 GB
   [double]$NeedGB = 0,         # 0 = learned / default estimate for this kind of command
   [int]$MaxParallel = 0        # 0 = no fixed cap (memory decides)
 )
@@ -41,6 +42,8 @@ param(
 #   after 2 recorded runs: learned peak x 1.25, never above the start value, never below 4 GB;
 #   at start time, if memory is tight the heap is REDUCED toward 4 GB instead of waiting longer.
 $HeapMinGB = 4
+. (Join-Path $PSScriptRoot 'sysinfo.ps1')
+if ($KeepFreeGB -lt 0) { $KeepFreeGB = [math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)) }
 $StartGB = @{ gradle = 12; maven = 8; node = 4 }
 $mavenKeep = ([string]$env:MAVEN_OPTS -replace '-Xm[xs]\S+|-XX:\+Use\w+GC|-XX:MaxMetaspaceSize=\S+', '' -replace '\s+', ' ').Trim()
 $nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -replace '\s+', ' ').Trim()
@@ -70,14 +73,14 @@ $Kinds = [ordered]@{
 function Get-Kind([string]$c) { foreach ($k in $Kinds.Keys) { if ($c -match $Kinds[$k][0]) { return $k } }; 'other' }
 
 # Repo-local wrappers must be called as .\gradlew.bat / .\mvnw.cmd: Claude Code sets NoDefaultCurrentDirectoryInExePath=1,
-# so cmd.exe no longer finds programs in the current directory by bare name.
-$Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.\\)(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', '$1.\$2')
+# so cmd.exe no longer finds programs in the current directory by bare name (sh never does: ./gradlew there).
+$Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
 # Test runners fork one worker per core by default; cap them.
 if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -replace '\s-n\s+auto', ' -n 2' }
 
-$ledger = Join-Path $env:TEMP 'claude-build-gate'
+$ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
 New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
 function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
@@ -120,7 +123,7 @@ if ($jvmKind -or $nodeKind -or $gradleKind) {
   if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history yet: assume the heap can fill up
 }
 function Set-HeapEnv([int]$gb) {
-  if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }   # G1 returns unused heap to Windows
+  if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }   # G1 returns unused heap to the OS
   if ($nodeKind) { $env:NODE_OPTIONS = "$nodeKeep --max-old-space-size=$($gb * 1024)".Trim() }
   if ($gradleKind -and $script:Cmd -notmatch 'org\.gradle\.jvmargs') {
     # Gradle daemon heap comes from org.gradle.jvmargs (gradle.properties); a -D on the command line overrides it
@@ -152,11 +155,11 @@ function Get-Queue {
 
 function Get-Procs {
   $procs = @{}; $kids = @{}; $names = @{}
-  foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, WorkingSetSize, Name) {
-    $procs[[int]$p.ProcessId] = [double]$p.WorkingSetSize; $names[[int]$p.ProcessId] = $p.Name
-    $pp = [int]$p.ParentProcessId
+  foreach ($p in Get-SysProcs -NoCommandLine) {
+    $procs[$p.Id] = $p.WorkingSet; $names[$p.Id] = $p.Name
+    $pp = $p.ParentId
     if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }
-    [void]$kids[$pp].Add([int]$p.ProcessId)
+    [void]$kids[$pp].Add($p.Id)
   }
   @{ procs = $procs; kids = $kids; names = $names }
 }
@@ -169,7 +172,7 @@ function Get-TreeGB([int]$rootPid, $Snap) {
   }
   return $sum / 1GB
 }
-function Get-AvailGB { [math]::Round((Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes / 1KB, 1) }
+function Get-AvailGB { (Get-SysMem).AvailGB }
 function Get-State {
   $Snap = Get-Procs
   $promised = 0; $running = 0
@@ -237,7 +240,12 @@ while ((Get-Date) -lt $deadline) {
     if ($left -ge $KeepFreeGB -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { Set-HeapEnv $heap }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
-      $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Cmd -WorkingDirectory $Dir -NoNewWindow -PassThru
+      if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Cmd -WorkingDirectory $Dir -NoNewWindow -PassThru }
+      else {
+        $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.ArgumentList.Add('-c'); $psi.ArgumentList.Add($Cmd)
+        $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false
+        $proc = [Diagnostics.Process]::Start($psi)
+      }
       Remove-Item $myTicket -ErrorAction SilentlyContinue
       @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
       $entry = Join-Path $ledger "$($proc.Id).json"

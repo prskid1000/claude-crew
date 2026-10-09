@@ -18,7 +18,7 @@ $protected = @('main', 'master', 'develop', 'release/\S+')
 try { $kc = Get-Content (Join-Path (Split-Path $K) 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
 
 function Deny($why) {
-  $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+  $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $K)))) '.claude-runtime' }   # <workspace>/.claude-runtime
   New-Item -ItemType Directory -Force $rt | Out-Null
   "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Join-Path $rt 'guard.log')
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
@@ -29,17 +29,17 @@ function Deny($why) {
 $raw = $cmd
 $cmd = [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
 if ($cmd -match '\bgit\b[^|;&]*\bstash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
-if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $K\wt.ps1 commit (it fixes hooksPath in worktrees); fix what the hook reports." }
+if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?!-with-lease)|\s-f\b)' -or ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*--force' -and $cmd -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
   Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after wt.ps1 sync.'
 }
 # heavy builds/tests must go through the gate
 $gated = $cmd -match 'gate\.ps1|check\.ps1|app-build\.ps1'
-$heavy = $cmd -match '(^|[\s;&|(''"])(\.\\)?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
+$heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
          $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
          $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or   # run as a command, not a name in a list (Get-Process java,msbuild)
          $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b)'
 if ($heavy -and -not $gated) {
-  Deny "Heavy builds/tests go through the machine-wide memory gate: & $K\check.ps1 -Dir <module> [-Step test -Tests X | -Step build], or $K\gate.ps1 -Dir <dir> -Cmd '<cmd>' for anything else."
+  Deny "Heavy builds/tests go through the machine-wide memory gate: & $(Join-Path $K 'check.ps1') -Dir <module> [-Step test -Tests X | -Step build], or $(Join-Path $K 'gate.ps1') -Dir <dir> -Cmd '<cmd>' for anything else."
 }
 exit 0

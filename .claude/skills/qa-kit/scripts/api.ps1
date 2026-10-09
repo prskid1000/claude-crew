@@ -27,7 +27,7 @@ $ErrorActionPreference = 'Stop'
 # Git Bash (MSYS) rewrites a '/api/x' argument to 'C:/Program Files/Git/api/x' before pwsh sees it: undo that
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
 $here = Split-Path $MyInvocation.MyCommand.Path
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($MyInvocation.MyCommand.Path -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }   # runtime output lives outside .claude
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($MyInvocation.MyCommand.Path -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }   # runtime output lives outside .claude
 $cfgFile = Join-Path (Split-Path $here) 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - copy targets.example.json and fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json

@@ -18,7 +18,7 @@ Android UI helper for any app on an emulator or device (via uiautomator + adb in
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
 $adb = if ($env:ANDROID_HOME) { "$env:ANDROID_HOME\platform-tools\adb.exe" } else { "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" }
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($MyInvocation.MyCommand.Path -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }   # runtime output lives outside .claude
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($MyInvocation.MyCommand.Path -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }   # runtime output lives outside .claude
 $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $tmp = Join-Path $rt "android"; New-Item -ItemType Directory -Force $tmp | Out-Null
 $xmlLocal = Join-Path $tmp "ui_$tag.xml"

@@ -26,7 +26,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $K = Split-Path $MyInvocation.MyCommand.Path
-$st = & "$K\stack.ps1" -Dir $Dir -Json | ConvertFrom-Json
+. (Join-Path $K 'sysinfo.ps1')
+$st = & (Join-Path $K 'stack.ps1') -Dir $Dir -Json | ConvertFrom-Json
 Write-Host "[check] $($st.stack) in $($st.dir)"
 
 if ($Step -eq 'migrations') {
@@ -35,13 +36,14 @@ if ($Step -eq 'migrations') {
   if (-not $masters) { Write-Host '[check] no Liquibase master.xml in this repo - nothing to check'; exit 0 }
   $rc = 0
   $mine = @($masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) })
-  $under = @($mine | Where-Object { $_.StartsWith($st.dir + '\', [StringComparison]::OrdinalIgnoreCase) })
+  $under = @($mine | Where-Object { $_.StartsWith($st.dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) })
   if ($under.Count) { $mine = $under }   # module has its own changelog: check only that one
   foreach ($full in $mine) {
-    $a = @("$K\lbcheck.py", $full, $Since)
-    if ($Show) { "python $($a -join ' ')"; continue }
+    $a = @((Join-Path $K 'lbcheck.py'), $full, $Since)
+    $py = Get-Python
+    if ($Show) { "$py $($a -join ' ')"; continue }
     Write-Host "[check] liquibase: $full (files since $Since)"
-    python @a; if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
+    & $py @a; if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
   }
   exit $rc
 }
@@ -77,16 +79,17 @@ foreach ($s in $steps) {
   }
   if ($st.solution) { $cmd = $cmd -replace '\{sln\}', $st.solution }
   # Speed-ups that don't change results:
-  if ($cmd -match '^(\.\\mvnw\.cmd|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.\\mvnw\.cmd|mvn)\s', 'mvnd ' }   # warm Maven daemon
+  if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }   # warm Maven daemon
   if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {                                                                  # incremental type-check
-    $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($K -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+    $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $K)))) '.claude-runtime' }   # <workspace>/.claude-runtime
     $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
-    New-Item -ItemType Directory -Force "$rt\tsbuild" | Out-Null
-    $cmd += " --incremental --tsBuildInfoFile `"$rt\tsbuild\$hash.tsbuildinfo`""
+    $tsb = Join-Path $rt 'tsbuild'
+    New-Item -ItemType Directory -Force $tsb | Out-Null
+    $cmd += " --incremental --tsBuildInfoFile `"$(Join-Path $tsb "$hash.tsbuildinfo")`""
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }                                                       # Gradle build cache
   if ($Show) { "$s : $cmd"; continue }
-  & "$K\gate.ps1" -Dir $st.dir -Cmd $cmd
+  & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $cmd
   $ran++
   if ($LASTEXITCODE) { Write-Host "[check] $s FAILED (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
   Write-Host "[check] $s ok"

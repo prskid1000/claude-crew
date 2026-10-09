@@ -15,6 +15,13 @@ Keys you set replace the detected ones; the rest stay.
 param([string]$Dir = (Get-Location).Path, [switch]$Json)
 $ErrorActionPreference = 'Stop'
 $Dir = (Resolve-Path $Dir).Path
+. (Join-Path $PSScriptRoot 'sysinfo.ps1')
+# Repo-local wrappers: .\mvnw.cmd / .\gradlew.bat on Windows, ./mvnw / ./gradlew elsewhere
+function Wrapper($d, $name, $winExt, $fallback) {
+  if ($KitIsWindows) { if (Test-Path (Join-Path $d "$name.$winExt")) { return ".\$name.$winExt" } }
+  elseif (Test-Path (Join-Path $d $name)) { return "./$name" }
+  $fallback
+}
 
 function Has($d, $pattern) { [bool](Get-ChildItem -LiteralPath $d -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1) }
 function First($d, $pattern) { Get-ChildItem -LiteralPath $d -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
@@ -42,13 +49,13 @@ function Get-Stack($d) {
 
   if (Test-Path (Join-Path $d 'pom.xml')) {
     $s = 'java-maven'
-    $mvn = if (Test-Path (Join-Path $d 'mvnw.cmd')) { '.\mvnw.cmd' } else { 'mvn' }
+    $mvn = Wrapper $d 'mvnw' 'cmd' 'mvn'
     $c.compile = "$mvn -o -q compile"
     $c.test = "$mvn -o -q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
     $c.build = "$mvn -o -q package -DskipTests"
   }
   elseif ((Has $d 'build.gradle') -or (Has $d 'build.gradle.kts') -or (Has $d 'settings.gradle*')) {
-    $gw = if (Test-Path (Join-Path $d 'gradlew.bat')) { '.\gradlew.bat' } else { 'gradle' }
+    $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
     $android = (Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($android) {
       $s = 'android-gradle'
@@ -71,7 +78,7 @@ function Get-Stack($d) {
       $s = 'dotnet-msbuild'
       $c.compile = 'msbuild "{sln}" /m:2 /v:q /nologo /p:Configuration=Debug'
       $c.build = 'msbuild "{sln}" /m:2 /v:q /nologo /p:Configuration=Release'
-      $c.test = 'vstest.console.exe {tests}'
+      $c.test = 'vstest.console.exe {tests}'   # .NET Framework test runner: Windows only
     } else {
       $s = 'dotnet'
       $c.compile = 'dotnet build "{sln}" -nologo -v q -m:2'
@@ -97,11 +104,14 @@ function Get-Stack($d) {
     elseif ($n.Scripts -contains 'test') { $c.test = 'npm test -- {tests}' }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
     if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = 'npm run build' }
-    if ($s -eq 'react-native' -and (Test-Path (Join-Path $d 'android\gradlew.bat'))) { $c.build = 'cd android && .\gradlew.bat assembleRelease' }
+    $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null
+    if ($s -eq 'react-native' -and $agw) { $c.build = "cd android && $agw assembleRelease" }
   }
   elseif ((Has $d 'pyproject.toml') -or (Has $d 'requirements*.txt') -or (Has $d 'setup.py') -or (Has $d 'Pipfile')) {
     $s = 'python'; $deps = @('.venv')
-    $py = if (Test-Path (Join-Path $d '.venv\Scripts\python.exe')) { '.venv\Scripts\python.exe' } else { 'python' }
+    $py = if ($KitIsWindows -and (Test-Path (Join-Path $d '.venv\Scripts\python.exe'))) { '.venv\Scripts\python.exe' }
+          elseif (-not $KitIsWindows -and (Test-Path (Join-Path $d '.venv/bin/python'))) { '.venv/bin/python' }
+          elseif ($KitIsWindows -or -not (Resolve-Tool python3)) { 'python' } else { 'python3' }
     $c.compile = "$py -m compileall -q {files}"
     $c.lint = "$py -m ruff check {files}"
     $c.test = "$py -m pytest {tests} -q"

@@ -55,7 +55,7 @@ while ((Get-Date) -lt $end) {
       New-Item -ItemType Directory -Force "$RunDir\$code" | Out-Null
       $res | ConvertTo-Json -Depth 8 | Out-File "$RunDir\$code\results.json" -Encoding utf8
       Log "$code finalizing: $((($res.checks | Group-Object result | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '))"
-      & "$S\finalize.ps1" -RunDir $RunDir -Code $code 2>&1 | ForEach-Object { Log "  $_" }
+      & (Join-Path $S 'finalize.ps1') -RunDir $RunDir -Code $code 2>&1 | ForEach-Object { Log "  $_" }
       Add-Content $done $code
     }
     if (-not $running.Count -and $started.Count -and ($j | Where-Object type -in 'finished', 'completed', 'done')) { Log 'workflow finished'; break }

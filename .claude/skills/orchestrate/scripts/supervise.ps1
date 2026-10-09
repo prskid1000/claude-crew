@@ -15,9 +15,10 @@ FLAG levels: ACT (do something now), WATCH (check again next round), INFO.
 #>
 param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix)   # -AutoFix: perform SAFE fixes itself (idle emulators) instead of only flagging
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
-$skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>\skills
-. (Join-Path $skills 'dev-kit\scripts\tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
+$skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
+. (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
+. (Join-Path $skills 'dev-kit/scripts/sysinfo.ps1')   # RAM / processes on Windows, Linux and macOS
+$rt = $KitConf.Runtime   # $env:CLAUDE_RUNTIME, else <workspace>/.claude-runtime
 $swarm = Join-Path $skills 'android-swarm'
 $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
@@ -103,7 +104,7 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
   Flag 'WATCH' "board entry $($s.agent) ($($s.run)) has no heartbeat for $([int]($now - [datetime]$s.beat).TotalMinutes) min" 'It may have finished without leaving, or be stuck. Cross-check with the workflow journal.' }
 
 # 3. memory gate
-$ledger = Join-Path $env:TEMP 'claude-build-gate'
+$ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
 $queue = @(Get-ChildItem (Join-Path $ledger 'queue') -Filter '*.json' | ForEach-Object { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (Get-Process -Id $t.pid) { $t } })
 $runningB = @(Get-ChildItem $ledger -Filter '*.json' | Where-Object Name -ne 'history.json' | ForEach-Object { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (Get-Process -Id $t.pid) { $t } })
 $oldest = $queue | Sort-Object { [datetime]$_.since } | Select-Object -First 1
@@ -117,7 +118,7 @@ foreach ($k in $hist.Keys) { $last = @($hist[$k] | Select-Object -Last 3); if ($
 # 3b. idle emulators: running but no active app test lane and no board claim uses them
 $stateFile = Join-Path $rt 'supervise-state.json'
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }; if (-not $state.idleSince) { $state.idleSince = @{} }
-$adb = Join-Path $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }) 'platform-tools\adb.exe'
+$adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))
 if (Test-Path $adb) {
   $serials = @(& $adb devices 2>$null | Where-Object { $_ -match '^(emulator-\d+)\s+device' } | ForEach-Object { $Matches[1] })
   $swarmCfg = try { Get-Content (Join-Path $swarm 'swarm.config.json') -Raw | ConvertFrom-Json } catch { $null }
@@ -160,19 +161,19 @@ if (Test-Path $adb) {
   # child is gone (qemu crashed) for 2+ min.
   if ($swarmCfg) {
     $adbState = @{}; foreach ($ln in @(& $adb devices 2>$null)) { if ($ln -match '^(emulator-\d+)\s+(\S+)') { $adbState[$Matches[1]] = $Matches[2] } }
-    $emuProcs = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'emulator%' OR Name LIKE 'qemu-system%'" -ErrorAction SilentlyContinue)
+    $emuProcs = @(Get-SysProcs -Name '^(emulator|qemu-system)')
     foreach ($ln in $swarmCfg.lanes) {
       $sr = "emulator-$($ln.port)"
       $mine = @($emuProcs | Where-Object { $_.CommandLine -match "-port\s+$($ln.port)\b" })
       if (-not $mine.Count) { continue }
-      $youngest = [int](($mine | ForEach-Object { ($now - $_.CreationDate).TotalMinutes } | Measure-Object -Minimum).Minimum)
+      $youngest = [int](($mine | ForEach-Object { ($now - $_.Created).TotalMinutes } | Measure-Object -Minimum).Minimum)
       $qemu = @($mine | Where-Object Name -like 'qemu-system*')
       $why = if ($adbState[$sr] -ne 'device' -and $youngest -ge 8) { "adb shows it '$(if ($adbState[$sr]) { $adbState[$sr] } else { 'absent' })' $youngest min after start (crashed or hung)" }
-             elseif (-not $qemu.Count -and $youngest -ge 2) { "emulator.exe is up but its qemu process is gone (crashed)" }
+             elseif (-not $qemu.Count -and $youngest -ge 2) { "the emulator process is up but its qemu process is gone (crashed)" }
       if (-not $why) { continue }
       $leased = Test-Path (Join-Path $leaseDir "$($ln.name).json")
       if ($AutoFix) {
-        $mine | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        $mine | ForEach-Object { Stop-SysProcess $_.Id }
         Flag 'INFO' "auto-fixed: killed dead emulator $sr ($($ln.name)): $why$(if ($leased) { '; its lease holder re-boots it on its next phone.ps1 acquire' })" 'Nothing to do.'
       } else { Flag 'ACT' "dead emulator $sr ($($ln.name)): $why" "Kill it: & $(Join-Path $swarm 'swarm-down.ps1') -Lanes $($ln.name) -KeepBrowsers (or run supervise with -AutoFix)." }
     }
@@ -181,11 +182,13 @@ if (Test-Path $adb) {
 $state | ConvertTo-Json -Depth 4 | Set-Content $stateFile
 
 # 4. machine
-$tot = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB; $avail = (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).AvailableMBytes / 1KB
+$mem = Get-SysMem; $tot = $mem.TotalGB; $avail = $mem.AvailGB
 $pct = [int](100 * (1 - $avail / $tot)); L "memory: $pct% used, $([math]::Round($avail,1)) GB available"
 if ($pct -ge 90) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run cleanup.ps1; check for orphaned java/node/chrome from finished agents.' }
-$drive = $KitConf.Workspace.Substring(0, 1)   # the drive the workspace (repos, worktrees, runtime) lives on
-$disk = Get-PSDrive $drive; $freeGB = [math]::Round($disk.Free / 1GB); L "disk ${drive}: $freeGB GB free"
+# the drive / file system the workspace (repos, worktrees, runtime) lives on
+$drive = if ($KitIsWindows) { $KitConf.Workspace.Substring(0, 1) } else { $KitConf.Workspace }
+$freeGB = try { [math]::Round([IO.DriveInfo]::new($(if ($KitIsWindows) { "${drive}:\" } else { $drive })).AvailableFreeSpace / 1GB) } catch { 999 }
+L "disk ${drive}: $freeGB GB free"
 if ($freeGB -lt 30) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Run cleanup.ps1; remove finished worktrees.' }
 $gl = Join-Path $rt 'guard.log'
 $blocks = @(Get-Content $gl | Where-Object { $_ -match '^(\S+)\t' -and ($now - [datetime]$Matches[1]).TotalMinutes -lt 60 })
@@ -207,7 +210,7 @@ if ($AutoFix) {
     }
     $null
   }
-  foreach ($l in @(& "$S\track.ps1" run)) {
+  foreach ($l in @(& (Join-Path $S 'track.ps1') run)) {
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') comment <id> <file.md>)." }
@@ -239,8 +242,8 @@ if ($AutoFix) {
     $f = Join-Path $board "$($s.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }
   }
   # under memory pressure clean now (idle Gradle/Kotlin daemons alone held ~6 GB at 91%); otherwise only when due
-  if ($pct -ge 85) { foreach ($l in @(& "$S\cleanup.ps1" | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> cleanup.ps1: $l" 'Re-check memory next round.' } }
-  else { & "$S\cleanup.ps1" -IfDue -Quiet }
+  if ($pct -ge 85) { foreach ($l in @(& (Join-Path $S 'cleanup.ps1') | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> cleanup.ps1: $l" 'Re-check memory next round.' } }
+  else { & (Join-Path $S 'cleanup.ps1') -IfDue -Quiet }
 }
 
 # 6. new bug tasks raised by QA that no bug-fix agent owns yet (parents taken from the QA runs' tracker config)
@@ -261,13 +264,13 @@ foreach ($par in $parents) {
   # Fix at once (the owner's standing mandate: QA bugs are fixed without waiting to be asked) - but as ONE wave for every bug open
   # right now, not one wave per bug. A still-running QA run is only mentioned: later bugs from it go into the next wave.
   $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
-  Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "Start the fixes now as ONE wave: & $PSScriptRoot\bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <repos> [-Hints ...] per task (writes the brief, starts tracking, prints /dev-wave args incl. mandate), combine the briefs into one file with a section per agent, then launch a single /dev-wave."
+  Flag 'ACT' "$($new.Count) new QA bug task(s) not being fixed$note`: $list" "Start the fixes now as ONE wave: & $(Join-Path $PSScriptRoot 'bug-brief.ps1') -Task <id> -Agent B-<code> -Repos <repos> [-Hints ...] per task (writes the brief, starts tracking, prints /dev-wave args incl. mandate), combine the briefs into one file with a section per agent, then launch a single /dev-wave."
 }
 
 # 7. capacity: scale QA workers with memory. Seats (qa-kit\scripts\qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
 #    so shrinking is automatic. Growing: if a QA run has items nobody has started and memory has room, say how many extra workers fit.
 $keepFree = try { $v = (Get-Content (Join-Path $skills 'qa-kit\targets.local.json') -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
-$freeNow = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1)
+$freeNow = Get-FreeGB
 $seatDir = Join-Path $rt 'qa-seats'
 $seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count
 $waitNow = @(Get-ChildItem (Join-Path $seatDir 'wait') -Filter *.json -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddMinutes(-3) }).Count

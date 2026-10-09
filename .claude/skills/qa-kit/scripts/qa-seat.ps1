@@ -20,7 +20,8 @@ param(
   [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\kitconfig.ps1')   # $KitConf.Runtime = $env:CLAUDE_RUNTIME or <workspace>\.claude-runtime
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitconfig.ps1')   # $KitConf.Runtime = $env:CLAUDE_RUNTIME or <workspace>/.claude-runtime
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/sysinfo.ps1')     # Get-FreeGB on Windows, Linux and macOS
 $rt = $KitConf.Runtime
 $dir = Join-Path $rt 'qa-seats'; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $wait, $claims | Out-Null
@@ -31,7 +32,7 @@ if (-not $KeepFreeGB) {
 $need = @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind]
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
 function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally { $mutex.ReleaseMutex() } }
-function FreeGB { [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB, 1) }
+function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3) { Remove-Item $_.FullName -Force } else { $o } }) }
 
