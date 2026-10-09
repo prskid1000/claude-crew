@@ -74,10 +74,13 @@ switch ($Action) {
       $rel = Split-Path $py; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel '.venv'); $to = Join-Path $path (Join-Path $rel '.venv')
       if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $links += $to }
     }
-    # generated hook folders worktrees miss
-    foreach ($h in (Get-ChildItem $src -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
-      $to = Join-Path $path $h.FullName.Substring($src.Length).TrimStart('\', '/')
-      if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
+    # generated hook folders worktrees miss. A dependency checkout installed with --ignore-scripts has no .husky/_ (husky's
+    # prepare script never ran), so fall back to the main checkout for any hook folder the link source lacks.
+    foreach ($hs in @($src, (Resolve-Path $Repo).Path | Select-Object -Unique)) {
+      foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
+        $to = Join-Path $path $h.FullName.Substring($hs.Length).TrimStart('\', '/')
+        if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
+      }
     }
     Meta $path 'links' ($links -join "`n")
     # git sees a symlink as a file, so a dir-only ignore rule (node_modules/) misses it and `wt.ps1 commit` (git add -A) would
