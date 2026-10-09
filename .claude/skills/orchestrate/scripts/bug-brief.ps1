@@ -27,8 +27,10 @@ $cfgFile = Join-Path $kit 'dev-kit\kit.local.json'
 $cfg = if (Test-Path $cfgFile) { Get-Content $cfgFile -Raw | ConvertFrom-Json } else { $null }
 if (-not $cfg -or -not $cfg.repos) { throw "add a ""repos"" list to $cfgFile (see kit.example.json)" }
 
-$j = clickup task view $Task --json | ConvertFrom-Json
-$desc = [string]($j.markdown_description ?? $j.description)
+. (Join-Path $kit 'dev-kit\scripts\tracker.ps1')                # Get-TrackerTask etc. (tracker.type in kit.local.json)
+$j = Get-TrackerTask $Task
+if (-not $j.name) { throw "cannot read task $Task from the tracker ($($KitConf.TrackerType)) - check its CLI auth / tracker config" }
+$desc = [string]$j.description
 # failed checks: "### <id> — <screen>" then "**Saw:** ..."
 $checks = @(); $cur = $null
 foreach ($line in $desc -split "`n") {
@@ -84,8 +86,8 @@ $($rows -join "`n")
 |---|---|---|---|
 | $Agent | $Task | $ids | $(if ($Range) { $Range } else { 'ask the coordinator if you need one' }) |
 
-Branches ``fix/CU-$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker: in progress → for review (the coordinator's
-tracker sets promoted). This wave is reviewed: do NOT schedule merges; the workflow does it after review.
+Branches ``fix/$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude\skills\dev-kit\scripts\tracker.ps1``):
+in progress → review (the coordinator's track.ps1 sets promoted). This wave is reviewed: do NOT schedule merges; the workflow does it after review.
 Register: ``$claude\skills\orchestrate\scripts\track.ps1 add -Task $Task -Discover``.
 Phones (app bugs): only if you really need one, ``$claude\skills\android-swarm\phone.ps1 acquire -Agent $Agent``, release it when done.
 "@

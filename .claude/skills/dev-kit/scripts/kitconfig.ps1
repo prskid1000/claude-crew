@@ -31,6 +31,9 @@ function Get-KitSetting([string]$Path, $Default) {
 }
 # reports: "gdocs" (Google Docs via the gws CLI) or "markdown" (files in the run folder); default gdocs only when gws is installed
 $__reportType = [string](Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }))
+$__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'clickup' })).ToLower()
+# tag that ties branches/MR titles to a task (fix/<tag><id>-slug); track.ps1 -Discover searches MRs for <tag><id>
+$__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
@@ -42,10 +45,11 @@ $KitConf = [pscustomobject]@{
   WorktreeRoots     = $__wtRoots                                  # where wt.ps1 puts worktrees (default <ReposRoot>-wt)
   GitHost           = [string](Get-KitValue 'gitHost' 'gitlab.com')   # GitLab host (self-hosted: gitlab.example.com)
   GitlabGroup       = [string](Get-KitValue 'gitlabGroup' '')     # group for short MR refs <repo>!<iid>
-  TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos track.ps1 -Discover searches for CU-<task> MRs
+  TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos track.ps1 -Discover searches for <TrackerTag><task> MRs
   RepoAliases       = (Get-KitValue 'repoAliases' $null)          # e.g. { "api": "backend", "web": "frontend" }
   ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # extra shared branches besides main/master/develop/release/*
-  TrackerType       = ([string](Get-KitSetting 'tracker.type' 'clickup')).ToLower()   # clickup | github | gitlab | jira | none (skills\dev-kit\scripts\tracker.ps1)
+  TrackerType       = $__trType                                   # clickup | github | gitlab | jira | none (skills\dev-kit\scripts\tracker.ps1)
+  TrackerTag        = $__trTag                                    # branch/MR tag before the task id: CU- (clickup), GH-, GL-, '' (jira keys, none)
   ReportType        = $__reportType.ToLower()                     # gdocs | markdown (qa-kit finalize.ps1, devtools.py doc)
   MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # cleanup.ps1 keeps this many QA browser profiles when no QA seat is active
   # Claude Code keeps this workspace's sessions (workflow journals) in ~/.claude/projects/<workspace path with non-alphanumerics as '-'>
