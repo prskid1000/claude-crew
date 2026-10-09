@@ -41,7 +41,7 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
   `stack.ps1` (detects Maven, Gradle/Android, .NET SDK/MSBuild, Angular, Node/React/Next/React Native, Python, Go, Rust, CMake, Make),
   `check.ps1` (compile + typecheck + lint / targeted tests / Liquibase checks, incremental `tsc`, through the gate),
   `gate.ps1` (memory gate: fair queue per owner, learned per-project peaks, dynamic heap caps, backfilling),
-  `wt.ps1` (worktrees with junction-linked `node_modules`/`.venv`, rebase, hook-safe commits, safe removal),
+  `wt.ps1` (worktrees with linked `node_modules`/`.venv` (junctions on Windows, symlinks elsewhere), rebase, hook-safe commits, safe removal),
   `guard.ps1` (PreToolUse guard), `tracker.ps1` (one issue-tracker adapter: ClickUp, GitHub issues, GitLab issues, Jira or none; `-DryRun`),
   `devtools.py` (MR/PR create, merge-when-green on GitLab/GitHub, tracker comments/statuses, tester-guide publishing as a Google Doc or file),
   `pipe-wait.ps1` (waits for MR pipelines; JSON with the failed job and error tail), `lbcheck.py` (Liquibase replay: duplicate columns/tables, missing rollbacks, empty rollbacks on changeSets marked irreversible), `keepboth.py` (append-only conflict resolver), `kitconfig.ps1`.
@@ -110,10 +110,12 @@ flowchart LR
 ## Prerequisites
 
 Required:
-- **Windows 10/11** (the scripts use PowerShell, WMI/CIM, junctions and `cmd.exe`).
-- **PowerShell 7+** (`pwsh`) for the scripts, and **Windows PowerShell 5.1** (`powershell.exe`, built in) for the hooks.
+- **Windows 10/11, Linux or macOS.** OS specifics (RAM, processes, directory links, temp folder, SDK paths) live in one helper,
+  `skills/dev-kit/scripts/sysinfo.ps1`: CIM and junctions on Windows, `/proc/meminfo`, `ps` and symlinks on Linux,
+  `sysctl`/`vm_stat`, `ps` and symlinks on macOS.
+- **PowerShell 7+** (`pwsh` on `PATH`) for the scripts and the hooks, on every OS.
 - **Claude Code** with subagents and workflows (the Workflow tool / workflow slash commands).
-- **git**, **Node.js 18+**, **Python 3.10+** on the PowerShell `PATH`.
+- **git**, **Node.js 18+**, **Python 3.10+** on the `PATH` (`python` on Windows, `python3` on Linux/macOS).
 - The build tools of your stacks (JDK + Maven/Gradle, .NET SDK, Node package manager, Python venvs, Go, Rust, ...).
 
 Optional, per feature:
@@ -122,40 +124,42 @@ Optional, per feature:
 | MRs / PRs, merge-when-green, tracker automation | `glab` (GitLab, incl. self-hosted) or `gh` (GitHub), logged in |
 | Tracker statuses, comments, bug tasks | one of, set by `tracker.type` in `kit.local.json`: **`clickup`** (default; `clickup` CLI), **`github`** (`gh`, issues with `status:` labels), **`gitlab`** (`glab`, issues), **`jira`** (Cloud REST: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`) or **`none`** (no tracker; calls are logged locally). Status names map through `tracker.statuses` |
 | Publishing tester guides and QA reports | `reports.type`: **`gdocs`** (Google Workspace CLI `gws`, logged in: Drive evidence + Google Doc) or **`markdown`** (no extra tool: `report.md` in the QA run folder, posted/attached on the task). Default: `gdocs` when `gws` is on PATH, else `markdown` |
-| Web QA | Chrome or Edge (or `CHROME_PATH`), `npm install` in `skills/qa-kit/scripts/web` |
-| Android QA | Android SDK (platform-tools, emulator, an x86_64 system image), hardware acceleration, **JDK 17 or 21** for app builds |
+| Web QA | Chrome, Edge or Chromium in its usual install folder or on `PATH` (or set `CHROME_PATH`), `npm install` in `skills/qa-kit/scripts/web` |
+| Android QA | Android SDK (platform-tools, emulator, an x86_64 system image; arm64 on Apple silicon), hardware acceleration (KVM on Linux), **JDK 17 or 21** for app builds |
 | Plenty of RAM | the gate makes any size work, but more RAM = more agents and phones at once (each emulator ~4.5 GB) |
 
 ## Setup
 
 1. **Place the kit.** Copy this repo's `.claude` folder into the workspace you open in Claude Code (the folder that contains,
-   or is the parent of, your repos), e.g. `C:\work\.claude`. If you already have a `.claude` folder, merge: keep your
+   or is the parent of, your repos), e.g. `C:/work/.claude` or `~/work/.claude` - called `<workspace>/.claude` below
+   (forward slashes work in PowerShell on every OS). If you already have a `.claude` folder, merge: keep your
    `settings.local.json`, and merge `settings.json` hooks/permissions and `CLAUDE.md` by hand.
-   Runtime output goes to `C:\work\.claude-runtime` (outside `.claude`; override with `$env:CLAUDE_RUNTIME`).
+   Runtime output goes to `<workspace>/.claude-runtime` (outside `.claude`; override with `$env:CLAUDE_RUNTIME`).
 2. **Configure** (each step only if you use that feature):
    ```powershell
-   cd C:\work\.claude\skills
-   Copy-Item dev-kit\kit.example.json dev-kit\kit.local.json          # git host/group, repos root, tracker repos, protected branches
-   Copy-Item qa-kit\targets.example.json qa-kit\targets.local.json    # test environments + test logins (the only place for passwords)
-   Copy-Item android-swarm\swarm.example.json android-swarm\swarm.config.json   # emulator lanes + app under test
+   cd <workspace>/.claude/skills
+   Copy-Item dev-kit/kit.example.json dev-kit/kit.local.json          # git host/group, repos root, tracker repos, protected branches
+   Copy-Item qa-kit/targets.example.json qa-kit/targets.local.json    # test environments + test logins (the only place for passwords)
+   Copy-Item android-swarm/swarm.example.json android-swarm/swarm.config.json   # emulator lanes + app under test
    ```
-   Then edit `C:\work\.claude\CLAUDE.md` (a template): your CLIs, tracker workflow, org specifics. See [docs/configuration.md](docs/configuration.md).
-3. **Web QA helper:** `cd C:\work\.claude\skills\qa-kit\scripts\web; npm install`.
-4. **Android swarm** (optional): set `ANDROID_HOME` (if not the default `%LOCALAPPDATA%\Android\Sdk`) and `ANDROID_AVD_HOME`
+   Then edit `<workspace>/.claude/CLAUDE.md` (a template): your CLIs, tracker workflow, org specifics. See [docs/configuration.md](docs/configuration.md).
+3. **Web QA helper:** `cd <workspace>/.claude/skills/qa-kit/scripts/web; npm install`.
+4. **Android swarm** (optional): set `ANDROID_HOME` (if not the default: `%LOCALAPPDATA%/Android/Sdk` on Windows,
+   `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) and `ANDROID_AVD_HOME`
    (or `avdDir` in `swarm.config.json`), install the system image named in `avd-template.ini`, then create all lanes at once:
    ```powershell
-   & C:\work\.claude\skills\android-swarm\swarm-avd.ps1 create
-   & C:\work\.claude\skills\android-swarm\app-build.ps1     # builds apk\app.apk through the memory gate
+   & <workspace>/.claude/skills/android-swarm/swarm-avd.ps1 create
+   & <workspace>/.claude/skills/android-swarm/app-build.ps1     # builds apk/app.apk through the memory gate
    ```
 5. **Check the hooks.** `.claude/settings.json` runs the guard before every Bash/PowerShell command and two SessionStart hooks, via
-   `powershell.exe` with `${CLAUDE_PROJECT_DIR}\.claude\...`. Start Claude Code in `C:\work`, run `/hooks` to see them, and try
+   `pwsh` with `${CLAUDE_PROJECT_DIR}/.claude/...`. Start Claude Code in `<workspace>`, run `/hooks` to see them, and try
    `git stash list` in a session: the guard should block it with an explanation.
 6. **Pick a tracker and report output** in `.claude/skills/dev-kit/kit.local.json` (copy `kit.example.json`), e.g.
    `{ "tracker": { "type": "github", "repo": "me/my-app" }, "reports": { "type": "markdown" } }`
-   (no tracker yet? `"type": "none"`). Check it with `& C:\work\.claude\skills\dev-kit\scripts\tracker.ps1 view <id> -DryRun`.
+   (no tracker yet? `"type": "none"`). Check it with `& <workspace>/.claude/skills/dev-kit/scripts/tracker.ps1 view <id> -DryRun`.
    Details: [docs/configuration.md](docs/configuration.md#tracker-trackertype).
 7. **First run.** Check CLI auth (`glab auth status` / `gh auth status`, your tracker, `gws` if you use `gdocs`), then ask Claude:
-   *"Use the orchestrate skill. Check `stack.ps1` and `check.ps1` on `C:\work\my-repo`."* — if the detected commands are right, you're set.
+   *"Use the orchestrate skill. Check `stack.ps1` and `check.ps1` on `<workspace>/my-repo`."* — if the detected commands are right, you're set.
 
 ## Usage
 
@@ -165,34 +169,34 @@ Optional, per feature:
 2. Run it:
    ```
    /dev-wave
-   args: { brief: 'C:\work\briefs\wave-projects.md', kitDir: 'C:\work\.claude',
+   args: { brief: '<workspace>/briefs/wave-projects.md', kitDir: '<workspace>/.claude',
            agents: [ { id: 'X1', items: 'PRJ-12, PRJ-13', area: 'project form + API' },
                      { id: 'X2', items: 'PRJ-20', area: 'report export' } ] }
    ```
 3. Keep one heartbeat on: `/loop 15m supervise the running waves`. Each round runs
-   `& C:\work\.claude\skills\orchestrate\scripts\supervise.ps1 -AutoFix` and acts on ACT flags.
-4. When it finishes: `& C:\work\.claude\skills\orchestrate\scripts\wave-report.ps1 -Run <workflow id>` (MRs, done/deferred,
+   `& <workspace>/.claude/skills/orchestrate/scripts/supervise.ps1 -AutoFix` and acts on ACT flags.
+4. When it finishes: `& <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run <workflow id>` (MRs, done/deferred,
    open review findings) and follow up (fix wave, deploy, QA).
 
 Bug-fix waves use `mode: 'bugfix'` with `BUGFIX_BRIEF.md`; stopped agents continue with `mode: 'resume'`.
 For a `[Bug] … failed checks` task from QA, one command writes the brief, starts tracking and prints the /dev-wave args
 (including `mandate` and a `model` suggestion: sonnet for one or two cosmetic checks):
-`& C:\work\.claude\skills\orchestrate\scripts\bug-brief.ps1 -Task <task id> -Agent B-ORD -Repos api,web`.
+`& <workspace>/.claude/skills/orchestrate/scripts/bug-brief.ps1 -Task <task id> -Agent B-ORD -Repos api,web`.
 Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area: 'label typo', model: 'sonnet' }`).
 
 ### Test and close a deployed batch
-1. Create a run folder `C:\work\.claude-runtime\qa-runs\2026-10-01-projects\` with the tester guides (exported to text) and `run.json`:
+1. Create a run folder `<workspace>/.claude-runtime/qa-runs/2026-10-01-projects/` with the tester guides (exported to text) and `run.json`:
    ```json
    { "title": "Projects epic", "target": "my-staging", "tester": "QA team",
      "mandate": ["Test the projects epic on staging and close what passes"],
      "tracker": { "list": "<list id>", "parent": "<epic id>", "owner": "<user id>", "closeStatus": "Closed" },
      "lanes": [ { "n": 1, "name": "Falcon", "serial": "emulator-5556", "user": "qa-user-1" } ],
-     "items": [ { "code": "F1", "title": "Project form", "guideFile": "C:\\work\\.claude-runtime\\qa-runs\\2026-10-01-projects\\F1.txt",
+     "items": [ { "code": "F1", "title": "Project form", "guideFile": "<workspace>/.claude-runtime/qa-runs/2026-10-01-projects/F1.txt",
                   "lane": "web", "subtasks": [ { "id": "<task id>", "name": "Project form", "mrs": "!101" } ] } ] }
    ```
-2. Run `/test-and-close` with the short form `{ runDir: '<run dir>', kitDir: 'C:\work\.claude' }` (a tiny agent reads `run.json`;
+2. Run `/test-and-close` with the short form `{ runDir: '<run dir>', kitDir: '<workspace>/.claude' }` (a tiny agent reads `run.json`;
    `only: ['F1']` runs a subset) or with the whole object plus `"runDir"` and `"kitDir"`, and start the safety net in the background:
-   `& C:\work\.claude\skills\qa-kit\scripts\autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir>`.
+   `& <workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir>`.
 3. Each package ends with a report (verdict, results table, failures with screenshots, evidence index) as a Google Doc or
    `report.md` (`reports.type`), a comment on every task, closed tasks, and a `[Bug] … failed checks` task for confirmed failures,
    which feeds the next bug-fix wave.
@@ -201,7 +205,7 @@ Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area:
 
 ### Phones
 ```powershell
-$P = 'C:\work\.claude\skills\android-swarm\phone.ps1'
+$P = '<workspace>/.claude/skills/android-swarm/phone.ps1'
 & $P acquire -Agent manual -Lane Falcon     # by hand: boots when memory allows, installs the current APK
 & $P status
 & $P release -Agent manual                  # closes the app, shuts the phone down unless someone is waiting
@@ -210,9 +214,9 @@ QA agents do the same with their own id; the supervisor releases leases whose ho
 
 ### Housekeeping and learning
 ```powershell
-& C:\work\.claude\skills\orchestrate\scripts\status.ps1 -Open -Watch     # live HTML dashboard
-& C:\work\.claude\skills\orchestrate\scripts\cleanup.ps1 -DryRun         # what self-cleaning would remove
-& C:\work\.claude\skills\orchestrate\scripts\learn.ps1 -Stats            # signals since the last retro
+& <workspace>/.claude/skills/orchestrate/scripts/status.ps1 -Open -Watch     # live HTML dashboard
+& <workspace>/.claude/skills/orchestrate/scripts/cleanup.ps1 -DryRun         # what self-cleaning would remove
+& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Stats            # signals since the last retro
 ```
 Run `/kit-retro` after a wave or when the session-start nudge says signals piled up (`{ applyScripts: true }` also applies script changes).
 
@@ -266,7 +270,9 @@ claude-crew/
 
 ## Limitations
 
-- **Windows / PowerShell first.** Scripts rely on PowerShell 7, WMI/CIM, NTFS junctions and Windows paths; macOS/Linux are not supported yet.
+- **A few Windows-only extras.** Everything runs on Windows, Linux and macOS with PowerShell 7, except: `annotate.ps1` (System.Drawing
+  is Windows-only in .NET; mark elements with `browser.mjs` `mark()` instead), `swarm-arrange.ps1` (Win32 window placement; it skips with
+  a note), and the .NET Framework stack (`msbuild`/`vstest.console.exe` for non-SDK projects). Linux and macOS were tested less than Windows.
 - **GitLab-first tracker automation.** MR creation and auto-merge work on GitLab and GitHub, but `track.ps1` (ordered merges, tracker
   moves) and `wave-report.ps1` merge checks speak GitLab (`glab`). Issue trackers are pluggable (ClickUp, GitHub, GitLab, Jira, none);
   Jira support targets Jira Cloud REST v3 with plain-text descriptions, and GitHub/GitLab have no task attachments (reports are posted as comment text).

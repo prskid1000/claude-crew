@@ -28,7 +28,7 @@ change works on a test environment, use the `qa-kit` skill / `/test-and-close` i
 1. Find `reference/projects/<project>.md` for the codebase you're auditing (e.g. `my-product.md`).
    Read it fully: repo layout, intended-behaviour sources, **known by-design behaviours**, and **past review lessons**.
 2. No profile yet? Copy `reference/projects/_template.md`, fill what you can from the repo's `CLAUDE.md`/README, and say so in the summary.
-3. Identify each layer's stack: `& <workspace>\.claude\skills\dev-kit\scripts\stack.ps1 -Dir <module folder>`.
+3. Identify each layer's stack: `& <workspace>/.claude/skills/dev-kit/scripts/stack.ps1 -Dir <module folder>`.
 
 ---
 
@@ -65,7 +65,7 @@ Use as many as available and **state which you used** in the summary. Strongest 
 
 | Source | How (generic) | Gives you |
 |---|---|---|
-| **Live / test data** | Read-only queries against a test environment (DB MCP, `qa-kit\scripts\api.ps1` GETs, product MCP tools named in the profile) | Real data-quality issues (NULLs, orphans, misaligned values). Strongest evidence. Never production writes. |
+| **Live / test data** | Read-only queries against a test environment (DB MCP, `qa-kit/scripts/api.ps1` GETs, product MCP tools named in the profile) | Real data-quality issues (NULLs, orphans, misaligned values). Strongest evidence. Never production writes. |
 | **Code** | Read real files in every layer of the module; cite `file:line` | The truth for bugs / perf / tech debt |
 | **DB schema** | Migrations (Liquibase, EF Core, Flyway, Alembic, Django, raw SQL) + ORM entities | Missing constraints, columns, indexes, nullable fields |
 | **API schema** | Controllers / routes / OpenAPI / GraphQL schema / DTOs | Contracts, missing batch ops, validation |
@@ -140,15 +140,15 @@ Always fill the triage columns for in-scope findings:
 
 ## 7. Deliverables
 
-1. **`<output dir>\<module>.json`** — one JSON array of findings (output dir: the project profile's findings folder, else
-   `<workspace>\.claude-runtime\audits\<project>\`). Validate:
-   `python <workspace>\.claude\skills\tech-audit\scripts\validate.py <file>` → must print `schema problems: none`.
-2. **Summary** — `python <workspace>\.claude\skills\tech-audit\scripts\summary.py <module>.json --sources "<what you used>"` writes
+1. **`<output dir>/<module>.json`** — one JSON array of findings (output dir: the project profile's findings folder, else
+   `<workspace>/.claude-runtime/audits/<project>/`). Validate:
+   `python <workspace>/.claude/skills/tech-audit/scripts/validate.py <file>` → must print `schema problems: none`.
+2. **Summary** — `python <workspace>/.claude/skills/tech-audit/scripts/summary.py <module>.json --sources "<what you used>"` writes
    `<module>-summary.md` (chat/MR) and a styled `<module>-summary.html` (severity chips, Critical/High, "Needs a product decision",
-   all findings, out-of-scope) — publish the HTML with `dev-kit\scripts\devtools.py doc` when it goes to reviewers.
+   all findings, out-of-scope) — publish the HTML with `dev-kit/scripts/devtools.py doc` when it goes to reviewers.
 3. If the profile names a workbook generator, re-run it.
 4. Optional hand-off: accepted in-scope Bugs can become tracker tasks and a bug-fix wave
-   (`orchestrate` skill → `templates\BUGFIX_BRIEF.md`).
+   (`orchestrate` skill → `templates/BUGFIX_BRIEF.md`).
 
 ---
 

@@ -22,7 +22,7 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `bugfixMandate` | - | bug-brief.ps1 | The task owner's own words asking for QA bugs to be fixed; passed to /dev-wave as `mandate` |
 | `githubHost` | `github.com` | devtools.py | GitHub (Enterprise) host |
 | `gitlabGroup` | none | track.ps1 | Group (or `group/subgroup`) for short MR refs `<repo>!<iid>`. Without it, refs must be `<group/repo>!<iid>` |
-| `reposRoot` | `<workspace>` | track.ps1, kitconfig | Folder holding the main checkouts (`<reposRoot>\<repo>`). `track.ps1 -MergeAfter` schedules merges from there |
+| `reposRoot` | `<workspace>` | track.ps1, kitconfig | Folder holding the main checkouts (`<reposRoot>/<repo>`). `track.ps1 -MergeAfter` schedules merges from there |
 | `worktreeRoots` | `[$env:CLAUDE_WT_ROOT, "<reposRoot>-wt"]` | cleanup.ps1, status.ps1 | Where `wt.ps1 new` puts worktrees (its default is `<repo's parent>-wt`) |
 | `trackerRepos` | `[]` | track.ps1 `-Discover` | Repos searched for MRs whose title/branch contains `<tracker.branchTag><task>` (e.g. `CU-<task>`) |
 | `repoAliases` | `{}` | track.ps1 | Short names agents use in refs, e.g. `{ "api": "backend", "web": "frontend" }` |
@@ -38,7 +38,7 @@ Every script and agent talks to the tracker through one adapter, `dev-kit/script
 dot-sourceable), never a tracker CLI directly:
 
 ```powershell
-$TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'
+$TR = '<workspace>/.claude/skills/dev-kit/scripts/tracker.ps1'
 & $TR view <id>                    # JSON { id, name, status, url, parent, assignees[], subtasks[], list, description }
 & $TR status <id> review           # logical status (or the backend's own name)
 & $TR comment <id> <text | file.md>
@@ -57,7 +57,7 @@ $TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'
 | `github` | `gh`, logged in; `tracker.repo` = `owner/name` | issues; status = label `status:<name>`, closed statuses close the issue (reopened when moved back); parent = `Part of #n` in the body plus a `- [ ] #child` line in the parent; reports are posted as comment text |
 | `gitlab` | `glab`, logged in (host from `gitHost`); `tracker.repo` = `group/project` | same label/state model through the issues API |
 | `jira` | env `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | REST v3; status = the transition whose name or target status matches; `-List` = project key; `tracker.issueType` (default `Task`) / `tracker.subtaskType` (default `Subtask`); `-Assignee` = account id |
-| `none` | nothing | no tracker: every call is logged to `<runtime>\tracker-none\tracker.log` and kept as JSON there (`create` returns `LOCAL-<n>`); nothing fails |
+| `none` | nothing | no tracker: every call is logged to `<runtime>/tracker-none/tracker.log` and kept as JSON there (`create` returns `LOCAL-<n>`); nothing fails |
 
 Other `tracker` keys:
 
@@ -79,7 +79,7 @@ Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in
 | `reports.type` | QA report (finalize.ps1) | `devtools.py doc` (tester guides) |
 |---|---|---|
 | `gdocs` | evidence uploaded to a Drive folder (`driveParent`), a Google Doc report anyone with the link can view; the tracker comment links it. Needs `gws` logged in | HTML uploaded as a Google Doc; prints its URL |
-| `markdown` | `<runDir>\<code>\report.md` (+ `report.html`) next to `shots\` and `evidence\`, links relative; the tracker comment carries the report (GitHub/GitLab: its text, ClickUp/Jira: the file attached, `none`: logged) and the bug task gets it too | the file (`.md` or `.html`) is kept under `<runtime>\docs` and its path printed — attach it with `tracker.ps1 attach` |
+| `markdown` | `<runDir>/<code>/report.md` (+ `report.html`) next to `shots\` and `evidence\`, links relative; the tracker comment carries the report (GitHub/GitLab: its text, ClickUp/Jira: the file attached, `none`: logged) and the bug task gets it too | the file (`.md` or `.html`) is kept under `<runtime>/docs` and its path printed — attach it with `tracker.ps1 attach` |
 
 `finalize.ps1 -Report gdocs|markdown` overrides the setting for one run.
 
@@ -108,20 +108,20 @@ Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in
 Top-level `keepFreeGB` (default `8`): `qa-seat.ps1` lets a new tester/verifier start only while free RAM minus its need
 (web ~1.5 GB, API ~0.4 GB) stays at or above it; the supervisor's capacity flag uses the same value.
 
-Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>\tokens`, web logins in `<runtime>\sessions`.
+Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>/tokens`, web logins in `<runtime>/sessions`.
 Evidence files never contain passwords or auth headers (`[redacted]`).
 
 ## `swarm.config.json` (android-swarm)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `avdDir` | `$env:ANDROID_AVD_HOME`, else `%USERPROFILE%\.android\avd` | Where the lane AVDs live |
+| `avdDir` | `$env:ANDROID_AVD_HOME`, else `~/.android/avd` (`%USERPROFILE%\.android\avd` on Windows) | Where the lane AVDs live |
 | `keepFreeGB` | `12` | A phone boots only if free RAM − 4.5 GB stays above this |
 | `headless` | `false` | Boot without windows (also per lane) |
 | `lanes[]` | — | `{ name, port, user, notes, headless }`: AVD name, console port (serial `emulator-<port>`), the lane's test login (a user key in targets.local.json), notes printed by `phone.ps1 acquire` |
 | `app.kind` | `react-native` | `react-native` or `native` |
 | `app.package` | — | Android package id, e.g. `com.example.app` |
-| `app.appDir` | — | App checkout (folder with `android\gradlew.bat` or `gradlew.bat`) |
+| `app.appDir` | — | App checkout (folder with `android/gradlew[.bat]` or `gradlew[.bat]`) |
 | `app.buildTask` / `app.buildArgs` | `assembleRelease` (RN) / `assembleDebug` (native) | Gradle task + args for `app-build.ps1` |
 | `app.apkGlob` | from the variant | APK location under the Android project |
 | `app.devClientScheme`, `app.metroPort` | —, `8081` | React Native Metro mode (Expo dev client) |
@@ -133,11 +133,13 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_RUNTIME` | Runtime folder (default `<workspace>\.claude-runtime`) |
+| `CLAUDE_RUNTIME` | Runtime folder (default `<workspace>/.claude-runtime`) |
 | `CLAUDE_WT_ROOT` | Worktree root for `wt.ps1 new` (default `<repo's parent>-wt`) |
 | `CLAUDE_AGENT` | Owner name for fair turns in the memory gate (default: worktree prefix) |
 | `CLAUDE_GATE_KEEP_FREE_GB` | RAM the gate always keeps free (default 15% of RAM, min 6 GB) |
-| `CHROME_PATH` | Chrome/Edge binary for `browser.mjs` (default: standard install paths) |
+| `CHROME_PATH` | Chrome/Edge/Chromium binary for `browser.mjs` (default: the usual install folders per OS, then `google-chrome`, `chromium`, `microsoft-edge` ... on `PATH`) |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Android SDK (default `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) |
+| `ANDROID_AVD_HOME` | Where the lane AVDs live when `swarm.config.json` has no `avdDir` (default `~/.android/avd`) |
 | `ANDROID_HOME`, `ANDROID_AVD_HOME` | Android SDK and AVD folders |
 | `ANDROID_SERIAL` | The phone an app-lane agent drives (set on every command) |
 | `GITLAB_HOST` | `glab` host (the scripts set it from `gitHost` when it isn't `gitlab.com`) |
@@ -160,13 +162,13 @@ Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sl
 
 `/dev-wave` (`.claude/workflows/dev-wave.js`):
 ```js
-{ brief: 'C:\\...\\wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
+{ brief: '<abs path>/wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true,
   agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', model: 'sonnet', effort: 'medium' } ],   // model/effort optional (default: strongest)
-  kitDir: 'C:\\work\\.claude', runtimeDir: 'C:\\work\\.claude-runtime' }   // kitDir/runtimeDir optional, recommended
+  kitDir: '<workspace>/.claude', runtimeDir: '<workspace>/.claude-runtime' }   // kitDir/runtimeDir optional, recommended
 ```
 
 `/test-and-close` (`.claude/workflows/test-and-close.js`): preferably the short form
-`{ runDir, kitDir?, only?: ['F1'], lanes?, instance?: 'w2' }` - a tiny (haiku) agent reads `<runDir>\run.json`, `only` keeps those item
+`{ runDir, kitDir?, only?: ['F1'], lanes?, instance?: 'w2' }` - a tiny (haiku) agent reads `<runDir>/run.json`, `only` keeps those item
 codes, `instance` names an extra worker run (item claims keep runs apart). Or the full `run.json` object plus `runDir` (and optional
 `kitDir`). Full shape in the header comment of the workflow file; `finalize.ps1` reads the same `run.json` from the run folder.
 Items may carry `model: 'sonnet'|'opus'|'haiku'` and `effort: 'low'|'medium'|'high'`; without them, narrow web/API retests use sonnet and
@@ -177,11 +179,31 @@ everything else the default (strongest) model.
 Workflow scripts can't read the filesystem, so they don't know where the kit is: without `kitDir` they hand agents paths
 relative to the workspace root (`.claude\skills\...`) and tell them so. Passing the absolute `kitDir` is more robust.
 
+## Operating systems
+
+The scripts run with PowerShell 7 (`pwsh`) on Windows, Linux and macOS. Everything OS-specific goes through
+`skills/dev-kit/scripts/sysinfo.ps1`:
+
+| Need | Windows | Linux | macOS |
+|---|---|---|---|
+| Total / available RAM (gate, seats, phones, supervisor) | CIM (`Win32_ComputerSystem`, `PerfOS_Memory`) | `/proc/meminfo` (`MemAvailable`) | `sysctl hw.memsize` + `vm_stat` (free + inactive) |
+| Processes with command lines (gate trees, cleanup, emulators) | CIM `Win32_Process` | `ps -A -o pid,ppid,rss,etime,args` | same `ps` |
+| Linked `node_modules` / `.venv` in worktrees | directory junction (no admin) | symlink (+ `.git/info/exclude`) | symlink (+ `.git/info/exclude`) |
+| Build command shell (gate) | `cmd /c` | `/bin/sh -c` | `/bin/sh -c` |
+| Repo wrappers | `.\gradlew.bat`, `.\mvnw.cmd` | `./gradlew`, `./mvnw` | `./gradlew`, `./mvnw` |
+| Temp folder (gate ledger) | `%TEMP%` | `$TMPDIR` or `/tmp` | `$TMPDIR` |
+| Background programs (emulators, Metro) | hidden window | `setsid nohup` | `nohup` |
+
+Windows-only: `annotate.ps1` (System.Drawing; use `browser.mjs` `mark()` elsewhere), `swarm-arrange.ps1` (Win32 window
+placement; skips with a note), and the .NET Framework stack (`msbuild` / `vstest.console.exe` for non-SDK projects).
+Free RAM for seats and phones (`keepFreeGB`) is Windows "free" memory and the "available" figure on Linux/macOS (their page
+cache keeps "free" near zero).
+
 ## Hooks (`.claude/settings.json`)
 
 | Event | Script | Purpose |
 |---|---|---|
-| `PreToolUse` (Bash, PowerShell) | `dev-kit/scripts/guard.ps1` | blocks `git stash`, `--no-verify`, force-push to shared branches, ungated heavy builds; logs to `<runtime>\guard.log` |
+| `PreToolUse` (Bash, PowerShell) | `dev-kit/scripts/guard.ps1` | blocks `git stash`, `--no-verify`, force-push to shared branches, ungated heavy builds; logs to `<runtime>/guard.log` |
 | `SessionStart` | `orchestrate/scripts/retro-nudge.ps1` | one-line nudge to run `/kit-retro` once ≥ 15 signals piled up |
 | `SessionStart` (async) | `orchestrate/scripts/cleanup.ps1 -IfDue -Quiet` | daily self-cleaning |
 

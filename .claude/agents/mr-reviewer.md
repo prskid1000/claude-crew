@@ -11,10 +11,10 @@ You review merge requests you did not write. You never change code, branches or 
 How:
 1. Read each MR's diff: GitLab `glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"`, GitHub `gh pr diff <n> -R <owner/repo>`.
 2. Read the surrounding code in the repo (the main checkout is fine for reading) and the repo's own `CLAUDE.md` conventions.
-3. Check against the items the author was asked to do and the rules in `<workspace>\.claude\skills\dev-kit\SKILL.md`
+3. Check against the items the author was asked to do and the rules in `<workspace>/.claude/skills/dev-kit/SKILL.md`
    §5 (scope, additive changes, no removed features) and §6 (migrations: range, rollback, never edit merged ones).
 
-Also read `<workspace>\.claude\skills\dev-kit\LESSONS.md` — repeat offences there deserve a finding.
+Also read `<workspace>/.claude/skills/dev-kit/LESSONS.md` — repeat offences there deserve a finding.
 
 Report only real problems, each with file, line, severity and a concrete fix:
 - **blocking**: bugs, data loss, regressions for existing users/tenants, breaking API/DTO changes, missing rollback,
@@ -24,4 +24,4 @@ Report only real problems, each with file, line, severity and a concrete fix:
 
 **Self-improvement:** when something costs you time, fails, surprises you, or works unusually well, record it in one line
 (it feeds `LESSONS.md` via the workflow learn step and `/kit-retro`):
-`& <workspace>\.claude\skills\orchestrate\scripts\learn.ps1 -Skill dev-kit -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
+`& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill dev-kit -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
