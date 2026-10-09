@@ -225,6 +225,26 @@ QA agents do the same with their own id; the supervisor releases leases whose ho
 ```
 Run `/kit-retro` after a wave or when the session-start nudge says signals piled up (`{ applyScripts: true }` also applies script changes).
 
+## Token budget
+
+Every agent reads less at start: skills open with a short Quick start (details in `reference/*.md`, read on demand), `LESSONS.md`
+keeps only active rules (≤ 40 lines; the rest lives in `HISTORY.md`), and workflow prompts point at the skills instead of repeating them.
+Approx tokens read at start (`kit-cost.ps1`, bytes/4; full table in [docs/kit-cost.md](docs/kit-cost.md)):
+
+| Agent / run | Before | After |
+|---|---:|---:|
+| dev agent (build) | 12.7k | 7.0k |
+| mr-reviewer | 12.2k | 6.5k |
+| qa-tester (web) | 11.4k | 6.5k |
+| qa-verifier | 11.0k | 6.1k |
+| coordinator | 10.1k | 5.3k |
+| sample /dev-wave run (8 steps) | 71.8k | 41.8k |
+| sample /test-and-close run (10 steps) | 77.5k | 46.7k |
+
+On top of that: builds run on sonnet unless marked complex, mechanical steps on haiku, optional stages (`review: 'auto'`,
+`learn: 'auto'`, `verify: false`) and a `supervise.ps1 -Brief` heartbeat. Re-measure after kit changes:
+`pwsh -File .claude/skills/orchestrate/scripts/kit-cost.ps1 -Baseline docs/kit-cost.before.json`.
+
 ## Configuration
 
 | What | Where | Notes |
