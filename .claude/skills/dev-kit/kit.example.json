@@ -20,7 +20,42 @@
   "protectedBranches": [
     "staging"
   ],
-  "driveParent": "<Google Drive folder or shared-drive id for tester guides>",
+  "driveParent": "<Google Drive folder or shared-drive id for tester guides (reports.type gdocs)>",
+  "tracker": {
+    "_readme": "type: clickup (default) | github | gitlab | jira | none. github/gitlab need repo; jira needs env JIRA_BASE_URL/JIRA_EMAIL/JIRA_API_TOKEN. statuses maps logical names to your board's names (a list = first is set, all match).",
+    "type": "clickup",
+    "repo": "<owner/name or group/project, for github/gitlab>",
+    "list": "<default list id / Jira project key for new tasks>",
+    "branchTag": "CU-",
+    "statuses": {
+      "open": [
+        "open",
+        "to do"
+      ],
+      "inProgress": "in progress",
+      "review": [
+        "for review",
+        "in review"
+      ],
+      "promoted": "promoted",
+      "inTest": [
+        "in test",
+        "for test"
+      ],
+      "closed": [
+        "closed",
+        "complete",
+        "done"
+      ]
+    }
+  },
+  "reports": {
+    "_readme": "type: gdocs (Google Docs + Drive via the gws CLI; default when gws is installed) | markdown (report.md in the QA run folder, carried by the tracker comment)",
+    "type": "markdown"
+  },
+  "cleanup": {
+    "maxBrowserProfiles": 4
+  },
   "repos": [
     {
       "name": "backend",

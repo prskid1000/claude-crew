@@ -33,7 +33,7 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
 | Command | What it runs |
 |---|---|
 | `/dev-wave` | One dev agent per area in parallel → independent review per agent → CI gate (MR pipelines checked before merge; failed jobs become blocking findings) → one fix round for blocking/should-fix findings → merges scheduled after a clean review and green pipelines → Learn step |
-| `/test-and-close` | Web pool + API pool + one agent per Android lane → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → publish (Drive + Google Doc + tracker comment/close + bug task) → Learn step |
+| `/test-and-close` | Web pool + API pool + one agent per Android lane → retest if > 25% NOT_TESTED → note audit → independent verify of every FAIL → publish (report as a Google Doc or Markdown + tracker comment/close + bug task) → Learn step |
 | `/kit-retro` | 4 parallel analysts (dev, QA, speed, docs) mine signals, guard blocks, gate history and QA runs → one maintainer applies lesson/rule changes and lists script changes for approval |
 
 ### Skills (`.claude/skills/`)
@@ -42,7 +42,8 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
   `check.ps1` (compile + typecheck + lint / targeted tests / Liquibase checks, incremental `tsc`, through the gate),
   `gate.ps1` (memory gate: fair queue per owner, learned per-project peaks, dynamic heap caps, backfilling),
   `wt.ps1` (worktrees with junction-linked `node_modules`/`.venv`, rebase, hook-safe commits, safe removal),
-  `guard.ps1` (PreToolUse guard), `devtools.py` (MR/PR create, merge-when-green on GitLab/GitHub, tracker comments/statuses, Google Doc publishing),
+  `guard.ps1` (PreToolUse guard), `tracker.ps1` (one issue-tracker adapter: ClickUp, GitHub issues, GitLab issues, Jira or none; `-DryRun`),
+  `devtools.py` (MR/PR create, merge-when-green on GitLab/GitHub, tracker comments/statuses, tester-guide publishing as a Google Doc or file),
   `pipe-wait.ps1` (waits for MR pipelines; JSON with the failed job and error tail), `lbcheck.py` (Liquibase replay: duplicate columns/tables, missing rollbacks, empty rollbacks on changeSets marked irreversible), `keepboth.py` (append-only conflict resolver), `kitconfig.ps1`.
 - **orchestrate** — the coordinator playbook and templates (wave / bug-fix / resume briefs, MR body, task solution), plus
   `supervise.ps1` (heartbeat with ACT/WATCH flags and `-AutoFix`), `board.ps1` (agent board), `track.ps1` (moves tracker tasks when all MRs merge; ordered merges),
@@ -50,7 +51,7 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
   `wave-report.ps1` (journal-based wave summary), `status.ps1` (HTML dashboard), `cleanup.ps1` (self-cleaning), `learn.ps1` and `retro-nudge.ps1` (self-improvement).
 - **qa-kit** — QA rules (verdicts, shared-environment etiquette), the **evidence standard**, a tester-guide template, and tools:
   `api.ps1` (any API as any configured user; evidence envelopes with secrets redacted), `web/browser.mjs` (long-lived logged-in headless Chrome sessions via puppeteer-core, shared logins, failure capture, element highlighting),
-  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/shotmark/wait/log/photo), `annotate.ps1` (box / arrow / label on any screenshot), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc, tracker comments, bug tasks), `autoclose.ps1` (safety net),
+  `android/ui.ps1` (uiautomator-based tap/type/dump/shot/shotmark/wait/log/photo), `annotate.ps1` (box / arrow / label on any screenshot), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc or Markdown, tracker comments, bug tasks), `autoclose.ps1` (safety net),
   `qa-seat.ps1` (memory seats + item claims: QA concurrency follows free RAM, extra worker runs never test the same item).
 - **android-swarm** — parallel emulators for any APK (React Native or native): `phone.ps1` leases, `app-build.ps1` (through the gate, from the latest merged branch),
   `swarm-up/-down/-slim/-arrange`, `app-mode`/`app-launch` (Release or Metro), `swarm-avd.ps1` (create all lanes from one template; reset cold/snapshots/wipe/recreate).
@@ -119,8 +120,8 @@ Optional, per feature:
 | Feature | Needs |
 |---|---|
 | MRs / PRs, merge-when-green, tracker automation | `glab` (GitLab, incl. self-hosted) or `gh` (GitHub), logged in |
-| Tracker statuses, comments, bug tasks | a tracker CLI — the kit ships with the **ClickUp CLI** (`clickup`) as its example; swap the calls in `devtools.py`, `track.ps1`, `finalize.ps1`, `supervise.ps1` for another tracker |
-| Publishing tester guides and QA reports | Google Workspace CLI `gws`, logged in (Drive + Docs) |
+| Tracker statuses, comments, bug tasks | one of, set by `tracker.type` in `kit.local.json`: **`clickup`** (default; `clickup` CLI), **`github`** (`gh`, issues with `status:` labels), **`gitlab`** (`glab`, issues), **`jira`** (Cloud REST: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`) or **`none`** (no tracker; calls are logged locally). Status names map through `tracker.statuses` |
+| Publishing tester guides and QA reports | `reports.type`: **`gdocs`** (Google Workspace CLI `gws`, logged in: Drive evidence + Google Doc) or **`markdown`** (no extra tool: `report.md` in the QA run folder, posted/attached on the task). Default: `gdocs` when `gws` is on PATH, else `markdown` |
 | Web QA | Chrome or Edge (or `CHROME_PATH`), `npm install` in `skills/qa-kit/scripts/web` |
 | Android QA | Android SDK (platform-tools, emulator, an x86_64 system image), hardware acceleration, **JDK 17 or 21** for app builds |
 | Plenty of RAM | the gate makes any size work, but more RAM = more agents and phones at once (each emulator ~4.5 GB) |
@@ -149,7 +150,11 @@ Optional, per feature:
 5. **Check the hooks.** `.claude/settings.json` runs the guard before every Bash/PowerShell command and two SessionStart hooks, via
    `powershell.exe` with `${CLAUDE_PROJECT_DIR}\.claude\...`. Start Claude Code in `C:\work`, run `/hooks` to see them, and try
    `git stash list` in a session: the guard should block it with an explanation.
-6. **First run.** Check CLI auth (`glab auth status` / `gh auth status`, your tracker CLI, `gws`), then ask Claude:
+6. **Pick a tracker and report output** in `.claude/skills/dev-kit/kit.local.json` (copy `kit.example.json`), e.g.
+   `{ "tracker": { "type": "github", "repo": "me/my-app" }, "reports": { "type": "markdown" } }`
+   (no tracker yet? `"type": "none"`). Check it with `& C:\work\.claude\skills\dev-kit\scripts\tracker.ps1 view <id> -DryRun`.
+   Details: [docs/configuration.md](docs/configuration.md#tracker-trackertype).
+7. **First run.** Check CLI auth (`glab auth status` / `gh auth status`, your tracker, `gws` if you use `gdocs`), then ask Claude:
    *"Use the orchestrate skill. Check `stack.ps1` and `check.ps1` on `C:\work\my-repo`."* — if the detected commands are right, you're set.
 
 ## Usage
@@ -188,8 +193,9 @@ Any agent can carry `model` / `effort` (e.g. `{ id: 'X3', items: 'ORD-31', area:
 2. Run `/test-and-close` with the short form `{ runDir: '<run dir>', kitDir: 'C:\work\.claude' }` (a tiny agent reads `run.json`;
    `only: ['F1']` runs a subset) or with the whole object plus `"runDir"` and `"kitDir"`, and start the safety net in the background:
    `& C:\work\.claude\skills\qa-kit\scripts\autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir>`.
-3. Each package ends with a Google Doc (verdict banner, results table, failures with screenshots, evidence index), a comment
-   on every task, closed tasks, and a `[Bug] … failed checks` task for confirmed failures, which feeds the next bug-fix wave.
+3. Each package ends with a report (verdict, results table, failures with screenshots, evidence index) as a Google Doc or
+   `report.md` (`reports.type`), a comment on every task, closed tasks, and a `[Bug] … failed checks` task for confirmed failures,
+   which feeds the next bug-fix wave.
 4. Testers wait for a memory seat, so parallelism follows free RAM. When the supervisor flags spare capacity, add a worker:
    `/test-and-close { runDir, kitDir, instance: 'w2', only: ['F4','F5'] }` - item claims stop two runs testing the same item.
 
@@ -214,7 +220,7 @@ Run `/kit-retro` after a wave or when the session-start nudge says signals piled
 
 | What | Where | Notes |
 |---|---|---|
-| Org settings (git host, GitLab group, repos root, worktree roots, tracker repos, repo aliases, protected branches, Drive folder) | `.claude/skills/dev-kit/kit.local.json` | all optional, see `kit.example.json` |
+| Org settings (issue tracker + status names, report output, git host, GitLab group, repos root, worktree roots, tracker repos, repo aliases, protected branches, Drive folder, browser-profile cap) | `.claude/skills/dev-kit/kit.local.json` | all optional, see `kit.example.json` and [docs/configuration.md](docs/configuration.md) |
 | Test environments, auth styles, test users | `.claude/skills/qa-kit/targets.local.json` | **the only file with passwords** |
 | Emulator lanes, app under test | `.claude/skills/android-swarm/swarm.config.json` | lane hardware in `avd-template.ini` |
 | Per-repo build commands | `.claude-stack.json` next to a build file | overrides stack detection |
@@ -262,7 +268,8 @@ claude-crew/
 
 - **Windows / PowerShell first.** Scripts rely on PowerShell 7, WMI/CIM, NTFS junctions and Windows paths; macOS/Linux are not supported yet.
 - **GitLab-first tracker automation.** MR creation and auto-merge work on GitLab and GitHub, but `track.ps1` (ordered merges, tracker
-  moves) and `wave-report.ps1` merge checks speak GitLab (`glab`). Tracker calls use the ClickUp CLI and publishing uses Google Workspace (`gws`).
+  moves) and `wave-report.ps1` merge checks speak GitLab (`glab`). Issue trackers are pluggable (ClickUp, GitHub, GitLab, Jira, none);
+  Jira support targets Jira Cloud REST v3 with plain-text descriptions, and GitHub/GitLab have no task attachments (reports are posted as comment text).
 - **Workflow scripts can't read the filesystem**, so pass `kitDir` (absolute) to workflows; without it, agents get workspace-relative paths.
 - Supervision reads Claude Code's local session journals (`~/.claude/projects/<workspace slug>/.../workflows`); if that layout changes,
   `supervise.ps1` and `wave-report.ps1` need updating.

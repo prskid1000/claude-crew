@@ -6,7 +6,7 @@ location (`<workspace>` = the folder that holds `.claude`).
 
 | File (copy from) | Needed for | Holds secrets? |
 |---|---|---|
-| `.claude/skills/dev-kit/kit.local.json` (`kit.example.json`) | tracker automation, self-hosted git, worktree cleanup, protected branches, tester-guide publishing | no |
+| `.claude/skills/dev-kit/kit.local.json` (`kit.example.json`) | issue tracker + report output, tracker automation, self-hosted git, worktree cleanup, protected branches | no |
 | `.claude/skills/qa-kit/targets.local.json` (`targets.example.json`) | QA: API calls, web login, app lane logins | **yes** — test passwords / API keys, only here |
 | `.claude/skills/android-swarm/swarm.config.json` (`swarm.example.json`) | Android emulator lanes + the app under test | no |
 | `.claude/settings.local.json` | your personal Claude Code permissions (standard Claude Code file) | maybe |
@@ -24,10 +24,64 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `gitlabGroup` | none | track.ps1 | Group (or `group/subgroup`) for short MR refs `<repo>!<iid>`. Without it, refs must be `<group/repo>!<iid>` |
 | `reposRoot` | `<workspace>` | track.ps1, kitconfig | Folder holding the main checkouts (`<reposRoot>\<repo>`). `track.ps1 -MergeAfter` schedules merges from there |
 | `worktreeRoots` | `[$env:CLAUDE_WT_ROOT, "<reposRoot>-wt"]` | cleanup.ps1, status.ps1 | Where `wt.ps1 new` puts worktrees (its default is `<repo's parent>-wt`) |
-| `trackerRepos` | `[]` | track.ps1 `-Discover` | Repos searched for MRs whose title/branch contains `CU-<task>` |
+| `trackerRepos` | `[]` | track.ps1 `-Discover` | Repos searched for MRs whose title/branch contains `<tracker.branchTag><task>` (e.g. `CU-<task>`) |
 | `repoAliases` | `{}` | track.ps1 | Short names agents use in refs, e.g. `{ "api": "backend", "web": "frontend" }` |
 | `protectedBranches` | `[]` | guard.ps1, cleanup.ps1 | Shared branches besides `main`, `master`, `develop`, `release/*`: never force-pushed, their worktrees never auto-removed |
-| `driveParent` | none | devtools.py `doc` | Google Drive folder (or shared drive) id for tester guides |
+| `driveParent` | none | devtools.py `doc`, finalize.ps1 (`gdocs` only) | Google Drive folder (or shared drive) id for tester guides / QA evidence |
+| `tracker` | `{ "type": "clickup" }` | tracker.ps1 and everything that talks to the tracker | Issue tracker backend — see [Tracker](#tracker-trackertype) |
+| `reports` | `{ "type": "gdocs" }` if `gws` is on PATH, else `{ "type": "markdown" }` | finalize.ps1, devtools.py `doc` | Where QA reports and tester guides go — see [Reports](#reports-reportstype) |
+| `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
+
+### Tracker (`tracker.type`)
+
+Every script and agent talks to the tracker through one adapter, `dev-kit/scripts/tracker.ps1` (PowerShell 7; also
+dot-sourceable), never a tracker CLI directly:
+
+```powershell
+$TR = '<workspace>\.claude\skills\dev-kit\scripts\tracker.ps1'
+& $TR view <id>                    # JSON { id, name, status, url, parent, assignees[], subtasks[], list, description }
+& $TR status <id> review           # logical status (or the backend's own name)
+& $TR comment <id> <text | file.md>
+& $TR comments <id>                # JSON [{ user, date, text }], oldest first
+& $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # JSON { id, url }
+& $TR url <id>
+& $TR describe <id> <text | file.md>   # replace the description
+& $TR attach <id> <file> [-Text "<comment>"]
+# any verb: -DryRun (or $env:KIT_TRACKER_DRYRUN=1) prints the CLI/REST call instead; -Type <backend> overrides the config
+```
+`devtools.py task|subtasks|newtask|status|comment|finish` call the same adapter.
+
+| `tracker.type` | Needs | Model |
+|---|---|---|
+| `clickup` (default) | `clickup` CLI, logged in | native statuses, subtasks, attachments; `-List` = list id |
+| `github` | `gh`, logged in; `tracker.repo` = `owner/name` | issues; status = label `status:<name>`, closed statuses close the issue (reopened when moved back); parent = `Part of #n` in the body plus a `- [ ] #child` line in the parent; reports are posted as comment text |
+| `gitlab` | `glab`, logged in (host from `gitHost`); `tracker.repo` = `group/project` | same label/state model through the issues API |
+| `jira` | env `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | REST v3; status = the transition whose name or target status matches; `-List` = project key; `tracker.issueType` (default `Task`) / `tracker.subtaskType` (default `Subtask`); `-Assignee` = account id |
+| `none` | nothing | no tracker: every call is logged to `<runtime>\tracker-none\tracker.log` and kept as JSON there (`create` returns `LOCAL-<n>`); nothing fails |
+
+Other `tracker` keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tracker.repo` | - | `owner/name` (GitHub) or `group/project` (GitLab) holding the issues |
+| `tracker.list` | - | Default list / project for `create` (bug tasks when `run.json` has no `tracker.list`) |
+| `tracker.branchTag` | `CU-` (clickup), `GH-` (github), `GL-` (gitlab), empty (jira, none) | Put before the task id in branch names and MR titles (`fix/<tag><id>-slug`); `track.ps1 -Discover` searches for it |
+| `tracker.statuses` | see below | Map logical statuses to your board's names; a value may be a list (the first is set, all count as a match) |
+
+Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in progress`, `review` = `for review`/`in review`,
+`promoted` = `promoted`, `inTest` = `in test`/`for test`, `closed` = `closed`/`complete`/`done`. Example:
+```json
+"tracker": { "type": "jira", "list": "PROJ", "statuses": { "review": ["In Review"], "promoted": "Merged", "inTest": "QA", "closed": ["Done"] } }
+```
+
+### Reports (`reports.type`)
+
+| `reports.type` | QA report (finalize.ps1) | `devtools.py doc` (tester guides) |
+|---|---|---|
+| `gdocs` | evidence uploaded to a Drive folder (`driveParent`), a Google Doc report anyone with the link can view; the tracker comment links it. Needs `gws` logged in | HTML uploaded as a Google Doc; prints its URL |
+| `markdown` | `<runDir>\<code>\report.md` (+ `report.html`) next to `shots\` and `evidence\`, links relative; the tracker comment carries the report (GitHub/GitLab: its text, ClickUp/Jira: the file attached, `none`: logged) and the bug task gets it too | the file (`.md` or `.html`) is kept under `<runtime>\docs` and its path printed — attach it with `tracker.ps1 attach` |
+
+`finalize.ps1 -Report gdocs|markdown` overrides the setting for one run.
 
 ## `targets.local.json` (qa-kit)
 
@@ -87,6 +141,10 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | `ANDROID_HOME`, `ANDROID_AVD_HOME` | Android SDK and AVD folders |
 | `ANDROID_SERIAL` | The phone an app-lane agent drives (set on every command) |
 | `GITLAB_HOST` | `glab` host (the scripts set it from `gitHost` when it isn't `gitlab.com`) |
+| `KIT_TRACKER_TYPE` | Overrides `tracker.type` (e.g. `none` for a dry session) |
+| `KIT_TRACKER_DRYRUN` | `1`: tracker.ps1 prints its calls instead of making them |
+| `KIT_REPORT_TYPE` | Overrides `reports.type` |
+| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira tracker backend (`https://<site>.atlassian.net`, account e-mail, API token) |
 
 ## Per-repo stack override: `.claude-stack.json`
 

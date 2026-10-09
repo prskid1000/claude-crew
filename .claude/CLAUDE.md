@@ -7,8 +7,8 @@ everything long goes into skills (loaded on demand) or path-scoped rules (`rules
 ## Multi-agent work (any repo, any stack)
 See `.claude\rules\multi-agent.md` (always loaded). Playbook: the `orchestrate` skill. Workflows: `/dev-wave`, `/test-and-close`,
 `/kit-retro`. Subagent types: `dev-agent`, `mr-reviewer`, `qa-tester`, `qa-verifier`.
-Org settings the scripts read (git host, GitLab group, repos root, tracker repos, protected branches) go in
-`skills\dev-kit\kit.local.json` (copy `kit.example.json`).
+Org settings the scripts read (issue tracker, report output, git host, GitLab group, repos root, tracker repos, protected
+branches) go in `skills\dev-kit\kit.local.json` (copy `kit.example.json`; see `docs/configuration.md`).
 
 ## CLIs
 
@@ -17,31 +17,31 @@ Org settings the scripts read (git host, GitLab group, repos root, tracker repos
 | CLI | Purpose | Auth check |
 |-----|---------|------------|
 | `glab` (or `gh`) | GitLab (GitHub) — clone, push branches, open MRs/PRs | `glab auth status` / `gh auth status` |
-| `clickup` | Tracker: read tasks, post comments, set statuses (replace with your tracker's CLI) | `clickup task view <id> --json` |
-| `gws` | Google Workspace — publish tester guides and QA reports as Google Docs | resolve with `shutil.which()` on Windows |
+| tracker | Tasks, comments, statuses — always through `skills\dev-kit\scripts\tracker.ps1` (backend: `tracker.type` = clickup / github / gitlab / jira / none) | `tracker.ps1 view <id>` |
+| `gws` (optional) | Google Workspace — only when `reports.type` is `gdocs` (tester guides and QA reports as Google Docs) | resolve with `shutil.which()` on Windows |
 | `<your-cli>` | <purpose, e.g. cloud logs / observability queries> | `<auth check command>` |
 
-- **Windows note:** resolve shims (`gws`, `clickup`, `npx`, ...) with `shutil.which()` before `subprocess`.
+- **Windows note:** resolve shims (`gws`, `gh`, `npx`, ...) with `shutil.which()` before `subprocess`.
 
 ## Tracker workflow (example — adapt the status names to your board)
 1. **Start:** set the task to `in progress` and write the problem in the task description.
 2. **Open MRs:** put the task link and a short solution summary in each MR description, then set the task to `in review`.
 3. **Comment on the task:** the solution and the MR links (`skills\orchestrate\templates\TASK_SOLUTION.md`).
-4. **Testing instructions:** a comment for a simple change; a tester guide (`skills\qa-kit\templates\tester-guide.html`,
-   published as a Google Doc anyone with the link can view) for a complex one.
+4. **Testing instructions:** a comment for a simple change; a tester guide (`skills\qa-kit\templates\tester-guide.html` or a
+   Markdown file, published with `devtools.py doc` — a Google Doc or a file attached to the task, per `reports.type`) for a complex one.
 5. **After the MRs merge:** `promoted` (the coordinator's `track.ps1` does this automatically).
 6. **After deployment:** `in test` — set by a person, never before deployment.
 
 ## Shipping code
-- **Branch:** feature → `f/CU-<task-id>-<slug>` (a tracker id prefix lets the tracker link the branch), bugfix → `fix/...`, refactor → `refactor/...`.
+- **Branch:** feature → `f/<tag><task-id>-<slug>` (`tracker.branchTag`, e.g. `CU-`; lets `track.ps1 -Discover` and the tracker link the branch), bugfix → `fix/...`, refactor → `refactor/...`.
 - **Commit** in Conventional Commits: `feat(scope):` / `fix(scope):` / `refactor(scope):`.
 - **MRs:** one per repo; cross-link MRs when a task spans repos; always include the task URL.
 - **New tracker task?** Set its owner/assignee to the person who asked you to create it.
 
 ## Testing evidence
 - UI changes → screenshots; backend-only changes → API request/response JSON (`skills\qa-kit\scripts\api.ps1 -Save`).
-- Large files (payloads, logs) → upload to Drive and share links only.
-- Collect everything in one Google Doc (anyone with the link can view) and attach it to the task.
+- Large files (payloads, logs) → keep them as files (Drive links with `gdocs`, the QA run folder with `markdown`), never paste them.
+- Collect everything in one report (Google Doc or Markdown, per `reports.type`) and attach/link it on the task.
 - Rules and naming: `skills\qa-kit\reference\evidence-standard.md`.
 
 ## Command labels (suggested convention)
