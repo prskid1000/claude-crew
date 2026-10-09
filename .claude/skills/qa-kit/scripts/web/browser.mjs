@@ -6,7 +6,7 @@
 //
 //   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession } from 'file:///C:/work/.claude/skills/qa-kit/scripts/web/browser.mjs'   // the absolute file URL of this file
 //   const s = await session({ port: 9401, target: 'my-staging', tenant: 'acme', as: 'admin' })  // one port per target+tenant+user
-//   await go(s.page, '/orders')
+//   await go(s.page, '/projects')
 //   console.log((await text(s.page)).slice(0, 2000))
 //   await clickText(s.page, 'Filter')
 //   await setInput(s.page, 'input[placeholder="Select date"]', '29/09/2026 13:45')   // inputs & date pickers: type + Enter

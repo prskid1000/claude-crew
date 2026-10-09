@@ -59,7 +59,7 @@ foreach ($w in $wfDirs) {
     # it is over and wave-report.ps1 covers its outcome; an agent whose MRs all merged also shipped fine. (Build-stage results
     # report merged=false because merging happens later in the same wave, so "shipped" alone is not enough.)
     $shipped = $r.result.mrs -and -not @($r.result.mrs | Where-Object { -not $_.merged }).Count
-    # agent-coordination wording only: a bare "duplicate" fired on bug summaries about duplicate orders/lines/names
+    # agent-coordination wording only: a bare "duplicate" fired on bug summaries about duplicate records/lines/names
     if ($running.Count -and -not $shipped -and $sum -match '(?i)duplicate (agent|copy|writer|instance|session)|(agent|copy|writer)s? collid|collid\w* with (another|an?other agent|agent)|another (agent|writer)|halted|stopped editing') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (board.ps1 check).' }
     if ($r.result -and $r.result.mrs -and @($r.result.mrs).Count -eq 0 -and $sum -match '(?i)not done|no MRs') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) finished without MRs" 'Resume it (dev-wave mode resume) unless it was deliberately stopped.' }
   }

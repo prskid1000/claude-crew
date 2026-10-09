@@ -4,7 +4,7 @@ Thanks for helping. A few rules keep the kit useful for everyone:
 
 1. **Keep it generic.** No organisation names, hostnames, repo names, paths, people or credentials in the kit. Anything
    specific goes in a git-ignored `*.local.json`, in `CLAUDE.md`, or in your own skills. Examples use `example.com`,
-   `com.example.app`, `qa-driver-1`, `<your-gitlab-group>`.
+   `com.example.app`, `qa-user-1`, `<your-gitlab-group>`.
 2. **No hard-coded paths.** Scripts derive the kit from their own location (`$PSScriptRoot` / `kitconfig.ps1`), the
    workspace is the parent of `.claude`, runtime output goes to `$env:CLAUDE_RUNTIME` or `<workspace>\.claude-runtime`.
 3. **Keep the docs true.** When a script's behaviour changes, update its `SKILL.md`, the orchestrate playbook, the agent

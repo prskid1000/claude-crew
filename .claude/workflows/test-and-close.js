@@ -25,7 +25,7 @@ or the full run.json object (write it to <runDir>\run.json too — finalize.ps1 
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
   tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'Closed' },
   webParallel: 5, apiParallel: 5,
-  lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'driver1', notes: 'own vehicle 57' } ],
+  lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
   items: [ { code: 'F2', title: '...', guideFile: 'C:\\...\\F2.txt', lane: 'web'|'api'|'app',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
