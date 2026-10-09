@@ -23,6 +23,9 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    Workflow files (`.claude/workflows/*.js`) run inside Claude Code's workflow runtime: to syntax-check one, wrap it in
    `async function __wf(){ ... }`, replace `export const meta` with `const meta`, and run `node --check` on the result.
    They must keep LF line endings (`.gitattributes` enforces it).
+   `pwsh -File .claude/skills/orchestrate/scripts/kit-cost.ps1 -Steps` runs every workflow with mock agents (a full syntax and
+   flow check) and lists each step's label, agent type and model: diff it before/after a workflow change. `kit-cost.ps1 -Baseline
+   docs/kit-cost.before.json` shows the token budget per agent type; keep SKILL.md Quick starts ≤ 60 lines and LESSONS.md ≤ 40.
 5. **Safety first.** Changes must not weaken the guard hook, the memory gate, the "never production" rule or secret redaction
    without a clear reason in the PR.
 
