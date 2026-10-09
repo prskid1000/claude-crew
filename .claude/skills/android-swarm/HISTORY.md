@@ -1,0 +1,14 @@
+# Emulator swarm - lessons history (NOT read by agents)
+
+Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, kept verbatim. Agents read only LESSONS.md;
+`learn.ps1 -Trim` and `/kit-retro` append here when LESSONS.md goes over its 40-line cap.
+
+## Moved out of LESSONS.md (fixed in kit / historical / coordinator-only)
+- (fixed in kit) A QA tester ran `app-build.ps1 -AppDir <stale feature worktree>` right after the lanes' APK was rebuilt; it would have replaced `apk/app.apk` (installed on every lane by phone.ps1) with an older app. Only the configured checkout now publishes app.apk; side builds write `apk/app-<branch>-<commit>.apk` for the tester's own phone (`-Shared` to publish).
+- (fixed in kit) Every WMI-launched emulator opened its own console/terminal window that stayed open after the phone exited (4 windows for 3 phones). swarm-up starts emulator.exe with SW_HIDE (WMI rejects CREATE_NO_WINDOW). Because a hidden emulator can now die unseen: swarm-up kills a dead/hung emulator on the lane's port before booting (waits if it is still booting, < 8 min), uses a bounded 6-min boot wait instead of `adb wait-for-device` and kills a phone that never boots; supervise kills lane emulators that adb doesn't show as `device` 8+ min after start, or whose qemu child crashed.
+- (fixed in kit) Agents own phones through leases - `phone.ps1 acquire` (take a free running phone, boot one when memory allows, else wait in a fair queue for a release or memory; installs the current APK) and `release` (close the app, shut down unless someone waits). The coordinator no longer runs swarm-up/down for QA runs; supervise only releases orphan leases and stops unleased idle phones. swarm-down verifies the emulator exited (one ignored `emu kill` and kept running while reported stopped).
+- (fixed in kit) A finished app lane's emulator kept running until someone noticed. Phone in use = leased; agents release before long non-phone work (API, web UI in the browser, code, data prep); the supervisor shuts an unleased phone whose app has been closed 10 min; the workflow releases a lane after its last app item.
+- (fixed in kit) app-build.ps1 built the main checkout as last pulled, 10 commits behind the branch, so the APK lacked the fixes under test. It now fast-forwards a clean checkout to origin/<branch> first (reinstalls deps if lockfiles changed); `-NoUpdate` opts out.
+- (fixed in kit) Headless lanes (-Headless / config), `-Mode Embedded` alias, `metro-start -Port`, variant-safe app-build (+ `-DevClient` builds base.apk), lane logins in config, `ui.ps1 photo` (in-app camera), and `swarm-avd.ps1` (create all lanes from avd-template.ini; reset cold/snapshots/wipe/recreate).
+- (2×, fixed in kit) Java 24+ breaks the React Native native (CMake/prefab) step ("restricted method in java.lang.System"). app-build ignores a JAVA_HOME of 24+ and picks a JDK 17/21.
+

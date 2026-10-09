@@ -21,7 +21,7 @@ You do two jobs at once: run the agents AND continuously improve the kit (`<work
   follow-ups: open review findings → follow-up wave; deploy → QA; failed checks → bug-fix wave; all merged → tracker status).
 - **Fix the kit, not just the symptom:** whenever an agent, script or flow causes friction (a workaround, a repeated lesson, a false flag,
   a crash, a slow step), fix the script/rule/template in `.claude` in the same session, re-test it, and record it in the skill's
-  LESSONS.md (mark lessons "fixed in kit" when the script now handles it). Prefer making the tool handle it over telling agents to.
+  LESSONS.md (once the script handles it, retire the lesson: `learn.ps1 -Skill <s> -Fixed "<words>"` moves it to HISTORY.md). Prefer making the tool handle it over telling agents to.
 - **Keep the docs true:** when you change a script's behaviour, update its SKILL.md / ORCHESTRATE playbook / agent definitions together.
 - **One kit source, synced (if you keep the kit in its own repo, like this one):** make every kit change in the repo clone (generic:
   no org/tenant/product names, hosts, ids or local paths; config through `*.local.json`), write lessons generically (no dates or task

@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
     { title: 'Verify', detail: 'note audit + independent re-test of every FAIL' },
     { title: 'Close', detail: 'report (Google Doc or Markdown, per reports.type) + tracker comment/close + bug task for confirmed failures' },
-    { title: 'Learn', detail: 'signals + LESSONS.md updates from this run' },
+    { title: 'Learn', detail: 'signals + LESSONS.md updates (40-line cap) from this run' },
   ],
 }
 
@@ -409,9 +409,10 @@ ${JSON.stringify(all).slice(0, 60000)}
    deferrals, anything that cost time or worked unusually well) append ONE signal line with
    & ${ORCH}/learn.ps1 -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref <id> -Source workflow
    (skill: qa-kit or another kit skill / project name; kinds: friction, failure, defect-missed, false-positive, stale-env, flaky, idea, win).
-2. Read ${QA}/LESSONS.md and the recent signals (learn.ps1 -Show -Last 200). If a pattern now
-   occurred ≥ 2 times and isn't a lesson yet, add it (newest first, one actionable line, "(n×)" count, project heading if project-specific);
-   if an existing lesson recurred, bump its count. Keep the file under ~40 lines. Don't touch SKILL.md (that's /kit-retro's job).
+2. Read ${QA}/LESSONS.md (active rules; never HISTORY.md) and the recent signals (learn.ps1 -Show -Last 200). A pattern seen ≥ 2 times
+   that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
+   lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
+   learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
 3. Clean up what this run produced: & ${ORCH}/cleanup.ps1 -Quiet  (kills leftover headless browsers > 3 h, expired logins/tokens,
    stale temp, finished worktrees; only kit-created things). Then: Get-Content (Join-Path ${RT} cleanup.log) -Tail 15 and mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, model: 'sonnet', effort: 'low' })
