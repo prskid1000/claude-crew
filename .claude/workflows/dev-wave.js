@@ -156,7 +156,7 @@ function shipPrompt(a, r) {
 ${r.mrs.filter((m) => !m.merged).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 Producers first: run python ${K}\\scripts\\devtools.py merge <repo checkout or worktree> <iid> for DB/API MRs now
 (worktrees: ${r.worktrees.join(', ')}). For consumer MRs (web/app) that depend on an API MR in this list, do not merge them yourself:
-register the order with & ${ORCH}\\track.ps1 add -Task <the ClickUp task id in the MR title/branch>
+register the order with & ${ORCH}\\track.ps1 add -Task <the tracker task id in the MR title/branch>
 -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>' (the tracker schedules it once the API MR merged). Independent consumer
 MRs: devtools.py merge them now. Change no code. Return the report with the same MRs (merged=false unless GitLab already says merged).${HOLD_NOTE}`
 }
