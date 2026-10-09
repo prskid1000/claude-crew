@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 $adb = $c.adb; $pkg = $c.app.package
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 $dir = Join-Path $rt 'phones'; $waitDir = Join-Path $dir 'wait'
 New-Item -ItemType Directory -Force $dir, $waitDir | Out-Null
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')

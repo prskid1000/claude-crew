@@ -17,7 +17,7 @@ param(
   [string]$Text, [string]$Ref = '', [string]$Source = 'agent',
   [switch]$Show, [int]$Last = 30, [switch]$Stats
 )
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 $dir = Join-Path $rt 'learning'; New-Item -ItemType Directory -Force $dir | Out-Null
 $file = Join-Path $dir 'signals.jsonl'
 $mark = Join-Path $dir 'last-retro.txt'

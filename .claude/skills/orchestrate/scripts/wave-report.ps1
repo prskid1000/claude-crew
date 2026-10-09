@@ -8,7 +8,7 @@ notification text is truncated and not plain JSON. Works for /dev-wave, /test-an
 #>
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json)
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
 $proj = $KitConf.ClaudeProjectDir   # this workspace's Claude Code sessions
 if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab

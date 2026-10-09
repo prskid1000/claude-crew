@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $kit = Split-Path (Split-Path $PSScriptRoot)                     # ...\.claude\skills
 $claude = Split-Path $kit
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { (Split-Path $claude) + '\.claude-runtime' }
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path $claude) '.claude-runtime' }
 $cfgFile = Join-Path $kit 'dev-kit\kit.local.json'
 $cfg = if (Test-Path $cfgFile) { Get-Content $cfgFile -Raw | ConvertFrom-Json } else { $null }
 if (-not $cfg -or -not $cfg.repos) { throw "add a ""repos"" list to $cfgFile (see kit.example.json)" }

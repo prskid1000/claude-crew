@@ -15,8 +15,8 @@ What it cleans (only kit-created things; never repos, never anything in use):
   - loose evidence / android shots / temp xml in runtime > 14 / 3 days
   - QA run folders > 30 days (results.json, finalize.json and report.html are kept as a record)
   - tsc incremental caches > 30 days; gate ledger entries of dead builds
-  - Claude session temp dirs (%TEMP%\claude\<project>\<session>: scratchpad, task outputs) untouched > 7 days
-  - kit test leftovers in %TEMP% (kit-*, claude-kit-*, wfc.js, gradletest, report-preview.html, ...) > 1 day
+  - Claude session temp dirs (<OS temp>/claude/<project>/<session>: scratchpad, task outputs) untouched > 7 days
+  - kit test leftovers in the OS temp folder (kit-*, claude-kit-*, wfc.js, gradletest, report-preview.html, ...) > 1 day
   - worktrees that are finished: remote branch deleted (MR merged + source branch removed), no uncommitted changes,
     no unpushed work, untouched > 2 h -> wt.ps1 remove (the local branch ref stays, nothing is lost)
   - log rotation: guard.log, cleanup.log, signals.jsonl (kept to the newest 5000 lines)
@@ -24,9 +24,11 @@ Claude Code's own transcripts are left to its `cleanupPeriodDays` setting.
 #>
 param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2)   # WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt); idle 0 right after a wave finished (still-open MRs are protected by their remote branch)
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
-$K = Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts'
+$K = Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts'
 . (Join-Path $K 'kitconfig.ps1')
+. (Join-Path $K 'sysinfo.ps1')
+$rt = $KitConf.Runtime   # $env:CLAUDE_RUNTIME, else <workspace>/.claude-runtime
+$tmp = Get-KitTemp
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
 $keepBranches = '^(' + ((@('main', 'master', 'develop') + @($KitConf.ProtectedBranches | ForEach-Object { [regex]::Escape($_) })) -join '|') + ')$'
 New-Item -ItemType Directory -Force $rt | Out-Null
@@ -47,13 +49,13 @@ function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours
 
 # 1. headless test browsers left running, then idle profiles
 $profiles = Join-Path $rt 'chrome-profiles'
-$chromes = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -match '--headless' -and $_.CommandLine -match [regex]::Escape($profiles) }
+$chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|google chrome|microsoft edge)(\.exe)?$' | Where-Object { $_.CommandLine -match '--headless' -and $_.CommandLine -match [regex]::Escape($profiles) }
 $qaRuns = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | ForEach-Object Name)
 $qaActive = @(Get-ChildItem (Join-Path $rt 'board') -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
   Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 20 -and ($_.run -in $qaRuns -or "$($_.worktrees)" -match 'chrome:') }).Count
 $browserLimitH = if ($qaActive) { 3 } else { 0.5 }
-foreach ($c in $chromes | Where-Object { $_.ParentProcessId -notin $chromes.ProcessId }) {   # browser roots only
-  if (($now - $c.CreationDate).TotalHours -gt $browserLimitH) { [void]$actions.Add("killed headless browser pid $($c.ProcessId) (running $([int]($now - $c.CreationDate).TotalHours) h)"); if (-not $DryRun) { Stop-Process -Id $c.ProcessId -Force } }
+foreach ($c in $chromes | Where-Object { $_.ParentId -notin $chromes.Id }) {   # browser roots only
+  if (($now - $c.Created).TotalHours -gt $browserLimitH) { [void]$actions.Add("killed headless browser pid $($c.Id) (running $([int]($now - $c.Created).TotalHours) h)"); if (-not $DryRun) { Stop-SysProcess $c.Id } }
 }
 $inUse = @($chromes | ForEach-Object { if ($_.CommandLine -match 'chrome-profiles[\\/](\d+)') { $Matches[1] } } | Sort-Object -Unique)
 foreach ($p in Get-ChildItem $profiles -Directory) { if ($p.Name -notin $inUse -and (Old $p 24)) { Gone $p.FullName 'idle browser profile' } }
@@ -69,11 +71,11 @@ if (-not $seatsActive -and -not $qaActive) {
 }
 
 # 1b. idle Gradle / Kotlin daemons (they keep GBs after a build) - only when no gated Gradle build is running
-$gradleBusy = @(Get-ChildItem (Join-Path $env:TEMP 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json' |
+$gradleBusy = @(Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json' |
   ForEach-Object { try { $e = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($e.kind -match 'android|gradle' -and (Get-Process -Id $e.pid)) { $e } } catch {} }).Count
 if (-not $gradleBusy) {
-  foreach ($d in Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -match 'GradleDaemon|KotlinCompileDaemon' }) {
-    if (($now - $d.CreationDate).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($d.CommandLine -match 'Kotlin') { 'Kotlin daemon' } else { 'Gradle daemon' }), $d.ProcessId, ($d.WorkingSetSize / 1GB))); $script:freed += [long]$d.WorkingSetSize; if (-not $DryRun) { Stop-Process -Id $d.ProcessId -Force } }
+  foreach ($d in Get-SysProcs -Name '^java(\.exe)?$' | Where-Object { $_.CommandLine -match 'GradleDaemon|KotlinCompileDaemon' }) {
+    if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($d.CommandLine -match 'Kotlin') { 'Kotlin daemon' } else { 'Gradle daemon' }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
   }
 }
 
@@ -90,12 +92,12 @@ foreach ($r in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory) {
 foreach ($f in Get-ChildItem (Join-Path $rt 'tsbuild') -File) { if (Old $f (30 * 24)) { Gone $f.FullName 'tsc cache > 30 d' } }
 
 # 4. gate ledger: entries of builds that are no longer running
-foreach ($f in Get-ChildItem (Join-Path $env:TEMP 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json') {
+foreach ($f in Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json') {
   try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; if (-not (Get-Process -Id $e.pid -ErrorAction SilentlyContinue)) { Gone $f.FullName 'dead gate entry' } } catch {}
 }
 
 # 5. Claude session temp dirs (scratchpad, task outputs) untouched for a week
-foreach ($proj in Get-ChildItem (Join-Path $env:TEMP 'claude') -Directory) {
+foreach ($proj in Get-ChildItem (Join-Path $tmp 'claude') -Directory) {
   foreach ($sess in Get-ChildItem $proj.FullName -Directory | Where-Object Name -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {   # session ids only
     $newest = Get-ChildItem $sess.FullName -Recurse -File -Force | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     $last = if ($newest) { $newest.LastWriteTime } else { $sess.LastWriteTime }
@@ -103,8 +105,8 @@ foreach ($proj in Get-ChildItem (Join-Path $env:TEMP 'claude') -Directory) {
   }
 }
 
-# 6. kit test leftovers in %TEMP%
-foreach ($f in Get-ChildItem $env:TEMP -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
+# 6. kit test leftovers in the OS temp folder
+foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
   if (Old $f 24) { Gone $f.FullName 'kit test leftover' }
 }
 
@@ -116,14 +118,14 @@ foreach ($root in $WorktreeRoot) {
     $br = git -C $d rev-parse --abbrev-ref HEAD 2>$null
     if (-not $br -or $br -eq 'HEAD' -or $br -match $keepBranches) { continue }
     if (git -C $d status --porcelain 2>$null) { continue }                                   # uncommitted work
-    $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '\\(node_modules|\.git|target|build)\\' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     if ($newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
     git -C $d fetch -q --prune origin 2>$null
     if (git -C $d ls-remote --heads origin $br 2>$null) { continue }                          # branch still open on the remote
     $unpushed = git -C $d log --oneline "@{upstream}..HEAD" 2>$null
     if ($LASTEXITCODE -eq 0 -and $unpushed) { continue }
     [void]$actions.Add("worktree $d (branch $br merged + deleted on remote, clean, idle > $WorktreeIdleHours h) -> wt.ps1 remove; local branch ref kept")
-    if (-not $DryRun) { & "$K\wt.ps1" remove -Dir $d | Out-Null }
+    if (-not $DryRun) { & (Join-Path $K 'wt.ps1') remove -Dir $d | Out-Null }
   }
 }
 

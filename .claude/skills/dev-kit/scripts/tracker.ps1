@@ -261,7 +261,7 @@ function Add-TrackerComment([string]$Id, [string]$Text) {
     }
     'gitlab' { $res = __TrGl 'POST' (__TrGlPath $Id '/notes') @{ body = $Text }; if ($res) { "commented on #$((__TrRef $Id)[1])" } }
     'jira' { $res = __TrJira 'POST' "issue/$Id/comment" @{ body = (__TrAdf $Text) }; if ($res) { "commented on $Id" } }
-    default { $null = __TrNone $Id "comment $Text" { param($o) $o.comments = @(@($o.comments) + [pscustomobject]@{ user = $env:USERNAME; date = (Get-Date).ToUniversalTime().ToString('s'); text = $Text }) }; "commented on $Id (tracker none)" }
+    default { $null = __TrNone $Id "comment $Text" { param($o) $o.comments = @(@($o.comments) + [pscustomobject]@{ user = [Environment]::UserName; date = (Get-Date).ToUniversalTime().ToString('s'); text = $Text }) }; "commented on $Id (tracker none)" }
   }
 }
 
@@ -373,7 +373,7 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
     }
     'clickup' { __TrCli 'clickup' @('attachment', 'add', $Id, $File); if ($Text) { Add-TrackerComment $Id "$Text (attached: $leaf)" } }
     'jira' { $null = __TrJira 'POST' "issue/$Id/attachments" $null $File; "attached $leaf to $Id"; if ($Text) { Add-TrackerComment $Id "$Text (attached: $leaf)" } }
-    default { $null = __TrNone $Id "attach $File" { param($o) $o.comments = @(@($o.comments) + [pscustomobject]@{ user = $env:USERNAME; date = (Get-Date).ToUniversalTime().ToString('s'); text = "$Text [attachment: $File]" }) }; "attached $leaf to $Id (tracker none)" }
+    default { $null = __TrNone $Id "attach $File" { param($o) $o.comments = @(@($o.comments) + [pscustomobject]@{ user = [Environment]::UserName; date = (Get-Date).ToUniversalTime().ToString('s'); text = "$Text [attachment: $File]" }) }; "attached $leaf to $Id (tracker none)" }
   }
 }
 

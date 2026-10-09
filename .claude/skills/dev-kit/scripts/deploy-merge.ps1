@@ -19,13 +19,13 @@ $ErrorActionPreference = 'Stop'
 $K = $PSScriptRoot
 $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
 $br = "deploy/$($To -replace '[^\w]+', '-')-$(Get-Date -Format yyyyMMddHHmm)"
-$out = & "$K\wt.ps1" new -Repo $Repo -Branch $br -Target $To -Name $name
+$out = & (Join-Path $K 'wt.ps1') new -Repo $Repo -Branch $br -Target $To -Name $name
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
 if (-not $wt) { throw "wt.ps1 new failed: $out" }
 "worktree: $wt"
 git -C $wt fetch -q origin $From $To
 $ahead = git -C $wt rev-list --count "origin/$To..origin/$From"
-if ([int]$ahead -eq 0) { & "$K\wt.ps1" remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$From has no commits that origin/$To lacks (worktree removed)"; exit 0 }
+if ([int]$ahead -eq 0) { & (Join-Path $K 'wt.ps1') remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$From has no commits that origin/$To lacks (worktree removed)"; exit 0 }
 git -C $wt merge --no-ff "origin/$From" -m "chore(deploy): merge $From into $To" 2>&1 | Select-Object -Last 3
 $conf = @(git -C $wt diff --name-only --diff-filter=U)
 $left = @()
@@ -38,10 +38,10 @@ foreach ($f in $conf) {
 }
 if ($left.Count) { "UNRESOLVED (deploy branch has its own changes): "; $left | ForEach-Object { "  $_" }; "Resolve in $wt, git add, then wt.ps1 commit -Dir $wt -NoStage and push yourself."; exit 2 }
 if ($conf.Count) {
-  & "$K\wt.ps1" commit -Dir $wt -NoStage -Message "chore(deploy): merge $From into $To`n`nAdd/add conflicts from an earlier squashed merge: the $To copies equalled older $From versions, so $From's current version was taken."
+  & (Join-Path $K 'wt.ps1') commit -Dir $wt -NoStage -Message "chore(deploy): merge $From into $To`n`nAdd/add conflicts from an earlier squashed merge: the $To copies equalled older $From versions, so $From's current version was taken."
   if ($LASTEXITCODE) { "commit FAILED (hooks?) in $wt"; exit 1 }
 }
-if ($Check) { & "$K\check.ps1" -Dir (Join-Path $wt $Check); if ($LASTEXITCODE) { "compile FAILED - not pushing"; exit 1 } }
+if ($Check) { & (Join-Path $K 'check.ps1') -Dir (Join-Path $wt $Check); if ($LASTEXITCODE) { "compile FAILED - not pushing"; exit 1 } }
 if (-not $Push) { "ready: review $wt, then push with: git -C $wt push origin HEAD:$To"; exit 0 }
 git -C $wt fetch -q origin $To
 git -C $wt merge-base --is-ancestor "origin/$To" HEAD

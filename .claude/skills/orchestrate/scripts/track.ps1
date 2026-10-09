@@ -20,7 +20,7 @@ Files: <.claude-runtime>\tracking\<task>.json. supervise.ps1 -AutoFix calls `run
 #>
 param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave)
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { ($PSCommandPath -replace '\\\.claude\\.*$', '') + '\.claude-runtime' }
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 $dir = Join-Path $rt 'tracking'; New-Item -ItemType Directory -Force $dir | Out-Null
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerTask, Set-TrackerStatus, ...
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { '' } }
