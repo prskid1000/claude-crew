@@ -2,6 +2,8 @@
 
 Newest first. `(n×)` = times observed.
 
+- (fixed in kit) A dev-wave agent deleted the kit runtime folder (live QA runs, task tracking, wave reports, lesson signals) because the harness relayed the owner's chat message asking the LEAD to clean it up later. guard.ps1 now blocks deleting the runtime root and its qa-runs/tracking/waves/learning/board folders (cleanup.ps1, or KIT_ALLOW_RUNTIME_DELETE=1 for the lead), and the dev-wave prompt forbids acting on relayed requests outside the agent's items. Lead: when the owner asks for something destructive while waves run, do it yourself after they finish.
+
 - (fixed in kit) A finished QA verifier's board entry stayed WATCH 'no heartbeat' for 30+ min: supervise only auto-closes entries whose name equals the workflow label's agent (verify:X -> 'X'), but QA verifiers join the board as 'X-verify'. LabelNames() now yields both forms, so such entries are marked left automatically.
 
 - (fixed in kit) After a dev wave ENDED, track.ps1 kept holding its MRs as 'waits for its review (fix:<agent> still running)': waves/<run>.json is only refreshed by supervise for RUNNING workflows, so a finished wave's file stayed 'running'. InFlight now refreshes a report older than 5 min (wave-report.ps1) before it holds.
