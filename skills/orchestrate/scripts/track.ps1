@@ -267,7 +267,14 @@ switch ($Action) {
       }
       $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); Save $o
       "DONE $($o.task): all $(@($o.mrs).Count) MRs merged -> status $($o.onMerged -join ' -> ')"
+      $script:merged = $true
     }
     if ($script:holds) { "HOLD: $($script:holds) task(s) waiting for their review/fix round (-Detail lists them)" }
+    # a task's MRs all merged (also when a person merged them after its wave ended): its worktrees and local branches are
+    # finished now - sweep them once, in the background (the wave/QA flows sweep at their own end; nothing else triggers it)
+    if ($script:merged) {
+      $cl = Join-Path $PSScriptRoot 'cleanup.ps1'
+      Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-File', $cl, '-WorktreesOnly', '-WorktreeIdleHours', '0', '-Quiet' | Out-Null
+    }
   }
 }

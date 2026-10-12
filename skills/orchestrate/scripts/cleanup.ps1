@@ -20,12 +20,16 @@ What it cleans (only kit-created things; never repos, never anything in use):
   - Claude session temp dirs (<OS temp>/claude/<project>/<session>: scratchpad, task outputs) untouched > 7 days
   - kit test leftovers in the OS temp folder (kit-*, claude-kit-*, wfc.js, gradletest, report-preview.html, ...) > 1 day
   - worktrees that are finished: remote branch deleted (MR merged + source branch removed), no uncommitted changes,
-    no unpushed work, untouched > 2 h -> wt.ps1 remove (the local branch ref stays, nothing is lost)
+    no unpushed work, untouched > 2 h -> wt.ps1 remove
+  - local branches whose remote branch is gone, only when the git host shows a merged MR/PR at exactly the branch's tip
+    (nothing on it can be lost; never a checked-out branch) - in the worktrees' repos and every repo under reposRoot
+  -WorktreesOnly runs just those two (no daily stamp): track.ps1 starts it in the background when a task's MRs have all
+  merged; dev-wave and test-and-close run the full cleanup at their end. Supervise rounds never run it (too heavy).
   - log rotation: logs/*.log and the durable learning.local.jsonl (kept to the newest 5000 lines)
 Paths come from Get-KitPath (kitpaths.json). Everything under <runtime> is disposable; durable state lives at the kit root.
 Claude Code's own transcripts are left to its `cleanupPeriodDays` setting.
 #>
-param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2)   # WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt); idle 0 right after a wave finished (still-open MRs are protected by their remote branch)
+param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [switch]$WorktreesOnly, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2)   # -WorktreesOnly: just step 7 (supervise runs it every round)   # WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt); idle 0 right after a wave finished (still-open MRs are protected by their remote branch)
 $ErrorActionPreference = 'SilentlyContinue'
 $K = Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts'
 . (Join-Path $K 'kitconfig.ps1')
@@ -48,6 +52,7 @@ function Gone($path, $why) {
 }
 function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours }
 
+if (-not $WorktreesOnly) {   # steps 1-6: everything but worktrees/branches
 # 1. headless test browsers left running, then idle profiles
 $profiles = Get-KitPath chrome-profiles
 $chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|google chrome|microsoft edge)(\.exe)?$' | Where-Object { $_.CommandLine -match '--headless' -and $_.CommandLine -match [regex]::Escape($profiles) }
@@ -115,7 +120,26 @@ foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-
   if (Old $f 24) { Gone $f.FullName 'kit test leftover' }
 }
 
-# 7. finished worktrees
+}
+
+# 7. finished worktrees, then their local branches
+# A local branch is deleted only when the git host shows a MERGED MR/PR whose head is exactly this branch's tip: then
+# nothing on it is lost (squash merges included). Anything else (unmerged, extra local commits, host unreachable) stays.
+function MergedTip($repo, $br) {
+  $url = "$(git -C $repo remote get-url origin 2>$null)".Trim()
+  # https://host/group/repo(.git) or git@host:group/repo(.git) -> host + group/repo
+  if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return $null }
+  $hostName = $Matches.host; $path = $Matches.path
+  if ($hostName -match 'github') {
+    $gh = Get-Command gh -ErrorAction SilentlyContinue; if (-not $gh) { return $null }
+    return @(& $gh.Source pr list --repo $path --head $br --state merged --json headRefOid 2>$null | ConvertFrom-Json | ForEach-Object headRefOid)
+  }
+  $gl = Get-Command glab -ErrorAction SilentlyContinue; if (-not $gl) { return $null }
+  $env:GITLAB_HOST = $hostName
+  $mrs = & $gl.Source api "projects/$([uri]::EscapeDataString($path))/merge_requests?source_branch=$([uri]::EscapeDataString($br))&state=merged&per_page=20" 2>$null | ConvertFrom-Json
+  return @($mrs | ForEach-Object sha)
+}
+$repos = @{}
 foreach ($root in $WorktreeRoot) {
   foreach ($w in Get-ChildItem $root -Directory) {
     $d = $w.FullName
@@ -130,19 +154,40 @@ foreach ($root in $WorktreeRoot) {
     if ($LASTEXITCODE -ne 0 -or $heads) { continue }                                          # still on the remote, or remote unreachable (offline/auth)
     $unpushed = git -C $d log --oneline "@{upstream}..HEAD" 2>$null
     if ($LASTEXITCODE -eq 0 -and $unpushed) { continue }
-    [void]$actions.Add("worktree $d (branch $br merged + deleted on remote, clean, idle > $WorktreeIdleHours h) -> wt.ps1 remove; local branch ref kept")
+    $main = Split-Path (git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)   # the repo the worktree belongs to
+    [void]$actions.Add("worktree $d (branch $br merged + deleted on remote, clean, idle > $WorktreeIdleHours h) -> wt.ps1 remove")
     if (-not $DryRun) { & (Join-Path $K 'wt.ps1') remove -Dir $d | Out-Null }
+    if ($main) { $repos[$main] = $true }
+  }
+}
+# local branches whose remote branch is gone ([gone]) in the repos above and the configured repos root: worktree-less
+# leftovers of merged MRs too (SourceTree lists them all); a branch checked out anywhere is never touched
+$roots = @($KitConf.ReposRoot) | Where-Object { $_ -and (Test-Path $_) }
+foreach ($r in $roots) { foreach ($c in Get-ChildItem $r -Directory) { if (Test-Path (Join-Path $c.FullName '.git')) { $repos[$c.FullName] = $true } } }
+foreach ($repo in @($repos.Keys)) {
+  if (-not (git -C $repo rev-parse --git-dir 2>$null)) { continue }
+  git -C $repo fetch -q --prune origin 2>$null; if ($LASTEXITCODE -ne 0) { continue }        # offline / auth: decide nothing
+  $out = @(git -C $repo worktree list --porcelain 2>$null | Where-Object { $_ -like 'branch refs/heads/*' } | ForEach-Object { $_.Substring(18) })
+  foreach ($line in git -C $repo for-each-ref --format='%(refname:short)|%(objectname)|%(upstream:track)' refs/heads) {
+    $b, $tip, $track = $line -split '\|', 3
+    if ($track -ne '[gone]' -or $b -match $keepBranches -or $b -in $out) { continue }
+    $merged = MergedTip $repo $b
+    if (-not $merged -or $tip -notin $merged) { continue }                                     # not proven merged at this exact tip
+    [void]$actions.Add("branch $b in $repo (MR merged at its tip, remote branch deleted) -> deleted")
+    if (-not $DryRun) { git -C $repo branch -D $b 2>$null | Out-Null }
   }
 }
 
 # 8. rotate logs
+if (-not $WorktreesOnly) {
 foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File | ForEach-Object FullName) + (Get-KitPath signals))) {
   if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep }; [void]$actions.Add("rotated $f to 5000 lines") }
 }
 
+}
 $summary = "$(if ($DryRun) { '[dry run] would free' } else { 'freed' }) $([math]::Round($freed / 1MB, 1)) MB in $($actions.Count) action(s)"
 if (-not $DryRun) {
-  $now.ToString('s') | Set-Content $mark
+  if (-not $WorktreesOnly) { $now.ToString('s') | Set-Content $mark }   # a worktree sweep is not the daily cleanup
   "$($now.ToString('s')) $summary" | Add-Content $log; $actions | ForEach-Object { "  $_" } | Add-Content $log
 }
 if (-not $Quiet) { $summary; $actions }

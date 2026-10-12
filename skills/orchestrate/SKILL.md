@@ -31,7 +31,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/board.ps1` | agents' step 0 (`join`/`beat`/`check`/`leave`); read by supervise |
 | `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
 | `scripts/status.ps1` | step 4, live dashboard (`-Open -Watch`) |
-| `scripts/cleanup.ps1` | E18 after a wave; SessionStart hook (daily, async); every workflow's last step |
+| `scripts/cleanup.ps1` | E18 after a wave; SessionStart hook (daily, async); every workflow's last step; `-WorktreesOnly` by track.ps1 when a task's MRs all merged |
 | `scripts/kit-lint.py`, `scripts/kitgraph_lib.py` | K3 and E16 (0 problems before a push); SessionStart summary via kit-health.ps1; the pre-push hook (`--org-terms`) |
 | `scripts/kit-flow.py`, `scripts/kit-flow.template.html` | R3 / K3: renders `<runtime>/cache/kit-flow.html` (`--watch` while editing); also run by kit-lint and SessionStart |
 | `scripts/kit-health.ps1` | SessionStart hook: kit git state (uncommitted, behind/ahead), pre-push gate, old runtime, kit-lint summary (E17); `-Flow -Fetch` async |
@@ -82,7 +82,7 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
 | E15 | A lesson is seen 2+ times | 2×: a `LESSONS.md` line (`learn.ps1 -Lesson "(n×) …"`); 3× and still true, generic and actionable for every agent of that type: promote it to a rule in SKILL.md / rules, or better a script check or default (then `-Fixed`) |
 | E16 | You changed the kit (it is the workspace's `.claude` folder, a git clone: edit in place) | K3-K5: `kit-lint.py` (0 problems), parse checks, commit + push (the pre-push hook re-checks org terms and local files) |
 | E17 | SessionStart kit line: uncommitted kit changes, behind/ahead of upstream, pre-push gate off, an old runtime, or kit-lint problems | uncommitted → commit + push (E16), or list org-only paths in `kit.local.json` `localOnly`; behind → `git -C <kit> pull --rebase` once no agents run; gate off / old runtime → `kit-setup.ps1` (`-Migrate <old runtime>`); lint problems in published files → HEAL; in the local overlay → fix the overlay (`reference/extending.md` §8) |
-| E18 | A wave finished | workflows run `cleanup.ps1 -WorktreeIdleHours 0` themselves (merged worktrees go at once); after a stopped run, run it yourself |
+| E18 | A wave finished | workflows run `cleanup.ps1 -WorktreeIdleHours 0` themselves (merged worktrees and their local branches go at once; MRs merged later are swept when track.ps1 sees them merge); after a stopped run, run it yourself |
 | E19 | A new repo or project joins | `dev-kit/scripts/stack.ps1 -Dir <module>`; wrong commands → `.claude-stack.json` (`reference/layout.md` "Adding a new project") |
 | E20 | A deploy (or a merge into a branch that deploys) is needed | ask a person; never deploy yourself |
 
