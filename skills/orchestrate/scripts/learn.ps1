@@ -10,13 +10,15 @@ LESSONS.md short. Signals are raw observations; /kit-retro and each workflow's l
 
 Lessons (learn steps, /kit-retro, the lead):
   & $L -Skill qa-kit -Lesson "(2×) <one actionable line>" [-Project <name>]   # new ACTIVE lesson: top of ## General (or ## Project: <name>)
+  & $L -Skill dev-kit -Bump "<unique words of a lesson>" [-Append "<extra clause>"]   # seen again: (n×) -> (n+1×), optional clause
   & $L -Skill dev-kit -Fixed "<unique words of a lesson>"   # the kit now handles it: move that line to HISTORY.md as "(fixed in kit) ..."
   & $L -Skill dev-kit -Trim [-Max 40]                       # enforce the cap: move "(fixed in kit)" lines, then the oldest
                                                             # (bottom) lines, verbatim to HISTORY.md until LESSONS.md has <= Max lines
 LESSONS.md = active rules agents read (newest first, one line each); HISTORY.md next to it = moved lines, never read by agents.
 Signals are durable local knowledge: <kit>/learning.local.jsonl (git-ignored; Get-KitPath signals), the last-retro time in
 <kit>/learning.local.stamp. Deleting the runtime folder never loses them.
--Lesson and -Fixed trim automatically.
+-Lesson, -Bump and -Fixed trim automatically. Always change LESSONS.md through this script, never with an editor tool
+(an IDE-attached session opens every file it edits).
 
 -Skill: orchestrate | dev-kit | qa-kit | android-swarm | tech-audit | <project name>
 -Kind : friction (slow/awkward) | failure (tool/script broke) | defect-missed | false-positive | rule-violation |
@@ -26,7 +28,7 @@ param(
   [string]$Skill, [ValidateSet('friction', 'failure', 'defect-missed', 'false-positive', 'rule-violation', 'stale-env', 'flaky', 'idea', 'win')][string]$Kind,
   [string]$Text, [string]$Ref = '', [string]$Source = 'agent',
   [switch]$Show, [int]$Last = 30, [switch]$Stats,
-  [string]$Lesson, [string]$Project, [string]$Fixed, [switch]$Trim, [int]$Max = 40
+  [string]$Lesson, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
 )
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath (kitpaths.json)
 $file = Get-KitPath signals -Create
@@ -42,8 +44,8 @@ if ($Stats) {
 }
 
 # ---- lessons: LESSONS.md (active, capped) and HISTORY.md (moved lines, verbatim) ----
-if ($Lesson -or $Fixed -or $Trim) {
-  if (-not $Skill) { throw 'need -Skill <skill folder> with -Lesson / -Fixed / -Trim' }
+if ($Lesson -or $Fixed -or $Bump -or $Trim) {
+  if (-not $Skill) { throw 'need -Skill <skill folder> with -Lesson / -Bump / -Fixed / -Trim' }
   $sd = Join-Path (Split-Path (Split-Path $PSScriptRoot)) $Skill
   $lf = Join-Path $sd 'LESSONS.md'; $hf = Join-Path $sd 'HISTORY.md'
   if (-not (Test-Path $lf)) { throw "no LESSONS.md in skill '$Skill' ($lf)" }
@@ -59,6 +61,16 @@ if ($Lesson -or $Fixed -or $Trim) {
       else { $first = -1; for ($i = 0; $i -lt $L.Count; $i++) { if ($L[$i] -match '^- ') { $first = $i; break } }; if ($first -lt 0) { $first = $L.Count }; $L.Insert($first, $line) }
     } else { $L.Insert($at + 1, $line) }
     "lesson added to $Skill/LESSONS.md ($head)"
+  }
+  if ($Bump) {
+    $hit = @(0..($L.Count - 1) | Where-Object { $L[$_] -match '^- ' -and $L[$_].Contains($Bump) })
+    if ($hit.Count -ne 1) { throw "-Bump must match exactly one lesson line (matched $($hit.Count))" }
+    $s = $L[$hit[0]]
+    if ($Append) { $c = $Append.Trim().TrimEnd('.'); $s = if ($s -match '^(.*?)\.?(\s*\(\d+×\))$') { "$($Matches[1]). $c.$($Matches[2])" } else { "$($s.TrimEnd('.')). $c." } }
+    $m = [regex]::Match($s, '\((\d+)×\)')
+    $s = if ($m.Success) { $s.Remove($m.Index, $m.Length).Insert($m.Index, "($([int]$m.Groups[1].Value + 1)×)") } else { "$s (2×)" }
+    $L[$hit[0]] = $s
+    "lesson bumped in $Skill/LESSONS.md: $($m.Success ? "($([int]$m.Groups[1].Value + 1)×)" : '(2×)')"
   }
   if ($Fixed) {
     $hit = @(0..($L.Count - 1) | Where-Object { $L[$_] -match '^- ' -and $L[$_].Contains($Fixed) })

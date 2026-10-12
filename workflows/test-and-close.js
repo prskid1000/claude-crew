@@ -419,7 +419,7 @@ ${JSON.stringify(all).slice(0, 60000)}
    & ${ORCH}/learn.ps1 -Skill <qa-kit|other skill|project> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. Read ${QA}/LESSONS.md (active rules; never HISTORY.md) and the recent signals (learn.ps1 -Show -Last 200). A pattern seen ≥ 2 times
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
-   lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
+   lesson: learn.ps1 -Skill <skill> -Bump "<words of it>" [-Append "<new clause>"] (never edit LESSONS.md with Edit/Write). A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
 3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
