@@ -65,7 +65,7 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
 ## Events (event -> action; check this table whenever something happens while you coordinate)
 | # | Event | Action (script / workflow) |
 |---|---|---|
-| E1 | You launched a workflow or agent and no heartbeat runs | ONE heartbeat: `/loop 30m` → `supervise.ps1 -Session <id> -AutoFix -Brief` (generic prompt; never poll, never several loops). Stop it when nothing runs |
+| E1 | You launched a workflow or agent and no heartbeat runs | ONE heartbeat: `/loop 10m` → `supervise.ps1 -Session <id> -AutoFix -Brief` (generic prompt; never poll, never several loops). Stop it when nothing runs |
 | E2 | supervise prints **ACT** | do the action it prints (unclear: `reference/supervising.md`) |
 | E3 | supervise prints **WATCH** | nothing now; re-check next round; leave healthy agents alone |
 | E4 | supervise prints **LIVE** (a promoted task's MRs are deployed) | agents test it: /test-and-close (R11); a person tests: tester guide via `qa-kit` (R9) |
