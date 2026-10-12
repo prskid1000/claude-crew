@@ -49,7 +49,12 @@ function New-Avd($name) {
   @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd$([IO.Path]::DirectorySeparatorChar)$name.avd", "target=$target") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
   "$name created in $avdHome (first boot builds its disks: a few minutes)"
 }
-function Stop-Lane($l) { if (Running $l) { & (Join-Path $c.dir 'swarm-down.ps1') -Lanes $l.name -KeepBrowsers | Select-Object -First 1 } }
+function Stop-Lane($l) {
+  if (Running $l) { & (Join-Path $c.dir 'swarm-down.ps1') -Lanes $l.name -KeepBrowsers | Select-Object -First 1 }
+  # an offline/hung emulator is not 'device' in adb but still holds the AVD files: kill it by port
+  $left = @(Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" })
+  if ($left.Count) { $left | ForEach-Object { Stop-SysProcess $_.Id }; Start-Sleep 2 }
+}
 
 switch ($Action) {
   'list' {
@@ -74,13 +79,17 @@ switch ($Action) {
       Stop-Lane $l
       $d = Join-Path $avdHome "$($l.name).avd"
       switch ($Level) {
-        'snapshots' { Remove-Item (Join-Path $d 'snapshots') -Recurse -Force -ErrorAction SilentlyContinue; "$($l.name): snapshots deleted" }
+        'snapshots' {
+          Remove-Item (Join-Path $d 'snapshots') -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path (Join-Path $d 'snapshots')) { Write-Warning "$($l.name): snapshots could not be deleted (file in use?)" } else { "$($l.name): snapshots deleted" }
+        }
         'wipe' {
           # factory reset: user data + snapshots + caches go; the emulator recreates them from the system image
-          foreach ($f in 'userdata-qemu.img', 'userdata-qemu.img.qcow2', 'cache.img', 'cache.img.qcow2', 'encryptionkey.img', 'encryptionkey.img.qcow2', 'snapshots', 'multiinstance.lock', 'hardware-qemu.ini.lock') {
+          $left = @(foreach ($f in 'userdata-qemu.img', 'userdata-qemu.img.qcow2', 'cache.img', 'cache.img.qcow2', 'encryptionkey.img', 'encryptionkey.img.qcow2', 'snapshots', 'multiinstance.lock', 'hardware-qemu.ini.lock') {
             Remove-Item (Join-Path $d $f) -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          "$($l.name): wiped (factory reset)"
+            if (Test-Path (Join-Path $d $f)) { $f }
+          })
+          if ($left.Count) { Write-Warning "$($l.name): NOT wiped, could not delete $($left -join ', ') (emulator still running?)" } else { "$($l.name): wiped (factory reset)" }
         }
         'recreate' {
           Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item (Join-Path $avdHome "$($l.name).ini") -Force -ErrorAction SilentlyContinue

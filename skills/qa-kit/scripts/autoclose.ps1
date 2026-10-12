@@ -6,11 +6,13 @@ own close step finished without publishing (ok=false, e.g. a small close agent r
   Linux/macOS:  nohup pwsh -File <workspace>/.claude/skills/qa-kit/scripts/autoclose.ps1 -Journal <workflow transcript dir> -RunDir <run dir> >/dev/null 2>&1 &
 
 Merges verify verdicts into the checks, writes <run>/<code>/results.json, runs finalize.ps1 once per code.
-Skips packages with > 50% NOT_TESTED. Logs to <run>/autoclose.log; remembers handled codes in <run>/autoclose_done.txt.
+Skips packages with > 50% NOT_TESTED. Logs to <run>/autoclose.log; remembers handled codes in <run>/autoclose_done.txt
+(a code whose finalize.ps1 fails twice, counted in <run>/autoclose_failed.txt, is given up and logged).
 #>
 param([Parameter(Mandatory)][string]$Journal, [Parameter(Mandatory)][string]$RunDir, [int]$EveryMinutes = 4, [int]$MaxHours = 12)
 $S = Split-Path $MyInvocation.MyCommand.Path
 $done = "$RunDir\autoclose_done.txt"; if (-not (Test-Path $done)) { New-Item -ItemType File $done | Out-Null }
+$failed = "$RunDir\autoclose_failed.txt"; if (-not (Test-Path $failed)) { New-Item -ItemType File $failed | Out-Null }
 $log = "$RunDir\autoclose.log"
 function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Tee-Object -FilePath $log -Append }
 $run = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
@@ -56,8 +58,13 @@ while ((Get-Date) -lt $end) {
       New-Item -ItemType Directory -Force "$RunDir\$code" | Out-Null
       $res | ConvertTo-Json -Depth 8 | Out-File "$RunDir\$code\results.json" -Encoding utf8
       Log "$code finalizing: $((($res.checks | Group-Object result | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '))"
-      & (Join-Path $S 'finalize.ps1') -RunDir $RunDir -Code $code 2>&1 | ForEach-Object { Log "  $_" }
-      Add-Content $done $code
+      try { & (Join-Path $S 'finalize.ps1') -RunDir $RunDir -Code $code 2>&1 | ForEach-Object { Log "  $_" }; Add-Content $done $code }
+      catch {
+        # one line per failed attempt: give up after 2 so a broken package is not re-uploaded every loop
+        Add-Content $failed $code; $n = @(Get-Content $failed | Where-Object { $_ -eq $code }).Count
+        if ($n -ge 2) { Log "$code finalize failed $n times, giving up - needs a manual look: $_"; Add-Content $done $code }
+        else { Log "$code finalize failed (attempt $n, retried next loop): $_" }
+      }
     }
     if (-not $running.Count -and $started.Count -and ($j | Where-Object type -in 'finished', 'completed', 'done')) { Log 'workflow finished'; break }
   } catch { Log "error: $_" }

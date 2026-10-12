@@ -26,7 +26,13 @@ $adb = $c.adb; $pkg = $c.app.package
 $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
 New-Item -ItemType Directory -Force $dir, $waitDir | Out-Null
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')
-function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally { $mutex.ReleaseMutex() } }
+function Locked([scriptblock]$b) {
+  $got = $false
+  try { $got = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $got = $true }   # a killed holder hands the mutex over
+  try { & $b } finally { if ($got) { $mutex.ReleaseMutex() } }
+}
+# waiters touch their file every loop; one not touched for 3 min died and must not block the queue
+function Waiters { Get-ChildItem $waitDir -Filter '*.json' | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
 function Lease($name) { $f = Join-Path $dir "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
 function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
 . (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
@@ -54,17 +60,18 @@ switch ($Action) {
     $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
     $wf = Join-Path $waitDir "$Agent.json"
-    @{ agent = $Agent; lane = $Lane; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $wf
+    $since = (Get-Date).ToString('s')
+    @{ agent = $Agent; lane = $Lane; since = $since } | ConvertTo-Json | Set-Content $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
     while (-not $got) {
       $got = Locked {
+        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { @{ agent = $Agent; lane = $Lane; since = $since } | ConvertTo-Json | Set-Content $wf }   # heartbeat
         $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
         if ($mine) { return $mine[0] }
         # fair: the oldest waiter whose wish a free lane can satisfy goes first
         $free = @($lanes | Where-Object { -not (Lease $_.name) })
         if (-not $free) { return $null }
-        $ahead = @(Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
-            Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date (Get-Content $wf -Raw | ConvertFrom-Json).since) -and (-not $_.lane -or $free.name -contains $_.lane) })
+        $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
         if ($ahead.Count -ge $free.Count) { return $null }
         # spawn or wait: a free phone that is already up is taken at once; booting another one needs memory for it
         # (free RAM - its 4.5 GB >= keepFreeGB). If memory is short but some phone is leased, wait for whichever comes first
@@ -94,9 +101,11 @@ switch ($Action) {
     if (-not $NoInstall -and $c.app.kind -and (ApkStamp)) {
       $onPhone = ((& $adb -s $serial shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim()
       if ($onPhone -ne (ApkStamp)) {
-        & (Join-Path $c.dir 'app-mode.ps1') -Mode Release -Serials $serial | Out-Host
-        & $adb -s $serial shell "echo $(ApkStamp) > /sdcard/.qa-apk-stamp"
-        $installed = 'updated (the app may need a fresh login)'
+        try {
+          & (Join-Path $c.dir 'app-mode.ps1') -Mode Release -Serials $serial | Out-Host
+          & $adb -s $serial shell "echo $(ApkStamp) > /sdcard/.qa-apk-stamp"
+          $installed = 'updated (the app may need a fresh login)'
+        } catch { Write-Warning "$serial : $_"; $installed = "install FAILED (the phone runs an older app): $_" }   # no stamp: the next acquire retries
       }
     }
     [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed; apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
@@ -112,7 +121,7 @@ switch ($Action) {
       if (Running $l) { & $adb -s $serial shell am force-stop $pkg 2>$null }
       $waiting = Locked {
         Remove-Item (Join-Path $dir "$($l.name).json") -Force
-        @(Get-ChildItem $waitDir -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
+        @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
       }
       if ($Keep -or $waiting) { "$($l.name) released (kept running: $(if ($Keep) { '-Keep' } else { "$waiting agent(s) waiting" }))" }
       elseif (Running $l) { & (Join-Path $c.dir 'swarm-down.ps1') -Lanes $l.name -KeepBrowsers | Out-Null; "$($l.name) released and shut down" }

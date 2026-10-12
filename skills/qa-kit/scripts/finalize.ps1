@@ -118,13 +118,20 @@ foreach ($st in @($item.subtasks)) {
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $fails = @($mine | Where-Object { $_.result -eq 'FAIL' }); $nt = Cnt $mine 'NOT_TESTED'; $pend = Cnt $mine 'PENDING'
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $fails.Count; notTested = $nt; pending = $pend; bug = $null; closed = $false }
-  if (-not $NoTracker) {
-    $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
+  $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
+  if ($NoTracker) {
+    # a dry run must not overwrite a posted record (the next real run would post again); its own records are marked
+    # so a later real run treats the subtask as a first run
+    if ($prevRec -and -not $prevRec.noTracker) { $out.subtasks += $prevRec; continue }
+    $rec.noTracker = $true
+  } else {
+    if ($prevRec.noTracker) { $prevRec = $null }
     if ($prevRec.closed) { $out.subtasks += $prevRec; continue }   # keep the first run's record (bug id, closed)
     # re-run of a task kept open (NOT_TESTED) or waiting for a sibling item: never a second bug task or results comment,
     # only re-check whether it can close now
     if ($prevRec) {
       $rec.bug = $prevRec.bug
+      $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($fails.Count -and -not $rec.bug) { 'failed checks have no bug task' }
       $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
       if ($others.Count) { $rec.waitingFor = $others }
       elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested" }
@@ -150,6 +157,7 @@ foreach ($st in @($item.subtasks)) {
       if ($bug.id) { $rec.bug = $bug.id; $msg += ". Failed part moved to $(if ($bug.url) { $bug.url } else { TaskUrl $bug.id })" }
       else { $rec.bugError = 'bug task could not be created'; Write-Warning "$($st.id): could not create the bug task for $(($fails | ForEach-Object id) -join ', ') - task kept open" }
     }
+    elseif ($fails.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
     if ($reportFile) {
       $msg += ". Full report with screenshots and API evidence: $docUrl (evidence in $D)"
       $null = TrySay { Add-TrackerAttachment $st.id $reportFile $msg } "post the report on $($st.id)"

@@ -17,12 +17,15 @@ if ($Mode -eq 'Metro' -and $c.app.kind -ne 'react-native') { throw 'Metro mode i
 if (-not $Serials) { $Serials = (Get-Content $c.state -Raw | ConvertFrom-Json).serial }
 $apk = Join-Path $c.apkDir $(if ($Mode -eq 'Release') { 'app.apk' } else { 'base.apk' })
 if (-not (Test-Path $apk)) { throw "$apk missing$(if ($Mode -eq 'Release') { ' - run app-build.ps1' } else { ' - put the dev-client APK there' })" }
+$failed = @()
 foreach ($s in $Serials) {
   $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1
   if ($r -notmatch 'Success') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
+  if ($r -notmatch 'Success') { Write-Warning "$s : $Mode install failed ($r)"; $failed += $s; continue }
   foreach ($p in $c.app.permissions) { & $adb -s $s shell pm grant $pkg "android.permission.$p" 2>$null }
   if ($Mode -eq 'Metro') { & $adb -s $s reverse "tcp:$mp" "tcp:$mp" | Out-Null } else { & $adb -s $s reverse --remove "tcp:$mp" 2>$null | Out-Null }
   & $adb -s $s shell "echo $Mode > /sdcard/.qa-app-mode"
   "$s : $Mode app installed ($r)"
   if ($Launch) { & (Join-Path $c.dir 'app-launch.ps1') -Serial $s }
 }
+if ($failed) { throw "app install failed on $($failed -join ', ')" }

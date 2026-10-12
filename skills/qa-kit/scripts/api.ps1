@@ -36,7 +36,7 @@ $t = $cfg.targets.$Target
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
-if (-not $u.Count -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }
+if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
 $base = $t.api.TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 

@@ -24,8 +24,11 @@ $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $tmp = Get-KitPath android-tmp -Create
 $xmlLocal = Join-Path $tmp "ui_$tag.xml"
 function Get-Nodes {
+  # remove both copies first: a failed dump must not hand back the previous screen
+  & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
   & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
-  & $adb pull /sdcard/ui.xml $xmlLocal | Out-Null
+  & $adb pull /sdcard/ui.xml $xmlLocal 2>$null | Out-Null
+  if (-not (Test-Path $xmlLocal)) { throw 'uiautomator dump failed (no fresh ui.xml): screen busy or device offline - retry' }
   [xml]$x = Get-Content $xmlLocal -Raw
   $x.SelectNodes('//node') | ForEach-Object {
     $t = if ($_.text) { $_.text } elseif ($_.'content-desc') { $_.'content-desc' } else { '' }
@@ -77,7 +80,7 @@ switch ($Action) {
   }
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))
-    while ((Get-Date) -lt $end) { if (Get-Nodes | Where-Object { $_.text -like "*$Arg*" }) { "found '$Arg'"; return }; Start-Sleep 2 }
+    while ((Get-Date) -lt $end) { if (try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }) { "found '$Arg'"; return }; Start-Sleep 2 }
     "TIMEOUT waiting for '$Arg'"
   }
   'photo' {

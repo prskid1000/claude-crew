@@ -87,7 +87,9 @@ foreach ($o in $out) {
   "$($o.lane) ready: $($o.serial)"
 }
 $out = $ready
-$out | ConvertTo-Json | Set-Content $c.state -Encoding utf8
+# merge by lane: other lanes booted by earlier calls stay in swarm.json (an empty/corrupt file counts as none)
+$prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
+ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 foreach ($i in 1..3) { Start-Sleep 4; & (Join-Path $c.dir 'swarm-arrange.ps1') | Out-Null }
 & (Join-Path $c.dir 'swarm-arrange.ps1')
 if ($Mode -eq 'Metro' -and -not (Test-PortListening $c.app.metroPort)) { & (Join-Path $c.dir 'metro-start.ps1') }

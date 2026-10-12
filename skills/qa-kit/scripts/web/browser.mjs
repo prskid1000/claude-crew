@@ -263,7 +263,8 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // Evidence names: <CODE>-<checkId>[_verify]_<nn>_<what>.<ext>  (see qa-kit\reference\evidence-standard.md)
-const EVIDENCE_NAME = /^[A-Za-z0-9]+-[A-Za-z]*\d+(_verify)?_\d{2}_[a-z0-9]+(-[a-z0-9]+)*\.(jpe?g|png|json|log|mp4)$/
+// same pattern as lib/report.ps1 $EvidenceName (PowerShell -match is case-insensitive, hence /i)
+const EVIDENCE_NAME = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2})?|_\d{2})_[a-z0-9]+([-._][a-z0-9]+)*\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" does not follow <CODE>-<check>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg)`)
 }

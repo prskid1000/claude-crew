@@ -30,7 +30,11 @@ if (-not $KeepFreeGB) {
 }
 $need = @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind]
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
-function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally { $mutex.ReleaseMutex() } }
+function Locked([scriptblock]$b) {
+  $got = $false
+  try { $got = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $got = $true }   # a killed holder hands the mutex over
+  try { & $b } finally { if ($got) { $mutex.ReleaseMutex() } }
+}
 function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3) { Remove-Item $_.FullName -Force } else { $o } }) }

@@ -21,6 +21,10 @@ VOCAB = {
 IN_SCOPE = {'Bug', 'Performance', 'Tech Debt'}
 ID = re.compile(r'^[A-Z0-9]+(-[A-Z0-9]+)*-(BUG|PERF|REF|GAP|UX|RPT)-\d+$')
 
+if len(sys.argv) < 2:
+    print(__doc__.strip())
+    sys.exit(2)
+
 problems, seen, rows = [], set(), 0
 for path in sys.argv[1:]:
     try:
@@ -33,12 +37,16 @@ for path in sys.argv[1:]:
         continue
     for o in data:
         rows += 1
+        if not isinstance(o, dict):
+            problems.append(f'{path}: row {rows} is not a JSON object')
+            continue
         fid = o.get('id', '?')
         if set(o) != set(KEYS):
             problems.append(f'{fid}: keys differ (missing {sorted(set(KEYS) - set(o))}, extra {sorted(set(o) - set(KEYS))})')
             continue
         if any(not isinstance(v, str) for v in o.values()):
-            problems.append(f'{fid}: all values must be strings')
+            problems.append(f'{fid!r}: all values must be strings')
+            continue   # the checks below assume strings (hashable id, .startswith)
         if fid in seen:
             problems.append(f'{fid}: duplicate id')
         seen.add(fid)
