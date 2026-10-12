@@ -28,12 +28,15 @@ BLOCKS = ('Load when', 'Not when', 'Hands off to', 'Files')
 FUZZY = re.compile(r'(?<!")read (it |this )?(only )?when (you need|needed)|\(read only when', re.I)   # quoted = named, not used
 
 
-def read(p):
+def read(p, raw=False):
+    """File text with line endings normalised to LF (a Windows clone with core.autocrlf checks files out as CRLF);
+    raw=True keeps them (WF-CRLF)."""
     try:
         with open(p, encoding='utf-8', errors='replace', newline='') as f:
-            return f.read()
+            text = f.read()
     except OSError:
         return ''
+    return text if raw else text.replace('\r\n', '\n')
 
 
 def frontmatter(text):
@@ -520,7 +523,7 @@ def lint(k, g=None, org_terms=None):
             bad('WF-WHEN', p, 'meta.whenToUse is not word for word the conditions of a router row')
         if re.search(r'\bDate\.now\s*\(|\bnew\s+Date\s*\(', js_code(src)):
             bad('WF-CLOCK', p, 'workflow code reads the clock (Date.now / new Date): it breaks resume')
-        if '\r' in src:
+        if '\r' in read(os.path.join(k.dir, p), raw=True):
             bad('WF-CRLF', p, 'CR line endings (workflow scripts must be LF)')
     # ---- agents
     for a, p in k.agents.items():

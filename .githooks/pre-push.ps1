@@ -22,7 +22,8 @@ $revs = @($revs | Where-Object { $_ } | Select-Object -Unique)
 if ($revs.Count) {
   $files = @($revs | ForEach-Object { git -C $root diff-tree --no-commit-id --name-only --diff-filter=ACMR -r $_ } | Where-Object { $_ } | Select-Object -Unique)
   if ($files.Count) {
-    $ign = @($files | git -C $root check-ignore --no-index --stdin 2>$null)
+    # paths as arguments, in batches (piping from pwsh on Windows would append CR to every path)
+    $ign = @(for ($i = 0; $i -lt $files.Count; $i += 100) { git -C $root check-ignore --no-index -- @($files[$i..([math]::Min($i + 99, $files.Count - 1))]) 2>$null })
     foreach ($f in $ign) { $hits += "LOCAL FILE  $f is git-ignored or local-only (.gitignore / .git/info/exclude) but a pushed commit carries it: git rm --cached it and amend" }
   }
 }
