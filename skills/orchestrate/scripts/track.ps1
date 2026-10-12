@@ -47,11 +47,19 @@ function NormRef($r) {
   $r
 }
 function Load($t) { (Read-KitTracking).tasks[$t] }
+$script:doneFields = 'doneAt', 'liveOn', 'liveCheckedAt', 'qaCovered'   # state of a finished task (supervise: deploy / QA); cleared on reopen
 function Save($o) {
   # another process (an agent's `add`) may have written since we loaded: keep its MRs / merge orders instead of overwriting them
   Update-KitTracking {
     param($all)
     $cur = $all.tasks[$o.task]
+    if ($cur) {
+      # done/reopen written by another process since we loaded wins: a `run` must not finish a task an `add` just reopened, and an
+      # `add` that brought no new MRs must not reopen what a `run` just finished
+      $newMrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -and @($cur.mrs) -notcontains $_ })
+      if ($o.done -and -not $cur.done -and [string]$cur.reopenedAt -ne [string]$o.reopenedAt) { $o.done = $false; $o.reopenedAt = $cur.reopenedAt; foreach ($k in $script:doneFields) { $o.Remove($k) } }
+      elseif ($cur.done -and -not $o.done -and [string]$cur.reopenedAt -eq [string]$o.reopenedAt -and -not $newMrs.Count) { $o.done = $true; $o.doneAt = $cur.doneAt }
+    }
     if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
     $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
@@ -136,7 +144,9 @@ switch ($Action) {
     if ($Discover) { $o.discover = $true }
     if ($Wave) { $o.wave = $Wave }   # a dev-wave still fixing this task (started before the task existed): hold until it ends
     if ($MergeAfter) { $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique) }
-    if (-not $o.done -or @($o.mrs).Count -gt $before) { $o.done = $false }   # a finished task stays finished unless new MRs were added
+    # a finished task stays finished unless new MRs were added; reopened, its deploy/QA state belonged to the earlier MRs
+    if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
+    elseif (-not $o.done) { $o.done = $false }
     Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
   }
   'show' {
@@ -158,6 +168,8 @@ switch ($Action) {
         if ($m.state -ne 'opened') { continue }
         $keep[$ref] = $am[$ref]
         if ($m.merge_when_pipeline_succeeds -or $m.draft -or $m.has_conflicts -or $m.detailed_merge_status -eq 'conflict' -or $m.head_pipeline.status -in 'failed', 'canceled') { continue }
+        # no head pipeline (yet): GitLab would merge a merge-when-green request at once - wait for the next round
+        if (-not $m.head_pipeline) { continue }
         $a = @('-X', 'PUT', "projects/$enc/merge_requests/$iid/merge", '-f', 'squash=true', '-f', 'should_remove_source_branch=true')
         if ($m.head_pipeline.status -ne 'success') { $a += @('-f', 'merge_when_pipeline_succeeds=true') }
         $r = glab api @a 2>$null | ConvertFrom-Json
@@ -217,13 +229,20 @@ switch ($Action) {
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
       if ($held) { Hold "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))"; continue }
       # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
-      if ($o.wave) { $wf = Join-Path $wavesDir "$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue } }
+      if ($o.wave) {
+        $wf = Join-Path $wavesDir "$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null
+        # no report = no journal for that run (wrong or expired id): not running, else the task would hold forever
+        if (-not (Test-Path $wf)) { if (-not $Quiet) { "CONFIG $($o.task): wave $($o.wave) has no journal/report (wrong or expired run id) - not holding for it" } }
+        elseif (@((Get-Content $wf -Raw | ConvertFrom-Json).running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue }
+      }
       $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($busy) { Hold "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix"; continue }
       # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)
       $now = TaskStatus $o.task
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
-      foreach ($s in $o.onMerged) { try { $null = Set-TrackerStatus $o.task $s } catch { if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s': $_" } } }
+      $setFailed = $false
+      foreach ($s in $o.onMerged) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
+      if ($setFailed) { continue }   # not done: the next run retries (no "status set" comment either)
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
       $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
       try { $null = Add-TrackerComment $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}

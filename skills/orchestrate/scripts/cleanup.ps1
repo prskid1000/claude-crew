@@ -126,7 +126,8 @@ foreach ($root in $WorktreeRoot) {
     $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     if ($newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
     git -C $d fetch -q --prune origin 2>$null
-    if (git -C $d ls-remote --heads origin $br 2>$null) { continue }                          # branch still open on the remote
+    $heads = git -C $d ls-remote --heads origin $br 2>$null
+    if ($LASTEXITCODE -ne 0 -or $heads) { continue }                                          # still on the remote, or remote unreachable (offline/auth)
     $unpushed = git -C $d log --oneline "@{upstream}..HEAD" 2>$null
     if ($LASTEXITCODE -eq 0 -and $unpushed) { continue }
     [void]$actions.Add("worktree $d (branch $br merged + deleted on remote, clean, idle > $WorktreeIdleHours h) -> wt.ps1 remove; local branch ref kept")

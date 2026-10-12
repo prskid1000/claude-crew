@@ -81,7 +81,7 @@ function Build {
   $since = if (Test-Path $mark) { [datetime](Get-Content $mark -Raw).Trim() } else { [datetime]::MinValue }
   $sigs = if (Test-Path $sig) { @(Get-Content $sig | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $new = @($sigs | Where-Object { [datetime]$_.at -gt $since })
-  $blocks = if (Test-Path $guard) { @(Get-Content $guard) } else { @() }
+  $blocks = if (Test-Path $guard) { @(Get-Content $guard | Where-Object { $_ -match '^(\S+)\t' -and [datetime]$Matches[1] -gt $since }) } else { @() }   # since the last retro, like retro-nudge.ps1
   A "<h2 style='$h2'>Learning loop</h2><p>$($new.Count) new signal(s) since the last retro ($(if ($since -eq [datetime]::MinValue) { 'never run' } else { $since.ToString('d MMM HH:mm') })) · $($sigs.Count) total · $($blocks.Count) guard block(s)$(if (($new.Count + $blocks.Count) -ge 15) { " · <b style='color:#b91c1c'>run /kit-retro</b>" })</p>"
   if ($new.Count) { Table @('When', 'Skill', 'Kind', 'Signal') ($new | Select-Object -Last 15 | ForEach-Object { , @(([datetime]$_.at).ToString('d MMM HH:mm'), (Esc $_.skill), (Esc $_.kind), (Esc $_.text)) }) }
   if ($blocks.Count) { A '<p><b>Recent guard blocks</b></p>'; Table @('When', 'Reason', 'Command') ($blocks | Select-Object -Last 8 | ForEach-Object { $p = $_ -split "`t"; , @((Esc $p[0]), (Esc $p[2]), (Esc $p[3])) }) }

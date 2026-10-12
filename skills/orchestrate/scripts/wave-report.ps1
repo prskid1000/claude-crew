@@ -18,14 +18,26 @@ if (-not $dir) { throw "workflow $Run not found under $proj" }
 $ev = @(Get-Content (Join-Path $dir 'journal.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
 $label = @{}; foreach ($e in $ev | Where-Object type -eq 'started') { $label[$e.agentId] = $e.label }
 $results = @($ev | Where-Object type -eq 'result' | ForEach-Object { [pscustomobject]@{ label = $label[$_.agentId]; r = $_.result } })
-$running = @($ev | Where-Object type -eq 'started' | Where-Object { $_.agentId -notin @($ev | Where-Object type -eq 'result' | ForEach-Object agentId) } | ForEach-Object label)
+# running = started without a result, minus (as supervise.ps1 does) steps superseded by a later finished agent for the same item
+# (died on an API error, retried) and every step of a workflow the lead stopped (supervise.ps1 -MarkStopped)
+$started = @($ev | Where-Object type -eq 'started'); $doneIds = @($ev | Where-Object type -eq 'result' | ForEach-Object agentId)
+$itemOf = { param($l) (([string]$l -split ':', 2)[-1] -split '@')[0] }
+$lastDone = @{}; for ($i = 0; $i -lt $started.Count; $i++) { if ($started[$i].agentId -in $doneIds) { $lastDone[(& $itemOf $started[$i].label)] = $i } }
+$running = @(for ($i = 0; $i -lt $started.Count; $i++) { $s = $started[$i]; if ($s.agentId -notin $doneIds -and -not ($lastDone[(& $itemOf $s.label)] -gt $i)) { $s.label } })
+if (Test-Path (Join-Path (Get-KitPath stopped) $Run)) { $running = @() }
 
 $agents = [ordered]@{}; $findings = New-Object System.Collections.ArrayList; $qa = [ordered]@{}; $learn = $null
 foreach ($x in $results) {
   $kind, $id = ($x.label -split ':', 2); $id = ($id -split '@')[0]
   switch ($kind) {
     { $_ -in 'build', 'fix' } {
-      if ($x.r.mrs) { $agents[$id] = [ordered]@{ mrs = @($x.r.mrs | ForEach-Object { [ordered]@{ url = $_.url; merged = $_.merged } }); done = @($x.r.done); deferred = @($x.r.deferred); needsLiveCheck = @($x.r.needsLiveCheck); fixedRound = ($kind -eq 'fix') } }
+      if ($x.r.mrs) {
+        # a fix round reports only the MRs it touched: merge with the build round's by URL (the newer entry wins)
+        $p = if ($agents.Contains($id)) { $agents[$id] } else { $null }; $urls = @($x.r.mrs | ForEach-Object url)
+        $mrs = @(@($p.mrs | Where-Object { $_ -and $_.url -notin $urls }) + @($x.r.mrs | ForEach-Object { [ordered]@{ url = $_.url; merged = $_.merged } }))
+        $agents[$id] = [ordered]@{ mrs = $mrs; done = @(@($p.done) + @($x.r.done) | Where-Object { $_ } | Select-Object -Unique); deferred = $(if ($x.r.deferred) { @($x.r.deferred) } else { @($p.deferred | Where-Object { $_ }) })
+          needsLiveCheck = @(@($p.needsLiveCheck) + @($x.r.needsLiveCheck) | Where-Object { $_ } | Select-Object -Unique); fixedRound = ($kind -eq 'fix' -or [bool]$p.fixedRound) }
+      }
       elseif (-not $agents.Contains($id)) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
     }
     'review' { foreach ($f in $x.r.findings) { [void]$findings.Add([ordered]@{ agent = $id; severity = $f.severity; file = $f.file; line = $f.line; problem = $f.problem; fix = $f.fix; mr = $f.mr }) } }

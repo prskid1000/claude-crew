@@ -22,23 +22,33 @@ function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $p
 }
 # Cross-process lock for a durable file (tracking.local.json is written by track.ps1 and devtools.py): a <file>.lock created
-# exclusively; a lock older than 2 minutes is stale (its writer died) and is taken over.
+# exclusively; a lock older than 2 minutes is stale (its writer died) and is taken over. Not got within ~130 s -> throws (never
+# runs the body unlocked: two writers would each drop the other's change).
 function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][scriptblock]$Body) {
   $lock = "$File.lock"; $fs = $null
-  for ($i = 0; $i -lt 200 -and -not $fs; $i++) {
+  for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
       if ((Test-Path $lock) -and ((Get-Date) - (Get-Item $lock).LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }
       else { Start-Sleep -Milliseconds 100 }
     }
   }
-  try { & $Body } finally { if ($fs) { $fs.Dispose(); Remove-Item $lock -Force -ErrorAction SilentlyContinue } }
+  # Write-Warning + return too: under $ErrorActionPreference = 'SilentlyContinue' (most kit scripts) a throw does not stop the function
+  if (-not $fs) { $m = "Invoke-KitLocked: $lock still held after 130 s - not writing $File"; Write-Warning $m; throw $m; return }
+  try { & $Body } finally { $fs.Dispose(); Remove-Item $lock -Force -ErrorAction SilentlyContinue }
 }
 # Durable task tracking (<kit>/tracking.local.json): { tasks: { <task>: {task, mrs, onMerged, done, ...} }, automerge: { <ref>: <time> } }.
 # Writers: track.ps1 (tasks + automerge re-arm), devtools.py merge (automerge), supervise.ps1 (live/QA fields). Needs pwsh 7.
-function Read-KitTracking {
+# -Strict (writers): invalid JSON is backed up to <file>.bad-<time> and throws, so a write never replaces every task with {}.
+function Read-KitTracking([switch]$Strict) {
   $f = Get-KitPath tracking; $t = $null
-  if (Test-Path $f) { try { $t = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable } catch { Write-Warning "tracking: $f is not valid JSON ($_)" } }
+  if (Test-Path $f) {
+    try { $t = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable }
+    catch {
+      if ($Strict) { $bak = "$f.bad-$(Get-Date -Format yyyyMMddHHmmss)"; Copy-Item $f $bak -Force; $m = "tracking: $f is not valid JSON (copy: $bak) - fix or remove it; not writing: $_"; Write-Warning $m; throw $m; return $null }
+      Write-Warning "tracking: $f is not valid JSON ($_)"
+    }
+  }
   if ($t -isnot [hashtable]) { $t = @{} }
   if ($t.tasks -isnot [hashtable]) { $t.tasks = @{} }
   if ($t.automerge -isnot [hashtable]) { $t.automerge = @{} }
@@ -48,7 +58,8 @@ function Read-KitTracking {
 function Update-KitTracking([Parameter(Mandatory)][scriptblock]$Change) {
   $f = Get-KitPath tracking -Create
   Invoke-KitLocked $f {
-    $t = Read-KitTracking
+    $t = Read-KitTracking -Strict
+    if ($t -isnot [hashtable]) { return }   # invalid file (Read-KitTracking warned/threw): never write {} over it
     & $Change $t
     $t.version = 1
     $t | ConvertTo-Json -Depth 8 | Set-Content "$f.tmp" -Encoding utf8

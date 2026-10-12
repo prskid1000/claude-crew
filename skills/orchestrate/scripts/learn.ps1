@@ -56,7 +56,7 @@ if ($Lesson -or $Fixed -or $Trim) {
     $at = -1; for ($i = 0; $i -lt $L.Count; $i++) { if ($L[$i] -eq $head -or ($Project -and $L[$i] -like "$head *")) { $at = $i; break } }
     if ($at -lt 0) {
       if ($Project) { $L.Add(''); $L.Add($head); $L.Add($line) }
-      else { $first = 0; for ($i = 0; $i -lt $L.Count; $i++) { if ($L[$i] -match '^- ') { $first = $i; break } }; if (-not $first) { $first = $L.Count }; $L.Insert($first, $line) }
+      else { $first = -1; for ($i = 0; $i -lt $L.Count; $i++) { if ($L[$i] -match '^- ') { $first = $i; break } }; if ($first -lt 0) { $first = $L.Count }; $L.Insert($first, $line) }
     } else { $L.Insert($at + 1, $line) }
     "lesson added to $Skill/LESSONS.md ($head)"
   }

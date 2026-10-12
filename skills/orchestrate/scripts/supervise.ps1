@@ -70,7 +70,7 @@ foreach ($w in $wfDirs) {
     $shipped = $r.result.mrs -and -not @($r.result.mrs | Where-Object { -not $_.merged }).Count
     # agent-coordination wording only: a bare "duplicate" fired on bug summaries about duplicate records/lines/names
     if ($running.Count -and -not $shipped -and $sum -match '(?i)duplicate (agent|copy|writer|instance|session)|(agent|copy|writer)s? collid|collid\w* with (another|an?other agent|agent)|another (agent|writer)|halted|stopped editing') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (board.ps1 check).' }
-    if ($r.result -and $r.result.mrs -and @($r.result.mrs).Count -eq 0 -and $sum -match '(?i)not done|no MRs') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) finished without MRs" 'Resume it (dev-wave mode resume) unless it was deliberately stopped.' }
+    if ($null -ne $r.result.mrs -and @($r.result.mrs).Count -eq 0 -and $sum -match '(?i)not done|no MRs') { Flag 'ACT' "$($started | Where-Object agentId -eq $r.agentId | ForEach-Object label) finished without MRs" 'Resume it (dev-wave mode resume) unless it was deliberately stopped.' }
   }
 }
 
@@ -158,7 +158,9 @@ if (Test-Path $adb) {
     if ($appRunning) { $state.idleSince.Remove($sr) | Out-Null; continue }
     if (-not $state.idleSince.ContainsKey($sr)) { $state.idleSince[$sr] = $now.ToString('o') }
     $idleFor = [int]($now - [datetime]$state.idleSince[$sr]).TotalMinutes
-    if ($AutoFix -and $idleFor -ge 10 -and $lane) {
+    if (-not $lane) {   # not a swarm lane (started by hand / another tool): nothing here can shut it down by lane name
+      if ($idleFor -ge 10) { Flag 'WATCH' "emulator $sr is not in swarm.config.json and our app has been closed on it for $idleFor min" "If nobody uses it: & $adb -s $sr emu kill" }
+    } elseif ($AutoFix -and $idleFor -ge 10) {
       & (Join-Path $swarm 'swarm-down.ps1') -Lanes $lane -KeepBrowsers | Out-Null
       $state.idleSince.Remove($sr) | Out-Null
       Flag 'INFO' "auto-fixed: shut down unleased emulator $sr ($lane): app closed for $idleFor min" 'Agents get phones with phone.ps1 acquire.'
@@ -169,7 +171,8 @@ if (Test-Path $adb) {
   # serial is not 'device' and whose newest process is older than 8 min (normal boot < 6 min); (b) an emulator.exe whose qemu
   # child is gone (qemu crashed) for 2+ min.
   if ($swarmCfg) {
-    $adbState = @{}; foreach ($ln in @(& $adb devices 2>$null)) { if ($ln -match '^(emulator-\d+)\s+(\S+)') { $adbState[$Matches[1]] = $Matches[2] } }
+    $adbStates = { $st = @{}; foreach ($ln in @(& $adb devices 2>$null)) { if ($ln -match '^(emulator-\d+)\s+(\S+)') { $st[$Matches[1]] = $Matches[2] } }; $st }
+    $adbState = & $adbStates; $rechecked = $false
     $emuProcs = @(Get-SysProcs -Name '^(emulator|qemu-system)')
     foreach ($ln in $swarmCfg.lanes) {
       $sr = "emulator-$($ln.port)"
@@ -177,13 +180,18 @@ if (Test-Path $adb) {
       if (-not $mine.Count) { continue }
       $youngest = [int](($mine | ForEach-Object { ($now - $_.Created).TotalMinutes } | Measure-Object -Minimum).Minimum)
       $qemu = @($mine | Where-Object Name -like 'qemu-system*')
-      $why = if ($adbState[$sr] -ne 'device' -and $youngest -ge 8) { "adb shows it '$(if ($adbState[$sr]) { $adbState[$sr] } else { 'absent' })' $youngest min after start (crashed or hung)" }
-             elseif (-not $qemu.Count -and $youngest -ge 2) { "the emulator process is up but its qemu process is gone (crashed)" }
+      $whyOf = { if ($adbState[$sr] -ne 'device' -and $youngest -ge 8) { "adb shows it '$(if ($adbState[$sr]) { $adbState[$sr] } else { 'absent' })' $youngest min after start (crashed or hung)" }
+                 elseif (-not $qemu.Count -and $youngest -ge 2) { "the emulator process is up but its qemu process is gone (crashed)" } }
+      $why = & $whyOf
+      # the adb daemon may just have restarted (`adb devices` lists nothing for a few seconds): ask once more before calling it dead
+      if ($why -and $adbState[$sr] -ne 'device' -and -not $rechecked) { Start-Sleep -Seconds 10; $adbState = & $adbStates; $rechecked = $true; $why = & $whyOf }
       if (-not $why) { continue }
-      $leased = Test-Path (Join-Path $leaseDir "$($ln.name).json")
+      if (Test-Path (Join-Path $leaseDir "$($ln.name).json")) {   # leased: never killed under its holder (an orphan lease is released above first)
+        Flag 'WATCH' "leased emulator $sr ($($ln.name)) looks dead: $why" "Its lease holder re-boots it on its next phone.ps1 acquire; if the holder is gone, the lease is released after 30 min."; continue
+      }
       if ($AutoFix) {
         $mine | ForEach-Object { Stop-SysProcess $_.Id }
-        Flag 'INFO' "auto-fixed: killed dead emulator $sr ($($ln.name)): $why$(if ($leased) { '; its lease holder re-boots it on its next phone.ps1 acquire' })" 'Nothing to do.'
+        Flag 'INFO' "auto-fixed: killed dead emulator $sr ($($ln.name)): $why" 'Nothing to do.'
       } else { Flag 'ACT' "dead emulator $sr ($($ln.name)): $why" "Kill it: & $(Join-Path $swarm 'swarm-down.ps1') -Lanes $($ln.name) -KeepBrowsers (or run supervise with -AutoFix)." }
     }
   }
@@ -224,8 +232,9 @@ if ($AutoFix) {
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
+    elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "All MRs merged but the tracker refused the status change (track.ps1 retries every round): check tracker auth and status names (tracker.statuses in kit.local.json; & $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') view <id>), or set it by hand." }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') comment <id> <file.md>)." }
-    elseif ($l -match '^ATTENTION .* (?<repo>[\w.-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
+    elseif ($l -match '^ATTENTION .* (?<repo>[\w./-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
     }
     elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline, was closed or has merge conflicts (a sibling MR changed the same lines): get it fixed or rebased (resume its agent with RESUME_BRIEF; the agent may have stopped).' }
