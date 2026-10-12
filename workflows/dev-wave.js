@@ -135,8 +135,8 @@ merge): a review runs first and the workflow merges after it - this wins over an
 Report merged=false for every MR.${REVIEW_AUTO ? `
 Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
-Testing instructions are part of the job (dev-kit step 7b): a simple change gets a how-to-test comment on the task;
-a complex one (several screens or flows, more than one repo, migrations, roles) gets a tester guide from
+Testing instructions are part of the job (dev-kit step 7b): run devtools.py guide-mode first; "always" = every change gets the
+published tester guide below (with screenshots). Otherwise a simple change gets a how-to-test comment on the task; a complex one (several screens or flows, more than one repo, migrations, roles) gets a tester guide from
 ${KIT}/skills/qa-kit/templates/tester-guide.html (check ids, concrete Expected per check, environment, accounts, data to prepare)
 published with devtools.py doc and linked on the task and in the MR. Report its link as testerGuide.
 Return the report.`

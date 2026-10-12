@@ -51,7 +51,8 @@
   },
   "reports": {
     "_readme": "type: gdocs (Google Docs + Drive via the gws CLI; default when gws is installed) | markdown (report.md in the QA run folder, carried by the tracker comment)",
-    "type": "markdown"
+    "type": "markdown",
+    "guide": "complex"
   },
   "cleanup": {
     "maxBrowserProfiles": 4

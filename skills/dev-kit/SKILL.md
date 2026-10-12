@@ -78,7 +78,8 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   schedule merges (the workflow does after review); producers (DB/API) merge before consumers; force-push only your own branch (`--force-with-lease`).
 - **Tracker:** always `scripts/tracker.ps1` (never a tracker CLI): `inProgress` → `review` once MRs are open and the testing instructions (7b) posted → `promoted` when all merged; never `inTest`.
 - **Testing instructions (mandatory, step 7b):** every change that a tester can check gets them before the task moves to `review`.
-  Simple (one screen / one endpoint): a how-to-test comment on the task. Complex (several screens or flows, more than one repo,
+  `python devtools.py guide-mode` prints `always` (config `reports.guide`): then every change gets the published guide below,
+  with its screenshots, and the task comment links it. Otherwise: simple (one screen / one endpoint): a how-to-test comment on the task. Complex (several screens or flows, more than one repo,
   migrations, roles/permissions, reports): a tester guide from `qa-kit/templates/tester-guide.html` (check ids, environment, accounts,
   data to prepare, steps and a concrete Expected per check; include "unchanged" checks for what must not change), published with
   `devtools.py doc "<title>" <file>` (a `.md` guide is converted to HTML, tables kept) and linked on the task and in the MR. Report the link as `testerGuide`.

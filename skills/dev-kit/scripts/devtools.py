@@ -11,11 +11,14 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py merge <worktree> <iid>                         squash-merge once the pipeline is green (polls)
   python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
                                                                     (.md is converted to HTML for gdocs: tables, lists, code survive)
+  python devtools.py guide-mode                                     "always" or "complex": when a change gets a published tester guide
 
 Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy kit.example.json):
   "tracker": { "type": "clickup|github|gitlab|jira|none", ... }   task commands go through tracker.ps1 (default clickup)
   "reports": { "type": "gdocs|markdown" }  `doc`: gdocs = Google Doc via gws (default when gws is installed);
                                            markdown = the file is kept under <runtime>/work/docs and its path printed
+  "reports": { "guide": "complex|always" } complex (default) = tester guide for complex changes, a comment for simple ones;
+                                           always = every testable change gets a published tester guide (steps + screenshots)
   "driveParent": "<Drive folder id>"   default parent folder for `doc` (gdocs)
   "gitHost": "gitlab.example.com"      self-hosted GitLab (default gitlab.com); "githubHost" likewise (default github.com)
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs (pwsh, glab, gh, gws) are resolved with
@@ -423,5 +426,7 @@ if __name__ == '__main__':
         if os.path.isfile(title) and not os.path.isfile(path):   # tolerate the swapped order: doc <file> "<title>"
             title, path = path, title
         print(make_doc(title, path, *(a[3:4] or [])))
+    elif cmd == 'guide-mode':
+        print('always' if str((CFG.get('reports') or {}).get('guide') or '').lower() == 'always' else 'complex')
     else:
         print(__doc__)

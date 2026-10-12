@@ -92,6 +92,10 @@ Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in
 
 `finalize.ps1 -Report gdocs|markdown` overrides the setting for one run.
 
+`reports.guide` (default `complex`): when a change gets a published tester guide (dev-kit step 7b). `complex` = changes over
+several screens or flows, repos, migrations or roles get the guide, simple ones a how-to-test comment; `always` = every testable
+change gets the guide (steps, concrete Expected, screenshots) and the task comment links it. Agents read it with `devtools.py guide-mode`.
+
 ## `targets.local.json` (qa-kit)
 
 ```json
