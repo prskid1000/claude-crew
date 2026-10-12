@@ -143,7 +143,7 @@ const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, ou
 
 const COMMON = `${PATHS}
 WHY YOU ARE DOING THIS
-${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${R.mandate.map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
+${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
 Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
 
 AGENT BOARD — join first: & ${ORCH}/board.ps1 join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
@@ -274,7 +274,8 @@ const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result =
 const tag = (L) => (L ? '@' + L.name : '')
 
 async function runItem(it, idx, L) {
-  const p = 9600 + (idx % 40) * 10
+  // pools start at 0 / 100 / 200 / 300: % 400 keeps every pool on its own ports (% 40 put web item k and app item k on the same Chrome)
+  const p = 9600 + (idx % 400) * 10
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
@@ -336,7 +337,7 @@ ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', 
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
-    return { code: it.code, summary: line, result: res, eventful: true }
+    return { code: it.code, summary: line, result: res, eventful: true, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
   }
   const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))

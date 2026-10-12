@@ -87,8 +87,14 @@ Find RECURRING patterns (≥ 2 occurrences) and clear wins. For each, propose th
 Every proposal needs evidence with counts. Do not edit anything. Prefer fewer, sharper proposals.`, { label: `analyse:${l.key}`, phase: 'Analyse', schema: PROPOSALS, ...pick('analyse') })))
 
 const all = found.filter(Boolean).flatMap((f) => f.proposals)
-log(`analysts proposed ${all.length} change(s)`)
-if (!all.length) return { applied: [], proposedForApproval: [], rejected: [], report: 'nothing to change' }
+const dead = found.filter((f) => !f).length
+log(`analysts proposed ${all.length} change(s)${dead ? ` - WARNING ${dead} analyst(s) returned nothing` : ''}`)
+if (!all.length) {
+  // stamp anyway, so the session-start nudge stops counting the signals this retro already looked at - unless analysts failed
+  if (!dead) await agent(`Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')} (create the folder), nothing else. Return ok=true.`,
+    { label: 'stamp', phase: 'Apply', model: 'haiku', effort: 'low' })
+  return { applied: [], proposedForApproval: [], rejected: [], report: dead ? `no proposals; ${dead} analyst(s) failed - re-run the retro` : 'nothing to change' }
+}
 
 phase('Apply')
 const res = await agent(`You are the kit maintainer (kit: ${C}). Apply this retrospective.${PATHS}

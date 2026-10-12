@@ -156,9 +156,9 @@ Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these p
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it isn't a problem. Before you push, check each MR's state (glab mr view / gh pr view): pushing to the
 branch of an already-merged MR changes nothing on the target, so for a merged MR put the fix on a new branch from the target
-(wt.ps1 new) and open a follow-up MR; otherwise wt.ps1 sync and push to the same branch. Gated checks, push, then schedule
-the merges yourself (devtools.py merge, producers first; dependents: ${ORCH}/track.ps1 add -Task <id> -MergeAfter '<web/app MR>><API MR>').
-Return the updated report.${HOLD_NOTE}`
+(wt.ps1 new) and open a follow-up MR; otherwise wt.ps1 sync and push to the same branch. Gated checks, push. Do NOT schedule merges:
+the workflow waits for the pipelines and merges after you. Return the updated report with every MR (follow-ups included), merged=false
+unless it is already merged.${HOLD_NOTE}`
 }
 
 // review passed (or was off for this agent): schedule the merges — the build agent deliberately left them open
@@ -176,9 +176,13 @@ function ciPrompt(r) {
 If the JSON says "done": false, run the same command again (at most 3 times in total) and return the last JSON.`
 }
 
+// held repos are filtered out in code, not only by prompt text: a merge there needs a person's yes
+const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((h) => (m.url || '').includes(`/${h}/`))
+const toShip = (r) => r.mrs.filter((m) => !m.merged && !isHeld(m))
+
 function shipPrompt(a, r) {
   return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code.${PATHS}
-${r.mrs.filter((m) => !m.merged).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
+${toShip(r).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 DB/API (producer) and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
 A consumer (web/app) MR that depends on an API MR in this list: don't merge it; register & ${ORCH}/track.ps1 add -Task <task id from the
 MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
@@ -194,43 +198,65 @@ const results = await pipeline(
     if (!REVIEW || !r.mrs.length) return { id: a.id, report: r, findings: [] }
     if (REVIEW_AUTO && smallChange(r)) { log(`${a.id}: review skipped (auto: ${r.changedLines} changed lines, nothing sensitive)`); return { id: a.id, report: r, findings: [], reviewSkipped: true } }
     const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'mr-reviewer', ...pick('review') })
-    return { id: a.id, report: r, findings: (rv && rv.findings) || [] }
+    // a reviewer that returned nothing is NOT a clean review: never ship unreviewed MRs
+    if (!rv) return { id: a.id, report: r, findings: [{ mr: r.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking',
+      problem: 'The review agent returned nothing (failed or stopped), so these MRs are unreviewed and were not merged.', fix: 'Re-run the review (one-off mr-reviewer, router R7), then merge.' }], reviewFailed: true }
+    return { id: a.id, report: r, findings: rv.findings || [] }
   },
   async (x, a) => {
     if (!x || x.error) return x
+    if (x.reviewFailed) { log(`${a.id}: review agent returned nothing - MRs left open, unreviewed`); return x }
     // should-fix findings get the fix round too (no deferrals): a should-fix once reopened a permission gap on merge
     const blocking = x.findings.filter((f) => f.severity !== 'nit')
-    if (!blocking.length && REVIEW && x.report.mrs.some((m) => !m.merged)) {
-      const ci = await agent(ciPrompt(x.report), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, ...pick('ci'), effort: 'low' })
-      for (const m of ((ci && ci.mrs) || []).filter((m) => m.status === 'failed')) {
-        blocking.push({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking', problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
-          fix: 'Reproduce the failing CI job locally through the gate (check.ps1 / lbcheck.py for changelog checks), fix the cause, push, and make sure the pipeline goes green.' })
-      }
-      if (blocking.length) log(`${a.id}: ${blocking.length} failed pipeline(s) -> fix round`)
-    }
     if (!blocking.length) {
-      if (!REVIEW || !x.report.mrs.some((m) => !m.merged)) return x
-      const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
-      // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
-      if (!r3) return x
-      const merged = new Set(r3.mrs.filter((m) => m.merged).map((m) => m.url))
-      return { ...x, report: { ...x.report, mrs: x.report.mrs.map((m) => ({ ...m, merged: m.merged || merged.has(m.url) })),
-        summary: `${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
+      const failures = await ciGate(a, x.report)
+      if (failures.length) { log(`${a.id}: ${failures.length} failed pipeline(s) -> fix round`); blocking.push(...failures) }
     }
-    log(`${a.id}: ${blocking.length} blocking review finding(s) -> fix round`)
+    if (!blocking.length) return ship(a, x)
+    log(`${a.id}: ${blocking.length} blocking finding(s) -> fix round`)
     const r2 = await agent(fixPrompt(a, x.report, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
-    if (!r2) return { ...x, fixed: false }
+    // CI failures count as findings too, so the coordinator sees them when the fix round fails
+    if (!r2) return { ...x, findings: [...x.findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: false }
     // merge, don't replace: the fix agent reports only its fixes, the build report holds the items done
     const uniq = (a) => [...new Set(a)]
+    const byId = (a) => [...new Map(a.map((d) => [d.id, d])).values()]
     const mrs = [...r2.mrs, ...x.report.mrs.filter((m) => !r2.mrs.some((n) => n.url === m.url))]
-    return { ...x, fixed: true, report: { ...x.report, mrs, worktrees: uniq([...x.report.worktrees, ...r2.worktrees]),
-      done: uniq([...x.report.done, ...r2.done]), deferred: uniq([...x.report.deferred, ...r2.deferred]),
+    const fixedX = { ...x, findings: [...x.findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: true, report: { ...x.report, mrs, worktrees: uniq([...x.report.worktrees, ...r2.worktrees]),
+      done: uniq([...x.report.done, ...r2.done]), deferred: byId([...x.report.deferred, ...r2.deferred]),
       needsLiveCheck: uniq([...x.report.needsLiveCheck, ...r2.needsLiveCheck]), seed: uniq([...(x.report.seed || []), ...(r2.seed || [])]),
       foreignHooks: uniq([...(x.report.foreignHooks || []), ...(r2.foreignHooks || [])]),
       testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.report.testerGuide,
       summary: `${x.report.summary}\n\nFix round: ${r2.summary}` } }
+    // the fix round is not proof: pipelines must be green again before anything merges
+    const failures = await ciGate(a, fixedX.report)
+    if (failures.length) { log(`${a.id}: pipelines still failing after the fix round - left open`); return { ...fixedX, fixed: false, findings: [...fixedX.findings, ...failures] } }
+    return ship(a, fixedX)
   },
 )
+
+// CI gate: failed pipelines become blocking findings; a CI agent that returned nothing is logged, not treated as green-and-silent
+async function ciGate(a, r) {
+  if (!REVIEW || !r.mrs.some((m) => !m.merged)) return []
+  const ci = await agent(ciPrompt(r), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, ...pick('ci'), effort: 'low' })
+  if (!ci) { log(`${a.id}: WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
+  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
+    problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
+    fix: 'Reproduce the failing CI job locally through the gate (check.ps1 / lbcheck.py for changelog checks), fix the cause, push, and make sure the pipeline goes green.' }))
+}
+
+// review passed (or was off): schedule the merges - the build and fix agents deliberately left them open
+async function ship(a, x) {
+  if (!REVIEW) return x
+  const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
+  if (held.length) log(`${a.id}: ${held.length} MR(s) held for approval (holdMerge): ${held.map((m) => m.url).join(', ')}`)
+  if (!toShip(x.report).length) return x
+  const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
+  // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
+  if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
+  const merged = new Set(r3.mrs.filter((m) => m.merged).map((m) => m.url))
+  return { ...x, report: { ...x.report, mrs: x.report.mrs.map((m) => ({ ...m, merged: m.merged || merged.has(m.url) })),
+    summary: `${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
+}
 
 const out = results.filter(Boolean)
 for (const x of out) {
