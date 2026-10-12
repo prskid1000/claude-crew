@@ -1,0 +1,9 @@
+#!/bin/sh
+# Kit pre-push gate (versioned; enabled by skills/orchestrate/scripts/kit-setup.ps1: git config core.hooksPath .githooks).
+# Blocks a push that carries an org term or a git-ignored / local-only file. Logic: .githooks/pre-push.ps1 (pwsh 7 + python).
+root="$(git rev-parse --show-toplevel)"
+if command -v pwsh >/dev/null 2>&1; then
+  exec pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$root/.githooks/pre-push.ps1" "$@"
+fi
+echo "pre-push: pwsh 7 is not installed, so the kit's org-term / local-file checks cannot run. Install pwsh, then push again." >&2
+exit 1
