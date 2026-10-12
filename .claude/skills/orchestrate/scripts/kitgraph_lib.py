@@ -88,7 +88,8 @@ def blocks(text):
         if m:
             body = re.sub(r'^\s*:?\s*(\([^)]*\))?\s*:?\s*', '', m.group(1))   # drop "(all must hold):" style lead-ins
             if name == 'Files':
-                rows_n = len(re.findall(r'^\|\s*`', body, re.M))
+                tm = re.search(r'^\*\*Files:?\*\*[^\n]*\n(?:[ \t]*\n)*((?:\|.*\n?)+)', text, re.M)
+                rows_n = sum(len(re.findall(r'`[^`]+`', r[0])) for r in table_rows(tm.group(1) if tm else '') if r and r[0].lower() != 'file')
                 body = f'{rows_n} files listed, each with the step that reads or runs it'
             out[name] = re.sub(r'\s+', ' ', body)[:600]
     return out
