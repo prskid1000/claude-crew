@@ -39,7 +39,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 2. **Deployed?** Before any FAIL: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` for every repo of the task; not deployed → NOT_TESTED "not deployed yet".
 3. **Test each check** with the tools: API `scripts/api.ps1 -Target <t> -As <user> [-Tenant <x>] -Method <M> -Path '/...' [-Body '<json>']
    [-Save <name> -OutDir <dir>]`; web `scripts/web/browser.mjs` (`session()` = one logged-in headless Chrome per port; `mark`, `shot`,
-   `saveNet`, `hoverSel`; not the chrome-devtools MCP); app `scripts/android/ui.ps1` (dump / tap / tapid / type / swipe / shot / shotmark /
+   `saveNet`, `hoverSel`; also for the main session's R10 checks and repros; a visible browser only when the owner asks to watch); app `scripts/android/ui.ps1` (dump / tap / tapid / type / swipe / shot / shotmark /
    wait / log). Tracker: `../dev-kit/scripts/tracker.ps1 view|comments <id>`.
 4. **Evidence:** folder `<run>/<CODE>/shots` (web JPEG, app PNG) and `/evidence` (API/network/DB/log JSON); your scripts in `/scripts`.
    Name `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab ≤ 40 chars), e.g. `F2-T4_01_before-edit.jpeg`.
