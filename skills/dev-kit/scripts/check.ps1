@@ -87,12 +87,29 @@ foreach ($s in $steps) {
       $changed = git -C $st.dir diff --name-only --diff-filter=ACMR $(if ($base) { $base } else { 'HEAD' }) -- . 2>$null
       # only files the stack's linter reads (ruff/flake8 get .py, eslint gets JS/TS)
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
-      $changed = @($changed | Where-Object { $_ -match $ext } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ })
+      # paths relative to the stack dir (the gate runs there): absolute paths made a 200-file merge overflow cmd.exe's 8191 chars
+      Push-Location $st.dir
+      $changed = @($changed | Where-Object { $_ -match $ext } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ } | ForEach-Object { Resolve-Path -Relative $_ })
+      Pop-Location
       if (-not $changed.Count) { Write-Host "[check] ${s}: no changed files"; continue }
       $Files = ($changed | ForEach-Object { '"' + $_ + '"' }) -join ' '
     }
-    $cmd = $cmd -replace '\{files\}', $(if ($Files) { $Files } else { '.' })
   }
+  # still too long for one command line (cmd.exe stops at 8191 chars): run the step in batches of files
+  $batches = @($cmd)
+  if ($cmd -match '\{files\}') {
+    $batches = @()
+    $list = if ($Files) { @([regex]::Matches($Files, '"[^"]*"|\S+') | ForEach-Object Value) } else { @('.') }
+    $room = 7000 - $cmd.Length; $cur = @()
+    foreach ($f in $list) {
+      if ($cur.Count -and (($cur -join ' ').Length + $f.Length + 1) -gt $room) { $batches += $cmd -replace '\{files\}', ($cur -join ' '); $cur = @() }
+      $cur += $f
+    }
+    if ($cur.Count) { $batches += $cmd -replace '\{files\}', ($cur -join ' ') }
+  }
+  for ($bi = 0; $bi -lt $batches.Count; $bi++) {
+  $cmd = $batches[$bi]
+  if ($batches.Count -gt 1) { Write-Host "[check] $s batch $($bi + 1)/$($batches.Count)" }
   if ($st.solution) { $cmd = $cmd -replace '\{sln\}', $st.solution }
   # Speed-ups that don't change results:
   if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }   # warm Maven daemon
@@ -107,7 +124,8 @@ foreach ($s in $steps) {
   & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $cmd
   $ran++
   if ($LASTEXITCODE) { Write-Host "[check] $s FAILED (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
-  Write-Host "[check] $s ok"
+  }
+  if (-not $Show) { Write-Host "[check] $s ok" }
 }
 if (-not $Show -and -not $ran) { Write-Host "[check] nothing to run for $Step" }
 exit 0
