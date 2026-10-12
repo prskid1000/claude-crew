@@ -14,6 +14,10 @@ pwsh -File <workspace>/.claude/skills/orchestrate/scripts/kit-setup.ps1
 - turns on the versioned pre-push gate: `git config core.hooksPath .githooks`;
 - writes the `localOnly` paths of `skills/dev-kit/kit.local.json` into `.git/info/exclude` (kit-health refreshes this at every
   session start);
+- points Claude Code's auto memory at `<workspace>/.claude/memory/` (git-ignored, created if missing): it writes the absolute
+  `autoMemoryDirectory` into the git-ignored `settings.local.json`, keeping other keys (kit-health re-checks it at every session
+  start, so a moved or fresh clone is fixed by itself; it takes effect from the next session). Opt out with
+  `"memory": { "keepDefault": true }` in `kit.local.json`;
 - creates the runtime (`.claude-runtime/work`, `cache`, `logs`) and lists the local config files still to copy:
   `skills/dev-kit/kit.local.json`, `skills/qa-kit/targets.local.json`, `skills/android-swarm/swarm.config.json` (from their
   `*.example.json`).

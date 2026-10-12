@@ -16,7 +16,8 @@ skills/android-swarm/swarm.json
 skills/android-swarm/apk/
 rules/*.local.md
 
-# harness state Claude Code writes into .claude
+# harness state Claude Code writes into .claude (auto memory: kit-setup points autoMemoryDirectory at /memory)
+/memory/
 /agent-memory-local/
 /scheduled_tasks.lock
 /worktrees/

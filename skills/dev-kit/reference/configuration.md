@@ -38,6 +38,7 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `supervise.minDiskFreeGB` | `30` | supervise.ps1 | Free disk (GB) on the workspace drive below which supervise raises an ACT flag |
 | `localOnly` | `[]` | kit-setup.ps1, kit-lint.py, pre-push hook | Kit paths that are local overlay (org-only skills, project profiles, extra rules): `kit-setup.ps1 -Exclude` (run by kit-health at SessionStart) writes them into the clone's `.git/info/exclude` so they never show in `git status`, the pre-push hook blocks them, kit-lint treats them as overlay |
 | `orgTerms` | `[]` | kit-lint.py `--org-terms`, pre-push hook | Org words (names, hosts, ids) that must never appear in the published kit; the coordinator scans the kit with them before every push (orchestrate K3) and `.githooks/pre-push` blocks a push that carries one |
+| `memory.keepDefault` | `false` | kit-setup.ps1 (and kit-health at session start) | `false`: Claude Code auto memory is kept in `<kit>/memory/` (git-ignored; `autoMemoryDirectory` written into `settings.local.json`). `true`: leave the harness default location |
 | `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
 
 ### Tracker (`tracker.type`)

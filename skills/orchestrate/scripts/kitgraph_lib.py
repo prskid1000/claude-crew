@@ -11,7 +11,7 @@ import fnmatch, json, os, re
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Set, Tuple
 
-SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.claude-runtime', 'worktrees'}
+SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.claude-runtime', 'worktrees', 'memory'}
 # repo plumbing at the kit root (the repo root IS the .claude folder): read for org terms and doc links, not part of the kit graph
 REPO_ONLY = ('README.md', 'CONTRIBUTING.md', 'LICENSE', 'docs', 'examples', '.githooks', '.gitignore', '.gitattributes')
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (kit-lint RUNTIME-RAW)
@@ -177,7 +177,7 @@ def load(kit):
     allf, junk, repo_files = [], [], []
     for d, dirs, fs in os.walk(k.dir):
         top = os.path.relpath(d, k.dir) == '.'
-        skip = SKIP_DIRS if top else SKIP_DIRS - {'.claude-runtime', 'worktrees'}   # runtime + harness worktrees: kit root only
+        skip = SKIP_DIRS if top else SKIP_DIRS - {'.claude-runtime', 'worktrees', 'memory'}   # runtime, harness worktrees, auto memory: kit root only
         dirs[:] = [x for x in dirs if x not in skip]
         for f in fs:
             rel = os.path.relpath(os.path.join(d, f), k.dir).replace('\\', '/')

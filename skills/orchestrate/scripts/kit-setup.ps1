@@ -10,7 +10,8 @@ one-time migration from the old layout (a synced copy with its runtime next to .
 
 Install / repair:
   - git config core.hooksPath .githooks   (the versioned pre-push gate: org terms, ignored/local files; kit-health checks it)
-  - writes the kit.local.json "localOnly" paths into the clone's .git/info/exclude (a managed block), so org-only skills and
+  - points Claude Code auto memory at <kit>/memory (autoMemoryDirectory in settings.local.json; created if missing)
+- writes the kit.local.json "localOnly" paths into the clone's .git/info/exclude (a managed block), so org-only skills and
     files stay untracked and never show in git status (kit-health runs -Exclude at every SessionStart)
   - creates <runtime>/work, cache, logs and lists the local config files still to copy from their *.example.json
 -Migrate <dir>: an old runtime folder (e.g. <workspace>/.claude-runtime from the synced-copy layout). Copies what is durable:
@@ -26,6 +27,24 @@ $ErrorActionPreference = 'Stop'
 $kit = Split-Path (Split-Path (Split-Path $PSScriptRoot))   # <kit>/skills/orchestrate/scripts -> <kit>
 . (Join-Path $kit 'skills/dev-kit/scripts/kitpaths.ps1')
 function Say($s) { if (-not $Quiet) { $s } }
+
+# Claude Code auto memory goes into this kit: <kit>/memory (git-ignored). The setting must be an absolute path, so it is
+# written per clone into the git-ignored settings.local.json (merged, other keys kept); the folder is created if missing.
+# Takes effect from the next session. Opt out with  "memory": { "keepDefault": true }  in kit.local.json.
+function Set-Memory {
+  try { $cfg = Get-Content (Join-Path $kit 'skills/dev-kit/kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $cfg = $null }
+  if ($cfg -and $cfg.memory -and $cfg.memory.keepDefault) { return $null }
+  $dir = Join-Path $kit 'memory'
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+  $want = ($dir -replace '\\', '/')
+  $sl = Join-Path $kit 'settings.local.json'
+  $s = if (Test-Path $sl) { try { Get-Content $sl -Raw | ConvertFrom-Json -AsHashtable } catch { $null } } else { @{} }
+  if ($null -eq $s) { return "settings.local.json is not valid JSON: autoMemoryDirectory not set (fix the file, then re-run)" }
+  if ($s['autoMemoryDirectory'] -eq $want) { return $null }
+  $s['autoMemoryDirectory'] = $want
+  [IO.File]::WriteAllText($sl, ($s | ConvertTo-Json -Depth 20))
+  "memory: autoMemoryDirectory = $want (settings.local.json; from the next session)"
+}
 
 function Update-Exclude {
   if (-not (Test-Path (Join-Path $kit '.git'))) { return 'not a git clone: no .git/info/exclude' }
@@ -45,7 +64,7 @@ function Update-Exclude {
   if ($new -ne $old) { New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null; [IO.File]::WriteAllText($ex, $new); "excluded $($paths.Count) localOnly path(s) in $ex" }
 }
 
-if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; exit 0 }
+if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m) { Say $m }; exit 0 }
 
 if ($Migrate) {
   if (-not (Test-Path $Migrate -PathType Container)) { throw "no such folder: $Migrate" }
@@ -127,6 +146,7 @@ else {
   if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-push gate on)' }
   $r = Update-Exclude; if ($r) { Say $r }
 }
+$m = Set-Memory; if ($m) { Say $m }
 foreach ($n in 'work', 'cache', 'logs') { $null = Get-KitPath $n -Create }
 Say "runtime: $(Get-KitPath runtime) (work/ cache/ logs/; disposable)"
 foreach ($pair in @(@('skills/dev-kit/kit.example.json', 'skills/dev-kit/kit.local.json'), @('skills/qa-kit/targets.example.json', 'skills/qa-kit/targets.local.json'),
