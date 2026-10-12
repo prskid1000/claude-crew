@@ -32,8 +32,16 @@ Write-Host "[check] $($st.stack) in $($st.dir)"
 
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-  $masters = git -C $top ls-files '*master.xml' | Where-Object { $_ -match 'liquibase' }
-  if (-not $masters) { Write-Host '[check] no Liquibase master.xml in this repo - nothing to check'; exit 0 }
+  # Liquibase master changelogs: *master.xml under a liquibase/ or changelog/ folder (JHipster config/liquibase/master.xml,
+  # Spring Boot db/changelog/db.changelog-master.xml). A YAML/JSON/SQL master is not checked (said so, not silently passed).
+  $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
+  $masters = @($all | Where-Object { $_ -match '\.xml$' })
+  foreach ($o in @($all | Where-Object { $_ -notmatch '\.xml$' })) { Write-Host "[check] $o is not an XML changelog - lbcheck reads XML only, not checked" }
+  if (-not $masters) { Write-Host '[check] no Liquibase XML master changelog in this repo - nothing to check'; exit 0 }
+  # changelog files without a yyyyMMddHHmmss name prefix are judged by git instead: the ones changed in the last 14 days (or
+  # since -Since) are reported too (lbcheck.py reads LBCHECK_CHANGED, basenames separated by '|')
+  $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
+  $env:LBCHECK_CHANGED = (@(git -C $top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
   $rc = 0
   $mine = @($masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) })
   $under = @($mine | Where-Object { $_.StartsWith($st.dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) })
@@ -69,9 +77,17 @@ foreach ($s in $steps) {
     if (-not $Files -and $s -eq 'lint' -and $Step -eq 'quick') {
       # quick lint = files changed against the merge base, so it stays fast
       $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-      $base = (git -C $st.dir merge-base HEAD '@{upstream}' 2>$null)
+      # base = where this branch left its target: the worktree's recorded target (wt.ps1 new), else the remote's default
+      # branch (origin/HEAD), else the upstream. (@{upstream} alone is the pushed branch itself, so after a push or
+      # commit quick lint used to see only uncommitted files.)
+      $gd = (git -C $st.dir rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
+      $tgt = if (Test-Path (Join-Path $gd 'claude-target')) { "origin/$((Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim())" }
+      $refs = @($tgt, ((git -C $st.dir symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null) | Select-Object -First 1), '@{upstream}') | Where-Object { $_ }
+      $base = $null; foreach ($r in $refs) { $base = (git -C $st.dir merge-base HEAD $r 2>$null); if ($LASTEXITCODE -eq 0 -and $base) { break }; $base = $null }
       $changed = git -C $st.dir diff --name-only --diff-filter=ACMR $(if ($base) { $base } else { 'HEAD' }) -- . 2>$null
-      $changed = @($changed | Where-Object { $_ -match '\.(ts|tsx|js|jsx|mjs|py)$' } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ })
+      # only files the stack's linter reads (ruff/flake8 get .py, eslint gets JS/TS)
+      $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
+      $changed = @($changed | Where-Object { $_ -match $ext } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ })
       if (-not $changed.Count) { Write-Host '[check] lint: no changed files'; continue }
       $Files = ($changed | ForEach-Object { '"' + $_ + '"' }) -join ' '
     }

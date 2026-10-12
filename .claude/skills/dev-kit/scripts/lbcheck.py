@@ -4,8 +4,11 @@ has no guarding <preConditions>. Also flags schema changeSets without a <rollbac
 
   python lbcheck.py <path/to/master.xml> [sinceTimestamp]
 
-Only files whose name starts with a timestamp >= sinceTimestamp (yyyyMMddHHmmss) are reported (default: all).
-Includes are resolved relative to the classpath root (the folder above 'config/...') or to master.xml's folder.
+Only files whose name starts with a timestamp >= sinceTimestamp (yyyyMMddHHmmss) are reported (default: all), plus files named
+in env LBCHECK_CHANGED (basenames separated by '|'; check.ps1 passes the changelog files git changed recently, so repos that
+do not name changelogs with a timestamp are checked too).
+Includes are resolved relative to the including file, the classpath root (the folder above 'config/liquibase/...', else the
+'resources' folder) or master.xml's folder.
 Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n > 0.
 """
 import os, re, sys
@@ -16,8 +19,9 @@ MASTER = os.path.abspath(sys.argv[1])
 SINCE = sys.argv[2] if len(sys.argv) > 2 else '0'
 MASTER_DIR = os.path.dirname(MASTER)
 # classpath root: for .../resources/config/liquibase/master.xml it is .../resources
-m = re.search(r'^(.*?)[\\/]config[\\/]liquibase[\\/]', MASTER)
+m = re.search(r'^(.*?)[\\/]config[\\/]liquibase[\\/]', MASTER) or re.search(r'^(.*[\\/]resources)[\\/]', MASTER)
 CP_ROOT = m.group(1) if m else MASTER_DIR
+CHANGED = {f for f in os.environ.get('LBCHECK_CHANGED', '').split('|') if f}
 SCHEMA_TAGS = {'createTable', 'addColumn', 'dropColumn', 'dropTable', 'renameColumn', 'modifyDataType',
                'addForeignKeyConstraint', 'createIndex', 'addUniqueConstraint', 'sql', 'update', 'insert', 'delete'}
 AUTO_ROLLBACK = {'createTable', 'addColumn', 'renameColumn', 'createIndex', 'addForeignKeyConstraint', 'addUniqueConstraint'}
@@ -80,7 +84,7 @@ def walk(path, fname):
         issues.append(f'PARSE ERROR {fname}: {e}')
         return
     ts = re.match(r'(\d{14})', os.path.basename(fname))
-    report = bool(ts) and ts.group(1) >= SINCE
+    report = (bool(ts) and ts.group(1) >= SINCE) or (not ts and (SINCE == '0' or os.path.basename(fname) in CHANGED))
     if report:
         # CI rule: a changeSet whose comment (XML comment or <comment>) says it is not reversible must still carry a NON-EMPTY
         # <rollback> (an empty <rollback/> is rejected too). The XML parser drops comments, so check the raw text per changeSet.
