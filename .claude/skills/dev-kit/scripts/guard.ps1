@@ -4,6 +4,7 @@ Turns the kit's hard rules into enforcement instead of advice:
   - no `git stash` (the stash is shared across worktrees)
   - no `--no-verify` / hook skipping
   - no force-push to a protected branch (main, master, develop, release/*, plus kit.local.json "protectedBranches")
+  - no `adb kill-server` (it drops every agent's emulator lane)
   - heavy builds/tests go through the memory gate (check.ps1 / gate.ps1), not straight to mvn/gradle/dotnet/ng/jest/...
 Reads the hook JSON on stdin; prints a deny decision with the reason, or nothing (= allow).
 Every block is logged to <.claude-runtime>/guard.log so /kit-retro can learn from repeated mistakes.
@@ -42,6 +43,7 @@ if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmt
 if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|rimraf|shutil\.rmtree)' -and $raw -match '\.claude-runtime[\\/](qa-runs|tracking|waves|learning|board)[\\/]?([''"\s;|]|$)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
   Deny 'These runtime folders hold live state (QA runs, tracking, wave reports, lessons). Do not delete them; cleanup.ps1 prunes old entries itself.' }
 if ($cmd -match '\bgit\b[^|;&]*\bstash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
+if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm-avd.ps1 reset).' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?!-with-lease)|\s-f\b)' -or ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*--force' -and $cmd -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
   Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after wt.ps1 sync.'

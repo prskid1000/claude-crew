@@ -1,7 +1,7 @@
 ﻿<#
 Installs the app under test on the swarm phones in the chosen mode:
-  Release - apk/app.apk (build it with app-build.ps1).
-  Metro   - react-native only: apk/base.apk (Expo dev client) + adb reverse to the shared Metro (metro-start.ps1).
+  Release - <out>/apk/app.apk (build it with app-build.ps1; <out> = <runtime>/android-swarm).
+  Metro   - react-native only: <out>/apk/base.apk (Expo dev client) + adb reverse to the shared Metro (metro-start.ps1).
 Both should be signed with the same key, so switching keeps the app's data.
 #>
 param(
@@ -14,8 +14,8 @@ if ($Mode -eq 'Embedded') { $Mode = 'Release' }
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 $adb = $c.adb; $pkg = $c.app.package; $mp = $c.app.metroPort
 if ($Mode -eq 'Metro' -and $c.app.kind -ne 'react-native') { throw 'Metro mode is only for react-native apps' }
-if (-not $Serials) { $Serials = (Get-Content (Join-Path $c.dir 'swarm.json') -Raw | ConvertFrom-Json).serial }
-$apk = Join-Path $c.dir $(if ($Mode -eq 'Release') { 'apk/app.apk' } else { 'apk/base.apk' })
+if (-not $Serials) { $Serials = (Get-Content $c.state -Raw | ConvertFrom-Json).serial }
+$apk = Join-Path $c.apkDir $(if ($Mode -eq 'Release') { 'app.apk' } else { 'base.apk' })
 if (-not (Test-Path $apk)) { throw "$apk missing$(if ($Mode -eq 'Release') { ' - run app-build.ps1' } else { ' - put the dev-client APK there' })" }
 foreach ($s in $Serials) {
   $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1

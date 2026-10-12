@@ -3,7 +3,7 @@ Phone leases: an app-testing agent owns its phone end to end. The coordinator ne
 
   $P = '<workspace>/.claude/skills/android-swarm/phone.ps1'
   & $P acquire -Agent APP1 [-Lane Falcon] [-WaitMinutes 90]   # wait for a free lane (fair FIFO), boot it through the memory gate,
-                                                              # install the current apk/app.apk if the phone has an older one;
+                                                              # install the current <out>/apk/app.apk if the phone has an older one;
                                                               # prints JSON {lane, serial, port, installed}
   & $P release -Agent APP1 [-Keep]    # close our app, free the lease; the phone shuts down unless another agent is waiting for it (or -Keep)
   & $P status                         # leases, waiting agents, running phones
@@ -30,7 +30,15 @@ function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally 
 function Lease($name) { $f = Join-Path $dir "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
 function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
 . (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
-function ApkStamp { $a = Get-Item (Join-Path $c.dir 'apk/app.apk') -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
+function ApkStamp { $a = Get-Item (Join-Path $c.apkDir 'app.apk') -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
+# What the lanes run (app-build.ps1 writes app.json) and whether the branch has moved on since (local ref only: no fetch)
+function ApkInfo {
+  $f = Join-Path $c.apkDir 'app.json'; if (-not (Test-Path $f)) { return $null }
+  $i = Get-Content $f -Raw | ConvertFrom-Json
+  $head = try { (git -C $i.appDir rev-parse --short "origin/$($i.branch)" 2>$null) } catch { $null }
+  $warn = if ($head -and $head.Trim() -ne $i.commit) { "the APK is $($i.commit) but origin/$($i.branch) is at $($head.Trim()): ask the lead to rebuild (app-build.ps1)" }
+  [ordered]@{ branch = $i.branch; commit = $i.commit; built = $i.built; warning = $warn }
+}
 
 switch ($Action) {
   'status' {
@@ -91,7 +99,7 @@ switch ($Action) {
         $installed = 'updated (the app may need a fresh login)'
       }
     }
-    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed } | ConvertTo-Json -Compress
+    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed; apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
   }
 
   'release' {

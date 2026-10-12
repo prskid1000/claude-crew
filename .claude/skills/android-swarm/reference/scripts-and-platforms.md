@@ -1,6 +1,9 @@
 # Android swarm in full: scripts, modes, memory, Linux/macOS (android-swarm reference)
 
-Read when you build or (re)create emulators, switch modes, or run on Linux/macOS. The original full text of the skill:
+Read at android-swarm lead steps L1-L4 (build, create or reset lanes, switch modes) and on Linux/macOS. The full text of the skill:
+
+`<out>` = `<runtime>/android-swarm` (`$env:CLAUDE_RUNTIME`, else `<workspace>/.claude-runtime`; `outDir` in `swarm.config.json`
+overrides it): APKs, `<out>/apk/app.json` (branch + commit of `app.apk`), `build.log`, `metro.log`, emulator logs and `swarm.json`.
 
 ## Up to N emulators (lanes) run the app under test in parallel, one testing agent per phone. PowerShell only.
 Everything app-specific is in `swarm.config.json` (copy `swarm.example.json`): lanes (AVD name + console port), and the
@@ -8,12 +11,12 @@ app (`kind` react-native | native, package, appDir, build task/args, APK glob, p
 
 | Script | Purpose |
 |---|---|
-| `app-build.ps1` | build the test APK through the memory gate (`../dev-kit/scripts/gate.ps1`) → `apk/app.apk` (+ `app-<commit>.apk`). Fast-forwards a clean checkout to `origin/<branch>` first (`-NoUpdate` to skip). Rebuild after app changes. Only the configured checkout publishes `apk/app.apk` (installed on every lane); `-AppDir <other worktree>` writes `apk/app-<branch>-<commit>.apk` for your own leased phone (`-Shared` to publish) |
-| `phone.ps1 acquire\|release\|status -Agent <id> [-Lane <name>]` | **how agents get phones.** acquire: take a free running phone, else boot one if memory allows (free RAM − 4.5 GB ≥ `keepFreeGB`), else wait in a fair queue for a release or memory; installs the current `apk/app.apk` if the phone has an older one. release: close the app, free the lease, shut the phone down unless another agent waits |
+| `app-build.ps1` | build the test APK through the memory gate (`../dev-kit/scripts/gate.ps1`) → `<out>/apk/app.apk` (+ `app-<commit>.apk`). Fast-forwards a clean checkout to `origin/<branch>` first (`-NoUpdate` to skip). Rebuild after app changes. Only the configured checkout publishes `<out>/apk/app.apk` (installed on every lane); `-AppDir <other worktree>` writes `<out>/apk/app-<branch>-<commit>.apk` for your own leased phone (`-Shared` to publish) |
+| `phone.ps1 acquire\|release\|status -Agent <id> [-Lane <name>]` | **how agents get phones.** acquire: take a free running phone, else boot one if memory allows (free RAM − 4.5 GB ≥ `keepFreeGB`), else wait in a fair queue for a release or memory; installs the current `<out>/apk/app.apk` if the phone has an older one. release: close the app, free the lease, shut the phone down unless another agent waits |
 | `swarm-up.ps1 [-Count n] [-Mode Release\|Metro\|None] [-Headless] [-ColdBoot]` | (manual / used by phone.ps1) boot lanes, wait, slim once, install the app, write `swarm.json`. `-Headless` (or `"headless": true` in the config, per lane or top level) = no windows; `-Mode Embedded` = Release (old name) |
 | `swarm-avd.ps1 list\|create\|reset` | **create** every missing lane emulator in one go from `avd-template.ini` (identical phones; no Android command-line tools needed). **reset -Lanes X -Level** `cold` (stuck/offline boot) → `snapshots` (corrupt quick-boot snapshot) → `wipe` (factory reset) → `recreate` (AVD files broken). A lane leased by an agent is refused unless `-Force`; after wipe/recreate the next acquire re-slims and reinstalls the app |
-| `app-build.ps1 -DevClient` | react-native: build the dev client (Expo dev client, or a bare RN debug build; debug variant) → `apk/base.apk` for Metro mode. Any other `-Task` copies the APK that run built to `apk/app-<variant>.apk` |
-| `app-mode.ps1 -Mode Release\|Metro` | install that mode's APK on all phones (Metro = React Native dev client `apk/base.apk` + adb reverse) |
+| `app-build.ps1 -DevClient` | react-native: build the dev client (Expo dev client, or a bare RN debug build; debug variant) → `<out>/apk/base.apk` for Metro mode. Any other `-Task` copies the APK that run built to `<out>/apk/app-<variant>.apk` |
+| `app-mode.ps1 -Mode Release\|Metro` | install that mode's APK on all phones (Metro = React Native dev client `<out>/apk/base.apk` + adb reverse) |
 | `app-launch.ps1 -Serial <s> [-Clear]` | (re)start the app the right way for the phone's mode; `-Clear` wipes app data and re-grants permissions |
 | `metro-start.ps1` | React Native only: one shared Metro (no watching, capped workers), bundle pre-warmed |
 | `swarm-arrange.ps1` | windows side by side, centred on the main monitor (DPI-aware). Windows only (Win32 APIs): on Linux/macOS it prints a note and does nothing |
@@ -31,7 +34,7 @@ ledger while running, so builds account for it. QA agents claim their phone on t
 Manual use (a person testing by hand): `phone.ps1 acquire -Agent manual -Lane <name>` … `phone.ps1 release -Agent manual`; a manual lease is never reclaimed by the supervisor. AVD images live in `avdDir` (default `$env:ANDROID_AVD_HOME`, else `~/.android/avd`).
 
 Linux / macOS: the SDK is `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`, else `~/Android/Sdk` (Linux) or `~/Library/Android/sdk` (macOS);
-emulators start detached through `setsid`/`nohup` (log: `emulator-<lane>.log` next to the scripts) and need hardware acceleration
+emulators start detached through `setsid`/`nohup` (log: `<out>/emulator-<lane>.log`) and need hardware acceleration
 (KVM on Linux). `avd-template.ini` is an x86_64 image: on Apple-silicon Macs change `abi.type`, `hw.cpu.arch` and `image.sysdir.1`
 to the arm64-v8a image before `swarm-avd.ps1 create`.
 

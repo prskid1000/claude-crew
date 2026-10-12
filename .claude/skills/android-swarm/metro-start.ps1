@@ -9,7 +9,7 @@ $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 . (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
 if (-not $AppDir) { $AppDir = $c.app.appDir }
 if (-not $Port) { $Port = $c.app.metroPort }
-$log = Join-Path $c.dir 'metro.log'
+$log = Join-Path $c.out 'metro.log'
 Get-PortPids $Port | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; "stopped old Metro pid $_" }
 $flags = "--port $Port --max-workers $MaxWorkers" + $(if ($ClearCache) { ' --clear' } else { '' })
 # Expo app (expo in package.json): npx expo start; bare React Native: npx react-native start (same Metro flags)

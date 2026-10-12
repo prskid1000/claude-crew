@@ -48,3 +48,6 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 - Some web deploys are two-stage: merging to the target branch deploys nothing; a release pipeline (often a scheduled one run on demand) copies it to a deploy branch, and THAT branch's pipeline puts it on the test site. Wait for the second pipeline (`deployed.ps1` reports "no successful <deploy job> includes it yet" until then).
 - A test environment's JWT signing key can differ from the one in the repo's config: forged/re-signed tokens get 401 there, so prove "the API refuses a token for another product" by unit test or with the deployed key. A separately deployed service (e.g. a cloud function) may be undeployed: check before testing.
 - Use a secondary test user for per-user preference checks, and keep one tenant/account with the feature OFF for "nothing else changed" (R) checks; never change its settings.
+
+## Moved by learn.ps1 (-Fixed / -Trim), oldest first
+- (fixed in kit) (2×) The swarm's APK can be days old: compare its commit with the branch head and rebuild with `android-swarm/app-build.ps1` before any app retest.

@@ -1,7 +1,8 @@
 ﻿<#
 Builds the test APK of the app in swarm.config.json (or -AppDir) through the machine-wide memory gate, and copies it
-to apk/app.apk (+ apk/app-<commit>.apk). apk/app.apk is installed on every lane by phone.ps1, so a build of any other
-checkout (-AppDir pointing at a worktree / feature branch) only writes apk/app-<branch>-<commit>.apk unless -Shared.
+to <out>/apk/app.apk (+ app-<commit>.apk; <out> = <runtime>/android-swarm, see _config.ps1). app.apk is installed on every lane by
+phone.ps1, so a build of any other checkout (-AppDir pointing at a worktree / feature branch) only writes app-<branch>-<commit>.apk
+unless -Shared. apk/app.json records the branch, commit and time of app.apk (phone.ps1 acquire warns when the branch moved on).
 - react-native: release build with the JS bundle inside (no Metro / dev menu / LogBox) - steadier automated testing.
 - native (Kotlin/Java): runs app.buildTask (default assembleDebug).
 Rebuild whenever the app code changes. Always test the APK of the branch under test.
@@ -78,7 +79,7 @@ if ($JavaHome) { $env:JAVA_HOME = $JavaHome }
 "Using Java: $env:JAVA_HOME"
 $env:SENTRY_DISABLE_AUTO_UPLOAD = 'true'
 if ($c.app.kind -eq 'react-native') { $env:NODE_ENV = 'production' }
-$log = Join-Path $c.dir 'build.log'
+$log = Join-Path $c.out 'build.log'
 $t0 = Get-Date
 if ($Clean) { Push-Location $android; & (Join-Path . $gw) clean --console=plain | Select-Object -Last 3; Pop-Location }
 & $gate -Dir $android -Cmd "$gw $Task $BuildArgs `"-Dorg.gradle.java.home=$env:JAVA_HOME`" --console=plain > `"$log`" 2>&1" -WaitMinutes 120
@@ -92,7 +93,7 @@ $apkRoot = Join-Path $android ((([string]$c.app.apkGlob) -split '/build/outputs/
 if (-not (([string]$c.app.apkGlob) -match '/build/outputs/')) { $apkRoot = Join-Path $android 'app/build/outputs/apk' }
 $apk = Get-ChildItem $apkRoot -Recurse -Filter *.apk -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
 if (-not $apk) { throw "no APK built by this run under $apkRoot (set swarm.config.json app.apkGlob to <module>/build/outputs/apk/... if the app module is not 'app')" }
-$apkDir = Join-Path $c.dir 'apk'; New-Item -ItemType Directory -Force $apkDir | Out-Null
+$apkDir = $c.apkDir
 $name = if ($DevClient) { 'base' } elseif ($Task -eq $c.app.buildTask) { 'app' } else { 'app-' + ($Task -replace '^assemble', '').ToLower() }
 # apk/app.apk is what phone.ps1 installs on EVERY lane: only a build of the configured checkout may replace it.
 # A side checkout (another worktree / feature branch) gets its own file, so it can't push an older app onto the other lanes.
@@ -106,4 +107,7 @@ if ($sideBuild -and -not $Shared) {
 }
 Copy-Item $apk.FullName (Join-Path $apkDir "$name.apk") -Force
 Copy-Item $apk.FullName (Join-Path $apkDir "$name-$commit.apk") -Force
-"Done in $([int]((Get-Date) - $t0).TotalMinutes) min: apk\$name.apk ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
+if ($name -eq 'app') {   # stamp for phone.ps1: which branch/commit the lanes run
+  [ordered]@{ branch = $branch; commit = $commit; appDir = $AppDir; built = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app.json') -Encoding utf8
+}
+"Done in $([int]((Get-Date) - $t0).TotalMinutes) min: $(Join-Path $apkDir "$name.apk") ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"

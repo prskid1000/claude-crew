@@ -17,4 +17,21 @@ $sdk = Get-AndroidSdk   # ANDROID_HOME, ANDROID_SDK_ROOT, else the OS default (%
 $c | Add-Member -Force adb (Join-Path $sdk (Join-Path 'platform-tools' (Get-ExeName 'adb')))
 $c | Add-Member -Force emulator (Join-Path $sdk (Join-Path 'emulator' (Get-ExeName 'emulator')))
 $c | Add-Member -Force dir $here
+# Runtime output (APKs, build/metro/emulator logs, swarm.json) lives outside .claude: swarm.config.json "outDir", else
+# <runtime>/android-swarm with <runtime> = $env:CLAUDE_RUNTIME or <workspace>/.claude-runtime (the rule kitconfig.ps1 uses).
+$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path (Split-Path (Split-Path $here))) '.claude-runtime' }
+$out = if ($c.outDir) { [string]$c.outDir } else { Join-Path $rt 'android-swarm' }
+$apkDir = Join-Path $out 'apk'
+New-Item -ItemType Directory -Force $apkDir | Out-Null
+# Backward compatibility: an APK built before the move still sits in <skill>/apk - copy it once so lanes keep their build.
+$oldApk = Join-Path $here 'apk'
+if (-not (Test-Path (Join-Path $apkDir 'app.apk')) -and (Test-Path (Join-Path $oldApk 'app.apk'))) {
+  Get-ChildItem $oldApk -Filter *.apk -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $apkDir $_.Name) }
+  if (Test-Path (Join-Path $oldApk 'app.json')) { Copy-Item (Join-Path $oldApk 'app.json') $apkDir }
+}
+$state = Join-Path $out 'swarm.json'
+if (-not (Test-Path $state) -and (Test-Path (Join-Path $here 'swarm.json'))) { Copy-Item (Join-Path $here 'swarm.json') $state }
+$c | Add-Member -Force out $out
+$c | Add-Member -Force apkDir $apkDir
+$c | Add-Member -Force state $state
 $c

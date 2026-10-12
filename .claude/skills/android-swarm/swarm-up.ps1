@@ -61,7 +61,7 @@ foreach ($name in $Lanes) {
     } else {
       # Linux/macOS: setsid/nohup so the emulator is not killed with this shell; its output goes to emulator-<lane>.log
       if (-not (Test-Path $c.emulator)) { throw "no emulator at $($c.emulator) - set ANDROID_HOME (or ANDROID_SDK_ROOT)" }
-      Start-Detached -FilePath $c.emulator -ArgumentList ($a | ForEach-Object { [string]$_ }) -WorkingDirectory (Split-Path $c.emulator) -Log (Join-Path $c.dir "emulator-$name.log")
+      Start-Detached -FilePath $c.emulator -ArgumentList ($a | ForEach-Object { [string]$_ }) -WorkingDirectory (Split-Path $c.emulator) -Log (Join-Path $c.out "emulator-$name.log")
     }
     "$name booting on $serial ..."
     # long-lived gate ledger entry: builds see the emulator's memory as promised while it boots (removed when it exits)
@@ -87,7 +87,7 @@ foreach ($o in $out) {
   "$($o.lane) ready: $($o.serial)"
 }
 $out = $ready
-$out | ConvertTo-Json | Set-Content (Join-Path $c.dir 'swarm.json') -Encoding utf8
+$out | ConvertTo-Json | Set-Content $c.state -Encoding utf8
 foreach ($i in 1..3) { Start-Sleep 4; & (Join-Path $c.dir 'swarm-arrange.ps1') | Out-Null }
 & (Join-Path $c.dir 'swarm-arrange.ps1')
 if ($Mode -eq 'Metro' -and -not (Test-PortListening $c.app.metroPort)) { & (Join-Path $c.dir 'metro-start.ps1') }
