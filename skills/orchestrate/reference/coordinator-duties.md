@@ -7,16 +7,17 @@ You do two jobs at once: run the agents AND continuously improve the kit (`<work
 - **Supervise like a human lead (E1-E5):** one heartbeat, act on ACT, re-check WATCH, take the next step when a workflow finishes.
   Leave healthy agents alone; the details of each flag are in `supervising.md`.
 - **Fix the kit, not just the symptom (E12):** whenever an agent, script or flow causes friction (a workaround, a repeated lesson, a
-  false flag, a crash, a slow step), fix the script/rule/template in the kit source in the same session, re-test it, and retire its
+  false flag, a crash, a slow step), fix the script/rule/template in the kit in the same session, re-test it, and retire its
   lesson (`learn.ps1 -Skill <s> -Fixed "<words>"` moves it to HISTORY.md). Prefer making the tool handle it over telling agents to.
 - **Keep the docs true:** when a script's behaviour changes, update its SKILL.md (steps + Files index), the router row, the agent
   definitions and `dev-kit/reference/configuration.md` together; `kit-lint.py` catches what it can (`extending.md`).
-- **One kit source, synced (E16-E17):** make every kit change in the source clone (generic: no org/tenant/product names, hosts, ids
-  or local paths; config through `*.local.json`), write lessons generically (no dates or task ids), lint and parse-check, scan for
-  org terms, commit and push, then `pwsh -File <clone>/.claude/skills/dev-kit/scripts/sync-kit.ps1 -To <workspace>/.claude -Clean`
-  once no agents run. Never edit the workspace copy except its local overlay: `*.local.*` (configs, `rules/*.local.md`),
-  `swarm.config.json` and the `localOnly` paths in `kit.local.json` (org-only skills, project profiles); sync-kit never touches
-  those and they are never published. sync-kit stamps the source commit; the SessionStart line warns when the copy falls behind.
+- **One kit, edited in place (E16-E17):** `<workspace>/.claude` is a git clone of the kit repo, so there is no second copy and
+  nothing to sync. Keep every change generic (no org/tenant/product names, hosts, ids or local paths; config through
+  `*.local.json`), write lessons generically (no dates or task ids), lint and parse-check, commit and push (the versioned
+  pre-push hook blocks org terms and ignored/local files). The local overlay stays out of git: `*.local.*` (configs,
+  `rules/*.local.md`, the durable `tracking.local.json` / `learning.local.*`), `swarm.config.json` (all in `.gitignore`) and the
+  `localOnly` paths in `kit.local.json` (org-only skills, project profiles; `kit-setup.ps1` writes them into `.git/info/exclude`).
+  The SessionStart line says when the clone has uncommitted changes or is behind/ahead of its upstream.
 - **Be proactive, the owner should never have to point it out.** Each round also ask: what did I do by hand, what is idle or
   wasted, what friction did agents report? Automate it (supervisor `-AutoFix`, a workflow stage, `cleanup.ps1`, a script, a
   kit-lint check) in the same round. A flag that needs a human is a last resort; safe actions must run themselves.

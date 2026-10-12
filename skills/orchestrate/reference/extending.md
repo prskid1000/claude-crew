@@ -3,7 +3,8 @@
 Read at orchestrate K1, before adding or changing any kit part. Every part must be reachable on an explicit path:
 **CLAUDE.md Router row → skill (its numbered steps) → the Files-index row that binds a reference / template / script to a step →
 workflow → agent type.** `kit-lint.py` enforces what it can (codes in brackets); run it until it prints 0 problems (orchestrate K3).
-Work in the kit source clone, keep everything generic (org specifics go in the local overlay, §8).
+The kit is the workspace's `.claude` folder, a git clone of the kit repo: edit it in place, keep everything generic (org specifics go
+in the local overlay, §8), commit and push (orchestrate K3-K4).
 
 ## 1. A script, reference doc or template inside a skill
 - Put it in the skill folder (`scripts/`, `reference/`, `templates/`), never loose at the kit root.
@@ -11,8 +12,13 @@ Work in the kit source clone, keep everything generic (org specifics go in the l
   ("step 4c, before adding a migration"), never "read when you need it" [FILES-UNLISTED, FILES-UNBOUND, SKILL-FUZZY].
 - Make the step itself name it, so the agent meets it on its way through the steps.
 - A reference doc opens with one line saying which step(s) read it. A library dot-sourced by other scripts is listed as such.
-- Scripts: derive paths from their own location (`kitconfig.ps1`), write runtime output under `<runtime>` (never inside `.claude`)
-  [JUNK], run with pwsh 7 on Windows/Linux/macOS, trim quotes from MR refs (`'a!1','b!2'` arrive literally), and parse-check.
+- Scripts: derive paths from their own location (`kitconfig.ps1`). Runtime output and durable local state are named in
+  `skills/dev-kit/scripts/kitpaths.json` and resolved only through its helpers: `Get-KitPath <name>` (PowerShell), `kit_path()`
+  (Python), `kitPath()` (Node), `rp()` with a `const KP` copy of the names in workflows [RUNTIME-RAW, RUNTIME-MAP, JUNK]. A new
+  path is a new name in `kitpaths.json`: `work/` (in-flight runs), `cache/` (rebuilt on demand) or `logs/` under the disposable
+  runtime, or `durable` (a git-ignored `*.local.*` file at the kit root) when losing it would lose knowledge or task state;
+  then add a row to `docs/runtime.md` and, if it grows, a prune rule to `cleanup.ps1`. Scripts run with pwsh 7 on
+  Windows/Linux/macOS, trim quotes from MR refs (`'a!1','b!2'` arrive literally), and are parse-checked.
 
 ## 2. A new skill
 - `skills/<name>/SKILL.md` with frontmatter `description: "Load when: <concrete conditions>. Not when: <condition> -> <sibling>. ..."`
@@ -53,13 +59,15 @@ Work in the kit source clone, keep everything generic (org specifics go in the l
 - Use `pwsh` in exec form with `${CLAUDE_PROJECT_DIR}/.claude/...`; synchronous hooks stay well under their timeout (SessionStart
   < 2 s), slow work goes in an `"async": true` entry. List the script in its skill's Files index ("SessionStart hook: ...").
 
-## 8. The local overlay (per workspace, never synced or published)
+## 8. The local overlay (per workspace, never committed or published)
 - `*.local.*`: `kit.local.json` (org settings, `localOnly`, `orgTerms`), `targets.local.json` (the only place for passwords),
-  `settings.local.json`, `rules/*.local.md` (org rules); plus `swarm.config.json` and every path in `kit.local.json` `localOnly`.
+  `settings.local.json`, `rules/*.local.md` (org rules); plus `swarm.config.json` and every path in `kit.local.json` `localOnly`
+  (`kit-setup.ps1 -Exclude`, run by kit-health at SessionStart, keeps them in `.git/info/exclude`: never in `git status`).
 - `rules/org.local.md` (always loaded) holds a `## Org router rows` table with the Router's columns (`# | Conditions | Target |
   Load first`), rows `O1`, `O2`, ... for org-only skills and needs; the Router's R0 sends matching requests there [OVERLAY-ROUTER].
   Keep each row narrow (it is checked before R1).
 - A local skill (`skills/<org-skill>/`, listed in `localOnly`) follows §2 exactly and is routed by an org row.
 - A project profile for tech-audit (`skills/tech-audit/reference/projects/<project>.md`) is covered by that skill's Files index.
 - Path-scoped org rules (`rules/<stack>.md` in `localOnly`) follow §5.
-- Before pushing kit changes, scan the source with the overlay's terms: `kit-lint.py --org-terms <workspace>/.claude/skills/dev-kit/kit.local.json` [ORG-TERM].
+- Before pushing kit changes, scan with the overlay's terms: `kit-lint.py --org-terms <kit>/skills/dev-kit/kit.local.json` [ORG-TERM];
+  the pre-push hook (`.githooks/pre-push`, on after `kit-setup.ps1`) runs the same scan and blocks force-added local files.

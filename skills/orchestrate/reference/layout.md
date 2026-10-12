@@ -11,9 +11,13 @@ go in the wave **brief** / QA **run.json**, in memory, or in the repo's own `CLA
 > Launch the kit workflows by path, not by name: `Workflow({ scriptPath: "<kit>/workflows/dev-wave.js", args })`. Named lookup only searches the *current* working directory's `.claude/workflows`, so after a `cd` into a repo `Workflow({ name: "dev-wave" })` fails with "not found".
 
 ## What lives where (standard `.claude/` layout)
+`<workspace>/.claude` is a git clone of the kit repo (`git clone https://github.com/prskid1000/claude-crew <workspace>/.claude`),
+edited in place and updated with `git pull`. Local files stay out of git (`.gitignore`, and `localOnly` via `.git/info/exclude`).
 ```
 <workspace>/.claude/
-├── CLAUDE.md                     global rules (your org's CLIs, tracker workflow, conventions)
+├── CLAUDE.md                     the Router + global rules (your org's CLIs, tracker workflow, conventions)
+├── README.md, docs/, examples/   the repo's documentation (install, runtime, configuration, example rules)
+├── .githooks/pre-push           blocks org terms and force-added local files (on after kit-setup.ps1)
 ├── settings.json                 permissions + hooks: guard (blocks stash/--no-verify/force-push/ungated builds), retro nudge, cleanup
 ├── rules\                        multi-agent.md (always) · db-migrations (loads by file path) · your own path-scoped rules
 ├── skills\
@@ -29,10 +33,14 @@ go in the wave **brief** / QA **run.json**, in memory, or in the repo's own `CLA
 │   ├── tech-audit\               static audit of one module → findings JSON + styled summary (+ reference/projects/<project>.md)
 │   └── <your own skills>         on-demand references for your org (observability queries, database access, ...)
 ├── agents\                       dev-agent · mr-reviewer · qa-tester · qa-verifier   (subagent types)
-└── workflows\                    /dev-wave · /test-and-close · /kit-retro (each ends with a Learn step)
-<workspace>/.claude-runtime/      tokens, evidence, qa-runs, browser profiles, logs (outside .claude; or $env:CLAUDE_RUNTIME)
+├── workflows\                    /dev-wave · /test-and-close · /kit-retro (each ends with a Learn step)
+├── *.local.*                     durable local state, git-ignored: tracking.local.json (tasks -> MRs, merge intents),
+│                                 learning.local.jsonl + learning.local.stamp (signals, last retro), tracker-none.local/
+└── .claude-runtime\              disposable, git-ignored (or the CLAUDE_RUNTIME env var): work\ (in-flight runs) · cache\ · logs\
 ```
-`<workspace>` = the folder that holds `.claude` (where you start Claude Code). Scripts find it from their own location.
+Every runtime and durable path has a name in `skills/dev-kit/scripts/kitpaths.json` (scripts resolve them with `Get-KitPath`);
+what writes each folder and how it is rebuilt: `docs/runtime.md`.
+`<workspace>` = the folder that holds `.claude` (where you start Claude Code). Scripts find the kit and workspace from their own location.
 Workflows take an optional `kitDir` arg (absolute path of `.claude`); pass it so every agent gets absolute paths.
 Run scripts from **PowerShell** (node, python, glab, gh and your tracker/report CLIs are on its PATH; `python` hangs in git-bash).
 Linux/macOS: run them with `pwsh` 7 (from Bash: `pwsh -NoProfile -Command "& <script>.ps1 ..."`); everything except
@@ -72,10 +80,10 @@ QA: add the environment to `qa-kit/targets.local.json`; app testing: point `andr
 Every workflow's last step and a daily background SessionStart hook run `scripts/cleanup.ps1`: leftover headless browsers (> 3 h), idle browser
 profiles, expired shared logins/tokens, stale evidence/temp, week-old Claude session temp dirs, kit test leftovers in the OS temp folder, finished
 worktrees (remote branch merged + deleted, clean, idle > 2 h; the local branch ref is kept; roots from kit.local.json "worktreeRoots") and log rotation. Only kit-created things.
-`-DryRun` shows what would go; `cleanup.log` in `.claude-runtime` records what was freed.
+`-DryRun` shows what would go; `<runtime>/logs/cleanup.log` records what was freed.
 
 ## Watching a wave
-`& <workspace>/.claude/skills/orchestrate/scripts/status.ps1 -Open -Watch` → `.claude-runtime/dashboard.html`: memory + running builds,
+`& <workspace>/.claude/skills/orchestrate/scripts/status.ps1 -Open -Watch` → `<runtime>/cache/dashboard.html`: memory + running builds,
 learned build profiles, worktrees (branch, ahead/behind, dirty), latest QA runs, learning signals and guard blocks.
 
 ## Document formats

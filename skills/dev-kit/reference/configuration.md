@@ -36,8 +36,8 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `gate.heapMinGB` | `4` | gate.ps1 | Heap floor when the gate shrinks heaps under memory pressure |
 | `supervise.ramActPct` | `90` | supervise.ps1 | RAM use (%) that raises an ACT flag |
 | `supervise.minDiskFreeGB` | `30` | supervise.ps1 | Free disk (GB) on the workspace drive below which supervise raises an ACT flag |
-| `localOnly` | `[]` | sync-kit.ps1, kit-lint.py | Workspace paths that are local overlay (org-only skills, project profiles, extra rules): sync-kit never copies over or deletes them, kit-lint treats them as overlay |
-| `orgTerms` | `[]` | kit-lint.py `--org-terms` | Org words (names, hosts, ids) that must never appear in the published kit; the coordinator scans the kit source with them before every push (orchestrate K3) |
+| `localOnly` | `[]` | kit-setup.ps1, kit-lint.py, pre-push hook | Kit paths that are local overlay (org-only skills, project profiles, extra rules): `kit-setup.ps1 -Exclude` (run by kit-health at SessionStart) writes them into the clone's `.git/info/exclude` so they never show in `git status`, the pre-push hook blocks them, kit-lint treats them as overlay |
+| `orgTerms` | `[]` | kit-lint.py `--org-terms`, pre-push hook | Org words (names, hosts, ids) that must never appear in the published kit; the coordinator scans the kit with them before every push (orchestrate K3) and `.githooks/pre-push` blocks a push that carries one |
 | `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
 
 ### Tracker (`tracker.type`)
@@ -65,7 +65,7 @@ $TR = '<workspace>/.claude/skills/dev-kit/scripts/tracker.ps1'
 | `github` | `gh`, logged in; `tracker.repo` = `owner/name` | issues; status = label `status:<name>`, closed statuses close the issue (reopened when moved back); parent = `Part of #n` in the body plus a `- [ ] #child` line in the parent; reports are posted as comment text |
 | `gitlab` | `glab`, logged in (host from `gitHost`); `tracker.repo` = `group/project` | same label/state model through the issues API |
 | `jira` | env `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | REST v3; status = the transition whose name or target status matches; `-List` = project key; `tracker.issueType` (default `Task`) / `tracker.subtaskType` (default `Subtask`); `-Assignee` = account id |
-| `none` | nothing | no tracker: every call is logged to `<runtime>/tracker-none/tracker.log` and kept as JSON there (`create` returns `LOCAL-<n>`); nothing fails |
+| `none` | nothing | no tracker: every task is kept as JSON in `<kit>/tracker-none.local/` (durable, git-ignored; `create` returns `LOCAL-<n>`) and every call is logged to `<runtime>/logs/tracker-none.log`; nothing fails |
 
 Other `tracker` keys:
 
@@ -87,7 +87,7 @@ Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in
 | `reports.type` | QA report (finalize.ps1) | `devtools.py doc` (tester guides) |
 |---|---|---|
 | `gdocs` | evidence uploaded to a Drive folder (`driveParent`), a Google Doc report anyone with the link can view; the tracker comment links it. Needs `gws` logged in | HTML uploaded as a Google Doc; prints its URL |
-| `markdown` | `<runDir>/<code>/report.md` (+ `report.html`) next to `shots\` and `evidence\`, links relative; the tracker comment carries the report (GitHub/GitLab: its text, ClickUp/Jira: the file attached, `none`: logged) and the bug task gets it too | the file (`.md` or `.html`) is kept under `<runtime>/docs` and its path printed — attach it with `tracker.ps1 attach` |
+| `markdown` | `<runDir>/<code>/report.md` (+ `report.html`) next to `shots\` and `evidence\`, links relative; the tracker comment carries the report (GitHub/GitLab: its text, ClickUp/Jira: the file attached, `none`: logged) and the bug task gets it too | the file (`.md` or `.html`) is kept under `<runtime>/work/docs` and its path printed — attach it with `tracker.ps1 attach` |
 
 `finalize.ps1 -Report gdocs|markdown` overrides the setting for one run.
 
@@ -120,7 +120,7 @@ empty = the machine's) and window/viewport size for `browser.mjs`.
 Top-level `keepFreeGB` (default `8`): `qa-seat.ps1` lets a new tester/verifier start only while free RAM minus its need
 (web ~1.5 GB, API ~0.4 GB) stays at or above it; the supervisor's capacity flag uses the same value.
 
-Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>/tokens`, web logins in `<runtime>/sessions`.
+Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>/cache/tokens`, web logins in `<runtime>/cache/sessions`.
 Evidence files never contain passwords or auth headers (`[redacted]`).
 
 ## `swarm.config.json` (android-swarm)
@@ -128,7 +128,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | Key | Default | Meaning |
 |---|---|---|
 | `avdDir` | `$env:ANDROID_AVD_HOME`, else `~/.android/avd` (`%USERPROFILE%\.android\avd` on Windows) | Where the lane AVDs live |
-| `outDir` | `<runtime>/android-swarm` | Runtime output: `apk/` (app.apk, base.apk, per-commit and side builds, `app.json` stamp), `build.log`, `metro.log`, emulator logs, `swarm.json`. An `app.apk` left in the skill's old `apk/` folder is copied here once |
+| `outDir` | `<runtime>/cache/android-swarm` | Runtime output: `apk/` (app.apk, base.apk, per-commit and side builds, `app.json` stamp), `build.log`, `metro.log`, emulator logs, `swarm.json`. An `app.apk` left in the skill's old `apk/` folder is copied here once |
 | `keepFreeGB` | `12` | A phone boots only if free RAM − 4.5 GB stays above this |
 | `headless` | `false` | Boot without windows (also per lane) |
 | `lanes[]` | — | `{ name, port, user, notes, headless }`: AVD name, console port (serial `emulator-<port>`), the lane's test login (a user key in targets.local.json), notes printed by `phone.ps1 acquire` |
@@ -147,7 +147,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 
 | Variable | Effect |
 |---|---|
-| `CLAUDE_RUNTIME` | Runtime folder (default `<workspace>/.claude-runtime`) |
+| `CLAUDE_RUNTIME` | Runtime folder (default `<kit>/.claude-runtime`; layout in `skills/dev-kit/scripts/kitpaths.json`) |
 | `CLAUDE_WT_ROOT` | Worktree root for `wt.ps1 new` (default `<repo's parent>-wt`) |
 | `CLAUDE_AGENT` | Owner name for fair turns in the memory gate (default: worktree prefix) |
 | `CLAUDE_GATE_KEEP_FREE_GB` | RAM the gate always keeps free (default `gate.keepFreeGB`, else 15% of RAM, min 6 GB) |
@@ -194,7 +194,7 @@ What detection reads (so most repos need no override):
 { brief: '<abs path>/wave-brief.md', mode: 'feature' | 'bugfix' | 'resume', review: true | false | 'auto', learn: true | false | 'auto',
   agents: [ { id: 'X1', items: 'A3, A4', area: 'project form', note: '', complex: false, model: '', effort: 'medium' } ],   // complex/model/effort optional
   complex: ['X1'], models: { build: 'sonnet', review: 'sonnet' },   // optional (see Models by stage)
-  kitDir: '<workspace>/.claude', runtimeDir: '<workspace>/.claude-runtime' }   // kitDir/runtimeDir optional, recommended
+  kitDir: '<workspace>/.claude' }   // kitDir optional, recommended; runtimeDir optional (default <kitDir>/.claude-runtime)
 ```
 
 `/test-and-close` (`.claude/workflows/test-and-close.js`): preferably the short form
@@ -270,11 +270,11 @@ cache keeps "free" near zero).
 
 | Event | Script | Purpose |
 |---|---|---|
-| `PreToolUse` (Bash, PowerShell) | `dev-kit/scripts/guard.ps1` | blocks `git stash`, `--no-verify`, force-push to shared branches, ungated heavy builds; logs to `<runtime>/guard.log` |
-| `SessionStart` | `orchestrate/scripts/kit-health.ps1` | one line when the workspace kit is behind its source (`kit-sync.local.json`, written by sync-kit) or kit-lint finds problems |
+| `PreToolUse` (Bash, PowerShell) | `dev-kit/scripts/guard.ps1` | blocks `git stash`, `--no-verify`, force-push to shared branches, ungated heavy builds, deleting the runtime's `work/` while runs are active; logs to `<runtime>/logs/guard.log` |
+| `SessionStart` | `orchestrate/scripts/kit-health.ps1` | one line when the kit clone has uncommitted changes, is behind/ahead of its last-fetched upstream, the pre-push gate is off, an old runtime waits for migration, or kit-lint finds problems; refreshes the `localOnly` excludes |
 | `SessionStart` | `orchestrate/scripts/retro-nudge.ps1` | one-line nudge to run `/kit-retro` once ≥ 15 signals piled up |
 | `SessionStart` (async) | `orchestrate/scripts/cleanup.ps1 -IfDue -Quiet` | daily self-cleaning |
-| `SessionStart` (async) | `orchestrate/scripts/kit-health.ps1 -Flow` | regenerates `<runtime>/kit-flow.html` (also done by every kit-lint run and sync-kit) |
+| `SessionStart` (async) | `orchestrate/scripts/kit-health.ps1 -Flow -Fetch` | regenerates `<runtime>/cache/kit-flow.html` (also done by every kit-lint run) and runs `git fetch` so the next start knows the real behind/ahead count |
 
 They run with PowerShell 7 (`pwsh`, on `PATH` on Windows, Linux and macOS) in exec form, with the path built from
 `${CLAUDE_PROJECT_DIR}/.claude/...` (forward slashes work on every OS) — so the kit must sit in the `.claude` folder of

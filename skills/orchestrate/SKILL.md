@@ -32,9 +32,10 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
 | `scripts/status.ps1` | step 4, live dashboard (`-Open -Watch`) |
 | `scripts/cleanup.ps1` | E18 after a wave; SessionStart hook (daily, async); every workflow's last step |
-| `scripts/kit-lint.py`, `scripts/kitgraph_lib.py` | K3 and E16 (0 problems before a push); SessionStart summary via kit-health.ps1; sync-kit |
-| `scripts/kit-flow.py`, `scripts/kit-flow.template.html` | R3 / K3: renders `<runtime>/kit-flow.html` (`--watch` while editing); also run by kit-lint, sync-kit and SessionStart |
-| `scripts/kit-health.ps1` | SessionStart hook: kit drift + kit-lint summary (E17); `-Flow` regenerates the page (async) |
+| `scripts/kit-lint.py`, `scripts/kitgraph_lib.py` | K3 and E16 (0 problems before a push); SessionStart summary via kit-health.ps1; the pre-push hook (`--org-terms`) |
+| `scripts/kit-flow.py`, `scripts/kit-flow.template.html` | R3 / K3: renders `<runtime>/cache/kit-flow.html` (`--watch` while editing); also run by kit-lint and SessionStart |
+| `scripts/kit-health.ps1` | SessionStart hook: kit git state (uncommitted, behind/ahead), pre-push gate, old runtime, kit-lint summary (E17); `-Flow -Fetch` async |
+| `scripts/kit-setup.ps1` | install / repair (hooksPath, `localOnly` excludes, runtime folders); `-Exclude` from kit-health; `-Migrate <old runtime>` (E17) |
 | `scripts/kit-cost.ps1`, `scripts/kit-cost.mjs` | K3 after a workflow or SKILL.md change (`-Steps`, `-Baseline`) |
 | `scripts/retro-nudge.ps1` | SessionStart hook: the E14 nudge |
 | `scripts/guard-sendmessage.ps1` | PreToolUse hook: blocks SendMessage to workflow agents (E10) |
@@ -54,7 +55,7 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
 4. **Relay** (E10): decisions/contracts → append to `<brief>.contracts.md`; watch with `scripts/status.ps1 -Open -Watch` if useful.
 5. **Ship:** agents merge producers first (DB/API), then clients; tracker → review → promoted (`track.ps1`, automatic).
 6. **Deploy:** **a person** deploys to the test environment. App: `android-swarm/app-build.ps1` from the merged branch (agents lease phones).
-7. **Test:** run folder `<workspace>/.claude-runtime/qa-runs/<date>-<name>/` + `run.json` (`qa-kit/reference/runs.md`);
+7. **Test:** run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (`qa-kit/reference/runs.md`);
    `/test-and-close { runDir, kitDir }`; start `qa-kit/scripts/autoclose.ps1` in the background. Bugs → E9; retest: `retest: true`.
 8. **Close:** reconcile backlog vs merged MRs + tracker comments; list only what's open, each with a reason (external / new data model /
    product decision / no data / cut for size). `inTest` only after deployment, set by a person.
@@ -75,22 +76,24 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
 | E9 | QA bug tasks created ("[Bug] … failed checks") | `bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per bug, then ONE /dev-wave `mode: 'bugfix'` for every bug open now; never wait for the QA run to finish |
 | E10 | The owner changes a rule or scope mid-wave | append it to the brief AND `<brief>.contracts.md` (agents re-read both before every push); QA runs: `<runDir>/lead-notes.md`. Never SendMessage a workflow agent by id (a hook blocks it: it spawns a duplicate) |
 | E11 | The owner asks for something destructive (clean a folder, reset a branch) while waves run | do it yourself after they finish; agents never act on relayed requests |
-| E12 | HEAL: a guard block that was wrong or repeated, a script crash, a workaround, a false flag, any kit friction | fix the script/rule in the kit source in this session ("Change the kit"), re-test it, then `learn.ps1 -Skill <s> -Fixed "<words>"` for its lesson |
+| E12 | HEAL: a guard block that was wrong or repeated, a script crash, a workaround, a false flag, any kit friction | fix the script/rule in the kit in this session ("Change the kit": edit in place, commit, push), re-test it, then `learn.ps1 -Skill <s> -Fixed "<words>"` for its lesson |
 | E13 | LEARN: something cost time, failed, surprised you or worked unusually well | `learn.ps1 -Skill <s> -Kind <kind> -Text "<what + fix>"` |
 | E14 | The session-start nudge says signals piled up, or a run finished with errors, deferrals or review findings | /kit-retro (R4) |
 | E15 | A lesson is seen 2+ times | 2×: a `LESSONS.md` line (`learn.ps1 -Lesson "(n×) …"`); 3× and still true, generic and actionable for every agent of that type: promote it to a rule in SKILL.md / rules, or better a script check or default (then `-Fixed`) |
-| E16 | The kit changed in its source clone | K3-K5: `kit-lint.py` (0 problems), parse checks, org-term scan, commit + push; `sync-kit.ps1` only after running agents finish |
-| E17 | SessionStart says the workspace kit is behind its source, or kit-lint reports problems | sync once no agents run (E16); lint problems in the published kit → HEAL in the source; in the local overlay → fix the overlay (`reference/extending.md` §8) |
+| E16 | You changed the kit (it is the workspace's `.claude` folder, a git clone: edit in place) | K3-K5: `kit-lint.py` (0 problems), parse checks, commit + push (the pre-push hook re-checks org terms and local files) |
+| E17 | SessionStart kit line: uncommitted kit changes, behind/ahead of upstream, pre-push gate off, an old runtime, or kit-lint problems | uncommitted → commit + push (E16), or list org-only paths in `kit.local.json` `localOnly`; behind → `git -C <kit> pull --rebase` once no agents run; gate off / old runtime → `kit-setup.ps1` (`-Migrate <old runtime>`); lint problems in published files → HEAL; in the local overlay → fix the overlay (`reference/extending.md` §8) |
 | E18 | A wave finished | workflows run `cleanup.ps1 -WorktreeIdleHours 0` themselves (merged worktrees go at once); after a stopped run, run it yourself |
 | E19 | A new repo or project joins | `dev-kit/scripts/stack.ps1 -Dir <module>`; wrong commands → `.claude-stack.json` (`reference/layout.md` "Adding a new project") |
 | E20 | A deploy (or a merge into a branch that deploys) is needed | ask a person; never deploy yourself |
 
 ## Change the kit (HEAL and extending)
 - K1. Read `reference/extending.md` (where each kind of part goes, the patterns kit-lint enforces); `reference/layout.md` for the layout.
-- K2. Edit the **kit source clone** (generic: no org, product, tenant, host, id or local path; config through `*.local.json`), never a
-  workspace copy except its local overlay. Prefer making the script handle it over telling agents to.
-- K3. `python <kit>/skills/orchestrate/scripts/kit-lint.py` must print 0 problems (it regenerates `<runtime>/kit-flow.html`); parse every
+- K2. Edit the kit **in place**: `<kit>` is a git clone of the kit repo (generic: no org, product, tenant, host, id or local path;
+  config through `*.local.json`; org-only parts are local overlay, git-ignored or `localOnly`). Prefer making the script handle it
+  over telling agents to.
+- K3. `python <kit>/skills/orchestrate/scripts/kit-lint.py` must print 0 problems (it regenerates `<runtime>/cache/kit-flow.html`); parse every
   touched .ps1, `node --check` touched .js/.mjs (workflows wrapped as in CONTRIBUTING), `kit-cost.ps1 -Steps` after a workflow change;
-  org-term scan: `kit-lint.py --org-terms <workspace>/.claude/skills/dev-kit/kit.local.json` (its `orgTerms` list).
-- K4. Commit (Conventional Commits), `git pull --rebase`, push. K5. `sync-kit.ps1 -To <workspace>/.claude -Clean` once no agents run
-  (it lints first, stamps the source commit and regenerates the page). K6. `learn.ps1 -Fixed` for the lesson the change retires.
+  org-term scan: `kit-lint.py --org-terms <kit>/skills/dev-kit/kit.local.json` (its `orgTerms` list; the pre-push hook runs it too).
+- K4. `git -C <kit> status` shows only kit files (org-only ones: `localOnly`); commit (Conventional Commits), `git pull --rebase`,
+  push: the versioned pre-push hook blocks org terms and ignored/local files. K5. Nothing to sync: every session in this workspace
+  already runs the new kit (agents already running keep the files they read). K6. `learn.ps1 -Fixed` for the lesson the change retires.
