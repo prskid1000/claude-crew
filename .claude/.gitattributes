@@ -1,3 +1,0 @@
-# Workflow scripts must be LF (CR is rejected as a control character)
-*.js text eol=lf
-*.mjs text eol=lf

@@ -1,15 +1,28 @@
-# local config with secrets / machine values
-*.local.json
-**/settings.local.json
-.claude/skills/android-swarm/swarm.config.json
-.claude/skills/android-swarm/swarm.json
-.claude/skills/android-swarm/apk/
-*.log
+# This repo IS a workspace's .claude folder (git clone ... <workspace>/.claude). Everything below stays local.
+# Org-only paths that are not covered here go in skills/dev-kit/kit.local.json "localOnly": kit-exclude.ps1 writes them
+# into .git/info/exclude (kit-health runs it at SessionStart), so they never show in git status.
+
+# runtime: disposable (work/ cache/ logs/), rebuilt by the scripts; see docs/runtime.md
+/.claude-runtime/
+
+# local config, org rules and durable local state (copy the *.example.json files)
+*.local.*
+*.local/
+settings.local.json
+skills/dev-kit/kit.local.json
+skills/qa-kit/targets.local.json
+skills/android-swarm/swarm.config.json
+skills/android-swarm/swarm.json
+skills/android-swarm/apk/
+rules/*.local.md
+
+# harness state Claude Code writes into .claude
+/agent-memory-local/
+/scheduled_tasks.lock
+/worktrees/
+
+# installs, caches, build output
 node_modules/
 __pycache__/
-.claude/agent-memory-local/
-.claude/scheduled_tasks.lock
-# runtime output (never commit)
-.claude-runtime/
-# org rules kept out of the generic kit
-.claude/rules/*.local.md
+*.apk
+*.log
