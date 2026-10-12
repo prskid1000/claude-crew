@@ -66,13 +66,14 @@ const REPORT = {
     done: { type: 'array', items: { type: 'string' }, description: 'item ids finished' },
     deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
     needsLiveCheck: { type: 'array', items: { type: 'string' } },
+    testerGuide: { type: 'string', description: 'testing instructions for the tester: link to the published tester guide (complex change) or to the tracker comment with the how-to-test steps (simple change); "none: <reason>" only for changes with nothing to test (docs, kit, refactor without behaviour change)' },
     seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
     foreignHooks: { type: 'array', items: { type: 'string' }, description: 'one-line hooks left in another agent area' },
     summary: { type: 'string', description: '<=200 words' },
     changedLines: { type: 'number', description: 'added + removed lines over all your MRs (git diff --numstat origin/<target>...HEAD)' },
     changedFiles: { type: 'array', items: { type: 'string' }, description: 'repo-relative paths changed by your MRs' },
   },
-  required: ['mrs', 'worktrees', 'done', 'deferred', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary'],
+  required: ['mrs', 'worktrees', 'done', 'deferred', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary', 'testerGuide'],
 }
 const REVIEW_SCHEMA = {
   type: 'object',
@@ -129,6 +130,10 @@ ${REVIEW
 merge): a review runs first and the workflow merges after it. Report merged=false for every MR.${REVIEW_AUTO ? `
 Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
+Testing instructions are part of the job (dev-kit Quick start step 7b): a simple change gets a how-to-test comment on the task;
+a complex one (several screens or flows, more than one repo, migrations, roles) gets a tester guide from
+${KIT}/skills/qa-kit/templates/tester-guide.html (check ids, concrete Expected per check, environment, accounts, data to prepare)
+published with devtools.py doc and linked on the task and in the MR. Report its link as testerGuide.
 Return the report.`
 }
 
@@ -169,7 +174,7 @@ function shipPrompt(a, r) {
 ${r.mrs.filter((m) => !m.merged).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 DB/API (producer) and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
 A consumer (web/app) MR that depends on an API MR in this list: don't merge it; register & ${ORCH}/track.ps1 add -Task <task id from the
-MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged).${HOLD_NOTE}`
+MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, learn ${LEARN}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
@@ -215,6 +220,7 @@ const results = await pipeline(
       done: uniq([...x.report.done, ...r2.done]), deferred: uniq([...x.report.deferred, ...r2.deferred]),
       needsLiveCheck: uniq([...x.report.needsLiveCheck, ...r2.needsLiveCheck]), seed: uniq([...(x.report.seed || []), ...(r2.seed || [])]),
       foreignHooks: uniq([...(x.report.foreignHooks || []), ...(r2.foreignHooks || [])]),
+      testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.report.testerGuide,
       summary: `${x.report.summary}\n\nFix round: ${r2.summary}` } }
   },
 )
@@ -231,7 +237,9 @@ const outcome = {
   needsLiveCheck: out.flatMap((x) => (x.report ? x.report.needsLiveCheck : [])),
   seed: out.flatMap((x) => (x.report ? x.report.seed : [])),
   openFindings: out.flatMap((x) => (x.fixed ? [] : (x.findings || []).filter((f) => f.severity !== 'nit'))),
+  testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, guide: x.report.testerGuide || 'MISSING' })),
 }
+for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no tester guide (${g.guide}) - the coordinator writes or requests one before QA`)
 
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
 // learn: 'auto' runs it only when something happened worth learning from; a clean wave just gets the cleanup.

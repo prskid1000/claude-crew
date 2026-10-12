@@ -24,6 +24,7 @@ Read `<workspace>/.claude/skills/dev-kit/SKILL.md` first. This brief adds wave-s
 - **Contracts between agents**: <"X1 adds DTO field f (optional); X2 consumes it after X1's API MR merges">.
 
 **Branch / worktree:** `f/<tracker.branchTag><task>-<slug>`, worktree name = your agent id (e.g. `x1`).
+**Testing instructions (mandatory):** simple change -> how-to-test comment on the task; complex -> tester guide from `qa-kit/templates/tester-guide.html`, published with `devtools.py doc`, linked on the task and in the MR (dev-kit Quick start step 7b). Include "unchanged" checks for what must not change.
 **Tracker:** create your task under epic <id> in list <id>, assigned to <user id>, named per your org's task-naming convention (e.g. `[Feature] <product> — <code> <title> (<repos>)`).
 
 **Items that turn out to need a product decision or a behaviour change for existing users:** defer with a one-line reason. Don't guess.

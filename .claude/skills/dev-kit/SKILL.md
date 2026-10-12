@@ -24,6 +24,8 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. rebase + re-check before push
 git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
+python $K/devtools.py doc <guide.html> "<title>"                  # 7b. tester guide (complex change) -> link it on the task + MR;
+                                                                #     simple change: tracker.ps1 comment <task> with how-to-test steps
 python $K/devtools.py merge <wt> <iid>                           # 8. merge-when-green, returns at once (NOT in a reviewed /dev-wave)
 & <workspace>/.claude/skills/orchestrate/scripts/track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. coordinator promotes when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board
@@ -44,10 +46,15 @@ python $K/devtools.py merge <wt> <iid>                           # 8. merge-when
 - **Ship:** re-read `<brief>.contracts.md` before pushing (append-only if you write to it, never overwrite); one MR per repo, title
   with `<tag><task>` in it (e.g. `feat: <summary> - <CODE> (<tag><task>) (<Repo>)`, or the brief's format), body from `orchestrate/templates/MR_BODY.md`; in a reviewed `/dev-wave` don't
   schedule merges (the workflow does after review); producers (DB/API) merge before consumers; force-push only your own branch (`--force-with-lease`).
-- **Tracker:** always `scripts/tracker.ps1` (never a tracker CLI): `inProgress` → `review` once MRs are open and the guide posted → `promoted` when all merged; never `inTest`.
+- **Tracker:** always `scripts/tracker.ps1` (never a tracker CLI): `inProgress` → `review` once MRs are open and the testing instructions (7b) posted → `promoted` when all merged; never `inTest`.
+- **Testing instructions (mandatory, step 7b):** every change that a tester can check gets them before the task moves to `review`.
+  Simple (one screen / one endpoint): a how-to-test comment on the task. Complex (several screens or flows, more than one repo,
+  migrations, roles/permissions, reports): a tester guide from `qa-kit/templates/tester-guide.html` (check ids, environment, accounts,
+  data to prepare, steps and a concrete Expected per check; include "unchanged" checks for what must not change), published with
+  `devtools.py doc` and linked on the task and in the MR. Details: `reference/shipping.md` §7. Report the link as `testerGuide`.
 - **Evidence:** UI → screenshots, backend → `qa-kit/scripts/api.ps1 -Save` JSON; never production; a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 
-**Final reply (≤ 200 words):** MRs + merge state · done / deferred ids with reasons · settings/data to seed · what needs a live check ·
+**Final reply (≤ 200 words):** MRs + merge state · tester guide / how-to-test link · done / deferred ids with reasons · settings/data to seed · what needs a live check ·
 hooks left in other areas · dependencies you needed but didn't install.
 
 **Learn:** read `LESSONS.md` (next to this file) first. Something cost time, failed or worked unusually well → one line:
