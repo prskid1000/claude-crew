@@ -1,22 +1,33 @@
 #Requires -Version 7
 <#
-Merges a source branch (usually main) into a deploy branch (e.g. staging/<product>) so merged fixes reach the test environment.
+Merges a source branch (the repo's main line) into a deploy branch (repos[].deploys[].branch in kit.local.json, e.g. staging)
+so merged fixes reach the test environment.
 Automates the one conflict rule that is always safe: a deploy-branch file that is byte-identical to SOME earlier version of the
 same file on the source branch (it came in through an earlier squashed/cherry-picked merge) takes the source's current version.
 Any other conflict stops the script with the list, for a human or agent to resolve.
 
-  & <kit>/skills/dev-kit/scripts/deploy-merge.ps1 -Repo <main checkout> -To staging/<product> [-From main] [-Push] [-Check <dir to compile>]
+  & <kit>/skills/dev-kit/scripts/deploy-merge.ps1 -Repo <main checkout> -To <deploy branch> [-From <branch>] [-Push] [-Check <dir to compile>]
+
+-From default: kit.local.json repos[].target of this checkout, else the remote's default branch (origin/HEAD), else main.
 
 Steps: fresh worktree from origin/<To> (wt.ps1 new), merge --no-ff origin/<From>, auto-resolve as above, commit with hooks
 (wt.ps1 commit), optional compile (check.ps1 -Dir <worktree>/<Check>), then with -Push a plain (fast-forward) push to <To>.
 Without -Push it stops after the commit so you can look first. Prints the worktree; remove it afterwards with wt.ps1 remove.
 #>
 param(
-  [Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$To, [string]$From = 'main',
+  [Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$To, [string]$From,
   [string]$Check, [switch]$Push, [int]$History = 300
 )
 $ErrorActionPreference = 'Stop'
 $K = $PSScriptRoot
+if (-not $From) {
+  . (Join-Path $K 'kitconfig.ps1')
+  $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
+  $From = @(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and $_.target -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1 -ExpandProperty target
+  if (-not $From) { $h = (git -C $Repo symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null); if ($h) { $From = ($h -replace '^origin/', '').Trim() } }
+  if (-not $From) { $From = 'main' }
+  "source branch: $From"
+}
 $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
 $br = "deploy/$($To -replace '[^\w]+', '-')-$(Get-Date -Format yyyyMMddHHmm)"
 $out = & (Join-Path $K 'wt.ps1') new -Repo $Repo -Branch $br -Target $To -Name $name

@@ -5,12 +5,32 @@ the dev agent instead of scheduling a merge that will never happen.
   & <workspace>/.claude/skills/dev-kit/scripts/pipe-wait.ps1 -Mrs https://gitlab.example.com/group/api/-/merge_requests/12,https://... [-MaxMinutes 8]
 
 Output: {"done":true|false,"mrs":[{"mr":url,"status":"success|failed|running|...","job":"<failed job>","error":"<last error lines>"}]}
-done=false = some pipelines still running after -MaxMinutes (call again). Exit 0 always (read the JSON). GitLab (glab) MRs only.
+done=false = some pipelines still running after -MaxMinutes (call again). Exit 0 always (read the JSON).
+GitLab MRs (.../-/merge_requests/<n>) through glab; GitHub pull requests (.../pull/<n>) through gh (status = the PR's checks).
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
+# GitHub: the PR's check runs / commit statuses folded into the GitLab-style statuses the callers read
+function GhState($url) {
+  $pr = gh pr view $url --json state,statusCheckRollup 2>$null | ConvertFrom-Json
+  if (-not $pr) { return [ordered]@{ mr = $url; status = 'unknown' } }
+  if ($pr.state -eq 'MERGED') { return [ordered]@{ mr = $url; status = 'merged' } }
+  $checks = @($pr.statusCheckRollup)
+  if (-not $checks.Count) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }
+  $res = @($checks | ForEach-Object { if ($_.conclusion) { $_.conclusion } elseif ($_.state) { $_.state } else { $_.status } } | ForEach-Object { "$_".ToUpper() })
+  $bad = @($checks | Where-Object { "$($_.conclusion)$($_.state)".ToUpper() -match 'FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE' })
+  $o = [ordered]@{ mr = $url; status = $(if ($bad.Count) { 'failed' } elseif ($res | Where-Object { $_ -match 'PENDING|QUEUED|IN_PROGRESS|EXPECTED|WAITING|REQUESTED' }) { 'running' } else { 'success' }) }
+  if ($bad.Count) {
+    $o.job = $(if ($bad[0].name) { $bad[0].name } else { $bad[0].context })
+    $link = if ($bad[0].detailsUrl) { $bad[0].detailsUrl } else { $bad[0].targetUrl }
+    if ($link -match '/runs/(\d+)') { $o.error = ((gh run view $Matches[1] --repo ($url -replace '^https?://[^/]+/([^/]+/[^/]+)/pull/.*$', '$1') --log-failed 2>$null) -split "`n" | Where-Object { $_ -match '(?i)error|fail|exception' } | Select-Object -Last 8) -join "`n" }
+    if (-not $o.error) { $o.error = "see $link" }
+  }
+  $o
+}
 function State($url) {
+  if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
   if ($url -notmatch '^https?://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
   $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
   $m = glab api "projects/$proj/merge_requests/$iid" 2>$null | ConvertFrom-Json

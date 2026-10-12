@@ -48,7 +48,8 @@ if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
 # the agent's "merged" is a snapshot from when it finished (usually merge-when-green still pending): ask GitLab now
 # (glab talks to the host it is logged in to; self-hosted: GITLAB_HOST / kit.local.json "gitHost")
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
-  $m.merged = ((glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json).state -eq 'merged') } } }
+  $m.merged = ((glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json).state -eq 'merged') }
+  elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') { $m.merged = ((gh pr view $m.url --json state 2>$null | ConvertFrom-Json).state -eq 'MERGED') } } }   # GitHub PRs
 function Sum($xs, $k) { [int](@($xs | ForEach-Object { $_[$k] }) | Measure-Object -Sum).Sum }
 $cut = { param($s, $n) $s = [string]$s; $s.Substring(0, [math]::Min($n, $s.Length)) }
 if ($Detail) {

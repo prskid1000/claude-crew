@@ -43,7 +43,13 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
       if ($lockChanged -and $c.app.kind -eq 'react-native') {
         $pkgDir = (Get-Item $AppDir).FullName; while ($pkgDir -and -not (Test-Path (Join-Path $pkgDir 'package.json'))) { $pkgDir = Split-Path $pkgDir }
         "dependencies changed ($($lockChanged -join ', ')): installing in $pkgDir"
-        Push-Location $pkgDir; try { if (Test-Path 'yarn.lock') { yarn install --frozen-lockfile 2>&1 | Select-Object -Last 2 } else { npm ci 2>&1 | Select-Object -Last 2 } } finally { Pop-Location }
+        # frozen install with the repo's package manager (yarn 1: --frozen-lockfile, yarn 2+ (.yarnrc.yml): --immutable)
+        Push-Location $pkgDir; try {
+          if (Test-Path 'pnpm-lock.yaml') { pnpm install --frozen-lockfile 2>&1 | Select-Object -Last 2 }
+          elseif (Test-Path 'yarn.lock') { if (Test-Path '.yarnrc.yml') { yarn install --immutable 2>&1 | Select-Object -Last 2 } else { yarn install --frozen-lockfile 2>&1 | Select-Object -Last 2 } }
+          elseif ((Test-Path 'bun.lockb') -or (Test-Path 'bun.lock')) { bun install --frozen-lockfile 2>&1 | Select-Object -Last 2 }
+          else { npm ci 2>&1 | Select-Object -Last 2 }
+        } finally { Pop-Location }
       }
     }
   }
@@ -51,19 +57,22 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
 $commit = (git -C $AppDir rev-parse --short HEAD).Trim()
 "Building $Task from $branch @ $commit$(if ($dirty) { " (+$dirty uncommitted changes)" }) ..."
 
-# Java 24+ breaks the native (CMake/prefab) step, so a JAVA_HOME of 24+ (e.g. a user-level Corretto 25) is ignored here
+# Java 24+ breaks the native (CMake/prefab) step, so a JAVA_HOME of 24+ (e.g. a user-level Corretto 25) is ignored here.
+# swarm.config.json app.javaHome pins a JDK; app.javaVersions (default [17, 21]) lists the majors the app's build accepts.
 $javaExe = Join-Path 'bin' (Get-ExeName 'java')
-function JavaMajor($h) { if ($h -and (Test-Path (Join-Path $h $javaExe))) { $v = (& (Join-Path $h $javaExe) -version 2>&1 | Select-Object -First 1); if ($v -match 'version "(\d+)') { [int]$Matches[1] } } }
-if (-not $JavaHome -and (JavaMajor $env:JAVA_HOME) -in 17, 21) { $JavaHome = $env:JAVA_HOME }
+$javaOk = @(if ($c.app.javaVersions) { @($c.app.javaVersions) | ForEach-Object { [int]$_ } } else { 17, 21 })
+if (-not $JavaHome -and $c.app.javaHome) { $JavaHome = [string]$c.app.javaHome }
+function JavaMajor($h) { if ($h -and (Test-Path (Join-Path $h $javaExe))) { $v = (& (Join-Path $h $javaExe) -version 2>&1 | Select-Object -First 1); if ($v -match 'version "(1\.)?(\d+)') { [int]$Matches[2] } } }
+if (-not $JavaHome -and (JavaMajor $env:JAVA_HOME) -in $javaOk) { $JavaHome = $env:JAVA_HOME }
 if (-not $JavaHome) {
   # JDK folders per OS (Android Studio's bundled jbr included); macOS JDKs keep java under Contents/Home
   $roots = @((Join-Path $HOME '.gradle/jdks'), (Join-Path $HOME '.jdks'))
-  $roots += if ($KitIsWindows) { 'C:\Program Files\Android', 'C:\Program Files\Java', 'C:\Program Files\Eclipse Adoptium' }
+  $roots += if ($KitIsWindows) { @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Android'; Join-Path $_ 'Java'; Join-Path $_ 'Eclipse Adoptium'; Join-Path $_ 'Microsoft'; Join-Path $_ 'Amazon Corretto'; Join-Path $_ 'Zulu' } }
             elseif ($KitIsMac) { '/Library/Java/JavaVirtualMachines', '/Applications' }
             else { '/usr/lib/jvm', '/opt', (Join-Path $HOME 'android-studio') }
   $JavaHome = @(Get-ChildItem $roots -Directory -ErrorAction SilentlyContinue |
     ForEach-Object { if ($_.Name -match '^Android Studio') { if ($KitIsMac) { Join-Path $_.FullName 'Contents/jbr/Contents/Home' } else { Join-Path $_.FullName 'jbr' } } elseif ($_.Name -eq 'android-studio') { Join-Path $_.FullName 'jbr' } elseif (Test-Path (Join-Path $_.FullName 'Contents/Home')) { Join-Path $_.FullName 'Contents/Home' } else { $_.FullName } } |
-    Where-Object { Test-Path (Join-Path $_ $javaExe) } | Where-Object { ((& (Join-Path $_ $javaExe) -version 2>&1 | Select-Object -First 1) -match 'version "(17|21)\.') })[0]
+    Where-Object { Test-Path (Join-Path $_ $javaExe) } | Where-Object { (JavaMajor $_) -in $javaOk })[0]
 }
 if ($JavaHome) { $env:JAVA_HOME = $JavaHome }
 "Using Java: $env:JAVA_HOME"
@@ -78,8 +87,11 @@ Select-String -Path $log -Pattern 'BUILD|FAILURE|error:' | Select-Object -Last 1
 Push-Location $android; & (Join-Path . $gw) --stop --console=plain | Out-Null; Pop-Location   # don't leave a multi-GB daemon idling
 if ($rc -ne 0) { throw "Gradle build failed (exit $rc) - see $log" }
 # the APK this run built, whatever its variant folder (a task other than the configured one must not copy a stale APK)
-$apk = Get-ChildItem (Join-Path $android 'app/build/outputs/apk') -Recurse -Filter *.apk -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
-if (-not $apk) { throw "no APK built by this run under $(Join-Path $android 'app/build/outputs/apk')" }
+# Module folder from app.apkGlob (default app/build/outputs/apk/<variant>/*.apk): an application module not named 'app' works too
+$apkRoot = Join-Path $android ((([string]$c.app.apkGlob) -split '/build/outputs/')[0] + '/build/outputs/apk')
+if (-not (([string]$c.app.apkGlob) -match '/build/outputs/')) { $apkRoot = Join-Path $android 'app/build/outputs/apk' }
+$apk = Get-ChildItem $apkRoot -Recurse -Filter *.apk -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
+if (-not $apk) { throw "no APK built by this run under $apkRoot (set swarm.config.json app.apkGlob to <module>/build/outputs/apk/... if the app module is not 'app')" }
 $apkDir = Join-Path $c.dir 'apk'; New-Item -ItemType Directory -Force $apkDir | Out-Null
 $name = if ($DevClient) { 'base' } elseif ($Task -eq $c.app.buildTask) { 'app' } else { 'app-' + ($Task -replace '^assemble', '').ToLower() }
 # apk/app.apk is what phone.ps1 installs on EVERY lane: only a build of the configured checkout may replace it.

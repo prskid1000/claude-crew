@@ -193,12 +193,13 @@ $state | ConvertTo-Json -Depth 4 | Set-Content $stateFile
 # 4. machine
 $mem = Get-SysMem; $tot = $mem.TotalGB; $avail = $mem.AvailGB
 $pct = [int](100 * (1 - $avail / $tot)); L "memory: $pct% used, $([math]::Round($avail,1)) GB available"
-if ($pct -ge 90) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run cleanup.ps1; check for orphaned java/node/chrome from finished agents.' }
+$ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90); $diskMin = [double](Get-KitSetting 'supervise.minDiskFreeGB' 30)   # kit.local.json
+if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run cleanup.ps1; check for orphaned java/node/chrome from finished agents.' }
 # the drive / file system the workspace (repos, worktrees, runtime) lives on
 $drive = if ($KitIsWindows) { $KitConf.Workspace.Substring(0, 1) } else { $KitConf.Workspace }
 $freeGB = try { [math]::Round([IO.DriveInfo]::new($(if ($KitIsWindows) { "${drive}:\" } else { $drive })).AvailableFreeSpace / 1GB) } catch { 999 }
 L "disk ${drive}: $freeGB GB free"
-if ($freeGB -lt 30) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Run cleanup.ps1; remove finished worktrees.' }
+if ($freeGB -lt $diskMin) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Run cleanup.ps1; remove finished worktrees.' }
 $gl = Join-Path $rt 'guard.log'
 $blocks = @(Get-Content $gl | Where-Object { $_ -match '^(\S+)\t' -and ($now - [datetime]$Matches[1]).TotalMinutes -lt 60 })
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: read guard.log; add a contracts note or a lesson so they stop.' }

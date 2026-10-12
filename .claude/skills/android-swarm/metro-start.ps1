@@ -12,7 +12,11 @@ if (-not $Port) { $Port = $c.app.metroPort }
 $log = Join-Path $c.dir 'metro.log'
 Get-PortPids $Port | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; "stopped old Metro pid $_" }
 $flags = "--port $Port --max-workers $MaxWorkers" + $(if ($ClearCache) { ' --clear' } else { '' })
-$cmd = "Set-Location '$AppDir'; `$env:CI='1'; npx expo start $flags *>&1 | Out-File -FilePath '$log' -Encoding utf8"
+# Expo app (expo in package.json): npx expo start; bare React Native: npx react-native start (same Metro flags)
+$pkgDir = (Get-Item $AppDir).FullName; while ($pkgDir -and -not (Test-Path (Join-Path $pkgDir 'package.json'))) { $pkgDir = Split-Path $pkgDir }
+$isExpo = $pkgDir -and ((Get-Content (Join-Path $pkgDir 'package.json') -Raw) -match '"expo"\s*:')
+$starter = if ($isExpo) { 'npx expo start' } else { 'npx react-native start' }
+$cmd = "Set-Location '$AppDir'; `$env:CI='1'; $starter $flags *>&1 | Out-File -FilePath '$log' -Encoding utf8"
 Start-Detached -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-Command', $cmd -WorkingDirectory $AppDir   # hidden on Windows, setsid/nohup elsewhere
 "Metro starting (workers $MaxWorkers, log $log) ..."
 $ready = $false

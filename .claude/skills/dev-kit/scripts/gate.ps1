@@ -12,7 +12,7 @@ There is no fixed limit on parallel builds. A build starts only when
     available RAM - (memory still promised to running builds) - (this build's estimate)  >=  KeepFreeGB
 - available RAM = free + reclaimable cache (Windows "Available" as Task Manager shows it, Linux MemAvailable, macOS free +
   inactive pages), read through sysinfo.ps1 so the gate runs on Windows, Linux and macOS;
-- KeepFreeGB default = 15% of total RAM (min 6 GB); override with -KeepFreeGB or $env:CLAUDE_GATE_KEEP_FREE_GB;
+- KeepFreeGB default = 15% of total RAM (min 6 GB); override with -KeepFreeGB, $env:CLAUDE_GATE_KEEP_FREE_GB or kit.local.json gate.keepFreeGB;
 - the estimate is LEARNED per PROJECT: each build's peak working set is recorded per command kind + repo (history.json) and the next
   estimate is the recent peak + 15%; until there are 2 samples, a built-in default per kind is used;
 - "promised" = for each gated build still running, max(0, its estimate - what its process tree uses now);
@@ -41,10 +41,13 @@ param(
 #   new project (no history for this kind + repo): start Gradle 12 GB, Maven 8 GB, Node 4 GB;
 #   after 2 recorded runs: learned peak x 1.25, never above the start value, never below 4 GB;
 #   at start time, if memory is tight the heap is REDUCED toward 4 GB instead of waiting longer.
-$HeapMinGB = 4
+# All of these numbers can be set in kit.local.json "gate" (machines with less RAM, or JVM builds that need more):
+#   { "keepFreeGB": 6, "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } }
 . (Join-Path $PSScriptRoot 'sysinfo.ps1')
-if ($KeepFreeGB -lt 0) { $KeepFreeGB = [math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)) }
-$StartGB = @{ gradle = 12; maven = 8; node = 4 }
+. (Join-Path $PSScriptRoot 'kitconfig.ps1')
+$HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
+if ($KeepFreeGB -lt 0) { $KeepFreeGB = [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
+$StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
 $mavenKeep = ([string]$env:MAVEN_OPTS -replace '-Xm[xs]\S+|-XX:\+Use\w+GC|-XX:MaxMetaspaceSize=\S+', '' -replace '\s+', ' ').Trim()
 $nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -replace '\s+', ' ').Trim()
 if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = '-Dorg.gradle.workers.max=4' }
@@ -59,7 +62,7 @@ $Kinds = [ordered]@{
   'rn-bundle'     = @('export:embed|react-native bundle|expo export', 3)
   'e2e'           = @('cypress|playwright', 3.5)
   'ng-test'       = @('ng test|karma', 3)
-  'web-build'     = @('ng build|next build|vite build|webpack|npm run build', 4)
+  'web-build'     = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 4)
   'maven-test'    = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
   'maven'         = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
   'dotnet'        = @('msbuild|dotnet (build|test|publish)', 3)

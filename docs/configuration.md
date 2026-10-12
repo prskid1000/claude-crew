@@ -30,6 +30,12 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `driveParent` | none | devtools.py `doc`, finalize.ps1 (`gdocs` only) | Google Drive folder (or shared drive) id for tester guides / QA evidence |
 | `tracker` | `{ "type": "clickup" }` | tracker.ps1 and everything that talks to the tracker | Issue tracker backend — see [Tracker](#tracker-trackertype) |
 | `reports` | `{ "type": "gdocs" }` if `gws` is on PATH, else `{ "type": "markdown" }` | finalize.ps1, devtools.py `doc` | Where QA reports and tester guides go — see [Reports](#reports-reportstype) |
+| `build.mavenOffline` | `true` | stack.ps1 | Maven commands get `-o` (offline: no network round-trips or remote-repo lock contention between parallel builds) when `~/.m2/repository` exists; `false` = always online |
+| `gate.keepFreeGB` | 15% of RAM, min 6 | gate.ps1 | RAM every gated build leaves free (`-KeepFreeGB` / env `CLAUDE_GATE_KEEP_FREE_GB` win) |
+| `gate.startHeapGB` | `{ "gradle": 12, "maven": 8, "node": 4 }` | gate.ps1 | First JVM/Node heap for a project with no build history (afterwards learned from real peaks, never above this) |
+| `gate.heapMinGB` | `4` | gate.ps1 | Heap floor when the gate shrinks heaps under memory pressure |
+| `supervise.ramActPct` | `90` | supervise.ps1 | RAM use (%) that raises an ACT flag |
+| `supervise.minDiskFreeGB` | `30` | supervise.ps1 | Free disk (GB) on the workspace drive below which supervise raises an ACT flag |
 | `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
 
 ### Tracker (`tracker.type`)
@@ -105,6 +111,10 @@ Logical statuses and their defaults: `open` = `open`/`to do`, `inProgress` = `in
   }
 }
 ```
+`browser` (top level, or per target to override it): `{ "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000 }` (the
+defaults) - the headless browser's language (Accept-Language, `navigator.language`: date and number formats), time zone (IANA name,
+empty = the machine's) and window/viewport size for `browser.mjs`.
+
 Top-level `keepFreeGB` (default `8`): `qa-seat.ps1` lets a new tester/verifier start only while free RAM minus its need
 (web ~1.5 GB, API ~0.4 GB) stays at or above it; the supervisor's capacity flag uses the same value.
 
@@ -123,8 +133,9 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | `app.package` | — | Android package id, e.g. `com.example.app` |
 | `app.appDir` | — | App checkout (folder with `android/gradlew[.bat]` or `gradlew[.bat]`) |
 | `app.buildTask` / `app.buildArgs` | `assembleRelease` (RN) / `assembleDebug` (native) | Gradle task + args for `app-build.ps1` |
-| `app.apkGlob` | from the variant | APK location under the Android project |
-| `app.devClientScheme`, `app.metroPort` | —, `8081` | React Native Metro mode (Expo dev client) |
+| `app.apkGlob` | from the variant | APK location under the Android project; its module folder (the part before `/build/outputs/`) is where `app-build.ps1` looks for the APK it built (an app module not named `app`) |
+| `app.devClientScheme`, `app.metroPort` | —, `8081` | React Native Metro mode: with a scheme the Expo dev client is deep-linked to Metro; without one (bare React Native debug build) the app starts normally with the Metro port reversed. `metro-start.ps1` runs `npx expo start` when the app depends on `expo`, else `npx react-native start` |
+| `app.javaHome` / `app.javaVersions` | — / `[17, 21]` | `app-build.ps1`: pin a JDK, or the JDK majors the build accepts (found in `JAVA_HOME`, `~/.gradle/jdks`, `~/.jdks`, the usual install folders) |
 | `app.permissions` | `[]` | Runtime permissions granted after install |
 
 `avd-template.ini` defines the (identical) lane hardware; `{{NAME}}` and `{{SDK}}` are filled by `swarm-avd.ps1 create`.
@@ -136,7 +147,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | `CLAUDE_RUNTIME` | Runtime folder (default `<workspace>/.claude-runtime`) |
 | `CLAUDE_WT_ROOT` | Worktree root for `wt.ps1 new` (default `<repo's parent>-wt`) |
 | `CLAUDE_AGENT` | Owner name for fair turns in the memory gate (default: worktree prefix) |
-| `CLAUDE_GATE_KEEP_FREE_GB` | RAM the gate always keeps free (default 15% of RAM, min 6 GB) |
+| `CLAUDE_GATE_KEEP_FREE_GB` | RAM the gate always keeps free (default `gate.keepFreeGB`, else 15% of RAM, min 6 GB) |
 | `CHROME_PATH` | Chrome/Edge/Chromium binary for `browser.mjs` (default: the usual install folders per OS, then `google-chrome`, `chromium`, `microsoft-edge` ... on `PATH`) |
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Android SDK (default `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) |
 | `ANDROID_AVD_HOME` | Where the lane AVDs live when `swarm.config.json` has no `avdDir` (default `~/.android/avd`) |
@@ -156,7 +167,22 @@ CMake and Make. If it guesses wrong, drop a `.claude-stack.json` next to the bui
 ```json
 { "stack": "custom", "commands": { "compile": "make", "test": "make test T={tests}" }, "deps": ["node_modules"] }
 ```
-Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sln}`.
+Keys you set replace the detected ones. Placeholders: `{tests}`, `{files}`, `{sln}`. Android: `"androidVariant": "freeDebug"`
+picks the variant for compile/test/lint/assemble (default `Debug`, or `<first product flavor>Debug` when the app declares
+`productFlavors`).
+
+What detection reads (so most repos need no override):
+
+| Stack | Detected from the project |
+|---|---|
+| Maven | wrapper (`mvnw`), offline only with a local repo (`build.mavenOffline`) |
+| Gradle / Android | wrapper (`gradlew`), `AndroidManifest.xml`, product flavors |
+| .NET Framework | `msbuild` / `vstest.console.exe` on `PATH`, else found with `vswhere` (Visual Studio / Build Tools) |
+| Angular | `angular.json`: a `test` target and its builder (Karma gets `--browsers=ChromeHeadless`), a `production` build configuration |
+| Node | lockfile → `npm` / `yarn` / `pnpm` / `bun` for `test` and `build` scripts; jest / vitest / eslint from dependencies and config files; `tsconfig.app.json` when `tsconfig.json` only holds project references |
+| Python | `.venv`; ruff (else flake8) and pytest (else `unittest`) as installed in the project's interpreter, else from their config files |
+| Make | `test` step only when the Makefile has a `test:` target |
+| Liquibase (`-Step migrations`) | XML master changelogs (`*master.xml`) under a `liquibase/` or `changelog/` folder; changed files are reported whether or not their names start with a timestamp |
 
 ## Workflow arguments
 

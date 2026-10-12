@@ -55,7 +55,9 @@ const BROWSERS = [
   ]),
 ].filter(Boolean)
 const CHROME = BROWSERS.find((p) => existsSync(p))
-const VIEW = { width: 1600, height: 1000 }
+// Browser look per target (or top-level "browser" in targets.local.json): { lang, timezone, width, height }.
+// Defaults: en-GB, the machine's time zone, 1600x1000. lang = Accept-Language / navigator.language (date and number formats).
+const browserOpts = (t) => ({ lang: 'en-GB', timezone: '', width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export function targetOf(name) {
@@ -146,13 +148,15 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
   const t = targetOf(target)
   tenant = tenant ?? t.defaultTenant ?? ''
   BASE = t.web
+  const bo = browserOpts(t)
+  const VIEW = { width: Number(bo.width), height: Number(bo.height) }
   let browser
   try {
     browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW })
   } catch {
     const dir = `${PROFILES}/${port}`
     mkdirSync(dir, { recursive: true })
-    const child = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--window-size=1600,1000', '--lang=en-GB', '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' })
+    const child = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' })
     child.unref()
     for (let i = 0; i < 40 && !browser; i++) {
       await sleep(500)
@@ -165,6 +169,7 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
   const pages = (await browser.pages()).filter((p) => !p.url().startsWith('devtools'))
   const page = pages[0] || (await browser.newPage())
   await page.setViewport(VIEW)
+  if (bo.timezone) await page.emulateTimezone(bo.timezone).catch(() => {})
   page.setDefaultTimeout(20000)
   page.setDefaultNavigationTimeout(90000)
   const net = watch(page, t.apiPattern)

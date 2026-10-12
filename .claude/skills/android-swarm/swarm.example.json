@@ -17,6 +17,8 @@
     "buildTask": "assembleRelease",
     "buildArgs": "-PreactNativeArchitectures=x86_64 -Dorg.gradle.workers.max=4",
     "apkGlob": "app/build/outputs/apk/release/*.apk",
-    "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"]
+    "permissions": ["CAMERA", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"],
+    "javaHome": "",
+    "javaVersions": [17, 21]
   }
 }

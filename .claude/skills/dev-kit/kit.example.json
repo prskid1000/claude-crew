@@ -56,6 +56,23 @@
   "cleanup": {
     "maxBrowserProfiles": 4
   },
+  "build": {
+    "_readme": "mavenOffline: Maven runs with -o (offline) when ~/.m2/repository exists (default true); false = always online.",
+    "mavenOffline": true
+  },
+  "gate": {
+    "_readme": "Memory gate (gate.ps1). keepFreeGB (default 15% of RAM, min 6; env CLAUDE_GATE_KEEP_FREE_GB wins) = RAM every build leaves free. startHeapGB = first heap for a project with no build history (then learned); heapMinGB = the floor.",
+    "heapMinGB": 4,
+    "startHeapGB": {
+      "gradle": 12,
+      "maven": 8,
+      "node": 4
+    }
+  },
+  "supervise": {
+    "ramActPct": 90,
+    "minDiskFreeGB": 30
+  },
   "repos": [
     {
       "name": "backend",

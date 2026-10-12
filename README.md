@@ -193,7 +193,7 @@ Agents build on sonnet by default; mark hard ones `complex: true` (strongest mod
    ```json
    { "title": "Projects epic", "target": "my-staging", "tester": "QA team",
      "mandate": ["Test the projects epic on staging and close what passes"],
-     "tracker": { "list": "<list id>", "parent": "<epic id>", "owner": "<user id>", "closeStatus": "Closed" },
+     "tracker": { "list": "<list id>", "parent": "<epic id>", "owner": "<user id>", "closeStatus": "closed" },
      "lanes": [ { "n": 1, "name": "Falcon", "serial": "emulator-5556", "user": "qa-user-1" } ],
      "items": [ { "code": "F1", "title": "Project form", "guideFile": "<workspace>/.claude-runtime/qa-runs/2026-10-01-projects/F1.txt",
                   "lane": "web", "subtasks": [ { "id": "<task id>", "name": "Project form", "mrs": "!101" } ] } ] }
@@ -299,8 +299,9 @@ claude-crew/
 - **A few Windows-only extras.** Everything runs on Windows, Linux and macOS with PowerShell 7, except: `annotate.ps1` (System.Drawing
   is Windows-only in .NET; mark elements with `browser.mjs` `mark()` instead), `swarm-arrange.ps1` (Win32 window placement; it skips with
   a note), and the .NET Framework stack (`msbuild`/`vstest.console.exe` for non-SDK projects). Linux and macOS were tested less than Windows.
-- **GitLab-first tracker automation.** MR creation and auto-merge work on GitLab and GitHub, but `track.ps1` (ordered merges, tracker
-  moves) and `wave-report.ps1` merge checks speak GitLab (`glab`). Issue trackers are pluggable (ClickUp, GitHub, GitLab, Jira, none);
+- **GitLab-first tracker automation.** MR creation, auto-merge, the CI wait (`pipe-wait.ps1`) and `wave-report.ps1` merge checks work
+  on GitLab and GitHub, but `track.ps1` (ordered merges, tracker moves), `deployed.ps1` and the supervisor's MR-owner lookup speak
+  GitLab (`glab`). Issue trackers are pluggable (ClickUp, GitHub, GitLab, Jira, none);
   Jira support targets Jira Cloud REST v3 with plain-text descriptions, and GitHub/GitLab have no task attachments (reports are posted as comment text).
 - **Workflow scripts can't read the filesystem**, so pass `kitDir` (absolute) to workflows; without it, agents get workspace-relative paths.
 - Supervision reads Claude Code's local session journals (`~/.claude/projects/<workspace slug>/.../workflows`); if that layout changes,
