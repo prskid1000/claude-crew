@@ -127,7 +127,8 @@ Worktree name prefix: ${a.id.toLowerCase()}; your migration range is in the brie
 ${a.note || ''}
 ${REVIEW
     ? `Do the whole job: implement, gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges (no devtools.py
-merge): a review runs first and the workflow merges after it. Report merged=false for every MR.${REVIEW_AUTO ? `
+merge): a review runs first and the workflow merges after it - this wins over any "merge when green" in the brief.
+Report merged=false for every MR.${REVIEW_AUTO ? `
 Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
 Testing instructions are part of the job (dev-kit Quick start step 7b): a simple change gets a how-to-test comment on the task;
@@ -149,7 +150,9 @@ function fixPrompt(a, r, findings) {
 You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS} Follow ${K}/SKILL.md and ${A.brief}.
 Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these problems in your MRs (blocking and should-fix; resolve all of them):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
-Fix each (wt.ps1 sync first; follow-up MR if the original merged) or explain why it isn't a problem. Gated checks, push, then schedule
+Fix each or explain why it isn't a problem. Before you push, check each MR's state (glab mr view / gh pr view): pushing to the
+branch of an already-merged MR changes nothing on the target, so for a merged MR put the fix on a new branch from the target
+(wt.ps1 new) and open a follow-up MR; otherwise wt.ps1 sync and push to the same branch. Gated checks, push, then schedule
 the merges yourself (devtools.py merge, producers first; dependents: ${ORCH}/track.ps1 add -Task <id> -MergeAfter '<web/app MR>><API MR>').
 Return the updated report.${HOLD_NOTE}`
 }
