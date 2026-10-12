@@ -48,7 +48,8 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
 - **orchestrate** — the coordinator playbook and templates (wave / bug-fix / resume briefs, MR body, task solution), plus
   `supervise.ps1` (heartbeat with ACT/WATCH flags and `-AutoFix`), `board.ps1` (agent board), `track.ps1` (moves tracker tasks when all MRs merge; ordered merges),
   `bug-brief.ps1` (QA bug task → bug-fix brief + tracking + ready /dev-wave args, with a model suggestion),
-  `wave-report.ps1` (journal-based wave summary), `status.ps1` (HTML dashboard), `cleanup.ps1` (self-cleaning), `learn.ps1` and `retro-nudge.ps1` (self-improvement).
+  `wave-report.ps1` (journal-based wave summary), `status.ps1` (HTML dashboard), `cleanup.ps1` (self-cleaning), `learn.ps1` and `retro-nudge.ps1` (self-improvement),
+  `kit-lint.py` (the kit's structure check) and `kit-flow.py` (the trigger-flow page; both use `kitgraph_lib.py`), `kit-health.ps1` (SessionStart drift + lint line).
 - **qa-kit** — QA rules (verdicts, shared-environment etiquette), the **evidence standard**, a tester-guide template, and tools:
   `api.ps1` (any API as any configured user; evidence envelopes with secrets redacted), `web/browser.mjs` (long-lived logged-in headless Chrome sessions via puppeteer-core, shared logins, failure capture, element highlighting),
   `android/ui.ps1` (uiautomator-based tap/type/dump/shot/shotmark/wait/log/photo), `annotate.ps1` (box / arrow / label on any screenshot), `finalize.ps1` + `lib/report.ps1` (styled results report → Google Doc or Markdown, tracker comments, bug tasks), `autoclose.ps1` (safety net),
@@ -59,7 +60,33 @@ can coordinate parallel dev agents and evidence-grade QA agents across any numbe
 
 ### Rules and hooks
 - `rules/multi-agent.md` (always loaded) and `rules/db-migrations.md` (loads when a migration file is opened).
-- `settings.json`: PreToolUse guard, SessionStart retro nudge and daily cleanup, a conservative permission allowlist, `git stash` denied.
+- `settings.json`: PreToolUse guard, SessionStart kit health (drift + kit-lint), retro nudge, daily cleanup and the kit-flow page,
+  a conservative permission allowlist, `git stash` denied.
+
+## How agents find their way: one explicit graph
+
+Nothing in the kit is reached by fuzzy description matching. Every session loads `CLAUDE.md`, whose **Router** is an ordered table:
+classify the request, the first row whose conditions all hold wins, and it names exactly one target. Each skill's `SKILL.md` opens
+with **Load when / Not when / Hands off to** and a **Files** index that binds every file in its folder to the numbered step that
+reads or runs it. Workflows spawn the agent types; each agent loads its skill first. While coordinating, the main session follows
+the **Events** table in the `orchestrate` skill (event -> script or workflow).
+
+```mermaid
+flowchart LR
+  C[CLAUDE.md Router<br/>first matching row wins] -->|R14 / R10 / R9 / R8 / R12| S[skill SKILL.md<br/>Load when · Not when · Hands off to]
+  C -->|R4 / R5 / R6 / R11 / R13| W[/workflow/]
+  C -->|R1 / R2| O[orchestrate<br/>Events table · Change the kit]
+  C -->|R7| MR[mr-reviewer]
+  O --> W
+  S -->|Files index: step N| F[reference · template · script]
+  W -->|spawns| A[agent types<br/>dev-agent · mr-reviewer · qa-tester · qa-verifier]
+  A -->|Load first| S
+  H[[settings.json hooks]] --> G[guard · kit-health · retro-nudge · cleanup]
+```
+
+`kit-lint.py` keeps the graph honest (every skill, workflow and agent routed, every file in a Files index with its step, no fuzzy
+triggers, no dangling paths, workflow `whenToUse` = its router row) and `kit-flow.py` draws it as a page (`<runtime>/kit-flow.html`:
+Flow, Triggers, Router & events, Files, Issues). Adding a part: [extending.md](.claude/skills/orchestrate/reference/extending.md).
 
 ## How it works
 
@@ -146,14 +173,14 @@ Optional, per feature:
    Copy-Item qa-kit/targets.example.json qa-kit/targets.local.json    # test environments + test logins (the only place for passwords)
    Copy-Item android-swarm/swarm.example.json android-swarm/swarm.config.json   # emulator lanes + app under test
    ```
-   Then edit `<workspace>/.claude/CLAUDE.md` (a template): your CLIs, tracker workflow, org specifics. See [docs/configuration.md](docs/configuration.md).
+   Then edit `<workspace>/.claude/CLAUDE.md` (a template): your CLIs, tracker workflow, org specifics. See [.claude/skills/dev-kit/reference/configuration.md](.claude/skills/dev-kit/reference/configuration.md).
 3. **Web QA helper:** `cd <workspace>/.claude/skills/qa-kit/scripts/web; npm install`.
 4. **Android swarm** (optional): set `ANDROID_HOME` (if not the default: `%LOCALAPPDATA%/Android/Sdk` on Windows,
    `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) and `ANDROID_AVD_HOME`
    (or `avdDir` in `swarm.config.json`), install the system image named in `avd-template.ini`, then create all lanes at once:
    ```powershell
    & <workspace>/.claude/skills/android-swarm/swarm-avd.ps1 create
-   & <workspace>/.claude/skills/android-swarm/app-build.ps1     # builds apk/app.apk through the memory gate
+   & <workspace>/.claude/skills/android-swarm/app-build.ps1     # builds <workspace>/.claude-runtime/android-swarm/apk/app.apk through the memory gate
    ```
 5. **Check the hooks.** `.claude/settings.json` runs the guard before every Bash/PowerShell command and two SessionStart hooks, via
    `pwsh` with `${CLAUDE_PROJECT_DIR}/.claude/...`. Start Claude Code in `<workspace>`, run `/hooks` to see them, and try
@@ -161,7 +188,7 @@ Optional, per feature:
 6. **Pick a tracker and report output** in `.claude/skills/dev-kit/kit.local.json` (copy `kit.example.json`), e.g.
    `{ "tracker": { "type": "github", "repo": "me/my-app" }, "reports": { "type": "markdown" } }`
    (no tracker yet? `"type": "none"`). Check it with `& <workspace>/.claude/skills/dev-kit/scripts/tracker.ps1 view <id> -DryRun`.
-   Details: [docs/configuration.md](docs/configuration.md#tracker-trackertype).
+   Details: [.claude/skills/dev-kit/reference/configuration.md](.claude/skills/dev-kit/reference/configuration.md#tracker-trackertype).
 7. **First run.** Check CLI auth (`glab auth status` / `gh auth status`, your tracker, `gws` if you use `gdocs`), then ask Claude:
    *"Use the orchestrate skill. Check `stack.ps1` and `check.ps1` on `<workspace>/my-repo`."* — if the detected commands are right, you're set.
 
@@ -227,19 +254,19 @@ Run `/kit-retro` after a wave or when the session-start nudge says signals piled
 
 ## Token budget
 
-Every agent reads less at start: skills open with a short Quick start (details in `reference/*.md`, read on demand), `LESSONS.md`
+Every agent reads less at start: skills open with their trigger blocks, a Files index and short numbered steps (details in `reference/*.md`, each read at the step that names it), `LESSONS.md`
 keeps only active rules (≤ 40 lines; the rest lives in `HISTORY.md`), and workflow prompts point at the skills instead of repeating them.
 Approx tokens read at start (`kit-cost.ps1`, bytes/4; full table in [docs/kit-cost.md](docs/kit-cost.md)):
 
 | Agent / run | Before | After |
 |---|---:|---:|
-| dev agent (build) | 12.7k | 7.0k |
-| mr-reviewer | 12.2k | 6.5k |
-| qa-tester (web) | 11.4k | 6.5k |
-| qa-verifier | 11.0k | 6.1k |
-| coordinator | 10.1k | 5.3k |
-| sample /dev-wave run (8 steps) | 71.8k | 41.8k |
-| sample /test-and-close run (10 steps) | 77.5k | 46.7k |
+| dev agent (build) | 12.7k | 8.0k |
+| mr-reviewer | 12.2k | 7.4k |
+| qa-tester (web) | 11.4k | 7.3k |
+| qa-verifier | 11.0k | 6.9k |
+| coordinator | 10.1k | 6.6k |
+| sample /dev-wave run (8 steps) | 71.8k | 47.3k |
+| sample /test-and-close run (10 steps) | 77.5k | 52.5k |
 
 On top of that: builds run on sonnet unless marked complex, mechanical steps on haiku, optional stages (`review: 'auto'`,
 `learn: 'auto'`, `verify: false`) and a `supervise.ps1 -Brief` heartbeat. Re-measure after kit changes:
@@ -249,14 +276,14 @@ On top of that: builds run on sonnet unless marked complex, mechanical steps on 
 
 | What | Where | Notes |
 |---|---|---|
-| Org settings (issue tracker + status names, report output, git host, GitLab group, repos root, worktree roots, tracker repos, repo aliases, protected branches, Drive folder, browser-profile cap) | `.claude/skills/dev-kit/kit.local.json` | all optional, see `kit.example.json` and [docs/configuration.md](docs/configuration.md) |
+| Org settings (issue tracker + status names, report output, git host, GitLab group, repos root, worktree roots, tracker repos, repo aliases, protected branches, Drive folder, browser-profile cap) | `.claude/skills/dev-kit/kit.local.json` | all optional, see `kit.example.json` and [.claude/skills/dev-kit/reference/configuration.md](.claude/skills/dev-kit/reference/configuration.md) |
 | Test environments, auth styles, test users | `.claude/skills/qa-kit/targets.local.json` | **the only file with passwords** |
-| Emulator lanes, app under test | `.claude/skills/android-swarm/swarm.config.json` | lane hardware in `avd-template.ini` |
+| Emulator lanes, app under test | `.claude/skills/android-swarm/swarm.config.json` | lane hardware in `avd-template.ini`; APKs and logs in `<runtime>/android-swarm` (`outDir`) |
 | Per-repo build commands | `.claude-stack.json` next to a build file | overrides stack detection |
 | Runtime folder, worktree root, gate headroom, browser path | env vars `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_GATE_KEEP_FREE_GB`, `CHROME_PATH` | |
 | Workspace rules | `.claude/CLAUDE.md`, `.claude/rules/*.md` | examples of path-scoped rules in `examples/rules/` |
 
-Full reference: [docs/configuration.md](docs/configuration.md).
+Full reference: [.claude/skills/dev-kit/reference/configuration.md](.claude/skills/dev-kit/reference/configuration.md).
 
 ## Directory layout
 
@@ -264,18 +291,18 @@ Full reference: [docs/configuration.md](docs/configuration.md).
 claude-crew/
 ├── .claude/                      ← copy this into your workspace
 │   ├── CLAUDE.md                 template: CLIs, tracker workflow, org specifics
-│   ├── settings.json             hooks (guard, retro nudge, cleanup) + permissions
+│   ├── settings.json             hooks (guard, kit health, retro nudge, cleanup, kit-flow page) + permissions
 │   ├── agents/                   dev-agent · mr-reviewer · qa-tester · qa-verifier
 │   ├── rules/                    multi-agent.md (always) · db-migrations.md (by path)
 │   ├── workflows/                dev-wave.js · test-and-close.js · kit-retro.js
-│   └── skills/                   each SKILL.md = a short Quick start + reference/*.md read only when needed;
+│   └── skills/                   each SKILL.md = Load when / Not when / Hands off to + a Files index (file -> step) + steps;
 │       │                         LESSONS.md = active rules (≤ 40 lines), HISTORY.md = retired lessons (agents never read it)
 │       ├── dev-kit/              SKILL.md, LESSONS.md, HISTORY.md, reference/, kit.example.json, scripts/
 │       ├── orchestrate/          SKILL.md, LESSONS.md, HISTORY.md, reference/, templates/, scripts/
 │       ├── qa-kit/               SKILL.md, LESSONS.md, HISTORY.md, targets.example.json, reference/, templates/, scripts/{web,android,lib}
 │       ├── android-swarm/        SKILL.md, LESSONS.md, HISTORY.md, reference/, swarm.example.json, avd-template.ini, *.ps1
 │       └── tech-audit/           SKILL.md, reference/ (full guide, schema, example, project template), scripts/
-├── docs/configuration.md · docs/kit-cost.md (token budget)
+├── docs/kit-cost.md (token budget) · docs/configuration.md (moved: .claude/skills/dev-kit/reference/configuration.md)
 ├── examples/rules/               path-scoped rule examples (Java backend, Angular frontend)
 ├── README.md · CONTRIBUTING.md · LICENSE
 <workspace>/.claude-runtime/      created at run time: board, tracking, learning, qa-runs, tokens, sessions, logs (never commit)

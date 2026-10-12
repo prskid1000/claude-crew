@@ -11,7 +11,7 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    command breaks off Windows, and `& "$K\x.ps1"` is parsed as module\command there), and use `dev-kit/scripts/sysinfo.ps1`
    for RAM, processes, directory links, temp folder, Python and the Android SDK instead of CIM, `%TEMP%` or `cmd /c`.
 3. **Keep the docs true.** When a script's behaviour changes, update its `SKILL.md`, the orchestrate playbook, the agent
-   definitions and `docs/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`
+   definitions and `.claude/skills/dev-kit/reference/configuration.md` in the same change. Generic lessons go in the skill's `LESSONS.md`
    (active rules only, ≤ 40 lines: add with `learn.ps1 -Lesson`, retire with `learn.ps1 -Fixed`; moved lines live in `HISTORY.md`).
 4. **Check before you open a PR:**
    ```powershell
@@ -23,9 +23,12 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    Workflow files (`.claude/workflows/*.js`) run inside Claude Code's workflow runtime: to syntax-check one, wrap it in
    `async function __wf(){ ... }`, replace `export const meta` with `const meta`, and run `node --check` on the result.
    They must keep LF line endings (`.gitattributes` enforces it).
+   `python .claude/skills/orchestrate/scripts/kit-lint.py` must print 0 problems: every skill, workflow and agent routed in
+   `CLAUDE.md`, every file in its skill's Files index with a step, no fuzzy triggers or dangling paths (how to add each kind of part:
+   `.claude/skills/orchestrate/reference/extending.md`). It also regenerates `.claude-runtime/kit-flow.html`.
    `pwsh -File .claude/skills/orchestrate/scripts/kit-cost.ps1 -Steps` runs every workflow with mock agents (a full syntax and
    flow check) and lists each step's label, agent type and model: diff it before/after a workflow change. `kit-cost.ps1 -Baseline
-   docs/kit-cost.before.json` shows the token budget per agent type; keep SKILL.md Quick starts ≤ 60 lines and LESSONS.md ≤ 40.
+   docs/kit-cost.before.json` shows the token budget per agent type; keep SKILL.md steps ≤ 60 lines (plus the Files index) and LESSONS.md ≤ 40.
 5. **Safety first.** Changes must not weaken the guard hook, the memory gate, the "never production" rule or secret redaction
    without a clear reason in the PR.
 
