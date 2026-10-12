@@ -1,7 +1,7 @@
 export const meta = {
   name: 'dev-wave',
   description: 'Run a wave of parallel dev agents (any stack) from a brief: implement + ship each area, independent MR review, one fix round, reconcile',
-  whenToUse: 'Several independent work areas (features or bug fixes) across one or more repos should be built and shipped in parallel',
+  whenToUse: 'Coding with more than 2 work items or tasks, one item spanning 2+ repos, or one large item (new feature or epic, migrations, many screens)',
   phases: [
     { title: 'Build', detail: 'one agent per area: worktree, code, gated checks, MRs, merge when green' },
     { title: 'Review', detail: 'independent reviewer per agent reads its MR diffs' },
@@ -44,6 +44,7 @@ const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are rela
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 if (!A.brief || !Array.isArray(A.agents) || !A.agents.length) throw new Error('args.brief and args.agents[] are required')
 const MODE = A.mode || 'feature'
+if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the task owner words): agents may drop their items for the latest chat message. Pass mandate next time (orchestrate step 3).')
 const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
 const REVIEW = A.review !== false
 const REVIEW_AUTO = A.review === 'auto'
@@ -120,7 +121,7 @@ const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ?
 function buildPrompt(a) {
   return `${WHY}
 You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
-Follow ${K}/SKILL.md (Quick start; scripts in ${K}/scripts) and the brief ${A.brief} (repos, ownership, ranges, decisions; it wins).
+Follow ${K}/SKILL.md (its steps and Rules; scripts in ${K}/scripts) and the brief ${A.brief} (repos, ownership, ranges, decisions; it wins).
 ${MODE === 'resume' ? `Resuming: first work out what is already done (${T}/RESUME_BRIEF.md).\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: join first with -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktree name prefix: ${a.id.toLowerCase()}; your migration range is in the brief. Never touch other agents' worktrees, branches or processes.
@@ -131,7 +132,7 @@ merge): a review runs first and the workflow merges after it - this wins over an
 Report merged=false for every MR.${REVIEW_AUTO ? `
 Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
     : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
-Testing instructions are part of the job (dev-kit Quick start step 7b): a simple change gets a how-to-test comment on the task;
+Testing instructions are part of the job (dev-kit step 7b): a simple change gets a how-to-test comment on the task;
 a complex one (several screens or flows, more than one repo, migrations, roles) gets a tester guide from
 ${KIT}/skills/qa-kit/templates/tester-guide.html (check ids, concrete Expected per check, environment, accounts, data to prepare)
 published with devtools.py doc and linked on the task and in the MR. Report its link as testerGuide.
@@ -141,7 +142,7 @@ Return the report.`
 function reviewPrompt(a, r) {
   return `Review agent ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}) as your agent definition says.${PATHS}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
-Rules: ${K}/SKILL.md Quick start (scope) and ${K}/reference/migrations.md. Only real problems; "blocking" = must be fixed before it ships.
+Rules: ${K}/SKILL.md Rules (scope) and ${K}/reference/migrations.md. Only real problems; "blocking" = must be fixed before it ships.
 Do not change any code yourself.`
 }
 
@@ -250,7 +251,7 @@ phase('Learn')
 const eventful = out.some((x) => x.error || x.fixed !== undefined || (x.findings || []).length || (x.report && x.report.deferred.length)) || outcome.openFindings.length > 0
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
-& ${ORCH}/cleanup.ps1 -Quiet`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
+& ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
   log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean wave'}); cleanup ran`)
   return outcome
 }
@@ -264,7 +265,7 @@ ${JSON.stringify(outcome).slice(0, 60000)}
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
-3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
+3. & ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0 (only kit-created leftovers; merged worktrees go at once, open MRs are kept), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return outcome

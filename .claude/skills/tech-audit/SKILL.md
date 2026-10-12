@@ -1,16 +1,28 @@
 ---
 name: tech-audit
-description: >-
-  Static technical audit of one module in any codebase/stack (web, API, mobile, desktop, Python, .NET, ...) for
-  Bugs, Performance issues and Tech Debt, with strict false-positive discipline. Functional gaps / UX / reporting are
-  captured but flagged out-of-scope. Produces findings in a fixed 23-key JSON schema plus a Markdown summary, ready for
-  a findings workbook. Use when asked to "audit / review <module> for bugs / perf / tech debt", "find bugs in <module>",
-  "health-check this module" or "generate findings". Not for testing deployed changes (that's qa-kit).
+description: "Load when: asked to audit, review or health-check one module's code for bugs, performance or tech debt, or to generate findings, without changing code or a deploy to test. Not when: reviewing an agent's open MRs -> mr-reviewer agent; testing deployed changes -> qa-kit; fixing the findings -> dev-kit or /dev-wave via orchestrate."
 argument-hint: "<module> [project]"
 ---
 
+**Load when** (all must hold): the target is one module (a folder, feature or service) of a codebase; the output is findings, not
+code changes; router row R8.
+**Not when:** an agent's open MRs -> `mr-reviewer` agent (R7); a deployed change on a test environment -> `qa-kit`; fixing the
+findings -> `dev-kit` (one) or `/dev-wave` (many, via `orchestrate`).
+**Hands off to:** the person reviewing the findings workbook; accepted findings become a wave brief (`orchestrate` step 2) or
+bug tasks; rejected false positives go back into the project profile (step 9).
+**Files** (every file in this folder; read or run each only at its step):
 
-# Quick start (technical audit of one module, any project)
+| File | Read / run at |
+|---|---|
+| `reference/projects/<project>.md` | step 1, read fully (local overlay: each project's profile) |
+| `reference/projects/_template.md` | step 1, copied when the project has no profile yet |
+| `reference/audit-guide.md` | step 5 for any candidate whose pre-flight answer is unsure, and before the self-review of a module with > 10 findings |
+| `reference/output-schema.md` | step 7, before writing the first finding |
+| `reference/example-finding.json` | step 7, the shape of one finding |
+| `scripts/validate.py` | step 8, must print `schema problems: none` |
+| `scripts/summary.py` | step 8, summary .md + .html |
+
+# Steps (technical audit of one module, any project)
 
 Produce a **rigorous, low-false-positive** list of technical findings (Bug / Performance / Tech Debt) for **one module**, in the exact
 23-key schema the findings workbook consumes. Not for testing deployments (that's `qa-kit`).
@@ -40,9 +52,5 @@ Produce a **rigorous, low-false-positive** list of technical findings (Bug / Per
    In-scope findings always fill `why_today` / `why_not_prod` (prefix `(inferred)` unless evidenced) and `db_migration` (Yes/No/Maybe).
 8. **Deliver:** `<module>.json` in the profile's findings folder (else `<workspace>/.claude-runtime/audits/<project>/`);
    `python <workspace>/.claude/skills/tech-audit/scripts/validate.py <file>` must print `schema problems: none`; then
-   `python .../scripts/summary.py <module>.json --sources "<what you used>"` (→ summary .md + .html; publish the HTML with `devtools.py doc`).
+   `python .../scripts/summary.py <module>.json --sources "<what you used>"` (→ summary .md + .html; publish the HTML with `python <workspace>/.claude/skills/dev-kit/scripts/devtools.py doc "<title>" <file.html>`).
 9. **Review loop:** a finding rejected as a false positive → add the lesson to the project profile (by-design / review lessons).
-
-## Reference (read only when you need it)
-- `reference/audit-guide.md` — the full guide (scope, inputs table, every false-positive rule, triage columns, workbook + bug-wave hand-off).
-- `reference/output-schema.md` — field definitions and allowed values: while writing findings.

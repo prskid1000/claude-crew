@@ -1,7 +1,8 @@
 # Technical audit guide in full (tech-audit reference)
 
-The complete process behind the Quick start in `../SKILL.md` (scope rules, input sources, false-positive rules, schema notes,
-deliverables, review loop). Read it for a borderline finding, before the §5 self-review of a large module, or when updating the skill.
+The complete process behind the steps in `../SKILL.md` (scope rules, input sources, false-positive rules, schema notes,
+deliverables, review loop). Read at tech-audit step 5 for any candidate whose pre-flight answer is unsure, before the self-review of a module with > 10 findings,
+and when changing this skill.
 
 Produce a **rigorous, low-false-positive** list of technical improvement findings for **one module**, in the exact
 schema the findings workbook consumes. The process is generic; project knowledge (repo layout, knowledge-base tools,

@@ -1,49 +1,78 @@
 ---
 name: qa-kit
-description: QA rules and tools for testing deployed work on a test environment (never production) — API calls as any configured user with saved request/response evidence, headless logged-in browser for any web app, Android UI driving, honest verdicts (defects are never notes), publishing results (Google Doc or Markdown report) to the issue tracker (ClickUp / GitHub / GitLab / Jira / none) with bug tasks. Use when testing tasks/guides on staging, verifying fixes, collecting evidence, or running /test-and-close.
+description: "Load when: you test deployed work on a test environment (qa-tester / qa-verifier agent, or one change checked directly: router R10), write a tester guide for a person (R9), or set up a QA run as the lead. Not when: a batch of deployed tasks is to be tested by agents -> /test-and-close via orchestrate; static code audit -> tech-audit; emulator lanes -> android-swarm; coding -> dev-kit."
 ---
 
-# Quick start (every tester, verifier and auditor reads this)
+**Load when** (all must hold): the work is testing, or writing testing instructions, for a change deployed (or about to be deployed)
+to a **test environment**; you are a `qa-tester` / `qa-verifier`, the main session on R9 / R10, or the lead preparing a run (orchestrate step 7).
+**Not when:** several deployed tasks should be tested by agents -> `/test-and-close` (load `orchestrate`); code audit without a
+deploy -> `tech-audit`; booting or resetting emulators -> `android-swarm`; fixing what failed -> `dev-kit` / bug wave.
+**Hands off to:** `finalize.ps1` (report + tracker close + `[Bug]` tasks, run by /test-and-close), the coordinator (bug tasks →
+orchestrate E9), the person who tests by hand (the published guide, G3).
+**Files** (every file in this folder; read or run each only at its step):
 
-Test deployed work on a **test environment** (never production), record honest verdicts with evidence. Web apps, APIs, Android apps.
-Scripts: `<workspace>/.claude/skills/qa-kit/scripts` (PowerShell). Environments + logins: `targets.local.json` (passwords only there).
+| File | Read / run at |
+|---|---|
+| `LESSONS.md` | step 0 (and G0, L0), before anything else |
+| `HISTORY.md` | never read for work (retired lessons) |
+| `reference/evidence-standard.md` | step 4 when you save anything other than a screenshot or `api.ps1 -Save` JSON, or a name is unclear |
+| `reference/tools-and-rules.md` | step 3 for a tool not shown below; step 4 when marking a FAIL shot; step 5 for a borderline verdict |
+| `reference/runs.md` | lead steps L0-L3 (machine setup, run.json, seats, documents) |
+| `templates/tester-guide.html` | G1 when `reports.type` is `gdocs` |
+| `templates/tester-guide.md` | G1 when `reports.type` is `markdown` |
+| `targets.example.json` | L0: copy to `targets.local.json` (environments + test logins; the only place for passwords) |
+| `scripts/qa-seat.ps1` | step 1 (`acquire`; the workflow tells you how), `release` at the end |
+| `scripts/deployed.ps1` | step 2, before any FAIL |
+| `scripts/api.ps1` | step 3 (API as any user, `-Save` evidence) |
+| `scripts/web/browser.mjs` | step 3 (web; read its header first) |
+| `scripts/web/package.json`, `scripts/web/package-lock.json` | L0: `npm ci` in `scripts/web` (puppeteer-core) |
+| `scripts/android/ui.ps1` | step 3 (app lanes; `$env:ANDROID_SERIAL` on every command) |
+| `scripts/annotate.ps1` | step 4, marking a FAIL screenshot (any image) |
+| `scripts/finalize.ps1`, `scripts/lib/report.ps1` | run by /test-and-close's close step; by the lead for `skipClose` items (L3) |
+| `scripts/autoclose.ps1` | L2, started in the background with every run |
+| `scripts/add-retest.ps1` | L3, when a bug task's fix went live (retest item) |
 
-**Verdicts — defects are never notes**
-- **PASS**: the expected behaviour was seen.
-- **PASS_WITH_NOTE**: ONLY (a) guide text out of date because later, intended work changed the flow and the intent holds, or (b) a purely cosmetic difference while behaviour is correct.
-- **FAIL**: any defect, in or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck flow, data changed wrongly or not saved,
-  wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
-- **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
-- **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A` for those checks when the run has phones).
-- **findings**: context only (test-data notes, guide drift), never defects. The note audit re-reads every note and finding anyway.
-- Before a FAIL confirm the change is deployed: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` (else NOT_TESTED "not deployed yet").
+## Tester / verifier steps (test environment only, never production)
+0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`.
+1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
+   -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`.
+2. **Deployed?** Before any FAIL: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` for every repo of the task; not deployed → NOT_TESTED "not deployed yet".
+3. **Test each check** with the tools: API `scripts/api.ps1 -Target <t> -As <user> [-Tenant <x>] -Method <M> -Path '/...' [-Body '<json>']
+   [-Save <name> -OutDir <dir>]`; web `scripts/web/browser.mjs` (`session()` = one logged-in headless Chrome per port; `mark`, `shot`,
+   `saveNet`, `hoverSel`; not the chrome-devtools MCP); app `scripts/android/ui.ps1` (dump / tap / tapid / type / swipe / shot / shotmark /
+   wait / log). Tracker: `../dev-kit/scripts/tracker.ps1 view|comments <id>`.
+4. **Evidence:** folder `<run>/<CODE>/shots` (web JPEG, app PNG) and `/evidence` (API/network/DB/log JSON); your scripts in `/scripts`.
+   Name `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab ≤ 40 chars), e.g. `F2-T4_01_before-edit.jpeg`.
+   PASS (UI) = one shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = failure shot
+   **and** the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files. Never a blank/loading/login
+   page; open each image with Read before listing it; list only names that exist. Mark every FAIL screenshot: app
+   `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`.
+5. **Verdict per check — defects are never notes:**
+   - **PASS**: the expected behaviour was seen. **PASS_WITH_NOTE**: ONLY (a) guide text out of date because later, intended work
+     changed the flow and the intent holds, or (b) a purely cosmetic difference while behaviour is correct.
+   - **FAIL**: any defect, in or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck flow, data changed wrongly or not
+     saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
+   - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
+   - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
+6. **Leave:** `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`), return the results the task asks for.
 
-**Evidence** (full standard: `reference/evidence-standard.md`)
-- Folder `<run>/<CODE>/shots` (screenshots: web JPEG, app PNG) and `/evidence` (API/network/DB/log JSON); your scripts in `/scripts`.
-- Name `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab ≤ 40 chars), e.g. `F2-T4_01_before-edit.jpeg`, `F2-X1_01_500-on-cancel.json`.
-- PASS (UI) = one shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = failure shot **and**
-  the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files. Never a blank/loading/login page;
-  open each image with Read before listing it. List only file names that exist (no paths, folders or scripts). Secrets are redacted by the helpers.
-- Mark every FAIL screenshot: app `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`.
+**Shared environment** (others test at the same time): data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you
+created, an unexpected change may be another agent's (re-check before FAIL); change an environment setting only when a check needs
+it, restore it at once, list it in `setup_changes`; per-user preferences on a secondary test user; never deactivate, delete or
+re-password test logins; ≤ 2 Chrome ports per web agent; app lanes: only your serial, never `adb kill-server`. Project facts come
+from the run's `context` / `contextFiles` and `LESSONS.md`, never from these generic files.
 
-**Tools**
-- API as any user: `scripts/api.ps1 -Target <t> -As <user> [-Tenant <x>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]`.
-- Web: `scripts/web/browser.mjs` (read its header) — `session()` = one logged-in headless Chrome per port; `mark`, `shot`, `saveNet`, `hoverSel`. Not the chrome-devtools MCP.
-- Android: `scripts/android/ui.ps1` (dump / tap / tapid / type / swipe / shot / shotmark / wait / log) with `$env:ANDROID_SERIAL` set; phones via `../android-swarm/phone.ps1 acquire|release`.
-- Tracker: `../dev-kit/scripts/tracker.ps1 view|comments <id>` (never a tracker CLI directly). Memory seat: `scripts/qa-seat.ps1` (the workflow tells you how).
+## Guide steps (a person tests by hand: router R9; dev agents at dev-kit 7b)
+- G0. Read `LESSONS.md`; know the change (MRs, task) and the target environment.
+- G1. Fill `templates/tester-guide.html` (`gdocs`) or `templates/tester-guide.md` (`markdown`): check ids, environment, accounts, data to
+  prepare, steps and a concrete Expected per check, plus "unchanged" checks for what must not change.
+- G2. Publish: `python ../dev-kit/scripts/devtools.py doc "<title>" <guide file>` (a `.md` guide is converted to HTML first, so tables survive).
+- G3. Link it on the task (`tracker.ps1 comment` / `attach`) and in the MR; simple change → a how-to-test comment instead.
 
-**Shared environment** (others test at the same time)
-- Board: `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run> -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report; `leave` when done.
-- Data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`); delete only what you created; an unexpected change may be another agent's — re-check before FAIL.
-- Change an environment setting only when a check needs it, restore it at once, list it in `setup_changes`; per-user preferences on a
-  secondary test user; never deactivate, delete or re-password test logins.
-- ≤ 2 Chrome ports per web agent, `killSession()` when done; kill only processes you started. App lanes: only your serial, never `adb kill-server`.
-- Project facts (tenants, accounts, quirks) come from the run's `context` / `contextFiles` and `LESSONS.md`, never from these generic files.
+## Lead steps (setting up a run; orchestrate step 7)
+- L0. Machine setup once: `reference/runs.md` "Setup" (targets.local.json, `npm ci` in `scripts/web`, swarm config, auth checks).
+- L1. Run folder + `run.json` (shape: `reference/runs.md` and the header of `test-and-close.js`), guides exported to text.
+- L2. Launch `/test-and-close { runDir, kitDir }` and start `scripts/autoclose.ps1 -Journal <dir> -RunDir <run>` in the background.
+- L3. Afterwards: publish `skipClose` items with `finalize.ps1 -RunDir <run> -Code <code>`; a bug fix went live → `add-retest.ps1`.
 
-**Learn:** read `LESSONS.md` first (general + per-project UI gotchas). Record surprises:
-`& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill qa-kit -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.
-
-## Reference (read only when you need it)
-- `reference/evidence-standard.md` — evidence formats (JSON envelope, logs, DB rows, recordings, redaction): when you save anything beyond screenshots and `api.ps1 -Save` JSON, or a name is unclear.
-- `reference/tools-and-rules.md` — full tool table (finalize, deployed, add-retest, autoclose, qa-seat), marking evidence, verdicts, board and etiquette in full.
-- `reference/runs.md` — machine setup, run folder + `run.json`, skipClose, memory seats + extra workers, documents: for the lead setting up or publishing a run.
+**Learn:** record surprises: `& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill qa-kit -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.

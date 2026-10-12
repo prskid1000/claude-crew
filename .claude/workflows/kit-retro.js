@@ -1,7 +1,7 @@
 export const meta = {
   name: 'kit-retro',
   description: 'Self-improvement pass for the multi-agent kit: mine learning signals, guard blocks, gate history and recent QA/dev runs; update LESSONS.md, promote stable lessons into rules, propose script/default changes',
-  whenToUse: 'After a wave or QA run, weekly, or when the session-start nudge says signals have piled up',
+  whenToUse: 'A wave or QA run finished with errors, deferrals or review findings, the session-start nudge says signals piled up, or the owner asks for a kit retrospective',
   phases: [
     { title: 'Analyse', detail: '4 parallel analysts: dev, QA, speed/infra, docs/evidence' },
     { title: 'Apply', detail: 'one synthesizer dedupes, applies lesson + rule changes, writes the retro report' },
@@ -30,6 +30,7 @@ Data sources (read what exists; missing files just mean no data yet):
 - <OS temp folder>/claude-build-gate/history.json ([IO.Path]::GetTempPath(): %TEMP% on Windows, $TMPDIR or /tmp elsewhere) — per build kind: peak GB, seconds, ok — slow or failing kinds, estimates drifting
 - ${RT}/qa-runs/*/ — run.json, <code>/results.json, finalize.json, autoclose.log: NOT_TESTED reasons, audit reclassifications, verify "not reproduced" rates
 - ${RT}/audits/ — tech-audit findings and review outcomes, if any
+- Kit structure problems: python ${C}/skills/orchestrate/scripts/kit-lint.py --warn --no-flow (unrouted parts, unlisted files, fuzzy triggers, dangling paths)
 - Current kit: ${C}/skills/*/SKILL.md, ${C}/skills/*/LESSONS.md (active rules; ${C}/skills/*/HISTORY.md = moved/fixed lessons: read it only to spot a fixed problem that came back), ${C}/skills/tech-audit/reference/projects/*.md, ${C}/rules/*.md, ${C}/agents/*.md, ${C}/workflows/*.js`
 
 const PROPOSALS = {
@@ -100,7 +101,9 @@ Steps:
    (moved verbatim to HISTORY.md), then -Skill <s> -Trim for every skill you touched (enforces ≤ 40 lines; never delete lessons by hand).
 3. ${A.applyScripts ? 'ALSO APPLY script-change / default-change / template-change proposals, then re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check-style check every changed .js/.mjs; revert any change that breaks parsing.' : 'Do NOT apply script-change / default-change / template-change: list them for approval with the exact edit.'}
 4. Write the report to ${RT}/learning/retro-<yyyy-MM-dd-HHmm>.md: what changed and why (with evidence), what awaits approval, what was rejected.
-5. Run ${C}/skills/orchestrate/scripts/cleanup.ps1 -Quiet and include the freed space in the report.
+5. Run python ${C}/skills/orchestrate/scripts/kit-lint.py (it also regenerates <runtime>/kit-flow.html): fix every problem your changes
+   caused (a new file goes into its skill's Files index with its step, see ${C}/skills/orchestrate/reference/extending.md) and list the
+   rest in the report. Then ${C}/skills/orchestrate/scripts/cleanup.ps1 -Quiet; include the freed space in the report.
 6. Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${RT}/learning/last-retro.txt so the next retro and the session nudge count only new signals.
 Return the lists and the report path.`, { label: 'apply', phase: 'Apply', schema: RESULT, ...pick('apply') })
 

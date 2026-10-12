@@ -1,6 +1,7 @@
 # QA tools, verdicts and etiquette in full (qa-kit reference)
 
-The full text behind the Quick start in `../SKILL.md`. Read when a tool or rule there is not enough.
+The full text behind `../SKILL.md`. Read at qa-kit step 3 when you need a tool not shown there (finalize, add-retest, autoclose,
+qa-seat by hand), at step 4 when you mark a FAIL screenshot, and at step 5 when a verdict is borderline (PASS_WITH_NOTE vs FAIL).
 
 ## Tools
 | Need | Tool |

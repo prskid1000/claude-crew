@@ -1,55 +1,96 @@
 ---
 name: orchestrate
-description: Coordinator playbook for multi-agent work in any repo/stack in this workspace — plan a wave of parallel dev agents, write the brief, run /dev-wave, relay decisions, then QA the deployed result with /test-and-close and loop bug fixes. Use when the user asks to run many agents in parallel, split an epic/backlog across agents, run a dev wave, resume stopped agents, or test-and-close a batch of tasks.
+description: "Load when: you are the main session and the router sends you here: launching or supervising /dev-wave, /test-and-close or /kit-retro, a coordinator event (workflow finished, supervise flag, stopped agents, QA bug tasks, mid-wave rule change, SessionStart kit line), or changing the kit. Not when: you are an agent inside a wave -> dev-kit / qa-kit; one small change -> dev-kit, directly."
 argument-hint: "[epic / sheet / task list]"
 ---
 
-# Quick start (you = the coordinator)
+**Load when** (all must hold): you are the main session (not a spawned agent); the CLAUDE.md router matched R1-R6, R11 or R13.
+**Not when:** you are a `dev-agent` -> `dev-kit`; a `qa-tester` / `qa-verifier` -> `qa-kit`; one small change -> do it directly with
+`dev-kit` (R14); a manual tester guide -> `qa-kit` (R9).
+**Hands off to:** `/dev-wave` (spawns `dev-agent` + `mr-reviewer`), `/test-and-close` (spawns `qa-tester` + `qa-verifier`),
+`/kit-retro`; a one-off `mr-reviewer` (R7); `android-swarm` for the APK (step 6).
+**Files** (every file in this folder; read or run each only at its step or event row):
 
+| File | Read / run at |
+|---|---|
+| `LESSONS.md` | step 0, before planning anything |
+| `HISTORY.md` | never read for work (retired lessons; `/kit-retro` checks it for regressions) |
+| `reference/coordinator-duties.md` | step 0, the first time you coordinate in a session; E12 HEAL |
+| `reference/supervising.md` | E2, when an ACT flag's printed action is unclear; E5 the finish checklist |
+| `reference/self-improvement.md` | step 3 (models, optional stages, mandate); E9 bug waves; E13-E15 learning |
+| `reference/layout.md` | K1 (kit layout, hard-won rules); E19 (a new project or repo); step 4 (dashboard) |
+| `reference/extending.md` | K1, before adding or changing any kit part |
+| `templates/WAVE_BRIEF.md` | step 2, filled into the scratchpad |
+| `templates/BUGFIX_BRIEF.md` | E9, written per bug by `bug-brief.ps1` |
+| `templates/RESUME_BRIEF.md` | E6, for agents resumed from their worktrees |
+| `templates/MR_BODY.md`, `templates/TASK_SOLUTION.md` | filled by dev agents at dev-kit step 7 / step 8 (MR body, tracker solution comment) |
+| `scripts/supervise.ps1` | E1 heartbeat, every round (`-AutoFix -Brief`); `-MarkStopped` at E6 |
+| `scripts/wave-report.ps1` | E5, when a workflow finishes |
+| `scripts/bug-brief.ps1` | E9, one call per QA bug task |
+| `scripts/track.ps1` | step 5 (`add -Task -Mrs`, `-MergeAfter`); run by supervise every round |
+| `scripts/board.ps1` | agents' step 0 (`join`/`beat`/`check`/`leave`); read by supervise |
+| `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
+| `scripts/status.ps1` | step 4, live dashboard (`-Open -Watch`) |
+| `scripts/cleanup.ps1` | E18 after a wave; SessionStart hook (daily, async); every workflow's last step |
+| `scripts/kit-lint.py`, `scripts/kitgraph_lib.py` | K3 and E16 (0 problems before a push); SessionStart summary via kit-health.ps1; sync-kit |
+| `scripts/kit-flow.py`, `scripts/kit-flow.template.html` | R3 / K3: renders `<runtime>/kit-flow.html` (`--watch` while editing); also run by kit-lint, sync-kit and SessionStart |
+| `scripts/kit-health.ps1` | SessionStart hook: kit drift + kit-lint summary (E17); `-Flow` regenerates the page (async) |
+| `scripts/kit-cost.ps1`, `scripts/kit-cost.mjs` | K3 after a workflow or SKILL.md change (`-Steps`, `-Baseline`) |
+| `scripts/retro-nudge.ps1` | SessionStart hook: the E14 nudge |
+| `scripts/guard-sendmessage.ps1` | PreToolUse hook: blocks SendMessage to workflow agents (E10) |
+
+## Steps (you = the coordinator)
 Project facts (repos, branches, environments, accounts, product rules) live in the wave **brief** / QA **run.json**, memory or the
 repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with **pwsh 7**. `<kit>` = `<workspace>/.claude`.
 
-**Launching:** always by path — `Workflow({ scriptPath: "<kit>/workflows/dev-wave.js", args })` (named lookup breaks after a `cd`).
-Always pass `kitDir` (absolute) and `mandate` (the owner's own words that asked for the work: without it agents drop their items for the
-latest chat message). /test-and-close takes the short form `{ runDir, kitDir }` (run.json is read from the run folder).
-Models: builds run on sonnet unless the brief marks the agent complex (`agents[].complex: true` → strongest); review/verify/audit sonnet;
-mechanical steps haiku. Override per agent (`model`) or per stage (`models: {...}`) — docs/configuration.md.
-Cheaper runs: dev-wave `review: 'auto'` (small, non-sensitive diffs skip review), `learn: 'auto'` (learn only after trouble);
-test-and-close `verify: false` (FAILs go straight to bug tasks, no re-test).
+0. **Start:** read `LESSONS.md`; first coordination this session → `reference/coordinator-duties.md`.
+1. **Scope:** read the epic/sheet; group work **by area, not item count** (disjoint screens/packages per agent); note which items need app / web / API testing.
+2. **Brief:** fill `templates/WAVE_BRIEF.md` in the scratchpad: repos + targets, ownership, migration ranges, contracts, Complex column.
+3. **Launch** by path: `Workflow({ scriptPath: "<kit>/workflows/dev-wave.js", args })` with `{ brief, agents:[{id, items, area}], mode,
+   review, kitDir, mandate }` (named lookup breaks after a `cd`). Always pass `kitDir` (absolute) and `mandate` (the owner's own words;
+   without it agents drop their items for the latest chat message). Models and cheaper runs (`review: 'auto'`, `learn: 'auto'`,
+   `verify: false`): `reference/self-improvement.md`. A single area can also be one `dev-agent` via the Agent tool ("Follow the brief <path>.
+   You are X3 …"). Repos whose target deploys on merge: `holdMerge: [<repo>]` (MRs stay open, reviewed, green; ask, then merge). Then E1.
+4. **Relay** (E10): decisions/contracts → append to `<brief>.contracts.md`; watch with `scripts/status.ps1 -Open -Watch` if useful.
+5. **Ship:** agents merge producers first (DB/API), then clients; tracker → review → promoted (`track.ps1`, automatic).
+6. **Deploy:** **a person** deploys to the test environment. App: `android-swarm/app-build.ps1` from the merged branch (agents lease phones).
+7. **Test:** run folder `<workspace>/.claude-runtime/qa-runs/<date>-<name>/` + `run.json` (`qa-kit/reference/runs.md`);
+   `/test-and-close { runDir, kitDir }`; start `qa-kit/scripts/autoclose.ps1` in the background. Bugs → E9; retest: `retest: true`.
+8. **Close:** reconcile backlog vs merged MRs + tracker comments; list only what's open, each with a reason (external / new data model /
+   product decision / no data / cut for size). `inTest` only after deployment, set by a person.
 
-| # | Step | Dev side | QA side |
-|---|---|---|---|
-| 0 | Scope | Read the epic/sheet; group work **by area, not item count** (disjoint screens/packages per agent) | Note which items need app / web / API testing |
-| 1 | Brief | Fill `templates/WAVE_BRIEF.md` in the scratchpad: repos + targets, ownership, migration ranges, contracts | — |
-| 2 | Build | `/dev-wave` with args `{ brief, agents:[{id, items, area}], mode, review, kitDir }` — or Agent tool, type `dev-agent`, prompt "Follow the brief <path>. You are X3 …" | — |
-| 3 | Relay | Append decisions/contracts to `<brief>.contracts.md` (agents re-read it before every push). **Never SendMessage a `/dev-wave` agent by ID** (the `guard-sendmessage.ps1` PreToolUse hook blocks it) — it spawns a duplicate in the same worktree. SendMessage only for agents you spawned yourself with the Agent tool | — |
-| 3b | Merge hold | A repo whose target deploys on merge and the user wants to approve: launch `/dev-wave` with `holdMerge: [<repo>]` (or `true`). Its MRs stay open, reviewed and green; ask the user, then merge. |
-| 4 | Ship | Agents merge producers first (DB/API), then clients; tracker → review → promoted | — |
-| 5 | Deploy | **A human** deploys to the test environment | `android-swarm/app-build.ps1` from the merged branch (phones: the app agents lease and boot them themselves) |
-| 6 | Test | — | Run folder `<workspace>/.claude-runtime/qa-runs/<date>-<name>/` + `run.json`; `/test-and-close` with that object (+ `kitDir`) as args; start `qa-kit/scripts/autoclose.ps1` |
-| 7 | Bugs | `[Bug] … failed checks` tasks → `templates/BUGFIX_BRIEF.md` → `/dev-wave` with `mode: 'bugfix'` | Retest: same workflow, `retest: true` on the items |
-| 8 | Close | Reconcile backlog vs merged MRs + tracker comments; list only what's open, each with a reason (external / new data model / product decision / no data / cut for size) | `in test` only after deployment, set by a person |
-
-Stopped agents (usage limit, RAM, user): `templates/RESUME_BRIEF.md`, or `/dev-wave` with `mode: 'resume'`; they continue from their worktrees.
 ~15 parallel dev agents is fine: they queue on the machine-wide memory gate. Expect hours for big waves.
 
-**Supervising:** ONE cheap heartbeat for the whole session, generic prompt (what runs comes from the script, not the prompt):
-`/loop 30m` → `& <kit>/skills/orchestrate/scripts/supervise.ps1 -Session <this session id> -AutoFix -Brief` (prints only flags, or one
-"ok: N running, mem X%" line; drop `-Brief` for the full digest). Don't poll for results: workflow completion notifications wake you.
-Act on **ACT** flags (each prints its action), re-check **WATCH** next round, leave healthy agents alone. When a workflow finishes:
-`wave-report.ps1 -Run <wf id>` (compact; `-Detail` for everything; never parse the truncated notification), reconcile, then the next step: open findings → follow-up wave, deploy → QA, failed checks →
-bug-fix wave (`scripts/bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per bug, ONE wave for all open bugs). Stopped a workflow
-yourself? `supervise.ps1 -MarkStopped <run id>`. Stop the loop when nothing runs.
+## Events (event -> action; check this table whenever something happens while you coordinate)
+| # | Event | Action (script / workflow) |
+|---|---|---|
+| E1 | You launched a workflow or agent and no heartbeat runs | ONE heartbeat: `/loop 30m` → `supervise.ps1 -Session <id> -AutoFix -Brief` (generic prompt; never poll, never several loops). Stop it when nothing runs |
+| E2 | supervise prints **ACT** | do the action it prints (unclear: `reference/supervising.md`) |
+| E3 | supervise prints **WATCH** | nothing now; re-check next round; leave healthy agents alone |
+| E4 | supervise prints **LIVE** (a promoted task's MRs are deployed) | agents test it: /test-and-close (R11); a person tests: tester guide via `qa-kit` (R9) |
+| E5 | A workflow finished (notification) | `wave-report.ps1 -Run <id>` (never parse the truncated notification); reconcile; then: open findings → follow-up /dev-wave (one group per file owner); deployed → E4; failed checks → E9; troubled run → E14 |
+| E6 | An agent or workflow stopped (usage limit, API timeout, RAM, you) with work left | `supervise.ps1 -MarkStopped <run>` if you stopped it; /dev-wave `mode: 'resume'` (`templates/RESUME_BRIEF.md`) from its worktrees; never restart from scratch |
+| E7 | A pipeline fails on an agent's MR | inside a reviewed wave: automatic (the CI gate makes it a blocking finding for the fix round); after the wave: a fix round = /dev-wave for that area, or direct if one small fix (R14) |
+| E8 | A review finding on an already-merged MR | a follow-up MR: should-fix findings → follow-up /dev-wave; one small fix → direct (R14) |
+| E9 | QA bug tasks created ("[Bug] … failed checks") | `bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per bug, then ONE /dev-wave `mode: 'bugfix'` for every bug open now; never wait for the QA run to finish |
+| E10 | The owner changes a rule or scope mid-wave | append it to the brief AND `<brief>.contracts.md` (agents re-read both before every push); QA runs: `<runDir>/lead-notes.md`. Never SendMessage a workflow agent by id (a hook blocks it: it spawns a duplicate) |
+| E11 | The owner asks for something destructive (clean a folder, reset a branch) while waves run | do it yourself after they finish; agents never act on relayed requests |
+| E12 | HEAL: a guard block that was wrong or repeated, a script crash, a workaround, a false flag, any kit friction | fix the script/rule in the kit source in this session ("Change the kit"), re-test it, then `learn.ps1 -Skill <s> -Fixed "<words>"` for its lesson |
+| E13 | LEARN: something cost time, failed, surprised you or worked unusually well | `learn.ps1 -Skill <s> -Kind <kind> -Text "<what + fix>"` |
+| E14 | The session-start nudge says signals piled up, or a run finished with errors, deferrals or review findings | /kit-retro (R4) |
+| E15 | A lesson is seen 2+ times | 2×: a `LESSONS.md` line (`learn.ps1 -Lesson "(n×) …"`); 3× and still true, generic and actionable for every agent of that type: promote it to a rule in SKILL.md / rules, or better a script check or default (then `-Fixed`) |
+| E16 | The kit changed in its source clone | K3-K5: `kit-lint.py` (0 problems), parse checks, org-term scan, commit + push; `sync-kit.ps1` only after running agents finish |
+| E17 | SessionStart says the workspace kit is behind its source, or kit-lint reports problems | sync once no agents run (E16); lint problems in the published kit → HEAL in the source; in the local overlay → fix the overlay (`reference/extending.md` §8) |
+| E18 | A wave finished | workflows run `cleanup.ps1 -WorktreeIdleHours 0` themselves (merged worktrees go at once); after a stopped run, run it yourself |
+| E19 | A new repo or project joins | `dev-kit/scripts/stack.ps1 -Dir <module>`; wrong commands → `.claude-stack.json` (`reference/layout.md` "Adding a new project") |
+| E20 | A deploy (or a merge into a branch that deploys) is needed | ask a person; never deploy yourself |
 
-**Relay, never message:** decisions/contracts → append to `<brief>.contracts.md` (agents re-read before every push); never SendMessage a
-workflow agent by id (spawns a duplicate; a hook blocks it). Answer QA testers in `<runDir>/lead-notes.md`. Never set `inTest` before
-deployment; deploys are a person's call (step 5), and repos whose target deploys on merge get `holdMerge`.
-
-**Learn:** read `LESSONS.md` (next to this file) first. Kit friction → fix the script/rule in the same session; `learn.ps1` records
-signals; `/kit-retro` turns them into lessons and rules. Token budget per agent type: `scripts/kit-cost.ps1`.
-
-## Reference (read only when you need it)
-- `reference/coordinator-duties.md` — supervising like a human lead, fixing the kit, one kit source + sync-kit, being proactive: read when you start coordinating.
-- `reference/supervising.md` — every supervise check and the typical ACT moves: when a flag is unclear.
-- `reference/self-improvement.md` — signal sources, /kit-retro, bug-brief, memory-based QA scaling, model choice, mandate.
-- `reference/layout.md` — what lives where, command quick reference, hard-won rules, adding a project, self-cleaning, dashboard, document formats.
+## Change the kit (HEAL and extending)
+- K1. Read `reference/extending.md` (where each kind of part goes, the patterns kit-lint enforces); `reference/layout.md` for the layout.
+- K2. Edit the **kit source clone** (generic: no org, product, tenant, host, id or local path; config through `*.local.json`), never a
+  workspace copy except its local overlay. Prefer making the script handle it over telling agents to.
+- K3. `python <kit>/skills/orchestrate/scripts/kit-lint.py` must print 0 problems (it regenerates `<runtime>/kit-flow.html`); parse every
+  touched .ps1, `node --check` touched .js/.mjs (workflows wrapped as in CONTRIBUTING), `kit-cost.ps1 -Steps` after a workflow change;
+  org-term scan: `kit-lint.py --org-terms <workspace>/.claude/skills/dev-kit/kit.local.json` (its `orgTerms` list).
+- K4. Commit (Conventional Commits), `git pull --rebase`, push. K5. `sync-kit.ps1 -To <workspace>/.claude -Clean` once no agents run
+  (it lints first, stamps the source commit and regenerates the page). K6. `learn.ps1 -Fixed` for the lesson the change retires.

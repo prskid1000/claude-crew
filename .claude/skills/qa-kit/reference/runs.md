@@ -1,6 +1,6 @@
 # QA runs: setup, run.json, seats, documents (qa-kit reference)
 
-For the lead / whoever sets up a machine or a run. Testers do not need it.
+Read at qa-kit lead steps L0 (machine setup, once) and L1-L3 (a run), and orchestrate step 7. Testers do not need it.
 
 ## Setup (once per machine)
 1. In this skill's folder: `Copy-Item targets.example.json targets.local.json` and fill in your environments + test logins.

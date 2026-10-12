@@ -1,6 +1,6 @@
 # Database migrations (dev-kit reference)
 
-Read before you add or change a DB migration (any tool).
+Read at dev-kit step 4c, before you add or change a DB migration (any tool). The short form is `rules/db-migrations.md`.
 
 ## 6. Database migrations (whatever the tool)
 - **Use only your assigned range** for ids/timestamps, so parallel agents never collide.

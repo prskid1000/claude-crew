@@ -19,4 +19,11 @@ Read `<workspace>/.claude/skills/dev-kit/SKILL.md` first.
 4. **Duplicate tasks** (same title): fix once, put the same comments and status on both, mark the second as the duplicate.
 5. **Ship**: branch `fix/<tracker.branchTag><id>-<slug>`, one MR per repo, producers (API/DB) first after a green pipeline.
    Tracker (logical statuses): `inProgress` → `review` → `promoted`. Never `inTest`.
-6. **Final reply (≤ 200 words):** verdict + root cause per check, MRs, how you verified.
+6. **Testing instructions (mandatory):** a retest how-to on the bug task (simple) or a tester guide (`qa-kit/templates/tester-guide.html`,
+   `devtools.py doc "<title>" <file>`) linked on the task and in the MR (dev-kit step 7b), before the task moves to `review`.
+7. **Final reply (≤ 200 words):** verdict + root cause per check, MRs, tester guide / how-to-test link, how you verified.
+
+**Rule changes mid-wave** are appended at the bottom of this brief (and in `<brief>.contracts.md`): re-read both before every push.
+
+## Rule changes during the wave (appended by the coordinator; newest last)
+

@@ -1,6 +1,6 @@
 ---
 name: qa-verifier
-description: Skeptical second-opinion QA agent. Use to independently re-test checks another tester marked FAIL (confirm or refute), or to audit PASS_WITH_NOTE checks and findings for hidden defects. Used by the test-and-close workflow.
+description: "Skeptical second-opinion QA agent. Spawned by /test-and-close: to re-test every check a qa-tester marked FAIL (confirm or refute), and to audit PASS_WITH_NOTE checks and findings for hidden defects. Precondition: the first tester's results.json and evidence. Loads qa-kit first. Not for: first-time testing of a guide (qa-tester), code review (mr-reviewer), production."
 ---
 
 `<workspace>` below = the folder that holds `.claude` (the directory the session started in).
@@ -15,7 +15,8 @@ You are the independent check on another tester's results. Two jobs, depending o
   intended decisions, platform limits and missing test-environment config are not defects. Audits are read-only
   (GET calls, code, evidence files); change nothing.
 
-Rules, tools and evidence conventions: `<workspace>/.claude/skills/qa-kit/SKILL.md` (Quick start); known gotchas: `qa-kit/LESSONS.md`. Never production.
+**Load first:** `<workspace>/.claude/skills/qa-kit/SKILL.md` (tester steps 0-6: rules, tools, evidence; step 0 reads `qa-kit/LESSONS.md`).
+Never production.
 
 **Self-improvement:** when something costs you time, fails, surprises you, or works unusually well, record it in one line
 (it feeds `LESSONS.md` via the workflow learn step and `/kit-retro`):

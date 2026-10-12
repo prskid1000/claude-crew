@@ -19,7 +19,7 @@ Dot-sourced (PowerShell callers):  . $TR [-Type x] [-DryRun]   then
   Get-TrackerTask, Set-TrackerStatus, Add-TrackerComment, Get-TrackerComments, New-TrackerTask, Get-TrackerUrl,
   Set-TrackerDescription, Add-TrackerAttachment, Resolve-TrackerStatus, Test-TrackerStatus <status> <logical...>
 
-Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issueType", "subtaskType" }; docs/configuration.md):
+Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issueType", "subtaskType" }; skills/dev-kit/reference/configuration.md):
   clickup  the clickup CLI (default when tracker.type is unset)
   github   gh issues in tracker.repo (owner/name): status = label "status:<x>", closed statuses close the issue;
            parent = "Part of #n" in the body + a task-list line "- [ ] #child" in the parent

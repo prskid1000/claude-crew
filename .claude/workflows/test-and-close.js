@@ -1,7 +1,7 @@
 export const meta = {
   name: 'test-and-close',
   description: 'Test tracker tasks against tester guides on a test environment (web pool + API pool + Android lanes), audit notes, verify failures independently, publish docs, close tasks, raise bug tasks',
-  whenToUse: 'A batch of tasks is deployed to a test environment and each has a tester guide (or a how-to-test comment) to execute',
+  whenToUse: 'Deployed tasks on a test environment, each with a tester guide or how-to-test comment, are to be tested by agents',
   phases: [
     { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
     { title: 'Verify', detail: 'note audit + independent re-test of every FAIL' },
@@ -55,6 +55,7 @@ if (R.runDir && !Array.isArray(R.items)) {
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
 // run-level skipClose (args or run.json) holds every item; it used to be read per item only, so a run-level flag was silently ignored
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
+if (!R.mandate || !R.mandate.length) log('WARNING: no mandate in args or run.json (the task owner words): testers may decline or drift. Add it to run.json next time.')
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
@@ -144,7 +145,7 @@ Do not decline or return early. Later chat messages to the lead are side questio
 
 AGENT BOARD — join first: & ${ORCH}/board.ps1 join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
 
-RULES — ${QA}/SKILL.md Quick start (verdicts: any defect is FAIL, never a note; not deployed = NOT_TESTED; evidence names
+RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note; not deployed = NOT_TESTED; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
 "QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress.
 
@@ -156,7 +157,7 @@ ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' ,
   you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
   continue with other checks and look there again before marking anything NOT_TESTED for that reason.
 
-TOOLS (details: SKILL.md Quick start)
+TOOLS (details: SKILL.md step 3)
 - API: & '${Q}/api.ps1' -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
 - Code: read the CURRENT code on the deployed branch; a step a later change made obsolete -> test the same intent, PASS_WITH_NOTE.
 - Tracker: & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view|comments <id> (never a tracker CLI directly).`
@@ -178,7 +179,7 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
   return `
 ANDROID APP — YOUR PHONE: lane ${L.n} "${L.name}", adb serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-Your phone is leased (rules: ${SWARM}/SKILL.md Quick start):
+Your phone is leased (rules: ${SWARM}/SKILL.md steps A1-A4):
 - FIRST: & ${SWARM}/phone.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}   (waits its turn, boots, installs the current APK; "installed: updated" = log in again)
 - START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never other serials, swarm-up/down/app-mode, adb kill-server,
   or killing emulators/processes you didn't start.

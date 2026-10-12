@@ -1,6 +1,15 @@
 # Tracker (dev-kit reference)
 
-Read when you change a task status, comment, create a subtask or attach a file.
+Read at dev-kit step 0b (before your first tracker call: status, comment, subtask, attachment).
+
+## The task's life (logical statuses; `tracker.statuses` in `kit.local.json` maps them to the board's names)
+1. **Start:** `inProgress`, and write the problem in the task description.
+2. **Open MRs:** the task link and a short solution summary in each MR description, then `review`.
+3. **Comment on the task:** the solution and the MR links (`orchestrate/templates/TASK_SOLUTION.md`).
+4. **Testing instructions:** a comment for a simple change; a tester guide for a complex one (dev-kit step 7b).
+5. **After the MRs merge:** `promoted` (the coordinator's `track.ps1` does this automatically).
+6. **After deployment:** `inTest`, set by a person, never before deployment.
+New tracker task? Its owner/assignee is the person who asked you to create it.
 
 ## 9. Tracker
 The backend (ClickUp, GitHub issues, GitLab issues, Jira or none) is set once in kit.local.json `tracker.type`; you always use

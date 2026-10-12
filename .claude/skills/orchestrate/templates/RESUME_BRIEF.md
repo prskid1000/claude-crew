@@ -12,4 +12,11 @@ committed only locally, or partly merged.
    - Continue where it stopped; don't redo finished work.
 3. **Another agent may still be in the same worktree.** If files keep changing between two `git status` runs, stop and
    report it (the stopped agent may have children still running).
-4. **Then ship** as in the dev-kit SKILL.md Quick start (Ship, Tracker; details in `dev-kit/reference/shipping.md` and `tracker.md`).
+4. **Then ship** as in the dev-kit SKILL.md steps 6-9 (details in `dev-kit/reference/shipping.md` and `tracker.md`).
+5. **Testing instructions (mandatory):** if the stopped agent did not post them, do it (dev-kit step 7b) before the task moves to `review`.
+
+**Rule changes mid-wave** are appended at the bottom of the original brief and of this one (and in `<brief>.contracts.md`):
+re-read them before every push.
+
+## Rule changes during the wave (appended by the coordinator; newest last)
+

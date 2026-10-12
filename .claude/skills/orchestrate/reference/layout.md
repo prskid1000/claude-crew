@@ -1,6 +1,7 @@
 # Kit layout, quick reference and housekeeping (orchestrate reference)
 
-Read when you need where something lives, a command example, or how cleanup / the dashboard / document formats work.
+Read at orchestrate K1 (layout and hard-won rules before changing the kit), E19 (adding a project) and step 4 (dashboard).
+The explicit map of every file is each SKILL.md Files index; the router is in `CLAUDE.md`.
 
 ## Background
 Nothing project-specific is hard-coded: stacks are detected from marker files, the git host/project from `origin`,

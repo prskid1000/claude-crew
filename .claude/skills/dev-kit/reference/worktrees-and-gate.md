@@ -1,6 +1,7 @@
 # Worktrees, agent board and the memory gate (dev-kit reference)
 
-Full rules behind the Quick start in `../SKILL.md`. Read when a worktree/link warning, a board warning or a gate wait/kill puzzles you.
+Full rules behind `../SKILL.md`. Read at dev-kit step 0 or 1 when `board.ps1` or `wt.ps1` prints a warning (DUPLICATE, CLAIM, AREA,
+deps differ), and at step 4 when the gate holds a build > 10 min or kills it.
 
 ## Setup and platforms
 You're one of several agents working at the same time, on any stack (Java, Kotlin/Android, React Native,

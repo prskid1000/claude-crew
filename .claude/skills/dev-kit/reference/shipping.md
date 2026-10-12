@@ -1,6 +1,12 @@
 # Scope, evidence and shipping (dev-kit reference)
 
-Read when you open MRs, write the tester guide or hit a merge conflict.
+Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester guide: §7) and on a merge conflict (§8.3).
+
+## Conventions (every repo)
+- **Branch:** feature `f/<tag><task-id>-<slug>` (`<tag>` = kit.local.json `tracker.branchTag`, e.g. `CU-`; it lets `track.ps1 -Discover`
+  and the tracker link the branch), bugfix `fix/...`, refactor `refactor/...` (or your org's prefixes).
+- **Commit:** Conventional Commits, `feat(scope):` / `fix(scope):` / `refactor(scope):`.
+- **MRs:** one per repo; cross-link MRs when a task spans repos; always include the task URL.
 
 ## 5. Scope
 - Fix only what your items ask; no sweeps of similar code. Don't remove existing features or inputs.
@@ -16,7 +22,8 @@ Read when you open MRs, write the tester guide or hit a merge conflict.
 - **Stale deploy**: if a check fails only because the environment runs an older build (404 / 405 / "No static resource" on
   an endpoint that exists on the target branch), call it a stale deploy and don't change code.
 - Tester guide: fill `<workspace>/.claude/skills/qa-kit/templates/tester-guide.html` (check ids T/L/R, concrete Expected) and publish it
-  with `devtools.py doc` (anyone with the link can view). Say what still needs a live check.
+  with `python $K/devtools.py doc "<title>" <guide.html>` (anyone with the link can view; a `.md` guide is converted to HTML for
+  Google Docs, so its tables survive). Say what still needs a live check.
 - Evidence names and formats: `qa-kit/reference/evidence-standard.md`.
 
 ## 8. Ship it yourself

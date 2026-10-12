@@ -1,5 +1,11 @@
 # Evidence standard
 
+Read at qa-kit step 4 (whenever you save evidence other than a screenshot or `api.ps1 -Save` JSON, or a name is unclear) and by
+dev agents at dev-kit step 7b. In short (the rule for every change):
+- UI changes -> screenshots; backend-only changes -> API request/response JSON (`qa-kit/scripts/api.ps1 -Save`).
+- Large files (payloads, logs) stay files (Drive links with `gdocs`, the QA run folder with `markdown`), never pasted.
+- Everything goes into one report (Google Doc or Markdown, per `reports.type`) attached or linked on the task.
+
 Every tested check leaves evidence that a reviewer, developer or customer can understand **without asking the tester**.
 `finalize.ps1` checks names and publishes everything listed here.
 

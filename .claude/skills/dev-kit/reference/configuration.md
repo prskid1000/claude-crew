@@ -36,6 +36,8 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `gate.heapMinGB` | `4` | gate.ps1 | Heap floor when the gate shrinks heaps under memory pressure |
 | `supervise.ramActPct` | `90` | supervise.ps1 | RAM use (%) that raises an ACT flag |
 | `supervise.minDiskFreeGB` | `30` | supervise.ps1 | Free disk (GB) on the workspace drive below which supervise raises an ACT flag |
+| `localOnly` | `[]` | sync-kit.ps1, kit-lint.py | Workspace paths that are local overlay (org-only skills, project profiles, extra rules): sync-kit never copies over or deletes them, kit-lint treats them as overlay |
+| `orgTerms` | `[]` | kit-lint.py `--org-terms` | Org words (names, hosts, ids) that must never appear in the published kit; the coordinator scans the kit source with them before every push (orchestrate K3) |
 | `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
 
 ### Tracker (`tracker.type`)
@@ -126,6 +128,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | Key | Default | Meaning |
 |---|---|---|
 | `avdDir` | `$env:ANDROID_AVD_HOME`, else `~/.android/avd` (`%USERPROFILE%\.android\avd` on Windows) | Where the lane AVDs live |
+| `outDir` | `<runtime>/android-swarm` | Runtime output: `apk/` (app.apk, base.apk, per-commit and side builds, `app.json` stamp), `build.log`, `metro.log`, emulator logs, `swarm.json`. An `app.apk` left in the skill's old `apk/` folder is copied here once |
 | `keepFreeGB` | `12` | A phone boots only if free RAM − 4.5 GB stays above this |
 | `headless` | `false` | Boot without windows (also per lane) |
 | `lanes[]` | — | `{ name, port, user, notes, headless }`: AVD name, console port (serial `emulator-<port>`), the lane's test login (a user key in targets.local.json), notes printed by `phone.ps1 acquire` |
@@ -268,8 +271,10 @@ cache keeps "free" near zero).
 | Event | Script | Purpose |
 |---|---|---|
 | `PreToolUse` (Bash, PowerShell) | `dev-kit/scripts/guard.ps1` | blocks `git stash`, `--no-verify`, force-push to shared branches, ungated heavy builds; logs to `<runtime>/guard.log` |
+| `SessionStart` | `orchestrate/scripts/kit-health.ps1` | one line when the workspace kit is behind its source (`kit-sync.local.json`, written by sync-kit) or kit-lint finds problems |
 | `SessionStart` | `orchestrate/scripts/retro-nudge.ps1` | one-line nudge to run `/kit-retro` once ≥ 15 signals piled up |
 | `SessionStart` (async) | `orchestrate/scripts/cleanup.ps1 -IfDue -Quiet` | daily self-cleaning |
+| `SessionStart` (async) | `orchestrate/scripts/kit-health.ps1 -Flow` | regenerates `<runtime>/kit-flow.html` (also done by every kit-lint run and sync-kit) |
 
 They run with PowerShell 7 (`pwsh`, on `PATH` on Windows, Linux and macOS) in exec form, with the path built from
 `${CLAUDE_PROJECT_DIR}/.claude/...` (forward slashes work on every OS) — so the kit must sit in the `.claude` folder of

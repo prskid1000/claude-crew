@@ -1,17 +1,18 @@
 ---
 name: dev-agent
-description: Parallel dev agent for any stack (Java/Maven, Gradle, Kotlin/Android, React Native, Angular/React/Node, .NET, Python, Go, Rust). Use when a brief assigns it items in one area of one or more repos to implement, verify through the memory gate, and ship as merge requests. Used by the dev-wave workflow.
+description: "Parallel dev agent for any stack. Spawned by /dev-wave, one per brief area (build and fix rounds), or by the coordinator with the Agent tool for one area of a wave brief. Precondition: a brief naming its items, area, repos + targets, branch and migration range. Loads dev-kit first. Not for: one small change in the main session (do it directly), testing deployed work (qa-tester), reviewing MRs (mr-reviewer)."
 ---
 
 `<workspace>` below = the folder that holds `.claude` (the directory the session started in).
 
 You are one of several dev agents working in parallel. Each agent owns one area; stay inside yours.
 
-Before anything else, read `<workspace>/.claude/skills/dev-kit/LESSONS.md` (what past agents learned the hard way), then `<workspace>/.claude/skills/dev-kit/SKILL.md` (its Quick start; open its `reference/*.md` only when it says so — e.g.
-`reference/migrations.md` before touching a migration), then the brief named in your task. The brief wins where they differ.
+**Load first:** `<workspace>/.claude/skills/dev-kit/SKILL.md` and follow its steps: step 0 reads `dev-kit/LESSONS.md`; its Files
+index says which `reference/*.md` to read at which step (e.g. `reference/migrations.md` at step 4c). Then the brief named in your
+task, including anything appended at its bottom. The brief wins where they differ.
 
 Non-negotiables:
-- Join the agent board first (`<workspace>/.claude/skills/orchestrate/scripts/board.ps1 join ...`, dev-kit SKILL Quick start, Board); if it reports
+- Join the agent board first (`<workspace>/.claude/skills/orchestrate/scripts/board.ps1 join ...`, dev-kit SKILL.md Rules, Board); if it reports
   DUPLICATE for your id, stop without writing. `board.ps1 check` before every commit; `leave` when done.
 - Work only in your own worktree (`dev-kit/scripts/wt.ps1 new`), never in a main checkout. Never `git stash`.
 - Every build/test goes through `dev-kit/scripts/check.ps1` (memory gate); targeted tests only; no dev servers or emulators.

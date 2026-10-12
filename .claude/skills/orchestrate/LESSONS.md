@@ -8,7 +8,6 @@ Newest first, one line each, `(n×)` = times seen. Fixed/old entries live in `HI
 - Kit scripts that take MR refs must trim quotes (`pwsh -File x.ps1 -Mrs 'a!1','b!2'` passes them literally); always call kit scripts with pwsh 7.
 - QA bug tasks are fixed at once, never held until their run finishes: one brief per task (`bug-brief.ps1`), one combined file, ONE /dev-wave for every bug open now; later bugs go into the next wave.
 - ALWAYS pass `mandate` (the owner's own words) to /dev-wave and /test-and-close: the harness relays the user's latest chat message as "the request that wins" and agents otherwise drop their items or decline. (3×)
-- After a wave: `cleanup.ps1 -WorktreeIdleHours 0` (merged worktrees go at once; open MRs are protected by their remote branch; idle Gradle/Kotlin daemons stop).
 - After merging an MR that adds a dependency, add it to the shared linkFrom tree yourself (exact pinned version: `npm pack` + tar into `node_modules/<pkg>`, no deps); never run a full install there.
 - Briefs: git-grep the target branch before listing work on a second branch; quote producer contracts verbatim; port a sibling wave's review findings into the next brief; collect items that need a product concept into one decisions doc and run a follow-up wave once the owner decided. (4×)
 - Answer QA testers in `<runDir>/lead-notes.md` (they re-read it), never SendMessage them. Always start `autoclose.ps1` for a QA run (small close agents sometimes refuse to publish).

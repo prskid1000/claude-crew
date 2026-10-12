@@ -53,3 +53,6 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 - Paste the user's request verbatim into the run's `mandate` — testers otherwise decline or return early.
 - (fixed in kit) track.ps1 run under Windows PowerShell 5.1 loaded every tracking file as null (ConvertFrom-Json -AsHashtable is PS7-only), skipped the done check and called the tracker CLI with empty task ids. gate/status/supervise/track.ps1 now carry #Requires -Version 7; always call kit scripts with pwsh.
 - Workflow({name:'dev-wave'}) fails with 'not found' once the session's working directory moved into a repo (named lookup uses the cwd's .claude/workflows). SKILL.md now says to launch kit workflows by scriptPath.
+
+## Moved by learn.ps1 (-Fixed / -Trim), oldest first
+- (fixed in kit) After a wave: `cleanup.ps1 -WorktreeIdleHours 0` (merged worktrees go at once; open MRs are protected by their remote branch; idle Gradle/Kotlin daemons stop).
