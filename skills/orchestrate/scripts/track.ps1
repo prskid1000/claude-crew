@@ -171,7 +171,8 @@ switch ($Action) {
       if ($o.done) { continue }
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($o.discover) {
-        if (-not @($KitConf.TrackerRepos).Count) { if (-not $Quiet) { "ATTENTION $($o.task): -Discover needs ""trackerRepos"" in kit.local.json" } }
+        # a config gap, not an MR problem: only worth saying when nothing was registered by hand either
+        if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: track.ps1 add -Task $($o.task) -Mrs <repo>!<iid>)" } }
         foreach ($r in @($KitConf.TrackerRepos)) {
           $pp = ProjPath $r; if (-not $pp) { continue }
           $found = @(glab api "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString("$($KitConf.TrackerTag)$($o.task)"))&in=title,source_branch&state=all&per_page=50" 2>$null | ConvertFrom-Json | Where-Object { $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" })

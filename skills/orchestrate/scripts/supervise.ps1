@@ -221,6 +221,7 @@ if ($AutoFix) {
   }
   foreach ($l in @(& (Join-Path $S 'track.ps1') run -Detail)) {   # -Detail: HOLD lines become INFO flags
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
+    elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $(Join-Path $skills 'dev-kit\scripts\tracker.ps1') comment <id> <file.md>)." }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w.-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
