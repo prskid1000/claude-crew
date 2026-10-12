@@ -14,6 +14,24 @@
   Defects are FAIL, never notes. Dev agents never start emulators (the QA swarm owns them).
 - Runtime output (tokens, evidence, QA runs, browser profiles) goes to `<workspace>/.claude-runtime/`, not into `.claude\`.
 
+## Picking a workflow on your own (autonomous)
+Where the org's rules grant a standing opt-in for workflows (e.g. `rules/*.local.md` says the owner allows them without asking), the
+main session decides by itself when to run one: it doesn't wait for the user to name a workflow, and it doesn't ask first. It
+launches, then says in one line what started (workflow, agents, repos) and why. Without that grant, propose the workflow instead.
+
+| The request is... | Run |
+|---|---|
+| Coding with **more than 2 work items or tasks**, one item spanning **2+ repos**, or one large item (new feature/epic, migrations, many screens) | `/dev-wave` (`mode: 'bugfix'` for bug tasks, `'resume'` for stopped agents) |
+| **Testing** deployed work: tracker tasks with tester guides / how-to-test comments on a test environment | `/test-and-close` |
+| Coding **and** testing | `/dev-wave` now; `/test-and-close` once a person has deployed (deploys stay a person's call) |
+| Bug tasks raised by a QA run | one `/dev-wave` (`mode: 'bugfix'`) for every bug open now |
+| A wave or QA run finished with errors, deferrals or review findings, or the session-start nudge says signals piled up | `/kit-retro` |
+| A single small change (one screen / file / quick fix), a question, an analysis, a config edit | no workflow: do it directly (or one subagent) |
+
+Mixed requests: split them. The small parts are done directly, the large ones go to a workflow, all in the same turn. Size each
+workflow to the session's size guideline. A request that is already running in a workflow is never launched twice; add to it
+through the contracts file instead.
+
 ## When you are the coordinator (main session running waves / QA runs)
 Two jobs at once: run the agents AND improve the kit (`<workspace>/.claude`). Use the `orchestrate` skill (its Quick start: launching,
 one supervise loop, next steps when a workflow finishes). Fix kit friction in the same session (prefer making the script handle it;
