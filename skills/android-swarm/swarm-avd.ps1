@@ -28,12 +28,13 @@ $adb = $c.adb
 . (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/sysinfo.ps1')   # RAM, processes, SDK paths on Windows/Linux/macOS
 $sdk = Split-Path (Split-Path $c.adb)
 $avdHome = if ($c.avdDir) { $c.avdDir } elseif ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { (Join-Path $HOME '.android/avd') }
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
+. (Join-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)) 'dev-kit/scripts/kitpaths.ps1')
+$leases = Get-KitPath phones
 $template = Join-Path $c.dir 'avd-template.ini'
 $all = @($c.lanes | Where-Object { -not $Lanes -or $Lanes -contains $_.name })
 if ($Lanes) { $bad = @($Lanes | Where-Object { $c.lanes.name -notcontains $_ }); if ($bad) { throw "unknown lane(s) $($bad -join ', ') (lanes: $($c.lanes.name -join ', '))" } }
 function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
-function Holder($l) { $f = Join-Path $rt "phones\$($l.name).json"; if (Test-Path $f) { (Get-Content $f -Raw | ConvertFrom-Json).agent } }
+function Holder($l) { $f = Join-Path $leases "$($l.name).json"; if (Test-Path $f) { (Get-Content $f -Raw | ConvertFrom-Json).agent } }
 
 function New-Avd($name) {
   $tpl = Get-Content $template -Raw
@@ -86,7 +87,7 @@ switch ($Action) {
           New-Avd $l.name
         }
       }
-      Remove-Item (Join-Path $rt "phones\$($l.name).json") -Force -ErrorAction SilentlyContinue   # any lease on a reset phone is void
+      Remove-Item (Join-Path $leases "$($l.name).json") -Force -ErrorAction SilentlyContinue   # any lease on a reset phone is void
       if (-not $NoBoot) { & (Join-Path $c.dir 'swarm-up.ps1') -Lanes $l.name -Mode None -ColdBoot | Select-Object -Last 2 }
     }
   }

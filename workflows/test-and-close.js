@@ -14,7 +14,7 @@ export const meta = {
 args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker run for queued items; item claims keep runs apart)  (short form: run.json is read from runDir - preferred, keeps launches/notifications small)
 or the full run.json object (write it to <runDir>/run.json too — finalize.ps1 reads it), plus runDir:
 {
-  runDir: 'C:/work/.claude-runtime/qa-runs/2026-10-01-epic-x',
+  runDir: '<runtime>/work/qa-runs/2026-10-01-epic-x',   // <runtime> = <kitDir>/.claude-runtime (qa-kit reference/runs.md)
   kitDir: 'C:/work/.claude',               // optional: absolute path of this kit (recommended); default '.claude' = relative to the workspace root
   title: 'Product X epic',                   // used in doc names and bug titles
   target: 'my-staging',                      // name in skills/qa-kit/targets.local.json
@@ -64,7 +64,10 @@ const QA = `${KIT}/skills/qa-kit`                 // SKILL.md = QA rules, target
 const Q = `${QA}/scripts`
 const SWARM = `${KIT}/skills/android-swarm`
 const ORCH = `${KIT}/skills/orchestrate/scripts`
-const RT = (R.runtimeDir || `${KIT}/../.claude-runtime`).replace(/[\\/]+$/, '')
+const RT = (R.runtimeDir || `${KIT}/.claude-runtime`).replace(/[\\/]+$/, '')
+// kit paths by name: the same names and values as skills/dev-kit/scripts/kitpaths.json (kit-lint RUNTIME-MAP keeps them equal)
+const KP = {"runtime": {"cleanup-log": "logs/cleanup.log"}, "durable": {}}
+const rp = (n) => (n in KP.durable ? `${KIT}/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // ES module imports need a file:// URL of the absolute path
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/scripts/web/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
   : `<file:/// URL of the absolute path of ${KIT}/skills/qa-kit/scripts/web/browser.mjs>`
@@ -417,7 +420,7 @@ ${JSON.stringify(all).slice(0, 60000)}
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
-3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
+3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return all

@@ -2,18 +2,17 @@
 <#
 One-page status of everything the kit is doing: memory + running gated builds, worktrees (branch, dirty, ahead/behind),
 QA runs (per package verdicts, published or not), the learning loop (signals, guard blocks, last retro).
-Writes <.claude-runtime>/dashboard.html (auto-refreshes every 60 s in the browser).
+Writes <runtime>/cache/dashboard.html (Get-KitPath dashboard; auto-refreshes every 60 s in the browser).
 
   & <workspace>/.claude/skills/orchestrate/scripts/status.ps1 [-Open] [-Watch] [-WorktreeRoot <folder with worktrees>]
 -Watch regenerates every 60 s until stopped (run it in the background during a wave).
 -WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt, the wt.ps1 default).
 #>
 param([switch]$Open, [switch]$Watch, [string[]]$WorktreeRoot = @())
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts/kitconfig.ps1')
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts/sysinfo.ps1')
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
-$out = Join-Path $rt 'dashboard.html'
+$out = Get-KitPath dashboard
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 
 function Build {
@@ -60,7 +59,7 @@ function Build {
   }
 
   # QA runs
-  $runs = Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+  $runs = Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5
   if ($runs) {
     A "<h2 style='$h2'>QA runs (latest 5)</h2>"
     foreach ($r in $runs) {
@@ -78,7 +77,7 @@ function Build {
   }
 
   # Learning loop
-  $sig = Join-Path $rt 'learning\signals.jsonl'; $mark = Join-Path $rt 'learning\last-retro.txt'; $guard = Join-Path $rt 'guard.log'
+  $sig = Get-KitPath signals; $mark = Get-KitPath last-retro; $guard = Get-KitPath guard-log
   $since = if (Test-Path $mark) { [datetime](Get-Content $mark -Raw).Trim() } else { [datetime]::MinValue }
   $sigs = if (Test-Path $sig) { @(Get-Content $sig | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $new = @($sigs | Where-Object { [datetime]$_.at -gt $since })
@@ -86,9 +85,9 @@ function Build {
   A "<h2 style='$h2'>Learning loop</h2><p>$($new.Count) new signal(s) since the last retro ($(if ($since -eq [datetime]::MinValue) { 'never run' } else { $since.ToString('d MMM HH:mm') })) · $($sigs.Count) total · $($blocks.Count) guard block(s)$(if (($new.Count + $blocks.Count) -ge 15) { " · <b style='color:#b91c1c'>run /kit-retro</b>" })</p>"
   if ($new.Count) { Table @('When', 'Skill', 'Kind', 'Signal') ($new | Select-Object -Last 15 | ForEach-Object { , @(([datetime]$_.at).ToString('d MMM HH:mm'), (Esc $_.skill), (Esc $_.kind), (Esc $_.text)) }) }
   if ($blocks.Count) { A '<p><b>Recent guard blocks</b></p>'; Table @('When', 'Reason', 'Command') ($blocks | Select-Object -Last 8 | ForEach-Object { $p = $_ -split "`t"; , @((Esc $p[0]), (Esc $p[2]), (Esc $p[3])) }) }
-  $cl = Join-Path $rt 'cleanup.log'; if (Test-Path $cl) { $last = Get-Content $cl | Where-Object { $_ -match '^\d{4}-' } | Select-Object -Last 1; A "<h2 style='$h2'>Cleanup</h2><p>$(Esc $last)</p>" }
+  $cl = Get-KitPath cleanup-log; if (Test-Path $cl) { $last = Get-Content $cl | Where-Object { $_ -match '^\d{4}-' } | Select-Object -Last 1; A "<h2 style='$h2'>Cleanup</h2><p>$(Esc $last)</p>" }
   A '</body></html>'
-  New-Item -ItemType Directory -Force $rt | Out-Null
+  $null = Get-KitPath dashboard -Create
   $sb.ToString() | Out-File $out -Encoding utf8
 }
 

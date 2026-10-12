@@ -21,8 +21,8 @@ param(
   [string]$Agent, [string]$Area = '', [string]$Items = '', [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree
 )
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
-$dir = Join-Path $rt 'board'; New-Item -ItemType Directory -Force $dir | Out-Null
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath (kitpaths.json)
+$dir = Get-KitPath board -Create
 $staleMin = 20
 function All { foreach ($f in Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue) { try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; $e | Add-Member -Force NoteProperty file $f.FullName; $e } catch {} } }
 function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }

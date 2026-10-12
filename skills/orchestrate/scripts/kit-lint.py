@@ -2,10 +2,10 @@
 
   python kit-lint.py [<kit .claude dir>] [--summary] [--warn] [--no-flow] [--org-terms <kit.local.json | term,term>] [--json <out>]
 
-Default kit dir: the .claude folder this script lives in. Exit 1 when problems are found (0 with --warn).
---summary   one line (the SessionStart hook uses it); --no-flow skips regenerating <runtime>/kit-flow.html (kit-flow.py)
---org-terms also scans the published kit (and README/docs/examples next to a source clone) for org terms: a JSON file's
-            "orgTerms" list (e.g. the workspace kit.local.json) or a comma list.
+Default kit dir: the kit this script lives in (the .claude folder = the kit repo's root). Exit 1 when problems are found (0 with --warn).
+--summary   one line (the SessionStart hook uses it); --no-flow skips regenerating <runtime>/cache/kit-flow.html (kit-flow.py)
+--org-terms also scans the published kit (README/docs/examples included) for org terms: a JSON file's "orgTerms" list
+            (e.g. the workspace kit.local.json) or a comma list. The pre-push hook (.githooks/pre-push) runs it.
 Checks (the same graph and rules kit-flow.py draws; both use kitgraph_lib.py):
   ROUTER-MISSING / ROUTER-TARGET / ROUTER-UNROUTED  CLAUDE.md "## Router" table; one target per row; every skill, workflow, agent routed
   OVERLAY-ROUTER  a workspace with rules/*.local.md needs a "## Org router rows" section
@@ -16,9 +16,13 @@ Checks (the same graph and rules kit-flow.py draws; both use kitgraph_lib.py):
                   LESSONS.md is read at step 0, HISTORY.md is marked "never"
   WF-WHEN / WF-CLOCK / WF-CRLF  whenToUse is a router row word for word; no Date.now/new Date in code; LF only
   AGENT-SPAWN / AGENT-SKILL  description says "Spawned by" and "Not for"; body names the skill it loads first
-  REF-DANGLING    a kit path in Markdown points at nothing (docs/ paths too: docs are not synced into workspaces)
+  REF-DANGLING    a kit path in Markdown points at nothing (docs/ and examples/ paths too)
   REACH-NONE / REACH-MENTION  unreached file / reached only through a mention
-  JUNK            runtime output or reserved-name files inside .claude
+  JUNK            runtime output or reserved-name files among the kit files (outside .claude-runtime)
+  RUNTIME-RAW     a script builds a runtime path by hand (.claude-runtime/<sub>, $CLAUDE_RUNTIME, $KitConf.Runtime, ${RT}/):
+                  use Get-KitPath / kit_path / kitPath / rp(<name>) with the names in skills/dev-kit/scripts/kitpaths.json
+  RUNTIME-MAP     a workflow's `const KP` names differ from kitpaths.json (or kitpaths.json is invalid)
+  RUNTIME-DURABLE durable state (learning, tracking, automerge.json, tracker-none) inside the disposable runtime: kit-setup.ps1 -Migrate
   CONFIG-UNDOC    a *.example.json key missing from skills/dev-kit/reference/configuration.md
   ORG-TERM        an org term in a published file (only with --org-terms)
 """

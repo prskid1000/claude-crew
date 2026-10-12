@@ -7,19 +7,22 @@ Runs automatically: at the end of every workflow (Learn step) and once a day fro
   & ... cleanup.ps1 -IfDue                                               # only if the last cleanup was > 20 h ago
 
 What it cleans (only kit-created things; never repos, never anything in use):
-  - headless test browsers (runtime/chrome-profiles) running > 3 h, or > 30 min when no QA agent is active on the board;
+  - headless test browsers (<runtime>/cache/chrome-profiles) running > 3 h, or > 30 min when no QA agent is active on the board;
     then their profile folders idle > 1 day; and when no QA seat/agent is active, only the cleanup.maxBrowserProfiles
     (kit.local.json, default 4) most recently used profiles are kept - a profile in use is never removed
   - idle Gradle / Kotlin compile daemons (GBs each) when no gated Gradle build is running
-  - shared web logins (runtime/sessions) > 8 h, API tokens > 3 days
-  - loose evidence / android shots / temp xml in runtime > 14 / 3 days
+  - shared web logins (cache/sessions) > 8 h, API tokens (cache/tokens) > 3 days, stop markers (cache/stopped) > 7 days
+  - loose evidence (work/evidence) > 14 days, android shots / temp xml (work/shots, cache/android-tmp) > 3 days
+  - wave reports (work/waves) > 14 days, bug briefs and markdown docs (work/briefs, work/docs) > 30 days, retro reports
+    (logs/retros) > 90 days
   - QA run folders > 30 days (results.json, finalize.json and report.html are kept as a record)
   - tsc incremental caches > 30 days; gate ledger entries of dead builds
   - Claude session temp dirs (<OS temp>/claude/<project>/<session>: scratchpad, task outputs) untouched > 7 days
   - kit test leftovers in the OS temp folder (kit-*, claude-kit-*, wfc.js, gradletest, report-preview.html, ...) > 1 day
   - worktrees that are finished: remote branch deleted (MR merged + source branch removed), no uncommitted changes,
     no unpushed work, untouched > 2 h -> wt.ps1 remove (the local branch ref stays, nothing is lost)
-  - log rotation: guard.log, cleanup.log, signals.jsonl (kept to the newest 5000 lines)
+  - log rotation: logs/*.log and the durable learning.local.jsonl (kept to the newest 5000 lines)
+Paths come from Get-KitPath (kitpaths.json). Everything under <runtime> is disposable; durable state lives at the kit root.
 Claude Code's own transcripts are left to its `cleanupPeriodDays` setting.
 #>
 param([switch]$DryRun, [switch]$IfDue, [switch]$Quiet, [string[]]$WorktreeRoot = @(), [double]$WorktreeIdleHours = 2)   # WorktreeRoot default: kit.local.json "worktreeRoots" (else <reposRoot>-wt); idle 0 right after a wave finished (still-open MRs are protected by their remote branch)
@@ -27,12 +30,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 $K = Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/scripts'
 . (Join-Path $K 'kitconfig.ps1')
 . (Join-Path $K 'sysinfo.ps1')
-$rt = $KitConf.Runtime   # $env:CLAUDE_RUNTIME, else <workspace>/.claude-runtime
 $tmp = Get-KitTemp
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
 $keepBranches = '^(' + ((@('main', 'master', 'develop') + @($KitConf.ProtectedBranches | ForEach-Object { [regex]::Escape($_) })) -join '|') + ')$'
-New-Item -ItemType Directory -Force $rt | Out-Null
-$mark = Join-Path $rt 'last-cleanup.txt'; $log = Join-Path $rt 'cleanup.log'
+$mark = Get-KitPath last-cleanup -Create; $log = Get-KitPath cleanup-log -Create
 if ($IfDue -and (Test-Path $mark) -and ((Get-Date) - [datetime](Get-Content $mark -Raw).Trim()).TotalHours -lt 20) { exit 0 }
 
 $now = Get-Date; $freed = 0L; $actions = New-Object System.Collections.ArrayList
@@ -48,10 +49,10 @@ function Gone($path, $why) {
 function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours }
 
 # 1. headless test browsers left running, then idle profiles
-$profiles = Join-Path $rt 'chrome-profiles'
+$profiles = Get-KitPath chrome-profiles
 $chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|google chrome|microsoft edge)(\.exe)?$' | Where-Object { $_.CommandLine -match '--headless' -and $_.CommandLine -match [regex]::Escape($profiles) }
-$qaRuns = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | ForEach-Object Name)
-$qaActive = @(Get-ChildItem (Join-Path $rt 'board') -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
+$qaRuns = @(Get-ChildItem (Get-KitPath qa-runs) -Directory | ForEach-Object Name)
+$qaActive = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
   Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 20 -and ($_.run -in $qaRuns -or "$($_.worktrees)" -match 'chrome:') }).Count
 $browserLimitH = if ($qaActive) { 3 } else { 0.5 }
 foreach ($c in $chromes | Where-Object { $_.ParentId -notin $chromes.Id }) {   # browser roots only
@@ -60,7 +61,7 @@ foreach ($c in $chromes | Where-Object { $_.ParentId -notin $chromes.Id }) {   #
 $inUse = @($chromes | ForEach-Object { if ($_.CommandLine -match 'chrome-profiles[\\/](\d+)') { $Matches[1] } } | Sort-Object -Unique)
 foreach ($p in Get-ChildItem $profiles -Directory) { if ($p.Name -notin $inUse -and (Old $p 24)) { Gone $p.FullName 'idle browser profile' } }
 # cap: with no QA seat taken (qa-seat.ps1; seats older than 3 h are stale) and no QA agent on the board, keep the N most recently used
-$seatsActive = @(Get-ChildItem (Join-Path $rt 'qa-seats\seats') -Filter '*.json' | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }).Count
+$seatsActive = @(Get-ChildItem (Join-Path (Get-KitPath qa-seats) 'seats') -Filter '*.json' | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }).Count
 $maxProfiles = [math]::Max(0, [int]$KitConf.MaxBrowserProfiles)
 if (-not $seatsActive -and -not $qaActive) {
   # Chrome rewrites "Local State" when a profile is used/closed; the folder's own time is the fallback
@@ -80,16 +81,20 @@ if (-not $gradleBusy) {
 }
 
 # 2. logins, tokens, loose evidence, android temp
-foreach ($f in Get-ChildItem (Join-Path $rt 'sessions') -File) { if (Old $f 8) { Gone $f.FullName 'expired shared web login' } }
-foreach ($f in Get-ChildItem (Join-Path $rt 'tokens') -File) { if (Old $f 72) { Gone $f.FullName 'old API token' } }
-foreach ($f in Get-ChildItem (Join-Path $rt 'evidence') -File) { if (Old $f (14 * 24)) { Gone $f.FullName 'loose evidence > 14 d' } }
-foreach ($d in 'android', 'shots') { foreach ($f in Get-ChildItem (Join-Path $rt $d) -Recurse -File) { if (Old $f 72) { Gone $f.FullName "$d temp > 3 d" } } }
+foreach ($f in Get-ChildItem (Get-KitPath sessions) -File) { if (Old $f 8) { Gone $f.FullName 'expired shared web login' } }
+foreach ($f in Get-ChildItem (Get-KitPath tokens) -File) { if (Old $f 72) { Gone $f.FullName 'old API token' } }
+foreach ($f in Get-ChildItem (Get-KitPath stopped) -File) { if (Old $f (7 * 24)) { Gone $f.FullName 'stop marker > 7 d' } }
+foreach ($f in Get-ChildItem (Get-KitPath evidence) -File) { if (Old $f (14 * 24)) { Gone $f.FullName 'loose evidence > 14 d' } }
+foreach ($d in 'android-tmp', 'shots') { foreach ($f in Get-ChildItem (Get-KitPath $d) -Recurse -File) { if (Old $f 72) { Gone $f.FullName "$d temp > 3 d" } } }
+foreach ($f in Get-ChildItem (Get-KitPath waves) -File) { if (Old $f (14 * 24)) { Gone $f.FullName 'wave report > 14 d' } }
+foreach ($d in 'briefs', 'docs') { foreach ($f in Get-ChildItem (Get-KitPath $d) -File) { if (Old $f (30 * 24)) { Gone $f.FullName "$d > 30 d" } } }
+foreach ($f in Get-ChildItem (Get-KitPath retros) -File) { if (Old $f (90 * 24)) { Gone $f.FullName 'retro report > 90 d' } }
 
 # 3. old QA runs: keep the record, drop the bulk
-foreach ($r in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory) {
+foreach ($r in Get-ChildItem (Get-KitPath qa-runs) -Directory) {
   if (Old $r (30 * 24)) { foreach ($sub in Get-ChildItem $r.FullName -Recurse -Directory | Where-Object Name -in 'shots', 'evidence', 'scripts') { Gone $sub.FullName 'QA run > 30 d (results/report kept)' } }
 }
-foreach ($f in Get-ChildItem (Join-Path $rt 'tsbuild') -File) { if (Old $f (30 * 24)) { Gone $f.FullName 'tsc cache > 30 d' } }
+foreach ($f in Get-ChildItem (Get-KitPath tsbuild) -File) { if (Old $f (30 * 24)) { Gone $f.FullName 'tsc cache > 30 d' } }
 
 # 4. gate ledger: entries of builds that are no longer running
 foreach ($f in Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json') {
@@ -130,7 +135,7 @@ foreach ($root in $WorktreeRoot) {
 }
 
 # 8. rotate logs
-foreach ($f in @((Join-Path $rt 'guard.log'), $log, (Join-Path $rt 'learning\signals.jsonl'))) {
+foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File | ForEach-Object FullName) + (Get-KitPath signals))) {
   if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep }; [void]$actions.Add("rotated $f to 5000 lines") }
 }
 

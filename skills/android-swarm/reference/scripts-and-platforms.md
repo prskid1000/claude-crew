@@ -2,7 +2,7 @@
 
 Read at android-swarm lead steps L1-L4 (build, create or reset lanes, switch modes) and on Linux/macOS. The full text of the skill:
 
-`<out>` = `<runtime>/android-swarm` (`$env:CLAUDE_RUNTIME`, else `<workspace>/.claude-runtime`; `outDir` in `swarm.config.json`
+`<out>` = `<runtime>/cache/android-swarm` (`Get-KitPath android-swarm`; `<runtime>` = `<kit>/.claude-runtime`; `outDir` in `swarm.config.json`
 overrides it): APKs, `<out>/apk/app.json` (branch + commit of `app.apk`), `build.log`, `metro.log`, emulator logs and `swarm.json`.
 
 ## Up to N emulators (lanes) run the app under test in parallel, one testing agent per phone. PowerShell only.
@@ -38,7 +38,7 @@ emulators start detached through `setsid`/`nohup` (log: `<out>/emulator-<lane>.l
 (KVM on Linux). `avd-template.ini` is an x86_64 image: on Apple-silicon Macs change `abi.type`, `hw.cpu.arch` and `image.sysdir.1`
 to the arm64-v8a image before `swarm-avd.ps1 create`.
 
-Phone in use = it is leased (`<runtime>/phones/<lane>.json`). Agents release before long non-phone work (API, web UI, code, data prep)
+Phone in use = it is leased (`<runtime>/work/phones/<lane>.json`). Agents release before long non-phone work (API, web UI, code, data prep)
 and acquire again later. `supervise.ps1 -AutoFix` is only the safety net: it releases a lease whose holder is gone (crashed) and shuts an
 unleased phone (booted by hand) whose app has been closed for 10 min. `swarm-down` verifies the emulator exited (force-kills after 90 s).
 

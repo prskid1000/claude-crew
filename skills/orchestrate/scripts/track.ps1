@@ -9,21 +9,27 @@ so nobody has to watch pipelines and flip statuses by hand.
                                                   # completes only once the task is already in review (its agent sets that after all MRs)
   & $T add  -Task abc125 -MergeAfter 'frontend!203>backend!102'   # schedule the web merge only once the API MR merged
   & $T show [-Detail]           # open tracked tasks and MR states (-Detail: finished ones too)
+  & $T -Rebuild [-Force]        # tracking file lost? recreate it (also `rebuild`): every open (or merged in the last 14 d) MR in
+                                # trackerRepos whose branch/title carries <tracker tag><id> becomes a -Discover task again (done
+                                # when all its MRs merged and the tracker status is already promoted or later); -Force merges into
+                                # an existing file. Without trackerRepos / a tracker tag it writes an empty file and says why.
   & $T run [-Detail]            # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
                                 # (prints actions only; HOLD lines are counted unless -Detail - supervise uses -Detail)
 
-Holds (no status change) while a still-running wave's saved report (<runtime>/waves/*.json) has a blocking review finding on one of the MRs.
+Holds (no status change) while a still-running wave's saved report (<runtime>/work/waves/*.json) has a blocking review finding on one of the MRs.
 MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
 are mapped by tracker.statuses; a backend's own status names work too).
 Config (skills/dev-kit/kit.local.json): gitHost, gitlabGroup, trackerRepos (searched by -Discover), repoAliases (short names agents use,
 e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit/scripts/tracker.ps1). glab for MRs.
-Files: <.claude-runtime>/tracking/<task>.json. supervise.ps1 -AutoFix calls `run` every round.
+File: <kit>/tracking.local.json (durable, git-ignored; Get-KitPath tracking): { tasks: {<task>: ...}, automerge: {<ref>: time} }
+(automerge = merge-when-green intents from devtools.py merge, re-armed by `run`). supervise.ps1 -AutoFix calls `run` every round.
 #>
-param([Parameter(Mandatory, Position = 0)][ValidateSet('add', 'show', 'run')][string]$Action, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
+param([Parameter(Position = 0)][ValidateSet('add', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
-$dir = Join-Path $rt 'tracking'; New-Item -ItemType Directory -Force $dir | Out-Null
-. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerTask, Set-TrackerStatus, ...
+if ($Rebuild) { $Action = 'rebuild' }
+if (-not $Action) { throw 'usage: track.ps1 add|show|run|rebuild ... (or -Rebuild)' }
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf, Get-KitPath, Read-/Update-KitTracking + Get-TrackerTask, ...
+$wavesDir = Get-KitPath waves
 $script:holds = 0
 # HOLD = waiting by design (review/fix still running): listed with -Detail, otherwise only counted at the end of `run`
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
@@ -40,21 +46,24 @@ function NormRef($r) {
   if ($r -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$' -and $alias[$Matches.repo]) { $r = "$($alias[$Matches.repo])!$($Matches.iid)" }
   $r
 }
-function Load($t) { $f = Join-Path $dir "$t.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json -AsHashtable } }
+function Load($t) { (Read-KitTracking).tasks[$t] }
 function Save($o) {
   # another process (an agent's `add`) may have written since we loaded: keep its MRs / merge orders instead of overwriting them
-  $cur = Load $o.task
-  if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
-  $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-  $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
-  $o | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir "$($o.task).json")
+  Update-KitTracking {
+    param($all)
+    $cur = $all.tasks[$o.task]
+    if ($cur) { foreach ($k in 'mrs', 'mergeAfter') { $o[$k] = @(@($o[$k]) + @($cur[$k]) | Where-Object { $_ } | Select-Object -Unique) }; if ($cur.discover) { $o.discover = $true } }
+    $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $o.mergeAfter = @(@($o.mergeAfter) | Where-Object { $_ } | ForEach-Object { $p = $_ -split '>', 2; if ($p.Count -eq 2) { "$(NormRef $p[0])>$(NormRef $p[1])" } else { $_ } } | Select-Object -Unique)
+    $all.tasks[$o.task] = $o
+  }
 }
 # "<label>" of a still-running dev-wave stage (build:/review:/fix:<agent>) whose agent owns this MR, else $null.
-# Reads <runtime>/waves/<run>.json (supervise refreshes them for every running workflow before calling `track run`).
+# Reads <runtime>/work/waves/<run>.json (supervise refreshes them for every running workflow before calling `track run`).
 function InFlight($ref) {
   if ($ref -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $null }
   $pat = "/$([regex]::Escape($Matches.r))/-/merge_requests/$($Matches.i)(\D|$)"
-  foreach ($f in Get-ChildItem (Join-Path $rt 'waves') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-12) }) {
+  foreach ($f in Get-ChildItem $wavesDir -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-12) }) {
     $w = Get-Content $f.FullName -Raw | ConvertFrom-Json
     if (-not @($w.running).Count) { continue }
     foreach ($p in $w.agents.PSObject.Properties) {
@@ -86,6 +95,38 @@ function MrState($ref) {
   $m.state
 }
 switch ($Action) {
+  'rebuild' {
+    $tf = Get-KitPath tracking
+    if ((Test-Path $tf) -and -not $Force) { "tracking file exists ($tf, $(@((Read-KitTracking).tasks.Keys).Count) task(s)): nothing to rebuild (-Force merges discovered tasks into it)"; return }
+    $tag = $KitConf.TrackerTag; $repos = @($KitConf.TrackerRepos)
+    if (-not $tag -or -not $repos.Count) {
+      Update-KitTracking { param($t) }   # an empty, valid file: track run / supervise work again; tasks come back as agents `add` them
+      "rebuilt $tf with no tasks: discovery needs ""trackerRepos"" and a tracker tag (tracker.branchTag) in kit.local.json. Re-add open tasks with: track.ps1 add -Task <id> -Discover"
+      return
+    }
+    $since = (Get-Date).AddDays(-14).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $found = @{}
+    foreach ($r in $repos) {
+      $pp = ProjPath $r; if (-not $pp) { "skip $r : use <group/repo> or set ""gitlabGroup"""; continue }
+      $q = "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString($tag))&in=title,source_branch&state=all&updated_after=$since&per_page=100"
+      foreach ($m in @(glab api $q 2>$null | ConvertFrom-Json) | Where-Object { $_ -and $_.state -ne 'closed' }) {
+        if ("$($m.source_branch) $($m.title)" -notmatch "(?i)$([regex]::Escape($tag))(?<id>[A-Za-z0-9]+)") { continue }
+        $id = $Matches.id
+        if (-not $found[$id]) { $found[$id] = @{ mrs = @(); states = @() } }
+        $found[$id].mrs += "$r!$($m.iid)"; $found[$id].states += $m.state
+      }
+    }
+    $n = 0; $nDone = 0
+    foreach ($id in $found.Keys) {
+      if ((Load $id) -and -not $Force) { continue }
+      $o = @{ task = $id; mrs = @($found[$id].mrs); onMerged = @('promoted'); discover = $true; done = $false; created = (Get-Date).ToString('s'); rebuilt = $true }
+      if (-not @($found[$id].states | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus (TaskStatus $id) 'promoted', 'inTest', 'closed')) { $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); $nDone++ }
+      Save $o; $n++
+      if ($Detail) { "  $id : $($o.mrs -join ', ')$(if ($o.done) { ' (done)' })" }
+    }
+    if (-not (Test-Path $tf)) { Update-KitTracking { param($t) } }
+    "rebuilt $tf : $n task(s) from $($repos.Count) repo(s) ($nDone already done; MRs with $tag<id> updated in the last 14 days)"
+  }
   'add' {
     if (-not $Task) { throw 'add needs -Task' }
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('s') } }
@@ -99,16 +140,16 @@ switch ($Action) {
     Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
   }
   'show' {
-    $all = @(Get-ChildItem $dir -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+    $all = @((Read-KitTracking).tasks.Values | ForEach-Object { [pscustomobject]$_ })
     foreach ($o in $all | Where-Object { $Detail -or -not $_.done }) { "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') }
     if (-not $Detail) { "($(@($all | Where-Object done).Count) finished task(s) hidden; -Detail lists them)" }
   }
   'run' {
     # Re-arm merge-when-green that GitLab dropped: a push after scheduling (rebase, review fix) cancels it, and the MR then sits
-    # open with a green pipeline. Intents come from devtools.py merge (<runtime>/automerge.json); merged/closed ones are forgotten.
-    $amf = Join-Path $rt 'automerge.json'
-    if (Test-Path $amf) {
-      $am = Get-Content $amf -Raw | ConvertFrom-Json -AsHashtable; $keep = @{}
+    # open with a green pipeline. Intents come from devtools.py merge (tracking.local.json "automerge"); merged/closed ones are forgotten.
+    $am = (Read-KitTracking).automerge
+    if ($am.Count) {
+      $keep = @{}
       foreach ($ref in @($am.Keys)) {
         if ($ref -notmatch '^(?<proj>.+)!(?<iid>\d+)$') { continue }
         $enc = $Matches.proj -replace '/', '%2F'; $iid = $Matches.iid
@@ -122,10 +163,12 @@ switch ($Action) {
         $r = glab api @a 2>$null | ConvertFrom-Json
         "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
       }
-      $keep | ConvertTo-Json | Set-Content $amf -Encoding utf8
+      # forget only what was checked here: devtools.py may have added an intent meanwhile
+      $gone = @($am.Keys | Where-Object { -not $keep.ContainsKey($_) })
+      if ($gone) { Update-KitTracking { param($t) foreach ($r in $gone) { $t.automerge.Remove($r) } } }
     }
-    foreach ($f in Get-ChildItem $dir -Filter '*.json') {
-      $o = Get-Content $f.FullName -Raw | ConvertFrom-Json -AsHashtable; if ($o.done) { continue }
+    foreach ($o in @((Read-KitTracking).tasks.Values)) {
+      if ($o.done) { continue }
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($o.discover) {
         if (-not @($KitConf.TrackerRepos).Count) { if (-not $Quiet) { "ATTENTION $($o.task): -Discover needs ""trackerRepos"" in kit.local.json" } }
@@ -167,13 +210,13 @@ switch ($Action) {
       if ($failed) { if (-not $Quiet) { "ATTENTION $($o.task): $(($failed | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', ')" }; continue }
       if (@($states.Values | Where-Object { $_ -ne 'merged' }).Count) { continue }
       # hold while a still-running wave has a blocking review finding on one of these MRs (its fix MR is on the way)
-      $held = @(Get-ChildItem (Join-Path $rt 'waves') -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
+      $held = @(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }   # refresh: the wave may have ended
           if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
       if ($held) { Hold "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))"; continue }
       # merged but its agent's review/fix round is still running: findings may still turn into a follow-up MR
-      if ($o.wave) { $wf = Join-Path $rt "waves\$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue } }
+      if ($o.wave) { $wf = Join-Path $wavesDir "$($o.wave).json"; & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $o.wave *> $null; $wj = if (Test-Path $wf) { Get-Content $wf -Raw | ConvertFrom-Json } else { $null }; if (-not $wj -or @($wj.running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue } }
       $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($busy) { Hold "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix"; continue }
       # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)

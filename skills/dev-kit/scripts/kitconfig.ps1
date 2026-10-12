@@ -4,11 +4,13 @@ Shared kit configuration. Dot-source it from any kit script:
   . (Join-Path <path to skills/dev-kit/scripts> 'kitconfig.ps1')      # sets $KitConf
 
 Everything is derived from where the kit lives, so the kit works in any workspace:
-  Kit        = the .claude folder (this file is <Kit>/skills/dev-kit/scripts/kitconfig.ps1)
+  Kit        = the .claude folder, a git clone of the kit repo (this file is <Kit>/skills/dev-kit/scripts/kitconfig.ps1)
   Workspace  = the parent of .claude (the folder you open Claude Code in)
-  Runtime    = $env:CLAUDE_RUNTIME, else <Workspace>/.claude-runtime (tokens, evidence, QA runs, logs - never inside .claude)
+  Runtime    = the CLAUDE_RUNTIME env var, else <Kit>/.claude-runtime (git-ignored, disposable: work/ cache/ logs/)
+Paths of runtime and durable local state: Get-KitPath <name> (kitpaths.ps1, dot-sourced here; map in kitpaths.json).
 Org-specific values come from <Kit>/skills/dev-kit/kit.local.json (copy kit.example.json; git-ignored). Every key is optional.
 #>
+. (Join-Path $PSScriptRoot 'kitpaths.ps1')   # Get-KitPath, Get-KitRuntime, Invoke-KitLocked
 $__devkit = Split-Path $PSScriptRoot
 $__kit = Split-Path (Split-Path $__devkit)
 $__ws = Split-Path $__kit
@@ -39,7 +41,7 @@ $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__rep
 $KitConf = [pscustomobject]@{
   Kit               = $__kit
   Workspace         = $__ws
-  Runtime           = $(if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $__ws '.claude-runtime' })
+  Runtime           = (Get-KitRuntime)                            # use Get-KitPath <name> for anything inside it
   ConfigFile        = $__cfgFile
   ReposRoot         = $__repos                                    # where the main checkouts live (<ReposRoot>/<repo>)
   WorktreeRoots     = $__wtRoots                                  # where wt.ps1 puts worktrees (default <ReposRoot>-wt)

@@ -20,6 +20,6 @@ goes stale within the hour.
 
 ## When a workflow finishes (E5)
 `& <workspace>/.claude/skills/orchestrate/scripts/wave-report.ps1 -Run <wf id> [-Detail]`: a journal-based summary (agents, MRs,
-done/deferred, OPEN review findings, QA verdicts), saved to `.claude-runtime/waves/<run>.json`. The notification text is truncated:
+done/deferred, OPEN review findings, QA verdicts), saved to `<runtime>/work/waves/<run>.json`. The notification text is truncated:
 don't parse it. Reconcile (MRs merged? tracker status? lessons recorded?), then take the E5 next step. Stopped a workflow yourself
 (TaskStop)? `supervise.ps1 -MarkStopped <run id>` once so its unfinished steps stop showing as running.

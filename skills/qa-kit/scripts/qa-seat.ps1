@@ -20,10 +20,9 @@ param(
   [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitconfig.ps1')   # $KitConf.Runtime = $env:CLAUDE_RUNTIME or <workspace>/.claude-runtime
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitconfig.ps1')   # $KitConf, Get-KitPath
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/sysinfo.ps1')     # Get-FreeGB on Windows, Linux and macOS
-$rt = $KitConf.Runtime
-$dir = Join-Path $rt 'qa-seats'; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
+$dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $wait, $claims | Out-Null
 if (-not $KeepFreeGB) {
   $tf = Join-Path (Split-Path $PSScriptRoot) 'targets.local.json'

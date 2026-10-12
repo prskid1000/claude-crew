@@ -1,0 +1,40 @@
+{
+  "_readme": "The ONE map of the kit's local state. Scripts never build these paths by hand: PowerShell Get-KitPath (kitpaths.ps1, dot-sourced by kitconfig.ps1), Python kit_path (kitpaths.py), Node kitPath (kitpaths.mjs) and each workflow's rp() helper all resolve names from here (kit-lint RUNTIME-RAW / RUNTIME-MAP enforce it). 'runtime' entries live under <runtime> = $CLAUDE_RUNTIME, else <kit>/.claude-runtime, and are disposable: work/ = in-flight runs, cache/ = rebuilt on demand, logs/ = append-only logs; deleting the folder loses nothing durable. 'durable' entries live at the kit root, git-ignored (*.local.*): knowledge and task state that must survive a runtime wipe. Folders end in '/'.",
+  "runtimeDir": ".claude-runtime",
+  "runtime": {
+    "work": "work/",
+    "cache": "cache/",
+    "logs": "logs/",
+    "waves": "work/waves/",
+    "qa-runs": "work/qa-runs/",
+    "board": "work/board/",
+    "briefs": "work/briefs/",
+    "phones": "work/phones/",
+    "qa-seats": "work/qa-seats/",
+    "audits": "work/audits/",
+    "docs": "work/docs/",
+    "evidence": "work/evidence/",
+    "shots": "work/shots/",
+    "chrome-profiles": "cache/chrome-profiles/",
+    "sessions": "cache/sessions/",
+    "tokens": "cache/tokens/",
+    "tsbuild": "cache/tsbuild/",
+    "android-swarm": "cache/android-swarm/",
+    "android-tmp": "cache/android-tmp/",
+    "stopped": "cache/stopped/",
+    "kit-flow": "cache/kit-flow.html",
+    "dashboard": "cache/dashboard.html",
+    "supervise-state": "cache/supervise-state.json",
+    "last-cleanup": "cache/last-cleanup.txt",
+    "guard-log": "logs/guard.log",
+    "cleanup-log": "logs/cleanup.log",
+    "tracker-log": "logs/tracker-none.log",
+    "retros": "logs/retros/"
+  },
+  "durable": {
+    "signals": "learning.local.jsonl",
+    "last-retro": "learning.local.stamp",
+    "tracking": "tracking.local.json",
+    "tracker-none": "tracker-none.local/"
+  }
+}

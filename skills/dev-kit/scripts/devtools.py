@@ -15,7 +15,7 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
 Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy kit.example.json):
   "tracker": { "type": "clickup|github|gitlab|jira|none", ... }   task commands go through tracker.ps1 (default clickup)
   "reports": { "type": "gdocs|markdown" }  `doc`: gdocs = Google Doc via gws (default when gws is installed);
-                                           markdown = the file is kept under <runtime>\\docs and its path printed
+                                           markdown = the file is kept under <runtime>/work/docs and its path printed
   "driveParent": "<Drive folder id>"   default parent folder for `doc` (gdocs)
   "gitHost": "gitlab.example.com"      self-hosted GitLab (default gitlab.com); "githubHost" likewise (default github.com)
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs (pwsh, glab, gh, gws) are resolved with
@@ -30,8 +30,8 @@ except Exception:
     CFG = {}
 GLAB, GH, GWS = (shutil.which(x) for x in ('glab', 'gh', 'gws'))
 REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or (CFG.get('reports') or {}).get('type') or ('gdocs' if GWS else 'markdown')).lower()
-WORKSPACE = os.path.dirname(os.path.dirname(os.path.dirname(KIT)))   # <workspace>\.claude\skills\dev-kit -> <workspace>
-RUNTIME = os.environ.get('CLAUDE_RUNTIME') or os.path.join(WORKSPACE, '.claude-runtime')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kitpaths import kit_path, locked  # noqa: E402  (the kit's one path map: kitpaths.json)
 
 
 def _run(cmd, cwd=None):
@@ -182,14 +182,20 @@ def mr_create(worktree, title, body_md, tgt=None):
 
 def _remember_automerge(ref):
     """GitLab drops 'merge when pipeline succeeds' when new commits are pushed (e.g. a rebase after scheduling).
-    Record the intent in <runtime>/automerge.json; track.ps1 run (every supervise round) re-arms it until the MR merges."""
-    rt = os.environ.get('CLAUDE_RUNTIME') or os.path.join(re.sub(r'[\\/]\.claude[\\/].*$', '', os.path.abspath(__file__)), '.claude-runtime')
-    path = os.path.join(rt, 'automerge.json')
+    Record the intent in the durable tracking file (<kit>/tracking.local.json, "automerge"); track.ps1 run (every supervise
+    round) re-arms it until the MR merges."""
+    path = kit_path('tracking')
     try:
-        data = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {}
-        data[ref] = time.strftime('%Y-%m-%dT%H:%M:%S')
-        os.makedirs(rt, exist_ok=True)
-        json.dump(data, open(path, 'w', encoding='utf-8'), indent=1)
+        with locked(path):
+            data = json.load(open(path, encoding='utf-8-sig')) if os.path.exists(path) else {}
+            data = data if isinstance(data, dict) else {}
+            data.setdefault('tasks', {})
+            am = data['automerge'] if isinstance(data.get('automerge'), dict) else {}
+            am[ref] = time.strftime('%Y-%m-%dT%H:%M:%S')
+            data['automerge'] = am
+            with open(path + '.tmp', 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=1)
+            os.replace(path + '.tmp', path)
     except Exception:
         pass
 
@@ -283,7 +289,7 @@ def merge_when_green(worktree, iid, timeout_min=90):
     return 'TIMEOUT waiting for pipeline'
 
 
-# ---------- Documents (reports.type: gdocs = Google Docs via gws, markdown = files under <runtime>\docs) ----------
+# ---------- Documents (reports.type: gdocs = Google Docs via gws, markdown = files under <runtime>/work/docs) ----------
 def gws(*args, params=None, body=None, upload=None):
     cmd = [GWS, *args]
     if params is not None:
@@ -296,9 +302,8 @@ def gws(*args, params=None, body=None, upload=None):
 
 
 def keep_doc(title, path):
-    """markdown reports: keep a copy under <runtime>\\docs (worktrees get removed) and return its path."""
-    d = os.path.join(RUNTIME, 'docs')
-    os.makedirs(d, exist_ok=True)
+    """markdown reports: keep a copy under <runtime>/work/docs (worktrees get removed) and return its path."""
+    d = kit_path('docs', create=True)
     slug = re.sub(r'[^A-Za-z0-9]+', '-', title).strip('-')[:80] or 'doc'
     dst = os.path.join(d, slug + os.path.splitext(path)[1])
     if os.path.abspath(dst) != os.path.abspath(path):

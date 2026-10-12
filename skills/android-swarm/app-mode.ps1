@@ -1,6 +1,6 @@
 ﻿<#
 Installs the app under test on the swarm phones in the chosen mode:
-  Release - <out>/apk/app.apk (build it with app-build.ps1; <out> = <runtime>/android-swarm).
+  Release - <out>/apk/app.apk (build it with app-build.ps1; <out> = <runtime>/cache/android-swarm).
   Metro   - react-native only: <out>/apk/base.apk (Expo dev client) + adb reverse to the shared Metro (metro-start.ps1).
 Both should be signed with the same key, so switching keeps the app's data.
 #>

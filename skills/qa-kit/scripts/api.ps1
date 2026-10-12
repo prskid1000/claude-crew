@@ -19,7 +19,7 @@ param(
   [string]$As = 'admin',
   [string]$Tenant = $null,
   [string]$Save = $null,            # evidence file name, without .json
-  [string]$OutDir = $null,          # default: <.claude-runtime>/evidence
+  [string]$OutDir = $null,          # default: <runtime>/work/evidence
   [hashtable]$Headers = @{},
   [int]$TimeoutSec = 180
 )
@@ -27,7 +27,7 @@ $ErrorActionPreference = 'Stop'
 # Git Bash (MSYS) rewrites a '/api/x' argument to 'C:/Program Files/Git/api/x' before pwsh sees it: undo that
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
 $here = Split-Path $MyInvocation.MyCommand.Path
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($MyInvocation.MyCommand.Path -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }   # runtime output lives outside .claude
+. (Join-Path (Split-Path (Split-Path $here)) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath
 $cfgFile = Join-Path (Split-Path $here) 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - copy targets.example.json and fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
@@ -43,7 +43,7 @@ $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
 function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k }; $o }
 
-$tokDir = Join-Path $rt 'tokens'; New-Item -ItemType Directory -Force $tokDir | Out-Null
+$tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
 function Login {
   $a = $t.auth
@@ -95,7 +95,7 @@ $status, $content, $ctype = $res
 if ($content -is [byte[]]) {
   $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
   if ($Save) {
-    $bdir = if ($OutDir) { $OutDir } else { Join-Path $rt 'evidence' }; New-Item -ItemType Directory -Force $bdir | Out-Null
+    $bdir = if ($OutDir) { $OutDir } else { Get-KitPath evidence }; New-Item -ItemType Directory -Force $bdir | Out-Null
     $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '.bin' } }
     $bf = Join-Path $bdir "$Save.body$ext"; [IO.File]::WriteAllBytes($bf, $bytes); $content += " saved to $bf"
   }
@@ -104,7 +104,7 @@ if ($content -is [byte[]]) {
 
 if ($Save) {
   # Evidence envelope per reference/evidence-standard.md: meta + request (secrets redacted) + response
-  if (-not $OutDir) { $OutDir = Join-Path $rt 'evidence' }
+  if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
   function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { $s | ConvertFrom-Json } catch { $s } }
   $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match '(?i)authorization|cookie|token|key|secret|password') { '[redacted]' } else { $script:sentHeaders[$k] } }

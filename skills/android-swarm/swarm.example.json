@@ -1,5 +1,5 @@
 {
-  "_readme": "Copy to swarm.config.json (git-ignored) and point 'app' at the app you are testing. Lanes = AVD names in avdDir (create them with swarm-avd.ps1 create). Each lane has its own test login ('user', a user key in qa-kit targets.local.json) and 'notes' printed by phone.ps1 acquire. 'headless' (top level or per lane) boots without windows. Passwords never go here. Paths: forward slashes work on every OS (Windows: C:/src/...). avdDir empty = $ANDROID_AVD_HOME, else ~/.android/avd. outDir empty = <runtime>/android-swarm (APKs, logs, swarm.json).",
+  "_readme": "Copy to swarm.config.json (git-ignored) and point 'app' at the app you are testing. Lanes = AVD names in avdDir (create them with swarm-avd.ps1 create). Each lane has its own test login ('user', a user key in qa-kit targets.local.json) and 'notes' printed by phone.ps1 acquire. 'headless' (top level or per lane) boots without windows. Passwords never go here. Paths: forward slashes work on every OS (Windows: C:/src/...). avdDir empty = $ANDROID_AVD_HOME, else ~/.android/avd. outDir empty = <runtime>/cache/android-swarm (APKs, logs, swarm.json).",
   "avdDir": "",
   "outDir": "",
   "keepFreeGB": 12,

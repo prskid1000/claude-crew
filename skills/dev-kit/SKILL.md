@@ -31,8 +31,8 @@ MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start
 | `scripts/pipe-wait.ps1` | run by /dev-wave's CI step (MR pipelines before merge) |
 | `scripts/deploy-merge.ps1` | coordinator only, after a person approved a deploy: merges the main line into a deploy branch |
 | `scripts/guard.ps1` | PreToolUse hook (blocks stash, --no-verify, force-push, adb kill-server, ungated builds) |
-| `scripts/sync-kit.ps1` | coordinator, orchestrate K5 (kit source -> workspace) |
 | `scripts/kitconfig.ps1`, `scripts/sysinfo.ps1` | libraries dot-sourced by the other scripts (config, OS specifics); never run by hand |
+| `scripts/kitpaths.json`, `scripts/kitpaths.ps1`, `scripts/kitpaths.py`, `scripts/kitpaths.mjs` | libraries: the one map of runtime and durable local paths (`Get-KitPath` / `kit_path` / `kitPath`); every script resolves paths through them, never by hand |
 
 ## Steps (every dev agent; your **brief** wins where it differs)
 Your brief (orchestrate templates WAVE / BUGFIX / RESUME) gives your items, area, repos + target branches, branch, worktree name,

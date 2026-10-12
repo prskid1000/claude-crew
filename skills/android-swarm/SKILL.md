@@ -26,8 +26,8 @@ description: "Load when: you build the test APK, create, boot or reset emulator 
 | `swarm-slim.ps1`, `swarm-arrange.ps1` | run by swarm-up (one-time slimming, window layout) |
 | `_config.ps1` | library: loads `swarm.config.json` and the output folder; never run by hand |
 
-Runtime output (APKs, `build.log`, `metro.log`, emulator logs, `swarm.json`) goes to `<runtime>/android-swarm/` (`$env:CLAUDE_RUNTIME`,
-else `<workspace>/.claude-runtime`; override with `outDir` in `swarm.config.json`). An older APK in this folder's `apk/` is copied there once.
+Runtime output (APKs, `build.log`, `metro.log`, emulator logs, `swarm.json`) goes to `<runtime>/cache/android-swarm/` (`<runtime>` =
+`<kit>/.claude-runtime`, disposable; override with `outDir` in `swarm.config.json`). An older APK in this folder's `apk/` is copied there once.
 
 ## App-lane tester steps
 - A0. Read `LESSONS.md`.

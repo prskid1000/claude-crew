@@ -9,7 +9,7 @@ Android UI helper for any app on an emulator or device (via uiautomator + adb in
   & ... ui.ps1 type "hello world"          # into the focused field
   & ... ui.ps1 key 4                       # keyevent (4 = BACK, 66 = ENTER)
   & ... ui.ps1 swipe 640 2000 640 800      # scroll
-  & ... ui.ps1 shot T3_after_save [<dir>]  # PNG screenshot (default dir: <.claude-runtime>/shots/<serial>)
+  & ... ui.ps1 shot T3_after_save [<dir>]  # PNG screenshot (default dir: <runtime>/work/shots/<serial>)
   & ... ui.ps1 shotmark T3_total "Total|#save_btn" ["wrong total"] [<dir>]   # screenshot + red box/label on those elements, one go
   & ... ui.ps1 wait "Welcome" 30           # wait up to N s for a text
   & ... ui.ps1 log ReactNativeJS           # recent logcat lines for a tag (clear with: adb logcat -c)
@@ -19,9 +19,9 @@ param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
 . (Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)))) 'dev-kit/scripts/sysinfo.ps1')
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))   # ANDROID_HOME / ANDROID_SDK_ROOT / OS default
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($MyInvocation.MyCommand.Path -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }   # runtime output lives outside .claude
+. (Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $MyInvocation.MyCommand.Path)))) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath
 $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
-$tmp = Join-Path $rt "android"; New-Item -ItemType Directory -Force $tmp | Out-Null
+$tmp = Get-KitPath android-tmp -Create
 $xmlLocal = Join-Path $tmp "ui_$tag.xml"
 function Get-Nodes {
   & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
@@ -52,7 +52,7 @@ switch ($Action) {
   'key' { & $adb shell input keyevent $Arg; "key $Arg" }
   'swipe' { & $adb shell input swipe $Arg $Arg2 $Arg3 $Arg4 400; 'swiped' }
   'shot' {
-    $dir = if ($Arg2) { $Arg2 } else { Join-Path $rt "shots\$tag" }
+    $dir = if ($Arg2) { $Arg2 } else { Join-Path (Get-KitPath shots) $tag }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $f = Join-Path $dir "$Arg.png"
     & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
@@ -61,7 +61,7 @@ switch ($Action) {
   'shotmark' {
     # one go: screenshot + red box (and label) around the element found by text or #resource-id. Arg = name, Arg2 = text or #id,
     # Arg3 = label (default: the element text), Arg4 = dir. Several elements: separate with ' | ' in Arg2.
-    $dir = if ($Arg4) { $Arg4 } else { Join-Path $rt "shots\$tag" }
+    $dir = if ($Arg4) { $Arg4 } else { Join-Path (Get-KitPath shots) $tag }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $f = Join-Path $dir "$Arg.png"
     $all = Get-Nodes

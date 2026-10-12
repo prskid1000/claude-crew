@@ -8,7 +8,7 @@ of the QA run that raised it, ownership, branch/board/merge rules, and prints th
 
 Repos: names or aliases from kit.local.json "repos" (each: { name, checkout, target, linkFrom?, aliases[] }); `name@branch` overrides the
 target for this bug (e.g. web@main when the same repo ships two products from different branches). The brief lands next to the
-other briefs (<runtime>/briefs/<task>.md); the script prints the path and the Workflow args JSON.
+other briefs (<runtime>/work/briefs/<task>.md); the script prints the path and the Workflow args JSON.
 Mandate: kit.local.json "bugfixMandate" (the task owner's own words asking the coordinator to fix QA bugs), else -Mandate.
 #>
 param(
@@ -22,7 +22,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $kit = Split-Path (Split-Path $PSScriptRoot)                     # .../.claude/skills
 $claude = Split-Path $kit
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path $claude) '.claude-runtime' }
 $cfgFile = Join-Path $kit 'dev-kit\kit.local.json'
 $cfg = if (Test-Path $cfgFile) { Get-Content $cfgFile -Raw | ConvertFrom-Json } else { $null }
 if (-not $cfg -or -not $cfg.repos) { throw "add a ""repos"" list to $cfgFile (see kit.example.json)" }
@@ -42,7 +41,7 @@ if (-not $checks) { throw "no '### <id> — <screen>' failed checks found in $Ta
 
 # the QA run that raised it: the run folder whose finalize.json names this bug
 $runItem = $null
-foreach ($fin in Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter finalize.json -ErrorAction SilentlyContinue) {
+foreach ($fin in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue) {
   $o = Get-Content $fin.FullName -Raw | ConvertFrom-Json
   if (@($o.subtasks | Where-Object { $_.bug -eq $Task }).Count) { $runItem = $fin.Directory; break }
 }
@@ -91,7 +90,7 @@ in progress → review (the coordinator's track.ps1 sets promoted). This wave is
 Register: ``$claude\skills\orchestrate\scripts\track.ps1 add -Task $Task -Discover``.
 Phones (app bugs): only if you really need one, ``$claude\skills\android-swarm\phone.ps1 acquire -Agent $Agent``, release it when done.
 "@
-$dir = Join-Path $rt 'briefs'; New-Item -ItemType Directory -Force $dir | Out-Null
+$dir = Get-KitPath briefs -Create
 $out = Join-Path $dir "$Task.md"
 Set-Content $out $md -Encoding utf8
 $m = if ($Mandate) { $Mandate } elseif ($cfg.bugfixMandate) { @($cfg.bugfixMandate) } else { Write-Warning 'no mandate: pass -Mandate or set kit.local.json "bugfixMandate" (agents drop their items for later chat messages without one)'; @() }
@@ -105,5 +104,6 @@ $wfArgs.agents[0].area = (($checks | ForEach-Object screen) -join '; ').Substrin
 "brief: $out ($($checks.Count) checks: $ids; model: $(if ($complex) { 'strongest (complex: true)' } else { 'sonnet (small/cosmetic)' }))"
 "Workflow args (scriptPath $claude\workflows\dev-wave.js):"
 $wfArgs | ConvertTo-Json -Depth 5 -Compress
-$tf = Join-Path $rt "tracking\$Task.json"
-if (Test-Path $tf) { "already tracked: $Task" } else { & (Join-Path $PSScriptRoot 'track.ps1') add -Task $Task -Discover | Out-Null; "tracking $Task (-Discover)" }
+$tj = Get-KitPath tracking   # durable <kit>/tracking.local.json (track.ps1)
+$tracked = (Test-Path $tj) -and @((Get-Content $tj -Raw | ConvertFrom-Json).tasks.PSObject.Properties.Name) -contains $Task
+if ($tracked) { "already tracked: $Task" } else { & (Join-Path $PSScriptRoot 'track.ps1') add -Task $Task -Discover | Out-Null; "tracking $Task (-Discover)" }

@@ -134,7 +134,7 @@ Always fill the triage columns for in-scope findings:
 ## 7. Deliverables
 
 1. **`<output dir>/<module>.json`** — one JSON array of findings (output dir: the project profile's findings folder, else
-   `<workspace>/.claude-runtime/audits/<project>/`). Validate:
+   `<runtime>/work/audits/<project>/`). Validate:
    `python <workspace>/.claude/skills/tech-audit/scripts/validate.py <file>` → must print `schema problems: none`.
 2. **Summary** — `python <workspace>/.claude/skills/tech-audit/scripts/summary.py <module>.json --sources "<what you used>"` writes
    `<module>-summary.md` (chat/MR) and a styled `<module>-summary.html` (severity chips, Critical/High, "Needs a product decision",

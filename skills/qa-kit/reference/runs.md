@@ -14,7 +14,7 @@ Read at qa-kit lead steps L0 (machine setup, once) and L1-L3 (a run), and orches
 Every tester/verifier first runs `scripts/qa-seat.ps1 acquire` (the workflow tells it how): it waits its fair turn while free RAM would drop under `keepFreeGB` (targets.local.json, default 8) and claims its item. So a run's `webParallel` is only a cap - real concurrency follows memory, and an extra worker run (`/test-and-close { runDir, kitDir, instance: 'w2', only: [...] }`, suggested by the supervisor's capacity flag) never tests an item another worker owns. Items can carry `model`/`effort`; narrow web/API retests default to sonnet.
 
 ## A run, end to end
-1. **Run folder**: `<workspace>/.claude-runtime/qa-runs/<date>-<name>/` with `run.json` (shape: header of `test-and-close.js`).
+1. **Run folder**: `<runtime>/work/qa-runs/<date>-<name>/` (`<runtime>` = `<kit>/.claude-runtime`) with `run.json` (shape: header of `test-and-close.js`).
    One item per tester guide: `{code, title, guideFile, lane: web|api|app, subtasks:[{id,name,mrs}], retest?, only?, dups?}`.
    Several items may share one task (e.g. a guide split by `only` into web + app parts): finalize keeps the task open until every
    item on it is published, so no `skipClose` is needed for that. `skipClose: true` = test + verify only; the verdicts are saved to

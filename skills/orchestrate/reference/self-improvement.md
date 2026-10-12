@@ -5,10 +5,10 @@ Read at orchestrate step 3 (models, optional stages, mandate), E9 (bug waves, ex
 ## Self-improvement loop (everything learns)
 | Signal source | Where it lands | Turned into |
 |---|---|---|
-| Agents (`learn.ps1 -Skill -Kind -Text`) and each workflow's Learn step | `.claude-runtime/learning/signals.jsonl` | `LESSONS.md` lines (≥ 2 occurrences) |
-| Guard hook blocks | `.claude-runtime/guard.log` | lessons / clearer rules where agents keep tripping |
+| Agents (`learn.ps1 -Skill -Kind -Text`) and each workflow's Learn step | `<kit>/learning.local.jsonl` (durable, git-ignored) | `LESSONS.md` lines (≥ 2 occurrences) |
+| Guard hook blocks | `<runtime>/logs/guard.log` | lessons / clearer rules where agents keep tripping |
 | Memory gate | `<OS temp>/claude-build-gate/history.json` (`%TEMP%` on Windows, `$TMPDIR` or `/tmp` elsewhere) | automatic: next build's memory estimate + "usually ~N min" |
-| QA runs (audit reclassifications, verify "not reproduced", NOT_TESTED causes, bad evidence names) | `qa-runs/<run>/` | qa-kit lessons, project gotchas |
+| QA runs (audit reclassifications, verify "not reproduced", NOT_TESTED causes, bad evidence names) | `<runtime>/work/qa-runs/<run>/` | qa-kit lessons, project gotchas |
 | Tech-audit review outcomes | project profile in `tech-audit/reference/projects/` | by-design list, review lessons |
 
 `/kit-retro` (suggested automatically at session start once ≥ 15 new signals pile up) mines all of the above with 4 parallel

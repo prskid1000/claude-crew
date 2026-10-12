@@ -27,12 +27,11 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { fileURLToPath } from 'node:url'
 
 const CFG = JSON.parse(readFileSync(new globalThis.URL('../../targets.local.json', import.meta.url), 'utf8'))
-// runtime output lives outside .claude: <parent of .claude>\.claude-runtime
-const RUNTIME = process.env.CLAUDE_RUNTIME || fileURLToPath(import.meta.url).replace(/[\\/]\.claude[\\/].*$/, '') + '/.claude-runtime'
-const PROFILES = `${RUNTIME}/chrome-profiles`
+// runtime paths come from the kit's one map (kitpaths.mjs / kitpaths.json): cache/chrome-profiles, cache/sessions
+import { kitPath } from '../../../dev-kit/scripts/kitpaths.mjs'
+const PROFILES = kitPath('chrome-profiles')
 // Chrome/Edge/Chromium: $CHROME_PATH first, then the usual install folders per OS, then the PATH (Linux package names)
 const onPath = (names) => (process.env.PATH || '').split(delimiter).filter(Boolean).flatMap((d) => names.map((n) => join(d, n)))
 const BROWSERS = [
@@ -117,12 +116,12 @@ async function login(page, t, tenant, as) {
   // share this login with every other port/agent: save the web storage (token lives there) for 8 h
   try {
     const st = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))
-    mkdirSync(`${RUNTIME}/sessions`, { recursive: true })
+    kitPath('sessions', { create: true })
     writeFileSync(sessionFile(t, tenant, as), JSON.stringify({ at: Date.now(), ...st }))
   } catch {}
 }
 
-const sessionFile = (t, tenant, as) => `${RUNTIME}/sessions/${(t.web + '-' + tenant + '-' + as).replace(/[^\w.-]/g, '_')}.json`
+const sessionFile = (t, tenant, as) => `${kitPath('sessions')}/${(t.web + '-' + tenant + '-' + as).replace(/[^\w.-]/g, '_')}.json`
 
 // Reuse a login saved by another port (≈1 s instead of a full login). Returns true when the app accepted it.
 async function restoreLogin(page, t, tenant, as) {

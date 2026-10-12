@@ -1,7 +1,8 @@
 """Shared kit graph + checks. kit-lint.py (problems, exit code) and kit-flow.py (HTML page) both import this module, so the
 page and the lint never disagree. Nothing here writes files.
 
-  load(kit)   -> Kit: files (published + local overlay, git-ignored runtime/caches left out), junk, skills, agents, workflows,
+  load(kit)   -> Kit: files (published + local overlay, git-ignored runtime/caches and the repo's README/docs/examples left out),
+                 junk, skills, agents, workflows,
                  texts, router text, org router rows, each skill's Files index
   graph(k)    -> nodes (kind, column, trigger text, reach, chain) + typed edges (route/scoped/hook/spawn/index/loads/calls/mention)
   lint(k, g)  -> [(code, where, message)]: every check kit-lint documents, incl. reach (unreached / mention-only) and junk
@@ -10,7 +11,16 @@ import fnmatch, json, os, re
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Set, Tuple
 
-SKIP_DIRS = {'node_modules', '__pycache__', '.git'}
+SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.claude-runtime', 'worktrees'}
+# repo plumbing at the kit root (the repo root IS the .claude folder): read for org terms and doc links, not part of the kit graph
+REPO_ONLY = ('README.md', 'CONTRIBUTING.md', 'LICENSE', 'docs', 'examples', '.githooks', '.gitignore', '.gitattributes')
+# the one map of runtime + durable paths, and the files allowed to know raw runtime paths (kit-lint RUNTIME-RAW)
+PATHS_JSON = 'skills/dev-kit/scripts/kitpaths.json'
+PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/scripts/kitpaths.ps1', 'skills/dev-kit/scripts/kitpaths.py',
+                'skills/dev-kit/scripts/kitpaths.mjs', 'skills/orchestrate/scripts/kitgraph_lib.py',
+                'skills/orchestrate/scripts/kit-setup.ps1', 'skills/orchestrate/scripts/kit-lint.py'}
+# durable state that older layouts kept inside the runtime (kit-lint RUNTIME-DURABLE; kit-setup.ps1 -Migrate moves it out)
+LEGACY_DURABLE = ('learning', 'tracking', 'automerge.json', 'tracker-none')
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
@@ -65,6 +75,7 @@ class Kit:
     """Everything load() reads (annotated so editors and type checkers know the attributes)."""
     dir: str
     repo: str
+    repo_files: List[str]
     all: List[str]
     junk: List[Tuple[str, str]]
     local_rules: List[str]
@@ -138,35 +149,45 @@ def tables(k):
 def load(kit):
     k = Kit()
     k.dir = os.path.abspath(kit)
-    k.repo = os.path.dirname(k.dir)
+    k.repo = k.dir   # the repo root is the kit (.claude folder); README/docs/examples sit next to the kit's own folders
     ign = [l.strip() for l in read(os.path.join(k.dir, '.gitignore')).splitlines() if l.strip() and not l.startswith('#')]
 
     def ignored(rel):
         parts = rel.split('/')
         for pat in ign:
+            anchored = pat.startswith('/')
+            pat = pat.lstrip('/').replace('**/', '')
             if pat.endswith('/'):
-                d = pat.rstrip('/').replace('**/', '')
-                if ('/' not in d and d in parts[:-1]) or rel.startswith(d + '/'):
+                d = pat.rstrip('/')
+                if '/' in d or anchored:
+                    if rel.startswith(d + '/') or fnmatch.fnmatch(rel, d + '/*'):
+                        return True
+                elif any(fnmatch.fnmatch(p, d) for p in parts[:-1]):
                     return True
-            elif '/' in pat:
-                if fnmatch.fnmatch(rel, pat.replace('**/', '')):
+            elif '/' in pat or anchored:
+                if fnmatch.fnmatch(rel, pat):
                     return True
             elif fnmatch.fnmatch(parts[-1], pat):
                 return True
         return False
 
-    allf, junk = [], []
+    allf, junk, repo_files = [], [], []
     for d, dirs, fs in os.walk(k.dir):
-        dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+        top = os.path.relpath(d, k.dir) == '.'
+        skip = SKIP_DIRS if top else SKIP_DIRS - {'.claude-runtime', 'worktrees'}   # runtime + harness worktrees: kit root only
+        dirs[:] = [x for x in dirs if x not in skip]
         for f in fs:
             rel = os.path.relpath(os.path.join(d, f), k.dir).replace('\\', '/')
-            if f.lower() in RESERVED:
+            if rel.split('/')[0] in REPO_ONLY:
+                repo_files.append(rel)
+            elif f.lower() in RESERVED:
                 junk.append((rel, 'reserved-name file (delete it)'))
             elif f.lower().endswith(JUNK_EXT):
-                junk.append((rel, 'runtime output inside .claude (runtime belongs in <workspace>/.claude-runtime; delete it once unused)'))
+                junk.append((rel, 'runtime output among the kit files (runtime belongs in <kit>/.claude-runtime: Get-KitPath; delete it once unused)'))
             else:
                 allf.append(rel)
     k.all = sorted(allf)
+    k.repo_files = sorted(repo_files)
     k.junk = junk
     k.local_rules = [f for f in k.all if re.match(r'rules/[^/]+\.local\.md$', f)]
     # kit files = published files + the local overlay that behaves like kit (local skills, project profiles); not configs/state
@@ -530,8 +551,9 @@ def lint(k, g=None, org_terms=None):
                 continue   # absolute paths point outside the kit on purpose (personal or org tools)
             if overlay(f) and not t.startswith(kit_dirs):
                 continue   # org overlay files may name project files and org tools; only their kit paths are checked
-            if t.startswith('docs/'):
-                bad('REF-DANGLING', f, f'{t}: docs/ is not synced into workspaces; link the kit copy (skills/.../reference/) instead')
+            if t.split('/')[0] in REPO_ONLY:   # the repo's docs/examples ship in every clone (the repo root is the kit)
+                if t not in k.repo_files:
+                    bad('REF-DANGLING', f, f'{t}: no such file in the kit repo')
                 continue
             if os.path.basename(t).startswith('.'):
                 continue
@@ -555,6 +577,47 @@ def lint(k, g=None, org_terms=None):
             bad('REACH-MENTION', f, 'reached only through a mention: list it in a Files index or the router')
     for f, why in k.junk:
         bad('JUNK', f, why)
+    # ---- runtime and durable paths: one map (kitpaths.json), resolved only by the helpers
+    try:
+        pmap = json.loads(k.texts.get(PATHS_JSON) or read(os.path.join(k.dir, PATHS_JSON)) or '{}')
+    except ValueError:
+        pmap = {}
+        bad('RUNTIME-MAP', PATHS_JSON, 'invalid JSON')
+    raw = [(re.compile(r'\.claude-runtime[\\/]+[\w<$]'), 'a hard-coded .claude-runtime/<sub> path'),
+           (re.compile(r"""(\$env:|environ(\.get)?\(?['"\[]|process\.env\.)CLAUDE_RUNTIME"""), 'reads $CLAUDE_RUNTIME itself'),
+           (re.compile(r'\$KitConf\.Runtime\b'), 'joins onto $KitConf.Runtime'),
+           (re.compile(r'\$\{RT\}/'), 'builds ${RT}/<sub> by hand')]
+    for f in k.files:
+        if f in PATH_HELPERS or not f.endswith(('.ps1', '.py', '.mjs', '.js')):
+            continue
+        for ln, line in enumerate(k.texts.get(f, '').splitlines(), 1):
+            if re.match(r'\s*const rp = ', line):
+                continue   # the workflow helper itself
+            for rx, what in raw:
+                if rx.search(line):
+                    bad('RUNTIME-RAW', f'{f}:{ln}', f'{what}: use Get-KitPath / kit_path / kitPath / rp(<name>) (names in {PATHS_JSON})')
+                    break
+    if pmap:
+        for w, p in k.workflows.items():
+            m = re.search(r'^const KP = (\{.*\})\s*$', k.texts.get(p, ''), re.M)
+            if not m:
+                if re.search(r'\$\{RT\}|\brp\(', k.texts.get(p, '')):
+                    bad('RUNTIME-MAP', p, 'uses runtime paths without a `const KP = {...}` map (copy the names from kitpaths.json)')
+                continue
+            try:
+                kp = json.loads(m.group(1))
+            except ValueError:
+                bad('RUNTIME-MAP', p, 'const KP must be JSON (double quotes) so kit-lint can compare it with kitpaths.json')
+                continue
+            for sect in ('runtime', 'durable'):
+                for n, v in (kp.get(sect) or {}).items():
+                    if (pmap.get(sect) or {}).get(n) != v:
+                        bad('RUNTIME-MAP', p, f'KP.{sect}["{n}"] = "{v}" but kitpaths.json says "{(pmap.get(sect) or {}).get(n)}"')
+        rt = os.environ.get('CLAUDE_RUNTIME') or os.path.join(k.dir, pmap.get('runtimeDir', '.claude-runtime'))
+        for n in LEGACY_DURABLE:
+            if os.path.exists(os.path.join(rt, n)):
+                bad('RUNTIME-DURABLE', f'<runtime>/{n}', 'durable state inside the disposable runtime (old layout): '
+                    'kit-setup.ps1 -Migrate <runtime folder> moves it out (in place: leftovers are parked in cache/old-layout)')
     # ---- config keys documented (the kit copy of the configuration reference)
     conf = k.texts.get('skills/dev-kit/reference/configuration.md', '')
     if conf:
@@ -569,17 +632,11 @@ def lint(k, g=None, org_terms=None):
             for key in data:
                 if not key.startswith('_') and f'`{key}' not in conf and f'"{key}"' not in conf:
                     bad('CONFIG-UNDOC', f, f'key "{key}" is not documented in skills/dev-kit/reference/configuration.md')
-    # ---- org terms (published files only, plus the repo's docs when linting a source clone)
+    # ---- org terms (published files only, plus the repo's README/docs/examples)
     if org_terms:
         scan = [(f, k.texts.get(f) or read(os.path.join(k.dir, f))) for f in k.files
                 if not ('.local.' in f or any(f == p or f.startswith(p + '/') for p in k.local_only))]
-        for extra in ('README.md', 'CONTRIBUTING.md', 'docs', 'examples'):
-            ep = os.path.join(k.repo, extra)
-            if os.path.isfile(ep):
-                scan.append(('../' + extra, read(ep)))
-            elif os.path.isdir(ep):
-                scan += [('../' + os.path.relpath(os.path.join(d, x), k.repo).replace('\\', '/'), read(os.path.join(d, x)))
-                         for d, _, fs in os.walk(ep) for x in fs]
+        scan += [(f, read(os.path.join(k.dir, f))) for f in k.repo_files if f.split('/')[0] != 'LICENSE']
         # whole words; a term with a capital letter matches case-sensitively (e.g. a folder name vs the English word)
         pats = [(t.strip(), re.compile(r'(?<![\w-])' + re.escape(t.strip()) + r'(?![\w-])', 0 if t.strip() != t.strip().lower() else re.I))
                 for t in org_terms if t.strip()]
@@ -592,4 +649,5 @@ def lint(k, g=None, org_terms=None):
 
 # kit-flow's issue groups for each lint code (the page lists lint problems under these headings)
 ISSUE_TYPE = {'REACH-NONE': 'unreached', 'REACH-MENTION': 'accidental', 'SKILL-DESC': 'fuzzy trigger', 'SKILL-FUZZY': 'fuzzy trigger',
-              'AGENT-SPAWN': 'fuzzy trigger', 'WF-WHEN': 'fuzzy trigger', 'REF-DANGLING': 'dangling', 'JUNK': 'junk'}
+              'AGENT-SPAWN': 'fuzzy trigger', 'WF-WHEN': 'fuzzy trigger', 'REF-DANGLING': 'dangling', 'JUNK': 'junk',
+              'RUNTIME-RAW': 'junk', 'RUNTIME-MAP': 'dangling', 'RUNTIME-DURABLE': 'junk'}

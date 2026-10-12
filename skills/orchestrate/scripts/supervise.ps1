@@ -22,7 +22,6 @@ $ErrorActionPreference = 'SilentlyContinue'
 $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
 . (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
 . (Join-Path $skills 'dev-kit/scripts/sysinfo.ps1')   # RAM / processes on Windows, Linux and macOS
-$rt = $KitConf.Runtime   # $env:CLAUDE_RUNTIME, else <workspace>/.claude-runtime
 $swarm = Join-Path $skills 'android-swarm'
 $runTotal = 0; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
@@ -32,8 +31,8 @@ function L($s) { [void]$lines.Add($s) }
 $proj = $KitConf.ClaudeProjectDir   # this workspace's Claude Code sessions
 $wfDirs = Get-ChildItem $proj -Directory | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents\workflows') -Directory } | Sort-Object LastWriteTime -Descending | Select-Object -First 6
 # a stopped workflow (TaskStop) leaves started-but-unfinished steps in its journal forever: the lead marks it once, it is skipped after
-$stoppedDir = Join-Path $rt 'stopped'
-if ($MarkStopped) { New-Item -ItemType Directory -Force $stoppedDir | Out-Null; Set-Content (Join-Path $stoppedDir $MarkStopped) (Get-Date).ToString('s'); "marked $MarkStopped as stopped" }
+$stoppedDir = Get-KitPath stopped
+if ($MarkStopped) { $null = Get-KitPath stopped -Create; Set-Content (Join-Path $stoppedDir $MarkStopped) (Get-Date).ToString('s'); "marked $MarkStopped as stopped" }
 foreach ($w in $wfDirs) {
   if (Test-Path (Join-Path $stoppedDir $w.Name)) { continue }
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
@@ -50,7 +49,7 @@ foreach ($w in $wfDirs) {
   $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
   $runTotal += $running.Count
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
-  # keep <runtime>/waves/<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
+  # keep <runtime>/work/waves/<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
   # agent is still in review or fix (a wave nobody had reported on yet was invisible to it, and merge-after merged mid-review)
   if ($AutoFix -and $running.Count -and @($started | Where-Object { $_.label -match '^(build|review|fix):' }).Count) {
     & (Join-Path $PSScriptRoot 'wave-report.ps1') -Run $w.Name *> $null
@@ -76,7 +75,7 @@ foreach ($w in $wfDirs) {
 }
 
 # 2. agent board
-$board = Join-Path $rt 'board'
+$board = Get-KitPath board
 $entries = @(Get-ChildItem $board -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
 $active = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 20 })
 $stale = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -ge 20 -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
@@ -125,7 +124,7 @@ $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-
 foreach ($k in $hist.Keys) { $last = @($hist[$k] | Select-Object -Last 3); if ($last.Count -eq 3 -and -not ($last | Where-Object { $_.ok })) { Flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; it may need help or a brief fix.' } }
 
 # 3b. idle emulators: running but no active app test lane and no board claim uses them
-$stateFile = Join-Path $rt 'supervise-state.json'
+$stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }; if (-not $state.idleSince) { $state.idleSince = @{} }
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))
 if (Test-Path $adb) {
@@ -136,7 +135,7 @@ if (Test-Path $adb) {
   # board, older than 30 min) is released, which shuts the phone down; (2) a running phone with NO lease (booted by hand) and our
   # app closed for 10 min is shut down.
   $P = Join-Path $swarm 'phone.ps1'
-  $leaseDir = Join-Path $rt 'phones'
+  $leaseDir = Get-KitPath phones
   foreach ($lf in @(Get-ChildItem $leaseDir -Filter '*.json' -ErrorAction SilentlyContinue)) {
     $ls = Get-Content $lf.FullName -Raw | ConvertFrom-Json
     $laneLive = @($liveLabels | Where-Object { $_ -match "@$([regex]::Escape($ls.lane))$" }).Count
@@ -200,7 +199,7 @@ $drive = if ($KitIsWindows) { $KitConf.Workspace.Substring(0, 1) } else { $KitCo
 $freeGB = try { [math]::Round([IO.DriveInfo]::new($(if ($KitIsWindows) { "${drive}:\" } else { $drive })).AvailableFreeSpace / 1GB) } catch { 999 }
 L "disk ${drive}: $freeGB GB free"
 if ($freeGB -lt $diskMin) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Run cleanup.ps1; remove finished worktrees.' }
-$gl = Join-Path $rt 'guard.log'
+$gl = Get-KitPath guard-log
 $blocks = @(Get-Content $gl | Where-Object { $_ -match '^(\S+)\t' -and ($now - [datetime]$Matches[1]).TotalMinutes -lt 60 })
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: read guard.log; add a contracts note or a lesson so they stop.' }
 
@@ -231,19 +230,18 @@ if ($AutoFix) {
   }
   # promoted tasks whose MRs went live on a test environment: QA can start now (never guess "not deployed yet" by hand)
   $D = Join-Path (Split-Path (Split-Path $S)) 'qa-kit\scripts\deployed.ps1'
-  foreach ($f in Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json') {
-    $o = Get-Content $f.FullName -Raw | ConvertFrom-Json -AsHashtable
+  foreach ($o in @((Read-KitTracking).tasks.Values)) {   # durable <kit>/tracking.local.json (track.ps1)
     if (-not $o.done -or $o.liveOn -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
     if ($o.qaCovered) { continue }
     if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt 10) { continue }   # deploys take > 10 min; don't re-ask the git host every run
     # a QA run already has it (often closed already): nothing to launch, so skip the git-host deploy lookup (10+ calls per task)
-    $covered = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape($o.task) } | ForEach-Object { $_.Directory.Name })
-    if ($covered.Count) { $o.qaCovered = @($covered); $o | ConvertTo-Json -Depth 5 | Set-Content $f.FullName; continue }
+    $covered = @(Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape($o.task) } | ForEach-Object { $_.Directory.Name })
+    if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
     $rows = @(& $D -Mrs (@($o.mrs) -join ',') -Json | ConvertFrom-Json)
     $o.liveCheckedAt = $now.ToString('o')
     $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
-    if ($live.Count) { $o.liveOn = @($live) }
-    $o | ConvertTo-Json -Depth 5 | Set-Content $f.FullName
+    $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($live.Count) { $fields.liveOn = @($live) }
+    Set-KitTaskFields $o.task $fields
     if ($live.Count) {
       Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
@@ -257,11 +255,11 @@ if ($AutoFix) {
 }
 
 # 6. new bug tasks raised by QA that no bug-fix agent owns yet (parents taken from the QA runs' tracker config)
-$parents = @(Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).tracker.parent } catch {} } | Where-Object { $_ } | Select-Object -Unique)
-$tracked = @(Get-ChildItem (Join-Path $rt 'tracking') -Filter '*.json' | ForEach-Object BaseName)
+$parents = @(Get-ChildItem (Get-KitPath qa-runs) -Directory | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).tracker.parent } catch {} } | Where-Object { $_ } | Select-Object -Unique)
+$tracked = @((Read-KitTracking).tasks.Keys)
 # New QA bug tasks are fixed at once, all open ones in ONE wave. $openRuns only adds a note that a run is still testing.
 $openRuns = @{}
-foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }) {
+foreach ($rd in Get-ChildItem (Get-KitPath qa-runs) -Directory | Where-Object { ($now - $_.LastWriteTime).TotalHours -lt 3 }) {
   try { $rj = Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { continue }
   $left = @($rj.items | Where-Object { -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\held.json")) }).Count   # held.json = skipClose item finished
   if ($left -and $rj.tracker.parent) { $openRuns[$rj.tracker.parent] = "$($rd.Name) ($left item(s) left)" }
@@ -281,11 +279,11 @@ foreach ($par in $parents) {
 #    so shrinking is automatic. Growing: if a QA run has items nobody has started and memory has room, say how many extra workers fit.
 $keepFree = try { $v = (Get-Content (Join-Path $skills 'qa-kit\targets.local.json') -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
 $freeNow = Get-FreeGB
-$seatDir = Join-Path $rt 'qa-seats'
+$seatDir = Get-KitPath qa-seats
 $seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count
 $waitNow = @(Get-ChildItem (Join-Path $seatDir 'wait') -Filter *.json -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddMinutes(-3) }).Count
 L "qa seats: $seatsNow taken, $waitNow waiting for memory; free RAM $freeNow GB"
-foreach ($rd in Get-ChildItem (Join-Path $rt 'qa-runs') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-8) }) {
+foreach ($rd in Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-8) }) {
   $run = try { Get-Content (Join-Path $rd.FullName 'run.json') -Raw | ConvertFrom-Json } catch { $null }
   if (-not $run) { continue }
   $queued = @($run.items | Where-Object { $_.lane -ne 'app' -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\finalize.json")) -and -not (Test-Path (Join-Path $rd.FullName "$($_.code)\held.json")) -and

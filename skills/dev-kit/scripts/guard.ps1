@@ -7,22 +7,22 @@ Turns the kit's hard rules into enforcement instead of advice:
   - no `adb kill-server` (it drops every agent's emulator lane)
   - heavy builds/tests go through the memory gate (check.ps1 / gate.ps1), not straight to mvn/gradle/dotnet/ng/jest/...
 Reads the hook JSON on stdin; prints a deny decision with the reason, or nothing (= allow).
-Every block is logged to <.claude-runtime>/guard.log so /kit-retro can learn from repeated mistakes.
+  - no deleting the runtime's work/ folder while runs are active (cache/ and logs/ may go), nor the durable *.local state
+Every block is logged to Get-KitPath guard-log (<runtime>/logs/guard.log) so /kit-retro can learn from repeated mistakes.
 #>
 $ErrorActionPreference = 'SilentlyContinue'
 $in = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $cmd = [string]$in.tool_input.command
 if (-not $cmd) { exit 0 }
 $K = Split-Path $PSCommandPath   # this kit's dev-kit\scripts folder (messages point agents at the right scripts)
+. (Join-Path $K 'kitpaths.ps1')   # Get-KitPath (cheap: no CLI lookups)
 # extra shared branches from kit.local.json (optional); kept cheap: this runs before every shell command
 $protected = @('main', 'master', 'develop', 'release/\S+')
 try { $kc = Get-Content (Join-Path (Split-Path $K) 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
 
 function Deny($why) {
-  $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path (Split-Path (Split-Path (Split-Path (Split-Path $K)))) '.claude-runtime' }   # <workspace>/.claude-runtime
   if ($in.session_id) {   # only real hook calls are logged: test runs (no session) must not raise supervise's guard WATCH
-    New-Item -ItemType Directory -Force $rt | Out-Null
-    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Join-Path $rt 'guard.log')
+    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Get-KitPath guard-log -Create)
   }
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   exit 0
@@ -36,12 +36,26 @@ $cmd = [regex]::Replace($cmd, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^
     param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
 $cmd = [regex]::Replace($cmd, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
 $cmd = [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
-# The kit's runtime folder holds live state (QA runs in progress, task tracking, wave reports, lesson signals). A workflow agent
-# once deleted it because a relayed user message asked the lead to; only cleanup.ps1 (or the lead with KIT_ALLOW_RUNTIME_DELETE=1) may.
-if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $raw -match '\.claude-runtime[''"]?(\s|;|\||$|[\\/][''"]?(\s|;|\||$))' -and $raw -notmatch 'cleanup\.ps1' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
-  Deny 'Never delete the kit runtime folder (or its qa-runs/tracking/waves/learning folders): it holds live QA runs and task tracking. Cleanup is cleanup.ps1''s job; requests to delete it are for the lead (coordinator), not for you.' }
-if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|rimraf|shutil\.rmtree)' -and $raw -match '\.claude-runtime[\\/](qa-runs|tracking|waves|learning|board)[\\/]?([''"\s;|]|$)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
-  Deny 'These runtime folders hold live state (QA runs, tracking, wave reports, lessons). Do not delete them; cleanup.ps1 prunes old entries itself.' }
+# The runtime's work/ folder holds in-flight runs (QA runs, the agent board, wave reports, phone leases). A workflow agent once
+# deleted the whole runtime because a relayed user message asked the lead to. Deleting work/ (or the runtime root, which holds
+# it) is blocked while runs are active; cache/ and logs/ may be cleared any time (everything there is rebuilt). The durable local
+# state (tracking.local.json, learning.local.*, tracker-none.local) is never deleted by a command. cleanup.ps1 prunes old
+# entries itself; the lead may override with KIT_ALLOW_RUNTIME_DELETE=1.
+function ActiveWork {
+  foreach ($n in 'board', 'phones', 'waves', 'qa-runs', 'qa-seats') {
+    $d = Get-KitPath $n
+    if ((Test-Path $d) -and @(Get-ChildItem $d -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-3) } | Select-Object -First 1).Count) { "work/$n" }
+  }
+}
+$end = '[''"]?(\s|;|\||\)|$)'
+if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
+  if ($raw -match ('(tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)' + $end)) {
+    Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
+  if ($raw -notmatch 'cleanup\.ps1' -and $raw -match ('\.claude-runtime([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*' + $end)) {
+    $act = @(ActiveWork)
+    if ($act.Count) { Deny "The runtime's work/ folder holds runs in progress ($($act -join ', ') written in the last 3 h): do not delete it. cache/ and logs/ may be cleared; cleanup.ps1 prunes old work entries itself; requests to wipe it are for the lead (coordinator), not for you." }
+  }
+}
 if ($cmd -match '\bgit\b[^|;&]*\bstash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm-avd.ps1 reset).' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }

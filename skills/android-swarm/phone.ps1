@@ -12,7 +12,7 @@ Manual use (a person, not an agent): & $P acquire -Agent manual -Lane Osprey ...
 by the supervisor (only a reminder after 4 h); agents wait for it like any lease.
 -Lane: a lane is tied to its test login (swarm.config.json / the run's lanes), so pass it when your login belongs to one lane.
 Without -Lane you get any free lane (a running one first). Re-acquiring a lane you already hold just returns it.
-Leases live in <runtime>\phones\. A lease whose agent left the agent board (or has no board entry for 3 h) is reclaimed by
+Leases live in <runtime>/work/phones/ (Get-KitPath phones). A lease whose agent left the agent board (or has no board entry for 3 h) is reclaimed by
 supervise.ps1 -AutoFix, which is only the safety net for crashed agents.
 #>
 param(
@@ -22,8 +22,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
 $adb = $c.adb; $pkg = $c.app.package
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
-$dir = Join-Path $rt 'phones'; $waitDir = Join-Path $dir 'wait'
+. (Join-Path (Split-Path (Split-Path $PSCommandPath)) 'dev-kit/scripts/kitpaths.ps1')
+$dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
 New-Item -ItemType Directory -Force $dir, $waitDir | Out-Null
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')
 function Locked([scriptblock]$b) { [void]$mutex.WaitOne(); try { & $b } finally { $mutex.ReleaseMutex() } }

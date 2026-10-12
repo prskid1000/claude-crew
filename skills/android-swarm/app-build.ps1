@@ -1,6 +1,6 @@
 ﻿<#
 Builds the test APK of the app in swarm.config.json (or -AppDir) through the machine-wide memory gate, and copies it
-to <out>/apk/app.apk (+ app-<commit>.apk; <out> = <runtime>/android-swarm, see _config.ps1). app.apk is installed on every lane by
+to <out>/apk/app.apk (+ app-<commit>.apk; <out> = <runtime>/cache/android-swarm, see _config.ps1). app.apk is installed on every lane by
 phone.ps1, so a build of any other checkout (-AppDir pointing at a worktree / feature branch) only writes app-<branch>-<commit>.apk
 unless -Shared. apk/app.json records the branch, commit and time of app.apk (phone.ps1 acquire warns when the branch moved on).
 - react-native: release build with the JS bundle inside (no Metro / dev menu / LogBox) - steadier automated testing.

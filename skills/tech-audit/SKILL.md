@@ -50,7 +50,7 @@ Produce a **rigorous, low-false-positive** list of technical findings (Bug / Per
    `id, module, layer, type, in_scope, subtype, title, area, severity, current, expected, business_impact, root_cause, why_today,
    why_not_prod, customer_impact, db_migration, suggested_fix, code_location, product_decision, effort, existing_notes, source`.
    In-scope findings always fill `why_today` / `why_not_prod` (prefix `(inferred)` unless evidenced) and `db_migration` (Yes/No/Maybe).
-8. **Deliver:** `<module>.json` in the profile's findings folder (else `<workspace>/.claude-runtime/audits/<project>/`);
+8. **Deliver:** `<module>.json` in the profile's findings folder (else `<runtime>/work/audits/<project>/`);
    `python <workspace>/.claude/skills/tech-audit/scripts/validate.py <file>` must print `schema problems: none`; then
    `python .../scripts/summary.py <module>.json --sources "<what you used>"` (→ summary .md + .html; publish the HTML with `python <workspace>/.claude/skills/dev-kit/scripts/devtools.py doc "<title>" <file.html>`).
 9. **Review loop:** a finding rejected as a false positive → add the lesson to the project profile (by-design / review lessons).

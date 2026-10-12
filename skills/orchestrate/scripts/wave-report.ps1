@@ -6,11 +6,10 @@ notification text is truncated and not plain JSON. Works for /dev-wave, /test-an
   -> default (compact): one totals line, then only what needs the lead: agents with unmerged MRs / deferrals / notes, QA packages
      with FAIL or NOT_TESTED, OPEN review findings (non-nit, not fixed by a fix: round), learn-step changes.
      -Detail: every agent and package, done lists, deferral reasons, live checks, full findings with their fix.
-     Always writes the full JSON to <.claude-runtime>/waves/<run>.json for later rounds / follow-up briefs.
+     Always writes the full JSON to <runtime>/work/waves/<run>.json (Get-KitPath waves) for later rounds / follow-up briefs.
 #>
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
 $proj = $KitConf.ClaudeProjectDir   # this workspace's Claude Code sessions
 if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
@@ -40,8 +39,8 @@ foreach ($x in $results) {
 $addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.agent].fixedRound })
 $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
-New-Item -ItemType Directory -Force (Join-Path $rt 'waves') | Out-Null
-$out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $rt "waves\$Run.json")
+$wavesDir = Get-KitPath waves -Create
+$out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $wavesDir "$Run.json")
 if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
 
 "=== $Run $(if ($running) { "(running: $($running -join ', '))" } else { '(complete)' })"
@@ -71,4 +70,4 @@ if ($Detail) {
   if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(& $cut $_.problem 100)" } }
 }
 if ($learn) { "--- learn: $($learn.signals) signal(s); lessons: $(@($learn.lessonsChanged).Count)" }
-if ($Detail) { "saved: $(Join-Path $rt "waves\$Run.json")" } else { "(full: -Detail or waves\$Run.json)" }
+if ($Detail) { "saved: $(Join-Path $wavesDir "$Run.json")" } else { "(full: -Detail or waves\$Run.json)" }

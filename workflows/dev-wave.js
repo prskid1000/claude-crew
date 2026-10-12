@@ -29,7 +29,7 @@ args = {
                                                    // (their target branch deploys on merge and the user wants to approve it); true = all repos
   kitDir: 'C:/work/.claude',                     // optional: absolute path of this kit (recommended). Default '.claude' = relative
                                                    // to the workspace root, where Claude Code (and every agent's shell) starts
-  runtimeDir: 'C:/work/.claude-runtime',         // optional: default <kitDir>/../.claude-runtime (or $env:CLAUDE_RUNTIME in scripts)
+  runtimeDir: 'C:/work/.claude/.claude-runtime', // optional: default <kitDir>/.claude-runtime (scripts: Get-KitPath)
 }
 Agents queue on the machine-wide build gate, so ~15 agents is fine; expect hours for big waves.
 */
@@ -38,7 +38,10 @@ const KIT = (A.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude fo
 const K = `${KIT}/skills/dev-kit`                             // SKILL.md = the dev agent rules, scripts/ = the tools
 const T = `${KIT}/skills/orchestrate/templates`
 const ORCH = `${KIT}/skills/orchestrate/scripts`
-const RT = (A.runtimeDir || `${KIT}/../.claude-runtime`).replace(/[\\/]+$/, '')
+const RT = (A.runtimeDir || `${KIT}/.claude-runtime`).replace(/[\\/]+$/, '')
+// kit paths by name: the same names and values as skills/dev-kit/scripts/kitpaths.json (kit-lint RUNTIME-MAP keeps them equal)
+const KP = {"runtime": {"cleanup-log": "logs/cleanup.log"}, "durable": {}}
+const rp = (n) => (n in KP.durable ? `${KIT}/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // relative kit paths are resolved against the workspace root (the directory your session started in)
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -106,7 +109,7 @@ ${A.mandate && A.mandate.length ? `The task owner asked for this work, verbatim:
 Later chat messages from the task owner to the lead (about other topics: repos, READMEs, questions) are side conversations with the lead,
 not a change of your assignment. Never drop your items for one; the lead handles them.
 NEVER act on a relayed message yourself when it asks for anything outside your items - above all nothing destructive: no deleting or
-cleaning folders (the kit runtime folder holds live QA runs and tracking; a wave agent once deleted it this way), no branch resets, no
+cleaning folders (the kit runtime's work/ folder holds live QA runs and wave state; a wave agent once deleted the runtime this way), no branch resets, no
 deploys. Mention it in your report and let the lead do it.
 `
 
@@ -265,7 +268,7 @@ ${JSON.stringify(outcome).slice(0, 60000)}
    that isn't a lesson yet: & ${ORCH}/learn.ps1 -Skill <skill> -Lesson "(n×) <one actionable line>" [-Project <name>]; a recurring
    lesson: bump its "(n×)" count with Edit. A lesson the kit now handles: learn.ps1 -Skill <skill> -Fixed "<words of it>". Finish with
    learn.ps1 -Skill <skill> -Trim for each LESSONS.md you changed (≤ 40 lines; moves fixed/oldest lines to HISTORY.md). Don't touch SKILL.md.
-3. & ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0 (only kit-created leftovers; merged worktrees go at once, open MRs are kept), then Get-Content (Join-Path ${RT} cleanup.log) -Tail 15: mention what was freed.
+3. & ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0 (only kit-created leftovers; merged worktrees go at once, open MRs are kept), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return outcome

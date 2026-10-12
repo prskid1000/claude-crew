@@ -14,6 +14,8 @@ Lessons (learn steps, /kit-retro, the lead):
   & $L -Skill dev-kit -Trim [-Max 40]                       # enforce the cap: move "(fixed in kit)" lines, then the oldest
                                                             # (bottom) lines, verbatim to HISTORY.md until LESSONS.md has <= Max lines
 LESSONS.md = active rules agents read (newest first, one line each); HISTORY.md next to it = moved lines, never read by agents.
+Signals are durable local knowledge: <kit>/learning.local.jsonl (git-ignored; Get-KitPath signals), the last-retro time in
+<kit>/learning.local.stamp. Deleting the runtime folder never loses them.
 -Lesson and -Fixed trim automatically.
 
 -Skill: orchestrate | dev-kit | qa-kit | android-swarm | tech-audit | <project name>
@@ -26,10 +28,9 @@ param(
   [switch]$Show, [int]$Last = 30, [switch]$Stats,
   [string]$Lesson, [string]$Project, [string]$Fixed, [switch]$Trim, [int]$Max = 40
 )
-$rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path ($PSCommandPath -replace '[\\/]\.claude[\\/].*$', '') '.claude-runtime' }
-$dir = Join-Path $rt 'learning'; New-Item -ItemType Directory -Force $dir | Out-Null
-$file = Join-Path $dir 'signals.jsonl'
-$mark = Join-Path $dir 'last-retro.txt'
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath (kitpaths.json)
+$file = Get-KitPath signals -Create
+$mark = Get-KitPath last-retro
 
 if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
 if ($Stats) {

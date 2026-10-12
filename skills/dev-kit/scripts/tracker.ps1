@@ -26,7 +26,8 @@ Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issue
   gitlab   glab api issues in tracker.repo (group/project), same label/state model; host from gitHost
   jira     REST v3 with $env:JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN; status = the transition whose name (or target
            status) matches; -List = project key; descriptions/comments are sent as plain-paragraph ADF
-  none     no tracker: every call is logged and kept in <runtime>/tracker-none/ (create returns LOCAL-<n>), nothing fails
+  none     no tracker: every task is kept in <kit>/tracker-none.local/ (durable, git-ignored; create returns LOCAL-<n>) and
+           every call is logged to <runtime>/logs/tracker-none.log; nothing fails
 Logical statuses (tracker.statuses overrides any; a value may be a list - the first name is set, all names match):
   open, inProgress, review, promoted, inTest, closed
 Works in PowerShell 7 (jira attachments need it); the rest also runs in Windows PowerShell 5.1.
@@ -44,7 +45,7 @@ for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
 $__trType = ([string]$(if ($__trOpt.Type) { $__trOpt.Type } elseif ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { $KitConf.TrackerType })).ToLower()
 $__trDry = [bool]($__trOpt.DryRun -or $env:KIT_TRACKER_DRYRUN -eq '1')
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
-$__trRt = $KitConf.Runtime
+$__trNoneDir = Get-KitPath tracker-none   # durable store of the 'none' tracker (kitpaths.json)
 if ($__trType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }
 
 $__trStatus = [ordered]@{
@@ -142,8 +143,8 @@ function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
 
 # --- none: local log + store ---
 function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
-  $d = Join-Path $__trRt 'tracker-none'; New-Item -ItemType Directory -Force $d | Out-Null
-  Add-Content (Join-Path $d 'tracker.log') ("{0} {1} {2}" -f (Get-Date -Format s), $Id, (__TrShort $What)) -Encoding utf8
+  $d = Get-KitPath tracker-none -Create
+  Add-Content (Get-KitPath tracker-log -Create) ("{0} {1} {2}" -f (Get-Date -Format s), $Id, (__TrShort $What)) -Encoding utf8
   if (-not $Id) { return $null }
   $f = Join-Path $d "$($Id -replace '[^\w.-]', '_').json"
   $o = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
@@ -158,7 +159,7 @@ function Get-TrackerUrl([string]$Id) {
     'github' { $r, $n = __TrRef $Id; "https://$(Get-KitValue 'githubHost' 'github.com')/$r/issues/$n" }
     'gitlab' { $r, $n = __TrRef $Id; "https://$($KitConf.GitHost)/$r/-/issues/$n" }
     'jira' { "$(if ($env:JIRA_BASE_URL) { $env:JIRA_BASE_URL.TrimEnd('/') } else { '<JIRA_BASE_URL>' })/browse/$Id" }
-    default { Join-Path (Join-Path $__trRt 'tracker-none') "$($Id -replace '[^\w.-]', '_').json" }
+    default { Join-Path $__trNoneDir "$($Id -replace '[^\w.-]', '_').json" }
   }
 }
 
@@ -208,7 +209,7 @@ function Get-TrackerTask([string]$Id) {
     default {
       $o = __TrNone $Id 'view' $null
       if (-not $o) { return (__TrStub $Id) }
-      $subs = @(Get-ChildItem (Join-Path $__trRt 'tracker-none') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
+      $subs = @(Get-ChildItem $__trNoneDir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
           Where-Object { $_.parent -eq $Id } | ForEach-Object { [pscustomobject]@{ id = $_.id; name = $_.name; status = $_.status; url = Get-TrackerUrl $_.id } })
       [pscustomobject]@{ id = $o.id; name = $o.name; status = $o.status; url = Get-TrackerUrl $o.id; parent = $o.parent; assignees = @($o.assignees); list = $o.list; subtasks = $subs; description = $o.description }
     }
@@ -336,7 +337,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       [pscustomobject]@{ id = $t.key; url = Get-TrackerUrl $t.key }
     }
     default {
-      $d = Join-Path $__trRt 'tracker-none'; New-Item -ItemType Directory -Force $d | Out-Null
+      $d = Get-KitPath tracker-none -Create
       $n = 1 + @(Get-ChildItem $d -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count
       while (Test-Path (Join-Path $d "LOCAL-$n.json")) { $n++ }
       $id = "LOCAL-$n"
