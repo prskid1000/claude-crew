@@ -15,9 +15,10 @@
 - Runtime output (tokens, evidence, QA runs, browser profiles) goes to `<workspace>/.claude-runtime/`, not into `.claude\`.
 
 ## Picking a workflow on your own (autonomous)
-Where the org's rules grant a standing opt-in for workflows (e.g. `rules/*.local.md` says the owner allows them without asking), the
-main session decides by itself when to run one: it doesn't wait for the user to name a workflow, and it doesn't ask first. It
-launches, then says in one line what started (workflow, agents, repos) and why. Without that grant, propose the workflow instead.
+Installing this kit is the standing opt-in for its workflows: the main session decides by itself when to run one, doesn't wait for
+the user to name a workflow, and doesn't ask first. It launches, then says in one line what started (workflow, agents, repos) and
+why. An org that wants to be asked first says so in its own rules (`rules/*.local.md`); then propose the workflow instead.
+Deploys, and merges into branches that deploy, still need a person's yes.
 
 | The request is... | Run |
 |---|---|
