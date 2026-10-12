@@ -11,3 +11,5 @@ __pycache__/
 .claude/scheduled_tasks.lock
 # runtime output (never commit)
 .claude-runtime/
+# org rules kept out of the generic kit
+.claude/rules/*.local.md

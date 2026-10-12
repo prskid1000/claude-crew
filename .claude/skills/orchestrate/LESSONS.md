@@ -17,4 +17,4 @@ Newest first, one line each, `(n×)` = times seen. Fixed/old entries live in `HI
 - Launch kit workflows by `scriptPath`, not name (named lookup uses the cwd's `.claude/workflows`).
 - Group agents by AREA (screens/packages), not item count; write overlaps and contracts into the brief. ~15 parallel dev agents is fine (they queue on the memory gate; expect hours).
 - Agents stopped by usage limits/RAM resume from their worktrees with RESUME_BRIEF; don't restart from scratch.
-- Never set tasks to `in test` before deployment; QA runs close subtasks only after publishing results.
+- Never set tasks to `inTest` (logical status) before deployment; QA runs close subtasks only after publishing results.

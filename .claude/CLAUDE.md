@@ -27,17 +27,17 @@ branches) go in `skills/dev-kit/kit.local.json` (copy `kit.example.json`; see `d
 
 - **Windows note:** resolve shims (`gws`, `gh`, `npx`, ...) with `shutil.which()` before `subprocess`.
 
-## Tracker workflow (example — adapt the status names to your board)
-1. **Start:** set the task to `in progress` and write the problem in the task description.
-2. **Open MRs:** put the task link and a short solution summary in each MR description, then set the task to `in review`.
+## Tracker workflow (logical statuses; `tracker.statuses` in `kit.local.json` maps them to your board's names)
+1. **Start:** set the task to `inProgress` and write the problem in the task description.
+2. **Open MRs:** put the task link and a short solution summary in each MR description, then set the task to `review`.
 3. **Comment on the task:** the solution and the MR links (`skills/orchestrate/templates/TASK_SOLUTION.md`).
 4. **Testing instructions:** a comment for a simple change; a tester guide (`skills/qa-kit/templates/tester-guide.html` or a
    Markdown file, published with `devtools.py doc` — a Google Doc or a file attached to the task, per `reports.type`) for a complex one.
 5. **After the MRs merge:** `promoted` (the coordinator's `track.ps1` does this automatically).
-6. **After deployment:** `in test` — set by a person, never before deployment.
+6. **After deployment:** `inTest` — set by a person, never before deployment.
 
 ## Shipping code
-- **Branch:** feature → `f/<tag><task-id>-<slug>` (`tracker.branchTag`, e.g. `CU-`; lets `track.ps1 -Discover` and the tracker link the branch), bugfix → `fix/...`, refactor → `refactor/...`.
+- **Branch:** feature → `f/<tag><task-id>-<slug>` (`tracker.branchTag`, e.g. `CU-`; lets `track.ps1 -Discover` and the tracker link the branch), bugfix → `fix/...`, refactor → `refactor/...` (or your org's prefixes).
 - **Commit** in Conventional Commits: `feat(scope):` / `fix(scope):` / `refactor(scope):`.
 - **MRs:** one per repo; cross-link MRs when a task spans repos; always include the task URL.
 - **New tracker task?** Set its owner/assignee to the person who asked you to create it.
@@ -48,11 +48,9 @@ branches) go in `skills/dev-kit/kit.local.json` (copy `kit.example.json`; see `d
 - Collect everything in one report (Google Doc or Markdown, per `reports.type`) and attach/link it on the task.
 - Rules and naming: `skills/qa-kit/reference/evidence-standard.md`.
 
-## Command labels (suggested convention)
-Descriptions shown for tool calls (Bash/PowerShell `description`) are short and a little fun: one fitting emoji + 3-7 plain words, e.g. `🛰️ Supervisor sweep with auto-fixes`, `🧪 Test the new checker`, `🚀 Push the kit to GitHub`. Never emoji-only, never vague.
-
 ## Org specifics (fill in)
 - Products / repos and what each one is: `<repo> — <one line>`.
 - Test environments (names only; URLs and logins go in `targets.local.json`): `<my-staging>`.
 - Code conventions: add path-scoped rules to `rules\` (examples in the repo's `examples/rules/`).
 - On-demand references (database access, observability queries, ...): add them as skills under `skills/<name>/SKILL.md`.
+- House style (command-label format, commit trailers, task naming, product/UI rules): `rules/*.local.md` (never synced).

@@ -42,7 +42,7 @@ Tracker (any backend: kit.local.json `tracker.type`) = `dev-kit/scripts/tracker.
 ```powershell
 $K = '<workspace>/.claude/skills/dev-kit/scripts'; $Q = '<workspace>/.claude/skills/qa-kit/scripts'
 & $K/stack.ps1 -Dir <module>                                   # detected stack + commands
-& $K/wt.ps1 new -Repo <main checkout> -Branch f/CU-123-x -Target main -Name x1
+& $K/wt.ps1 new -Repo <main checkout> -Branch f/<tag>123-x -Target main -Name x1
 & $K/check.ps1 -Dir <wt>/<module>                              # compile + typecheck + lint (gated)
 & $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "OrderServiceTest"
 & $K/check.ps1 -Dir <wt>/<module> -Step migrations

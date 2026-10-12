@@ -17,6 +17,6 @@ Read `<workspace>/.claude/skills/dev-kit/SKILL.md` first.
 3. **Reproduce before fixing** on the environment above (API via `<workspace>/.claude/skills/qa-kit/scripts/api.ps1`, web via the
    browser helper). For app bugs use the tester's evidence plus real API calls; don't start an emulator. Restore any data you change.
 4. **Duplicate tasks** (same title): fix once, put the same comments and status on both, mark the second as the duplicate.
-5. **Ship**: branch `fix/CU-<id>-<slug>`, one MR per repo, producers (API/DB) first after a green pipeline.
-   Tracker: in progress → review → promoted. Never "in test".
+5. **Ship**: branch `fix/<tracker.branchTag><id>-<slug>`, one MR per repo, producers (API/DB) first after a green pipeline.
+   Tracker (logical statuses): `inProgress` → `review` → `promoted`. Never `inTest`.
 6. **Final reply (≤ 200 words):** verdict + root cause per check, MRs, how you verified.

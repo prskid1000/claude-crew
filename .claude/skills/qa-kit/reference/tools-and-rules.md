@@ -42,7 +42,7 @@ It flags another agent on the same phone/port (CLAIM) or a duplicate of you (DUP
 ## Shared-environment etiquette (other agents test on the same environment at the same time)
 - **Data**: prefix everything you create `QA-<CODE>` (app lanes: `QA-L<n>-<CODE>`); delete only what you created.
   If something changed unexpectedly, another agent may have done it: re-check before calling it a failure.
-- **Settings**: change an environment/company setting only when a check needs it, restore it straight away, list it in
+- **Settings**: change an environment/tenant/account setting only when a check needs it, restore it straight away, list it in
   `setup_changes`. Per-user preferences: use a secondary test user. Run checks that change environment-wide settings alone.
 - **Accounts**: never deactivate, delete or re-password the test logins.
 - **Memory**: ≤ 2 Chrome ports per web agent, `killSession()` when done; don't kill processes you didn't start.

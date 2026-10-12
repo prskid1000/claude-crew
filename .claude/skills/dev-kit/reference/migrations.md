@@ -5,8 +5,8 @@ Read before you add or change a DB migration (any tool).
 ## 6. Database migrations (whatever the tool)
 - **Use only your assigned range** for ids/timestamps, so parallel agents never collide.
 - **Never edit a migration that has already merged**; add a new one.
-- **Liquibase**: file `YYYYMMDDHHMMSS_desc.xml` inside your range, first changeSet `tagDatabase`, a `<rollback>` on every
-  schema/data changeSet, append the include to `master.xml`. On rebase conflicts in `master.xml`: `python $K/keepboth.py <file>`.
+- **Liquibase**: follow the repo's changelog layout (file naming inside your range, tagging, where the include goes; your org
+  rules may fix them), a `<rollback>` on every schema/data changeSet. On rebase conflicts in the master changelog: `python $K/keepboth.py <file>`.
   Before every push: `check.ps1 -Step migrations` must print `ISSUES 0` (no duplicate addColumn/createTable). To replace an
   existing empty table, drop it behind a `preConditions onFail=MARK_RAN` guard with a rollback that recreates it.
 - **EF Core**: one migration per agent, named with your range prefix; after a rebase, if the model snapshot conflicts, regenerate your migration on top.

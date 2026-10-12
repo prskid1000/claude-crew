@@ -36,13 +36,13 @@ python $K/devtools.py merge <wt> <iid>                           # 8. merge-when
   linked `node_modules`/`.venv` (say what you need instead); remove with `wt.ps1 remove`. `wt.ps1 sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `check.ps1` (or `gate.ps1 -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo directly;
   waiting is normal, a killed build is not a code failure (re-run). Targeted tests only. No dev servers, no emulators, ≤ 1 headless browser.
-- **Commits:** Conventional Commits ending with a blank line + `Co-Authored-By: Claude <noreply@anthropic.com>`; `wt.ps1 commit` only;
+- **Commits:** Conventional Commits ending with a blank line + the attribution trailer your harness/org asks for; `wt.ps1 commit` only;
   never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash` (WIP commit instead).
 - **Scope:** only your items, no sweeps of similar code, never remove features or inputs; changes are additive (optional fields, new
   endpoints/params, flags); DTOs not entities in APIs; foreign files only as one-line hooks you list in your reply; decisions in the brief are final (new decision needed → defer with a reason).
 - **Migrations:** only your assigned range; never edit a merged migration. Per-tool rules (Liquibase/EF/Flyway/Alembic/Django): `reference/migrations.md` — read before touching one.
 - **Ship:** re-read `<brief>.contracts.md` before pushing (append-only if you write to it, never overwrite); one MR per repo, title
-  `feat: <summary> - <CODE> (<tag><task>) (<Repo>)`, body from `orchestrate/templates/MR_BODY.md`; in a reviewed `/dev-wave` don't
+  with `<tag><task>` in it (e.g. `feat: <summary> - <CODE> (<tag><task>) (<Repo>)`, or the brief's format), body from `orchestrate/templates/MR_BODY.md`; in a reviewed `/dev-wave` don't
   schedule merges (the workflow does after review); producers (DB/API) merge before consumers; force-push only your own branch (`--force-with-lease`).
 - **Tracker:** always `scripts/tracker.ps1` (never a tracker CLI): `inProgress` → `review` once MRs are open and the guide posted → `promoted` when all merged; never `inTest`.
 - **Evidence:** UI → screenshots, backend → `qa-kit/scripts/api.ps1 -Save` JSON; never production; a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.

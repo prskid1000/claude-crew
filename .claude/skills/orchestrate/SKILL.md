@@ -42,7 +42,7 @@ bug-fix wave (`scripts/bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per 
 yourself? `supervise.ps1 -MarkStopped <run id>`. Stop the loop when nothing runs.
 
 **Relay, never message:** decisions/contracts → append to `<brief>.contracts.md` (agents re-read before every push); never SendMessage a
-workflow agent by id (spawns a duplicate; a hook blocks it). Answer QA testers in `<runDir>/lead-notes.md`. Never set `in test` before
+workflow agent by id (spawns a duplicate; a hook blocks it). Answer QA testers in `<runDir>/lead-notes.md`. Never set `inTest` before
 deployment; deploys are a person's call (step 5), and repos whose target deploys on merge get `holdMerge`.
 
 **Learn:** read `LESSONS.md` (next to this file) first. Kit friction → fix the script/rule in the same session; `learn.ps1` records

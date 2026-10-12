@@ -25,7 +25,7 @@ Read when you open MRs, write the tester guide or hit a merge conflict.
    If another writer appears in your worktree (changes you didn't make), stop writing and tell the coordinator.
    Writing to the contracts file yourself (shapes for a sibling agent): **append only** (Edit at the end, or `Add-Content`), never
    Write/overwrite the whole file: the coordinator and other agents keep notes there and an overwrite silently deletes them.
-2. Push and open one MR/PR per repo: `devtools.py mr`. Title `feat: <summary> - <CODE> (<tag><task>) (<Repo>)` (`<tag>` = kit.local.json
+2. Push and open one MR/PR per repo: `devtools.py mr`. Title with `<tag><task>` in it, e.g. `feat: <summary> - <CODE> (<tag><task>) (<Repo>)` (or the brief's format; `<tag>` = kit.local.json
    `tracker.branchTag`, e.g. `CU-`; the coordinator's track.ps1 finds your MRs by it).
    Body: fill `<workspace>/.claude/skills/orchestrate/templates/MR_BODY.md` (devtools warns on missing sections and adds the footer).
    Tracker solution comment: `templates/TASK_SOLUTION.md`.
@@ -54,7 +54,7 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
 python $K/devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once (the supervisor re-arms it if a later push drops it)
-& $K/deploy-merge.ps1 -Repo <checkout> -To staging/<product> -Check <module> [-Push]   # coordinator: merge main into a deploy branch; auto-resolves add/add conflicts left by an earlier squashed merge
+& $K/deploy-merge.ps1 -Repo <checkout> -To <deploy branch> -Check <module> [-Push]   # coordinator: merge the main line (-From, default: repo target / origin HEAD) into a deploy branch; auto-resolves add/add conflicts left by an earlier squashed merge
 & <workspace>/.claude/skills/orchestrate/scripts/track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. the coordinator's heartbeat promotes the task when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board
 ```

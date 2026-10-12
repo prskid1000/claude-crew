@@ -47,8 +47,8 @@ Other agents merge all the time; a stale base means avoidable conflicts.
   Kill only the processes you started.
 
 ## 4. Commits
-- Conventional Commits: `feat(scope): …`, `fix(scope): …`, `refactor(scope): …`. End with a blank line and
-  `Co-Authored-By: Claude <noreply@anthropic.com>`.
+- Conventional Commits: `feat(scope): …`, `fix(scope): …`, `refactor(scope): …`. End with a blank line and the
+  attribution trailer your harness/org asks for (e.g. `Co-Authored-By: Claude <noreply@anthropic.com>`).
 - **Hooks must actually run**: commit with `wt.ps1 commit` (it fixes `core.hooksPath` for worktrees). Never `--no-verify`,
-  never type a hook's marker (e.g. `✅Pre-Commit`) yourself, never change shared git config.
+  never type a hook's marker (text your repo's commit hook adds) yourself, never change shared git config.
 - **Never `git stash`**: the stash is shared across worktrees. Use a WIP commit.

@@ -4,7 +4,7 @@
 ## What changed
 - <behaviour change 1, in user terms>
 - <behaviour change 2>
-- Technical: <key files / endpoints / migrations, e.g. `20261001101500_add_x.xml`>
+- Technical: <key files / endpoints / migrations, e.g. the new migration file>
 
 ## Not in this MR
 - <deferred item> — <reason: product decision / external / follow-up MR !n>
