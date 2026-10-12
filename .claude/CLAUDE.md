@@ -7,6 +7,10 @@ everything long goes into skills (loaded on demand) or path-scoped rules (`rules
 ## Multi-agent work (any repo, any stack)
 See `.claude/rules/multi-agent.md` (always loaded). Playbook: the `orchestrate` skill. Workflows: `/dev-wave`, `/test-and-close`,
 `/kit-retro`. Subagent types: `dev-agent`, `mr-reviewer`, `qa-tester`, `qa-verifier`.
+**Workflows are autonomous:** pick and launch them yourself, without being asked and without asking first (decision table:
+`multi-agent.md`, "Picking a workflow on your own"). Then say in one line what started and why. Deploys still need a person's yes.
+**Builds share one machine-wide queue:** every agent builds and tests through `check.ps1` / `gate.ps1` (memory gate). They queue
+when RAM is short, and the guard hook blocks ungated builds.
 Org settings the scripts read (issue tracker, report output, git host, GitLab group, repos root, tracker repos, protected
 branches) go in `skills/dev-kit/kit.local.json` (copy `kit.example.json`; see `docs/configuration.md`).
 
