@@ -5,6 +5,7 @@ Turns the kit's hard rules into enforcement instead of advice:
   - no `--no-verify` / hook skipping
   - no force-push to a protected branch (main, master, develop, release/*, plus kit.local.json "protectedBranches")
   - no `adb kill-server` (it drops every agent's emulator lane)
+  - no `& <file>.md` / `Invoke-Item` on a document (it opens the owner's desktop app instead of reading the file)
   - heavy builds/tests go through the memory gate (check.ps1 / gate.ps1), not straight to mvn/gradle/dotnet/ng/jest/...
 Reads the hook JSON on stdin; prints a deny decision with the reason, or nothing (= allow).
   - no deleting the runtime's work/ folder while runs are active (cache/ and logs/ may go), nor the durable *.local state
@@ -59,6 +60,10 @@ if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmt
 # stash as the git subcommand only (a branch like fix/stash-list is fine)
 if ($cmd -match '\bgit(\.exe)?\s+((-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*stash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm-avd.ps1 reset).' }
+# PowerShell's call operator (or Invoke-Item) on a document does not read it: it opens it in the desktop's default app
+# (a learn step once ran `& LESSONS.md` and popped it open in the owner's editor). Judged on the raw line: paths are often quoted.
+if ($raw -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii)\s+([''"][^''"]+|[^''"\s;|&]+)\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)[''"]?(\s|;|\||\)|$)') {
+  Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 # judged per push command: a protected name elsewhere in a compound line (git log origin/main; git push --force-with-lease) is not a push target
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {

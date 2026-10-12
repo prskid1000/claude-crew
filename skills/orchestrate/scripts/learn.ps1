@@ -17,8 +17,8 @@ Lessons (learn steps, /kit-retro, the lead):
 LESSONS.md = active rules agents read (newest first, one line each); HISTORY.md next to it = moved lines, never read by agents.
 Signals are durable local knowledge: <kit>/learning.local.jsonl (git-ignored; Get-KitPath signals), the last-retro time in
 <kit>/learning.local.stamp. Deleting the runtime folder never loses them.
--Lesson, -Bump and -Fixed trim automatically. Always change LESSONS.md through this script, never with an editor tool
-(an IDE-attached session opens every file it edits).
+-Lesson, -Bump and -Fixed trim automatically. Counts, new lines, retiring and the cap go through this script; merging or
+condensing lesson lines (to stay under the cap without losing rules) is a normal Edit of LESSONS.md.
 
 -Skill: orchestrate | dev-kit | qa-kit | android-swarm | tech-audit | <project name>
 -Kind : friction (slow/awkward) | failure (tool/script broke) | defect-missed | false-positive | rule-violation |
