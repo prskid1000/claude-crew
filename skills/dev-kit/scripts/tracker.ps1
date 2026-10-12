@@ -219,7 +219,12 @@ function Get-TrackerTask([string]$Id) {
 function Set-TrackerStatus([string]$Id, [string]$Status) {
   $name = Resolve-TrackerStatus $Status
   switch ($__trType) {
-    'clickup' { __TrCli 'clickup' @('status', 'set', $name, $Id) }
+    'clickup' {
+      # lists name the same status differently ("for review" / "in review"): try each alias until one exists on the task's list
+      $names = @($name); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { $names = @($__trStatus[$k]) } }
+      foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $Id); if ("$out" -notmatch 'no matching status') { return $out } }
+      $out
+    }
     'github' {
       $r, $n = __TrRef $Id
       $j = __TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'state,labels'))
