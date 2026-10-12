@@ -10,7 +10,7 @@ Git worktrees for parallel agents, for any repo and stack.
   & $K/wt.ps1 list   -Repo <main checkout>
 
 new:
-- creates <Root>/<Name>-<repo folder name> (Root = $env:CLAUDE_WT_ROOT, or "<repo's parent>-wt") on a new branch from origin/<Target>;
+- creates <Root>/<Name>-<repo folder name> (Root = $env:CLAUDE_WT_ROOT, else kit.local.json worktreeRoots[0], else "<repo's parent>-wt") on a new branch from origin/<Target>;
 - links installed dependencies from -LinkFrom (default: the main checkout) as junctions (Windows) or symlinks (Linux/macOS),
   so nothing is reinstalled:
   every node_modules next to a tracked package.json, and every .venv next to pyproject.toml/requirements.txt;
@@ -37,27 +37,49 @@ switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
     $Repo = (Resolve-Path $Repo).Path
-    if (-not $Root) { $Root = if ($env:CLAUDE_WT_ROOT) { $env:CLAUDE_WT_ROOT } else { (Split-Path $Repo) + '-wt' } }
+    # Root: -Root, else $env:CLAUDE_WT_ROOT, else kit.local.json "worktreeRoots"[0] (the same list cleanup/status scan), else
+    # <repo's parent>-wt. An org can keep worktrees inside its repos folder this way (e.g. "<reposRoot>/.worktrees").
+    if (-not $Root) {
+      $kcRoot = $null
+      try { . (Join-Path $PSScriptRoot 'kitconfig.ps1'); if ($env:CLAUDE_WT_ROOT -or (Get-KitValue 'worktreeRoots' $null)) { $kcRoot = @($KitConf.WorktreeRoots)[0] } } catch { }
+      $Root = if ($kcRoot) { $kcRoot } else { (Split-Path $Repo) + '-wt' }
+    }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
     if (Test-Path $path) { throw "$path already exists - resume there (wt.ps1 status -Dir $path) or pick another -Name" }
+    # no -LinkFrom: use kit.local.json repos[].linkFromByTarget[<target>] (or linkFrom when <target> is the repo's default target).
+    # One repo can ship several products from different branches; linking the main checkout's installs (another branch) gave
+    # agents silently wrong dependency versions. Resolved BEFORE the worktree exists: a configured source that is missing is an
+    # error (it used to fall back to the main checkout silently and every typecheck failed on version drift).
+    $r = $null
+    $kc = Join-Path (Split-Path $PSScriptRoot) 'kit.local.json'
+    if (Test-Path $kc) {
+      $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
+      $r = @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
+    }
+    if (-not $LinkFrom) {
+      if ($r) {
+        $cand = if ($r.linkFromByTarget -and $r.linkFromByTarget.$Target) { $r.linkFromByTarget.$Target } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
+        if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json names $cand as the dependency source for $(Split-Path $Repo -Leaf) target $Target, but it does not exist. Create it (git worktree add --detach <path> origin/$Target + a frozen-lockfile install) or fix kit.local.json." }
+        if ($cand) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
+      }
+    }
     New-Item -ItemType Directory -Force $Root | Out-Null
+    # a root inside another git repo (e.g. a superproject that holds the checkouts) must not show up there as untracked files
+    $outer = git -C $Root rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -eq 0 -and $outer) {
+      $outer = (Resolve-Path $outer.Trim()).Path; $rootFull = (Resolve-Path $Root).Path
+      if ($rootFull.StartsWith($outer, [StringComparison]::OrdinalIgnoreCase) -and $rootFull.Length -gt $outer.Length) {
+        $rel = '/' + $rootFull.Substring($outer.Length).TrimStart('\', '/').Replace('\', '/') + '/'
+        $ex = Join-Path (git -C $outer rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
+        New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null
+        if (-not ((Test-Path $ex) -and (Select-String -Path $ex -SimpleMatch -Pattern $rel -Quiet))) { Add-Content $ex $rel }
+      }
+    }
     G -C $Repo fetch -q origin $Target | Out-Null
     $remoteBranch = git -C $Repo ls-remote --heads origin $Branch
     if ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
-    # no -LinkFrom: use kit.local.json repos[].linkFromByTarget[<target>] (or linkFrom when <target> is the repo's default target).
-    # One repo can ship several products from different branches; linking the main checkout's installs (another branch) gave
-    # agents silently wrong dependency versions.
-    if (-not $LinkFrom) {
-      $kc = Join-Path (Split-Path $PSScriptRoot) 'kit.local.json'
-      if (Test-Path $kc) {
-        $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
-        $r = @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
-        $cand = if ($r.linkFromByTarget -and $r.linkFromByTarget.$Target) { $r.linkFromByTarget.$Target } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
-        if ($cand -and (Test-Path $cand)) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
-      }
-    }
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
     $links = @()
     # node_modules next to every tracked package.json
@@ -73,6 +95,16 @@ switch ($Action) {
     foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
       $rel = Split-Path $py; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel '.venv'); $to = Join-Path $path (Join-Path $rel '.venv')
       if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $links += $to }
+    }
+    # kit.local.json repos[].linkPaths: git-ignored local files/folders every worktree needs (credentials, local.properties,
+    # .env ...), taken from the dependency source (else the main checkout). Folders are linked, files are copied.
+    foreach ($lp in @($r.linkPaths) | Where-Object { $_ }) {
+      $from = @((Join-Path $src $lp), (Join-Path $Repo $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
+      $to = Join-Path $path $lp
+      if (-not $from) { Write-Warning "linkPaths: $lp not found in $src or $Repo - skipped"; continue }
+      if (Test-Path $to) { continue }
+      New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+      if ((Get-Item $from).PSIsContainer) { New-DirLink $to $from; $links += $to } else { Copy-Item $from $to }
     }
     # generated hook folders worktrees miss. A dependency checkout installed with --ignore-scripts has no .husky/_ (husky's
     # prepare script never ran), so fall back to the main checkout for any hook folder the link source lacks.

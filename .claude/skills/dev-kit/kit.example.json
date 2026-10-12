@@ -89,7 +89,10 @@
       ],
       "linkFromByTarget": {
         "<other target branch>": "<a checkout of that branch with its own install (e.g. git worktree add --detach + frozen-lockfile install)>"
-      }
+      },
+      "linkPaths": [
+        "<git-ignored file or folder every worktree needs, e.g. api/local-credentials.json or app/android/local.properties>"
+      ]
     }
   ],
   "bugfixMandate": [
