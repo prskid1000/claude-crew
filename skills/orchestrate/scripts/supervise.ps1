@@ -80,7 +80,8 @@ $entries = @(Get-ChildItem $board -Filter '*.json' | ForEach-Object { Get-Conten
 $active = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 20 })
 $stale = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -ge 20 -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
 L "board: $($active.Count) active, $($stale.Count) stale"
-foreach ($g in $active | Group-Object agent | Where-Object Count -gt 1) {
+# group by run + agent: two waves (or sessions) may both name an agent X1 - that is not a duplicate
+foreach ($g in $active | Group-Object { "$($_.run)/$($_.agent)" } | Where-Object Count -gt 1) {
   # an agent that joined the board twice (same run) leaves its first entry behind: if only the newest entry still beats
   # it is a re-join, not two copies -> mark the old entries left instead of an ACT flag
   $byBeat = @($g.Group | Sort-Object { [datetime]$_.beat } -Descending); $newest = [datetime]$byBeat[0].beat
