@@ -30,7 +30,8 @@ function Say($s) { if (-not $Quiet) { $s } }
 
 # Claude Code auto memory goes into this kit: <kit>/memory (git-ignored). The setting must be an absolute path, so it is
 # written per clone into the git-ignored settings.local.json (merged, other keys kept); the folder is created if missing.
-# Takes effect from the next session. Opt out with  "memory": { "keepDefault": true }  in kit.local.json.
+# Takes effect from the next session. Opt out with  "memory": { "keepDefault": true }  in kit.local.json (then a user-level
+# autoMemoryDirectory, e.g. one structured folder for all projects, or the harness default applies).
 function Set-Memory {
   try { $cfg = Get-Content (Join-Path $kit 'skills/dev-kit/kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $cfg = $null }
   if ($cfg -and $cfg.memory -and $cfg.memory.keepDefault) { return $null }
