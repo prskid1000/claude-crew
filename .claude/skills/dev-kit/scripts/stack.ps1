@@ -92,7 +92,18 @@ function Get-Stack($d) {
     $tsc = if (Test-Path (Join-Path $d 'tsconfig.app.json')) { 'tsconfig.app.json' } else { 'tsconfig.json' }
     $c.typecheck = "npx tsc -p $tsc --noEmit"
     $c.build = 'npx ng build --configuration production'
-    $c.test = 'npx ng test --watch=false --browsers=ChromeHeadless --include {tests}'
+    # test only when a project has a 'test' target; the flags depend on its builder (Karma takes --browsers, the
+    # @angular/build:unit-test / Vitest runner does not). No target -> check.ps1 says "has no 'test' step".
+    $ngTest = $null
+    try {
+      $aj = Get-Content (Join-Path $d 'angular.json') -Raw | ConvertFrom-Json
+      foreach ($p in $aj.projects.PSObject.Properties) {
+        $t = if ($p.Value.architect.test) { $p.Value.architect.test } elseif ($p.Value.targets.test) { $p.Value.targets.test } else { $null }
+        if ($t) { $ngTest = [string]$t.builder; break }
+      }
+    } catch { $ngTest = 'karma' }
+    if ($ngTest -match 'karma') { $c.test = 'npx ng test --watch=false --browsers=ChromeHeadless --include {tests}' }
+    elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
   }
   elseif (Test-Path (Join-Path $d 'package.json')) {

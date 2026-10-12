@@ -29,6 +29,11 @@ function Deny($why) {
 
 # Judge the command words only: text inside quotes (grep patterns, commit messages, learn.ps1 -Text "...") is not a command.
 $raw = $cmd
+# Heredoc bodies (<<EOF ... EOF) and PowerShell here-strings (@' ... '@) are data too (a script or brief that merely mentions a
+# forbidden command), unless the heredoc feeds a shell (bash/sh/pwsh <<EOF runs its body, so that body is still judged).
+$cmd = [regex]::Replace($cmd, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
+    param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
+$cmd = [regex]::Replace($cmd, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
 $cmd = [regex]::Replace($cmd, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
 # The kit's runtime folder holds live state (QA runs in progress, task tracking, wave reports, lesson signals). A workflow agent
 # once deleted it because a relayed user message asked the lead to; only cleanup.ps1 (or the lead with KIT_ALLOW_RUNTIME_DELETE=1) may.
