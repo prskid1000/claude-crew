@@ -232,6 +232,21 @@ const results = await pipeline(
     if (failures.length) { log(`${a.id}: pipelines still failing after the fix round - left open`); return { ...fixedX, fixed: false, findings: [...fixedX.findings, ...failures] } }
     return ship(a, fixedX)
   },
+  // every agent with MRs gets its tracker task registered, whatever happened above (merged, held, fix round failed): the
+  // tracker promotes it once all its MRs merge - also when a person merges them later. (Agents in a reviewed wave never
+  // reach dev-kit step 8b, and the ship step only registered consumer MRs, so tasks sat in review after their MRs merged.)
+  async (x, a) => {
+    if (!x || x.error || !x.report || !x.report.mrs.length) return x
+    const refs = x.report.mrs.map((m) => m.url).join(', ')
+    const tr = await agent(`Register agent ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}
+MRs: ${refs}
+1. Find the task id: it is in each MR's title or source branch after the tracker tag (e.g. CU-<id>); glab mr view / gh pr view <url> if needed.
+   One agent can have several tasks: group the MRs by task.
+2. Per task: & ${ORCH}/track.ps1 add -Task <task id> -Mrs '<repo>!<iid>','<repo>!<iid>' (all of that task's MRs, merged or not).
+Return ok=true and the track.ps1 output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, ...pick('ship'), effort: 'low' })
+    if (!tr || !tr.ok) log(`${a.id}: WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'}) - run track.ps1 add -Task <id> -Mrs ${refs}`)
+    return x
+  },
 )
 
 // CI gate: failed pipelines become blocking findings; a CI agent that returned nothing is logged, not treated as green-and-silent
