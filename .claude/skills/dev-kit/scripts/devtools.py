@@ -10,6 +10,7 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
   python devtools.py merge <worktree> <iid>                         squash-merge once the pipeline is green (polls)
   python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
+                                                                    (.md is converted to HTML for gdocs: tables, lists, code survive)
 
 Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy kit.example.json):
   "tracker": { "type": "clickup|github|gitlab|jira|none", ... }   task commands go through tracker.ps1 (default clickup)
@@ -305,6 +306,57 @@ def keep_doc(title, path):
     return dst
 
 
+def md_to_html(md, title=''):
+    """Small Markdown -> HTML converter (no dependency) for `doc`: headings, tables, lists, bold, italics, code, links, rules.
+    gws uploads Markdown as plain text (tables become pipes), so .md guides are converted before upload."""
+    import html as _h
+
+    def inline(t):
+        t = _h.escape(t, quote=False)
+        t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
+        t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
+        t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
+        return re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
+
+    out, lines, i, lst = [], md.splitlines(), 0, None
+    def close():
+        nonlocal lst
+        if lst:
+            out.append(f'</{lst}>')
+            lst = None
+    while i < len(lines):
+        l = lines[i]
+        if l.strip().startswith('```'):
+            close(); j = i + 1
+            while j < len(lines) and not lines[j].strip().startswith('```'):
+                j += 1
+            out.append('<pre><code>' + _h.escape('\n'.join(lines[i + 1:j])) + '</code></pre>'); i = j + 1; continue
+        if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?\s*$', lines[i + 1]):
+            close(); cells = lambda r: [c.strip() for c in r.strip().strip('|').split('|')]
+            rows = ['<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in cells(l)) + '</tr>']
+            i += 2
+            while i < len(lines) and lines[i].startswith('|'):
+                rows.append('<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in cells(lines[i])) + '</tr>'); i += 1
+            out.append('<table border="1" cellpadding="4" style="border-collapse:collapse">' + ''.join(rows) + '</table>'); continue
+        m = re.match(r'^(#{1,6})\s+(.*)$', l)
+        if m:
+            close(); n = len(m.group(1)); out.append(f'<h{n}>{inline(m.group(2))}</h{n}>'); i += 1; continue
+        m = re.match(r'^\s*([-*+]|\d+[.)])\s+(.*)$', l)
+        if m:
+            kind = 'ol' if m.group(1)[0].isdigit() else 'ul'
+            if lst != kind:
+                close(); out.append(f'<{kind}>'); lst = kind
+            out.append(f'<li>{inline(m.group(2))}</li>'); i += 1; continue
+        close()
+        if re.match(r'^\s*([-*_])(\s*\1){2,}\s*$', l):
+            out.append('<hr>')
+        elif l.strip():
+            out.append(f'<p>{inline(l)}</p>')
+        i += 1
+    close()
+    return f'<!doctype html><html><head><meta charset="utf-8"><title>{_h.escape(title)}</title></head><body>' + '\n'.join(out) + '</body></html>'
+
+
 def make_doc(title, html_path, parent=None):
     """Publish a document. gdocs: upload HTML (or Markdown text) as a Google Doc shared anyone-with-link (reader); avoid '&' in titles.
     markdown: keep the file (.md or .html) and return its path - attach it with tracker.ps1 attach <task> <path>."""
@@ -312,6 +364,13 @@ def make_doc(title, html_path, parent=None):
         return keep_doc(title, html_path)
     if not GWS:
         raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
+    if html_path.lower().endswith(('.md', '.markdown')):   # Markdown would upload as plain text: convert it first
+        conv = os.path.splitext(html_path)[0] + '.doc.html'
+        with open(html_path, encoding='utf-8') as fh:
+            text = fh.read()
+        with open(conv, 'w', encoding='utf-8') as fh:
+            fh.write(md_to_html(text, title))
+        html_path = conv
     body = {'name': title, 'mimeType': 'application/vnd.google-apps.document'}
     parent = parent or CFG.get('driveParent')
     if parent:
@@ -355,6 +414,9 @@ if __name__ == '__main__':
     elif cmd == 'merge-wait':     # old behaviour: poll until merged (blocks up to 90 min)
         print(merge_when_green(a[1], a[2]))
     elif cmd == 'doc':
-        print(make_doc(a[1], a[2], *(a[3:4] or [])))
+        title, path = a[1], a[2]
+        if os.path.isfile(title) and not os.path.isfile(path):   # tolerate the swapped order: doc <file> "<title>"
+            title, path = path, title
+        print(make_doc(title, path, *(a[3:4] or [])))
     else:
         print(__doc__)
