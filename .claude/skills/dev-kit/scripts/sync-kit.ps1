@@ -10,6 +10,9 @@ Sync a workspace's live kit from a clone of this repo (the clone is the single s
 - -Clean also deletes files in -To that are not in the clone (except LOCAL ones and runtime leftovers listed below), so the
   live kit is an exact copy plus its local overlay. Without -Clean nothing is ever deleted.
 - -DryRun prints what would change.
+- Before copying it runs kit-lint.py on the clone (warn only: problems are listed, the sync still runs); afterwards it writes
+  <To>/kit-sync.local.json (source, commit, time: the SessionStart kit-health.ps1 line warns when the source moves on) and
+  regenerates <runtime>/kit-flow.html for the synced kit.
 Ignored in both trees: node_modules, __pycache__, *.log, *.apk, scheduled_tasks.lock (machine-local state, reinstall/rebuild it).
 #>
 param(
@@ -20,6 +23,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $From = (Resolve-Path $From).Path; New-Item -ItemType Directory -Force $To | Out-Null; $To = (Resolve-Path $To).Path
 if ($From -eq $To) { throw 'From and To are the same folder' }
+
+$py = @('python3', 'python') | ForEach-Object { (Get-Command $_ -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source } | Where-Object { $_ } | Select-Object -First 1
+if ($py) {   # lint the source first: a sync should not spread an unrouted or unlisted file (warn only)
+  $lint = & $py (Join-Path $From 'skills/orchestrate/scripts/kit-lint.py') $From --no-flow 2>&1
+  if ($LASTEXITCODE -ne 0) { Write-Warning "kit-lint found problems in the source (syncing anyway):"; $lint | Select-Object -Last 15 | ForEach-Object { "  $_" } }
+}
 
 function Rel($root, $full) { $full.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/' }
 $ignore = '(^|/)(node_modules|__pycache__)(/|$)|\.log$|\.apk$|(^|/)scheduled_tasks\.lock$|(^|/)nul$'
@@ -53,5 +62,12 @@ if ($Clean) {
     Get-ChildItem $To -Recurse -Directory -Force | Sort-Object { $_.FullName.Length } -Descending |
       Where-Object { -not (Get-ChildItem $_.FullName -Force) } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
   }
+}
+if (-not $DryRun) {
+  $repo = Split-Path $From
+  $commit = (git -C $repo rev-parse --short HEAD 2>$null)
+  [ordered]@{ source = $From; commit = $(if ($commit) { $commit.Trim() } else { '' }); dirty = [bool](git -C $repo status --porcelain -- .claude 2>$null); at = (Get-Date).ToString('s') } |
+    ConvertTo-Json | Set-Content (Join-Path $To 'kit-sync.local.json') -Encoding utf8
+  if ($py) { & $py (Join-Path $To 'skills/orchestrate/scripts/kit-flow.py') $To | Out-Null }
 }
 "$(if ($DryRun) { 'DRY RUN: ' })$copied copied/updated, $deleted deleted, $skipped local file(s) in the clone left alone; local overlay in $To kept"

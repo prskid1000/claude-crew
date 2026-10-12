@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kit Trigger Flow</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--lane:#eef1f5;--ink:#1d2330;--muted:#667085;--line:#d0d5dd;--chip:#e7ebf1;--hi:#f5a524;--bad:#e5484d;
+--route:#2f6fed;--scoped:#7a5af8;--hook:#e5484d;--spawn:#12a594;--index:#8b95a5;--loads:#d97706;--calls:#0e9f6e;--mention:#aab2bf;
+--k-root:#1d2330;--k-rule:#3b4a6b;--k-skill:#2f6fed;--k-workflow:#12a594;--k-agent:#7a5af8;--k-hook:#e5484d;--k-ref:#d97706;--k-script:#0e9f6e;--k-other:#8b95a5}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1218;--panel:#171b23;--lane:#131720;--ink:#e6e9ef;--muted:#98a2b3;--line:#2a303c;--chip:#222836;
+--k-root:#e6e9ef;--k-rule:#a9b4cc;--mention:#4a5263;--index:#6b7486}}
+:root[data-theme=dark]{--bg:#0f1218;--panel:#171b23;--lane:#131720;--ink:#e6e9ef;--muted:#98a2b3;--line:#2a303c;--chip:#222836;--k-root:#e6e9ef;--k-rule:#a9b4cc;--mention:#4a5263;--index:#6b7486}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:15px;margin:0 6px 0 0}.meta{color:var(--muted);font-size:12px}
+nav.tabs{display:flex;gap:2px;flex-wrap:wrap}nav.tabs button{border-radius:8px 8px 0 0;border-bottom:2px solid transparent;background:transparent}
+nav.tabs button.act{border-color:var(--line);border-bottom:2px solid var(--route);background:var(--chip);font-weight:600}
+input[type=search],select{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+input[type=search]{min-width:190px}
+.toggles{display:flex;flex-wrap:wrap;gap:6px}.tg{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:var(--chip);cursor:pointer;user-select:none;font-size:12px}
+.tg i{width:12px;height:3px;border-radius:2px;display:inline-block}.tg.off{opacity:.35}
+button{border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit}
+button.warn{background:var(--bad);color:#fff;border-color:var(--bad)}
+.flowonly{display:contents}body:not([data-tab=flow]) .flowonly{display:none}
+main{display:flex;height:calc(100vh - 92px)}.view{flex:1;overflow:auto;position:relative;display:none}.view.act{display:block}
+#v-flow{padding-left:12px}
+#canvas{position:relative;margin:0 0 40px}svg{position:absolute;left:0;top:0;pointer-events:none}#top{z-index:6}
+.colhead{position:absolute;top:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+.lane{position:absolute;border-radius:12px;background:var(--lane);border:1px solid var(--line)}
+.lanehead{position:absolute;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;user-select:none;z-index:4}
+.lanehead .car{display:inline-block;width:14px;text-align:center}
+.n{position:absolute;z-index:3;height:26px;display:flex;align-items:center;gap:7px;padding:0 9px;border-radius:7px;background:var(--panel);border:1px solid var(--line);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;transition:opacity .12s}
+.n b{width:8px;height:8px;border-radius:50%;flex:none}.n.local{border-style:dashed}.n.bad{box-shadow:inset 3px 0 0 var(--bad)}.n.acc{box-shadow:inset 3px 0 0 var(--hi)}
+.n.big{height:32px;font-weight:600;font-size:13px}.n.chip{background:transparent;border-style:dashed;color:var(--muted);font-style:italic}
+.dim .n:not(.on){opacity:.22}.n.sel{outline:2px solid var(--hi);outline-offset:1px}.n.match{outline:2px dashed var(--hi)}
+#base path{fill:none;stroke-width:1.4;opacity:.55}.dim #base path{opacity:.08}#top path{fill:none;stroke-width:2.4;opacity:1}
+.pad{padding:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}.card h3{margin:0 0 2px;font-size:14px}
+.card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:8px 0 0;font-size:12.5px}.card dt{color:var(--muted);font-weight:600;white-space:nowrap}.card dd{margin:0}
+.card.hasiss{border-left:3px solid var(--bad)}
+table.t{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px;margin:6px 0 18px}
+.t th,.t td{text-align:left;vertical-align:top;padding:6px 9px;border-bottom:1px solid var(--line)}.t th{background:var(--chip);font-weight:600;cursor:default;white-space:nowrap}
+#ftab th{cursor:pointer}.t tr:last-child td{border-bottom:0}.t td.p{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;word-break:break-all}
+code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:var(--chip);padding:0 4px;border-radius:4px}
+.gl{display:inline-block;margin:2px 4px 0 0;padding:0 7px;border-radius:999px;background:var(--chip);font-size:11.5px}
+aside{width:390px;max-width:42vw;border-left:1px solid var(--line);background:var(--panel);padding:14px 16px;overflow:auto}
+aside h2{font-size:14px;margin:0 0 4px}aside h3,.pad h3{font-size:12px;margin:12px 0 2px}aside .path{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted);word-break:break-all}
+.kind{display:inline-block;padding:1px 8px;border-radius:999px;background:var(--chip);font-size:11px;margin:6px 6px 6px 0}
+.trig{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
+.chain{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0}a[data-go]{color:var(--route);cursor:pointer;text-decoration:none}
+.lst{margin:4px 0 10px;padding:0;list-style:none}.lst li{padding:2px 0;font-size:12.5px}.et{display:inline-block;min-width:60px;font-size:11px;color:var(--muted)}
+.iss{padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}.iss em{font-style:normal;font-weight:600;color:var(--bad)}
+.legend{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;color:var(--muted);margin-top:10px}
+@media (max-width:760px){main{flex-direction:column;height:auto}.view{height:70vh}aside{width:auto;max-width:none;border-left:0;border-top:1px solid var(--line)}.cards{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>Kit trigger flow</h1>
+<nav class="tabs" id="tabs"></nav>
+<span class="meta" id="meta"></span>
+<input type="search" id="q" placeholder="Search files, triggers…">
+<span class="flowonly"><span class="toggles" id="tgs"></span><button id="expandAll">Expand all</button><button id="collapseAll">Collapse all</button></span>
+<button id="issuesBtn"></button><label class="tg" title="Reload every 5 s (run kit-flow.py --watch)"><input type="checkbox" id="live"> Live</label>
+<button id="theme" title="Theme">◐</button></header>
+<main>
+<div class="view" id="v-flow"><div id="canvas"><svg id="base"></svg><svg id="top"></svg></div></div>
+<div class="view pad" id="v-trig"></div>
+<div class="view pad" id="v-router"></div>
+<div class="view pad" id="v-files"></div>
+<div class="view pad" id="v-issues"></div>
+<aside id="side"></aside></main>
+<script>
+const D = __DATA__;
+const ET = {route:'Route: always-loaded text names the trigger',scoped:'Scoped rule',hook:'Hook: the harness runs it',spawn:'Spawn: workflow starts an agent type',index:'Index: a skill names its own file',loads:'Loads another skill',calls:'Calls a script',mention:'Mention only (not a real route)'};
+const KC = {root:'--k-root',rule:'--k-rule','rule-scoped':'--k-rule',settings:'--k-rule',skill:'--k-skill',workflow:'--k-workflow',agent:'--k-agent',hook:'--k-hook',reference:'--k-ref',template:'--k-ref',lessons:'--k-ref',history:'--k-other',config:'--k-other',script:'--k-script',other:'--k-other'};
+const TABS = [['flow','Flow'],['trig','Triggers'],['router','Router & events'],['files','Files'],['issues','Issues']];
+const store={get(k,d){try{const v=localStorage.getItem('kitflow.'+k);return v===null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('kitflow.'+k,JSON.stringify(v))}catch(e){}}};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const md=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+const nodes=D.nodes.filter(n=>!n.id.startsWith('.git'));const byId=Object.fromEntries(nodes.map(n=>[n.id,n]));
+const edges=D.edges.filter(e=>byId[e.s]&&byId[e.t]);
+const inCount={},outCount={};for(const e of edges){inCount[e.t]=(inCount[e.t]||0)+1;outCount[e.s]=(outCount[e.s]||0)+1}
+const issuesOf=id=>D.issues.filter(i=>i.id===id);
+const shown=store.get('types2',{route:1,scoped:1,hook:1,spawn:1,index:1,loads:0,calls:0,mention:0});
+let expanded=new Set(store.get('expanded',[]));let sel=store.get('sel',null);if(sel&&!byId[sel])sel=null;
+let tab=store.get('tab','flow');if(!TABS.some(t=>t[0]===tab))tab='flow';
+document.getElementById('meta').textContent=`${nodes.length} files · ${edges.length} links · ${D.counts.structural} reached through the flow · generated ${D.generated}`;
+const ib=document.getElementById('issuesBtn');ib.textContent=`${D.issues.length} issues`;if(D.issues.length)ib.className='warn';
+const qEl=document.getElementById('q');const q=()=>qEl.value.trim().toLowerCase();
+const hit=(n,s)=>!s||n.id.toLowerCase().includes(s)||(n.trigger||'').toLowerCase().includes(s);
+// ================= Flow: one swimlane per trigger group =================
+const laneNames=[...new Set(nodes.filter(n=>n.col>0).map(n=>n.group))].sort((a,b)=>{const r=g=>g==='workflows'?'0':g==='agents'?'1':g==='kit'?'9':'2'+g;return r(a).localeCompare(r(b))});
+const KORD={root:0,rule:1,'rule-scoped':2,settings:3,skill:0,workflow:0,agent:0,hook:1,reference:0,template:1,lessons:2,config:3,history:4,other:5,script:0};
+const X=[24,330,680,1010],W=[270,300,300,280],RH=34,BIG=40,PAD=12;
+const canvas=document.getElementById('canvas'),base=document.getElementById('base'),top_=document.getElementById('top');
+let pos={},chipOf={};
+function visible(id){const n=byId[id];if(!n)return false;if(n.col<=1)return true;return expanded.has(n.group)}
+function shownId(id){return visible(id)?id:(chipOf[id]||null)}
+function renderFlow(){
+  canvas.querySelectorAll('.n,.lane,.lanehead,.colhead').forEach(e=>e.remove());pos={};chipOf={};
+  for(const k of Object.keys(byId))if(k.startsWith('chip:'))delete byId[k];
+  ['Entry · always / path-scoped / settings','Triggers · skills, workflows, agents, hooks','Step docs · reference, templates, lessons','Scripts'].forEach((t,c)=>{const h=document.createElement('div');h.className='colhead';h.style.left=X[c]+'px';h.textContent=t;canvas.appendChild(h)});
+  let y0=40;for(const n of nodes.filter(n=>n.col===0).sort((a,b)=>KORD[a.kind]-KORD[b.kind]||a.label.localeCompare(b.label))){place(n,0,y0,true);y0+=BIG}
+  let y=40;
+  for(const g of laneNames){
+    const ln=nodes.filter(n=>n.group===g&&n.col>0);const open=expanded.has(g);
+    const cols=[1,2,3].map(c=>ln.filter(n=>n.col===c).sort((a,b)=>KORD[a.kind]-KORD[b.kind]||a.label.localeCompare(b.label)));
+    const hasInner=cols[1].length+cols[2].length>0;
+    const head=document.createElement('div');head.className='lanehead';head.style.left=(X[1]+4)+'px';head.style.top=(y+6)+'px';
+    head.innerHTML=`<span class="car">${hasInner?(open?'▾':'▸'):''}</span>${esc(g)} <span style="font-weight:400">${hasInner?`· ${cols[1].length} docs · ${cols[2].length} scripts`:''}</span>`;
+    if(hasInner)head.onclick=()=>{open?expanded.delete(g):expanded.add(g);store.set('expanded',[...expanded]);renderFlow();focus(sel)};
+    canvas.appendChild(head);
+    const yy=y+30;const rows=[0,0,0];
+    cols[0].forEach((n,i)=>place(n,1,yy+i*BIG,true));rows[0]=cols[0].length*BIG;
+    if(open){cols[1].forEach((n,i)=>place(n,2,yy+i*RH,false));cols[2].forEach((n,i)=>place(n,3,yy+i*RH,false));rows[1]=cols[1].length*RH;rows[2]=cols[2].length*RH}
+    else{[[1,2,'docs'],[2,3,'scripts']].forEach(([ci,c,label])=>{if(!cols[ci].length)return;const id=`chip:${g}:${label}`;
+      const bad=cols[ci].filter(n=>n.reach==='none'||n.reach==='mention-only').length;
+      const chip={id,label:`${cols[ci].length} ${label}${bad?` · ${bad} ⚠`:''} — click to expand`,kind:'chip',col:c,group:g,chip:true,members:cols[ci].map(n=>n.id)};
+      byId[id]=chip;cols[ci].forEach(n=>chipOf[n.id]=id);place(chip,c,yy,false);rows[ci]=RH})}
+    const h=Math.max(...rows,BIG)+30+PAD;
+    const lane=document.createElement('div');lane.className='lane';lane.style.left=(X[1]-10)+'px';lane.style.top=y+'px';lane.style.width=(X[3]+W[3]-X[1]+20)+'px';lane.style.height=h+'px';canvas.insertBefore(lane,canvas.firstChild);
+    y+=h+14;
+  }
+  const H=Math.max(y,y0)+20,Wd=X[3]+W[3]+40;canvas.style.width=Wd+'px';canvas.style.height=H+'px';
+  for(const s of [base,top_]){s.setAttribute('width',Wd);s.setAttribute('height',H)}
+  drawBase();markMatches();
+}
+function place(n,c,y,big){
+  const el=document.createElement('div');const bad=n.reach==='none'&&n.kind!=='history',acc=n.reach==='mention-only';
+  el.className='n'+(big?' big':'')+(n.local?' local':'')+(n.chip?' chip':'')+(bad?' bad':acc?' acc':'');
+  el.style.left=X[c]+'px';el.style.top=y+'px';el.style.width=W[c]+'px';el.title=n.chip?'Click to expand':n.id;
+  el.innerHTML=(n.chip?'':`<b style="background:var(${KC[n.kind]||'--k-other'})"></b>`)+esc(n.label);
+  el.onclick=()=>{if(n.chip){expanded.add(n.group);store.set('expanded',[...expanded]);renderFlow();focus(sel);return}select(n.id)};
+  el.onmouseenter=()=>{if(!n.chip)focus(n.id)};el.onmouseleave=()=>focus(sel);
+  canvas.appendChild(el);n.el=el;pos[n.id]={x:X[c],y,w:W[c],h:big?32:26};
+}
+function curve(a,b){
+  if(b.x>a.x+10){const x1=a.x+a.w,y1=a.y+a.h/2,x2=b.x,y2=b.y+b.h/2,m=Math.max(40,(x2-x1)/2);return `M${x1},${y1} C${x1+m},${y1} ${x2-m},${y2} ${x2},${y2}`}
+  if(b.x<a.x-10){const x1=a.x,y1=a.y+a.h/2,x2=b.x+b.w,y2=b.y+b.h/2,m=Math.max(40,(x1-x2)/2);return `M${x1},${y1} C${x1-m},${y1} ${x2+m},${y2} ${x2},${y2}`}
+  const x1=a.x+a.w,y1=a.y+a.h/2,x2=b.x+b.w,y2=b.y+b.h/2,o=24+Math.min(90,Math.abs(y2-y1)/5);return `M${x1},${y1} C${x1+o},${y1} ${x2+o},${y2} ${x2},${y2}`;
+}
+function mapped(types,filter){
+  const seen=new Set(),out=[];
+  for(const e of edges){if(!types[e.type]||(filter&&!filter(e)))continue;const s=shownId(e.s),t=shownId(e.t);if(!s||!t||s===t)continue;const k=s+'>'+t+'>'+e.type;if(seen.has(k))continue;seen.add(k);out.push({s,t,type:e.type})}
+  return out;
+}
+function draw(svg,list){svg.innerHTML='';for(const e of list){const a=pos[e.s],b=pos[e.t];if(!a||!b)continue;const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+  p.setAttribute('d',curve(a,b));p.setAttribute('stroke',`var(--${e.type})`);if(e.type==='mention')p.setAttribute('stroke-dasharray','3 4');svg.appendChild(p)}}
+function drawBase(){draw(base,mapped(shown))}
+function focus(id){
+  canvas.classList.toggle('dim',!!id);canvas.querySelectorAll('.n').forEach(e=>e.classList.remove('on','sel'));
+  if(!id||!byId[id]){top_.innerHTML='';return}
+  const want={...shown,loads:1,calls:1,index:1,route:1,scoped:1,hook:1,spawn:1};
+  const ids=new Set(byId[id].chip?byId[id].members:[id]);
+  const list=mapped(want,e=>ids.has(e.s)||ids.has(e.t));
+  const ch=(byId[id].chain||[]);for(let i=1;i<ch.length;i++){const s=shownId(ch[i-1]),t=shownId(ch[i]);if(s&&t&&s!==t){const e=edges.find(e=>e.s===ch[i-1]&&e.t===ch[i]);list.push({s,t,type:e?e.type:'index'})}}
+  draw(top_,list);
+  const on=new Set([shownId(id)]);for(const e of list){on.add(e.s);on.add(e.t)}
+  for(const k of on){const n=byId[k];if(n&&n.el)n.el.classList.add('on')}
+  const me=byId[shownId(id)];if(me&&me.el)me.el.classList.add('sel');
+}
+function markMatches(){const s=q();canvas.querySelectorAll('.n').forEach(el=>el.classList.remove('match'));if(s)for(const n of nodes)if(n.el&&canvas.contains(n.el)&&hit(n,s))n.el.classList.add('match')}
+// ================= Triggers: one card per trigger =================
+function renderTrig(){
+  const s=q(),kinds=['skill','workflow','agent','hook','rule-scoped','rule','root'];
+  const ts=nodes.filter(n=>kinds.includes(n.kind)&&hit(n,s)).sort((a,b)=>kinds.indexOf(a.kind)-kinds.indexOf(b.kind)||a.label.localeCompare(b.label));
+  document.getElementById('v-trig').innerHTML=`<div class="cards">${ts.map(n=>{
+    const files=n.kind==='skill'?nodes.filter(m=>m.group===n.group&&m.id!==n.id).length:null;
+    const iss=issuesOf(n.id).concat(n.kind==='skill'?D.issues.filter(i=>i.id&&i.id!==n.id&&byId[i.id]&&byId[i.id].group===n.group):[]);
+    const bl=Object.entries(n.blocks||{});
+    return `<div class="card${iss.length?' hasiss':''}"><h3><a data-go="${esc(n.id)}">${esc(n.label)}</a></h3>
+    <span class="kind">${esc(n.kind)}</span>${files!==null?`<span class="kind">${files} files</span>`:''}${n.local?'<span class="kind">local overlay</span>':''}${iss.length?`<span class="kind" style="color:var(--bad)">${iss.length} issues</span>`:''}
+    ${bl.length?`<dl>${bl.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${md(v)}</dd>`).join('')}</dl>`:`<div class="trig">${md(n.trigger)}</div>`}
+    ${iss.length?`<h3>Issues</h3>${iss.slice(0,6).map(i=>`<div class="iss"><em>${esc(i.type)}</em> ${i.id&&i.id!==n.id?link(i.id)+' — ':''}${esc(i.text)}</div>`).join('')}`:''}</div>`}).join('')||'<div class="meta">no trigger matches</div>'}</div>`;
+}
+// ================= Router & events: the always-loaded tables =================
+function renderRouter(){
+  const s=q();
+  document.getElementById('v-router').innerHTML=(D.tables||[]).map(t=>{
+    const rows=t.rows.map((r,i)=>[r,t.links[i]||[]]).filter(([r])=>!s||r.join(' ').toLowerCase().includes(s));
+    if(!rows.length)return '';
+    return `<h3>${esc(t.heading||'(no heading)')} <span class="meta">· <a data-go="${esc(t.file)}">${esc(t.file)}</a></span></h3>
+    <table class="t"><thead><tr>${t.head.map(h=>`<th>${md(h)}</th>`).join('')}<th>Goes to</th></tr></thead><tbody>${rows.map(([r,l])=>`<tr>${r.map(c=>`<td>${md(c)}</td>`).join('')}<td>${l.map(id=>`<span class="gl">${link(id)}</span>`).join('')||'<span class="meta">—</span>'}</td></tr>`).join('')}</tbody></table>`}).join('')||'<div class="meta">no tables match</div>';
+}
+// ================= Files: sortable, filterable =================
+let fsort=store.get('fsort',['id',1]),fkind='',freach='';
+function renderFiles(){
+  const s=q();const kinds=[...new Set(nodes.map(n=>n.kind))].sort(),reaches=['entry','structural','mention-only','none'];
+  const rows=nodes.filter(n=>hit(n,s)&&(!fkind||n.kind===fkind)&&(!freach||n.reach===freach)).map(n=>({n,id:n.id,kind:n.kind,reach:n.reach,in:inCount[n.id]||0,out:outCount[n.id]||0,trigger:n.trigger||''}));
+  const [k,dir]=fsort;rows.sort((a,b)=>(typeof a[k]==='number'?a[k]-b[k]:String(a[k]).localeCompare(String(b[k])))*dir);
+  const cols=[['id','Path'],['kind','Kind'],['reach','Reach'],['in','In'],['out','Out'],['trigger','Trigger / step']];
+  document.getElementById('v-files').innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+    <select id="fk"><option value="">all kinds</option>${kinds.map(x=>`<option${x===fkind?' selected':''}>${esc(x)}</option>`).join('')}</select>
+    <select id="fr"><option value="">any reach</option>${reaches.map(x=>`<option${x===freach?' selected':''}>${esc(x)}</option>`).join('')}</select>
+    <span class="meta" style="align-self:center">${rows.length} of ${nodes.length} files</span></div>
+    <table class="t" id="ftab"><thead><tr>${cols.map(([c,l])=>`<th data-k="${c}">${l}${c===k?(dir>0?' ▲':' ▼'):''}</th>`).join('')}</tr></thead><tbody>
+    ${rows.map(r=>`<tr><td class="p"><a data-go="${esc(r.id)}">${esc(r.id)}</a></td><td>${esc(r.kind)}</td><td${r.reach==='none'?' style="color:var(--bad)"':r.reach==='mention-only'?' style="color:var(--hi)"':''}>${esc(r.reach)}</td><td>${r.in}</td><td>${r.out}</td><td>${md(r.trigger.slice(0,160))}</td></tr>`).join('')}</tbody></table>`;
+  document.getElementById('fk').onchange=e=>{fkind=e.target.value;renderFiles()};
+  document.getElementById('fr').onchange=e=>{freach=e.target.value;renderFiles()};
+  document.querySelectorAll('#ftab th').forEach(th=>th.onclick=()=>{const c=th.dataset.k;fsort=[c,fsort[0]===c?-fsort[1]:1];store.set('fsort',fsort);renderFiles()});
+}
+// ================= Issues: grouped =================
+function issuesHtml(){
+  const s=q(),by={};for(const i of D.issues){if(s&&!((i.id||'')+' '+i.text+' '+i.type).toLowerCase().includes(s))continue;(by[i.type]=by[i.type]||[]).push(i)}
+  return Object.entries(by).map(([t,is])=>`<h3>${esc(t)} (${is.length})</h3>${is.map(i=>`<div class="iss">${i.code?`<span class="gl">${esc(i.code)}</span>`:''}${i.id?link(i.id)+' — ':''}${esc(i.text)}</div>`).join('')}`).join('')||'<div class="meta">no issues: every file is reached through the flow</div>';
+}
+function renderIssues(){document.getElementById('v-issues').innerHTML=`<h2 style="font-size:14px;margin:0">Issues (${D.issues.length})</h2><div class="meta">The same list kit-lint.py prints; fix them in the kit source and re-run it.</div>${issuesHtml()}`}
+// ================= side panel (every tab) =================
+const sideEl=document.getElementById('side');
+const link=id=>{const n=byId[id];return n?`<a data-go="${esc(id)}">${esc(n.label)}</a>`:esc(id)};
+function side(id){
+  if(!id||!byId[id]||byId[id].chip){sideEl.innerHTML=overview();return}
+  const n=byId[id],inn=edges.filter(e=>e.t===id),out=edges.filter(e=>e.s===id);
+  const rt={entry:'Entry point: the harness or the router reaches it directly',structural:'Reached through the flow','mention-only':'Only mentioned somewhere: no route, index or call leads here',none:'Unreached: nothing in the kit points here'}[n.reach];
+  const bl=Object.entries(n.blocks||{});
+  sideEl.innerHTML=`<h2>${esc(n.label)}</h2><div class="path">${esc(n.id)}</div>
+  <span class="kind">${esc(n.kind)}</span>${n.local?'<span class="kind">local overlay</span>':''}<span class="kind">${esc(n.reach)}</span>
+  ${n.trigger?`<div class="trig">${md(n.trigger)}</div>`:''}${bl.length?`<div class="card" style="margin:8px 0"><dl>${bl.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${md(v)}</dd>`).join('')}</dl></div>`:''}<div class="meta">${rt}</div>
+  ${n.chain&&n.chain.length>1?`<h3>How an agent gets here</h3><div class="chain">${n.chain.map(link).join(' → ')}</div>`:''}
+  <h3>Reached from (${inn.length})</h3><ul class="lst">${inn.map(e=>`<li><span class="et">${e.type}</span>${link(e.s)}</li>`).join('')||'<li class="meta">nothing</li>'}</ul>
+  <h3>Leads to (${out.length})</h3><ul class="lst">${out.map(e=>`<li><span class="et">${e.type}</span>${link(e.t)}</li>`).join('')||'<li class="meta">nothing</li>'}</ul>
+  ${issuesOf(id).map(i=>`<div class="iss"><em>${esc(i.type)}</em> ${esc(i.text)}</div>`).join('')}`;
+}
+function overview(){
+  return `<h2>How to read this</h2><div class="meta">Flow: each band is one trigger (a skill, the workflows, the agent types); entry files on the left route into them. Click ▸ or a dashed chip to open a band's docs and scripts. Hover or click a file to draw every link it has, on top. Other tabs: trigger cards, the router and events tables, every file, the issues.</div>
+  <div class="legend">${Object.entries(ET).map(([t,l])=>`<i style="width:22px;height:3px;background:var(--${t});align-self:center"></i><span>${l}</span>`).join('')}
+  <span style="border-left:3px solid var(--bad);padding-left:6px">red bar</span><span>unreached</span><span style="border-left:3px solid var(--hi);padding-left:6px">amber bar</span><span>reached only by a mention</span><span style="border:1px dashed var(--line);padding:0 6px">dashed</span><span>local overlay (not published)</span></div>
+  <h2 style="margin-top:16px">Issues (${D.issues.length})</h2>${issuesHtml()}`;
+}
+function select(id){sel=id;store.set('sel',id);if(tab==='flow')focus(id);side(id)}
+function go(id){
+  const n=byId[id];if(!n)return;
+  if(tab==='flow'){if(n.col>1&&!expanded.has(n.group)){expanded.add(n.group);store.set('expanded',[...expanded]);renderFlow()}
+    select(id);const p=pos[id];if(p)document.getElementById('v-flow').scrollTo({top:p.y-140,left:Math.max(0,p.x-260),behavior:'smooth'});return}
+  select(id);
+}
+document.addEventListener('click',e=>{const a=e.target.closest('[data-go]');if(a){e.preventDefault();go(a.dataset.go)}});
+ib.onclick=()=>setTab('issues');
+// ================= tabs + toolbar =================
+const R={flow:()=>{renderFlow();focus(sel)},trig:renderTrig,router:renderRouter,files:renderFiles,issues:renderIssues};
+const tabsEl=document.getElementById('tabs');
+for(const [k,l] of TABS){const b=document.createElement('button');b.textContent=l+(k==='issues'?` (${D.issues.length})`:'');b.dataset.t=k;b.onclick=()=>setTab(k);tabsEl.appendChild(b)}
+function setTab(t){tab=t;store.set('tab',t);document.body.dataset.tab=t;
+  tabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('act',b.dataset.t===t));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('act',v.id==='v-'+t));R[t]()}
+const tgs=document.getElementById('tgs');
+for(const t of Object.keys(ET)){const s=document.createElement('span');s.className='tg'+(shown[t]?'':' off');s.innerHTML=`<i style="background:var(--${t})"></i>${t}`;s.title=ET[t];
+  s.onclick=()=>{shown[t]=shown[t]?0:1;s.classList.toggle('off',!shown[t]);store.set('types2',shown);drawBase();focus(sel)};tgs.appendChild(s)}
+document.getElementById('expandAll').onclick=()=>{laneNames.forEach(g=>expanded.add(g));store.set('expanded',[...expanded]);renderFlow();focus(sel)};
+document.getElementById('collapseAll').onclick=()=>{expanded.clear();store.set('expanded',[]);renderFlow();focus(sel)};
+qEl.oninput=()=>{const s=q();
+  if(tab==='flow'){let grew=false;if(s)for(const n of nodes)if(n.col>1&&hit(n,s)&&!expanded.has(n.group)){expanded.add(n.group);grew=true}if(grew){renderFlow();focus(sel)}else markMatches()}
+  else R[tab]()};
+const root=document.documentElement;root.dataset.theme=store.get('theme','')||'';document.getElementById('theme').onclick=()=>{const t=root.dataset.theme==='dark'?'light':root.dataset.theme==='light'?'':'dark';root.dataset.theme=t;store.set('theme',t)};
+const flowEl=document.getElementById('v-flow'),live=document.getElementById('live');live.checked=!!store.get('live',0);let tm=null;
+function arm(){clearTimeout(tm);if(live.checked)tm=setTimeout(()=>{store.set('scroll',[flowEl.scrollLeft,flowEl.scrollTop]);location.reload()},5000)}
+live.onchange=()=>{store.set('live',live.checked?1:0);arm()};
+setTab(tab);const sc=store.get('scroll',null);if(sc&&tab==='flow')flowEl.scrollTo(sc[0],sc[1]);arm();side(sel);
+</script></body></html>
