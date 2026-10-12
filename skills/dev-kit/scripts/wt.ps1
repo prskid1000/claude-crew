@@ -77,7 +77,10 @@ switch ($Action) {
     }
     G -C $Repo fetch -q origin $Target | Out-Null
     $remoteBranch = git -C $Repo ls-remote --heads origin $Branch
-    if ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
+    git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
+    # the local branch outlives `wt.ps1 remove`: check it out again as it is (-B would reset it and lose unpushed commits)
+    if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch already exists - checked it out as it is$(if ($remoteBranch) { " (also on origin: compare with origin/$Branch before pushing)" })" }
+    elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
@@ -159,12 +162,21 @@ switch ($Action) {
   }
   'remove' {
     $Dir = (Resolve-Path $Dir).Path
-    if (-not $Force -and (git -C $Dir status --porcelain --untracked-files=no)) { throw "uncommitted changes in $Dir - commit/push them or pass -Force" }
-    foreach ($l in @(Meta $Dir 'links') | Where-Object { $_ }) { if (Test-Path $l) { Remove-DirLink $l } }   # removes only the link, never the linked folder
-    # any other junction/symlink left inside (never follow it)
-    Get-DirLinks $Dir 4 | ForEach-Object { Remove-DirLink $_.FullName }
+    $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
+    if (-not $Force) {
+      # the same test `git worktree remove` makes (untracked files count), run BEFORE any link goes; our own links don't count
+      $mine = @($links | ForEach-Object { [IO.Path]::GetRelativePath($Dir, $_).Replace('\', '/') })
+      $dirty = @(git -C $Dir status --porcelain | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) })
+      if ($dirty) { throw "uncommitted or untracked files in $Dir - commit/push or delete them, or pass -Force:`n$($dirty | Select-Object -First 10 | Out-String)" }
+    }
+    $undo = @(foreach ($l in $links) { , @($l, [string]@((Get-Item $l -Force).Target)[0]) })
+    foreach ($l in $links) { if (Test-Path $l) { Remove-DirLink $l } }   # removes only the link (junction/symlink), never the linked folder
     $main = ((git -C $Dir worktree list --porcelain | Select-Object -First 1) -replace '^worktree ', '')
     git -C $main worktree remove $(if ($Force) { '--force' }) $Dir
+    if ($LASTEXITCODE) {
+      foreach ($u in $undo) { if ($u[1] -and -not (Test-Path $u[0])) { New-DirLink $u[0] $u[1] } }
+      throw "git worktree remove failed for $Dir (dependency links restored); fix what git reports, or pass -Force"
+    }
     "removed $Dir"
   }
   'list' { git -C $Repo worktree list }

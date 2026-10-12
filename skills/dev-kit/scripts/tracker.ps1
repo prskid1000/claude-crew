@@ -76,8 +76,10 @@ function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -
 function __TrCli([string]$Exe, [string[]]$A) {
   if ($__trDry) { Write-Host "DRYRUN: $Exe $(__TrShort (__TrQuote $A))"; return $null }
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
-  $out = & $Exe @A 2>&1
-  (@($out) | ForEach-Object { "$_" }) -join "`n"
+  $out = (@(& $Exe @A 2>&1) | ForEach-Object { "$_" }) -join "`n"
+  # a failing CLI (expired auth, unknown task) must not look like success; status set's alias loop reads 'no matching status'
+  if ($LASTEXITCODE -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $($A[0..1] -join ' ') failed (exit $LASTEXITCODE): $(__TrShort $out)" }
+  $out
 }
 function __TrJson([string]$Out) {
   if (-not $Out) { return $null }
@@ -290,7 +292,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       $a = @('task', 'create', '--list-id', $List, '--name', $Name, '--markdown-description', $Description, '--json')
       if ($Priority) { $a += @('--priority', $Priority) }
       if ($Assignee -and $Assignee -ne '-') { $a += @('--assignee', $Assignee) }
-      $t = if ($Parent -and $Parent -ne '-' -and -not $__trDry) { __TrJson (__TrCli 'clickup' ($a + @('--parent', $Parent))) } else { $null }
+      $t = if ($Parent -and $Parent -ne '-' -and -not $__trDry) { try { __TrJson (__TrCli 'clickup' ($a + @('--parent', $Parent))) } catch { $null } } else { $null }
       if ($__trDry) { $null = __TrCli 'clickup' ($a + @(if ($Parent -and $Parent -ne '-') { '--parent', $Parent })); return [pscustomobject]@{ id = '<new>'; url = '' } }
       $dropped = $false
       # ClickUp refuses a subtask whose parent lives in another list: create it in the list and link it with a comment

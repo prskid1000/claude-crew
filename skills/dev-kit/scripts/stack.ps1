@@ -175,7 +175,7 @@ function Get-Stack($d) {
     $py = if ($KitIsWindows -and (Test-Path (Join-Path $d '.venv\Scripts\python.exe'))) { '.venv\Scripts\python.exe' }
           elseif (-not $KitIsWindows -and (Test-Path (Join-Path $d '.venv/bin/python'))) { '.venv/bin/python' }
           elseif ($KitIsWindows -or -not (Resolve-Tool python3)) { 'python' } else { 'python3' }
-    $c.compile = "$py -m compileall -q {files}"
+    $c.compile = "$py -m compileall -q -x `"[\\/](\.venv|venv|node_modules|\.git)[\\/]`" {files}"   # never walk a linked .venv
     # lint/test tools the project really has: ruff (else flake8) and pytest (else the standard library's unittest). Asked of
     # the project's interpreter in one call; if it cannot be asked, the config files decide (ruff + pytest as before).
     $cfgText = @('pyproject.toml', 'setup.cfg', 'tox.ini') | ForEach-Object { ReadText (Join-Path $d $_) }

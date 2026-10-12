@@ -31,8 +31,9 @@ function GhState($url) {
 }
 function State($url) {
   if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
-  if ($url -notmatch '^https?://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
+  if ($url -notmatch '^https?://(?<h>[^/]+)/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
   $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
+  $env:GITLAB_HOST = $Matches.h   # glab api would otherwise ask gitlab.com (self-hosted servers: the MR's own host)
   $m = glab api "projects/$proj/merge_requests/$iid" 2>$null | ConvertFrom-Json
   if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }

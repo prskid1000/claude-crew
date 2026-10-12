@@ -42,7 +42,8 @@ def kit_path(name, create=False, kit=None):
 def locked(path, stale=120):
     lock = path + '.lock'
     fd = None
-    for _ in range(200):
+    end = time.time() + stale + 10   # a dead writer's lock turns stale (and is taken over) before we give up
+    while fd is None:
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
@@ -53,6 +54,8 @@ def locked(path, stale=120):
                     continue
             except OSError:
                 pass
+            if time.time() > end:   # never run the body unlocked (that lost concurrent writes)
+                raise TimeoutError(f'could not lock {path} within {stale + 10} s ({lock} is held)')
             time.sleep(0.1)
     try:
         yield

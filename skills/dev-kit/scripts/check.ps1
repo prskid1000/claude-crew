@@ -74,8 +74,8 @@ foreach ($s in $steps) {
     $cmd = $cmd.Replace('{sln}', $sln[0].FullName)
   }
   if ($cmd -match '\{files\}') {
-    if (-not $Files -and $s -eq 'lint' -and $Step -eq 'quick') {
-      # quick lint = files changed against the merge base, so it stays fast
+    if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
+      # quick lint (and Python's compileall) = files changed against the merge base, so it stays fast
       $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
       # base = where this branch left its target: the worktree's recorded target (wt.ps1 new), else the remote's default
       # branch (origin/HEAD), else the upstream. (@{upstream} alone is the pushed branch itself, so after a push or
@@ -88,7 +88,7 @@ foreach ($s in $steps) {
       # only files the stack's linter reads (ruff/flake8 get .py, eslint gets JS/TS)
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
       $changed = @($changed | Where-Object { $_ -match $ext } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ })
-      if (-not $changed.Count) { Write-Host '[check] lint: no changed files'; continue }
+      if (-not $changed.Count) { Write-Host "[check] ${s}: no changed files"; continue }
       $Files = ($changed | ForEach-Object { '"' + $_ + '"' }) -join ' '
     }
     $cmd = $cmd -replace '\{files\}', $(if ($Files) { $Files } else { '.' })

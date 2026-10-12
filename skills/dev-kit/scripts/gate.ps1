@@ -243,7 +243,8 @@ while ((Get-Date) -lt $deadline) {
     if ($left -ge $KeepFreeGB -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { Set-HeapEnv $heap }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
-      if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Cmd -WorkingDirectory $Dir -NoNewWindow -PassThru }
+      # /s + outer quotes: cmd strips exactly those, so a command that starts with a quoted path ("C:\Program Files\...\MSBuild.exe" "x.sln") survives
+      if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
       else {
         $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.ArgumentList.Add('-c'); $psi.ArgumentList.Add($Cmd)
         $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false
@@ -273,10 +274,19 @@ try {
   $proc.WaitForExit(); $code = $proc.ExitCode
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
+  # read-modify-write under the gate mutex (parallel builds finish together); an unreadable file is left alone, never reset to {}
+  $got = $false
   try {
-    $h = Read-History
-    $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0) } | Select-Object -Last 10)
-    $h | ConvertTo-Json -Depth 3 | Set-Content $histFile
-  } catch {}
+    try { $got = $gate.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+    if ($got) {
+      $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
+      $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
+      if ($h -is [hashtable]) {
+        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0) } | Select-Object -Last 10)
+        $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
+        Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
+      }
+    }
+  } catch {} finally { if ($got) { $gate.ReleaseMutex() } }
 }
 exit $code

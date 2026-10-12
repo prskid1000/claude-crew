@@ -37,8 +37,10 @@ if (-not $wt) { throw "wt.ps1 new failed: $out" }
 git -C $wt fetch -q origin $From $To
 $ahead = git -C $wt rev-list --count "origin/$To..origin/$From"
 if ([int]$ahead -eq 0) { & (Join-Path $K 'wt.ps1') remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$From has no commits that origin/$To lacks (worktree removed)"; exit 0 }
-git -C $wt merge --no-ff "origin/$From" -m "chore(deploy): merge $From into $To" 2>&1 | Select-Object -Last 3
+$mo = git -C $wt merge --no-ff "origin/$From" -m "chore(deploy): merge $From into $To" 2>&1; $mrc = $LASTEXITCODE
+$mo | Select-Object -Last 3
 $conf = @(git -C $wt diff --name-only --diff-filter=U)
+if ($mrc -and -not $conf.Count) { "merge FAILED (not a conflict) in $wt"; exit 1 }
 $left = @()
 foreach ($f in $conf) {
   $theirs = git -C $wt rev-parse "origin/${To}:$f" 2>$null   # the deploy branch's blob before the merge
@@ -58,4 +60,5 @@ git -C $wt fetch -q origin $To
 git -C $wt merge-base --is-ancestor "origin/$To" HEAD
 if ($LASTEXITCODE) { "origin/$To moved while merging - re-run"; exit 1 }
 git -C $wt push origin "HEAD:$To"
+if ($LASTEXITCODE) { "push FAILED (exit $LASTEXITCODE): nothing reached $To; worktree kept: $wt"; exit 1 }
 "pushed $(git -C $wt rev-parse --short HEAD) to $To ($ahead commits from $From)"

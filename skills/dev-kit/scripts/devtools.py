@@ -126,8 +126,10 @@ def comment(tid, text):
 
 
 def finish(tid, guide_url, solution_md, status='review'):
-    md = task(tid).get('description') or ''
-    if guide_url not in md:
+    t = task(tid)
+    md = t.get('description') or ''
+    # a failed lookup has no id/name: describing would overwrite the real description with just the guide line
+    if t.get('id') and t.get('name') and guide_url not in md:
         _tracker('describe', tid, f'Testing guide: {guide_url}\n\n{md}')
     # one comment: the solution, plus the guide link only when the solution doesn't carry it already
     if guide_url not in solution_md:
@@ -139,6 +141,8 @@ def finish(tid, guide_url, solution_md, status='review'):
 # ---------- Git host (GitLab or GitHub, from the origin remote) ----------
 GITLAB_HOST = CFG.get('gitHost') or 'gitlab.com'
 GITHUB_HOST = CFG.get('githubHost') or 'github.com'
+if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # glab api outside a checkout would otherwise talk to gitlab.com
+    os.environ['GITLAB_HOST'] = CFG['gitHost']
 
 
 def remote(worktree):
@@ -221,27 +225,34 @@ def auto_merge(worktree, iid):
             return f'PIPELINE {st}: fix it, do not merge'
         args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true']
         # A repo without MR CI never gets a pipeline: merge_when_pipeline_succeeds would then wait forever.
-        # No pipeline at all on the MR and the head commit pushed > 5 min ago = no CI for MRs -> merge now.
+        # No CI = the source ref has never had a pipeline AND the MR was last updated > 5 min ago. (A head-commit date is no
+        # proof: an old commit pushed just now has no pipeline YET.) With no head pipeline GitLab would merge a
+        # merge_when_pipeline_succeeds at once, so a CI repo whose pipeline has not appeared gets WAIT, never a merge.
         no_ci = False
         if st is None:
-            pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
-            sha = m.get('sha') or ''
-            c = _json(_run([GLAB, 'api', f'projects/{enc}/repository/commits/{sha}'])) if sha else {}
-            when = c.get('committed_date') or c.get('created_at')
-            if not pls and when:
-                from datetime import datetime, timezone
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds()
-                no_ci = age > 300
-                if not no_ci:
-                    # callers (the dev-wave ship step) run merge ONCE: a WAIT left a reviewed no-CI MR open for good.
-                    # Wait out the 5 min here, then decide again (a pipeline may have appeared meanwhile).
-                    time.sleep(max(0, 310 - age))
-                    pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
-                    if pls:
-                        st = 'running'
-                    no_ci = not pls
-            if not pls and not no_ci:
-                return f'WAIT: no pipeline on !{iid} yet (pushed < 5 min ago); run merge again in a few minutes'
+            from datetime import datetime, timezone
+            src_proj = m.get('source_project_id') or enc
+            ref = (m.get('source_branch') or '').replace('/', '%2F')
+
+            def _no_ci():
+                pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
+                refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&per_page=1'])) if ref else {}
+                return (not pls and isinstance(refp, list) and not refp), bool(pls)
+
+            when = m.get('updated_at') or m.get('created_at') or ''
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
+            none_yet, has = _no_ci()
+            if none_yet and age <= 300:
+                # callers (the dev-wave ship step) run merge ONCE: a WAIT left a reviewed no-CI MR open for good.
+                # Wait out the 5 min here, then decide again (a pipeline may have appeared meanwhile).
+                time.sleep(max(0, 310 - age))
+                none_yet, has = _no_ci()
+                age = 301
+            if has:
+                st = 'running'
+            no_ci = none_yet and age > 300
+            if not has and not no_ci:
+                return f'WAIT: no pipeline on !{iid} yet (this branch has had pipelines, so one is expected); run merge again in a few minutes'
         if st != 'success' and not no_ci:
             args += ['-f', 'merge_when_pipeline_succeeds=true']
         out = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))

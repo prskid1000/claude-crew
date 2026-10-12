@@ -56,10 +56,11 @@ if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmt
     if ($act.Count) { Deny "The runtime's work/ folder holds runs in progress ($($act -join ', ') written in the last 3 h): do not delete it. cache/ and logs/ may be cleared; cleanup.ps1 prunes old work entries itself; requests to wipe it are for the lead (coordinator), not for you." }
   }
 }
-if ($cmd -match '\bgit\b[^|;&]*\bstash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
+# stash as the git subcommand only (a branch like fix/stash-list is fine)
+if ($cmd -match '\bgit(\.exe)?\s+((-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*stash\b') { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm-avd.ps1 reset).' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
-if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?!-with-lease)|\s-f\b)' -or ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*--force' -and $cmd -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
+if ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*(--force(?![-\w])|\s-f\b)' -or ($cmd -match '\bgit\b[^|;&]*\bpush\b[^|;&]*--force' -and $cmd -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
   Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after wt.ps1 sync.'
 }
 # heavy builds/tests must go through the gate
