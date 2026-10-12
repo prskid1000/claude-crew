@@ -469,8 +469,12 @@ def lint(k, g=None, org_terms=None):
         listed = set()
         for n, when, hits in k.index.get(s, []):
             listed.update(hits)
+            # an absolute path names a tool outside the kit (e.g. a local overlay's script): check it on disk instead
+            absolute = re.match(r'^(?:[A-Za-z]:[\\/]|/|~[\\/])', n)
+            if absolute and os.path.exists(os.path.expanduser(n)):
+                continue
             if not hits and '*' not in n and '<' not in n:
-                bad('FILES-MISSING', p, f'Files index lists {n}, which does not exist')
+                bad('FILES-MISSING', p, f'Files index lists {n}, which does not exist' + (' (absolute path, not found on this machine)' if absolute else ''))
             if re.match(r'(reference|templates)/', n) and not re.search(r'\bsteps?\b|\b[A-Z]\d+[a-z]?\b', when, re.I):
                 bad('FILES-UNBOUND', p, f'{n}: say at which step (or event row) it is read or filled')
             if n == 'HISTORY.md' and 'never' not in when.lower():
