@@ -6,7 +6,7 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py newtask <listId|-> <parentId|-> <assignee|-> "<name>" <desc.md>
   python devtools.py status <taskId> "<status>"                     logical (review, promoted, inTest, closed) or the tracker's own name
   python devtools.py comment <taskId> <file.md | "text">
-  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + comments + status
+  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + one solution comment (guide link appended if missing) + status
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
   python devtools.py merge <worktree> <iid>                         squash-merge once the pipeline is green (polls)
   python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
@@ -129,8 +129,10 @@ def finish(tid, guide_url, solution_md, status='review'):
     md = task(tid).get('description') or ''
     if guide_url not in md:
         _tracker('describe', tid, f'Testing guide: {guide_url}\n\n{md}')
+    # one comment: the solution, plus the guide link only when the solution doesn't carry it already
+    if guide_url not in solution_md:
+        solution_md = f'{solution_md.rstrip()}\n\nHow to test: follow the tester guide {guide_url}.'
     comment(tid, solution_md)
-    comment(tid, f'How to test: follow the tester guide {guide_url}.')
     set_status(tid, status)
 
 
