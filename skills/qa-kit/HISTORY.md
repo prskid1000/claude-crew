@@ -52,3 +52,4 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 ## Moved by learn.ps1 (-Fixed / -Trim), oldest first
 - (fixed in kit) (2×) The swarm's APK can be days old: compare its commit with the branch head and rebuild with `android-swarm/app-build.ps1` before any app retest.
 - (fixed in kit) (3×) LLM-driven checks (an AI decider/assistant) are intermittent: run each 5-14 times, record every run, keep the first and each deviating run as evidence. Re-run a deviating run before FAIL, and log its timestamp.
+- (fixed in kit) (3×) After a backend-service restart or redeploy the first assistant turns can answer 'data connection timed out' (tool-search calls only) for a few minutes: run a warm-up chat turn and re-run the check before any FAIL or bug is opened.

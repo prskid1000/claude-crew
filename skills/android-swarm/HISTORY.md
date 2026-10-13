@@ -12,3 +12,5 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 - (fixed in kit) Headless lanes (-Headless / config), `-Mode Embedded` alias, `metro-start -Port`, variant-safe app-build (+ `-DevClient` builds base.apk), lane logins in config, `ui.ps1 photo` (in-app camera), and `swarm-avd.ps1` (create all lanes from avd-template.ini; reset cold/snapshots/wipe/recreate).
 - (2×, fixed in kit) Java 24+ breaks the React Native native (CMake/prefab) step ("restricted method in java.lang.System"). app-build ignores a JAVA_HOME of 24+ and picks a JDK 17/21.
 
+## Moved by learn.ps1 (-Fixed / -Trim), oldest first
+- (fixed in kit) (3×) Under RAM pressure (2-6 GB free with the web Chrome pool and 3 emulators) all lanes can drop offline at once and phone.ps1 status shows your lease free while you still test: before each app check confirm adb devices lists your serial as 'device' and your lease file exists, else re-acquire; run at most 2 app lanes while a web pool runs in parallel.

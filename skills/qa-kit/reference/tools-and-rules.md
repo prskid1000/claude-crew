@@ -26,7 +26,10 @@ Mark every FAIL screenshot (red box on the wrong value / missing element); PASS 
 ## Verdicts: defects are never notes
 - **PASS**: the expected behaviour was seen.
 - **PASS_WITH_NOTE**: ONLY when (a) the guide text is out of date because later, intended work changed the flow and the intent
-  still holds, or (b) a purely cosmetic difference while the behaviour is correct.
+  still holds, (b) a purely cosmetic difference while the behaviour is correct, or (c) the guide's expected text cannot be met
+  for a reason outside the change (a platform/OS limit such as an Android chooser ignoring its title, or imprecise guide wording the
+  code and design show was never intended) while the behaviour is right: check the code or ask the lead before FAIL and quote both
+  readings. A guide-vs-screen disagreement the code does not settle goes to the lead before the run closes, never left as an open FAIL.
 - **FAIL**: any defect, inside or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck/blocked flow, data changed wrongly
   or not saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
 - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" doesn't.

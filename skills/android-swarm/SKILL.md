@@ -38,6 +38,9 @@ Runtime output (APKs, `build.log`, `metro.log`, emulator logs, `swarm.json`) goe
   Relaunch / clear: `app-launch.ps1 -Serial <s> [-Clear]`. Logs: `ui.ps1 log ReactNativeJS` (RN) or `ui.ps1 log <tag>`; in-app camera:
   tap the app's camera icon, then `ui.ps1 photo [shutterId]`. Each lane has its own login and data prefix; environment-wide setting
   changes run alone; passwords live only in `qa-kit/targets.local.json`.
+- A2b. Under RAM pressure lanes can drop offline while `phone.ps1 status` shows your lease free: before each app check confirm `adb devices`
+  lists your serial as `device` and your lease file exists; if either fails, re-acquire with `phone.ps1 acquire -Agent <id> -Lane <name> -NoInstall`.
+  The lead runs at most 2 app lanes while a web pool or a dev wave runs in parallel.
 - A3. Hand the phone back with `phone.ps1 release -Agent <id>` before long non-phone work (API, web UI, code, data prep); acquire again later.
 - A4. `phone.ps1 release -Agent <id>` when done.
 

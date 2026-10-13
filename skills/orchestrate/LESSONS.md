@@ -1,6 +1,7 @@
 # Coordination lessons — active rules (read before planning a wave or a QA run; ≤ 40 lines)
 Newest first, one line each, `(n×)` = times seen. Fixed/old entries live in `HISTORY.md` (never read it for work).
 
+- (3×) A bug-fix /dev-wave launched while an app-lane /test-and-close holds 3 phones starves both on one machine (gated tests sat in the RAM queue until agents were stopped, phone re-acquires took 20-40 min): when both must run, launch QA with `lanes` capped at 2 (or web/api lanes only) and tell build agents to push and open the MR with verification marked pending rather than wait in the gate.
 - The owner asks for something destructive (clean a folder, reset a branch) while waves run: do it yourself after they finish; agents must never act on relayed requests outside their items.
 - Contracts file: agents append, never overwrite — still re-check your note is there after agents publish shapes. When a contract changes mid-wave, append it AND add a note in the brief agents re-read; reconcile duplicate key specs. (3×)
 - Overlapping agents: brief them to rebase only after the sibling MR merges (one conflict resolution, not two).
