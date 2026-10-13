@@ -12,6 +12,8 @@ hand-edit the generated .codex/ or .agents/ files, or the next run overwrites th
 import json
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parents[4]  # .../<workspace> (holds .claude; usually NOT a git repo itself)
@@ -292,15 +294,29 @@ def deploy():
     .codex//.agents from the session cwd, not from inside .claude). The workspace root usually
     isn't a git repo itself, so this copy is a deploy target, not a second source of truth --
     same relationship as the kit repo itself being cloned into <workspace>/.claude."""
+    deployed = []
     for src_dir, dst_dir in ((KIT / ".codex", WORKSPACE / ".codex"), (KIT / ".agents", WORKSPACE / ".agents")):
         if dst_dir.exists():
             shutil.rmtree(dst_dir)
         shutil.copytree(src_dir, dst_dir)
+        deployed.append(dst_dir)
     # AGENTS.md/GEMINI.md: Codex/Antigravity search upward from the session cwd (usually
     # WORKSPACE), never down into .claude, so the canonical file in .claude needs a copy here too.
     for name in ("AGENTS.md", "GEMINI.md"):
-        shutil.copyfile(KIT / name, WORKSPACE / name)
-    print(f"deployed -> {WORKSPACE / '.codex'}, {WORKSPACE / '.agents'}, {WORKSPACE / 'AGENTS.md'}, {WORKSPACE / 'GEMINI.md'}")
+        dst = WORKSPACE / name
+        shutil.copyfile(KIT / name, dst)
+        deployed.append(dst)
+    # These are deploy output, not workspace content (same relationship .claude-runtime has to
+    # .claude): mark them hidden on Windows so they don't clutter Explorer/VS Code's file tree.
+    # .codex/.agents are already dot-prefixed (hidden by convention on Linux/macOS); AGENTS.md/
+    # GEMINI.md have no leading dot (required by spec) so this is the only way to hide them there.
+    if sys.platform == "win32":
+        for path in deployed:
+            try:
+                subprocess.run(["attrib", "+h", str(path)], check=False, capture_output=True)
+            except OSError:
+                pass
+    print(f"deployed (hidden) -> {', '.join(str(p) for p in deployed)}")
 
 
 def check_stale():
