@@ -12,8 +12,6 @@ hand-edit the generated .codex/ or .agents/ files, or the next run overwrites th
 import json
 import re
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parents[4]  # .../<workspace> (holds .claude; usually NOT a git repo itself)
@@ -306,17 +304,7 @@ def deploy():
         dst = WORKSPACE / name
         shutil.copyfile(KIT / name, dst)
         deployed.append(dst)
-    # These are deploy output, not workspace content (same relationship .claude-runtime has to
-    # .claude): mark them hidden on Windows so they don't clutter Explorer/VS Code's file tree.
-    # .codex/.agents are already dot-prefixed (hidden by convention on Linux/macOS); AGENTS.md/
-    # GEMINI.md have no leading dot (required by spec) so this is the only way to hide them there.
-    if sys.platform == "win32":
-        for path in deployed:
-            try:
-                subprocess.run(["attrib", "+h", str(path)], check=False, capture_output=True)
-            except OSError:
-                pass
-    print(f"deployed (hidden) -> {', '.join(str(p) for p in deployed)}")
+    print(f"deployed -> {', '.join(str(p) for p in deployed)}")
 
 
 def check_stale():
