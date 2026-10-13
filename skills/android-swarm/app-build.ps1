@@ -36,11 +36,6 @@ $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
 $publishes = (-not $PSBoundParameters.ContainsKey('AppDir')) -or $Shared
 if ($publishes -and -not $AnyBranch -and $branch -ne 'HEAD') {
   $track = "$(git -C $AppDir for-each-ref --format='%(upstream:track)' "refs/heads/$branch" 2>$null)".Trim()
-  if ($c.app.branch) {   # the build must hold every commit of origin/<app.branch> (a worktree branch cut from it passes)
-    git -C $AppDir fetch -q origin $c.app.branch 2>$null
-    git -C $AppDir merge-base --is-ancestor "origin/$($c.app.branch)" HEAD 2>$null
-    if ($LASTEXITCODE) { throw "the checkout $AppDir ('$branch') does not contain origin/$($c.app.branch) (app.branch): the lane APK would miss merged fixes. Switch it, or build a worktree of $($c.app.branch) with -AppDir <worktree> -Shared (-AnyBranch to override)." }
-  }
   if ($track -eq '[gone]') { throw "the checkout $AppDir is on '$branch', whose remote branch is gone (merged and deleted): the lane APK would miss newer merges. Switch it to the branch under test, or build a worktree of it with -AppDir <worktree> -Shared (-AnyBranch to override)." }
 }
 # Test the branch as merged, not whatever the checkout last pulled (an APK 10 commits behind re-fails fixed checks)
@@ -66,6 +61,14 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
         } finally { Pop-Location }
       }
     }
+  }
+}
+# after the fast-forward above: the build must hold every commit of origin/<app.branch> (a worktree branch cut from it passes)
+if ($publishes -and -not $AnyBranch) {
+  if ($c.app.branch) {
+    git -C $AppDir fetch -q origin $c.app.branch 2>$null
+    git -C $AppDir merge-base --is-ancestor "origin/$($c.app.branch)" HEAD 2>$null
+    if ($LASTEXITCODE) { throw "the checkout $AppDir ('$branch') does not contain origin/$($c.app.branch) (app.branch): the lane APK would miss merged fixes. Switch it, or build a worktree of $($c.app.branch) with -AppDir <worktree> -Shared (-AnyBranch to override)." }
   }
 }
 $commit = (git -C $AppDir rev-parse --short HEAD).Trim()
