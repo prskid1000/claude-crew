@@ -53,6 +53,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
    - **FAIL**: any defect, in or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck flow, data changed wrongly or not
      saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
    - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
+   - **LLM-driven checks** (an AI assistant or decider) are intermittent: after a redeploy or long idle do a warm-up turn, then run
+     each 5+ times in fresh sessions and record every answer with its timestamp; re-run a deviating result once before FAIL and keep
+     the first and each deviating run as evidence.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
 6. **Leave:** `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`), return the results the task asks for.
 

@@ -72,6 +72,9 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash` (WIP commit instead).
 - **Scope:** only your items, no sweeps of similar code, never remove features or inputs; changes are additive (optional fields, new
   endpoints/params, flags); DTOs not entities in APIs; foreign files only as one-line hooks you list in your reply; decisions in the brief are final (new decision needed → defer with a reason).
+- **Text files:** write code, briefs, guides and MR bodies with the Write tool and change files with Edit, then pass the file path
+  (`devtools.py doc <file>`, MR body from a file). Never Bash heredocs, sed or python string-replace for text with backslashes,
+  quotes or CRLF line endings (Git Bash turns `\b` into a backspace, apostrophes give "unexpected EOF", replace misses CRLF).
 - **Migrations (4c):** only your assigned range; never edit a merged migration; per-tool rules in `reference/migrations.md`.
 - **Ship (6-8):** re-read `<brief>.contracts.md` and the brief's bottom (rule changes are appended there mid-wave) before pushing
   (append-only if you write to it); one MR per repo, title with `<tag><task>` in it (e.g. `feat: <summary> - <CODE> (<tag><task>) (<Repo>)`, or the brief's format), body from `orchestrate/templates/MR_BODY.md`; in a reviewed `/dev-wave` don't

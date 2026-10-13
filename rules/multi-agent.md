@@ -15,6 +15,9 @@ deploys need a person's yes). The rules below hold whatever the route.
   Defects are FAIL, never notes. Dev agents never start emulators (the QA swarm owns them).
 - Browsers are **headless by default** for every repro, check and screenshot, the main session included: `qa-kit/scripts/web/browser.mjs`
   (one logged-in headless Chrome per port). A visible browser (a browser MCP, the owner's own browser) only when the owner asks to watch.
+- Run python and node (kit scripts, `browser.mjs`, page scripts) from the PowerShell tool (pwsh), not Git Bash: there `python` can be
+  a broken `.cmd` shim (SyntaxError), node scripts started via `powershell.exe -Command` hang with no output, and route arguments get
+  rewritten into Windows paths (if Bash is unavoidable, prefix `MSYS_NO_PATHCONV=1`). Python output: `-X utf8`.
 - `.claude` is a git clone of the kit (edit in place, commit, push). Runtime output (QA runs, tokens, APKs, logs, browser
   profiles) goes to `.claude/.claude-runtime/` (git-ignored, disposable), resolved by name through `Get-KitPath`; never elsewhere in `.claude`.
 - The kit learns: every agent reads its skill's `LESSONS.md` at step 0 and records surprises with
