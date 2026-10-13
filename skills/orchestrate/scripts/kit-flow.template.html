@@ -119,7 +119,11 @@ const nodes=D.nodes.filter(n=>!n.id.startsWith('.git'));const byId=Object.fromEn
 const edges=D.edges.filter(e=>byId[e.s]&&byId[e.t]);
 const inCount={},outCount={};for(const e of edges){inCount[e.t]=(inCount[e.t]||0)+1;outCount[e.s]=(outCount[e.s]||0)+1}
 const issuesOf=id=>D.issues.filter(i=>i.id===id);
-const shown=store.get('types2',{route:1,scoped:1,hook:1,spawn:1,index:1,loads:0,calls:0,mention:0});
+// route/scoped are off by default: with ~25 triggers all always-loaded by every root/rule file,
+// drawing every such edge at once produces a dense hairball right at the column-0/1 gutter.
+// They stay fully explorable per-file (hover/click always draws them for that one node — see
+// focus()'s `want` object, which force-includes route+scoped regardless of this toggle state).
+const shown=store.get('types2',{route:0,scoped:0,hook:1,spawn:1,index:1,loads:0,calls:0,mention:0});
 let expanded=new Set(store.get('expanded',[]));let sel=store.get('sel',null);if(sel&&!byId[sel])sel=null;
 let tab=store.get('tab','flow');if(!TABS.some(t=>t[0]===tab))tab='flow';
 const reached=nodes.filter(n=>n.reach==='entry'||n.reach==='structural').length;
