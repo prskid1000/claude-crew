@@ -143,6 +143,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | `app.kind` | `react-native` | `react-native` or `native` |
 | `app.package` | — | Android package id, e.g. `com.example.app` |
 | `app.appDir` | — | App checkout (folder with `android/gradlew[.bat]` or `gradlew[.bat]`) |
+| `app.branch` | - (any branch) | Branch the shared lane APK is tested from: `app-build.ps1` refuses to publish `apk/app.apk` from a checkout that does not contain `origin/<app.branch>` (a worktree cut from it passes), and always from a branch whose remote is gone; `-AnyBranch` overrides |
 | `app.buildTask` / `app.buildArgs` | `assembleRelease` (RN) / `assembleDebug` (native) | Gradle task + args for `app-build.ps1` |
 | `app.apkGlob` | from the variant | APK location under the Android project; its module folder (the part before `/build/outputs/`) is where `app-build.ps1` looks for the APK it built (an app module not named `app`) |
 | `app.devClientScheme`, `app.metroPort` | —, `8081` | React Native Metro mode: with a scheme the Expo dev client is deep-linked to Metro; without one (bare React Native debug build) the app starts normally with the Metro port reversed. `metro-start.ps1` runs `npx expo start` when the app depends on `expo`, else `npx react-native start` |

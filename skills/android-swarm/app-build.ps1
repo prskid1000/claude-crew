@@ -15,7 +15,8 @@ param(
   [string]$JavaHome,               # default: a JDK 17/21 found on the machine (24+ breaks some native steps)
   [switch]$NoUpdate,               # default: fast-forward a clean checkout to its upstream first, so the APK has the latest merges
   [switch]$DevClient,              # react-native: build the Expo dev client (debug variant) -> apk/base.apk, used by -Mode Metro
-  [switch]$Shared                  # with -AppDir on a side checkout: still publish it as apk/app.apk for every lane
+  [switch]$Shared,                 # with -AppDir on a side checkout: still publish it as apk/app.apk for every lane
+  [switch]$AnyBranch               # publish even from a branch that is not app.branch / whose remote is gone (normally refused)
 )
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
@@ -30,6 +31,18 @@ $android = if (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()
 $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
+# The shared app.apk is what every lane installs: never build it from whatever branch someone left the checkout on.
+# Refuse a branch whose remote is gone (merged and deleted = stale) or one other than swarm.config.json app.branch.
+$publishes = (-not $PSBoundParameters.ContainsKey('AppDir')) -or $Shared
+if ($publishes -and -not $AnyBranch -and $branch -ne 'HEAD') {
+  $track = "$(git -C $AppDir for-each-ref --format='%(upstream:track)' "refs/heads/$branch" 2>$null)".Trim()
+  if ($c.app.branch) {   # the build must hold every commit of origin/<app.branch> (a worktree branch cut from it passes)
+    git -C $AppDir fetch -q origin $c.app.branch 2>$null
+    git -C $AppDir merge-base --is-ancestor "origin/$($c.app.branch)" HEAD 2>$null
+    if ($LASTEXITCODE) { throw "the checkout $AppDir ('$branch') does not contain origin/$($c.app.branch) (app.branch): the lane APK would miss merged fixes. Switch it, or build a worktree of $($c.app.branch) with -AppDir <worktree> -Shared (-AnyBranch to override)." }
+  }
+  if ($track -eq '[gone]') { throw "the checkout $AppDir is on '$branch', whose remote branch is gone (merged and deleted): the lane APK would miss newer merges. Switch it to the branch under test, or build a worktree of it with -AppDir <worktree> -Shared (-AnyBranch to override)." }
+}
 # Test the branch as merged, not whatever the checkout last pulled (an APK 10 commits behind re-fails fixed checks)
 if (-not $NoUpdate -and $branch -ne 'HEAD') {
   $before = (git -C $AppDir rev-parse HEAD).Trim()
