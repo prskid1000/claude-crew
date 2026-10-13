@@ -155,6 +155,10 @@ foreach ($root in $WorktreeRoot) {
     $unpushed = git -C $d log --oneline "@{upstream}..HEAD" 2>$null
     if ($LASTEXITCODE -eq 0 -and $unpushed) { continue }
     $main = Split-Path (git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)   # the repo the worktree belongs to
+    # "not on the remote" also fits a fresh worktree whose branch was never pushed (another wave's cleanup at idle 0 deleted
+    # agents' new worktrees mid-run): remove only when the host shows a merged MR/PR at exactly this branch's tip
+    $tip = (git -C $d rev-parse HEAD 2>$null)
+    if (-not $main -or $tip -notin @(MergedTip $main $br)) { continue }
     [void]$actions.Add("worktree $d (branch $br merged + deleted on remote, clean, idle > $WorktreeIdleHours h) -> wt.ps1 remove")
     if (-not $DryRun) { & (Join-Path $K 'wt.ps1') remove -Dir $d | Out-Null }
     if ($main) { $repos[$main] = $true }
