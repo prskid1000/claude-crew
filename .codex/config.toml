@@ -18,7 +18,7 @@ matcher = "*"
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = '''pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/retro-nudge.ps1'''
-timeout = 30
+timeout = 10
 
 [[hooks.SessionStart]]
 matcher = "*"
@@ -26,4 +26,12 @@ matcher = "*"
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = '''pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/kit-health.ps1'''
-timeout = 30
+timeout = 10
+
+[[hooks.SessionStart]]
+matcher = "*"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = '''pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/cleanup.ps1 -IfDue -Quiet'''
+timeout = 600

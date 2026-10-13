@@ -3,7 +3,8 @@
 ## Claude Code-only mechanics
 Everything above this line is shared with Codex and Antigravity (see `AGENTS.md`'s own final section for what does NOT
 port). What's below applies only here:
-- **Hooks** (`settings.json`): `PreToolUse` (guard.ps1) and `SessionStart` (retro-nudge.ps1, kit-health.ps1) are ported to
+- **Hooks** (`settings.json`): `PreToolUse` (guard.ps1) and `SessionStart` (retro-nudge.ps1, kit-health.ps1, cleanup.ps1
+  `-IfDue -Quiet`; the cosmetic `kit-health.ps1 -Flow -Fetch` variant is skipped) are ported to
   `.codex/config.toml` and `.agents/hooks.json` by `skills/orchestrate/scripts/port-kit.py` — rerun it after any hooks edit.
   The `SendMessage` guard has no port (see `AGENTS.md`).
 - **Agents** (`agents/*.md`) and **workflows** (`workflows/*.js`): the same script ports agent definitions to
