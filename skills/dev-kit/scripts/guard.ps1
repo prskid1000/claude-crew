@@ -49,7 +49,8 @@ function ActiveWork {
   }
 }
 $end = '[''"]?(\s|;|\||\)|$)'
-if ($raw -match '(Remove-Item|\brm\b|\brmdir\b|\brd\b|\bdel\b|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
+# rm/rmdir/rd/del only as a command word (start, or after whitespace ; | & ( `), never inside a name like "2026-x-rm-y"
+if ($raw -match '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
   if ($raw -match ('(tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)' + $end)) {
     Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
   if ($raw -notmatch 'cleanup\.ps1' -and $raw -match ('\.claude-runtime([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*' + $end)) {
