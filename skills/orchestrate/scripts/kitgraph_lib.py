@@ -13,7 +13,9 @@ from typing import Dict, List, Optional, Set, Tuple
 
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.claude-runtime', 'worktrees', 'memory'}
 # repo plumbing at the kit root (the repo root IS the .claude folder): read for org terms and doc links, not part of the kit graph
-REPO_ONLY = ('README.md', 'CONTRIBUTING.md', 'LICENSE', 'docs', 'examples', '.githooks', '.gitignore', '.gitattributes')
+REPO_ONLY = ('README.md', 'CONTRIBUTING.md', 'LICENSE', 'docs', 'examples', '.githooks', '.gitignore', '.gitattributes',
+             # cross-tool mirrors (Codex/Antigravity): real content, but `@import`ed into CLAUDE.md, not routed to directly
+             'AGENTS.md', 'GEMINI.md', '.codex', '.agents')
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (kit-lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/scripts/kitpaths.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/scripts/kitpaths.ps1', 'skills/dev-kit/scripts/kitpaths.py',
@@ -26,6 +28,26 @@ JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
 BLOCKS = ('Load when', 'Not when', 'Hands off to', 'Files')
 FUZZY = re.compile(r'(?<!")read (it |this )?(only )?when (you need|needed)|\(read only when', re.I)   # quoted = named, not used
+IMPORT_RE = re.compile(r'^@([\w./-]+\.md)\s*$', re.MULTILINE)
+
+
+def resolve_imports(text, base_dir, _seen=None):
+    """Expand Claude Code's own `@<path>.md` import lines (e.g. CLAUDE.md pointing at a
+    canonical AGENTS.md shared with Codex/Antigravity) so every text-based check below sees
+    the same content Claude Code itself would load, regardless of which file is the real one."""
+    seen = _seen if _seen is not None else set()
+
+    def repl(m):
+        path = m.group(1)
+        if path in seen:
+            return ''
+        full = os.path.join(base_dir, path)
+        if not os.path.isfile(full):
+            return m.group(0)
+        seen.add(path)
+        return resolve_imports(read(full), base_dir, seen)
+
+    return IMPORT_RE.sub(repl, text)
 
 
 def read(p, raw=False):
@@ -205,6 +227,9 @@ def load(kit):
     k.agents = {f[7:-3]: f for f in k.files if re.match(r'agents/[^/]+\.md$', f)}
     k.workflows = {f[10:-3]: f for f in k.files if re.match(r'workflows/[^/]+\.js$', f)}
     k.texts = {f: read(os.path.join(k.dir, f)) for f in k.files if f.lower().endswith(TEXT_EXT)}
+    for f in k.texts:
+        if f.lower().endswith('.md'):
+            k.texts[f] = resolve_imports(k.texts[f], k.dir)
     claude = k.texts.get('CLAUDE.md', '')
     k.router = section(claude, 'Router')
     k.org_rows = ''.join(section(k.texts.get(r, ''), 'Org router rows') or '' for r in k.local_rules)

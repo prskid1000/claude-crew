@@ -44,6 +44,10 @@ if ((Test-Path $legacy) -and $legacy -ne (Get-KitPath runtime)) { $msgs += "old 
 if ($py) {
   $lint = & $py (Join-Path $PSScriptRoot 'kit-lint.py') $kit --summary --warn --no-flow 2>$null
   if ($lint) { $msgs += ($lint -join ' ') }
+  $portKit = Join-Path $PSScriptRoot 'port-kit.py'
+  if (Test-Path $portKit) {
+    & $py $portKit --check 2>$null | ForEach-Object { $msgs += $_ }
+  }
 }
 if ($msgs) {
   $text = ($msgs -join ' | ') + ' (orchestrate Events E17)'

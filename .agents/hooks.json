@@ -1,0 +1,37 @@
+{
+  "guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/dev-kit/scripts/guard.ps1",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "kit-health": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/retro-nudge.ps1",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/kit-health.ps1",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

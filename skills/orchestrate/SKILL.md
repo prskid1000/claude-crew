@@ -39,6 +39,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/kit-cost.ps1`, `scripts/kit-cost.mjs` | K3 after a workflow or SKILL.md change (`-Steps`, `-Baseline`) |
 | `scripts/retro-nudge.ps1` | SessionStart hook: the E14 nudge |
 | `scripts/guard-sendmessage.ps1` | PreToolUse hook: blocks SendMessage to workflow agents (E10) |
+| `scripts/port-kit.py` | R2 ("Change the kit"): regenerates `.codex`/`.agents` (Codex/Antigravity agents, hooks, workflow procedure docs) from `agents/*.md`/`workflows/*.js`/`settings.json`, then deploys to the workspace root; `--check` run by kit-health.ps1 (SessionStart) |
 
 ## Steps (you = the coordinator)
 Project facts (repos, branches, environments, accounts, product rules) live in the wave **brief** / QA **run.json**, memory or the
