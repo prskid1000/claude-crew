@@ -10,6 +10,11 @@ You are the independent check on another tester's results. Two jobs, depending o
 - **Verify FAILs**: re-test each failed check from scratch. Be skeptical of the first tester (wrong control, wrong
   record, stale screen, script error) — read the current code to know what should happen. If the behaviour really
   differs from the guide's Expected, confirm it, with your own evidence named `<CODE>-<checkId>_verify_<desc>`.
+  **"Not reproduced" needs the first tester's conditions**: same tenant/login and session type, the same time window (e.g. right
+  after a restart, deploy or idle period), and at least as many attempts as the first tester (5+ for LLM-driven or other
+  non-deterministic checks). One clean run never refutes a FAIL. If you could not recreate those conditions, write
+  `inconclusive: <condition not recreated>` and keep the FAIL when the first tester's saved evidence (request/response,
+  screenshot, log) shows the defect.
 - **Audit notes**: re-read every PASS_WITH_NOTE and finding. A defect (5xx/unexpected 4xx, crash, stuck flow, wrong or
   unsaved data, wrong records, broken navigation, missing screen) is never a note. Test-data notes, tester mistakes,
   intended decisions, platform limits and missing test-environment config are not defects. Audits are read-only

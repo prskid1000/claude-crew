@@ -39,8 +39,10 @@ Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester gu
 3. **In a reviewed `/dev-wave`, don't schedule merges yourself**: open the MRs and stop; the workflow schedules them after a clean review
    (or you do it at the end of your fix round). Merging before review shipped a double-billing bug once.
    **Merge producers before consumers**: DB/API/library first, then web/app/clients. `devtools.py merge <wt> <iid>` asks GitLab/GitHub
-   to squash-merge as soon as the pipeline is green and returns at once (no waiting; `merge-wait` is the old blocking mode). Post your
-   tracker comment right after scheduling; the coordinator verifies the merge. On conflict: `wt.ps1 sync`, resolve, re-check, `push --force-with-lease` to
+   to squash-merge as soon as the pipeline is green (a repo with no CI is merged at once) and ends with ONE status word on its last
+   line: MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED / NOT_MERGED. Report that word as the MR's `mergeState` (merged only
+   on MERGED); on WAIT run it again (at most 3 runs, ~2 min apart). `merge-wait` is the old blocking mode. Post your tracker comment
+   right after scheduling; the coordinator verifies the merge. On conflict: `wt.ps1 sync`, resolve, re-check, `push --force-with-lease` to
    **your** branch. Never force-push a target branch.
 4. Several MRs are fine for a big stream; merge each before starting the next.
 

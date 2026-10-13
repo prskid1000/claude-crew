@@ -13,6 +13,10 @@ command and runs it through the memory gate (gate.ps1).
 
 -Dir is the folder with the build file (pom.xml, package.json, *.sln, pyproject.toml, ...), or anything below it.
 Tests are targeted: -Step test needs -Tests unless you pass -AllTests (full suites are slow and eat RAM).
+A web project with no unit-test target runs its specs with node-spec.mjs (pure-logic specs under node, no TestBed/DOM).
+Quick lint checks the files changed on the branch plus untracked ones. TypeScript typecheck output goes to
+<runtime>/logs/typecheck-<repo>-<time>.log; on TS5103 (an ignoreDeprecations value the installed TypeScript rejects) it retries
+once with a temp tsconfig and then prints only the errors in your changed files plus one BASELINE line, failing only on yours.
 Exit code: 0 ok, non-zero = the first failing step's exit code (3 = the gate could not start it in time).
 #>
 param(
@@ -29,6 +33,91 @@ $K = Split-Path $MyInvocation.MyCommand.Path
 . (Join-Path $K 'sysinfo.ps1')
 $st = & (Join-Path $K 'stack.ps1') -Dir $Dir -Json | ConvertFrom-Json
 Write-Host "[check] $($st.stack) in $($st.dir)"
+
+# Files changed on this branch (full paths, existing, under the stack dir): the diff against where the branch left its target
+# plus untracked files git does not ignore. Base = the worktree's recorded target (wt.ps1 new), else the remote's default branch
+# (origin/HEAD), else the upstream. (@{upstream} alone is the pushed branch itself, so after a push or commit quick lint used to
+# see only uncommitted files.)
+function Get-ChangedFiles {
+  $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
+  $gd = (git -C $st.dir rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
+  $tgt = if (Test-Path (Join-Path $gd 'claude-target')) { "origin/$((Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim())" }
+  $refs = @($tgt, ((git -C $st.dir symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null) | Select-Object -First 1), '@{upstream}') | Where-Object { $_ }
+  $base = $null; foreach ($r in $refs) { $base = (git -C $st.dir merge-base HEAD $r 2>$null); if ($LASTEXITCODE -eq 0 -and $base) { break }; $base = $null }
+  $list = @(git -C $st.dir diff --name-only --diff-filter=ACMR $(if ($base) { $base } else { 'HEAD' }) -- . 2>$null) +
+          @(git -C $st.dir ls-files --others --exclude-standard --full-name -- . 2>$null)
+  @($list | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique)
+}
+
+# tsc typecheck through the gate with its output in <runtime>/logs. On TS5103 retry once with a temp tsconfig (runtime cache, deleted
+# after) that extends the project's and sets a valid ignoreDeprecations, using the repo's own node_modules/.bin/tsc; then print only
+# the errors in changed files plus a BASELINE line for the rest, and fail only on changed files (and on config errors, TS5xxx/TS6xxx).
+function Invoke-Typecheck([string]$TcCmd) {
+  . (Join-Path $K 'kitpaths.ps1')
+  $top = git -C $st.dir rev-parse --show-toplevel 2>$null
+  $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
+  $repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
+  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+  & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
+  $rc = $LASTEXITCODE
+  $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
+  if (-not @($out -match 'error TS5103').Count) {
+    $out | ForEach-Object { Write-Host $_ }
+    if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
+    return $rc
+  }
+  $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
+  $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
+  # the repo's own tsc: nearest node_modules/.bin going up to the git root (a worktree links node_modules from its main checkout)
+  $bin = $null; $d = $st.dir
+  while ($d) {
+    $p = Join-Path $d "node_modules/.bin/$(if ($KitIsWindows) { 'tsc.cmd' } else { 'tsc' })"
+    if (Test-Path -LiteralPath $p) { $bin = $p; break }
+    if (-not $top -or $d -eq $top) { break }
+    $parent = Split-Path $d; if (-not $parent -or $parent -eq $d) { break }; $d = $parent
+  }
+  $ver = '5.0'
+  if ($bin) { try { if ([int](((Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $bin)) 'typescript/package.json') -Raw | ConvertFrom-Json).version -split '\.')[0]) -ge 6) { $ver = '6.0' } } catch {} }
+  $cfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
+  # without files/include in the project's config, tsc's default include is the folder of the -p config (the temp one): pin it
+  $raw = try { Get-Content -LiteralPath $base -Raw } catch { '' }
+  if ($raw -notmatch '"(files|include)"\s*:') {
+    $pd = (Split-Path $base).Replace('\', '/')
+    $ex = @('node_modules', 'bower_components', 'jspm_packages')
+    try { $j = $raw | ConvertFrom-Json; if ($j.exclude) { $ex = @($j.exclude) } } catch {}
+    $cfg.include = @("$pd/**/*")
+    $cfg.exclude = @($ex | ForEach-Object { if ([IO.Path]::IsPathRooted($_)) { $_ } else { "$pd/$_" } })
+  }
+  $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
+  $tmp = Join-Path (Get-KitPath cache -Create) "tsconfig.ts5103.$hash.$PID.json"
+  $tsb = Join-Path (Get-KitPath tsbuild -Create) "$hash.ts5103.tsbuildinfo"
+  $tsc = if ($bin) { "`"$bin`"" } else { 'npx tsc' }
+  Write-Host "[check] typecheck hit TS5103 (ignoreDeprecations): retrying with a temp tsconfig (ignoreDeprecations $ver) and $(if ($bin) { $bin } else { 'npx tsc' })"
+  try {
+    $cfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8
+    & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
+    $rc = $LASTEXITCODE
+  } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+  $out2 = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Skip $out.Count })
+  if ($rc -eq 3 -and -not $out2.Count) { return 3 }   # the gate could not start it
+  $changed = @(Get-ChangedFiles | ForEach-Object { $_.ToLower() })
+  $mine = [Collections.Generic.List[string]]::new(); $mineN = 0; $baseN = 0; $baseFiles = @{}; $cur = $null; $blocks = 0
+  foreach ($l in $out2) {
+    if ($l -match '^(?<f>.+?)\(\d+,\d+\): error TS(?<code>\d+)' -or $l -match '^error TS(?<code>\d+)') {
+      $blocks++
+      $f = $Matches.f; $isCfg = (-not $f) -or $Matches.code -match '^[56]\d{3}$' -or $Matches.code -eq '18003'   # config/option errors always count
+      $full = if ($f) { [IO.Path]::GetFullPath((Join-Path $st.dir $f)).ToLower() } else { $null }
+      if ($isCfg -or $changed -contains $full) { $cur = 'mine'; $mineN++ } else { $cur = 'base'; $baseN++; $baseFiles[$full] = 1 }
+    }
+    elseif (-not ($cur -and $l -match '^\s')) { $cur = $null }
+    if ($cur -eq 'mine') { $mine.Add($l) }
+  }
+  $mine | ForEach-Object { Write-Host $_ }
+  Write-Host "BASELINE: $baseN errors outside your changes (in $($baseFiles.Count) files; not failing this check; full log: $log)"
+  if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or in the config)"; return 1 }
+  if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }   # tsc failed without diagnostics
+  return 0
+}
 
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
@@ -60,7 +149,10 @@ $steps = if ($Step -eq 'quick') { 'compile', 'typecheck', 'lint' } else { @($Ste
 $ran = 0
 foreach ($s in $steps) {
   $cmd = $st.commands.$s
+  # a web project without a unit-test target (e.g. a stack override that sets none): node-spec.mjs runs the specs under node
+  if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$(Join-Path $K 'node-spec.mjs')`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
+  if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs') { Write-Host '[check] no unit-test target: running node-spec.mjs (pure-logic specs under node; TestBed/DOM specs are reported NOT RUN)' }
   if ($cmd -match '\{tests\}') {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
     $cmd = $cmd -replace '\{tests\}', $Tests
@@ -75,21 +167,12 @@ foreach ($s in $steps) {
   }
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
-      # quick lint (and Python's compileall) = files changed against the merge base, so it stays fast
-      $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-      # base = where this branch left its target: the worktree's recorded target (wt.ps1 new), else the remote's default
-      # branch (origin/HEAD), else the upstream. (@{upstream} alone is the pushed branch itself, so after a push or
-      # commit quick lint used to see only uncommitted files.)
-      $gd = (git -C $st.dir rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
-      $tgt = if (Test-Path (Join-Path $gd 'claude-target')) { "origin/$((Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim())" }
-      $refs = @($tgt, ((git -C $st.dir symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null) | Select-Object -First 1), '@{upstream}') | Where-Object { $_ }
-      $base = $null; foreach ($r in $refs) { $base = (git -C $st.dir merge-base HEAD $r 2>$null); if ($LASTEXITCODE -eq 0 -and $base) { break }; $base = $null }
-      $changed = git -C $st.dir diff --name-only --diff-filter=ACMR $(if ($base) { $base } else { 'HEAD' }) -- . 2>$null
+      # quick lint (and Python's compileall) = files changed on the branch + untracked ones, so it stays fast
       # only files the stack's linter reads (ruff/flake8 get .py, eslint gets JS/TS)
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
       # paths relative to the stack dir (the gate runs there): absolute paths made a 200-file merge overflow cmd.exe's 8191 chars
       Push-Location $st.dir
-      $changed = @($changed | Where-Object { $_ -match $ext } | ForEach-Object { Join-Path $top $_ } | Where-Object { Test-Path $_ } | ForEach-Object { Resolve-Path -Relative $_ })
+      $changed = @(Get-ChangedFiles | Where-Object { $_ -match $ext } | ForEach-Object { Resolve-Path -Relative $_ })
       Pop-Location
       if (-not $changed.Count) { Write-Host "[check] ${s}: no changed files"; continue }
       $Files = ($changed | ForEach-Object { '"' + $_ + '"' }) -join ' '
@@ -121,9 +204,10 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }                                                       # Gradle build cache
   if ($Show) { "$s : $cmd"; continue }
-  & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $cmd
+  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $rc = [int](@(Invoke-Typecheck $cmd)[-1]) }
+  else { & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
-  if ($LASTEXITCODE) { Write-Host "[check] $s FAILED (exit $LASTEXITCODE)"; exit $LASTEXITCODE }
+  if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   }
   if (-not $Show) { Write-Host "[check] $s ok" }
 }

@@ -8,7 +8,7 @@ As a script (structured results print as JSON):
   & $TR status <id> <status>             # logical name (review, promoted, inTest, closed, ...) or the tracker's own status name
   & $TR comment <id> <text | file.md>
   & $TR comments <id>                    # [{ user, date, text }] oldest first
-  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url }; no -Assignee = Get-TrackerOwner (you)
+  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url } (+ assigned on ClickUp); no -Assignee = Get-TrackerOwner (you); ClickUp: a name/email is resolved to a member id, unresolved -> warning + unassigned (assigned=false)
   & $TR owner                            # who new tasks are assigned to: tracker.owner, else your OS full name matched to a tracker member
   & $TR url <id>
   & $TR describe <id> <text | file.md>   # replace the description
@@ -298,6 +298,14 @@ function __TrOsFullName {
   if (-not $n) { try { $n = git config --global user.name } catch {} }
   ([string]$n).Trim()
 }
+# ClickUp member id for a name (username, case-insensitive) or email, from `clickup member list --json`; $null when nobody matches,
+# throws when the CLI fails. Read-only, so it runs under -DryRun too (the $__trDry below shadows the script's for __TrCli).
+function __TrClickupMemberId([string]$Who) {
+  if (-not $Who) { return $null }
+  $__trDry = $false
+  $m = @(__TrJson (__TrCli 'clickup' @('member', 'list', '--json'))) | Where-Object { $_ -and ($_.username -eq $Who -or ($_.email -and $_.email -eq $Who)) } | Select-Object -First 1
+  if ($m) { [string]$m.id } else { $null }
+}
 $script:__trOwner = $null
 function Get-TrackerOwner {
   if ($null -ne $script:__trOwner) { return $script:__trOwner }
@@ -306,7 +314,7 @@ function Get-TrackerOwner {
     $name = __TrOsFullName
     try {
       switch ($__trType) {
-        'clickup' { if ($name) { $m = @(__TrJson (__TrCli 'clickup' @('member', 'list', '--json'))) | Where-Object { $_.username -eq $name } | Select-Object -First 1; if ($m) { $o = [string]$m.id } } }
+        'clickup' { if ($name) { $id = __TrClickupMemberId $name; if ($id) { $o = $id } } }
         'jira' { if ($name) { $m = @(__TrJira 'GET' "user/search?query=$([uri]::EscapeDataString($name))" $null) | Where-Object { $_.displayName -eq $name } | Select-Object -First 1; $o = if ($m) { [string]$m.accountId } else { [string](__TrJira 'GET' 'myself' $null).accountId } } }
         'github' { $o = [string](__TrCli 'gh' @('api', 'user', '--jq', '.login')) }
         'gitlab' { $o = [string](__TrGl 'GET' 'user' $null).username }
@@ -324,15 +332,21 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
     'clickup' {
       $a = @('task', 'create', '--list-id', $List, '--name', $Name, '--markdown-description', $Description, '--json')
       if ($Priority) { $a += @('--priority', $Priority) }
-      if ($Assignee -and $Assignee -ne '-') { $a += @('--assignee', $Assignee) }
+      # ClickUp wants a member id: a name or email is looked up among the workspace members; unresolved -> warn, create unassigned
+      if ($Assignee -and $Assignee -ne '-' -and $Assignee -notmatch '^\d+$') {
+        $id = try { __TrClickupMemberId $Assignee } catch { Write-Warning "tracker: member lookup failed ($($_.Exception.Message))"; $null }
+        if ($id) { $Assignee = $id } else { [Console]::Error.WriteLine("WARNING: tracker: no ClickUp member '$Assignee' (clickup member list): creating the task unassigned (assigned=false)"); $Assignee = '' }
+      }
+      $assigned = [bool]($Assignee -and $Assignee -ne '-')
+      if ($assigned) { $a += @('--assignee', $Assignee) }
       $t = if ($Parent -and $Parent -ne '-' -and -not $__trDry) { try { __TrJson (__TrCli 'clickup' ($a + @('--parent', $Parent))) } catch { $null } } else { $null }
-      if ($__trDry) { $null = __TrCli 'clickup' ($a + @(if ($Parent -and $Parent -ne '-') { '--parent', $Parent })); return [pscustomobject]@{ id = '<new>'; url = '' } }
+      if ($__trDry) { $null = __TrCli 'clickup' ($a + @(if ($Parent -and $Parent -ne '-') { '--parent', $Parent })); return [pscustomobject]@{ id = '<new>'; url = ''; assigned = $assigned } }
       $dropped = $false
       # ClickUp refuses a subtask whose parent lives in another list: create it in the list and link it with a comment
       if (-not $t.id) { $dropped = [bool]($Parent -and $Parent -ne '-'); $t = __TrJson (__TrCli 'clickup' $a) }
       if (-not $t.id) { return $null }
       if ($dropped) { $null = Add-TrackerComment $t.id "Related: $(Get-TrackerUrl $Parent) (could not be created as its subtask: it is in another list)." }
-      [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }) }
+      [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); assigned = $assigned }
     }
     'github' {
       $r = if ($List -match '/') { $List } else { (__TrRef '0')[0] }

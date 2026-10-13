@@ -8,7 +8,9 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py comment <taskId> <file.md | "text">
   python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + one solution comment (guide link appended if missing) + status
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
-  python devtools.py merge <worktree> <iid>                         squash-merge once the pipeline is green (polls)
+  python devtools.py merge <worktree> <iid>                         squash-merge now (green, or no CI) or schedule merge-when-green;
+                                                                    waits <= 90 s; last line: MERGED / SCHEDULED / WAIT / CONFLICT /
+                                                                    PIPELINE_FAILED / NOT_MERGED (read back from the host)
   python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
                                                                     (.md is converted to HTML for gdocs: tables, lists, code survive)
   python devtools.py guide-mode                                     "always" or "complex": when a change gets a published tester guide
@@ -155,20 +157,55 @@ def remote(worktree):
 
 
 def target_of(worktree):
+    """The MR target: the worktree's record (wt.ps1 new), else kit.local.json repos[].target of this repo, else origin/HEAD.
+    A fallback is printed (stderr) with where it came from; None only when all three are missing."""
     gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
     gd = gd if os.path.isabs(gd) else os.path.join(worktree, gd)
     f = os.path.join(gd, 'claude-target')
-    return open(f).read().strip() if os.path.exists(f) else None
+    if os.path.exists(f):
+        return open(f).read().strip() or None
+    # 1. kit.local.json repos[]: the entry whose checkout is this worktree's main checkout, or whose name/alias is the remote's repo name
+    common = _run(['git', '-C', worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    main = os.path.normcase(os.path.dirname(os.path.normpath(common))) if os.path.isdir(common) else ''
+    try:
+        name = remote(worktree)[1].rsplit('/', 1)[-1].lower()
+    except SystemExit:
+        name = ''
+    for r in CFG.get('repos') or []:
+        if not isinstance(r, dict) or not r.get('target'):
+            continue
+        co = r.get('checkout') or ''
+        same = bool(co and main and os.path.normcase(os.path.abspath(co)) == main)
+        names = [str(n).lower() for n in [r.get('name') or ''] + list(r.get('aliases') or []) if n]
+        if same or (name and name in names):
+            print(f"[mr] target {r['target']} (no wt.ps1 record; kit.local.json repos[].target of {r.get('name') or co})", file=sys.stderr)
+            return r['target']
+    # 2. the remote's default branch
+    head = _run(['git', '-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+    if head.startswith('origin/') and '\n' not in head:
+        print(f'[mr] target {head[7:]} (no wt.ps1 record, no kit.local.json repos[].target; origin/HEAD)', file=sys.stderr)
+        return head[7:]
+    return None
 
 
 MR_SECTIONS = ('## Task', '## What changed', '## Verified', '## How to test')  # orchestrate/templates/MR_BODY.md
 FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
 
+def _verified_gaps(body_md):
+    """'## Verified' should say what was not run and how pure logic was proven (MR_BODY.md): True when it has neither line."""
+    m = re.search(r'^## Verified[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
+    sec = m.group(1) if m else ''
+    return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
+
+
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - see .claude/skills/orchestrate/templates/MR_BODY.md', file=sys.stderr)
+    if _verified_gaps(body_md):
+        print('[mr] "## Verified" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
+              ' - say what was not run (or "Not run: nothing") - see MR_BODY.md', file=sys.stderr)
     link = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/'}.get(TRACKER_TYPE)
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
@@ -178,7 +215,8 @@ def mr_create(worktree, title, body_md, tgt=None):
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
     tgt = tgt or target_of(worktree)
     if not tgt:
-        raise SystemExit('no target: pass it, or create the worktree with wt.ps1 new')
+        raise SystemExit('no target: no wt.ps1 record, no kit.local.json repos[].target for this repo and no origin/HEAD'
+                         ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
     if host == 'gitlab':
         out = _run([GLAB, 'mr', 'create', '--source-branch', src, '--target-branch', tgt, '--title', title,
                     '--description', body_md, '--remove-source-branch', '--squash-before-merge', '--yes'], cwd=worktree)
@@ -209,61 +247,122 @@ def _remember_automerge(ref):
         pass
 
 
-def auto_merge(worktree, iid):
-    """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge).
-    Returns at once, so an agent never has to sit through a long pipeline. Merges straight away if it is already green."""
+MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
+
+
+def merge_word(res):
+    """The status word on the last line of auto_merge's result (NOT_MERGED when there is none)."""
+    last = (str(res or '').strip().splitlines() or [''])[-1].strip()
+    return last if last in MERGE_WORDS else 'NOT_MERGED'
+
+
+def _progress(msg):
+    print(f'[merge] {msg}', flush=True)   # flushed at once: a caller watching the output sees it is alive
+
+
+def _gitlab_no_ci_config(enc, m):
+    """True when the project shows it has no CI: it does not require a pipeline to merge, has no custom CI config path,
+    no Auto DevOps and no .gitlab-ci.yml on the MR's target branch. (A 404 is required: any other error counts as 'has CI'.)"""
+    p = _json(_run([GLAB, 'api', f'projects/{enc}']))
+    if not p.get('id') or p.get('only_allow_merge_if_pipeline_succeeds') or p.get('ci_config_path') or p.get('auto_devops_enabled'):
+        return False
+    tgt = (m.get('target_branch') or '').replace('/', '%2F')
+    if not tgt:
+        return False
+    f = _run([GLAB, 'api', f'projects/{enc}/repository/files/.gitlab-ci.yml?ref={tgt}'])
+    return '404' in f and 'file_name' not in f
+
+
+def _gitlab_final(enc, proj, iid, put, st):
+    """Re-read the MR after the merge PUT (a merge can take a moment) and turn its state into the result text + status word."""
+    m = {}
+    for i in range(4):
+        m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
+        if m.get('state') == 'merged' or m.get('merge_when_pipeline_succeeds') or i == 3:
+            break
+        _progress(f're-reading !{iid} ({m.get("detailed_merge_status") or m.get("merge_status") or m.get("state")})')
+        time.sleep(3)
+    if m.get('state') == 'merged':
+        return f'merged !{iid}\nMERGED'
+    if m.get('merge_when_pipeline_succeeds') or put.get('merge_when_pipeline_succeeds'):
+        _remember_automerge(f'{proj}!{iid}')
+        return f'scheduled: GitLab merges !{iid} automatically when the pipeline ({st}) succeeds\nSCHEDULED'
+    if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
+        return f'conflict on !{iid}: wt.ps1 sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again\nCONFLICT'
+    if (m.get('head_pipeline') or {}).get('status') in ('failed', 'canceled'):
+        return f'pipeline {m["head_pipeline"]["status"]} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
+    return f'not merged: !{iid} is {m.get("state")} ({m.get("detailed_merge_status") or m.get("merge_status")}); merge reply: {str(put)[:300]}\nNOT_MERGED'
+
+
+def auto_merge(worktree, iid, max_wait=90):
+    """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge), or merge
+    at once when it is green already or the project has no CI. Waits at most max_wait seconds (with flushed progress lines), so it
+    finishes inside an agent's tool timeout. The result's LAST line is exactly one status word (merge_word):
+    MERGED / SCHEDULED / WAIT (run again in a few minutes) / CONFLICT / PIPELINE_FAILED / NOT_MERGED, read back from the host."""
     host, proj = remote(worktree)
     if host == 'gitlab':
         enc = proj.replace('/', '%2F')
         m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
         if m.get('state') == 'merged':
-            return 'already merged'
+            return f'already merged !{iid}\nMERGED'
+        if m.get('state') and m.get('state') != 'opened':
+            return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
         if m.get('has_conflicts'):
-            return 'CONFLICT: wt.ps1 sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
+            return 'CONFLICT: wt.ps1 sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again\nCONFLICT'
         st = (m.get('head_pipeline') or {}).get('status')
         if st in ('failed', 'canceled'):
-            return f'PIPELINE {st}: fix it, do not merge'
+            return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
         args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true']
-        # A repo without MR CI never gets a pipeline: merge_when_pipeline_succeeds would then wait forever.
-        # No CI = the source ref has never had a pipeline AND the MR was last updated > 5 min ago. (A head-commit date is no
-        # proof: an old commit pushed just now has no pipeline YET.) With no head pipeline GitLab would merge a
-        # merge_when_pipeline_succeeds at once, so a CI repo whose pipeline has not appeared gets WAIT, never a merge.
+        # A repo without MR CI never gets a pipeline: merge_when_pipeline_succeeds would then wait forever (two reviewed MRs once
+        # stayed open while the poller slept and died with its agent). Decide from the project first: no pipeline required and no
+        # CI config at all -> merge now. Otherwise (a CI file whose rules may skip MRs): no pipeline for the MR head and none on the
+        # source ref for > 5 min since the MR was last updated -> no CI for this MR. A head-commit date is no proof (an old commit
+        # pushed just now has no pipeline YET); with no head pipeline GitLab would merge a merge_when_pipeline_succeeds at once, so
+        # an MR whose pipeline is still expected gets WAIT, never a merge.
         no_ci = False
         if st is None:
-            from datetime import datetime, timezone
-            src_proj = m.get('source_project_id') or enc
-            ref = (m.get('source_branch') or '').replace('/', '%2F')
+            if _gitlab_no_ci_config(enc, m):
+                no_ci = True
+                _progress(f'project has no CI (no pipeline required, no CI config on {m.get("target_branch")}): merging !{iid} now')
+            else:
+                from datetime import datetime, timezone
+                src_proj = m.get('source_project_id') or enc
+                ref = (m.get('source_branch') or '').replace('/', '%2F')
 
-            def _no_ci():
-                pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
-                refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&per_page=1'])) if ref else {}
-                return (not pls and isinstance(refp, list) and not refp), bool(pls)
+                def _no_ci():
+                    pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
+                    refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&per_page=1'])) if ref else {}
+                    return (not pls and isinstance(refp, list) and not refp), bool(pls)
 
-            when = m.get('updated_at') or m.get('created_at') or ''
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
-            none_yet, has = _no_ci()
-            if none_yet and age <= 300:
-                # callers (the dev-wave ship step) run merge ONCE: a WAIT left a reviewed no-CI MR open for good.
-                # Wait out the 5 min here, then decide again (a pipeline may have appeared meanwhile).
-                time.sleep(max(0, 310 - age))
+                when = m.get('updated_at') or m.get('created_at') or ''
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
                 none_yet, has = _no_ci()
-                age = 301
-            if has:
-                st = 'running'
-            no_ci = none_yet and age > 300
-            if not has and not no_ci:
-                return f'WAIT: no pipeline on !{iid} yet (this branch has had pipelines, so one is expected); run merge again in a few minutes'
+                waited = 0
+                # short check only: poll every 15 s with a progress line, never past max_wait (a tool timeout kills a silent sleep)
+                while none_yet and age + waited <= 300 and waited + 15 <= max_wait:
+                    _progress(f'no pipeline on !{iid} yet; checking again in 15 s ({int(300 - age - waited)} s until it counts as no CI)')
+                    time.sleep(15)
+                    waited += 15
+                    none_yet, has = _no_ci()
+                if has:
+                    st = 'running'
+                no_ci = none_yet and age + waited > 300
+                if not has and not no_ci:
+                    left = int(max(30, 310 - age - waited)) if none_yet else 60
+                    return f'WAIT: no pipeline on !{iid} yet (a pipeline is still expected); run merge again in {left} s\nWAIT'
         if st != 'success' and not no_ci:
             args += ['-f', 'merge_when_pipeline_succeeds=true']
-        out = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
-        if out.get('state') == 'merged':
-            return 'merged'
-        if out.get('merge_when_pipeline_succeeds'):
-            _remember_automerge(f'{proj}!{iid}')
-            return f'scheduled: GitLab merges !{iid} automatically when the pipeline ({st}) succeeds'
-        return f'not merged: {str(out)[:300]}'
+        put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
+        return _gitlab_final(enc, proj, iid, put, st)
     out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch', '--auto'], cwd=worktree)
-    return out[:300] or f'scheduled: GitHub auto-merges #{iid} when checks pass'
+    if 'clean status' in out.lower():   # nothing to wait for (no required checks): auto-merge is refused, merge directly
+        out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)
+    v = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state,mergeable,autoMergeRequest,statusCheckRollup'], cwd=worktree))
+    concl = [r.get('conclusion') or r.get('state') for r in v.get('statusCheckRollup') or []]
+    word = ('MERGED' if v.get('state') == 'MERGED' else 'SCHEDULED' if v.get('autoMergeRequest') else
+            'CONFLICT' if v.get('mergeable') == 'CONFLICTING' else
+            'PIPELINE_FAILED' if any(c in ('FAILURE', 'CANCELLED', 'ERROR', 'TIMED_OUT') for c in concl) else 'NOT_MERGED')
+    return f'{out[:300] or f"#{iid}: {word.lower()}"}\n{word}'
 
 
 def merge_when_green(worktree, iid, timeout_min=90):
@@ -294,7 +393,7 @@ def merge_when_green(worktree, iid, timeout_min=90):
             return f'PIPELINE {st}: fix it, do not merge'
         if host == 'gitlab' and st is None:   # no MR CI in this repo: auto_merge() decides (merges once no pipeline is coming)
             res = auto_merge(worktree, iid)
-            if not res.startswith('WAIT'):
+            if merge_word(res) != 'WAIT':
                 return res
         if ok:
             if host == 'gitlab':

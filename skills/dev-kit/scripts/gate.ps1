@@ -7,6 +7,10 @@ Angular/Node/React Native, Python, Go, Rust, CMake.
   & <workspace>/.claude/skills/dev-kit/scripts/gate.ps1 -Dir <dir> -Cmd "<command>"
 
 Usually you call check.ps1, which detects the command and runs it through this gate for you.
+The command runs in -Dir, so relative paths resolve against -Dir. On Windows it runs under cmd.exe: to run somewhere else write
+`cd /d <absolute dir> && <cmd>` (elsewhere `cd <dir> && <cmd>` under /bin/sh). cmd.exe has no ';' separator: on Windows a ';'
+outside quotes and followed by a space is rewritten to ' & ' (cmd's "then run", the same meaning) and the rewritten command is
+printed; a ';' inside a word (a Java classpath a.jar;b.jar) is left alone.
 
 There is no fixed limit on parallel builds. A build starts only when
     available RAM - (memory still promised to running builds) - (this build's estimate)  >=  KeepFreeGB
@@ -14,7 +18,8 @@ There is no fixed limit on parallel builds. A build starts only when
   inactive pages), read through sysinfo.ps1 so the gate runs on Windows, Linux and macOS;
 - KeepFreeGB default = 15% of total RAM (min 6 GB); override with -KeepFreeGB, $env:CLAUDE_GATE_KEEP_FREE_GB or kit.local.json gate.keepFreeGB;
 - the estimate is LEARNED per PROJECT: each build's peak working set is recorded per command kind + repo (history.json) and the next
-  estimate is the recent peak + 15%; until there are 2 samples, a built-in default per kind is used;
+  estimate is the recent peak (last 5 runs) + 15%, capped at 60% of total RAM; until there are 2 samples, a built-in default per
+  kind is used;
 - "promised" = for each gated build still running, max(0, its estimate - what its process tree uses now);
 - running builds are listed in a shared ledger in <OS temp folder>/claude-build-gate; dead entries are dropped;
 - starts are decided one at a time, under a named mutex, from a FAIR QUEUE: the owner (agent / worktree) with the fewest
@@ -62,7 +67,7 @@ $Kinds = [ordered]@{
   'rn-bundle'     = @('export:embed|react-native bundle|expo export', 3)
   'e2e'           = @('cypress|playwright', 3.5)
   'ng-test'       = @('ng test|karma', 3)
-  'web-build'     = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 4)
+  'web-build'     = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
   'maven-test'    = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
   'maven'         = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
   'dotnet'        = @('msbuild|dotnet (build|test|publish)', 3)
@@ -74,6 +79,25 @@ $Kinds = [ordered]@{
   'go'            = @('go (build|test|vet)', 2)
 }
 function Get-Kind([string]$c) { foreach ($k in $Kinds.Keys) { if ($c -match $Kinds[$k][0]) { return $k } }; 'other' }
+
+# cmd.exe has no ';' separator ('a; b' runs a with the arguments ';' and 'b'). Rewrite a ';' outside double quotes that is followed
+# by whitespace (or ends the command) to ' & ' (cmd's "then run"); a ';' inside a word (classpath a.jar;b.jar, -Dx=a;b) stays.
+function ConvertTo-CmdSeparators([string]$c) {
+  $sb = [Text.StringBuilder]::new(); $inQ = $false
+  for ($i = 0; $i -lt $c.Length; $i++) {
+    $ch = $c[$i]
+    if ($ch -eq [char]34) { $inQ = -not $inQ; [void]$sb.Append($ch); continue }
+    if (-not $inQ -and $ch -eq [char]59 -and ($i + 1 -ge $c.Length -or [char]::IsWhiteSpace($c[$i + 1]))) {
+      while ($i + 1 -lt $c.Length -and [char]::IsWhiteSpace($c[$i + 1])) { $i++ }
+      $head = $sb.ToString().TrimEnd(); [void]$sb.Clear().Append($head)
+      if ($i + 1 -lt $c.Length -and $head) { [void]$sb.Append(' & ') }
+      continue
+    }
+    [void]$sb.Append($ch)
+  }
+  $sb.ToString()
+}
+if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';' separator - running as: $semi"; $Cmd = $semi } }
 
 # Repo-local wrappers must be called as .\gradlew.bat / .\mvnw.cmd: Claude Code sets NoDefaultCurrentDirectoryInExePath=1,
 # so cmd.exe no longer finds programs in the current directory by bare name (sh never does: ./gradlew there).
@@ -106,9 +130,14 @@ $hist = Read-History
 $samples = @($hist[$histKey] | Where-Object { $_ })        # [{gb, sec, ok}, ...] newest last
 $peaks = @($samples | ForEach-Object { [double]$_.gb })
 $secs = @($samples | ForEach-Object { [double]$_.sec } | Sort-Object)
-$need = if ($NeedGB -gt 0) { $NeedGB }
-        elseif ($peaks.Count -ge 2) { [math]::Round([math]::Min($default * 1.5, [math]::Max(0.75, (($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.15)), 1) }
-        else { $default }
+# Estimate: with 2+ recorded peaks, the recent max (last 5) + 15%, never above 60% of total RAM (a cap at default x 1.5 once
+# reserved 6 GB for web builds that peaked at 9.5 GB); fewer samples -> the kind's default.
+function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) {
+  if (@($Peaks).Count -lt 2) { return $Default }
+  $recentMax = (@($Peaks) | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
+  [math]::Round([math]::Min($TotalGB * 0.6, [math]::Max(0.75, $recentMax * 1.15)), 1)
+}
+$need = if ($NeedGB -gt 0) { $NeedGB } else { Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB }
 
 # Dynamic heap for JVM / Node build kinds (see top of file)
 $jvmKind = $kind -like 'maven*'

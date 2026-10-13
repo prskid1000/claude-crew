@@ -85,3 +85,6 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 - Data-fix migrations need a backup table (old + new values, INSERT..SELECT, UPDATE through it) with a restoring rollback; a derived field must reuse the rule existing consumers use (grep for it first). (2×)
 - A new server 4xx refusal on a mobile action needs a guard narrow enough to hit only the intended state and an app end state (refused drafts block logout as unsent work); if the error type drops its key, re-read server state to detect it. Ship the API first.
 - Copy/split of a record that carries rates, extras and lines: re-rate the original, strip per-record charges from the copies, guard against already-invoiced/dispatched records, add a sum-of-rates test.
+
+## Moved by learn.ps1 (-Fixed / -Trim), oldest first
+- (fixed in kit) (3×) devtools.py merge on a repo with no CI config waits for a pipeline that never runs and its poller dies with the agent: when the CI gate reports no-pipeline and the project does not require one, merge at once after review, then confirm the MR state. Seen again 2026-10-13: poller produced nothing; merge at once when the CI gate reports no-pipeline.

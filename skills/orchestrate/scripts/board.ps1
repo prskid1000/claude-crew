@@ -3,23 +3,29 @@ Shared agent board: every agent (in any workflow or session) says what it's work
 duplicates are caught at once, and two agents never write the same worktree.
 
   $B = '<workspace>/.claude/skills/orchestrate/scripts/board.ps1'
-  & $B join  -Agent A1 -Area "checkout form + view" -Items "FEAT-12,FEAT-13" -Claims <wt root>/a1-backend,<wt root>/a1-frontend [-Run checkout-v2] [-Contracts <file>]
+  & $B join  -Agent A1 -Area "checkout form + view" -Items "FEAT-12,FEAT-13" -Claims <wt root>/a1-backend,<wt root>/a1-frontend [-Run checkout-v2] [-Contracts <file>] [-Resume]
         (-Claims = anything exclusive: worktree paths, emulator serials like emulator-5556, browser ports like chrome:9601)
-        -> prints a SESSION token (keep it), the other active agents, warnings, and the contracts file to follow
+        (-Resume = you continue a stopped agent's work (RESUME_BRIEF): take over its entry when you claim the same worktrees)
+        -> prints the other active agents, warnings, the contracts file to follow, and LAST the SESSION token (keep it)
   & $B beat  -Session <token> [-Status "testing web"]   # heartbeat; do it when you start a build/test or push (cheap)
   & $B show  [-Run checkout-v2]                           # who is doing what right now (+ warnings)
   & $B check -Worktree <dir> -Session <token>             # is anyone else writing here? exit 1 = stop and tell the coordinator
   & $B leave -Session <token> [-Status done]
 
-Entries go stale after 20 min without a heartbeat. Warnings:
-  DUPLICATE  - the same agent id is active in two sessions (e.g. a resumed copy): the newer one must stop.
+Entries go stale after 20 min without a heartbeat. On join, an entry of the same agent id in the same run is:
+  reused     - same claims and a heartbeat in the last 2 min (a quick re-join): the same SESSION token comes back (REJOIN);
+  taken over - its holder is gone (its pid is not running and no heartbeat for 3 min), or you pass -Resume and claim the same
+               worktrees: it is marked left and you get a new session (TAKEOVER). If its holder was still alive after all, its
+               next beat prints TAKEN OVER and exits 1, and `check` names you as the other writer: it must stop without writing.
+Warnings:
+  DUPLICATE  - the same agent id is active in two sessions (e.g. a resumed copy without -Resume): the newer one must stop.
   CLAIM      - another active agent claims the same worktree / phone / port.
   AREA       - another active agent in the same run lists overlapping items.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('join', 'beat', 'show', 'check', 'leave')][string]$Action,
   [string]$Agent, [string]$Area = '', [string]$Items = '', [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
-  [string]$Session, [string]$Status = '', [string]$Worktree
+  [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume
 )
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitpaths.ps1')   # Get-KitPath (kitpaths.json)
 $dir = Get-KitPath board -Create
@@ -56,21 +62,47 @@ function Print($act) {
 switch ($Action) {
   'join' {
     if (-not $Agent) { throw 'join needs -Agent' }
-    $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+    $now = Get-Date
+    $myClaims = @($Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
+    $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
+    $notes = @()
+    # quick re-join (same agent, run and claims, heartbeat < 2 min): keep that session token instead of a second entry
+    $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@($_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
+      Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
+    if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
+    else { $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
+    # takeover: the old holder is gone (pid not running and no beat for 3 min; the pid is the shell that ran join, often short-lived,
+    # so it alone proves nothing), or -Resume claims the same worktrees. It is marked left; its next beat tells it to stop.
+    foreach ($o in @($same | Where-Object { $_.session -ne $tok })) {
+      $alive = $o.pid -and [bool](Get-Process -Id ([int]$o.pid) -ErrorAction SilentlyContinue)
+      $age = ($now - [datetime]$o.beat).TotalMinutes
+      $shared = @(@($o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
+      $why = if (-not $alive -and $age -ge 3) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and $shared.Count) { "-Resume on $($shared -join ', ')" } else { $null }
+      if (-not $why) { continue }
+      try {
+        $j = Get-Content $o.file -Raw | ConvertFrom-Json
+        $j.status = 'left'; $j | Add-Member -Force NoteProperty takenOverBy $tok; $j | Add-Member -Force NoteProperty takenOverAt $now.ToString('o')
+        $j | ConvertTo-Json | Set-Content $o.file
+        $notes += "TAKEOVER: replaced session $($o.session) ($why; joined $(([datetime]$o.joined).ToString('HH:mm')), last beat $(([datetime]$o.beat).ToString('HH:mm')))"
+      } catch { $notes += "could not take over session $($o.session): $_" }
+    }
     $me = [ordered]@{ agent = $Agent; session = $tok; run = $Run; area = $Area; items = $Items; worktrees = @($Worktrees); contracts = $Contracts
-                      status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o'); pid = $PID }
+                      status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID }
     $me | ConvertTo-Json | Set-Content (Join-Path $dir "$tok.json")
-    "SESSION $tok   (pass -Session $tok to beat / check / leave)"
     $act = @(Active | Where-Object session -ne $tok)
     Print $act
+    $notes | ForEach-Object { $_ }
     $w = @(Warnings ([pscustomobject]$me) $act)
     if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" } }
     $c = if ($Contracts) { $Contracts } else { (Active | Where-Object { $_.run -eq $Run -and $_.contracts } | Select-Object -First 1).contracts }
     if ($c -and (Test-Path $c)) { "CONTRACTS ($c) - re-read before every push:"; Get-Content $c | Select-Object -First 60 | ForEach-Object { "  $_" } }
+    "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
     $f = Join-Path $dir "$Session.json"; if (-not (Test-Path $f)) { throw "unknown session $Session - join first" }
-    $me = Get-Content $f -Raw | ConvertFrom-Json; $me.beat = (Get-Date).ToString('o'); if ($Status) { $me.status = $Status }
+    $me = Get-Content $f -Raw | ConvertFrom-Json
+    if ($me.status -eq 'left' -and $me.takenOverBy) { "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
+    $me.beat = (Get-Date).ToString('o'); if ($Status) { $me.status = $Status }
     $me | ConvertTo-Json | Set-Content $f
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
   }

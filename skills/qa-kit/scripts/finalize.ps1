@@ -10,12 +10,15 @@ Report output (kit.local.json "reports": { "type": ... }, or -Report):
 Tracker: skills/dev-kit/scripts/tracker.ps1 (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
 
   & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing]
-  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> -Check
+  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> -Check [-FixNames]
 
 Evidence check (runs first, before any upload or tracker call; reference/evidence-standard.md): every file listed in results.json
 must exist (in shots\, evidence\ or findable in the run dir), else it throws and nothing is published. -AllowMissing publishes
-anyway, dropping the missing names and noting them in the check's "observed". Off-standard names are only a warning.
--Check runs only this check (no copies, uploads or tracker calls): exit 1 and the list when evidence is missing, else exit 0.
+anyway, dropping the missing names and noting them in the check's "observed". On publish, off-standard names are only a warning.
+-Check runs only this check (no copies, uploads or tracker calls) and exits 1 with the list when evidence is missing, a file in
+shots\/evidence\ has an off-standard name (a suggested standard name is printed for each) or a check id appears twice in
+results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
+references in results.json (each rename is printed); duplicate check ids are never fixed automatically.
 
 Run dir layout (see the qa-kit SKILL.md):
   run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus, closeWithNotTested?}, driveParent, items[] }
@@ -30,11 +33,13 @@ param(
   [switch]$NoTracker,
   [switch]$Force,
   [switch]$Check,
+  [switch]$FixNames,
   [switch]$AllowMissing,
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
   [string]$Date = (Get-Date -Format 'd MMM yyyy')
 )
 $ErrorActionPreference = 'Stop'
+if ($FixNames -and -not $Check) { throw '-FixNames works only together with -Check' }
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerUrl, Set-TrackerStatus, ...
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
 if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ErrorAction SilentlyContinue)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
@@ -63,11 +68,71 @@ foreach ($c in @($res.checks)) {
 . (Join-Path $PSScriptRoot 'lib/report.ps1')
 $files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match '^\.(jpe?g|png|json|log|csv|txt|pdf|mp4|html|xlsx?)$' })
 $badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
-if ($badNames.Count) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
+if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 if ($Check) {
-  if ($lostList.Count) { "$Code evidence check: $($lostList.Count) file(s) listed in results.json but missing:"; $lostList | ForEach-Object { "  $_" }; exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, $($badNames.Count) off-standard name(s))"; exit 0
+  # A standard name for an off-standard file: <CODE>-<check>[_verify]_<nn>_<what>.<ext> when a check id is in the name or a check
+  # lists the file, else the setup form <CODE>-<nn>-<what>.<ext>; nn from the name (a free one when absent or taken).
+  $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
+  $refBy = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and -not $refBy.ContainsKey([string]$e)) { $refBy[[string]$e] = [string]$c.id } } }
+  $taken = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($x in $files) { $null = $taken.Add($x.Name) }
+  function Get-StandardName([string]$name) {
+    $ext = [IO.Path]::GetExtension($name).ToLower(); $stem = [IO.Path]::GetFileNameWithoutExtension($name)
+    $stem = $stem -replace "(?i)^$([regex]::Escape($Code))(?=$|[^A-Za-z0-9])[-_. ]*", ''
+    $id = $null
+    foreach ($i in $ids) { if ($stem -match "(?i)^$([regex]::Escape($i))(?=$|[^A-Za-z0-9])") { $id = $i; $stem = $stem.Substring($i.Length); break } }
+    if (-not $id -and $refBy[$name]) { $id = $refBy[$name] }
+    $verify = $stem -match '(?i)(^|[^a-z])verify([^a-z]|$)'
+    $stem = $stem -replace '(?i)(^|[^a-z])verify(?=[^a-z]|$)', '$1'
+    $nn = -1
+    $num = [regex]::Match($stem, '(?<![A-Za-z0-9])(\d{1,2})m?(?![A-Za-z0-9])')
+    if ($num.Success) { $nn = [int]$num.Groups[1].Value; $stem = $stem.Remove($num.Index, $num.Length) }
+    $what = ($stem.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if (-not $what) { $what = if ($ext -match '^\.(jpe?g|png)$') { 'screen' } else { 'evidence' } }
+    $make = {
+      param($n)
+      $c1 = if ($id) { '{0}-{1}{2}_{3:D2}_{4}{5}' -f $Code, $id, $(if ($verify) { '_verify' } else { '' }), $n, $what, $ext } else { $null }
+      if ($c1 -and $c1 -match $script:EvidenceName) { return $c1 }
+      '{0}-{1:D2}-{2}{3}' -f $Code, $n, $what, $ext   # setup form: no check id, or one that does not fit the pattern
+    }
+    if ($nn -lt 0) {   # no number in the name: the next one after this check's (or the setup files') highest
+      $pre = if ($id) { "$Code-$id$(if ($verify) { '_verify' })_" } else { "$Code-" }
+      $used = @($taken | Where-Object { $_.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { if ($_.Substring($pre.Length) -match '^(\d{2})m?[_-]') { [int]$Matches[1] } })
+      $nn = if ($used.Count) { ($used | Measure-Object -Maximum).Maximum + 1 } elseif ($id) { 1 } else { 0 }
+    }
+    $n = [int]$nn
+    $cand = & $make $n
+    while (($taken.Contains($cand) -or $cand -notmatch $script:EvidenceName) -and $n -lt 99) { $n++; $cand = & $make $n }
+    if ($cand -notmatch $script:EvidenceName -or $taken.Contains($cand)) { return $null }
+    $null = $taken.Add($cand); $cand
+  }
+  $suggest = [ordered]@{}
+  foreach ($b in $badNames) { $suggest[$b] = Get-StandardName $b }
+  if ($FixNames -and $suggest.Count) {
+    $resFile = "$D\results.json"; $raw = [IO.File]::ReadAllText($resFile)
+    foreach ($b in @($suggest.Keys)) {
+      $new = $suggest[$b]; if (-not $new) { continue }
+      $f = $files | Where-Object Name -eq $b | Select-Object -First 1
+      Rename-Item -LiteralPath $f.FullName -NewName $new
+      # references end in the file name: "<name>" or "<dir>/<name>" inside a JSON string
+      $raw = [regex]::Replace($raw, '(?<=["/\\])' + [regex]::Escape($b) + '(?=")', $new.Replace('$', '$$'))
+      "  renamed $($f.Directory.Name)\$b -> $new"
+      $suggest.Remove($b)
+    }
+    [IO.File]::WriteAllText($resFile, $raw)
+    $badNames = @($suggest.Keys)
+  }
+  $dups = @(@($res.checks) | Where-Object { $_.id } | Group-Object { [string]$_.id } | Where-Object Count -gt 1 | ForEach-Object { "$($_.Name) (x$($_.Count))" })
+  $fail = $false
+  if ($lostList.Count) { $fail = $true; "$Code evidence check: $($lostList.Count) file(s) listed in results.json but missing:"; $lostList | ForEach-Object { "  $_" } }
+  if ($badNames.Count) {
+    $fail = $true; "$Code evidence check: $($badNames.Count) off-standard name(s) (reference/evidence-standard.md; -Check -FixNames renames them):"
+    $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } else { '(no suggestion: rename by hand)' })" }
+  }
+  if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
+  if ($fail) { exit 1 }
+  "$Code evidence check: OK ($($files.Count) files, standard names, unique check ids)"; exit 0
 }
 if ($lostList.Count -and -not $AllowMissing) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run (or pass -AllowMissing to publish without them)."

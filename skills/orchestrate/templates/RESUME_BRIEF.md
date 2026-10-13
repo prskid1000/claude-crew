@@ -5,6 +5,10 @@ A previous agent on this work was stopped (memory, a usage limit, or the user). 
 committed only locally, or partly merged.
 
 1. **Rules.** Read `<workspace>/.claude/skills/dev-kit/SKILL.md` and the original brief: <path>.
+   **Board:** join with the stopped agent's id and run, its worktrees as claims, and `-Resume`:
+   `& <workspace>/.claude/skills/orchestrate/scripts/board.ps1 join -Agent <id> -Run <wave> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md -Resume`.
+   It takes over the stopped agent's board entry (TAKEOVER) instead of reporting DUPLICATE; keep the SESSION token on its last line.
+   DUPLICATE or CLAIM even with `-Resume` = another live writer: stop and report it.
 2. **Work out what's done before you edit anything.**
    - Each worktree: `& <workspace>/.claude/skills/dev-kit/scripts/wt.ps1 status -Dir <wt>` (branch, target, ahead/behind, dirty files).
    - The tracker task description and comments.

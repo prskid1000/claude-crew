@@ -55,6 +55,10 @@ function TsProject($d) {
   $null
 }
 
+# Web project with no unit-test target (no Karma/Vitest/Jest, no `test` script): node-spec.mjs bundles the given *.spec.ts files with
+# the project's own esbuild and runs them under node with a jasmine/jest-like shim (pure-logic specs; no TestBed or DOM).
+function NodeSpecCmd { "node `"$(Join-Path $PSScriptRoot 'node-spec.mjs')`" {tests}" }
+
 function Get-NodeTools($d) {
   $pkg = ReadJson (Join-Path $d 'package.json')
   $deps = @()
@@ -141,7 +145,7 @@ function Get-Stack($d) {
     $c.typecheck = "npx tsc -p $tsc --noEmit"
     $c.build = 'npx ng build --configuration production'
     # test only when a project has a 'test' target; the flags depend on its builder (Karma takes --browsers, the
-    # @angular/build:unit-test / Vitest runner does not). No target -> check.ps1 says "has no 'test' step".
+    # @angular/build:unit-test / Vitest runner does not). No target -> node-spec.mjs (pure-logic specs under node).
     # build: --configuration production only when the build target defines a 'production' configuration.
     $ngTest = $null
     try {
@@ -155,6 +159,7 @@ function Get-Stack($d) {
     } catch { $ngTest = 'karma' }
     if ($ngTest -match 'karma') { $c.test = 'npx ng test --watch=false --browsers=ChromeHeadless --include {tests}' }
     elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
+    else { $c.test = NodeSpecCmd }   # no test target: node-spec.mjs runs pure-logic specs
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
   }
   elseif (Test-Path (Join-Path $d 'package.json')) {
@@ -165,6 +170,7 @@ function Get-Stack($d) {
     if ($n.Vitest) { $c.test = 'npx vitest run {tests}' }
     elseif ($n.Jest) { $c.test = 'npx jest ' + $(if ($n.JestCfg) { "--config $($n.JestCfg) " } else { '' }) + '{tests} --no-watchman --forceExit' }
     elseif ($n.Scripts -contains 'test') { $c.test = NodeRun $pm 'test' '{tests}' }
+    elseif ($n.Ts -and $s -ne 'react-native') { $c.test = NodeSpecCmd }   # TypeScript web project with no test runner
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
     if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = NodeRun $pm 'build' '' }
     $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null

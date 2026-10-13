@@ -23,7 +23,7 @@ $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
 . (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
 . (Join-Path $skills 'dev-kit/scripts/sysinfo.ps1')   # RAM / processes on Windows, Linux and macOS
 $swarm = Join-Path $skills 'android-swarm'
-$runTotal = 0; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
+$runTotal = 0; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
 function L($s) { [void]$lines.Add($s) }
 
@@ -62,6 +62,7 @@ foreach ($w in $wfDirs) {
     $idle = if ($tf) { [int]($now - $tf.LastWriteTime).TotalMinutes } else { -1 }
     L ("  {0,-18} idle {1} min" -f $a.label, $idle)
     if ($idle -ge 0 -and $idle -lt $IdleMin) { [void]$liveLabels.Add($a.label) }
+    [void]$runningLabels.Add($a.label)   # quiet or not: a tester blocked in a long boot/memory wait still owns its phone
     if ($idle -ge $IdleMin) { Flag 'WATCH' "$($a.label) in $($w.Name) has written nothing for $idle min" "Check its worktree/board status and the gate queue; if it is waiting on the gate that's fine. If idle > 60 min with no build, it may be stuck: let the workflow finish it, then resume that agent with RESUME_BRIEF." }
   }
   foreach ($r in $res.Values) {
@@ -135,21 +136,36 @@ if (Test-Path $adb) {
   $serials = @(& $adb devices 2>$null | Where-Object { $_ -match '^(emulator-\d+)\s+device' } | ForEach-Object { $Matches[1] })
   $swarmCfg = try { Get-Content (Join-Path $swarm 'swarm.config.json') -Raw | ConvertFrom-Json } catch { $null }
   # Agents own phones through leases (android-swarm/phone.ps1 acquire/release): they boot, wait and shut down phones themselves.
-  # The supervisor is only the safety net: (1) a lease whose holder is gone (no live workflow step on that lane, not active on the
-  # board, older than 30 min) is released, which shuts the phone down; (2) a running phone with NO lease (booted by hand) and our
-  # app closed for 10 min is shut down.
+  # The supervisor is only the safety net: (1) a lease whose holder is gone (no live workflow step on that lane, no live board entry
+  # holding it, at least 60 min old) is released, which shuts the phone down; (2) a running phone with NO lease (booted by hand) and
+  # our app closed for 10 min is shut down.
   $P = Join-Path $swarm 'phone.ps1'
   $leaseDir = Get-KitPath phones
+  # A board entry holds a lease when it is not left, names the lease agent / holder or lists the lease serial or lane in its
+  # worktrees ("emulator-5556", "app:Falcon", comma-joined lists), and is alive: its pid runs or it beat in the last 3 h.
+  # (The lease agent is "qa-<run>-<lane>" while board codes are item codes, so the agent name alone never matched.)
+  $holdsLease = { param($e, $ls)
+    if ($e.status -eq 'left') { return $false }
+    $names = @($ls.agent, $ls.holder) | Where-Object { $_ }
+    $tokens = @((@($e.worktrees) -join ',') -split ',' | ForEach-Object { ("$_".Trim() -split ':')[-1].Trim() } | Where-Object { $_ })
+    $named = ($e.agent -in $names) -or @($tokens | Where-Object { ($ls.serial -and $_ -eq $ls.serial) -or ($ls.lane -and $_ -eq $ls.lane) }).Count
+    if (-not $named) { return $false }
+    $pidLive = $e.pid -and [bool](Get-Process -Id ([int]$e.pid) -ErrorAction SilentlyContinue)
+    $beatOk = try { ($now - [datetime]$e.beat).TotalHours -lt 3 } catch { $false }
+    [bool]($pidLive -or $beatOk)
+  }
   foreach ($lf in @(Get-ChildItem $leaseDir -Filter '*.json' -ErrorAction SilentlyContinue)) {
     $ls = Get-Content $lf.FullName -Raw | ConvertFrom-Json
-    $laneLive = @($liveLabels | Where-Object { $_ -match "@$([regex]::Escape($ls.lane))$" }).Count
-    $boardLive = @($active | Where-Object { $_.agent -eq $ls.agent }).Count
+    # any running (unfinished, not superseded) workflow step on the lane holds it, however long it has been quiet: releasing on
+    # idle shut phones down under testers waiting in a boot or memory queue. A dead step is replaced by the workflow anyway.
+    $laneLive = @($runningLabels | Where-Object { $_ -match "@$([regex]::Escape($ls.lane))$" }).Count
+    $boardLive = @($entries | Where-Object { & $holdsLease $_ $ls }).Count
     $age = [int]($now - [datetime]$ls.since).TotalMinutes
     if ($ls.agent -eq 'manual') {   # booted by hand (phone.ps1 acquire -Agent manual): the user owns it; never reclaimed, only a reminder
       if ($age -ge 240) { Flag 'WATCH' "phone $($ls.lane) booted by hand $([int]($age / 60)) h ago is still up" "If you are done with it: & $P release -Agent manual" }
       continue
     }
-    if ($laneLive -or $boardLive -or $age -lt 30) { continue }
+    if ($laneLive -or $boardLive -or $age -lt 60) { continue }
     if ($AutoFix) { $r = & $P release -Agent $ls.agent 2>&1; Flag 'INFO' "auto-fixed: released orphan phone lease $($ls.lane) held by $($ls.agent) for $age min: $r" 'Its holder is gone (crashed or finished without release).' }
     else { Flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent) for $age min, holder not active" "& $P release -Agent $($ls.agent)" }
   }
@@ -190,7 +206,7 @@ if (Test-Path $adb) {
       if ($why -and $adbState[$sr] -ne 'device' -and -not $rechecked) { Start-Sleep -Seconds 10; $adbState = & $adbStates; $rechecked = $true; $why = & $whyOf }
       if (-not $why) { continue }
       if (Test-Path (Join-Path $leaseDir "$($ln.name).json")) {   # leased: never killed under its holder (an orphan lease is released above first)
-        Flag 'WATCH' "leased emulator $sr ($($ln.name)) looks dead: $why" "Its lease holder re-boots it on its next phone.ps1 acquire; if the holder is gone, the lease is released after 30 min."; continue
+        Flag 'WATCH' "leased emulator $sr ($($ln.name)) looks dead: $why" "Its lease holder re-boots it with phone.ps1 ensure (or its next acquire); if the holder is gone, the lease is released after 60 min."; continue
       }
       if ($AutoFix) {
         $mine | ForEach-Object { Stop-SysProcess $_.Id }
@@ -319,7 +335,11 @@ if (-not $runTotal) {
   $sigF = Get-KitPath signals; $markF = Get-KitPath last-retro
   $since = if (Test-Path $markF) { [datetime](Get-Content $markF -Raw).Trim() } else { [datetime]::MinValue }
   $nSig = if (Test-Path $sigF) { @(Get-Content $sigF | Where-Object { $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since }).Count } else { 0 }
-  if ($nSig -ge 1) { Flag 'ACT' "retro due: $nSig signals since the last retro and no workflow running" '/kit-retro (E14)' }
+  # due when a dev-wave / test-and-close finished after the last retro (its journal has build/test steps and was written since),
+  # or when signals piled up anyway (15, as retro-nudge.ps1); one stray signal right after a retro is not worth five agents
+  $finished = @($wfDirs | Where-Object { $_.LastWriteTime -gt $since -and (Test-Path (Join-Path $_.FullName 'journal.jsonl')) -and
+      (Select-String (Join-Path $_.FullName 'journal.jsonl') -Pattern '"label":"(build|test|retest|verify|fix):' -Quiet) }).Count
+  if ($nSig -ge 15 -or ($nSig -ge 1 -and $finished)) { Flag 'ACT' "retro due: $nSig signals since the last retro, $finished dev/QA run(s) finished since, no workflow running" '/kit-retro (E14)' }
 }
 
 $out = [pscustomobject]@{ at = $now.ToString('s'); summary = @($lines); flags = @($flags) }

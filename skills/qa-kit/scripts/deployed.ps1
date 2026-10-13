@@ -13,9 +13,11 @@ Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": 
 "job": "deploy-staging" }]. A repo deployed by hand (no CI job) uses { "target": ..., "awsStack": "<CloudFormation stack>", "region": ... }:
 live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
 A repo deployed by hand onto a host: { "target": ..., "ssh": { "host": "user@host", "key": "<key file>", "repoDir": "<repo checkout on
-the host>", "appDir": "<installed app dir>", "subdir": "<optional: part of repoDir that is installed>", "exclude": ["data"],
-"service": "<optional systemd unit, for its start time>" } }: live when the MR's commit is an ancestor of the host checkout's HEAD
-AND `sudo diff -rq` shows no differing code files between repoDir/subdir and appDir (one ssh call, BatchMode). Without a way to
+the host>", "appDir": "<installed app dir>", "subdir": "<optional: part of repoDir that is installed>", "exclude": ["<optional
+extra glob per path part>"], "service": "<optional systemd unit, for its start time>" } }: live when the MR's commit is an ancestor
+of the host checkout's HEAD AND every file git tracks under repoDir/subdir (`git ls-files`) has the same sha256 under appDir (read
+with `sudo -n`; one ssh call per host+commit, BatchMode). Untracked or ignored runtime files in appDir (logs, node_modules,
+generated assets) never count, so `exclude` is only needed for tracked files the install leaves out on purpose. Without a way to
 check, { "target": ..., "manual": true } reports MANUAL (confirm with the owner or an ssh check), never NOT-DEPLOYED.
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.
 #>
@@ -45,20 +47,34 @@ function ContentOn($p, $mr, $sha, $ref) {
 }
 function OnRef($p, $mr, $sha, $ref) { (IsAncestor $p $sha $ref) -or (ContentOn $p $mr $sha $ref) }
 # Hand-deployed host: one ssh call per (host, dirs, commit), memoised. The script goes over base64 so no quoting or CRLF survives
-# Windows argument passing. Returns @{ head; anc; rc; diff; svc } or $null when the host cannot be reached.
+# Windows argument passing. Returns @{ head; anc; rc; diff; svc; files } or $null when the host cannot be reached.
+# Compared: only the files git tracks under repoDir/subdir (minus the optional `exclude` globs, matched against each path part),
+# sha256 in the checkout vs the same relative path under appDir (sudo -n). rc 0 = all match, 1 = DIFF lines, 2 = could not compare.
 function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
 function SshState($s, $sha) {
-  $src = if ($s.subdir) { "$($s.repoDir.TrimEnd('/'))/$($s.subdir)" } else { $s.repoDir }
-  $k = "$($s.host)|$($s.repoDir)|$src|$($s.appDir)|$sha"
+  $sub = ([string]$s.subdir).Trim('/')
+  $k = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$sha"
   if ($memo.ContainsKey($k)) { return $memo[$k] }
-  $x = (@('.git', '__pycache__', '*.pyc', 'venv', 'current') + @($s.exclude | Where-Object { $_ }) | ForEach-Object { "-x $(Sq $_)" }) -join ' '
+  $xs = (@($s.exclude | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '
+  $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
   $sh = @(
-    "R=$(Sq $s.repoDir); S=$(Sq $src); A=$(Sq $s.appDir.TrimEnd('/'))"
+    '{'
+    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs)"
     'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
     "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
     $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
-    "out=`$(sudo -n diff -rq $x `"`$S`" `"`$A`" 2>&1); echo RC=`$?"
-    'printf "%s\n" "$out" | grep -v "^Only in $A[/:]" | grep -v "^$" | sed "s/^/DIFF=/"'
+    'skip() { local c pat cs; IFS=/ read -ra cs <<< "$1"; for c in "${cs[@]}"; do for pat in "${X[@]}"; do [[ $c == $pat ]] && return 0; done; done; return 1; }'
+    'cd "$R" 2>/dev/null || { echo RC=2; echo "DIFF=cannot cd to $R"; exit 0; }'
+    'sudo -n test -d "$A" 2>/dev/null || { echo RC=2; echo "DIFF=sudo -n test -d $A failed (no passwordless sudo, or no app dir)"; exit 0; }'
+    'L=$(mktemp) || { echo RC=2; echo "DIFF=mktemp failed"; exit 0; }; trap ''rm -f "$L"'' EXIT'
+    'git ls-files -z -- ${SUB:+"$SUB"} | while IFS= read -r -d "" f; do r="${f#"$SUB"/}"; skip "$r" || printf "%s\0" "$r"; done > "$L"'
+    'N=$(tr -cd "\0" < "$L" | wc -c); echo "FILES=$N"'
+    '[ "$N" -gt 0 ] || { echo RC=2; echo "DIFF=git ls-files lists no tracked files under ${SUB:-the repo}"; exit 0; }'
+    'src=$(cd "$R/$SUB" && xargs -0 sha256sum -- < "$L" 2>/dev/null)'
+    'app=$(sudo -n sh -c ''cd "$1" && xargs -0 sha256sum -- 2>/dev/null'' _ "$A" < "$L")'
+    "out=`$(awk $(Sq $awk) <(printf '%s\n' `"`$app`") <(printf '%s\n' `"`$src`"))"
+    'if [ -n "$out" ]; then echo RC=1; printf "%s\n" "$out" | sed "s/^/DIFF=/"; else echo RC=0; fi'
+    '}'
   ) -join "`n"
   $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
   $key = [string]$s.key -replace '^~', $HOME
@@ -66,7 +82,8 @@ function SshState($s, $sha) {
   $r = if (-not ($lines -match '^RC=')) { $null } else {
     @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
        anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
-       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1) }
+       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1)
+       files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1) }
   }
   $memo[$k] = $r; $r
 }
@@ -90,9 +107,9 @@ $out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"'
       if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }
       $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
       if (-not $st.anc) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the host checkout ($where)" }; continue }
-      if ($st.rc -gt 1) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "in the host checkout, but diff failed: $(($st.diff | Select-Object -First 2) -join '; ') (sudo -n?)" }; continue }
-      if ($st.diff.Count) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "in the host checkout ($where), but $($st.diff.Count) file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')" }; continue }
-      [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the host checkout and installed ($where)" }
+      if ($st.rc -gt 1) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "in the host checkout, but the compare failed: $(($st.diff | Select-Object -First 2) -join '; ')" }; continue }
+      if ($st.diff.Count) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "in the host checkout ($where), but $($st.diff.Count) of $($st.files) tracked file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')" }; continue }
+      [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the host checkout and installed ($($st.files) tracked files match, $where)" }
       continue
     }
     if ($d.manual) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'MANUAL'; detail = 'deployed by hand: confirm with the owner or an ssh check' }; continue }

@@ -61,11 +61,18 @@ const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.hold
 const HOLD_NOTE = HOLD.length
   ? `\nMERGE HOLD: never merge or schedule a merge (no devtools.py merge, no track.ps1 -MergeAfter) for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')}: the user approves merges there (its branch feeds a deploy). Leave them open and green; report merged=false and say "held for approval".`
   : ''
+// devtools.py merge ends with one status word read back from the host; an agent's own "merged" guess once promoted unmerged work
+const MERGE_WORD_NOTE = `Merge results: the LAST line of each devtools.py merge run is one word: MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED /
+NOT_MERGED. Report it as that MR's mergeState and set merged=true ONLY for MERGED. WAIT: run the same merge again about 2 minutes
+later (at most 3 runs in total), then report the last word. CONFLICT / PIPELINE_FAILED / NOT_MERGED: do not retry, say why in the summary.`
 
 const REPORT = {
   type: 'object',
   properties: {
-    mrs: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, repo: { type: 'string' }, merged: { type: 'boolean' } }, required: ['url', 'repo', 'merged'] } },
+    mrs: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, repo: { type: 'string' },
+      merged: { type: 'boolean', description: 'true ONLY on a confirmed merge: devtools.py merge printed MERGED as its last line, or the host (glab mr view / gh pr view) says merged now' },
+      mergeState: { type: 'string', enum: ['MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'], description: 'the last-line status word of devtools.py merge; OPEN when no merge was attempted (review pending, held)' } },
+      required: ['url', 'repo', 'merged'] } },
     worktrees: { type: 'array', items: { type: 'string' } },
     done: { type: 'array', items: { type: 'string' }, description: 'item ids finished' },
     deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
@@ -132,9 +139,10 @@ ${a.note || ''}
 ${REVIEW
     ? `Do the whole job: implement, gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges (no devtools.py
 merge): a review runs first and the workflow merges after it - this wins over any "merge when green" in the brief.
-Report merged=false for every MR.${REVIEW_AUTO ? `
+Report merged=false and mergeState OPEN for every MR.${REVIEW_AUTO ? `
 Also report changedLines (added + removed over all your MRs) and changedFiles (paths): small low-risk changes skip the review.` : ''}`
-    : 'Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.'}${HOLD_NOTE}
+    : `Do the whole job: implement, run the gated checks, commit, push, open the MRs, merge when green (producers first), update the tracker.
+${MERGE_WORD_NOTE}`}${HOLD_NOTE}
 Testing instructions are part of the job (dev-kit step 7b): run devtools.py guide-mode first; "always" = every change gets the
 published tester guide below (with screenshots). Otherwise a simple change gets a how-to-test comment on the task; a complex one (several screens or flows, more than one repo, migrations, roles) gets a tester guide from
 ${KIT}/skills/qa-kit/templates/tester-guide.html (check ids, concrete Expected per check, environment, accounts, data to prepare)
@@ -189,7 +197,9 @@ on merge (holdMerge), so none of the targets below deploys. Do not ask for appro
 ${toShip(r).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 DB/API (producer) and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
 A consumer (web/app) MR that depends on an API MR in this list: don't merge it; register & ${ORCH}/track.ps1 add -Task <task id from the
-MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>'. Return the report with the same MRs (merged=false unless already merged) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
+MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>' (mergeState OPEN for it).
+${MERGE_WORD_NOTE}
+Return the report with the same MRs (merged=true only on MERGED) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, learn ${LEARN}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
@@ -220,7 +230,7 @@ const results = await pipeline(
     log(`${a.id}: ${blocking.length} blocking finding(s) -> fix round`)
     const r2 = await agent(fixPrompt(a, x.report, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
     // CI failures count as findings too, so the coordinator sees them when the fix round fails
-    if (!r2) return { ...x, findings: [...x.findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: false }
+    if (!r2) return { ...x, findings: [...x.findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: false, stopped: true }
     // merge, don't replace: the fix agent reports only its fixes, the build report holds the items done
     const uniq = (a) => [...new Set(a)]
     const byId = (a) => [...new Map(a.map((d) => [d.id, d])).values()]
@@ -242,11 +252,19 @@ const results = await pipeline(
   async (x, a) => {
     if (!x || x.error || !x.report || !x.report.mrs.length) return x
     const refs = x.report.mrs.map((m) => m.url).join(', ')
+    // not registered while work is missing: the tracker promotes a task once its known MRs merge, so an agent that deferred items
+    // or was stopped (fix round returned nothing) would get its task promoted with the rest still to do. The coordinator registers it.
+    const deferred = x.report.deferred || []
+    if (deferred.length || x.stopped) {
+      log(`${a.id}: tracker task NOT registered (${deferred.length ? `deferred ${deferred.map((d) => d.id).join(', ')}` : 'agent stopped'}) - once the rest is done: track.ps1 add -Task <id> -Discover -Mrs ${refs}`)
+      return { ...x, trackHeld: deferred.length ? 'deferred items' : 'agent stopped' }
+    }
     const tr = await agent(`Register agent ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}
 MRs: ${refs}
 1. Find the task id: it is in each MR's title or source branch after the tracker tag (e.g. CU-<id>); glab mr view / gh pr view <url> if needed.
    One agent can have several tasks: group the MRs by task.
-2. Per task: & ${ORCH}/track.ps1 add -Task <task id> -Mrs '<repo>!<iid>','<repo>!<iid>' (all of that task's MRs, merged or not).
+2. Per task: & ${ORCH}/track.ps1 add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>' (all of that task's MRs, merged or not;
+   -Discover also picks up the task's MRs opened later, e.g. a follow-up).
 Return ok=true and the track.ps1 output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, ...pick('ship'), effort: 'low' })
     if (!tr || !tr.ok) log(`${a.id}: WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'}) - run track.ps1 add -Task <id> -Mrs ${refs}`)
     return x
@@ -272,8 +290,12 @@ async function ship(a, x) {
   const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
   // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
   if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
-  const merged = new Set(r3.mrs.filter((m) => m.merged).map((m) => m.url))
-  return { ...x, report: { ...x.report, mrs: x.report.mrs.map((m) => ({ ...m, merged: m.merged || merged.has(m.url) })),
+  // merged only on a confirmed MERGED (devtools.py's last status word); an agent's merged=true without a word is not proof
+  const state = new Map(r3.mrs.map((m) => [m.url, m.mergeState || (m.merged ? 'NOT_MERGED' : 'OPEN')]))
+  return { ...x, report: { ...x.report, mrs: x.report.mrs.map((m) => {
+    const s = m.merged ? 'MERGED' : (state.get(m.url) || m.mergeState || 'OPEN')
+    return { ...m, mergeState: s, merged: s === 'MERGED' }
+  }),
     summary: `${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
 }
 
@@ -281,7 +303,8 @@ const out = results.filter(Boolean)
 for (const x of out) {
   if (x.error) { log(`${x.id}: ERROR ${x.error}`); continue }
   const r = x.report
-  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, done ${r.done.length}, deferred ${r.deferred.length}, review findings ${x.findings.length}`)
+  const notMerged = r.mrs.filter((m) => !m.merged && m.mergeState && m.mergeState !== 'OPEN').map((m) => `${m.mergeState} ${m.url}`)
+  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, done ${r.done.length}, deferred ${r.deferred.length}, review findings ${x.findings.length}${x.trackHeld ? `, tracker NOT registered (${x.trackHeld})` : ''}${notMerged.length ? ` | ${notMerged.join(', ')}` : ''}`)
 }
 const outcome = {
   agents: out,

@@ -16,7 +16,7 @@ description: "Load when: you build the test APK, create, boot or reset emulator 
 | `reference/scripts-and-platforms.md` | L1-L4 (build variants, create/reset lanes, modes, memory, manual leases) and on Linux/macOS |
 | `swarm.example.json` | L0: copy to `swarm.config.json` (lanes, app, optional `outDir`) |
 | `avd-template.ini` | L2: the lane hardware `swarm-avd.ps1 create` copies (x86_64; edit for Apple silicon) |
-| `phone.ps1` | A1 (`acquire`), A4 (`release`), `status` |
+| `phone.ps1` | A1 (`acquire [-Holder]`), A2b (`ensure`), A4 (`release`), `status` |
 | `app-launch.ps1` | A2, relaunch or clear the app |
 | `app-build.ps1` | L1, build the test APK through the memory gate |
 | `swarm-avd.ps1` | L2, create all lanes; `reset -Level cold|snapshots|wipe|recreate` for a broken one |
@@ -31,15 +31,17 @@ Runtime output (APKs, `build.log`, `metro.log`, emulator logs, `swarm.json`) goe
 
 ## App-lane tester steps
 - A0. Read `LESSONS.md`.
-- A1. `phone.ps1 acquire -Agent <id> -Lane <name>`: returns at once if it is yours, else waits its fair turn, boots it when memory
-  allows and installs the current `app.apk` ("installed: updated" = log in again); prints serial, login, notes and the APK's
-  branch/commit (a warning when the branch moved on: ask the lead to rebuild).
+- A1. `phone.ps1 acquire -Agent <id> -Lane <name> [-Holder <board code>]`: returns at once if it is yours, else waits its fair turn,
+  boots it when memory allows and installs the current `app.apk` ("installed: updated" = log in again); prints serial, login, notes
+  and the APK's branch/commit (a warning when the branch moved on: ask the lead to rebuild). Put the serial in your board entry's
+  worktrees (or pass `-Holder`): the supervisor counts the lease as live while that entry is.
 - A2. `$env:ANDROID_SERIAL='<serial>'` on every command; touch only your phone; never `adb kill-server`, never swarm-up/down/app-mode.
   Relaunch / clear: `app-launch.ps1 -Serial <s> [-Clear]`. Logs: `ui.ps1 log ReactNativeJS` (RN) or `ui.ps1 log <tag>`; in-app camera:
   tap the app's camera icon, then `ui.ps1 photo [shutterId]`. Each lane has its own login and data prefix; environment-wide setting
   changes run alone; passwords live only in `qa-kit/targets.local.json`.
-- A2b. Under RAM pressure lanes can drop offline while `phone.ps1 status` shows your lease free: before each app check confirm `adb devices`
-  lists your serial as `device` and your lease file exists; if either fails, re-acquire with `phone.ps1 acquire -Agent <id> -Lane <name> -NoInstall`.
+- A2b. Under RAM pressure lanes can drop offline (`phone.ps1 status` shows "down, leased by <you>"; the lease is kept): before each app
+  check confirm `adb devices` lists your serial as `device` and your lease file exists. Serial offline -> `phone.ps1 ensure -Agent <id>`
+  (cold-boots your lane through the memory gate); lease file gone -> `phone.ps1 acquire -Agent <id> -Lane <name> -NoInstall`.
   The lead runs at most 2 app lanes while a web pool or a dev wave runs in parallel.
 - A3. Hand the phone back with `phone.ps1 release -Agent <id>` before long non-phone work (API, web UI, code, data prep); acquire again later.
 - A4. `phone.ps1 release -Agent <id>` when done.

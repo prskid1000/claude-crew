@@ -2,22 +2,29 @@
 Phone leases: an app-testing agent owns its phone end to end. The coordinator never boots or shuts phones for a run.
 
   $P = '<workspace>/.claude/skills/android-swarm/phone.ps1'
-  & $P acquire -Agent APP1 [-Lane Falcon] [-WaitMinutes 90]   # wait for a free lane (fair FIFO), boot it through the memory gate,
-                                                              # install the current <out>/apk/app.apk if the phone has an older one;
-                                                              # prints JSON {lane, serial, port, installed}
+  & $P acquire -Agent APP1 [-Lane Falcon] [-WaitMinutes 90] [-Holder <board agent>]
+                                      # wait for a free lane (fair FIFO), boot it through the memory gate, install the current
+                                      # <out>/apk/app.apk if the phone has an older one; prints JSON {lane, serial, port, installed}.
+                                      # -Holder: the agent-board code that holds the lease (supervise.ps1 counts it as live while
+                                      # that board entry is); default: none (the board entry's worktrees name the serial or lane)
+  & $P ensure -Agent APP1             # your leased lane dropped offline: cold-boot it through the memory gate (the lease is kept);
+                                      # prints the same JSON as acquire (no install); fails when you hold no lease
   & $P release -Agent APP1 [-Keep]    # close our app, free the lease; the phone shuts down unless another agent is waiting for it (or -Keep)
-  & $P status                         # leases, waiting agents, running phones
+  & $P status                         # leases ("down, leased by X" = offline but still held), waiting agents, running phones
+A lease is kept when its lane goes offline: no other agent gets that lane, and a failed re-boot of a lane you already held keeps
+the lease (run ensure again); only a fresh acquire that cannot boot gives its new lease back.
 
 Manual use (a person, not an agent): & $P acquire -Agent manual -Lane Osprey ... & $P release -Agent manual. A 'manual' lease is never reclaimed
 by the supervisor (only a reminder after 4 h); agents wait for it like any lease.
 -Lane: a lane is tied to its test login (swarm.config.json / the run's lanes), so pass it when your login belongs to one lane.
 Without -Lane you get any free lane (a running one first). Re-acquiring a lane you already hold just returns it.
-Leases live in <runtime>/work/phones/ (Get-KitPath phones). A lease whose agent left the agent board (or has no board entry for 3 h) is reclaimed by
-supervise.ps1 -AutoFix, which is only the safety net for crashed agents.
+Leases live in <runtime>/work/phones/ (Get-KitPath phones). A lease that is 60+ min old with no live holder (no workflow step on
+its lane, no non-left board entry naming its agent/holder or listing its serial/lane in worktrees with a live pid or a beat under 3 h)
+is reclaimed by supervise.ps1 -AutoFix, which is only the safety net for crashed agents.
 #>
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
-  [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall
+  [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
+  [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall, [string]$Holder
 )
 $ErrorActionPreference = 'Stop'
 $c = & (Join-Path (Split-Path $MyInvocation.MyCommand.Path) '_config.ps1')
@@ -46,12 +53,21 @@ function ApkInfo {
   $warn = if ($head -and $head.Trim() -ne $i.commit) { "the APK is $($i.commit) but origin/$($i.branch) is at $($head.Trim()): ask the lead to rebuild (app-build.ps1)" }
   [ordered]@{ branch = $i.branch; commit = $i.commit; built = $i.built; warning = $warn }
 }
+# Boot a lane through swarm-up (memory gate inside); returns $true when the gate gave no memory turn (queued behind memory)
+function Boot($l, [switch]$Cold) {
+  $a = @{ Lanes = $l.name; Mode = 'None' }; if ($Cold) { $a.ColdBoot = $true }
+  $boot = @(& (Join-Path $c.dir 'swarm-up.ps1') @a 3>&1)   # 3>&1: catch the gate's "no memory turn" warning
+  $boot | Select-Object -Last 2 | Out-Host
+  [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
+}
 
 switch ($Action) {
   'status' {
     foreach ($l in $c.lanes) {
       $ls = Lease $l.name
-      '{0,-8} {1,-14} {2,-8} {3}' -f $l.name, "emulator-$($l.port)", $(if (Running $l) { 'up' } else { 'down' }), $(if ($ls) { "leased by $($ls.agent) since $($ls.since)" } else { 'free' })
+      $up = Running $l
+      $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
+      '{0,-8} {1,-14} {2}' -f $l.name, "emulator-$($l.port)", $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (offline: its agent runs phone.ps1 ensure)" } else { "down     $who" })
     }
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
   }
@@ -68,7 +84,11 @@ switch ($Action) {
       $got = Locked {
         if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { @{ agent = $Agent; lane = $Lane; since = $since } | ConvertTo-Json | Set-Content $wf }   # heartbeat
         $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
-        if ($mine) { return $mine[0] }
+        if ($mine) {   # already ours (also when it went offline: a held lane is never handed to anyone else)
+          $script:had = $true
+          if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; $o | ConvertTo-Json | Set-Content $lf } }
+          return $mine[0]
+        }
         # fair: the oldest waiter whose wish a free lane can satisfy goes first
         $free = @($lanes | Where-Object { -not (Lease $_.name) })
         if (-not $free) { return $null }
@@ -84,7 +104,8 @@ switch ($Action) {
           if ($freeGB - 4.5 -ge $c.keepFreeGB -or -not $someLeased) { $free[0] } else { $script:why = "only $freeGB GB free (a phone needs 4.5 + $($c.keepFreeGB) kept free)"; $null }
         }
         if (-not $pick) { return $null }
-        @{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $dir "$($pick.name).json")
+        $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') }; if ($Holder) { $new.holder = $Holder }
+        $new | ConvertTo-Json | Set-Content (Join-Path $dir "$($pick.name).json")
         $pick
       }
       if (-not $got) {
@@ -97,12 +118,11 @@ switch ($Action) {
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
     $serial = "emulator-$($got.port)"
     $memQueued = $false
+    if (-not (Running $got)) { $memQueued = Boot $got }
     if (-not (Running $got)) {
-      $boot = @(& (Join-Path $c.dir 'swarm-up.ps1') -Lanes $got.name -Mode None 3>&1)   # 3>&1: catch the gate's "no memory turn" warning
-      $boot | Select-Object -Last 2 | Out-Host
-      $memQueued = [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
-    }
-    if (-not (Running $got)) {
+      if ($script:had) {   # a lane we already held went offline and did not come back: keep the lease, never hand it to another agent
+        throw "$($got.name) is offline and did not boot$(if ($memQueued) { ' (no memory turn within 30 min)' }); lease kept: run phone.ps1 ensure -Agent $Agent again, or release it"
+      }
       Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force }
       if ($memQueued) { throw "$($got.name) queued behind memory: the gate gave no memory turn within 30 min; lease released (acquire again later)" }
       throw "$($got.name) did not boot (emulator problem); lease released"
@@ -119,6 +139,20 @@ switch ($Action) {
       }
     }
     [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed; apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
+  }
+
+  'ensure' {
+    # your own leased lane only: cold-boot it when adb no longer lists it as 'device' (a warm snapshot is what usually hangs)
+    if (-not $Agent) { throw 'ensure needs -Agent' }
+    $got = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
+    if (-not $got) { throw "no phone leased by ${Agent}: use phone.ps1 acquire -Agent $Agent -Lane <name>" }
+    $got = $got[0]; $serial = "emulator-$($got.port)"; $state = 'up'
+    if (-not (Running $got)) {
+      $memQueued = Boot $got -Cold
+      if (-not (Running $got)) { throw "$($got.name) did not come back$(if ($memQueued) { ' (no memory turn within 30 min)' }); lease kept: run ensure again later, or release it" }
+      $state = 'cold-booted (relaunch the app; it may need a fresh login)'
+    }
+    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; state = $state; installed = 'kept'; apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
   }
 
   'release' {

@@ -12,6 +12,8 @@
 ## Verified
 - Checks: `check.ps1 -Step quick` ✅ · tests `<names>` ✅ · migrations `ISSUES 0` ✅
 - Manual / staging: <what you saw, with evidence links (screenshots, request/response JSON)>
+- Not run: <gate or test that did not run, and why> (or "nothing")
+- Pure logic: <committed spec file that covers it, or the pasted node/python output that proves it> (or "none")
 
 ## How to test
 1. <environment + login>

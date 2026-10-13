@@ -24,6 +24,8 @@ MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start
 | `scripts/wt.ps1` | steps 1, 2, 5, 6 (`new`, `sync`, `commit`, `remove`, `status`) |
 | `scripts/stack.ps1` | step 3 |
 | `scripts/check.ps1`, `scripts/gate.ps1` | step 4 and 6 (every build/test; `gate.ps1 -Cmd` for anything check.ps1 doesn't cover) |
+| `scripts/node-spec.mjs` | step 4b: the test command `stack.ps1` / `check.ps1 -Step test` use for a web project with no unit-test target (pure-logic `*.spec.ts` under node, bundled with the project's esbuild) |
+| `scripts/lib/spec-shim.mjs` | library imported by `node-spec.mjs` (jasmine/jest-style describe/it/expect/spyOn); never run by hand |
 | `scripts/lbcheck.py` | run by `check.ps1 -Step migrations` (step 4c) |
 | `scripts/keepboth.py` | step 6, on an append-only changelog rebase conflict |
 | `scripts/devtools.py` | step 7 (`mr`), 7b (`doc`), 8 (`merge`) |
@@ -47,7 +49,7 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/wt.ps1 sync -Dir <wt>                                       # 2. rebase onto latest target - before editing
 & $K/stack.ps1 -Dir <wt>/<module>                                # 3. this module's build/test commands
 & $K/check.ps1 -Dir <wt>/<module>                                # 4. compile + typecheck + lint (gated)
-& $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "<names>"    # 4b. targeted tests only
+& $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "<names>"    # 4b. targeted tests only (no test target: node-spec.mjs runs the specs)
 & $K/check.ps1 -Dir <wt>/<module> -Step migrations               # 4c. if you touched DB migrations (must print ISSUES 0)
 & $K/wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. re-read <brief>.contracts.md, rebase + re-check before push
@@ -55,7 +57,7 @@ git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
 python $K/devtools.py doc "<title>" <guide.html>                  # 7b. tester guide (complex change) -> link it on the task + MR;
                                                                 #     simple change: tracker.ps1 comment <task> with how-to-test steps
-python $K/devtools.py merge <wt> <iid>                           # 8. merge-when-green, returns at once (NOT in a reviewed /dev-wave)
+python $K/devtools.py merge <wt> <iid>                           # 8. merge-when-green (no CI: at once); last line = MERGED|SCHEDULED|WAIT|... (NOT in a reviewed /dev-wave)
 & <workspace>/.claude/skills/orchestrate/scripts/track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. coordinator promotes when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board
 ```

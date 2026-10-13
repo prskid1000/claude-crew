@@ -31,14 +31,20 @@ foreach ($x in $results) {
   $kind, $id = ($x.label -split ':', 2); $id = ($id -split '@')[0]
   switch ($kind) {
     { $_ -in 'build', 'fix' } {
-      if ($x.r.mrs) {
-        # a fix round reports only the MRs it touched: merge with the build round's by URL (the newer entry wins)
-        $p = if ($agents.Contains($id)) { $agents[$id] } else { $null }; $urls = @($x.r.mrs | ForEach-Object url)
-        $mrs = @(@($p.mrs | Where-Object { $_ -and $_.url -notin $urls }) + @($x.r.mrs | ForEach-Object { [ordered]@{ url = $_.url; merged = $_.merged } }))
-        $agents[$id] = [ordered]@{ mrs = $mrs; done = @(@($p.done) + @($x.r.done) | Where-Object { $_ } | Select-Object -Unique); deferred = $(if ($x.r.deferred) { @($x.r.deferred) } else { @($p.deferred | Where-Object { $_ }) })
+      $p = if ($agents.Contains($id)) { $agents[$id] } else { $null }
+      if ($x.r -is [System.Management.Automation.PSCustomObject]) {
+        # a report object: read done/deferred/live checks from it even with no MRs (an agent that deferred everything still has a
+        # report; it once showed as "deferred 0" plus a raw @{mrs=...} dump). A fix round reports only the MRs it touched: merge with
+        # the build round's by URL, and deferred items by id (the newer entry wins).
+        $rm = @($x.r.mrs | Where-Object { $_ }); $urls = @($rm | ForEach-Object url)
+        $mrs = @(@($p.mrs | Where-Object { $_ -and $_.url -notin $urls }) + @($rm | ForEach-Object { [ordered]@{ url = $_.url; merged = [bool]$_.merged; mergeState = $(if ($_.mergeState) { [string]$_.mergeState } elseif ($_.merged) { 'MERGED' } else { 'OPEN' }) } }))
+        $nd = @($x.r.deferred | Where-Object { $_ }); $ndIds = @($nd | ForEach-Object id)
+        $agents[$id] = [ordered]@{ mrs = $mrs; done = @(@($p.done) + @($x.r.done) | Where-Object { $_ } | Select-Object -Unique)
+          deferred = @(@($p.deferred | Where-Object { $_ -and $_.id -notin $ndIds }) + $nd)
           needsLiveCheck = @(@($p.needsLiveCheck) + @($x.r.needsLiveCheck) | Where-Object { $_ } | Select-Object -Unique); fixedRound = ($kind -eq 'fix' -or [bool]$p.fixedRound) }
+        if (-not $mrs.Count -and $x.r.summary) { $agents[$id].note = ([string]$x.r.summary).Substring(0, [math]::Min(300, ([string]$x.r.summary).Length)) }
       }
-      elseif (-not $agents.Contains($id)) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
+      elseif (-not $p) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); needsLiveCheck = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
     }
     'review' { foreach ($f in $x.r.findings) { [void]$findings.Add([ordered]@{ agent = $id; severity = $f.severity; file = $f.file; line = $f.line; problem = $f.problem; fix = $f.fix; mr = $f.mr }) } }
     { $_ -in 'test', 'retest' } { if ($x.r.checks) { $c = @($x.r.checks); $qa[$id] = [ordered]@{ checks = $c.Count; pass = @($c | Where-Object result -in 'PASS', 'PASS_WITH_NOTE').Count; fail = @($c | Where-Object result -eq 'FAIL').Count; notTested = @($c | Where-Object result -eq 'NOT_TESTED').Count } } }
@@ -59,12 +65,18 @@ if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
 # the agent's "merged" is a snapshot from when it finished (usually merge-when-green still pending): ask GitLab now
 # (glab talks to the host it is logged in to; self-hosted: GITLAB_HOST / kit.local.json "gitHost")
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
-  $m.merged = ((glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json).state -eq 'merged') }
-  elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') { $m.merged = ((gh pr view $m.url --json state 2>$null | ConvertFrom-Json).state -eq 'MERGED') } } }   # GitHub PRs
+  $h = glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json
+  if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } }
+  elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') {   # GitHub PRs
+  $h = gh pr view $m.url --json state,autoMergeRequest 2>$null | ConvertFrom-Json
+  if ($h.state -eq 'MERGED') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.autoMergeRequest) { $m.mergeState = 'SCHEDULED' } } } }
 function Sum($xs, $k) { [int](@($xs | ForEach-Object { $_[$k] }) | Measure-Object -Sum).Sum }
+$isSched = { param($m) -not $m.merged -and $m.mergeState -eq 'SCHEDULED' }
 $cut = { param($s, $n) $s = [string]$s; $s.Substring(0, [math]::Min($n, $s.Length)) }
 if ($Detail) {
-  foreach ($k in $agents.Keys) { $a = $agents[$k]; '{0,-4} MRs {1}/{2} merged | done [{3}] | deferred {4}{5}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $(& $cut $a.note 80)" })
+  foreach ($k in $agents.Keys) { $a = $agents[$k]; $sc = @($a.mrs | Where-Object { & $isSched $_ }).Count
+    '{0,-4} MRs {1}/{2} merged{3} | done [{4}] | deferred {5}{6}' -f $k, @($a.mrs | Where-Object merged).Count, @($a.mrs).Count, $(if ($sc) { ", $sc scheduled" }), ($a.done -join ','), @($a.deferred).Count, $(if ($a.note) { " | $(& $cut $a.note 80)" })
+    foreach ($m in @($a.mrs | Where-Object { -not $_.merged })) { "       MR $($m.mergeState): $($m.url)" }
     foreach ($d in @($a.deferred)) { "       deferred $($d.id): $($d.reason)" }
     foreach ($c in @($a.needsLiveCheck)) { "       live check: $c" } }
   foreach ($k in $qa.Keys) { $q = $qa[$k]; '{0,-5} {1}/{2} pass, {3} fail, {4} not tested{5}' -f $k, $q.pass, $q.checks, $q.fail, $q.notTested, $(if ($q.Contains('published')) { " | published: $($q.published)" }) }
@@ -73,11 +85,11 @@ if ($Detail) {
 } else {
   $am = @($agents.Values | ForEach-Object { @($_.mrs) }); $qv = @($qa.Values)
   $parts = @()
-  if ($agents.Count) { $parts += "agents $($agents.Count): MRs $(@($am | Where-Object merged).Count)/$($am.Count) merged, done $(@($agents.Values | ForEach-Object { @($_.done) }).Count), deferred $(@($agents.Values | ForEach-Object { @($_.deferred) }).Count), findings open $($open.Count) / addressed $($addressed.Count)" }
+  if ($agents.Count) { $parts += "agents $($agents.Count): MRs $(@($am | Where-Object merged).Count)/$($am.Count) merged, $(@($am | Where-Object { & $isSched $_ }).Count) scheduled, done $(@($agents.Values | ForEach-Object { @($_.done) }).Count), deferred $(@($agents.Values | ForEach-Object { @($_.deferred) }).Count), findings open $($open.Count) / addressed $($addressed.Count)" }
   if ($qa.Count) { $parts += "QA $($qa.Count) pkg: pass $((Sum $qv 'pass'))/$((Sum $qv 'checks')), fail $((Sum $qv 'fail')), not tested $((Sum $qv 'notTested')), published $(@($qv | Where-Object { $_.Contains('published') -and $_.published }).Count)/$($qa.Count)" }
   if ($parts) { $parts -join ' | ' }
-  foreach ($k in $agents.Keys) { $a = $agents[$k]; $um = @($a.mrs | Where-Object { -not $_.merged }).Count
-    if ($um -or @($a.deferred).Count -or $a.note) { '  {0}: {1}{2}{3}' -f $k, $(if ($um) { "$um MR(s) not merged " }), $(if (@($a.deferred).Count) { "deferred $(@($a.deferred | ForEach-Object id) -join ',') " }), $(if ($a.note) { "| $(& $cut $a.note 80)" }) } }
+  foreach ($k in $agents.Keys) { $a = $agents[$k]; $um = @($a.mrs | Where-Object { -not $_.merged }).Count; $sc = @($a.mrs | Where-Object { & $isSched $_ }).Count; $dc = @($a.deferred).Count
+    if ($um -or $dc -or $a.note) { '  {0}: {1}{2}{3}' -f $k, $(if ($um) { "$um MR(s) not merged$(if ($sc) { " ($sc scheduled)" }) " }), $(if ($dc) { "deferred $dc ($(@($a.deferred | ForEach-Object id) -join ',')) " }), $(if ($a.note) { "| $(& $cut $a.note 80)" }) } }
   foreach ($k in $qa.Keys) { $q = $qa[$k]; if ($q.fail -or $q.notTested -or ($q.Contains('published') -and -not $q.published)) { '  {0}: fail {1}, not tested {2}{3}' -f $k, $q.fail, $q.notTested, $(if ($q.Contains('published') -and -not $q.published) { ', NOT published' }) } }
   if ($open.Count) { "--- OPEN review findings ($($open.Count))"; $open | ForEach-Object { "  [$($_.severity)] $($_.agent) $(Split-Path $_.file -Leaf):$($_.line) - $(& $cut $_.problem 100)" } }
 }
