@@ -8,6 +8,9 @@ as your workspace's `.claude` and Claude Code can coordinate parallel dev agents
 of repos and stacks. You edit the clone in place, commit and push; `git pull` updates it. Install, update and contribute:
 [docs/install.md](docs/install.md).
 
+The orchestration (waves, QA runs, hooks, the memory gate) is Claude Code-only, but the instructions and agent roster are also
+usable from **Codex CLI** and **Antigravity/`agy` CLI** — see [Cross-CLI support](#cross-cli-support-codex-antigravity) below.
+
 ---
 
 ## Problems it solves
@@ -59,6 +62,32 @@ of repos and stacks. You edit the clone in place, commit and push; `git pull` up
 - **android-swarm** — parallel emulators for any APK (React Native or native): `phone.ps1` leases, `app-build.ps1` (through the gate, from the latest merged branch),
   `swarm-up/-down/-slim/-arrange`, `app-mode`/`app-launch` (Release or Metro), `swarm-avd.ps1` (create all lanes from one template; reset cold/snapshots/wipe/recreate).
 - **tech-audit** — static audit of one module for bugs, performance and tech debt with strict false-positive discipline; fixed 23-key findings schema, validator and styled summary.
+
+## Cross-CLI support (Codex, Antigravity)
+
+The *instructions* (Router, CLIs, org specifics) and the four agent roles are also usable from **OpenAI's Codex CLI** and
+**Google's Antigravity/`agy` CLI**, generated from the same Claude Code source by one script, so there is one place to edit:
+
+```powershell
+python <workspace>/.claude/skills/orchestrate/scripts/port-kit.py   # after editing agents/*.md, settings.json hooks or workflows/*.js
+```
+
+| What | Claude Code source | Codex | Antigravity |
+|---|---|---|---|
+| Instructions | `CLAUDE.md` (`@AGENTS.md` import) | `AGENTS.md` (native) | `GEMINI.md` (`@AGENTS.md` import) |
+| Agents | `agents/*.md` | `.codex/agents/*.toml` | `.agents/agents/*.md` |
+| Guard + SessionStart hooks | `settings.json` | `.codex/config.toml` | `.agents/hooks.json` |
+| Workflows (`/dev-wave`, ...) | `workflows/*.js` (runs) | `.codex/workflows/*.md` (manual procedure doc) | `.agents/workflows/*.md` (manual procedure doc) |
+
+`port-kit.py` writes the canonical copy into this repo (tracked, pushed) and deploys a mirror to the workspace root, since
+Codex and Antigravity resolve `AGENTS.md`/`GEMINI.md`/`.codex`/`.agents` from the session's working directory upward, not
+from inside `.claude` — confirmed against the real `codex`/`agy` binaries, not just their docs. `kit-health.ps1` runs
+`port-kit.py --check` on every SessionStart and nudges if the ports drift from source.
+
+**Not portable, and not simulated:** the Workflow tool's pipeline/phase engine (Codex/Antigravity get a run procedure, not an
+automated script), the agent board's duplicate-session detection, the `SendMessage` guard hook (neither CLI has a tool by
+that name), the `Skill` tool's name-triggered invocation, and `kit-lint.py`'s own graph validation. These stay Claude
+Code-only; `AGENTS.md`'s own final section documents each one and why.
 
 ### Rules and hooks
 - `rules/multi-agent.md` (always loaded) and `rules/db-migrations.md` (loads when a migration file is opened).
