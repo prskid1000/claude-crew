@@ -77,7 +77,9 @@ function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -
 function __TrCli([string]$Exe, [string[]]$A) {
   if ($__trDry) { Write-Host "DRYRUN: $Exe $(__TrShort (__TrQuote $A))"; return $null }
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
-  $out = (@(& $Exe @A 2>&1) | ForEach-Object { "$_" }) -join "`n"
+  # CLIs print UTF-8; read it as UTF-8 (the console default code page turns '—' into mojibake and breaks parsers like bug-brief)
+  $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+  try { $out = (@(& $Exe @A 2>&1) | ForEach-Object { "$_" }) -join "`n" } finally { [Console]::OutputEncoding = $enc }
   # a failing CLI (expired auth, unknown task) must not look like success; status set's alias loop reads 'no matching status'
   if ($LASTEXITCODE -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $($A[0..1] -join ' ') failed (exit $LASTEXITCODE): $(__TrShort $out)" }
   $out
