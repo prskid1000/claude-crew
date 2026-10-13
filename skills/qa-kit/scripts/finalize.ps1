@@ -113,6 +113,16 @@ $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name, mapped by tracker.statuses
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # github/gitlab use tracker.repo; clickup/jira need a list/project
+# the last item on a shared task decides the close: sibling items' NOT_TESTED checks and untracked failures keep it open too
+function SiblingHold($id) {
+  $nt = 0; $err = $null
+  foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
+    $f = "$RunDir\$c\finalize.json"; if (-not (Test-Path $f)) { continue }
+    $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
+    if ($r) { $nt += [int]$r.notTested; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
+  }
+  [pscustomobject]@{ notTested = $nt; bugError = $err }
+}
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
@@ -133,9 +143,11 @@ foreach ($st in @($item.subtasks)) {
       $rec.bug = $prevRec.bug
       $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($fails.Count -and -not $rec.bug) { 'failed checks have no bug task' }
       $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
+      $sib = if ($others.Count) { $null } else { SiblingHold $st.id }
       if ($others.Count) { $rec.waitingFor = $others }
-      elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested" }
+      elseif (($nt + $sib.notTested) -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$($nt + $sib.notTested) check(s) not tested" }
       elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
+      elseif ($sib.bugError) { $rec.keptOpen = "failed checks have no bug task ($($sib.bugError))" }
       elseif (-not $pend) { if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } }
       $out.subtasks += $rec; continue
     }
@@ -168,10 +180,12 @@ foreach ($st in @($item.subtasks)) {
     }
     # a task shared by several items (e.g. one feature, one guide per dev group) closes only when the last of them has finalized
     $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
+    $sib = if ($others.Count) { $null } else { SiblingHold $st.id }
     if ($others.Count) { $rec.waitingFor = $others }
-    # NOT_TESTED checks keep the task open (e.g. a dependency not deployed yet): closing would hide the untested part
-    elseif ($nt -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$nt check(s) not tested"; $null = TrySay { Add-TrackerComment $st.id "Not closed: $nt check(s) could not be tested yet (see the report). Retest them once their blocker is resolved." } "comment on $($st.id)" }
+    # NOT_TESTED checks (this item's or a sibling's) keep the task open (e.g. a dependency not deployed yet): closing would hide the untested part
+    elseif (($nt + $sib.notTested) -and -not $tr.closeWithNotTested) { $ntAll = $nt + $sib.notTested; $rec.keptOpen = "$ntAll check(s) not tested"; $null = TrySay { Add-TrackerComment $st.id "Not closed: $ntAll check(s) could not be tested yet (see the reports). Retest them once their blocker is resolved." } "comment on $($st.id)" }
     elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
+    elseif ($sib.bugError) { $rec.keptOpen = "failed checks have no bug task ($($sib.bugError))" }
     elseif (-not $pend) { if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } }
   }
   $out.subtasks += $rec
