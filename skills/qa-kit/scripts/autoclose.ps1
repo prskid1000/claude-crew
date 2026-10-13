@@ -79,7 +79,11 @@ while ((Get-Date) -lt $end) {
         else { Log "$code finalize failed (attempt $n, retried next loop): $_" }
       }
     }
-    if (-not $running.Count -and $started.Count -and ($j | Where-Object type -in 'finished', 'completed', 'done')) { Log 'workflow finished'; break }
+    # the workflow journal has no "finished" entry (only launched / started / result): it is over when no agent runs and every tested
+    # item is handled (published by the workflow or finalized here) - else this watcher polled for MaxHours after every run
+    $handled = @(Get-Content $done)
+    $allHandled = $codes.Count -and -not @($codes | Where-Object { $handled -notcontains $_ }).Count
+    if (-not $running.Count -and $started.Count -and ($allHandled -or ($j | Where-Object type -in 'finished', 'completed', 'done'))) { Log 'workflow finished: every item handled'; break }
   } catch { Log "error: $_" }
   Start-Sleep -Seconds ($EveryMinutes * 60)
 }
