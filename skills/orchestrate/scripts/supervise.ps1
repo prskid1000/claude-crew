@@ -265,7 +265,9 @@ if ($AutoFix) {
     # task is tested on), so keep looking for newly live ones until the 3-day window ends
     if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
     if ($o.qaCovered) { continue }
-    if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt 10) { continue }   # deploys take > 10 min; don't re-ask the git host every run
+    # deploys take > 10 min; don't re-ask the git host every run. Already live somewhere: only look for another environment hourly
+    # (a 10-min re-check of every live task made rounds run past 4 min)
+    if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt $(if (@($o.liveOn).Count) { 60 } else { 10 })) { continue }
     # a QA run already has it (often closed already): nothing to launch, so skip the git-host deploy lookup (10+ calls per task)
     $covered = @(Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { (Get-Content $_.FullName -Raw) -match [regex]::Escape($o.task) } | ForEach-Object { $_.Directory.Name })
     if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
