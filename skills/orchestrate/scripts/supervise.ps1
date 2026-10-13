@@ -47,6 +47,9 @@ foreach ($w in $wfDirs) {
   $finishedAt = @{}
   foreach ($s in $started) { if ($res.ContainsKey($s.agentId)) { $k = & $itemOf $s.label; $i = [array]::IndexOf($started, $s); if (-not $finishedAt.ContainsKey($k) -or $finishedAt[$k] -lt $i) { $finishedAt[$k] = $i } } }
   $running = @($running | Where-Object { $k = & $itemOf $_.label; -not ($finishedAt.ContainsKey($k) -and $finishedAt[$k] -gt [array]::IndexOf($started, $_)) })
+  # A replacement started for the same label (a stopped agent re-run after a usage limit or API error) supersedes it too, even
+  # before the replacement finishes: only the latest start per label is live (else the dead one flags "written nothing" for hours).
+  $running = @($running | Where-Object { $lbl = $_.label; $i = [array]::IndexOf($started, $_); -not @($started | Where-Object { $_.label -eq $lbl -and [array]::IndexOf($started, $_) -gt $i }).Count })
   $runTotal += $running.Count
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
   # keep <runtime>/work/waves/<run>.json current for running dev waves: track.ps1 reads it to hold merges/promotions while an MR's
