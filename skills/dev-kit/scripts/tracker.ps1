@@ -8,7 +8,7 @@ As a script (structured results print as JSON):
   & $TR status <id> <status>             # logical name (review, promoted, inTest, closed, ...) or the tracker's own status name
   & $TR comment <id> <text | file.md>
   & $TR comments <id>                    # [{ user, date, text }] oldest first
-  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url }
+  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url }; no -Assignee = kit.local.json tracker.owner
   & $TR url <id>
   & $TR describe <id> <text | file.md>   # replace the description
   & $TR attach <id> <file> [-Text "<comment>"]   # report/guide: GitHub/GitLab post the file's text as a comment; ClickUp/Jira attach it
@@ -287,6 +287,7 @@ function Get-TrackerComments([string]$Id) {
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority) {
   $Description = __TrText $Description
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
+  if (-not $Assignee) { $Assignee = [string](Get-KitSetting 'tracker.owner' '') }   # new tasks go to the owner unless '-' (nobody) is passed
   switch ($__trType) {
     'clickup' {
       $a = @('task', 'create', '--list-id', $List, '--name', $Name, '--markdown-description', $Description, '--json')

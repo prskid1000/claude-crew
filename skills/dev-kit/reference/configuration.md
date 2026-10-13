@@ -74,6 +74,7 @@ Other `tracker` keys:
 |---|---|---|
 | `tracker.repo` | - | `owner/name` (GitHub) or `group/project` (GitLab) holding the issues |
 | `tracker.list` | - | Default list / project for `create` (bug tasks when `run.json` has no `tracker.list`) |
+| `tracker.owner` | - | Default assignee for every task `create` makes (bug tasks, subtasks) when no `-Assignee` is given (`run.json` `tracker.owner` wins for QA bug tasks; `-Assignee -` = nobody). Tracker user id (ClickUp/Jira) or username (GitHub/GitLab) |
 | `tracker.branchTag` | `CU-` (clickup), `GH-` (github), `GL-` (gitlab), empty (jira, none) | Put before the task id in branch names and MR titles (`fix/<tag><id>-slug`); `track.ps1 -Discover` searches for it |
 | `tracker.statuses` | see below | Map logical statuses to your board's names; a value may be a list (the first is set, all count as a match) |
 
