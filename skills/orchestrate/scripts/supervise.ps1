@@ -307,7 +307,8 @@ foreach ($par in $parents) {
 
 # 7. capacity: scale QA workers with memory. Seats (qa-kit/scripts/qa-seat.ps1) already hold new agents back while free RAM < keepFreeGB,
 #    so shrinking is automatic. Growing: if a QA run has items nobody has started and memory has room, say how many extra workers fit.
-$keepFree = try { $v = (Get-Content (Join-Path $skills 'qa-kit\targets.local.json') -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
+# one memory floor for the machine: the gate's (env CLAUDE_GATE_KEEP_FREE_GB, kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB), as qa-seat.ps1
+$keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
 $freeNow = Get-FreeGB
 $seatDir = Get-KitPath qa-seats
 $seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count

@@ -24,7 +24,10 @@ There is no fixed limit on parallel builds. A build starts only when
 - running builds are listed in a shared ledger in <OS temp folder>/claude-build-gate; dead entries are dropped;
 - starts are decided one at a time, under a named mutex, from a FAIR QUEUE: the owner (agent / worktree) with the fewest
   builds started in the last 30 min goes first, then the longest-waiting; a smaller build may backfill only while the head of
-  the queue doesn't fit and has waited < 20 min. Owner = $env:CLAUDE_AGENT, else the worktree prefix (x1-backend -> x1).
+  the queue doesn't fit and has waited < 20 min; after that only a SMALL build (its kind's median <= 120 s and need <= 2 GB, from
+  history) that fits may, one at a time. Owner = $env:CLAUDE_AGENT, else the worktree folder minus its repo suffix
+  (b-java-<repo> -> b-java), else its first dash part (x1-backend -> x1).
+- history.json samples: { gb, sec, ok, at, code, cmd (first 60 chars) }; older samples lack at / code / cmd.
 - heap caps follow load INTELLIGENTLY: ceiling = start value or learned peak x 1.25; floor = what this project's build really
   uses (learned peak x 1.1, min 4 GB). With N builds queued each gets an equal share of the free memory, clamped between floor
   and ceiling: plenty of room -> full headroom and builds run side by side; crowded -> heaps shrink toward real usage (never below
@@ -130,6 +133,13 @@ $hist = Read-History
 $samples = @($hist[$histKey] | Where-Object { $_ })        # [{gb, sec, ok}, ...] newest last
 $peaks = @($samples | ForEach-Object { [double]$_.gb })
 $secs = @($samples | ForEach-Object { [double]$_.sec } | Sort-Object)
+# Small build (may backfill past a starving head, see the queue loop): this kind's median run <= 120 s and need <= 2 GB, from
+# history (this project's samples, else every project's samples of the kind; under 2 samples it is never small). Old samples
+# without at/code/cmd are fine: only sec is read.
+function Get-MedianSec([double[]]$Secs) { $s = @($Secs | Sort-Object); if ($s.Count -lt 2) { return -1 }; $s[[int][math]::Floor($s.Count / 2)] }
+function Test-SmallBuild([double]$Need, [double]$MedianSec) { $MedianSec -ge 0 -and $MedianSec -le 120 -and $Need -le 2 }
+$kindSecs = if ($secs.Count -ge 2) { $secs } else { @($hist.Keys | Where-Object { $_ -like "$kind|*" } | ForEach-Object { @($hist[$_]) | Where-Object { $_ -and $null -ne $_.sec } | ForEach-Object { [double]$_.sec } }) }
+$medianSec = Get-MedianSec $kindSecs
 # Estimate: with 2+ recorded peaks, the recent max (last 5) + 15%, never above 60% of total RAM (a cap at default x 1.5 once
 # reserved 6 GB for web builds that peaked at 9.5 GB); fewer samples -> the kind's default.
 function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) {
@@ -163,9 +173,14 @@ function Set-HeapEnv([int]$gb) {
   }
 }
 
-# Owner for fair turns: explicit agent id, else the worktree/folder prefix (x1-backend -> x1)
+# Owner for fair turns: explicit agent id, else the worktree folder minus its repo suffix (b-load-java-<repo> in repo <repo>
+# -> b-load-java); a folder without that suffix (the main checkout, other names) -> its first dash part (x1-backend -> x1).
+function Get-OwnerName([string]$Leaf, [string]$Repo) {
+  if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { return $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) }
+  ($Leaf -split '-')[0]
+}
 $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf }
-$owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { ($ownerRoot -split '-')[0] }
+$owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
 $heapBase = $heap
 # never shrink below what this project's build has really used (a smaller heap only makes it thrash in GC)
 $heapFloor = if ($heap -gt 0 -and $peaks.Count -ge 2) { [math]::Min($heapBase, [math]::Max($HeapMinGB, [int][math]::Ceiling((($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.1))) } else { $HeapMinGB }
@@ -207,14 +222,24 @@ function Get-TreeGB([int]$rootPid, $Snap) {
 function Get-AvailGB { (Get-SysMem).AvailGB }
 function Get-State {
   $Snap = Get-Procs
-  $promised = 0; $running = 0
+  $promised = 0; $running = 0; $backfills = 0
   foreach ($f in Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json') {
     try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
     if (-not $Snap.procs.ContainsKey([int]$e.pid)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
     $running++
+    if ($e.backfill) { $backfills++ }
     $promised += [math]::Max(0, [double]$e.need - (Get-TreeGB ([int]$e.pid) $Snap))
   }
-  [pscustomobject]@{ Avail = (Get-AvailGB); Promised = [math]::Round($promised, 1); Running = $running; Snap = $Snap }
+  [pscustomobject]@{ Avail = (Get-AvailGB); Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
+}
+# May a build that is not the head of the queue start now? Returns '' (no), 'backfill' (the head doesn't fit and has waited < 20 min:
+# any build that fits) or 'small' (the head has waited 20+ min: only a small build that fits, and only while no other small backfill
+# runs, so the starving head is delayed by at most one short build).
+function Get-BackfillMode([double]$HeadNeed, [double]$HeadWaitedMin, [double]$Need, [double]$Room, [bool]$Small, [int]$SmallRunning) {
+  if ($HeadNeed -le $Room -or $Need -gt $Room) { return '' }
+  if ($HeadWaitedMin -lt 20) { return 'backfill' }
+  if ($Small -and $SmallRunning -eq 0) { return 'small' }
+  ''
 }
 function Top-Users($Snap) {
   ($Snap.names.GetEnumerator() | Group-Object Value | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = (($_.Group | ForEach-Object { $Snap.procs[$_.Key] }) | Measure-Object -Sum).Sum / 1GB } } |
@@ -249,11 +274,13 @@ while ((Get-Date) -lt $deadline) {
     # Fair turns: only the head of the queue may start; others may backfill only while the head doesn't fit (and isn't starving)
     $pos = [array]::IndexOf(@($queue | ForEach-Object { [int]$_.pid }), [int]$PID)
     $head = if ($queue.Count) { $queue[0] } else { $null }
-    $myTurn = ($pos -le 0)
+    $myTurn = ($pos -le 0); $smallFill = $false
     if (-not $myTurn -and $head) {
       $room = $s.Avail - $s.Promised - $KeepFreeGB
       $headWaited = ((Get-Date) - [datetime]$head.since).TotalMinutes
-      if ([double]$head.need -gt $room -and $need -le $room -and $headWaited -lt 20) { $myTurn = $true; Write-Host "[gate] backfilling ahead of $($head.owner) (its $($head.need) GB doesn't fit yet)" }
+      $mode = Get-BackfillMode ([double]$head.need) $headWaited $need $room (Test-SmallBuild $need $medianSec) $s.Backfills
+      if ($mode -eq 'backfill') { $myTurn = $true; Write-Host "[gate] backfilling ahead of $($head.owner) (its $($head.need) GB doesn't fit yet)" }
+      elseif ($mode -eq 'small') { $myTurn = $true; $smallFill = $true; Write-Host "[gate] small build (~$([int]$medianSec) s, $need GB) backfilling ahead of $($head.owner) (waited $([int]$headWaited) min; its $($head.need) GB doesn't fit yet)" }
     }
     if (-not $myTurn) {
       $waits++
@@ -282,7 +309,7 @@ while ((Get-Date) -lt $deadline) {
       Remove-Item $myTicket -ErrorAction SilentlyContinue
       @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
       $entry = Join-Path $ledger "$($proc.Id).json"
-      @{ pid = $proc.Id; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $entry
+      @{ pid = $proc.Id; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
       break
     }
     $waits++
@@ -311,7 +338,8 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
       $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
-        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0) } | Select-Object -Last 10)
+        # at / code / cmd (first 60 chars) were added later: readers must not assume older samples carry them
+        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; cmd = $(if ($Cmd.Length -gt 60) { $Cmd.Substring(0, 60) } else { $Cmd }) } | Select-Object -Last 10)
         $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
         Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
       }

@@ -53,12 +53,21 @@ function ApkInfo {
   $warn = if ($head -and $head.Trim() -ne $i.commit) { "the APK is $($i.commit) but origin/$($i.branch) is at $($head.Trim()): ask the lead to rebuild (app-build.ps1)" }
   [ordered]@{ branch = $i.branch; commit = $i.commit; built = $i.built; warning = $warn }
 }
-# Boot a lane through swarm-up (memory gate inside); returns $true when the gate gave no memory turn (queued behind memory)
-function Boot($l, [switch]$Cold) {
+# Memory admission is the gate's alone (one source of truth): a boot queues in gate.ps1 with builds, under the gate's keepFreeGB
+# (-KeepFreeGB / env CLAUDE_GATE_KEEP_FREE_GB / kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB; same formula as gate.ps1).
+. (Join-Path (Split-Path (Split-Path $PSCommandPath)) 'dev-kit/scripts/kitconfig.ps1')
+function GateKeepFreeGB { if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) } }
+# Boot a lane through swarm-up (memory gate inside); returns $true when the gate gave no memory turn (queued behind memory).
+# swarm-up waits up to 30 min for its gate turn; until -Until the boot is queued again instead of failing fast.
+function Boot($l, [switch]$Cold, [datetime]$Until = (Get-Date)) {
   $a = @{ Lanes = $l.name; Mode = 'None' }; if ($Cold) { $a.ColdBoot = $true }
-  $boot = @(& (Join-Path $c.dir 'swarm-up.ps1') @a 3>&1)   # 3>&1: catch the gate's "no memory turn" warning
-  $boot | Select-Object -Last 2 | Out-Host
-  [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
+  do {
+    $boot = @(& (Join-Path $c.dir 'swarm-up.ps1') @a 3>&1)   # 3>&1: catch the gate's "no memory turn" warning
+    $boot | Select-Object -Last 2 | Out-Host
+    $queued = [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
+    if ($queued -and (Get-Date) -lt $Until) { "$($l.name): still no memory turn in the gate; queuing the boot again (until $($Until.ToString('HH:mm')))" | Out-Host }
+  } while ($queued -and -not (Running $l) -and (Get-Date) -lt $Until)
+  $queued
 }
 
 switch ($Action) {
@@ -69,6 +78,7 @@ switch ($Action) {
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
       '{0,-8} {1,-14} {2}' -f $l.name, "emulator-$($l.port)", $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (offline: its agent runs phone.ps1 ensure)" } else { "down     $who" })
     }
+    "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (keeps $(GateKeepFreeGB) GB free, a phone needs ~4.5 GB)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
   }
 
@@ -94,22 +104,16 @@ switch ($Action) {
         if (-not $free) { return $null }
         $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
         if ($ahead.Count -ge $free.Count) { return $null }
-        # spawn or wait: a free phone that is already up is taken at once; booting another one needs memory for it
-        # (free RAM - its 4.5 GB >= keepFreeGB). If memory is short but some phone is leased, wait for whichever comes first
-        # (a release or memory). If nothing is leased, nothing will free up: take the lane and let the gate queue the boot.
+        # a free phone that is already up is taken at once; otherwise take a free lane and let the memory gate queue its boot
+        # (no memory pre-check here: the gate's keepFreeGB is the only floor, and the boot waits its fair turn with builds)
         $up = @($free | Where-Object { Running $_ })
-        $pick = if ($up) { $up[0] } else {
-          $freeGB = Get-FreeGB
-          $someLeased = @($lanes | Where-Object { Lease $_.name }).Count
-          if ($freeGB - 4.5 -ge $c.keepFreeGB -or -not $someLeased) { $free[0] } else { $script:why = "only $freeGB GB free (a phone needs 4.5 + $($c.keepFreeGB) kept free)"; $null }
-        }
-        if (-not $pick) { return $null }
+        $pick = if ($up) { $up[0] } else { $free[0] }
         $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') }; if ($Holder) { $new.holder = $Holder }
         $new | ConvertTo-Json | Set-Content (Join-Path $dir "$($pick.name).json")
         $pick
       }
       if (-not $got) {
-        if ((Get-Date) -gt $deadline) { Remove-Item $wf -Force; throw "no phone free within $WaitMinutes min (phone.ps1 status shows who holds them)" }
+        if ((Get-Date) -gt $deadline) { Remove-Item $wf -Force -ErrorAction SilentlyContinue; throw "no phone free within $WaitMinutes min (phone.ps1 status shows who holds them)" }
         if (-not $told) { "$(if ($script:why) { $script:why } else { "all $(if ($Lane) { "$Lane is" } else { 'lanes are' }) leased" }); waiting for a release or memory (fair queue) ..."; $told = $true }
         $script:why = $null
         Start-Sleep 20
@@ -118,13 +122,13 @@ switch ($Action) {
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
     $serial = "emulator-$($got.port)"
     $memQueued = $false
-    if (-not (Running $got)) { $memQueued = Boot $got }
+    if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
     if (-not (Running $got)) {
       if ($script:had) {   # a lane we already held went offline and did not come back: keep the lease, never hand it to another agent
-        throw "$($got.name) is offline and did not boot$(if ($memQueued) { ' (no memory turn within 30 min)' }); lease kept: run phone.ps1 ensure -Agent $Agent again, or release it"
+        throw "$($got.name) is offline and did not boot$(if ($memQueued) { " (no memory turn in the gate within -WaitMinutes $WaitMinutes)" }); lease kept: run phone.ps1 ensure -Agent $Agent again, or release it"
       }
-      Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force }
-      if ($memQueued) { throw "$($got.name) queued behind memory: the gate gave no memory turn within 30 min; lease released (acquire again later)" }
+      Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue }
+      if ($memQueued) { throw "$($got.name) queued behind memory: the gate gave no memory turn within -WaitMinutes $WaitMinutes; lease released (acquire again later)" }
       throw "$($got.name) did not boot (emulator problem); lease released"
     }
     $installed = 'kept'
@@ -148,8 +152,8 @@ switch ($Action) {
     if (-not $got) { throw "no phone leased by ${Agent}: use phone.ps1 acquire -Agent $Agent -Lane <name>" }
     $got = $got[0]; $serial = "emulator-$($got.port)"; $state = 'up'
     if (-not (Running $got)) {
-      $memQueued = Boot $got -Cold
-      if (-not (Running $got)) { throw "$($got.name) did not come back$(if ($memQueued) { ' (no memory turn within 30 min)' }); lease kept: run ensure again later, or release it" }
+      $memQueued = Boot $got -Cold -Until (Get-Date).AddMinutes($WaitMinutes)
+      if (-not (Running $got)) { throw "$($got.name) did not come back$(if ($memQueued) { " (no memory turn in the gate within -WaitMinutes $WaitMinutes)" }); lease kept: run ensure again later, or release it" }
       $state = 'cold-booted (relaunch the app; it may need a fresh login)'
     }
     [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; state = $state; installed = 'kept'; apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
@@ -164,7 +168,7 @@ switch ($Action) {
       $serial = "emulator-$($l.port)"
       if (Running $l) { & $adb -s $serial shell am force-stop $pkg 2>$null }
       $waiting = Locked {
-        Remove-Item (Join-Path $dir "$($l.name).json") -Force
+        Remove-Item (Join-Path $dir "$($l.name).json") -Force -ErrorAction SilentlyContinue
         @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
       }
       if ($Keep -or $waiting) { "$($l.name) released (kept running: $(if ($Keep) { '-Keep' } else { "$waiting agent(s) waiting" }))" }

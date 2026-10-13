@@ -32,7 +32,7 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `tracker` | `{ "type": "clickup" }` | tracker.ps1 and everything that talks to the tracker | Issue tracker backend — see [Tracker](#tracker-trackertype) |
 | `reports` | `{ "type": "gdocs" }` if `gws` is on PATH, else `{ "type": "markdown" }` | finalize.ps1, devtools.py `doc` | Where QA reports and tester guides go — see [Reports](#reports-reportstype) |
 | `build.mavenOffline` | `true` | stack.ps1 | Maven commands get `-o` (offline: no network round-trips or remote-repo lock contention between parallel builds) when `~/.m2/repository` exists; `false` = always online |
-| `gate.keepFreeGB` | 15% of RAM, min 6 | gate.ps1 | RAM every gated build leaves free (`-KeepFreeGB` / env `CLAUDE_GATE_KEEP_FREE_GB` win) |
+| `gate.keepFreeGB` | 15% of RAM, min 6 | gate.ps1, qa-seat.ps1, phone.ps1 (boots queue in the gate) | RAM every gated build, phone boot and QA seat leaves free: the one memory floor (`-KeepFreeGB` / env `CLAUDE_GATE_KEEP_FREE_GB` win) |
 | `gate.startHeapGB` | `{ "gradle": 12, "maven": 8, "node": 4 }` | gate.ps1 | First JVM/Node heap for a project with no build history (afterwards learned from real peaks, never above this) |
 | `gate.heapMinGB` | `4` | gate.ps1 | Heap floor when the gate shrinks heaps under memory pressure |
 | `supervise.ramActPct` | `90` | supervise.ps1 | RAM use (%) that raises an ACT flag |
@@ -124,8 +124,9 @@ change gets the guide (steps, concrete Expected, screenshots) and the task comme
 defaults) - the headless browser's language (Accept-Language, `navigator.language`: date and number formats), time zone (IANA name,
 empty = the machine's) and window/viewport size for `browser.mjs`.
 
-Top-level `keepFreeGB` (default `8`): `qa-seat.ps1` lets a new tester/verifier start only while free RAM minus its need
-(web ~1.5 GB, API ~0.4 GB) stays at or above it; the supervisor's capacity flag uses the same value.
+Top-level `keepFreeGB` (default `8`): only the supervisor's capacity flag reads it now. `qa-seat.ps1` uses the memory gate's floor
+(`gate.keepFreeGB`, see above): a new tester/verifier starts only while free RAM minus the GB the gate has promised (running and
+queued builds / phones) minus its need (web ~1.5 GB, API ~0.4 GB) stays at or above it.
 
 Placeholders: `{user}`, `{pass}`, `{tenant}`, `{token}`. Tokens are cached in `<runtime>/cache/tokens`, web logins in `<runtime>/cache/sessions`.
 Evidence files never contain passwords or auth headers (`[redacted]`).
@@ -136,7 +137,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 |---|---|---|
 | `avdDir` | `$env:ANDROID_AVD_HOME`, else `~/.android/avd` (`%USERPROFILE%\.android\avd` on Windows) | Where the lane AVDs live |
 | `outDir` | `<runtime>/cache/android-swarm` | Runtime output: `apk/` (app.apk, base.apk, per-commit and side builds, `app.json` stamp), `build.log`, `metro.log`, emulator logs, `swarm.json`. An `app.apk` left in the skill's old `apk/` folder is copied here once |
-| `keepFreeGB` | `12` | A phone boots only if free RAM − 4.5 GB stays above this |
+| `keepFreeGB` | `12` | Unused by `phone.ps1` (kept for older configs): a phone boot queues in the memory gate, which keeps `gate.keepFreeGB` free |
 | `headless` | `false` | Boot without windows (also per lane) |
 | `lanes[]` | — | `{ name, port, user, notes, headless }`: AVD name, console port (serial `emulator-<port>`), the lane's test login (a user key in targets.local.json), notes printed by `phone.ps1 acquire` |
 | `app.kind` | `react-native` | `react-native` or `native` |
@@ -156,7 +157,7 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 |---|---|
 | `CLAUDE_RUNTIME` | Runtime folder (default `<kit>/.claude-runtime`; layout in `skills/dev-kit/scripts/kitpaths.json`) |
 | `CLAUDE_WT_ROOT` | Worktree root for `wt.ps1 new` (default `<repo's parent>-wt`) |
-| `CLAUDE_AGENT` | Owner name for fair turns in the memory gate (default: worktree prefix) |
+| `CLAUDE_AGENT` | Owner name for fair turns in the memory gate (default: the worktree folder minus its repo suffix, else its first dash part) |
 | `CLAUDE_GATE_KEEP_FREE_GB` | RAM the gate always keeps free (default `gate.keepFreeGB`, else 15% of RAM, min 6 GB) |
 | `CHROME_PATH` | Chrome/Edge/Chromium binary for `browser.mjs` (default: the usual install folders per OS, then `google-chrome`, `chromium`, `microsoft-edge` ... on `PATH`) |
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Android SDK (default `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) |

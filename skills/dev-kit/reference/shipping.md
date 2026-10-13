@@ -41,7 +41,10 @@ Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester gu
    **Merge producers before consumers**: DB/API/library first, then web/app/clients. `devtools.py merge <wt> <iid>` asks GitLab/GitHub
    to squash-merge as soon as the pipeline is green (a repo with no CI is merged at once) and ends with ONE status word on its last
    line: MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED / NOT_MERGED. Report that word as the MR's `mergeState` (merged only
-   on MERGED); on WAIT run it again (at most 3 runs, ~2 min apart). `merge-wait` is the old blocking mode. Post your tracker comment
+   on MERGED); on WAIT run it again (at most 3 runs, ~2 min apart), except "waiting for producer <ref>": a consumer whose producer
+   (`track.ps1 add -MergeAfter '<consumer>!<iid>><producer>!<iid>'`) is not merged yet is refused; report WAIT, track.ps1 merges it
+   after the producer. `devtools.py mr` warns when the diff touches templates/styles and "Verified" has no `UI:` line.
+   `merge-wait` is the old blocking mode. Post your tracker comment
    right after scheduling; the coordinator verifies the merge. On conflict: `wt.ps1 sync`, resolve, re-check, `push --force-with-lease` to
    **your** branch. Never force-push a target branch.
 4. Several MRs are fine for a big stream; merge each before starting the next.

@@ -10,7 +10,8 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
   python devtools.py merge <worktree> <iid>                         squash-merge now (green, or no CI) or schedule merge-when-green;
                                                                     waits <= 90 s; last line: MERGED / SCHEDULED / WAIT / CONFLICT /
-                                                                    PIPELINE_FAILED / NOT_MERGED (read back from the host)
+                                                                    PIPELINE_FAILED / NOT_MERGED (read back from the host). A consumer
+                                                                    whose producer (tracking.local.json mergeAfter) is unmerged: WAIT
   python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (tester guide, report); prints its URL/path
                                                                     (.md is converted to HTML for gdocs: tables, lists, code survive)
   python devtools.py guide-mode                                     "always" or "complex": when a change gets a published tester guide
@@ -199,6 +200,18 @@ def _verified_gaps(body_md):
     return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
 
 
+UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/layout[^/]*/[^/]+\.xml$', re.I)
+
+
+def _ui_line_missing(worktree, tgt, body_md):
+    """MR_BODY.md '## Verified' carries '- UI: <spec / screenshot> (or "not a UI change")': the changed UI files when the body has no
+    UI: line and the diff against origin/<target> touches templates or styles, else []."""
+    if re.search(r'(?im)^\s*[-*]?\s*(\*\*)?UI(\*\*)?\s*:', body_md) or not tgt:
+        return []
+    out = _run(['git', '-C', worktree, 'diff', '--name-only', f'origin/{tgt}...HEAD'])
+    return [f for f in out.splitlines() if UI_FILES.search(f.strip())]
+
+
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
@@ -217,6 +230,10 @@ def mr_create(worktree, title, body_md, tgt=None):
     if not tgt:
         raise SystemExit('no target: no wt.ps1 record, no kit.local.json repos[].target for this repo and no origin/HEAD'
                          ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
+    ui = _ui_line_missing(worktree, tgt, body_md)
+    if ui:
+        print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## Verified" has no'
+              ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - see MR_BODY.md', file=sys.stderr)
     if host == 'gitlab':
         out = _run([GLAB, 'mr', 'create', '--source-branch', src, '--target-branch', tgt, '--title', title,
                     '--description', body_md, '--remove-source-branch', '--squash-before-merge', '--yes'], cwd=worktree)
@@ -294,12 +311,80 @@ def _gitlab_final(enc, proj, iid, put, st):
     return f'not merged: !{iid} is {m.get("state")} ({m.get("detailed_merge_status") or m.get("merge_status")}); merge reply: {str(put)[:300]}\nNOT_MERGED'
 
 
+def _norm_ref(ref):
+    """'web!12', a quoted ref, an MR/PR URL or an alias (kit.local.json repoAliases) -> (repo, iid) as track.ps1 stores them."""
+    r = str(ref or '').strip().strip('\'"')
+    group = CFG.get('gitlabGroup') or ''
+    m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pull)/(?P<i>\d+)', r)
+    if m:
+        p = m.group('p')
+        if group and p.lower().startswith(group.lower() + '/'):
+            p = p[len(group) + 1:]
+        r = f"{p}!{m.group('i')}"
+    m = re.match(r'^(?P<repo>[\w./-]+)!(?P<iid>\d+)$', r)
+    if not m:
+        return None
+    repo = m.group('repo')
+    repo = str((CFG.get('repoAliases') or {}).get(repo) or repo)
+    return repo, m.group('iid')
+
+
+def _same_repo(repo, proj):
+    """Does a tracking ref's repo ('web', 'group/web') name the project path from the origin remote ('group/sub/web')?"""
+    a, b = repo.lower().strip('/'), proj.lower().strip('/')
+    return a == b or b.endswith('/' + a)
+
+
+def _host_mr_state(host, proj, repo, iid):
+    """'merged' / 'opened' / 'closed' / '' (unknown) of <repo>!<iid>, resolved like track.ps1 (gitlabGroup, else the remote's group)."""
+    if '/' in repo:
+        path = repo
+    else:
+        group = CFG.get('gitlabGroup') if host == 'gitlab' else ''
+        path = f"{group or proj.rsplit('/', 1)[0]}/{repo}"
+    if host == 'gitlab':
+        return str(_json(_run([GLAB, 'api', f"projects/{path.replace('/', '%2F')}/merge_requests/{iid}"])).get('state') or '')
+    s = str(_json(_run([GH, 'pr', 'view', str(iid), '--repo', path, '--json', 'state'])).get('state') or '')
+    return {'MERGED': 'merged', 'OPEN': 'opened', 'CLOSED': 'closed'}.get(s, '')
+
+
+def unmerged_producers(proj, iid, state_of, tracking=None):
+    """Producer-before-consumer: the mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', written by track.ps1 add -MergeAfter)
+    in the durable tracking file whose consumer is this MR (<proj>!<iid>) and whose producer is not merged yet.
+    state_of(repo, iid) -> 'merged' / 'opened' / 'closed' / ''. Returns [(producer ref, state, task id)]."""
+    path = tracking or kit_path('tracking')
+    try:
+        data = json.load(open(path, encoding='utf-8-sig')) if os.path.exists(path) else {}
+    except Exception:
+        return []
+    out = []
+    for tid, t in ((data or {}).get('tasks') or {}).items():
+        if not isinstance(t, dict):
+            continue
+        for pair in t.get('mergeAfter') or []:
+            dep, sep, on = str(pair).partition('>')
+            d, o = _norm_ref(dep), _norm_ref(on)
+            if not sep or not d or not o or str(d[1]) != str(iid) or not _same_repo(d[0], proj):
+                continue
+            st = state_of(o[0], o[1])
+            if st != 'merged':
+                out.append((f'{o[0]}!{o[1]}', st or 'unknown', tid))
+    return out
+
+
 def auto_merge(worktree, iid, max_wait=90):
     """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge), or merge
     at once when it is green already or the project has no CI. Waits at most max_wait seconds (with flushed progress lines), so it
     finishes inside an agent's tool timeout. The result's LAST line is exactly one status word (merge_word):
-    MERGED / SCHEDULED / WAIT (run again in a few minutes) / CONFLICT / PIPELINE_FAILED / NOT_MERGED, read back from the host."""
+    MERGED / SCHEDULED / WAIT (run again in a few minutes) / CONFLICT / PIPELINE_FAILED / NOT_MERGED, read back from the host.
+    A consumer MR whose registered producer (track.ps1 -MergeAfter) is not merged yet is not merged: WAIT ("waiting for producer")."""
     host, proj = remote(worktree)
+    waiting = unmerged_producers(proj, iid, lambda r, i: _host_mr_state(host, proj, r, i))
+    if waiting:
+        lines = [f'waiting for producer {ref} ({st}; task {tid}): {proj}!{iid} merges only after it' for ref, st, tid in waiting]
+        if any(st == 'closed' for _, st, _ in waiting):
+            return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (track.ps1 mergeAfter) with the coordinator\nNOT_MERGED'
+        return '\n'.join(lines) + '\nnot merged now: track.ps1 run (supervise) merges it once the producer merged\nWAIT'
     if host == 'gitlab':
         enc = proj.replace('/', '%2F')
         m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
@@ -368,6 +453,9 @@ def auto_merge(worktree, iid, max_wait=90):
 def merge_when_green(worktree, iid, timeout_min=90):
     """Poll the pipeline; squash-merge when green. Never merges on failure or conflict. Prefer auto_merge (no waiting)."""
     host, proj = remote(worktree)
+    waiting = unmerged_producers(proj, iid, lambda r, i: _host_mr_state(host, proj, r, i))
+    if waiting:
+        return '; '.join(f'waiting for producer {ref} ({st}; task {tid})' for ref, st, tid in waiting) + ': not merged'
     end = time.time() + timeout_min * 60
     while time.time() < end:
         if host == 'gitlab':

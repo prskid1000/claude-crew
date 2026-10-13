@@ -68,7 +68,8 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      the UI path is missing) is its own NOT_TESTED check, never a note; an unreachable screen the feature needs is FAIL.
    - **LLM-driven checks** (an AI assistant or decider) are intermittent: after a redeploy or long idle do a warm-up turn, then run
      each 5+ times in fresh sessions and record every answer with its timestamp; re-run a deviating result once before FAIL and keep
-     the first and each deviating run as evidence.
+     the first and each deviating run as evidence. Set the check's `attempts` and `window` (conditions + UTC times) in results.json:
+     a verifier must recreate them to refute the FAIL (else its verdict is `inconclusive` and the FAIL stays).
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
 6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check -FixNames` (publishes nothing;
    renames off-standard evidence to `CODE-checkId_NN_slug` per `reference/evidence-standard.md` and rewrites results.json; exit 1 lists

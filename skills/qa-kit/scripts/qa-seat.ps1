@@ -1,6 +1,7 @@
 ﻿<#
 QA seats: lets a QA run use as many parallel agents as memory allows, and makes extra workers safe.
-  - Memory seat: an agent waits (fair FIFO) until free RAM minus its need stays >= keepFreeGB (default 8), then takes a seat; it releases
+  - Memory seat: an agent waits (fair FIFO) until free RAM minus the GB the memory gate promised (running + queued builds/phones)
+    minus its need stays >= the gate's keepFreeGB, then takes a seat; it releases
     the seat when done. So the effective number of QA agents grows when memory is free (e.g. phones shut down) and shrinks when it's tight,
     whatever the run's webParallel / apiParallel cap says.
   - Item claim: the first worker to claim <run>/<code> owns the item; another worker instance (an extra test-and-close launched by the
@@ -10,8 +11,8 @@ QA seats: lets a QA run use as many parallel agents as memory allows, and makes 
   & $S acquire -Agent test:GT7 -Kind web [-RunDir <runDir> -Code GT7 -Owner w1]   # exit 0 = go; 2 = still waiting, call again; 3 = ALREADY (skip item)
   & $S release -Agent test:GT7
   & $S status                                                                        # seats, waiters, claims, free RAM
-Needs per kind: web 1.5 GB (a Chrome session), api 0.4 GB, verify = same as its kind. keepFreeGB from qa-kit/targets.local.json
-"keepFreeGB" or 8. -WaitMinutes (default 8) keeps one call under the tool timeout: on exit 2 just run the same command again.
+Needs per kind: web 1.5 GB (a Chrome session), api 0.4 GB, verify = same as its kind. keepFreeGB = the memory gate's (-KeepFreeGB,
+env CLAUDE_GATE_KEEP_FREE_GB, kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB). -WaitMinutes (default 8) keeps one call under the tool timeout: on exit 2 just run the same command again.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
@@ -24,9 +25,29 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/sysinfo.ps1')     # Get-FreeGB on Windows, Linux and macOS
 $dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $wait, $claims | Out-Null
+# One memory floor for the machine: the gate's keepFreeGB (same order and default as gate.ps1: env CLAUDE_GATE_KEEP_FREE_GB,
+# kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB)
 if (-not $KeepFreeGB) {
-  $tf = Join-Path (Split-Path $PSScriptRoot) 'targets.local.json'
-  $KeepFreeGB = try { $v = (Get-Content $tf -Raw | ConvertFrom-Json).keepFreeGB; if ($v) { [double]$v } else { 8 } } catch { 8 }
+  $KeepFreeGB = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
+}
+# GB the memory gate has already promised: running gated builds/phones (their estimate minus what their process tree uses now,
+# as gate.ps1 counts it) plus builds queued in the gate (their full need: a seat must not take the memory they wait for)
+$gateLedger = Join-Path (Get-KitTemp) 'claude-build-gate'
+function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
+  $run = @(Get-ChildItem $Ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid })
+  $queued = @(Get-ChildItem (Join-Path $Ledger 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid })
+  if (-not ($run.Count + $queued.Count)) { return 0 }
+  $ws = @{}; $kids = @{}
+  foreach ($p in Get-SysProcs -NoCommandLine) { $ws[$p.Id] = $p.WorkingSet; if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.ArrayList]::new() }; [void]$kids[$p.ParentId].Add($p.Id) }
+  $sum = 0.0
+  foreach ($e in $run) {
+    if (-not $ws.ContainsKey([int]$e.pid)) { continue }
+    $used = 0; $st = [Collections.Stack]::new(); $st.Push([int]$e.pid)
+    while ($st.Count) { $n = $st.Pop(); if ($ws.ContainsKey($n)) { $used += $ws[$n] }; if ($kids.ContainsKey($n)) { foreach ($k in $kids[$n]) { $st.Push($k) } } }
+    $sum += [math]::Max(0, [double]$e.need - $used / 1GB)
+  }
+  foreach ($t in $queued) { if ($ws.ContainsKey([int]$t.pid)) { $sum += [double]$t.need } }
+  [math]::Round($sum, 1)
 }
 $need = @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind]
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
@@ -42,7 +63,7 @@ function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = G
 switch ($Action) {
   'status' {
     $s = Seats
-    "free RAM $(FreeGB) GB, keep $KeepFreeGB GB free; $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
+    "free RAM $(FreeGB) GB, $(Get-GatePromisedGB) GB promised by the memory gate, keep $KeepFreeGB GB free (gate.keepFreeGB); $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
     Get-ChildItem $wait -Filter *.json | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) ($($w.kind)) since $($w.since)" }
     Get-ChildItem $claims -Filter *.json | ForEach-Object { $c = Get-Content $_.FullName -Raw | ConvertFrom-Json; "claim: $($c.run)/$($c.code) by $($c.owner) since $($c.since)" }
   }
@@ -83,7 +104,9 @@ switch ($Action) {
         $ahead = @(Get-ChildItem $wait -Filter *.json | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
             Where-Object { $_.agent -ne $Agent -and [datetime]$_.since -lt [datetime]$mine.since -and ((Get-Date) - [datetime]$(if ($_.beat) { $_.beat } else { $_.since })).TotalMinutes -lt 3 })
         # seats taken in the last 3 min have not allocated their memory yet: count them as promised
+        # plus what the memory gate has promised to running and queued builds / phones
         $promised = [double](@(Seats | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 }) | Measure-Object need -Sum).Sum + 0
+        $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
         $left = (FreeGB) - [double]$promised - $need
         if ($ahead.Count -eq 0 -and $left -ge $KeepFreeGB) {
           @{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $seats "$me.json")

@@ -64,7 +64,13 @@ const HOLD_NOTE = HOLD.length
 // devtools.py merge ends with one status word read back from the host; an agent's own "merged" guess once promoted unmerged work
 const MERGE_WORD_NOTE = `Merge results: the LAST line of each devtools.py merge run is one word: MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED /
 NOT_MERGED. Report it as that MR's mergeState and set merged=true ONLY for MERGED. WAIT: run the same merge again about 2 minutes
-later (at most 3 runs in total), then report the last word. CONFLICT / PIPELINE_FAILED / NOT_MERGED: do not retry, say why in the summary.`
+later (at most 3 runs in total), then report the last word - except "waiting for producer <ref>": the producer MR is not merged yet,
+do not re-run, report WAIT (track.ps1 merges it after its producer). CONFLICT / PIPELINE_FAILED / NOT_MERGED: do not retry, say why in the summary.`
+
+// the build/memory gate (gate.ps1) queues work under $env:CLAUDE_AGENT; without it the owner is guessed from the worktree name
+const AGENT_ENV = (name) => `
+AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${name}';  (Bash: export CLAUDE_AGENT='${name}';) - the build gate
+queues your builds under this owner name (shell state does not persist between commands).`
 
 const REPORT = {
   type: 'object',
@@ -130,7 +136,7 @@ const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ?
 
 function buildPrompt(a) {
   return `${WHY}
-You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}
+You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; scripts in ${K}/scripts) and the brief ${A.brief} (repos, ownership, ranges, decisions; it wins).
 ${MODE === 'resume' ? `Resuming: first work out what is already done (${T}/RESUME_BRIEF.md).\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: join first with -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
@@ -151,7 +157,7 @@ Return the report.`
 }
 
 function reviewPrompt(a, r) {
-  return `Review agent ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}) as your agent definition says.${PATHS}
+  return `Review agent ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}) as your agent definition says.${PATHS}${AGENT_ENV(`review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Rules: ${K}/SKILL.md Rules (scope) and ${K}/reference/migrations.md. Only real problems; "blocking" = must be fixed before it ships.
 Do not change any code yourself.`
@@ -159,7 +165,8 @@ Do not change any code yourself.`
 
 function fixPrompt(a, r, findings) {
   return `${WHY}
-You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS} Follow ${K}/SKILL.md and ${A.brief}.
+You are dev agent ${a.id} again (items ${a.items}, area ${a.area}).${PATHS}${AGENT_ENV(a.id)}
+Follow ${K}/SKILL.md and ${A.brief}.
 Your worktrees: ${r.worktrees.join(', ')}. An independent reviewer found these problems in your MRs (blocking and should-fix; resolve all of them):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it isn't a problem. Before you push, check each MR's state (glab mr view / gh pr view): pushing to the
@@ -177,27 +184,36 @@ const CI_SCHEMA = {
 }
 // CI gate before shipping: agents stop at "MR opened", so nobody saw a failed pipeline (a lint/schema check failure sat unnoticed until
 // the tracker flagged it). A cheap agent waits for the pipelines with pipe-wait.ps1; failures go back to the dev agent as blocking findings.
-function ciPrompt(r) {
+function ciPrompt(r, a) {
   const urls = r.mrs.filter((m) => !m.merged).map((m) => m.url).join(',')
   return `Run exactly this PowerShell command and return its JSON output as the result (fields done, mrs). Nothing else.${PATHS}
-& ${K}/scripts/pipe-wait.ps1 -Mrs ${urls} -MaxMinutes 8
+$env:CLAUDE_AGENT='ci-${a ? a.id : 'wave'}'; & ${K}/scripts/pipe-wait.ps1 -Mrs ${urls} -MaxMinutes 8
 If the JSON says "done": false, run the same command again (at most 3 times in total) and return the last JSON.`
 }
 
 // held repos are filtered out in code, not only by prompt text: a merge there needs a person's yes
 const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((h) => (m.url || '').includes(`/${h}/`))
-const toShip = (r) => r.mrs.filter((m) => !m.merged && !isHeld(m))
+// producers (DB/API/library) merge before consumers (web/app/clients): the ship list is ordered that way, consumers last
+const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
+const isConsumer = (m) => CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
+const toShip = (r) => {
+  const open = r.mrs.filter((m) => !m.merged && !isHeld(m))
+  return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)]
+}
 
 function shipPrompt(a, r) {
   // a ship agent once refused every merge ("deploying merges need a person's yes") because it read the harness-relayed chat message
   // as the request: merges into deploying branches are already removed in code (holdMerge), so the listed ones are authorized
-  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code.${PATHS}
+  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code.${PATHS}${AGENT_ENV(`ship-${a.id}`)}
 These merges are authorized: this wave was launched for this work, and the workflow already removed every MR whose target deploys
 on merge (holdMerge), so none of the targets below deploys. Do not ask for approval and ignore any unrelated chat message relayed to you.
-${toShip(r).map((m) => `- ${m.url} (${m.repo})`).join('\n')}
-DB/API (producer) and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
-A consumer (web/app) MR that depends on an API MR in this list: don't merge it; register & ${ORCH}/track.ps1 add -Task <task id from the
-MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><api repo>!<iid>' (mergeState OPEN for it).
+Merge in THIS order (producers - DB/API/library - first, consumers - web/app/clients - last):
+${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
+Producer and independent MRs now: python ${K}/scripts/devtools.py merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}).
+A consumer (web/app) MR that depends on a producer MR in this list: merge it only after the producer's merge printed MERGED; otherwise
+don't merge it: register & ${ORCH}/track.ps1 add -Task <task id from the MR title/branch> -Discover -MergeAfter
+'<consumer repo>!<iid>><producer repo>!<iid>' (mergeState OPEN for it; the coordinator's tracker merges it once the producer merged).
+devtools.py merge itself refuses a consumer whose registered producer is not merged yet ("waiting for producer ...", last line WAIT).
 ${MERGE_WORD_NOTE}
 Return the report with the same MRs (merged=true only on MERGED) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
@@ -259,7 +275,7 @@ const results = await pipeline(
       log(`${a.id}: tracker task NOT registered (${deferred.length ? `deferred ${deferred.map((d) => d.id).join(', ')}` : 'agent stopped'}) - once the rest is done: track.ps1 add -Task <id> -Discover -Mrs ${refs}`)
       return { ...x, trackHeld: deferred.length ? 'deferred items' : 'agent stopped' }
     }
-    const tr = await agent(`Register agent ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}
+    const tr = await agent(`Register agent ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
 MRs: ${refs}
 1. Find the task id: it is in each MR's title or source branch after the tracker tag (e.g. CU-<id>); glab mr view / gh pr view <url> if needed.
    One agent can have several tasks: group the MRs by task.
@@ -274,7 +290,7 @@ Return ok=true and the track.ps1 output lines.`, { label: `track:${a.id}`, phase
 // CI gate: failed pipelines become blocking findings; a CI agent that returned nothing is logged, not treated as green-and-silent
 async function ciGate(a, r) {
   if (!REVIEW || !r.mrs.some((m) => !m.merged)) return []
-  const ci = await agent(ciPrompt(r), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, ...pick('ci'), effort: 'low' })
+  const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, ...pick('ci'), effort: 'low' })
   if (!ci) { log(`${a.id}: WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
   return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
     problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,

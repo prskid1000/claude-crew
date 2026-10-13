@@ -81,6 +81,8 @@ const LEARN = R.learn === undefined ? true : R.learn   // worker instance: extra
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
   return `
+AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}';  (Bash: export CLAUDE_AGENT='${label}';) - the build/memory
+gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
   & ${Q}/qa-seat.ps1 acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
   exit 0 = go. exit 2 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
@@ -115,6 +117,8 @@ const CHECKS_SCHEMA = {
           what_was_done: { type: 'string' },
           observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
           evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/' },
+          attempts: { type: 'integer', description: 'how many times you ran this check (LLM-driven / timing checks: 5+)' },
+          window: { type: 'string', description: 'when it ran, as conditions + UTC times: e.g. "first 5 min after a restart, 14:02-14:10 UTC", "after 2 h idle"' },
         },
         required: ['id', 'subtask_id', 'screen', 'result', 'what_was_done', 'observed', 'evidence'],
       },
@@ -127,13 +131,21 @@ const CHECKS_SCHEMA = {
 }
 const VERIFY_SCHEMA = {
   type: 'object',
-  properties: { verdicts: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, confirmed: { type: 'boolean' }, observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['id', 'confirmed', 'observed', 'evidence'] } } },
+  properties: { verdicts: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' },
+    outcome: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'], description: 'confirmed = the defect is real; refuted = not reproduced UNDER the first tester\'s conditions (same login/session type, time window, at least as many attempts); inconclusive = those conditions could not be recreated' },
+    confirmed: { type: 'boolean', description: 'false ONLY when outcome is refuted (older readers use this field)' },
+    attempts: { type: 'integer', description: 'how many times you ran the check' },
+    observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['id', 'outcome', 'confirmed', 'attempts', 'observed', 'evidence'] } } },
   required: ['verdicts'],
 }
 const AUDIT_SCHEMA = {
   type: 'object',
   properties: {
-    reclassify: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, defect: { type: 'boolean' }, reason: { type: 'string' } }, required: ['id', 'defect', 'reason'] } },
+    reclassify: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, defect: { type: 'boolean' },
+      notExercised: { type: 'boolean', description: 'true when part of the check\'s Expected was never exercised (not a defect, not a pass)' },
+      unreachable: { type: 'boolean', description: 'with notExercised: the screen/endpoint that part needs is missing or unreachable (-> FAIL)' },
+      part: { type: 'string', description: 'with notExercised: the part of Expected that was not exercised' },
+      reason: { type: 'string' } }, required: ['id', 'defect', 'reason'] } },
     newDefects: { type: 'array', items: { type: 'object', properties: { screen: { type: 'string' }, what_was_done: { type: 'string' }, observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['screen', 'what_was_done', 'observed', 'evidence'] } },
   },
   required: ['reclassify', 'newDefects'],
@@ -218,9 +230,13 @@ ${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comm
 ${it.extra || ''}
 ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only those.` : 'Work through ALL checks in the guide. Return every check with the guide\'s own numbers.'}
 Return checks, findings, setup_changes and data_created.
+For a check you ran more than once (LLM-driven / timing: 5+), set attempts and window (conditions + UTC times): a verifier must
+recreate them before it may refute your FAIL.
 LAST STEP before returning: write that same result as ${outDir(it)}/results.json (Write tool) and run
-  & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check
-  (checks only, publishes nothing). Exit 1 lists evidence named in results.json that does not exist: save it or drop the name, re-check.
+  & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames
+  (publishes nothing; renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites results.json). Exit 1 = evidence
+  named in results.json is missing, a name it could not fix, or duplicate check ids: save the file or drop the name, give each check
+  its own id, and re-run until exit 0. Return the checks as results.json now has them (fixed names).
 
 NON-NEGOTIABLE: there is no session time limit and nobody is waiting on you. "No time" or "not executed" are not valid NOT_TESTED reasons;
 returning early with untested checks will be rejected and re-run.`
@@ -234,9 +250,15 @@ function auditPrompt(it, res) {
   or (b) a purely cosmetic difference while behaviour is correct.
 - A DEFECT is: 5xx or unexpected 4xx; crash; stuck/blocking flow; data changed wrongly or not saved; wrong records affected; broken
   navigation; a missing screen the feature needs — whether or not it's in the guide's scope.
-- NOT defects: test-data/setup notes, tester mistakes, intended product decisions, platform limits, config missing on the test environment.
+- NOT defects: test-data/setup notes, tester mistakes, intended product decisions, platform limits, config missing on the test environment,
+  and guide-conditional checks (the guide itself says the step may not apply: "if the tenant has X", "conditional step") whose condition
+  does not hold on the target - unless the condition being false is itself the defect.
+- NOT EXERCISED (third class, neither defect nor pass): a part of the check's Expected the tester never exercised (a second theme not
+  rendered, a timeout/error path not triggered, verified through the API only because the UI path was not reached). Return it with
+  defect=false, notExercised=true, part=<that part>, and unreachable=true when the screen/endpoint that part needs is missing or
+  unreachable. The workflow turns it into its own check (<id>n): NOT_TESTED, or FAIL when unreachable. Never leave it inside a note.
 ${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (the tracker (tracker.ps1): & '${KIT}/skills/dev-kit/scripts/tracker.ps1' view ${R.tracker.parent} lists its subtasks).` : ''}
-- Return {id, defect, reason} per note check; defects that sit only in findings -> newDefects (screen, what_was_done, observed with the exact
+- Return {id, defect, reason} (plus notExercised/part/unreachable when it applies) per note check; defects that sit only in findings -> newDefects (screen, what_was_done, observed with the exact
   failing call/message, evidence file names that exist in ${outDir(it)}/shots or evidence).
 - You may read evidence, code, or call the API read-only (GET). Change nothing.
 
@@ -255,22 +277,29 @@ Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<check
 Tasks and MRs: ${(it.subtasks || []).map((s) => `${s.id}${s.mrs ? ` (MRs: ${s.mrs})` : ''}`).join('; ')}
 
 FAILED CHECKS:
-${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}`).join('\n')}
+${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}\n  conditions of the first tester: ${c.attempts || 1} attempt(s)${c.window ? `, window: ${c.window}` : ', window: not recorded (read the evidence timestamps)'}`).join('\n')}
 ${seatBlock(it, `verify:${it.code}`)}
 ${COMMON}
 ${laneBlock(it, ports, L)}
-Return one verdict per check id.`
+Return one verdict per check id, with attempts (how many times you ran it) and outcome:
+- confirmed: the behaviour really differs from Expected (confirmed=true).
+- refuted: not reproduced UNDER the first tester's conditions above (same login/session type, same time window - e.g. right after a
+  restart, deploy or idle period - and at least as many attempts; one clean run never refutes a FAIL) (confirmed=false).
+- inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).`
 }
 
 function finalPrompt(it, res) {
   return `Publish the test results of package ${it.code}.${PATHS}
 1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
-2. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check   (evidence check only, publishes nothing),
-   then (timeout 600000): & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
+2. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames   (publishes nothing; renames
+   off-standard evidence files and rewrites results.json to match). Exit 1 = evidence named in results.json is missing, a name it
+   could not fix, or duplicate check ids: fix that data (step 3) and re-run it until exit 0.
+   Then (timeout 600000): & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
    It refuses to publish while evidence listed in results.json is missing. It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on
    and closes the tasks through the tracker (tracker.ps1), and opens a bug task for confirmed failures.
-3. If it errors, fix only data problems in results.json (e.g. drop a missing evidence file name) and run it once more. Don't edit finalize.ps1.
+3. If it errors, fix only data problems in results.json (drop a missing evidence file name, suffix a duplicate check id; an off-standard
+   file name: re-run -Check -FixNames) and run it once more. Don't edit finalize.ps1.
 Return ok=true/false and the script's output.`
 }
 
@@ -313,13 +342,22 @@ async function runItem(it, idx, L) {
     for (const d of (a && a.reclassify) || []) {
       const c = res.checks.find((x) => x.id === d.id)
       if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.observed = `${c.observed} | Note audit: a defect, not a note: ${d.reason}` }
+      else if (c && d.notExercised) {
+        // NOT EXERCISED: the untested part of Expected becomes its own check <id>n (NOT_TESTED; FAIL when its screen/endpoint is unreachable)
+        let nid = `${c.id}n`, k = 1
+        while (res.checks.some((x) => x.id === nid)) nid = `${c.id}n${++k}`
+        res.checks.push({ id: nid, subtask_id: c.subtask_id, screen: c.screen, result: d.unreachable ? 'FAIL' : 'NOT_TESTED',
+          what_was_done: `Split from ${c.id} by the note audit: this part of its Expected was never exercised: ${d.part || '(see reason)'}`,
+          observed: `${d.unreachable ? 'The screen/endpoint this part needs was missing or unreachable' : 'Not exercised by the tester'}: ${d.reason} (raised by the note audit)`, evidence: [] })
+        c.observed = `${c.observed} | Note audit: the unexercised part moved to ${nid}`
+      }
     }
     // new audit checks continue after the highest X id already used (the guide's X1..Xn -> X(n+1))
     let n = Math.max(0, ...res.checks.map((c) => +((/^X(\d+)$/.exec(c.id) || [])[1] || 0)))
     for (const d of (a && a.newDefects) || []) {
       res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', what_was_done: d.what_was_done, observed: `${d.observed} (raised by the note audit)`, evidence: d.evidence || [] })
     }
-    if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.newDefects || []).length} new defect(s)`)
+    if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
   }
 
   const fails = res.checks.filter((c) => c.result === 'FAIL')
@@ -330,10 +368,17 @@ async function runItem(it, idx, L) {
     for (const c of fails) {
       const x = byId[c.id]
       if (!x) { c.verify = 'not re-tested'; continue }
-      c.verify = x.confirmed ? 'confirmed' : 'not reproduced'
-      c.evidence = [...c.evidence, ...x.evidence]
-      if (x.confirmed) c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}`
-      else { c.result = 'PASS_WITH_NOTE'; c.observed = `First run reported a failure; an independent re-test did not reproduce it. Re-test: ${x.observed}. First run: ${c.observed}` }
+      let outcome = x.outcome || (x.confirmed ? 'confirmed' : 'refuted')
+      // fewer attempts than the first tester never refutes an intermittent FAIL (LLM-driven / timing checks).
+    // (no apostrophes inside nested template literals: kit-lint's string stripper loses track of them)
+      if (outcome === 'refuted' && (c.attempts || 1) > 1 && (x.attempts || 1) < c.attempts) {
+        outcome = 'inconclusive'
+        x.observed = `${x.observed} (${x.attempts || 1} attempt(s) against ${c.attempts} by the first tester)`
+      }
+      c.evidence = [...c.evidence, ...(x.evidence || [])]
+      if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
+      else if (outcome === 'inconclusive') { c.verify = 'inconclusive'; c.observed = `${c.observed} | Re-test inconclusive (conditions not recreated): ${x.observed}` }
+      else { c.verify = 'not reproduced'; c.result = 'PASS_WITH_NOTE'; c.observed = `First run reported a failure; an independent re-test under the same conditions did not reproduce it. Re-test: ${x.observed}. First run: ${c.observed}` }
     }
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
@@ -347,15 +392,16 @@ ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
 ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).
-3. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check   (evidence check only, publishes nothing)
-   and return its output (ok=true even when it lists missing files: the lead fixes them before publishing).`,
+3. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames   (publishes nothing; renames
+   off-standard evidence files and rewrites results.json to match) and return its output. Exit 1 = evidence named in results.json is
+   missing, a name it could not fix, or duplicate check ids: return ok=true anyway with that output (the lead fixes them before publishing).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
     return { code: it.code, summary: line, result: res, eventful: true, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
   }
   const fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   log(line + (fin && fin.ok ? '' : ' [FINALIZE FAILED — autoclose.ps1 or the lead publishes it]'))
-  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduced/.test(c.observed || '')) || !(fin && fin.ok)
+  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(c.observed || '')) || !(fin && fin.ok)
   return { code: it.code, summary: line, finalize: fin, eventful, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 
@@ -430,7 +476,7 @@ const learned = await agent(`You maintain the kit's memory. This QA run just fin
 Outcome (JSON):
 ${JSON.stringify(all).slice(0, 60000)}
 
-1. One signal per notable event (failures, retries, NOT_TESTED causes, audit reclassifications, verify "not reproduced", anything that
+1. One signal per notable event (failures, retries, NOT_TESTED causes, audit reclassifications / not-exercised splits, verify "not reproduced" or "inconclusive", anything that
    cost time or worked unusually well):
    & ${ORCH}/learn.ps1 -Skill <qa-kit|other skill|project> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. Read ${QA}/LESSONS.md (active rules; never HISTORY.md) and the recent signals (learn.ps1 -Show -Last 200). A pattern seen ≥ 2 times
