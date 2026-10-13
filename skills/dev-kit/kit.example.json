@@ -26,7 +26,7 @@
     "type": "clickup",
     "repo": "<owner/name or group/project, for github/gitlab>",
     "list": "<default list id / Jira project key for new tasks>",
-    "owner": "<default assignee of new tasks: tracker user id (ClickUp/Jira) or username (GitHub/GitLab)>",
+    "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
     "branchTag": "CU-",
     "statuses": {
       "open": [

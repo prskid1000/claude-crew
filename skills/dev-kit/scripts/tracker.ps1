@@ -8,7 +8,8 @@ As a script (structured results print as JSON):
   & $TR status <id> <status>             # logical name (review, promoted, inTest, closed, ...) or the tracker's own status name
   & $TR comment <id> <text | file.md>
   & $TR comments <id>                    # [{ user, date, text }] oldest first
-  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url }; no -Assignee = kit.local.json tracker.owner
+  & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # { id, url }; no -Assignee = Get-TrackerOwner (you)
+  & $TR owner                            # who new tasks are assigned to: tracker.owner, else your OS full name matched to a tracker member
   & $TR url <id>
   & $TR describe <id> <text | file.md>   # replace the description
   & $TR attach <id> <file> [-Text "<comment>"]   # report/guide: GitHub/GitLab post the file's text as a comment; ClickUp/Jira attach it
@@ -16,7 +17,7 @@ As a script (structured results print as JSON):
   $env:KIT_TRACKER_DRYRUN=1): print the CLI / REST call instead of running it.
 
 Dot-sourced (PowerShell callers):  . $TR [-Type x] [-DryRun]   then
-  Get-TrackerTask, Set-TrackerStatus, Add-TrackerComment, Get-TrackerComments, New-TrackerTask, Get-TrackerUrl,
+  Get-TrackerTask, Set-TrackerStatus, Add-TrackerComment, Get-TrackerComments, New-TrackerTask, Get-TrackerUrl, Get-TrackerOwner,
   Set-TrackerDescription, Add-TrackerAttachment, Resolve-TrackerStatus, Test-TrackerStatus <status> <logical...>
 
 Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issueType", "subtaskType" }; skills/dev-kit/reference/configuration.md):
@@ -284,10 +285,39 @@ function Get-TrackerComments([string]$Id) {
   @($c | Sort-Object date)
 }
 
+# The person running the kit, as the tracker's assignee value: kit.local.json tracker.owner (optional override), else the
+# OS user's full name matched against the tracker's members (ClickUp/Jira -> id), else the CLI's logged-in user (GitHub/GitLab).
+function __TrOsFullName {
+  $n = ''
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    try { $n = (Get-LocalUser $env:USERNAME -ErrorAction Stop).FullName } catch {}
+    if (-not $n) { try { Add-Type -AssemblyName System.DirectoryServices.AccountManagement; $n = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName } catch {} }
+  } else { try { $n = ((getent passwd $env:USER) -split ':')[4] -split ',' | Select-Object -First 1 } catch {} }
+  if (-not $n) { try { $n = git config --global user.name } catch {} }
+  ([string]$n).Trim()
+}
+$script:__trOwner = $null
+function Get-TrackerOwner {
+  if ($null -ne $script:__trOwner) { return $script:__trOwner }
+  $o = [string](Get-KitSetting 'tracker.owner' '')
+  if (-not $o -and -not $__trDry) {
+    $name = __TrOsFullName
+    try {
+      switch ($__trType) {
+        'clickup' { if ($name) { $m = @(__TrJson (__TrCli 'clickup' @('member', 'list', '--json'))) | Where-Object { $_.username -eq $name } | Select-Object -First 1; if ($m) { $o = [string]$m.id } } }
+        'jira' { if ($name) { $m = @(__TrJira 'GET' "user/search?query=$([uri]::EscapeDataString($name))" $null) | Where-Object { $_.displayName -eq $name } | Select-Object -First 1; $o = if ($m) { [string]$m.accountId } else { [string](__TrJira 'GET' 'myself' $null).accountId } } }
+        'github' { $o = [string](__TrCli 'gh' @('api', 'user', '--jq', '.login')) }
+        'gitlab' { $o = [string](__TrGl 'GET' 'user' $null).username }
+        default { $o = $name }
+      }
+    } catch { Write-Warning "tracker: could not resolve the task owner '$name' ($($_.Exception.Message)); new tasks stay unassigned" }
+  }
+  $script:__trOwner = ([string]$o).Trim(); $script:__trOwner
+}
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority) {
   $Description = __TrText $Description
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
-  if (-not $Assignee) { $Assignee = [string](Get-KitSetting 'tracker.owner' '') }   # new tasks go to the owner unless '-' (nobody) is passed
+  if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # new tasks go to the person running the kit unless '-' (nobody) is passed
   switch ($__trType) {
     'clickup' {
       $a = @('task', 'create', '--list-id', $List, '--name', $Name, '--markdown-description', $Description, '--json')
@@ -400,6 +430,7 @@ switch ($__v) {
   'comments' { __TrOut @(Get-TrackerComments $__id) }
   'create' { __TrOut (New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority) }
   'url' { Get-TrackerUrl $__id }
+  'owner' { Get-TrackerOwner }
   'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
   'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
   default { Get-Content $PSCommandPath -TotalCount 34 | Select-Object -Skip 1; exit 1 }
