@@ -261,7 +261,9 @@ if ($AutoFix) {
   # promoted tasks whose MRs went live on a test environment: QA can start now (never guess "not deployed yet" by hand)
   $D = Join-Path (Split-Path (Split-Path $S)) 'qa-kit\scripts\deployed.ps1'
   foreach ($o in @((Read-KitTracking).tasks.Values)) {   # durable <kit>/tracking.local.json (track.ps1)
-    if (-not $o.done -or $o.liveOn -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
+    # liveOn does not stop the check: a repo can deploy to several test environments (one live first is often not the one the
+    # task is tested on), so keep looking for newly live ones until the 3-day window ends
+    if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
     if ($o.qaCovered) { continue }
     if ($o.liveCheckedAt -and ($now - [datetime]$o.liveCheckedAt).TotalMinutes -lt 10) { continue }   # deploys take > 10 min; don't re-ask the git host every run
     # a QA run already has it (often closed already): nothing to launch, so skip the git-host deploy lookup (10+ calls per task)
@@ -270,10 +272,11 @@ if ($AutoFix) {
     $rows = @(& $D -Mrs (@($o.mrs) -join ',') -Json | ConvertFrom-Json)
     $o.liveCheckedAt = $now.ToString('o')
     $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
-    $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($live.Count) { $fields.liveOn = @($live) }
+    $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
+    $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
     Set-KitTaskFields $o.task $fields
-    if ($live.Count) {
-      Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($live -join ', ')" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
+    if ($new.Count) {
+      Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($new -join ', ') (QA only on the environment the task is tested on)" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
   }
   foreach ($s in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 }) {   # finished without `leave`
