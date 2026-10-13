@@ -33,13 +33,21 @@ if ($SelfTest) {
     @('Bash', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
     @('Bash', "cat > note.md <<EOF`ngit stash is shared`nEOF", $false),
     @('Bash', 'git checkout fix/stash-list', $false),
-    @('Bash', 'echo done # not git stash', $false)
+    @('Bash', 'echo done # not git stash', $false),
+    # [tool, command, expect deny?, deny message] - opening a document with & / . / Invoke-Item instead of reading it
+    @('PowerShell', '& D:\kit\skills\dev-kit\LESSONS.md', $true, 'default desktop app'),
+    @('PowerShell', '& "C:\x y\notes.txt"', $true, 'default desktop app'),
+    @('PowerShell', 'Invoke-Item .\report.html', $true, 'default desktop app'),
+    @('PowerShell', 'cd x; ii "out.pdf"', $true, 'default desktop app'),
+    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . RESUME_BRIEF.md was read (see notes.md); & LESSONS.md"', $false, 'default desktop app'),
+    @('PowerShell', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, 'default desktop app'),
+    @('PowerShell', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, 'default desktop app')
   )
   $fail = 0
   foreach ($c in $cases) {
     $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress -Depth 4
     $out = ($json | pwsh -NoProfile -NonInteractive -File $PSCommandPath) -join ''
-    $denied = $out -match '"permissionDecision":"deny"' -and $out -match 'git stash is shared'
+    $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
     if (-not $ok) { $fail++ }
     '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $c[0], $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
@@ -142,8 +150,27 @@ if ($raw -match '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil
 if (Test-GitStash $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: wt.ps1 commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm-avd.ps1 reset).' }
 # PowerShell's call operator (or Invoke-Item) on a document does not read it: it opens it in the desktop's default app
-# (a learn step once ran `& LESSONS.md` and popped it open in the owner's editor). Judged on the raw line: paths are often quoted.
-if ($raw -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii)\s+([''"][^''"]+|[^''"\s;|&]+)\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)[''"]?(\s|;|\||\)|$)') {
+# (a learn step once ran `& LESSONS.md` and popped it open in the owner's editor).
+# PowerShell: judged on the parse tree (a document path inside a quoted -Text "..." argument once tripped the raw-line regex);
+# Bash or unparsable text: the regex on the line with quoted strings and heredocs stripped.
+function Test-OpenDoc([string]$text, [string]$tool) {
+  $doc = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)$'
+  if ($tool -ne 'Bash') {
+    $tk = $null; $er = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
+    if (-not @($er).Count) {
+      foreach ($ca in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        $el = @($ca.CommandElements); if (-not $el.Count) { continue }
+        $val = { param($e) if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $e.Value } else { $e.Extent.Text.Trim('''"') } }
+        if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
+        if ((& $val $el[0]) -match '^(Invoke-Item|ii)$' -and @($el | Select-Object -Skip 1 | Where-Object { (& $val $_) -match $doc }).Count) { return $true }
+      }
+      return $false
+    }
+  }
+  (StripData $text) -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii)\s+[^\s;|&]+\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)(\s|;|\||\)|$)'
+}
+if (Test-OpenDoc $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) {
   Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
 if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 # judged per push command: a protected name elsewhere in a compound line (git log origin/main; git push --force-with-lease) is not a push target
