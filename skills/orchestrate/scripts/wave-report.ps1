@@ -83,3 +83,9 @@ if ($Detail) {
 }
 if ($learn) { "--- learn: $($learn.signals) signal(s); lessons: $(@($learn.lessonsChanged).Count)" }
 if ($Detail) { "saved: $(Join-Path $wavesDir "$Run.json")" } else { "(full: -Detail or waves\$Run.json)" }
+# every finished run ends with a kit retro (orchestrate E14) when signals arrived since the last one (as retro-nudge.ps1 counts them)
+if (-not $running) {
+  $sig = Get-KitPath signals; $mark = Get-KitPath last-retro
+  $since = if (Test-Path $mark) { [datetime](Get-Content $mark -Raw).Trim() } else { [datetime]::MinValue }
+  if ((Test-Path $sig) -and (Get-Content $sig | Where-Object { $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since } | Select-Object -First 1)) { 'ACT  retro due: /kit-retro (E14)' }
+}

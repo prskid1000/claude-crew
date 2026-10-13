@@ -296,12 +296,14 @@ for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
 // learn: 'auto' runs it only when something happened worth learning from; a clean wave just gets the cleanup.
 phase('Learn')
+// every finished run ends with a kit retro (orchestrate E14): the coordinator launches it once no other workflow of the session runs
+const retroDue = (o) => { log('RETRO DUE: run /kit-retro (orchestrate E14) once no other workflow of this session runs'); return { ...o, retroDue: true, next: '/kit-retro (orchestrate E14)' } }
 const eventful = out.some((x) => x.error || x.fixed !== undefined || (x.findings || []).length || (x.report && x.report.deferred.length)) || outcome.openFindings.length > 0
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
 & ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
   log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean wave'}); cleanup ran`)
-  return outcome
+  return retroDue(outcome)
 }
 const learned = await agent(`You maintain the kit's memory. This dev wave just finished.${PATHS}
 Outcome (JSON):
@@ -316,4 +318,4 @@ ${JSON.stringify(outcome).slice(0, 60000)}
 3. & ${ORCH}/cleanup.ps1 -Quiet -WorktreeIdleHours 0 (only kit-created leftovers; merged worktrees go at once, open MRs are kept), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
-return outcome
+return retroDue(outcome)

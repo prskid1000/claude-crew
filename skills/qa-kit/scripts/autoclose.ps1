@@ -40,6 +40,19 @@ while ((Get-Date) -lt $end) {
       if ((& $nt $res) -gt 0.5) { Log "$code skipped: $([math]::Round((& $nt $res)*100))% NOT_TESTED - needs a manual look"; Add-Content $done $code; continue }
       $v = $byLabel["verify:$code"]
       $res | Add-Member -Force NoteProperty code $code
+      # as test-and-close.js runItem(): unique check ids (repeats get b, c, ...), then the note audit (reclassified notes ->
+      # FAIL; new defects numbered after the highest X id already used), so verify verdicts match their checks one to one
+      $seen = @{}
+      foreach ($c in $res.checks) { $id = [string]$c.id; $k = 1; while ($seen.ContainsKey($id)) { $id = "$($c.id)$([char](97 + $k++))" }; $c | Add-Member -Force NoteProperty id $id; $seen[$id] = 1 }
+      $au = $byLabel["audit:$code"]
+      if ($au) {
+        foreach ($d in @($au.reclassify)) { $c = @($res.checks) | Where-Object { $_.id -eq $d.id } | Select-Object -First 1
+          if ($c -and $d.defect -and $c.result -eq 'PASS_WITH_NOTE') { $c.result = 'FAIL'; $c.observed = "$($c.observed) | Note audit: a defect, not a note: $($d.reason)" } }
+        $n = [int](@($res.checks | ForEach-Object { if ([string]$_.id -match '^X(\d+)$') { [int]$Matches[1] } else { 0 } }) + 0 | Measure-Object -Maximum).Maximum
+        $sub = [string](@((@($run.items) | Where-Object code -eq $code | Select-Object -First 1).subtasks) | Select-Object -First 1).id
+        foreach ($d in @($au.newDefects | Where-Object { $_ })) { $n++
+          $res.checks = @($res.checks) + [pscustomobject]@{ id = "X$n"; subtask_id = $sub; screen = $d.screen; result = 'FAIL'; what_was_done = $d.what_was_done; observed = "$($d.observed) (raised by the note audit)"; evidence = @($d.evidence | Where-Object { $_ }) } }
+      }
       foreach ($c in $res.checks) {
         if ($c.result -ne 'FAIL') { continue }
         $x = if ($v) { $v.verdicts | Where-Object id -eq $c.id | Select-Object -First 1 } else { $null }

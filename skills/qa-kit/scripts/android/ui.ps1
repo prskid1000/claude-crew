@@ -80,7 +80,8 @@ switch ($Action) {
   }
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))
-    while ((Get-Date) -lt $end) { if (try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }) { "found '$Arg'"; return }; Start-Sleep 2 }
+    # not `if (try ...)`: inside ( ) `try` parses as a command name, so that test always failed and every wait timed out
+    while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Start-Sleep 2 }
     "TIMEOUT waiting for '$Arg'"
   }
   'photo' {

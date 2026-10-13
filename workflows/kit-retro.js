@@ -1,7 +1,7 @@
 export const meta = {
   name: 'kit-retro',
   description: 'Self-improvement pass for the multi-agent kit: mine learning signals, guard blocks, gate history and recent QA/dev runs; update LESSONS.md, promote stable lessons into rules, propose script/default changes',
-  whenToUse: 'A wave or QA run finished with errors, deferrals or review findings, the session-start nudge says signals piled up, or the owner asks for a kit retrospective',
+  whenToUse: 'A /dev-wave or /test-and-close finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective',
   phases: [
     { title: 'Analyse', detail: '4 parallel analysts: dev, QA, speed/infra, docs/evidence' },
     { title: 'Apply', detail: 'one synthesizer dedupes, applies lesson + rule changes, writes the retro report' },

@@ -295,6 +295,13 @@ async function runItem(it, idx, L) {
     return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
   }
   res.code = it.code
+  // unique check ids before audit and verify (two checks sharing an id would share one verdict): repeats get a b, c, ... suffix
+  const seenIds = new Set()
+  for (const c of res.checks) {
+    let id = String(c.id || 'check'), k = 1
+    while (seenIds.has(id)) id = `${c.id || 'check'}${String.fromCharCode(97 + k++)}`
+    c.id = id; seenIds.add(id)
+  }
 
   // Note audit: real defects hidden in notes/findings become FAIL (or new X checks) so they get verified and a bug task.
   if (res.checks.some((c) => c.result === 'PASS_WITH_NOTE') || (res.findings || []).length) {
@@ -303,7 +310,8 @@ async function runItem(it, idx, L) {
       const c = res.checks.find((x) => x.id === d.id)
       if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.observed = `${c.observed} | Note audit: a defect, not a note: ${d.reason}` }
     }
-    let n = res.checks.filter((c) => /^X\d+$/.test(c.id)).length
+    // new audit checks continue after the highest X id already used (the guide's X1..Xn -> X(n+1))
+    let n = Math.max(0, ...res.checks.map((c) => +((/^X(\d+)$/.exec(c.id) || [])[1] || 0)))
     for (const d of (a && a.newDefects) || []) {
       res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', what_was_done: d.what_was_done, observed: `${d.observed} (raised by the note audit)`, evidence: d.evidence || [] })
     }
@@ -403,12 +411,14 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
 // learn: 'auto' runs it only when something happened worth learning from; a clean run just gets the cleanup.
 phase('Learn')
+// every finished run ends with a kit retro (orchestrate E14): the coordinator launches it once no other workflow of the session runs
+const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E14) once no other workflow of this session runs'); return { results, retroDue: true, next: '/kit-retro (orchestrate E14)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
 & ${ORCH}/cleanup.ps1 -Quiet`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
   log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean run'}); cleanup ran`)
-  return all
+  return retroDue(all)
 }
 const learned = await agent(`You maintain the kit's memory. This QA run just finished.${PATHS}
 Outcome (JSON):
@@ -424,4 +434,4 @@ ${JSON.stringify(all).slice(0, 60000)}
 3. & ${ORCH}/cleanup.ps1 -Quiet (only kit-created leftovers), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
-return all
+return retroDue(all)

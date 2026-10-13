@@ -310,6 +310,15 @@ foreach ($rd in Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction Sile
   } elseif ($freeNow -lt $keepFree) { Flag 'WATCH' "memory tight ($freeNow GB free): QA seats are holding new agents back" 'Do not launch more agents until it recovers; close big apps if it persists.' }
 }
 
+# 8. retro due (orchestrate E14): learning signals since the last /kit-retro and no workflow (dev-wave, test-and-close, kit-retro) of
+#    this session still running - one retro then covers every finished run (counted as retro-nudge.ps1 does)
+if (-not $runTotal) {
+  $sigF = Get-KitPath signals; $markF = Get-KitPath last-retro
+  $since = if (Test-Path $markF) { [datetime](Get-Content $markF -Raw).Trim() } else { [datetime]::MinValue }
+  $nSig = if (Test-Path $sigF) { @(Get-Content $sigF | Where-Object { $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since }).Count } else { 0 }
+  if ($nSig -ge 1) { Flag 'ACT' "retro due: $nSig signals since the last retro and no workflow running" '/kit-retro (E14)' }
+}
+
 $out = [pscustomobject]@{ at = $now.ToString('s'); summary = @($lines); flags = @($flags) }
 if ($Json) { $out | ConvertTo-Json -Depth 4; exit 0 }
 if ($Brief) {

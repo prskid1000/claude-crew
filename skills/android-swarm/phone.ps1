@@ -27,9 +27,10 @@ $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
 New-Item -ItemType Directory -Force $dir, $waitDir | Out-Null
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')
 function Locked([scriptblock]$b) {
-  $got = $false
-  try { $got = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $got = $true }   # a killed holder hands the mutex over
-  try { & $b } finally { if ($got) { $mutex.ReleaseMutex() } }
+  # $held, not $got: $b runs in this scope, so a local $got would shadow the caller's lease variable
+  $held = $false
+  try { $held = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $held = $true }   # a killed holder hands the mutex over
+  try { & $b } finally { if ($held) { $mutex.ReleaseMutex() } }
 }
 # waiters touch their file every loop; one not touched for 3 min died and must not block the queue
 function Waiters { Get-ChildItem $waitDir -Filter '*.json' | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
@@ -95,8 +96,17 @@ switch ($Action) {
     }
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
     $serial = "emulator-$($got.port)"
-    if (-not (Running $got)) { & (Join-Path $c.dir 'swarm-up.ps1') -Lanes $got.name -Mode None | Select-Object -Last 2 | Out-Host }
-    if (-not (Running $got)) { Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force }; throw "$($got.name) did not boot (memory turn or emulator problem); lease released" }
+    $memQueued = $false
+    if (-not (Running $got)) {
+      $boot = @(& (Join-Path $c.dir 'swarm-up.ps1') -Lanes $got.name -Mode None 3>&1)   # 3>&1: catch the gate's "no memory turn" warning
+      $boot | Select-Object -Last 2 | Out-Host
+      $memQueued = [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
+    }
+    if (-not (Running $got)) {
+      Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force }
+      if ($memQueued) { throw "$($got.name) queued behind memory: the gate gave no memory turn within 30 min; lease released (acquire again later)" }
+      throw "$($got.name) did not boot (emulator problem); lease released"
+    }
     $installed = 'kept'
     if (-not $NoInstall -and $c.app.kind -and (ApkStamp)) {
       $onPhone = ((& $adb -s $serial shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim()
