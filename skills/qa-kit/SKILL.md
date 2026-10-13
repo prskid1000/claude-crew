@@ -35,7 +35,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 ## Tester / verifier steps (test environment only, never production)
 0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`.
 1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
-   -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`.
+   -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`. Keep the phone lease
+   through any wait under ~30 min (a lead decision, a deploy, a rebuild): release shuts the emulator down and re-acquiring queues
+   20-40 min behind the RAM gate. Do not start gated tests while you wait for a phone.
 2. **Deployed?** Before any FAIL: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` for every repo of the task; not deployed → NOT_TESTED "not deployed yet";
    MANUAL (deployed by hand) → the run's lead notes say whether it is live; unresolved there → NOT_TESTED, never FAIL.
 3. **Test each check** with the tools: API `scripts/api.ps1 -Target <t> -As <user> [-Tenant <x>] -Method <M> -Path '/...' [-Body '<json>']
@@ -63,13 +65,21 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      "fixed by a restart" (save the request/response and check observability; an unverified 5xx is FAIL), a wrong answer stated as fact
      with HTTP 200 (LLM checks: compare with the DB), a downstream 5xx that surfaces only in a finding, and errors in the first turns
      after a restart. Off-script defects → extra checks `X1`, `X2` ….
+   - **Retests of a dev fix** fail on the sibling path: run the full reported flow end to end (create/import, edit round-trip, cancel
+     in locked/terminal states, the list GET as well as the item GET, every locale key against the default locale), and every screen
+     that reads the same stored record or rule (e.g. home step cards as well as the screen in the bug). Date/shift-rule fixes: also
+     cross midnight and run a second shift on the same day.
    - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
      A part of the Expected you did not exercise (a second theme not rendered, a timeout path not triggered, checked via API only because
      the UI path is missing) is its own NOT_TESTED check, never a note; an unreachable screen the feature needs is FAIL.
    - **LLM-driven checks** (an AI assistant or decider) are intermittent: after a redeploy or long idle do a warm-up turn, then run
      each 5+ times in fresh sessions and record every answer with its timestamp; re-run a deviating result once before FAIL and keep
      the first and each deviating run as evidence. Set the check's `attempts` and `window` (conditions + UTC times) in results.json:
-     a verifier must recreate them to refute the FAIL (else its verdict is `inconclusive` and the FAIL stays).
+     a verifier must recreate them to refute the FAIL (else its verdict is `inconclusive` and the FAIL stays). Count the guide's runs
+     only after the warm-up turn; readiness = the health/listener endpoint answering, not the first startup log line; before failing
+     a 5xx in a restart window, check the service log for a worker recycle. Count or list questions: before testing compute every
+     plausible DB definition of the entity (flags, types, active/deleted); numbers that change between sessions and each match some
+     definition are a FAIL (definition drift), not data drift.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
 6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check -FixNames` (publishes nothing;
    renames off-standard evidence to `CODE-checkId_NN_slug` per `reference/evidence-standard.md` and rewrites results.json; exit 1 lists
@@ -97,7 +107,10 @@ from the run's `context` / `contextFiles` and `LESSONS.md`, never from these gen
   ssh check before launching and write the answer in the run's `lead-notes.md`; NOT-DEPLOYED items wait or are left out.
   Pre-run prerequisites: for every guide, check on the target tenant/role each feature flag or setting (current value, who switches and
   restores it; ask the owner when one was turned off on purpose), the test data and accounts the steps need (a driver with a stocked van,
-  franchise data, a soft-delete column, a role with the right authority) and server config the feature needs (e.g. an MCP URL); write
+  franchise data, a soft-delete column, a role with the right authority, the record/stop/order types the scenario needs such as a
+  COLLECT_DROP stop), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
+  result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data (APPLY, allocate,
+  resource) so testers never write to someone else's run, and server config the feature needs (e.g. an MCP URL); write
   each into `lead-notes.md`. Create up front what the API can create. Mark checks the lead cannot unblock as NOT_TESTED in run.json
   (item `skip` with the reason, the missing thing named) before testers start; an environment-level gate the tester cannot switch is
   NOT_TESTED with the setting named, never FAIL.

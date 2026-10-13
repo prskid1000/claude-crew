@@ -72,6 +72,8 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   waiting is normal, a killed build is not a code failure (re-run). Targeted tests only. No dev servers, no emulators, ≤ 1 headless browser.
   A gate still queued when you are told to stop or your turn ends is unrun: never leave commits local. Push, open the MR as Draft with
   `Not run: <gate>` in the MR body (MR_BODY "Verified") and the tracker comment, and report mergeState `NOT_MERGED`.
+  Call `check.ps1` / `gate.ps1` with a tool timeout of 600000 ms (or `run_in_background` for builds over 10 min): the 120 s default
+  is shorter than a normal Maven test, Android build or first jest run in a fresh worktree plus the gate queue, and a timed-out call leaves the gate unrun.
 - **Specs:** a change to pure logic (helper, formatter, gate/status set, bucket/zero-fill) or a template-only placement fix ships a
   committed spec in the same MR (no unit-test target: `check.ps1 -Step test` runs it through node-spec.mjs); a template change with no
   spec attaches a 1366x768 screenshot. A throwaway node check does not count.
@@ -79,6 +81,10 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash` (WIP commit instead).
 - **Scope:** only your items, no sweeps of similar code, never remove features or inputs; changes are additive (optional fields, new
   endpoints/params, flags); DTOs not entities in APIs; foreign files only as one-line hooks you list in your reply; decisions in the brief are final (new decision needed → defer with a reason).
+- **Shared code:** before you change a shared helper, hook, service, exception translator, formatter, validator, default or global
+  style, grep every caller, writer and consumer. Make overrides opt-in, key shared formatters/styles by field or selector (fix a
+  variant in the component's own style, not with an `!important` global) and add a round-trip test. In the MR body and in
+  `needsLiveCheck`, list each caller or endpoint the change reaches and the main-path flow that needs a live check before merge.
 - **Text files:** write code, briefs, guides and MR bodies with the Write tool and change files with Edit, then pass the file path
   (`devtools.py doc <file>`, MR body from a file). Never Bash heredocs, sed or python string-replace for text with backslashes,
   quotes or CRLF line endings (Git Bash turns `\b` into a backspace, apostrophes give "unexpected EOF", replace misses CRLF).
