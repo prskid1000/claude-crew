@@ -18,7 +18,7 @@ Every tested check leaves evidence that a reviewer, developer or customer can un
 ```
 
 ## 2. File names
-`<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>`  (ext: jpeg/png, json, log, pdf, csv, txt, html, xls/xlsx, mp4). Evidence saved elsewhere (absolute paths, verify folders) is collected by finalize.ps1; helper scripts are not evidence.
+`<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>`  (ext: jpeg/png, json, log, pdf, csv, txt, html, xls/xlsx, mp4). Evidence saved elsewhere (absolute paths, verify folders) is collected by finalize.ps1; helper scripts are not evidence. List relative file names only, never folders or helper scripts.
 
 | Part | Rule | Example |
 |---|---|---|

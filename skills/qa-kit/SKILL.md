@@ -54,16 +54,25 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      changed the flow and the intent holds, (b) a purely cosmetic difference while behaviour is correct, or (c) the guide's expected
      text cannot be met for a reason outside the change (a platform/OS limit, or imprecise guide wording the code and design show was
      never intended) while the behaviour is right: check the code or ask the lead before FAIL and quote both readings. A guide-vs-screen
-     disagreement the code does not settle goes to the lead before the run closes, never left as an open FAIL.
+     disagreement the code does not settle goes to the lead before the run closes, never left as an open FAIL. (d) a check the guide
+     itself makes conditional ("if the tenant has X", "conditional step") whose condition is false on the target: write "not applicable:
+     <condition> is false here" with the evidence (setting value, schema query, API refusal). It is not NOT_TESTED (it does not keep the
+     task open); it is FAIL only when the condition being false is itself the defect.
    - **FAIL**: any defect, in or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck flow, data changed wrongly or not
-     saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
+     saved, wrong records affected, broken navigation, a missing screen the feature needs. Also: a silent 200 with empty data, a 5xx
+     "fixed by a restart" (save the request/response and check observability; an unverified 5xx is FAIL), a wrong answer stated as fact
+     with HTTP 200 (LLM checks: compare with the DB), a downstream 5xx that surfaces only in a finding, and errors in the first turns
+     after a restart. Off-script defects → extra checks `X1`, `X2` ….
    - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
+     A part of the Expected you did not exercise (a second theme not rendered, a timeout path not triggered, checked via API only because
+     the UI path is missing) is its own NOT_TESTED check, never a note; an unreachable screen the feature needs is FAIL.
    - **LLM-driven checks** (an AI assistant or decider) are intermittent: after a redeploy or long idle do a warm-up turn, then run
      each 5+ times in fresh sessions and record every answer with its timestamp; re-run a deviating result once before FAIL and keep
      the first and each deviating run as evidence.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
-6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check` (publishes nothing; exit 1 lists
-   evidence named but missing: save it or drop the name); then `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`),
+6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check -FixNames` (publishes nothing;
+   renames off-standard evidence to `CODE-checkId_NN_slug` per `reference/evidence-standard.md` and rewrites results.json; exit 1 lists
+   evidence named but missing, names it could not fix and duplicate check ids: fix and re-run until exit 0); then `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`),
    return the results the task asks for.
 
 **Shared environment** (others test at the same time): data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you
@@ -85,6 +94,12 @@ from the run's `context` / `contextFiles` and `LESSONS.md`, never from these gen
 - L1. Run folder + `run.json` (shape: `reference/runs.md` and the header of `test-and-close.js`), guides exported to text.
   Pre-run deploy check: `scripts/deployed.ps1 -Mrs <every item's MRs>`; resolve each MANUAL repo (deployed by hand) with the owner or an
   ssh check before launching and write the answer in the run's `lead-notes.md`; NOT-DEPLOYED items wait or are left out.
+  Pre-run prerequisites: for every guide, check on the target tenant/role each feature flag or setting (current value, who switches and
+  restores it; ask the owner when one was turned off on purpose), the test data and accounts the steps need (a driver with a stocked van,
+  franchise data, a soft-delete column, a role with the right authority) and server config the feature needs (e.g. an MCP URL); write
+  each into `lead-notes.md`. Create up front what the API can create. Mark checks the lead cannot unblock as NOT_TESTED in run.json
+  (item `skip` with the reason, the missing thing named) before testers start; an environment-level gate the tester cannot switch is
+  NOT_TESTED with the setting named, never FAIL.
 - L2. Launch `/test-and-close { runDir, kitDir }` and start `scripts/autoclose.ps1 -Journal <dir> -RunDir <run>` in the background.
 - L3. Afterwards: publish `skipClose` items with `finalize.ps1 -RunDir <run> -Code <code>`; a bug fix went live → `add-retest.ps1`.
 

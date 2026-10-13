@@ -56,3 +56,4 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 
 ## Moved by learn.ps1 (-Fixed / -Trim), oldest first
 - (fixed in kit) After a wave: `cleanup.ps1 -WorktreeIdleHours 0` (merged worktrees go at once; open MRs are protected by their remote branch; idle Gradle/Kotlin daemons stop).
+- (fixed in kit) (3×) A bug-fix /dev-wave launched while an app-lane /test-and-close holds 3 phones starves both on one machine (gated tests sat in the RAM queue until agents were stopped, phone re-acquires took 20-40 min): when both must run, launch QA with `lanes` capped at 2 (or web/api lanes only) and tell build agents to push and open the MR with verification marked pending rather than wait in the gate.

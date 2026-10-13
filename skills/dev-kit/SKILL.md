@@ -70,6 +70,11 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   linked `node_modules`/`.venv` (say what you need instead); remove with `wt.ps1 remove`. `wt.ps1 sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `check.ps1` (or `gate.ps1 -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo directly;
   waiting is normal, a killed build is not a code failure (re-run). Targeted tests only. No dev servers, no emulators, ≤ 1 headless browser.
+  A gate still queued when you are told to stop or your turn ends is unrun: never leave commits local. Push, open the MR as Draft with
+  `Not run: <gate>` in the MR body (MR_BODY "Verified") and the tracker comment, and report mergeState `NOT_MERGED`.
+- **Specs:** a change to pure logic (helper, formatter, gate/status set, bucket/zero-fill) or a template-only placement fix ships a
+  committed spec in the same MR (no unit-test target: `check.ps1 -Step test` runs it through node-spec.mjs); a template change with no
+  spec attaches a 1366x768 screenshot. A throwaway node check does not count.
 - **Commits:** Conventional Commits ending with a blank line + the attribution trailer your harness/org asks for; `wt.ps1 commit` only;
   never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash` (WIP commit instead).
 - **Scope:** only your items, no sweeps of similar code, never remove features or inputs; changes are additive (optional fields, new

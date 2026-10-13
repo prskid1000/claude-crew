@@ -62,6 +62,8 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
    product decision / no data / cut for size). `inTest` only after deployment, set by a person.
 
 ~15 parallel dev agents is fine: they queue on the machine-wide memory gate. Expect hours for big waves.
+Dev-wave and app-lane QA on one machine: when both must run, cap /test-and-close `lanes` at 2 (or web/api lanes only) and brief build
+agents to push and open the MR as Draft with `Not run: <gate>` (dev-kit **Gate** rule) instead of waiting in the gate.
 
 ## Events (event -> action; check this table whenever something happens while you coordinate)
 | # | Event | Action (script / workflow) |

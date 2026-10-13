@@ -88,3 +88,4 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 
 ## Moved by learn.ps1 (-Fixed / -Trim), oldest first
 - (fixed in kit) (3×) devtools.py merge on a repo with no CI config waits for a pipeline that never runs and its poller dies with the agent: when the CI gate reports no-pipeline and the project does not require one, merge at once after review, then confirm the MR state. Seen again 2026-10-13: poller produced nothing; merge at once when the CI gate reports no-pipeline.
+- (fixed in kit) (3×) cleanup.ps1 (SessionStart -IfDue) removes fresh worktrees whose branch sits at origin/main's tip (never pushed, no MR): commit and push early, and check Test-Path of your worktree before each edit step
