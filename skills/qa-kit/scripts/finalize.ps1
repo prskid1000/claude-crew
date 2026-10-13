@@ -9,7 +9,13 @@ Report output (kit.local.json "reports": { "type": ... }, or -Report):
             report (GitHub/GitLab: its text; ClickUp/Jira: the file attached; none: logged). Default without gws.
 Tracker: skills/dev-kit/scripts/tracker.ps1 (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
 
-  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown]
+  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing]
+  & <workspace>/.claude/skills/qa-kit/scripts/finalize.ps1 -RunDir <run dir> -Code <package code> -Check
+
+Evidence check (runs first, before any upload or tracker call; reference/evidence-standard.md): every file listed in results.json
+must exist (in shots\, evidence\ or findable in the run dir), else it throws and nothing is published. -AllowMissing publishes
+anyway, dropping the missing names and noting them in the check's "observed". Off-standard names are only a warning.
+-Check runs only this check (no copies, uploads or tracker calls): exit 1 and the list when evidence is missing, else exit 0.
 
 Run dir layout (see the qa-kit SKILL.md):
   run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus, closeWithNotTested?}, driveParent, items[] }
@@ -23,13 +29,15 @@ param(
   [Parameter(Mandatory)][string]$Code,
   [switch]$NoTracker,
   [switch]$Force,
+  [switch]$Check,
+  [switch]$AllowMissing,
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
   [string]$Date = (Get-Date -Format 'd MMM yyyy')
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\tracker.ps1')   # $KitConf + Get-TrackerUrl, Set-TrackerStatus, ...
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
-if ($rtype -eq 'gdocs' -and -not (Get-Command gws -ErrorAction SilentlyContinue)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
+if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ErrorAction SilentlyContinue)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
 $RunDir = (Resolve-Path $RunDir).Path
 $run = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
@@ -38,16 +46,38 @@ $D = "$RunDir\$Code"
 $res = Get-Content "$D\results.json" -Raw | ConvertFrom-Json
 # Evidence entries may be absolute paths or files saved outside shots\/evidence\ (verify dirs, the item root): copy them into evidence\
 # so they upload; helper scripts, source files and code notes testers list (.mjs/.ts/.tsx/.java, or text with spaces) are not evidence and are dropped.
-New-Item -ItemType Directory -Force "$D\evidence" | Out-Null
+if (-not $Check) { New-Item -ItemType Directory -Force "$D\evidence" | Out-Null }
+$lost = [Collections.Generic.List[object]]::new()   # evidence listed in results.json that exists nowhere
 foreach ($c in @($res.checks)) {
   $c.evidence = @(@($c.evidence) | Where-Object { $_ -and [string]$_ -notmatch '\.(mjs|cjs|js|jsx|ts|tsx|java|kt|ps1|py|sh)$|\s' } | ForEach-Object {
       $e = [string]$_; $leaf = Split-Path $e -Leaf
       if (-not (Test-Path "$D\shots\$leaf") -and -not (Test-Path "$D\evidence\$leaf")) {
         $src = if ([IO.Path]::IsPathRooted($e) -and (Test-Path $e)) { $e } elseif (Test-Path (Join-Path $D $e)) { Join-Path $D $e } else { (Get-ChildItem $RunDir -Recurse -File -Filter $leaf -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
-        if ($src) { Copy-Item $src "$D\evidence\$leaf" -Force }
+        if (-not $src) { $lost.Add([pscustomobject]@{ check = $c; name = $leaf }) }
+        elseif (-not $Check) { Copy-Item $src "$D\evidence\$leaf" -Force }
       }
       $leaf } | Select-Object -Unique)
 }
+
+# 0. Evidence check before anything is uploaded or posted (reference/evidence-standard.md)
+. (Join-Path $PSScriptRoot 'lib/report.ps1')
+$files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match '^\.(jpe?g|png|json|log|csv|txt|pdf|mp4|html|xlsx?)$' })
+$badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
+if ($badNames.Count) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
+$lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
+if ($Check) {
+  if ($lostList.Count) { "$Code evidence check: $($lostList.Count) file(s) listed in results.json but missing:"; $lostList | ForEach-Object { "  $_" }; exit 1 }
+  "$Code evidence check: OK ($($files.Count) files, $($badNames.Count) off-standard name(s))"; exit 0
+}
+if ($lostList.Count -and -not $AllowMissing) {
+  throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run (or pass -AllowMissing to publish without them)."
+}
+foreach ($g in @($lost | Group-Object { $_.check.id })) {   # -AllowMissing: drop the names, say so in the check
+  $c = $g.Group[0].check; $gone = @($g.Group | ForEach-Object name)
+  $c.evidence = @(@($c.evidence) | Where-Object { $_ -notin $gone })
+  $c | Add-Member -NotePropertyName observed -NotePropertyValue "$($c.observed) [Evidence missing at publish: $($gone -join ', ')]".Trim() -Force
+}
+if ($lostList.Count) { Write-Warning "published without missing evidence (-AllowMissing): $($lostList -join '; ')" }
 $fin = "$D\finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
@@ -62,7 +92,6 @@ $P = '{"fields":"id,webViewLink","supportsAllDrives":true}'
 
 # 1. Evidence: Drive folder + uploads (gdocs) or the run folder itself (markdown; links are relative to <code>/report.md)
 $map = [ordered]@{ folderId = $null; folderLink = $null; files = [ordered]@{}; local = ($rtype -ne 'gdocs') }
-$files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match '^\.(jpe?g|png|json|log|csv|txt|pdf|mp4|html|xlsx?)$' })
 if ($map.local) {
   $map.folderLink = $D
   foreach ($x in $files) { $map.files[$x.Name] = @{ id = $null; link = "$($x.Directory.Name)/$($x.Name)"; path = $x.FullName } }
@@ -84,15 +113,12 @@ foreach ($x in $files) {
   if ($r.id) { $map.files[$x.Name] = @{ id = $r.id; link = $r.webViewLink } }
 }
 
-# 2. Styled report (lib/report.ps1) + evidence-name check (reference/evidence-standard.md)
-. (Join-Path $PSScriptRoot 'lib/report.ps1')
+# 2. Styled report (lib/report.ps1, loaded at step 0)
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId) { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
-$badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
-if ($badNames.Count) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] } | ForEach-Object { "$($c.id): $_" } })
-if ($missing.Count) { Write-Warning "evidence listed in results.json but not found/uploaded: $($missing -join '; ')" }
+if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
 Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D\report.html" -Encoding utf8
 
 # 3. The report: Google Doc (gdocs) or report.md in the run folder (markdown)

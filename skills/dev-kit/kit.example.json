@@ -104,6 +104,22 @@
           "target": "staging",
           "branch": "staging",
           "job": "deploy-staging"
+        },
+        {
+          "target": "<env deployed by hand onto a host>",
+          "ssh": {
+            "host": "<user>@<host>",
+            "key": "<path to the ssh key file>",
+            "repoDir": "<repo checkout on the host>",
+            "appDir": "<installed app dir>",
+            "exclude": [
+              "data"
+            ]
+          }
+        },
+        {
+          "target": "<env deployed by hand, no way to check>",
+          "manual": true
         }
       ],
       "linkFromByTarget": {

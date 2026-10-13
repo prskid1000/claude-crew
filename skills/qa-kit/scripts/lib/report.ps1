@@ -16,11 +16,13 @@ $script:Palette = @{
 }
 $script:Font = "font-family:Arial,Helvetica,sans-serif"
 $script:Cell = "border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;font-size:10pt"
-$script:EvidenceName = '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2})?|_\d{2})_[a-z0-9]+([-._][a-z0-9]+)*\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?)$'
+# check evidence <CODE>-<checkId>[_verify]_<nn>[m]_<what> ("m" / "-marked": an annotated copy) or setup evidence <code>-<nn>-<what>
+# (nn 00 = before the checks, 90+ = cleanup); reference/evidence-standard.md section 2
+$script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?)$'
 
 # "F2-T4_02_after-edit.jpeg" -> "After edit"; legacy names fall back to the file name
 function Caption($file) {
-  if ($file -match '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify)?(_\d{2})?_(.+)\.\w+$') {
+  if ($file -match '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify)?(_\d{2}m?)?_(.+)\.\w+$') {
     $c = ($Matches[3] -replace '[-_]', ' ').Trim(); $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }
     if (-not $c) { return $file }   # never let one odd name crash the whole publish
     return ($c.Substring(0, 1).ToUpper() + $c.Substring(1)) + $v

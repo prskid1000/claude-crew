@@ -10,6 +10,14 @@
 ## What changed
 <one paragraph in user terms; what is new, what must not change>
 
+## Before you start / Feature switches
+Check every switch ON before testing (per tenant / account you test with). Restore anything you changed afterwards.
+A gate you cannot switch yourself (environment config, licence, a role you cannot grant) = the checks behind it are NOT_TESTED, not FAIL.
+
+| Setting or role | Where | Value now | How to switch it on | Restore after |
+|---|---|---|---|---|
+| <setting / role / feature flag> | <screen or endpoint, tenant> | <on/off> | <steps> | <yes/no> |
+
 ## Checks
 Check ids are referenced by QA results and bug tasks: keep them stable.
 

@@ -19,6 +19,25 @@ One check = one observable result. QA agents test exactly these rows, so make "E
 <h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">What changed</h2>
 <ul><li>{{user-visible change}}</li></ul>
 
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Before you start / Feature switches</h2>
+<p>Check every switch ON before testing (per tenant / account you test with); restore anything you changed afterwards. A gate you cannot switch yourself (environment config, licence, a role you cannot grant) = the checks behind it are NOT_TESTED, not FAIL.</p>
+<table style="border-collapse:collapse;width:100%;margin-bottom:10px">
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:26%"><b>Setting or role</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:22%"><b>Where</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:12%"><b>Value now</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:28%"><b>How to switch it on</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:12%"><b>Restore after</b></td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{setting / role / feature flag}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{screen or endpoint, tenant}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{on/off}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{steps}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{yes/no}}</td>
+</tr>
+</table>
+
 <h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Setup and test data</h2>
 <ol><li>{{settings to enable, data to create (prefix QA-{{CODE}}), logins}}</li></ol>
 

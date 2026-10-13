@@ -84,7 +84,9 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
   `python devtools.py guide-mode` prints `always` (config `reports.guide`): then every change gets the published guide below,
   with its screenshots, and the task comment links it. Otherwise: simple (one screen / one endpoint): a how-to-test comment on the task. Complex (several screens or flows, more than one repo,
   migrations, roles/permissions, reports): a tester guide from `qa-kit/templates/tester-guide.html` (check ids, environment, accounts,
-  data to prepare, steps and a concrete Expected per check; include "unchanged" checks for what must not change), published with
+  data to prepare, steps and a concrete Expected per check; include "unchanged" checks for what must not change; always name the
+  feature switches: the settings or roles that switch the feature on, checked ON, in "Before you start / Feature switches"; a
+  how-to-test comment names them too), published with
   `devtools.py doc "<title>" <file>` (a `.md` guide is converted to HTML, tables kept) and linked on the task and in the MR. Report the link as `testerGuide`.
 - **Evidence:** UI → screenshots, backend → `qa-kit/scripts/api.ps1 -Save` JSON; never production; a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 

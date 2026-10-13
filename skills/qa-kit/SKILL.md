@@ -22,13 +22,13 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 | `templates/tester-guide.md` | G1 when `reports.type` is `markdown` |
 | `targets.example.json` | L0: copy to `targets.local.json` (environments + test logins; the only place for passwords) |
 | `scripts/qa-seat.ps1` | step 1 (`acquire`; the workflow tells you how), `release` at the end |
-| `scripts/deployed.ps1` | step 2, before any FAIL |
+| `scripts/deployed.ps1` | step 2, before any FAIL; L1, the lead's pre-run deploy check |
 | `scripts/api.ps1` | step 3 (API as any user, `-Save` evidence) |
 | `scripts/web/browser.mjs` | step 3 (web; read its header first) |
 | `scripts/web/package.json`, `scripts/web/package-lock.json` | L0: `npm ci` in `scripts/web` (puppeteer-core) |
 | `scripts/android/ui.ps1` | step 3 (app lanes; `$env:ANDROID_SERIAL` on every command) |
 | `scripts/annotate.ps1` | step 4, marking a FAIL screenshot (any image) |
-| `scripts/finalize.ps1`, `scripts/lib/report.ps1` | run by /test-and-close's close step; by the lead for `skipClose` items (L3) |
+| `scripts/finalize.ps1`, `scripts/lib/report.ps1` | step 6 (`finalize.ps1 -Check`, evidence check only); run by /test-and-close's close step; by the lead for `skipClose` items (L3) |
 | `scripts/autoclose.ps1` | L2, started in the background with every run |
 | `scripts/add-retest.ps1` | L3, when a bug task's fix went live (retest item) |
 
@@ -36,7 +36,8 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`.
 1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
    -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`.
-2. **Deployed?** Before any FAIL: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` for every repo of the task; not deployed → NOT_TESTED "not deployed yet".
+2. **Deployed?** Before any FAIL: `scripts/deployed.ps1 -Mrs <repo>!<iid>,...` for every repo of the task; not deployed → NOT_TESTED "not deployed yet";
+   MANUAL (deployed by hand) → the run's lead notes say whether it is live; unresolved there → NOT_TESTED, never FAIL.
 3. **Test each check** with the tools: API `scripts/api.ps1 -Target <t> -As <user> [-Tenant <x>] -Method <M> -Path '/...' [-Body '<json>']
    [-Save <name> -OutDir <dir>]`; web `scripts/web/browser.mjs` (`session()` = one logged-in headless Chrome per port; `mark`, `shot`,
    `saveNet`, `hoverSel`; also for the main session's R10 checks and repros; a visible browser only when the owner asks to watch); app `scripts/android/ui.ps1` (dump / tap / tapid / type / swipe / shot / shotmark /
@@ -46,7 +47,8 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
    PASS (UI) = one shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = failure shot
    **and** the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files. Never a blank/loading/login
    page; open each image with Read before listing it; list only names that exist. Mark every FAIL screenshot: app
-   `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`.
+   `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`
+   (`-Copy` keeps the original and writes `<name>-marked.<ext>`). Setup evidence for no one check: `<CODE>-00-<what>` (e.g. the deploy check).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: the expected behaviour was seen. **PASS_WITH_NOTE**: ONLY (a) guide text out of date because later, intended work
      changed the flow and the intent holds, or (b) a purely cosmetic difference while behaviour is correct.
@@ -57,7 +59,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      each 5+ times in fresh sessions and record every answer with its timestamp; re-run a deviating result once before FAIL and keep
      the first and each deviating run as evidence.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
-6. **Leave:** `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`), return the results the task asks for.
+6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check` (publishes nothing; exit 1 lists
+   evidence named but missing: save it or drop the name); then `board.ps1 leave`, release seat / phone / Chrome ports (`killSession()`),
+   return the results the task asks for.
 
 **Shared environment** (others test at the same time): data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you
 created, an unexpected change may be another agent's (re-check before FAIL); change an environment setting only when a check needs
@@ -68,13 +72,16 @@ from the run's `context` / `contextFiles` and `LESSONS.md`, never from these gen
 ## Guide steps (a person tests by hand: router R9; dev agents at dev-kit 7b)
 - G0. Read `LESSONS.md`; know the change (MRs, task) and the target environment.
 - G1. Fill `templates/tester-guide.html` (`gdocs`) or `templates/tester-guide.md` (`markdown`): check ids, environment, accounts, data to
-  prepare, steps and a concrete Expected per check, plus "unchanged" checks for what must not change.
+  prepare, steps and a concrete Expected per check, plus "unchanged" checks for what must not change. Always fill "Before you start /
+  Feature switches": every setting or role that switches the feature on, checked ON before testing (a gate the tester cannot switch = NOT_TESTED).
 - G2. Publish: `python ../dev-kit/scripts/devtools.py doc "<title>" <guide file>` (a `.md` guide is converted to HTML first, so tables survive).
 - G3. Link it on the task (`tracker.ps1 comment` / `attach`) and in the MR; simple change → a how-to-test comment instead.
 
 ## Lead steps (setting up a run; orchestrate step 7)
 - L0. Machine setup once: `reference/runs.md` "Setup" (targets.local.json, `npm ci` in `scripts/web`, swarm config, auth checks).
 - L1. Run folder + `run.json` (shape: `reference/runs.md` and the header of `test-and-close.js`), guides exported to text.
+  Pre-run deploy check: `scripts/deployed.ps1 -Mrs <every item's MRs>`; resolve each MANUAL repo (deployed by hand) with the owner or an
+  ssh check before launching and write the answer in the run's `lead-notes.md`; NOT-DEPLOYED items wait or are left out.
 - L2. Launch `/test-and-close { runDir, kitDir }` and start `scripts/autoclose.ps1 -Journal <dir> -RunDir <run>` in the background.
 - L3. Afterwards: publish `skipClose` items with `finalize.ps1 -RunDir <run> -Code <code>`; a bug fix went live → `add-retest.ps1`.
 

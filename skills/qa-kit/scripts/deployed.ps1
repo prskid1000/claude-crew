@@ -12,6 +12,11 @@ into staging" / cherry-picks) the MR is on its target branch and none of its fil
 Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
 "job": "deploy-staging" }]. A repo deployed by hand (no CI job) uses { "target": ..., "awsStack": "<CloudFormation stack>", "region": ... }:
 live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
+A repo deployed by hand onto a host: { "target": ..., "ssh": { "host": "user@host", "key": "<key file>", "repoDir": "<repo checkout on
+the host>", "appDir": "<installed app dir>", "subdir": "<optional: part of repoDir that is installed>", "exclude": ["data"],
+"service": "<optional systemd unit, for its start time>" } }: live when the MR's commit is an ancestor of the host checkout's HEAD
+AND `sudo diff -rq` shows no differing code files between repoDir/subdir and appDir (one ssh call, BatchMode). Without a way to
+check, { "target": ..., "manual": true } reports MANUAL (confirm with the owner or an ssh check), never NOT-DEPLOYED.
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail)
@@ -39,6 +44,32 @@ function ContentOn($p, $mr, $sha, $ref) {
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
 function OnRef($p, $mr, $sha, $ref) { (IsAncestor $p $sha $ref) -or (ContentOn $p $mr $sha $ref) }
+# Hand-deployed host: one ssh call per (host, dirs, commit), memoised. The script goes over base64 so no quoting or CRLF survives
+# Windows argument passing. Returns @{ head; anc; rc; diff; svc } or $null when the host cannot be reached.
+function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
+function SshState($s, $sha) {
+  $src = if ($s.subdir) { "$($s.repoDir.TrimEnd('/'))/$($s.subdir)" } else { $s.repoDir }
+  $k = "$($s.host)|$($s.repoDir)|$src|$($s.appDir)|$sha"
+  if ($memo.ContainsKey($k)) { return $memo[$k] }
+  $x = (@('.git', '__pycache__', '*.pyc', 'venv', 'current') + @($s.exclude | Where-Object { $_ }) | ForEach-Object { "-x $(Sq $_)" }) -join ' '
+  $sh = @(
+    "R=$(Sq $s.repoDir); S=$(Sq $src); A=$(Sq $s.appDir.TrimEnd('/'))"
+    'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
+    "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
+    $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
+    "out=`$(sudo -n diff -rq $x `"`$S`" `"`$A`" 2>&1); echo RC=`$?"
+    'printf "%s\n" "$out" | grep -v "^Only in $A[/:]" | grep -v "^$" | sed "s/^/DIFF=/"'
+  ) -join "`n"
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
+  $key = [string]$s.key -replace '^~', $HOME
+  $lines = @(ssh -i $key -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $s.host "echo $b64 | base64 -d | bash" 2>$null)
+  $r = if (-not ($lines -match '^RC=')) { $null } else {
+    @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
+       anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
+       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1) }
+  }
+  $memo[$k] = $r; $r
+}
 
 # `pwsh -File deployed.ps1 -Mrs 'a!1','b!2'` hands over the quotes literally; strip them and split on commas/spaces.
 $out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"') } | Where-Object { $_ })) {
@@ -54,6 +85,17 @@ $out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"'
   $deps = @($r.deploys | Where-Object { -not $Target -or $_.target -eq $Target })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
+    if ($d.ssh) {   # deployed by hand onto a host: the host checkout holds the merge AND the installed app matches it
+      $s = $d.ssh; $st = SshState $s $sha
+      if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }
+      $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
+      if (-not $st.anc) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the host checkout ($where)" }; continue }
+      if ($st.rc -gt 1) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "in the host checkout, but diff failed: $(($st.diff | Select-Object -First 2) -join '; ') (sudo -n?)" }; continue }
+      if ($st.diff.Count) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "in the host checkout ($where), but $($st.diff.Count) file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')" }; continue }
+      [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the host checkout and installed ($where)" }
+      continue
+    }
+    if ($d.manual) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'MANUAL'; detail = 'deployed by hand: confirm with the owner or an ssh check' }; continue }
     if ($d.awsStack) {   # deployed by hand (no CI job): live only if the CloudFormation stack was updated after the merge
       $upd = aws cloudformation describe-stacks --region $(if ($d.region) { $d.region } else { 'eu-west-1' }) --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
       if (-not $upd) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)" }; continue }

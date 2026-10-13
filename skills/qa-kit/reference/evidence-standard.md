@@ -27,6 +27,10 @@ Every tested check leaves evidence that a reviewer, developer or customer can un
 | `_verify` | only for the independent verifier's evidence | |
 | `nn` | 2-digit step order inside the check (optional after `_verify`) | `01`, `02` |
 | `what` | lowercase-kebab, ≤ 40 chars, says what is shown | `record-saved-toast`, `before-edit`, `after-edit`, `500-on-save` |
+| marked copy | an annotated copy keeps the original's name + `-marked` (`annotate.ps1 -Copy`; an `m` after `nn` is also accepted) | `F2-T4_02_after-edit-marked.jpeg` |
+| setup | evidence for no one check: `<code>-<nn>-<what>`, `nn` 00 = before the checks (deploy check, setup), 90+ = cleanup | `F2-00-deployed.txt`, `F2-90-restore-settings.json` |
+
+`annotate.ps1` overwrites its input by default; `-Copy` writes `<base>-marked.<ext>` next to it so the raw shot stays too.
 
 Good: `F2-T4_01_before-edit.jpeg`, `F2-T4_02_after-edit.jpeg`, `F2-T4_03_put-project.json`, `F2-X1_01_500-on-cancel.json`.
 Bad: `screenshot1.png`, `F2 T4.jpeg`, `test.json`, `F2-T4_final_FINAL.jpeg`.

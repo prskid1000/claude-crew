@@ -7,18 +7,21 @@ Windows only: .NET supports System.Drawing only there. On Linux/macOS mark the e
   $A = '<workspace>/.claude/skills/qa-kit/scripts/annotate.ps1'
   & $A -In shots/GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing' -Text '40,40,Expected: wraps inside A4'
   -Rect 'x,y,w,h[,label]'      -Arrow 'x1,y1,x2,y2[,label]' (tip at x2,y2)      -Text 'x,y,text'      (each repeatable / comma lists)
-  -Out <file>  default: overwrites -In (keep the evidence name); -Color red|orange|green|blue (default red); -Scale for very large shots.
+  -Out <file>  default: overwrites -In (keep the evidence name); -Copy writes <base>-marked.<ext> next to -In instead
+  (the original stays; list both in results.json); -Color red|orange|green|blue (default red); -Scale for very large shots.
 Coordinates are image pixels (Android: uiautomator bounds are already pixels; web: CSS px x devicePixelRatio).
 #>
 param(
   [Parameter(Mandatory)][string]$In, [string]$Out,
   [string[]]$Rect = @(), [string[]]$Arrow = @(), [string[]]$Text = @(),
-  [ValidateSet('red', 'orange', 'green', 'blue')][string]$Color = 'red', [double]$Scale = 0
+  [ValidateSet('red', 'orange', 'green', 'blue')][string]$Color = 'red', [double]$Scale = 0,
+  [switch]$Copy
 )
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate.ps1 needs Windows (System.Drawing). On Linux/macOS use browser.mjs mark() before shot(); for Android name the element in the check note.' }
 Add-Type -AssemblyName System.Drawing
 $src = (Resolve-Path $In).Path
+if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
 if (-not $Out) { $Out = $src }
 $bytes = [IO.File]::ReadAllBytes($src)                     # read fully so we can overwrite the same file
 $ms = New-Object IO.MemoryStream(, $bytes)

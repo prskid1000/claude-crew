@@ -218,6 +218,9 @@ ${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comm
 ${it.extra || ''}
 ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only those.` : 'Work through ALL checks in the guide. Return every check with the guide\'s own numbers.'}
 Return checks, findings, setup_changes and data_created.
+LAST STEP before returning: write that same result as ${outDir(it)}/results.json (Write tool) and run
+  & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check
+  (checks only, publishes nothing). Exit 1 lists evidence named in results.json that does not exist: save it or drop the name, re-check.
 
 NON-NEGOTIABLE: there is no session time limit and nobody is waiting on you. "No time" or "not executed" are not valid NOT_TESTED reasons;
 returning early with untested checks will be rejected and re-run.`
@@ -263,8 +266,9 @@ function finalPrompt(it, res) {
   return `Publish the test results of package ${it.code}.${PATHS}
 1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
-2. Run in PowerShell (timeout 600000): & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
-   It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on
+2. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check   (evidence check only, publishes nothing),
+   then (timeout 600000): & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code}
+   It refuses to publish while evidence listed in results.json is missing. It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on
    and closes the tasks through the tracker (tracker.ps1), and opens a bug task for confirmed failures.
 3. If it errors, fix only data problems in results.json (e.g. drop a missing evidence file name) and run it once more. Don't edit finalize.ps1.
 Return ok=true/false and the script's output.`
@@ -337,12 +341,14 @@ async function runItem(it, idx, L) {
   if (it.skipClose) {
     // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
     // finalize.ps1 -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.
-    await agent(`Write two files with the Write tool, content exactly as given, change nothing, then return ok=true.
+    await agent(`Write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
 ${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
-Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).`,
+Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).
+3. Run in PowerShell: & '${Q}/finalize.ps1' -RunDir '${R.runDir}' -Code ${it.code} -Check   (evidence check only, publishes nothing)
+   and return its output (ok=true even when it lists missing files: the lead fixes them before publishing).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; publish left to the lead)`)
     return { code: it.code, summary: line, result: res, eventful: true, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
