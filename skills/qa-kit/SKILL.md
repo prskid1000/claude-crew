@@ -67,8 +67,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      after a restart. Off-script defects → extra checks `X1`, `X2` ….
    - **Retests of a dev fix** fail on the sibling path: run the full reported flow end to end (create/import, edit round-trip, cancel
      in locked/terminal states, the list GET as well as the item GET, every locale key against the default locale), and every screen
-     that reads the same stored record or rule (e.g. home step cards as well as the screen in the bug). Date/shift-rule fixes: also
-     cross midnight and run a second shift on the same day.
+     that reads the same stored record or rule (e.g. home step cards as well as the screen in the bug), and the screen a gate or check
+     navigates to, using the same fixture (a gate fix can leave that screen's loader on the old rule, which leaves the flow stuck).
+     Date/shift-rule fixes: also cross midnight and run a second shift on the same day through to End of Day.
    - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
      A part of the Expected you did not exercise (a second theme not rendered, a timeout path not triggered, checked via API only because
      the UI path is missing) is its own NOT_TESTED check, never a note; an unreachable screen the feature needs is FAIL.

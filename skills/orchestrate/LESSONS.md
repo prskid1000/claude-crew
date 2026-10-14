@@ -1,6 +1,8 @@
 # Coordination lessons — active rules (read before planning a wave or a QA run; ≤ 40 lines)
 Newest first, one line each, `(n×)` = times seen. Fixed/old entries live in `HISTORY.md` (never read it for work).
 
+- (2×) Wave reports: take each MR's state from report.mrs[].mergeState / wave-report.ps1 (it asks the git host), never from an agent's summary prose; the build summary is written before the ship step merges (B-EOD2 <repo>!2709, B-EODX4 <repo>!2712 were reported open but had merged).
+- (3×) App fixes that need a phone clock or seed step (shift/midnight/end-of-day): dev agents cannot run them, so do not leave them as needsLiveCheck until after deploy. Once the wave's MR is green, build the branch APK (android-swarm) and run one qa-tester retest with the brief's clock and seed steps before the merge into the deploying branch (B-EOD3, B-EODX4 deferred twice; the post-deploy run APPX4 then failed on a shift-start bound).
 - The owner asks for something destructive (clean a folder, reset a branch) while waves run: do it yourself after they finish; agents must never act on relayed requests outside their items.
 - Contracts file: agents append, never overwrite — still re-check your note is there after agents publish shapes. When a contract changes mid-wave, append it AND add a note in the brief agents re-read; reconcile duplicate key specs. (3×)
 - Overlapping agents: brief them to rebase only after the sibling MR merges (one conflict resolution, not two).
