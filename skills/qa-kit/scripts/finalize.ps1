@@ -16,14 +16,14 @@ Evidence check (runs first, before any upload or tracker call; reference/evidenc
 must exist (in shots\, evidence\ or findable in the run dir), else it throws and nothing is published. -AllowMissing publishes
 anyway, dropping the missing names and noting them in the check's "observed". On publish, off-standard names are only a warning.
 -Check runs only this check (no copies, uploads or tracker calls) and exits 1 with the list when evidence is missing, a file in
-shots\/evidence\ has an off-standard name (a suggested standard name is printed for each) or a check id appears twice in
-results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
+shots\/evidence\ has an off-standard name (a suggested standard name is printed for each), a listed file has a type that is
+never published ("listed but unsupported type") or a check id appears twice in results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
 references in results.json (each rename is printed); duplicate check ids are never fixed automatically.
 
 Run dir layout (see the qa-kit SKILL.md):
   run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus, closeWithNotTested?}, driveParent, items[] }
   <code>/results.json            { code, checks[], findings[], setup_changes[], data_created[] }
-  <code>/shots/*.jpeg|png  <code>/evidence/*.json
+  <code>/shots/*.jpeg|png  <code>/evidence/*.json|jsonl|ndjson|log (types: $script:EvidenceExt in lib/report.ps1)
 Writes <code>/report.html (+ report.md for markdown) and <code>/finalize.json. tracker.closeStatus may be a logical status (closed).
 Subtasks that still have PENDING checks (tested later in another lane) get a comment but stay open.
 #>
@@ -66,9 +66,12 @@ foreach ($c in @($res.checks)) {
 
 # 0. Evidence check before anything is uploaded or posted (reference/evidence-standard.md)
 . (Join-Path $PSScriptRoot 'lib/report.ps1')
-$files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match '^\.(jpe?g|png|json|log|csv|txt|pdf|mp4|html|xlsx?)$' })
+$files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match $script:EvidenceExt })
 $badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
 if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
+# listed evidence of a type that is never published (it would silently stay on disk): convert it or list a supported file instead
+$badTypes = @(@(foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and [IO.Path]::GetExtension([string]$e) -notmatch $script:EvidenceExt) { "$($c.id): $e" } } }) | Select-Object -Unique)
+if ($badTypes.Count -and -not $Check) { Write-Warning "evidence listed but of an unsupported type (not published): $($badTypes -join '; ')" }
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 if ($Check) {
   # A standard name for an off-standard file: <CODE>-<check>[_verify]_<nn>_<what>.<ext> when a check id is in the name or a check
@@ -131,8 +134,12 @@ if ($Check) {
     $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } else { '(no suggestion: rename by hand)' })" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
+  if ($badTypes.Count) {
+    $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
+    $badTypes | ForEach-Object { "  $_" }
+  }
   if ($fail) { exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, unique check ids)"; exit 0
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, unique check ids)"; exit 0
 }
 if ($lostList.Count -and -not $AllowMissing) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run (or pass -AllowMissing to publish without them)."

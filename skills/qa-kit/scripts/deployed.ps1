@@ -19,6 +19,8 @@ of the host checkout's HEAD AND every file git tracks under repoDir/subdir (`git
 with `sudo -n`; one ssh call per host+commit, BatchMode). Untracked or ignored runtime files in appDir (logs, node_modules,
 generated assets) never count, so `exclude` is only needed for tracked files the install leaves out on purpose. Without a way to
 check, { "target": ..., "manual": true } reports MANUAL (confirm with the owner or an ssh check), never NOT-DEPLOYED.
+An app repo tested on the emulator lanes: { "target": ..., "laneApk": true } (or the path of an app.json): live when the MR's merge
+commit is an ancestor of the commit the lane APK was built from (android-swarm apk/app.json, written by app-build.ps1).
 Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFix uses it to flag promoted tasks that went live.
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail)
@@ -46,6 +48,24 @@ function ContentOn($p, $mr, $sha, $ref) {
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
 function OnRef($p, $mr, $sha, $ref) { (IsAncestor $p $sha $ref) -or (ContentOn $p $mr $sha $ref) }
+# App repos (laneApk): the stamp android-swarm app-build.ps1 writes next to the lane APK (apk/app.json: branch, commit, appDir, built).
+# laneApk = true -> <swarm.config.json outDir, else Get-KitPath android-swarm>/apk/app.json; a string = the path of that app.json.
+function LaneApk($d) {
+  $f = if ($d.laneApk -is [string]) { $d.laneApk } else {
+    $sc = Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'android-swarm/swarm.config.json'
+    $o = if (Test-Path $sc) { (Get-Content $sc -Raw | ConvertFrom-Json).outDir }
+    Join-Path $(if ($o) { [string]$o } else { Get-KitPath android-swarm }) 'apk/app.json'
+  }
+  if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json }
+}
+# Local ancestry in the checkout the APK was built from: $true / $false, $null when that checkout or the APK commit is not there.
+# A sha unknown to the checkout (exit 128) cannot be an ancestor of a commit the checkout holds: $false.
+function LocalAncestor($dir, $sha, $commit) {
+  if (-not $dir -or -not (Test-Path $dir)) { return $null }
+  git -C $dir cat-file -e "$commit^{commit}" 2>$null; if ($LASTEXITCODE) { return $null }
+  git -C $dir merge-base --is-ancestor $sha $commit 2>$null
+  $LASTEXITCODE -eq 0
+}
 # Hand-deployed host: one ssh call per (host, dirs, commit), memoised. The script goes over base64 so no quoting or CRLF survives
 # Windows argument passing. Returns @{ head; anc; rc; diff; svc; files } or $null when the host cannot be reached.
 # Compared: only the files git tracks under repoDir/subdir (minus the optional `exclude` globs, matched against each path part),
@@ -102,6 +122,16 @@ $out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"'
   $deps = @($r.deploys | Where-Object { -not $Target -or $_.target -eq $Target })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
+    if ($d.laneApk) {   # app repo, no deploy pipeline: live on the test phones when the lane APK was built from a commit holding the merge
+      $ai = LaneApk $d
+      if (-not $ai -or -not $ai.commit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = 'no lane APK stamp (android-swarm apk/app.json): build the APK with app-build.ps1' }; continue }
+      $apk = "APK $($ai.commit) ($($ai.branch), built $($ai.built))"
+      $on = LocalAncestor $ai.appDir $sha $ai.commit
+      if (-not $on) { $on = OnRef $p $mr $sha $ai.commit }   # no local checkout, or squashed / cherry-picked content: ask the git host
+      if ($on) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the lane $apk (phones get it on their next phone.ps1 acquire)" } }
+      else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the lane ${apk}: rebuild it (app-build.ps1) from a branch holding the merge" } }
+      continue
+    }
     if ($d.ssh) {   # deployed by hand onto a host: the host checkout holds the merge AND the installed app matches it
       $s = $d.ssh; $st = SshState $s $sha
       if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }

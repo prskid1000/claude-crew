@@ -18,6 +18,17 @@ A gate you cannot switch yourself (environment config, licence, a role you canno
 |---|---|---|---|---|
 | <setting / role / feature flag> | <screen or endpoint, tenant> | <on/off> | <steps> | <yes/no> |
 
+## Environment and data setup
+Every step a check depends on, in order (the dev agent fills it from its report's seed and needsLiveCheck; delete rows that do
+not apply). A step you cannot do = NOT_TESTED (say which), not FAIL.
+
+| Step | Why | How | Verify it took |
+|---|---|---|---|
+| APK commit (app checks) | the fix must be in the build the phone runs | <app build holding commit/MR, e.g. `deployed.ps1 -Mrs <repo>!<iid>`> | <commit shown by `phone.ps1 acquire` / the app's version> |
+| Device clock or time step | <date / shift / day-boundary behaviour> | <set the device or server time to …, or wait until …> | <the date/time the screen shows> |
+| Seed records and profile flags | <the records and user/tenant flags the checks need> | <API calls or screens; prefix created data QA-<CODE>> | <ids / values read back> |
+| Reindex / cache refresh | <search or cached data must include the seed> | <job, endpoint or command> | <the seed appears in search / the list> |
+
 ## Checks
 Check ids are referenced by QA results and bug tasks: keep them stable.
 

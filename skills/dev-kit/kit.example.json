@@ -120,6 +120,10 @@
         {
           "target": "<env deployed by hand, no way to check>",
           "manual": true
+        },
+        {
+          "target": "<test phones of an app repo (the emulator lane APK)>",
+          "laneApk": true
         }
       ],
       "linkFromByTarget": {

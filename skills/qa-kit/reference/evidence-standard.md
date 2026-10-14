@@ -13,12 +13,12 @@ Every tested check leaves evidence that a reviewer, developer or customer can un
 ```
 <run dir>/<CODE>/
 ├── shots\       screenshots (.jpeg web, .png app), short screen recordings (.mp4)
-├── evidence\    API / network / DB / log evidence (.json, .log)
+├── evidence\    API / network / DB / log evidence (.json, .jsonl/.ndjson for loops and streams, .log)
 └── scripts\     the scripts you ran (kept, never published)
 ```
 
 ## 2. File names
-`<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>`  (ext: jpeg/png, json, log, pdf, csv, txt, html, xls/xlsx, mp4). Evidence saved elsewhere (absolute paths, verify folders) is collected by finalize.ps1; helper scripts are not evidence. List relative file names only, never folders or helper scripts.
+`<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>`  (ext: jpeg/png, json, jsonl/ndjson, log, pdf, csv, txt, html, xls/xlsx, mp4; any other listed type is never published and `finalize.ps1 -Check` reports it as "listed but unsupported type"). Evidence saved elsewhere (absolute paths, verify folders) is collected by finalize.ps1; helper scripts are not evidence. List relative file names only, never folders or helper scripts.
 
 | Part | Rule | Example |
 |---|---|---|

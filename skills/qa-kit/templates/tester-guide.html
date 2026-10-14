@@ -38,8 +38,40 @@ One check = one observable result. QA agents test exactly these rows, so make "E
 </tr>
 </table>
 
-<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Setup and test data</h2>
-<ol><li>{{settings to enable, data to create (prefix QA-{{CODE}}), logins}}</li></ol>
+<h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Environment and data setup</h2>
+<p>Every step a check depends on, in order (filled from the dev report's seed and needsLiveCheck; delete rows that do not apply). <b>A step you cannot do = NOT_TESTED (say which), not FAIL.</b></p>
+<table style="border-collapse:collapse;width:100%;margin-bottom:10px">
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:20%"><b>Step</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:24%"><b>Why</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:32%"><b>How</b></td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px;background:#f8fafc;width:24%"><b>Verify it took</b></td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">APK commit (app checks)</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">the fix must be in the build the phone runs</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{app build holding commit / MR}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{commit shown at phone lease / app version}}</td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">Device clock or time step</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{date / shift / day-boundary behaviour}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{set the device or server time to …, or wait until …}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{date/time the screen shows}}</td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">Seed records and profile flags</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{records and user/tenant flags the checks need}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{API calls or screens; prefix created data QA-{{CODE}}}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{ids / values read back}}</td>
+</tr>
+<tr>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">Reindex / cache refresh</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{search or cached data must include the seed}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{job, endpoint or command}}</td>
+  <td style="border:1px solid #d1d5db;padding:6px 8px">{{the seed appears in search / the list}}</td>
+</tr>
+</table>
 
 <h2 style="font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px">Checks</h2>
 <table style="border-collapse:collapse;width:100%">

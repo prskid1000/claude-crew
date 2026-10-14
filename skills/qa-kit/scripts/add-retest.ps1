@@ -15,6 +15,9 @@ param(
   [string]$Title, [string]$Mrs = '', [string[]]$Only, [ValidateSet('web', 'api', 'app')][string]$Lane = 'web'
 )
 $ErrorActionPreference = 'Stop'
+# `pwsh -File add-retest.ps1 -Only 'T1','T2'` hands the list over as one string ("'T1','T2'" or "T1,T2"): split on commas and
+# spaces, trim the quotes (same as the -Mrs parsers).
+$Only = @(@($Only) -split '[\s,]+' | ForEach-Object { $_.Trim().Trim("'", '"') } | Where-Object { $_ })
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\tracker.ps1')   # tracker.type in kit.local.json
 $t = Get-TrackerTask $Task
 if (-not $t.name) { throw "cannot read task $Task (tracker $($KitConf.TrackerType): CLI auth / config?)" }

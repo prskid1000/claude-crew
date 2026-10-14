@@ -265,7 +265,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 // Evidence names: <CODE>-<checkId>[_verify]_<nn>[m]_<what>.<ext> or setup <code>-<nn>-<what>.<ext>  (qa-kit\reference\evidence-standard.md)
 // keep in sync with lib/report.ps1 $script:EvidenceName: the same literal, character for character (PowerShell -match is
 // case-insensitive, hence /i)
-const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?)$/i
+const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" does not follow <CODE>-<check>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg)`)
 }

@@ -18,8 +18,11 @@ $script:Font = "font-family:Arial,Helvetica,sans-serif"
 $script:Cell = "border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;font-size:10pt"
 # check evidence <CODE>-<checkId>[_verify]_<nn>[m]_<what> ("m" / "-marked": an annotated copy) or setup evidence <code>-<nn>-<what>
 # (nn 00 = before the checks, 90+ = cleanup); reference/evidence-standard.md section 2.
-# Keep in sync with web/browser.mjs EVIDENCE_NAME (the same literal there, with /i); finalize.ps1 -FixNames relies on it too.
-$script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?)$'
+# Keep in sync with web/browser.mjs EVIDENCE_NAME (the same literal there, with /i) and $script:EvidenceExt below;
+# finalize.ps1 -FixNames relies on it too.
+$script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$'
+# the evidence types finalize.ps1 publishes (matched against the file extension, dot included); anything else listed is reported as unsupported
+$script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'
 
 # "F2-T4_02_after-edit.jpeg" -> "After edit"; legacy names fall back to the file name
 function Caption($file) {
@@ -131,7 +134,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
     A "</tr>"
     foreach ($f in $all) {
       $chk = if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+)') { $Matches[1] } else { '' }
-      $type = switch -Regex ($f) { '\.(png|jpe?g)$' { 'Screenshot' } '\.json$' { 'API / data' } '\.(log|txt)$' { 'Log' } '\.csv$' { 'Export (CSV)' } '\.pdf$' { 'Document (PDF)' } '\.mp4$' { 'Recording' } default { 'File' } }
+      $type = switch -Regex ($f) { '\.(png|jpe?g)$' { 'Screenshot' } '\.json$' { 'API / data' } '\.(jsonl|ndjson)$' { 'Data (JSON lines)' } '\.(log|txt)$' { 'Log' } '\.csv$' { 'Export (CSV)' } '\.pdf$' { 'Document (PDF)' } '\.mp4$' { 'Recording' } default { 'File' } }
       A "<tr><td style='$script:Cell'><a href='$($Map.files[$f].link)'>$(Esc $f)</a></td><td style='$script:Cell'>$(Esc $chk)</td><td style='$script:Cell'>$type</td><td style='$script:Cell'>$(Esc (Caption $f))</td></tr>"
     }
     A "</table>"
