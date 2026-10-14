@@ -48,7 +48,8 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
    Name `<CODE>-<checkId>[_verify]_<nn>_<what>.<ext>` (`what` lowercase-kebab ≤ 40 chars), e.g. `F2-T4_01_before-edit.jpeg`.
    PASS (UI) = one shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = failure shot
    **and** the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files. Never a blank/loading/login
-   page; open each image with Read before listing it; list only names that exist. Mark every FAIL screenshot: app
+   page; open each image with Read before listing it; name each file to this standard when you save it and cite in results.json only
+   files that exist and are not 0 bytes (`finalize.ps1 -FixNames` is a safety net, not the naming step). Mark every FAIL screenshot: app
    `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`
    (`-Copy` keeps the original and writes `<name>-marked.<ext>`). Setup evidence for no one check: `<CODE>-00-<what>` (e.g. the deploy check).
 5. **Verdict per check — defects are never notes:**
@@ -91,7 +92,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 created, an unexpected change may be another agent's (re-check before FAIL); change an environment setting only when a check needs
 it, restore it at once, list it in `setup_changes`; per-user preferences on a secondary test user; never deactivate, delete or
 re-password test logins; ≤ 2 Chrome ports per web agent; app lanes: only your serial, never `adb kill-server`. Project facts come
-from the run's `context` / `contextFiles` and `LESSONS.md`, never from these generic files.
+from the run's `context` / `contextFiles` and `LESSONS.md`, never from these generic files. An MCP server the run relies on (DB,
+messaging) that failed to connect is a connection failure: note it in `lead-notes.md` / the run log and use the API or scripts
+instead; it is never a missing capability and never on its own a reason for NOT_TESTED.
 
 ## Guide steps (a person tests by hand: router R9; dev agents at dev-kit 7b)
 - G0. Read `LESSONS.md`; know the change (MRs, task) and the target environment.
@@ -108,7 +111,8 @@ from the run's `context` / `contextFiles` and `LESSONS.md`, never from these gen
   ssh check before launching and write the answer in the run's `lead-notes.md`; NOT-DEPLOYED items wait or are left out.
   Pre-run prerequisites: for every guide, check on the target tenant/role each feature flag or setting (current value, who switches and
   restores it; ask the owner when one was turned off on purpose), the test data and accounts the steps need (a driver with a stocked van,
-  franchise data, a soft-delete column, a role with the right authority, the record/stop/order types the scenario needs such as a
+  franchise data, a soft-delete column, a role with the right authority and the role's screen switches (a screen switched OFF for the
+  role makes deep links silently redirect to home), the record/stop/order types the scenario needs such as a
   COLLECT_DROP stop), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
   result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data (APPLY, allocate,
   resource) so testers never write to someone else's run, and server config the feature needs (e.g. an MCP URL); write

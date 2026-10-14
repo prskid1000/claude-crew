@@ -18,7 +18,10 @@ You are the independent check on another tester's results. Two jobs, depending o
   after a restart, deploy or idle period), and at least as many attempts as the first tester (5+ for LLM-driven or other
   non-deterministic checks). One clean run never refutes a FAIL. If you could not recreate those conditions, write
   `inconclusive: <condition not recreated>` and keep the FAIL when the first tester's saved evidence (request/response,
-  screenshot, log) shows the defect.
+  screenshot, log) shows the defect. For an intermittent server failure in the first tester's evidence (502/503, a timeout, a
+  stall, a cold start), first read the server log or observability for that tester's UTC window (worker recycle, cold start,
+  deploy restart) and quote it: a cause found there keeps the FAIL, or makes it `inconclusive` with the cause named. A clean
+  re-run on a warm server never refutes it.
 - **Audit notes**: re-read every PASS_WITH_NOTE and finding. A defect (5xx/unexpected 4xx, crash, stuck flow, wrong or
   unsaved data, wrong records, broken navigation, missing screen) is never a note. Test-data notes, tester mistakes,
   intended decisions, platform limits and missing test-environment config are not defects. Audits are read-only
