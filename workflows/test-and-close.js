@@ -135,7 +135,9 @@ const VERIFY_SCHEMA = {
     outcome: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'], description: 'confirmed = the defect is real; refuted = not reproduced UNDER the first tester\'s conditions (same login/session type, time window, at least as many attempts); inconclusive = those conditions could not be recreated' },
     confirmed: { type: 'boolean', description: 'false ONLY when outcome is refuted (older readers use this field)' },
     attempts: { type: 'integer', description: 'how many times you ran the check' },
-    observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['id', 'outcome', 'confirmed', 'attempts', 'observed', 'evidence'] } } },
+    observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } },
+    basis: { type: 'string', description: 'what the verdict rests on: the _verify evidence files you saved, the server log / observability window you read (UTC), or the code path (file:line) that explains the behaviour; none when there is nothing' } },
+    required: ['id', 'outcome', 'confirmed', 'attempts', 'observed', 'evidence', 'basis'] } } },
   required: ['verdicts'],
 }
 const AUDIT_SCHEMA = {
@@ -293,7 +295,9 @@ Return one verdict per check id, with attempts (how many times you ran it) and o
 - confirmed: the behaviour really differs from Expected (confirmed=true).
 - refuted: not reproduced UNDER the first tester's conditions above (same login/session type, same time window - e.g. right after a
   restart, deploy or idle period - and at least as many attempts; one clean run never refutes a FAIL) (confirmed=false).
-- inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).`
+- inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).
+Every verdict needs basis: the _verify evidence files you saved, the log window you read, or the code path (file:line). A refuted
+verdict with no _verify evidence and no code basis is counted as inconclusive.`
 }
 
 function finalPrompt(it, res) {
@@ -316,7 +320,9 @@ const tag = (L) => (L ? '@' + L.name : '')
 
 async function runItem(it, idx, L) {
   // pools start at 0 / 100 / 200 / 300: % 400 keeps every pool on its own ports (% 40 put web item k and app item k on the same Chrome)
-  const p = 9600 + (idx % 400) * 10
+  // the worker instance (args.instance, merged into R) shifts the base too: two test-and-close runs (w1, w2 ...) on one machine once both drove Chrome on 9600-9604
+  const inst = parseInt(String(R.instance || 'w0').replace(/\D/g, ''), 10) || 0
+  const p = 9600 + ((inst * 40 + idx) % 400) * 10
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
@@ -385,6 +391,12 @@ async function runItem(it, idx, L) {
         outcome = 'inconclusive'
         x.observed = `${x.observed} (${x.attempts || 1} attempt(s) against ${c.attempts ? `${need} by the first tester` : `${need} needed for an intermittent failure`})`
       }
+      // a refutation needs something to stand on: its own _verify evidence or a code / log basis (refutations without either were wrong)
+      const basis = String(x.basis || '').trim()
+      const verifyEv = (x.evidence || []).some((e) => /_verify[_.]/i.test(String(e)))
+      const codeBasis = /[\w-]+\.(java|kt|ts|tsx|js|mjs|py|cs|go|rb|php|sql|xml|html)(:\d+)?\b|\blogs?\b|observability/i.test(basis) && !/^none\b/i.test(basis)
+      if (outcome === 'refuted' && !verifyEv && !codeBasis) { outcome = 'inconclusive'; x.observed = `${x.observed} (no verify evidence or basis recorded)` }
+      if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
       c.evidence = [...c.evidence, ...(x.evidence || [])]
       if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
       else if (outcome === 'inconclusive') { c.verify = 'inconclusive'; c.observed = `${c.observed} | Re-test inconclusive (conditions not recreated): ${x.observed}` }

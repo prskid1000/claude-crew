@@ -27,6 +27,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/supervise.ps1` | E1 heartbeat, every round (`-AutoFix -Brief`); `-MarkStopped` at E6 |
 | `scripts/wave-report.ps1` | E5, when a workflow finishes |
 | `scripts/bug-brief.ps1` | E9, one call per QA bug task |
+| `scripts/launch-record.ps1` | steps 3 and 7, right after each workflow launch (`-RunId -Script -ArgsJson`); E5 `-Done`; E6 the resume line; `-List -Brief` run by kit-health.ps1 |
 | `scripts/track.ps1` | step 5 (`add -Task -Mrs`, `-MergeAfter`); run by supervise every round |
 | `scripts/board.ps1` | agents' step 0 (`join`/`beat`/`check`/`leave`); read by supervise |
 | `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
@@ -52,12 +53,14 @@ repo's `CLAUDE.md`; nothing project-specific is hard-coded. Run kit scripts with
    review, kitDir, mandate }` (named lookup breaks after a `cd`). Always pass `kitDir` (absolute) and `mandate` (the owner's own words;
    without it agents drop their items for the latest chat message). Models and cheaper runs (`review: 'auto'`, `learn: 'auto'`,
    `verify: false`): `reference/self-improvement.md`. A single area can also be one `dev-agent` via the Agent tool ("Follow the brief <path>.
-   You are X3 …"). Repos whose target deploys on merge: `holdMerge: [<repo>]` (MRs stay open, reviewed, green; ask, then merge). Then E1.
+   You are X3 …"). Repos whose target deploys on merge: `holdMerge: [<repo>]` (MRs stay open, reviewed, green; ask, then merge).
+   A consumer area that merges after a producer area: `agents[].dependsOn: ['<producer id>']`. Record every launch:
+   `scripts/launch-record.ps1 -RunId <runId> -Script <path> -ArgsJson '<args>'` (a restart then resumes it, E6). Then E1.
 4. **Relay** (E10): decisions/contracts → append to `<brief>.contracts.md`; watch with `scripts/status.ps1 -Open -Watch` if useful.
 5. **Ship:** agents merge producers first (DB/API), then clients; tracker → review → promoted (`track.ps1`, automatic).
 6. **Deploy:** **a person** deploys to the test environment. App: `android-swarm/app-build.ps1` from the merged branch (agents lease phones).
 7. **Test:** run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (`qa-kit/reference/runs.md`);
-   `/test-and-close { runDir, kitDir }`; start `qa-kit/scripts/autoclose.ps1` in the background. Bugs → E9; retest: `retest: true`.
+   `/test-and-close { runDir, kitDir }`; start `qa-kit/scripts/autoclose.ps1` in the background; record the launch (step 3). Bugs → E9; retest: `retest: true`.
 8. **Close:** reconcile backlog vs merged MRs + tracker comments; list only what's open, each with a reason (external / new data model /
    product decision / no data / cut for size). `inTest` only after deployment, set by a person.
 
@@ -72,8 +75,8 @@ agents to push and open the MR as Draft with `Not run: <gate>` (dev-kit **Gate**
 | E2 | supervise prints **ACT** | do the action it prints (unclear: `reference/supervising.md`) |
 | E3 | supervise prints **WATCH** | nothing now; re-check next round; leave healthy agents alone |
 | E4 | supervise prints **LIVE** (a promoted task's MRs are deployed) | agents test it: /test-and-close (R11); a person tests: tester guide via `qa-kit` (R9) |
-| E5 | A workflow finished (notification) | `wave-report.ps1 -Run <id>` (never parse the truncated notification); MR state comes from `mrs[].mergeState` / wave-report.ps1, never from summary prose; reconcile; then: open findings → follow-up /dev-wave (one group per file owner); deployed → E4; failed checks → E9; then ALWAYS → E14 |
-| E6 | An agent or workflow stopped (usage limit, API timeout, RAM, you) with work left | `supervise.ps1 -MarkStopped <run>` if you stopped it; /dev-wave `mode: 'resume'` (`templates/RESUME_BRIEF.md`) from its worktrees; never restart from scratch |
+| E5 | A workflow finished (notification) | `launch-record.ps1 -Done -RunId <runId>`; `wave-report.ps1 -Run <id>` (never parse the truncated notification); MR state comes from `mrs[].mergeState` / wave-report.ps1, never from summary prose; reconcile; then: open findings → follow-up /dev-wave (one group per file owner); deployed → E4; failed checks → E9; then ALWAYS → E14 |
+| E6 | An agent or workflow stopped (usage limit, API timeout, RAM, you) with work left | `supervise.ps1 -MarkStopped <run>` if you stopped it. A launch record exists (SessionStart lists it): `Workflow({ scriptPath, resumeFromRunId, args })` from the record (`launch-record.ps1 -List`), restart its autoclose, re-arm E1. Else /dev-wave `mode: 'resume'` (`templates/RESUME_BRIEF.md`) from its worktrees; never restart from scratch |
 | E7 | A pipeline fails on an agent's MR | inside a reviewed wave: automatic (the CI gate makes it a blocking finding for the fix round); after the wave: a fix round = /dev-wave for that area, or direct if one small fix (R14) |
 | E8 | A review finding on an already-merged MR | a follow-up MR: should-fix findings → follow-up /dev-wave; one small fix → direct (R14) |
 | E9 | QA bug tasks created ("[Bug] … failed checks") | `bug-brief.ps1 -Task <id> -Agent B-<code> -Repos <r>` per bug, then ONE /dev-wave `mode: 'bugfix'` for every bug open now; never wait for the QA run to finish |

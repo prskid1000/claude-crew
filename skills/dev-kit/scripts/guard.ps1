@@ -46,14 +46,14 @@ if ($SelfTest) {
     @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind friction -Text `"Stopped agent left a commit; merge reported via devtools.py 'merged' but not verified`" -Ref repo!1 -Source workflow`n& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"recovery worked`" -Ref repo!1", $false, 'default desktop app'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, 'default desktop app'),
     @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, 'default desktop app'),
-    # [.., 'holds runs in progress'] - deleting the runtime's work/ (judged as if runs were active: KIT_GUARD_SELFTEST_ACTIVE)
-    @('Bash', "cd /d/x/.claude-runtime/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
-    @('Bash', "cd D:/x/.claude-runtime && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain RM check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
-    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the .claude-runtime/work folder" -Source workflow', $false, 'holds runs in progress'),
-    @('Bash', 'rm -rf /d/x/.claude-runtime/work', $true, 'holds runs in progress'),
-    @('PowerShell', 'Remove-Item -Recurse -Force "D:\x y\.claude-runtime\work"', $true, 'holds runs in progress'),
-    @('Bash', "python -c `"import shutil; shutil.rmtree('/d/x/.claude-runtime/work')`"", $true, 'holds runs in progress'),
-    @('Bash', 'cd /d/x/.claude-runtime && rm -rf work', $true, 'holds runs in progress'),
+    # [.., 'holds runs in progress'] - deleting the runtime's work/ ({RT} = the runtime folder name; judged as if runs were active)
+    @('Bash', "cd /d/x/{RT}/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
+    @('Bash', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain RM check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
+    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the {RT}/work folder" -Source workflow', $false, 'holds runs in progress'),
+    @('Bash', 'rm -rf /d/x/{RT}/work', $true, 'holds runs in progress'),
+    @('PowerShell', 'Remove-Item -Recurse -Force "D:\x y\{RT}\work"', $true, 'holds runs in progress'),
+    @('Bash', "python -c `"import shutil; shutil.rmtree('/d/x/{RT}/work')`"", $true, 'holds runs in progress'),
+    @('Bash', 'cd /d/x/{RT} && rm -rf work', $true, 'holds runs in progress'),
     @('PowerShell', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
     # stash inside a heredoc fed to a non-shell interpreter is data; a real git stash after it is not
     @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
@@ -62,7 +62,7 @@ if ($SelfTest) {
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below
   $fail = 0
   foreach ($c in $cases) {
-    $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress -Depth 4
+    $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1].Replace('{RT}', '.claude-runtime') } } | ConvertTo-Json -Compress -Depth 4
     $out = ($json | pwsh -NoProfile -NonInteractive -File $PSCommandPath) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
@@ -157,7 +157,7 @@ function ActiveWork {
 # Judged per command segment (split on ; && || | and newlines) of the line with heredoc bodies and here-strings dropped: a delete
 # word in an MR body or a -Text "..." argument, or a runtime path in a separate `cd` segment, is not a delete of the runtime
 # (two false denials: `cd <runtime> && mkdir -p work/x && ... <<'EOF' ... rm ... EOF`). A quoted argument is kept (separators
-# blanked) only when it is a path or holds a delete call itself (Remove-Item "C:\x y\.claude-runtime\work", python -c "shutil.rmtree(...)").
+# blanked) only when it is a path or holds a delete call itself (Remove-Item "C:\x y\<runtime>\work", python -c "shutil.rmtree(...)").
 function DeleteSegments([string]$t) {
   $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
       param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })

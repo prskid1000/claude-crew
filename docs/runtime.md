@@ -24,6 +24,7 @@ durable state left inside the runtime (`RUNTIME-DURABLE`).
 | `briefs` | `work/briefs/<task>.md` | `bug-brief.ps1` | `/dev-wave` (its `brief` arg) | run `bug-brief.ps1` again |
 | `phones` | `work/phones/<lane>.json` | `phone.ps1` (leases), `swarm-avd.ps1` (voids a lease on reset) | `supervise.ps1`, `swarm-avd.ps1` | phones count as free; agents acquire again |
 | `qa-seats` | `work/qa-seats/` | `qa-seat.ps1` (memory seats, item claims) | `supervise.ps1`, `cleanup.ps1` | testers take seats again |
+| `launches` | `work/launches/<runId>.json` | `launch-record.ps1` (the coordinator, after each workflow launch; `-Done` at E5) | `kit-health.ps1` (SessionStart: stopped runs to resume), `cleanup.ps1` (> 3 days) | the coordinator rebuilds the launch by hand (script, args, run folder) |
 | `audits` | `work/audits/<project>/` | tech-audit agents (when the profile names no findings folder) | the lead, `/kit-retro` | re-run the audit (keep findings you need in the project's own folder) |
 | `docs` | `work/docs/` | `devtools.py doc` (markdown reports) | people (the file is attached to the task) | publish again |
 | `evidence` | `work/evidence/` | `api.ps1 -Save` without `-OutDir` | testers | re-run the call (run evidence lives in the run folder) |

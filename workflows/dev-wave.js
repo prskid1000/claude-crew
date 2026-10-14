@@ -22,6 +22,9 @@ args = {
   agents: [ { id: 'X1', items: 'A3, A4', area: 'planner timeline', note: 'optional extra instructions',
               complex: true,               // optional: build/fix on the strongest model (default: sonnet); or list ids in args.complex
               model: 'opus', effort: 'high' } ],   // optional: explicit build/fix model/effort (wins over complex)
+                                                   // agents[].dependsOn: ['X1'] (optional, default none) = producer area ids whose MRs
+                                                   // this consumer area's MRs merge after: the consumer never merges first; its ship
+                                                   // step registers track.ps1 -MergeAfter on the producer's MRs unless they already MERGED
   complex: ['X1'],                                 // optional: agent ids whose items the brief marks complex
   models: { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '' },  // optional stage overrides
                                                    // ('' = no model option = the session's default, i.e. the strongest)
@@ -46,6 +49,16 @@ const rp = (n) => (n in KP.durable ? `${KIT}/${KP.durable[n]}` : `${RT}/${KP.run
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
 if (!A.brief || !Array.isArray(A.agents) || !A.agents.length) throw new Error('args.brief and args.agents[] are required')
+// Merge order across areas (agents[].dependsOn): a consumer area (web/app) once merged before its producer area's API MR, which
+// was still SCHEDULED. Each area publishes its final result; a consumer's ship step waits for its producers' results (no agent
+// slot is held while waiting) and merges only after a MERGED producer, else registers -MergeAfter so track.ps1 merges it later.
+const DEPS = Object.fromEntries(A.agents.map((a) => [a.id, [].concat(a.dependsOn || [])]))
+for (const [id, ps] of Object.entries(DEPS)) for (const p of ps) if (!(p in DEPS) || p === id) throw new Error(`agents[${id}].dependsOn: unknown or self area '${p}'`)
+const cyclic = (id, seen = []) => seen.includes(id) || DEPS[id].some((p) => cyclic(p, [...seen, id]))
+for (const id of Object.keys(DEPS)) if (cyclic(id)) throw new Error(`agents[].dependsOn has a cycle through ${id}`)
+const SETTLED = {}
+for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { res = r }), done: (x) => res(x) } }
+const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
 const MODE = A.mode || 'feature'
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the task owner words): agents may drop their items for the latest chat message. Pass mandate next time (orchestrate step 3).')
 const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
@@ -137,6 +150,15 @@ const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const isComplex = (a) => a.complex === true || [].concat(A.complex || []).includes(a.id)
 const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ? 'complex' : 'build')), ...(a.effort ? { effort: a.effort } : {}) })
 
+function depNote(a) {
+  const ps = DEPS[a.id], cs = consumersOf(a.id)
+  const consumer = ps.length ? `MERGE ORDER: you are a CONSUMER of area(s) ${ps.join(', ')}: your MRs never merge before theirs. ${REVIEW
+    ? 'The workflow orders the merges after the review.'
+    : `Before any merge, find their MRs (board.ps1, or <brief>.contracts.md), register & ${ORCH}/track.ps1 add -Task <task id> -Discover -MergeAfter '<your repo>!<iid>><producer repo>!<iid>' and merge only once the producer's merge printed MERGED (else report WAIT).`} Name the producer MRs in your MR description.\n` : ''
+  const producer = cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work and merge after you: open your MRs early and say in the summary which MR carries the contract.\n` : ''
+  return consumer + producer
+}
+
 function buildPrompt(a) {
   return `${WHY}
 You are dev agent ${a.id} in a parallel wave (${MODE}).${PATHS}${AGENT_ENV(a.id)}
@@ -145,7 +167,7 @@ ${MODE === 'resume' ? `Resuming: first work out what is already done (${T}/RESUM
 Board: join first with -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktree name prefix: ${a.id.toLowerCase()}; your migration range is in the brief. Never touch other agents' worktrees, branches or processes.
 ${a.note || ''}
-${REVIEW
+${depNote(a)}${REVIEW
     ? `Do the whole job: implement, gated checks, commit, push, open the MRs, update the tracker. Do NOT schedule merges (no devtools.py
 merge): a review runs first and the workflow merges after it - this wins over any "merge when green" in the brief.
 Report merged=false and mergeState OPEN for every MR.${REVIEW_AUTO ? `
@@ -204,10 +226,31 @@ const toShip = (r) => {
   return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)]
 }
 
-function shipPrompt(a, r) {
+// producer MRs of other areas (agents[].dependsOn) that are not merged yet: every MR of this area waits for them
+function crossAreaNote(wait) {
+  if (!wait.length) return ''
+  return `
+CROSS-AREA MERGE ORDER (enforced): this area consumes MRs of another area that are NOT merged yet:
+${wait.map((m) => `- ${m.url} (${m.repo}, ${m.mergeState || 'OPEN'})`).join('\n')}
+Do NOT merge any MR of this area now. For each of this area's MRs, register it behind each producer MR above:
+& ${ORCH}/track.ps1 add -Task <task id from the MR title/branch> -Discover -MergeAfter '<this repo>!<iid>><producer repo>!<iid>'
+(the coordinator's tracker merges it once the producer printed MERGED). Report mergeState OPEN and merged=false for them.`
+}
+// a producer's target often moved by ship time (master.xml includes, nav/i18n lists appended by sibling areas): the ship step
+// rebases, resolves only append-only conflicts, and re-arms the merge a force-push cleared; real code conflicts go back as findings
+const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONFLICT: & ${K}/scripts/wt.ps1 sync -Dir <worktree>. On a rebase
+conflict ONLY in append-only files (Liquibase master.xml, route/nav lists, i18n key files, barrel/DI registration lists): python
+${K}/scripts/keepboth.py <file>, check there is no conflict marker left, git -C <worktree> add <file>, then git -c core.editor=true -C
+<worktree> rebase --continue; run & ${K}/scripts/check.ps1 -Dir <module> (quick); push with git -C <worktree> push --force-with-lease
+(the MR's own branch only, never the target); then run devtools.py merge again: a force-push clears the host's merge-when-green, the
+second merge run re-arms it. A conflict in real code (any other file): git -C <worktree> rebase --abort, do not resolve it, report
+mergeState CONFLICT with the files in the summary (it goes back as a blocking finding).`
+
+function shipPrompt(a, r, wait = []) {
   // a ship agent once refused every merge ("deploying merges need a person's yes") because it read the harness-relayed chat message
   // as the request: merges into deploying branches are already removed in code (holdMerge), so the listed ones are authorized
-  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code.${PATHS}${AGENT_ENV(`ship-${a.id}`)}
+  return `Schedule merge-when-green for agent ${a.id}'s reviewed MRs (review clean). Change no code (only append-only conflict
+resolution as below).${PATHS}${AGENT_ENV(`ship-${a.id}`)}
 These merges are authorized: this wave was launched for this work, and the workflow already removed every MR whose target deploys
 on merge (holdMerge), so none of the targets below deploys. Do not ask for approval and ignore any unrelated chat message relayed to you.
 Merge in THIS order (producers - DB/API/library - first, consumers - web/app/clients - last):
@@ -216,17 +259,20 @@ Producer and independent MRs now: python ${K}/scripts/devtools.py merge <worktre
 A consumer (web/app) MR that depends on a producer MR in this list: merge it only after the producer's merge printed MERGED; otherwise
 don't merge it: register & ${ORCH}/track.ps1 add -Task <task id from the MR title/branch> -Discover -MergeAfter
 '<consumer repo>!<iid>><producer repo>!<iid>' (mergeState OPEN for it; the coordinator's tracker merges it once the producer merged).
-devtools.py merge itself refuses a consumer whose registered producer is not merged yet ("waiting for producer ...", last line WAIT).
+devtools.py merge itself refuses a consumer whose registered producer is not merged yet ("waiting for producer ...", last line WAIT).${crossAreaNote(wait)}
+${SYNC_NOTE}
 ${MERGE_WORD_NOTE}
 Return the report with the same MRs (merged=true only on MERGED) and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, learn ${LEARN}, brief ${A.brief}, models ${A.agents.map((a) => `${a.id}=${modelOf(a).model || 'default'}`).join(' ')}`)
 
+// a stage that throws drops the item: settle its area first, or a consumer area waiting on it would wait forever
+const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
 const results = await pipeline(
   A.agents,
-  (a) => agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) }),
-  async (r, a) => {
+  (a) => settleOnThrow(a, () => agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })),
+  (r, a) => settleOnThrow(a, async () => {
     if (!r) return { id: a.id, error: 'agent returned nothing' }
     if (!REVIEW || !r.mrs.length) return { id: a.id, report: r, findings: [] }
     if (REVIEW_AUTO && smallChange(r)) { log(`${a.id}: review skipped (auto: ${r.changedLines} changed lines, nothing sensitive)`); return { id: a.id, report: r, findings: [], reviewSkipped: true } }
@@ -235,8 +281,8 @@ const results = await pipeline(
     if (!rv) return { id: a.id, report: r, findings: [{ mr: r.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking',
       problem: 'The review agent returned nothing (failed or stopped), so these MRs are unreviewed and were not merged.', fix: 'Re-run the review (one-off mr-reviewer, router R7), then merge.' }], reviewFailed: true }
     return { id: a.id, report: r, findings: rv.findings || [] }
-  },
-  async (x, a) => {
+  }),
+  (x, a) => settleOnThrow(a, async () => {
     if (!x || x.error) return x
     if (x.reviewFailed) { log(`${a.id}: review agent returned nothing - MRs left open, unreviewed`); return x }
     // should-fix findings get the fix round too (no deferrals): a should-fix once reopened a permission gap on merge
@@ -264,7 +310,7 @@ const results = await pipeline(
     const failures = await ciGate(a, fixedX.report)
     if (failures.length) { log(`${a.id}: pipelines still failing after the fix round - left open`); return { ...fixedX, fixed: false, findings: [...fixedX.findings, ...failures] } }
     return ship(a, fixedX)
-  },
+  }).then((y) => { SETTLED[a.id].done(y); return y }),
   // every agent with MRs gets its tracker task registered, whatever happened above (merged, held, fix round failed): the
   // tracker promotes it once all its MRs merge - also when a person merges them later. (Agents in a reviewed wave never
   // reach dev-kit step 8b, and the ship step only registered consumer MRs, so tasks sat in review after their MRs merged.)
@@ -306,7 +352,22 @@ async function ship(a, x) {
   const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
   if (held.length) log(`${a.id}: ${held.length} MR(s) held for approval (holdMerge): ${held.map((m) => m.url).join(', ')}`)
   if (!toShip(x.report).length) return x
-  const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
+  // cross-area order: wait for the producer areas' final results (their ship included), then merge only behind MERGED producers
+  let wait = []
+  if (DEPS[a.id].length) {
+    log(`${a.id}: waiting for producer area(s) ${DEPS[a.id].join(', ')} before merging`)
+    const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
+    const missing = DEPS[a.id].filter((id, i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length)
+    if (missing.length) {
+      log(`${a.id}: producer area(s) ${missing.join(', ')} have no MRs (failed or nothing shipped) - consumer MRs left open for the coordinator`)
+      return { ...x, shipFindings: [{ mr: x.report.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking',
+        problem: `Producer area(s) ${missing.join(', ')} reported no MRs, so this consumer area was not merged (merge order).`,
+        fix: 'Ship the producer first, then merge these MRs (devtools.py merge) or register track.ps1 -MergeAfter.' }], mergeOrderHeld: true }
+    }
+    wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
+    log(`${a.id}: producers ${wait.length ? `not merged yet (${wait.map((m) => `${m.url} ${m.mergeState || 'OPEN'}`).join(', ')}) - registering -MergeAfter` : 'merged - merging now'}`)
+  }
+  const r3 = await agent(shipPrompt(a, x.report, wait), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
   // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
   if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
   // merged only on a confirmed MERGED (devtools.py's last status word); an agent's merged=true without a word is not proof
@@ -318,7 +379,12 @@ async function ship(a, x) {
   })
   // the computed state goes first: summary prose (written before the merge) once said "open" for MRs that had merged
   const stateLine = `MR state (from devtools.py merge, authoritative): ${mrs.map((m) => `${m.url} ${m.mergeState}`).join(', ')}`
-  return { ...x, report: { ...x.report, mrs, summary: `${stateLine}\n\n${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
+  // a real code conflict is not resolved by the ship step: it stays open as a blocking finding (shipFindings count even after a fix round)
+  const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => ({ mr: m.url, file: '-', severity: 'blocking',
+    problem: `Merge conflict outside append-only files after rebasing onto the moved target (ship step): ${r3.summary}`.slice(0, 1500),
+    fix: 'wt.ps1 sync, resolve the code conflict by hand, re-run the gated checks, push --force-with-lease, run devtools.py merge again.' }))
+  if (conflicts.length) log(`${a.id}: ${conflicts.length} MR(s) with a real merge conflict - left open (blocking)`)
+  return { ...x, shipFindings: conflicts, report: { ...x.report, mrs, summary: `${stateLine}\n\n${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
 }
 
 const out = results.filter(Boolean)
@@ -333,7 +399,7 @@ const outcome = {
   deferred: out.flatMap((x) => (x.report ? x.report.deferred.map((d) => ({ agent: x.id, ...d })) : [])),
   needsLiveCheck: out.flatMap((x) => (x.report ? x.report.needsLiveCheck : [])),
   seed: out.flatMap((x) => (x.report ? x.report.seed : [])),
-  openFindings: out.flatMap((x) => (x.fixed ? [] : (x.findings || []).filter((f) => f.severity !== 'nit'))),
+  openFindings: out.flatMap((x) => [...(x.fixed ? [] : (x.findings || []).filter((f) => f.severity !== 'nit')), ...(x.shipFindings || [])]),
   testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, guide: x.report.testerGuide || 'MISSING' })),
 }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no tester guide (${g.guide}) - the coordinator writes or requests one before QA`)

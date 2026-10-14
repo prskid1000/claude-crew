@@ -11,7 +11,7 @@ What it cleans (only kit-created things; never repos, never anything in use):
     then their profile folders idle > 1 day; and when no QA seat/agent is active, only the cleanup.maxBrowserProfiles
     (kit.local.json, default 4) most recently used profiles are kept - a profile in use is never removed
   - idle Gradle / Kotlin compile daemons (GBs each) when no gated Gradle build is running
-  - shared web logins (cache/sessions) > 8 h, API tokens (cache/tokens) > 3 days, stop markers (cache/stopped) > 7 days
+  - shared web logins (cache/sessions) > 8 h, API tokens (cache/tokens) > 3 days, stop markers (cache/stopped) > 7 days, launch records (work/launches) > 3 days
   - loose evidence (work/evidence) > 14 days, android shots / temp xml (work/shots, cache/android-tmp) > 3 days
   - wave reports (work/waves) > 14 days, bug briefs and markdown docs (work/briefs, work/docs) > 30 days, retro reports
     (logs/retros) > 90 days
@@ -92,6 +92,7 @@ foreach ($f in Get-ChildItem (Get-KitPath stopped) -File) { if (Old $f (7 * 24))
 foreach ($f in Get-ChildItem (Get-KitPath evidence) -File) { if (Old $f (14 * 24)) { Gone $f.FullName 'loose evidence > 14 d' } }
 foreach ($d in 'android-tmp', 'shots') { foreach ($f in Get-ChildItem (Get-KitPath $d) -Recurse -File) { if (Old $f 72) { Gone $f.FullName "$d temp > 3 d" } } }
 foreach ($f in Get-ChildItem (Get-KitPath waves) -File) { if (Old $f (14 * 24)) { Gone $f.FullName 'wave report > 14 d' } }
+foreach ($f in Get-ChildItem (Get-KitPath launches) -File) { if (Old $f 72) { Gone $f.FullName 'launch record > 3 d' } }
 foreach ($d in 'briefs', 'docs') { foreach ($f in Get-ChildItem (Get-KitPath $d) -File) { if (Old $f (30 * 24)) { Gone $f.FullName "$d > 30 d" } } }
 foreach ($f in Get-ChildItem (Get-KitPath retros) -File) { if (Old $f (90 * 24)) { Gone $f.FullName 'retro report > 90 d' } }
 

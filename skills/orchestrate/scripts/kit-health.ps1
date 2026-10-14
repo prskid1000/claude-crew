@@ -5,6 +5,8 @@ The kit (the workspace's .claude folder) is a git clone of the kit repo, edited 
     -Fetch hook refreshes it for the next start); core.hooksPath must be .githooks (the pre-push gate)
   - kit.local.json "localOnly" paths are kept in .git/info/exclude (kit-setup.ps1 -Exclude; rewrites only on change)
   - an old runtime next to .claude (pre-clone layout) -> migrate it (kit-setup.ps1 -Migrate)
+  - workflow launches with no completion (launch-record.ps1 -List -Brief: resumeFromRunId + args file) and QA runs whose
+    autoclose watcher stopped, plus a note that no heartbeat is armed yet (skipped after a compaction: same session)
   - kit-lint summary (warn only): unrouted parts, unlisted files, fuzzy triggers, dangling paths, raw runtime paths,
     durable state inside the runtime (RUNTIME-DURABLE), overlay problems
   pwsh -File kit-health.ps1                # the checks above (synchronous hook, well under 2 s)
@@ -41,8 +43,17 @@ if (Test-Path (Join-Path $kit '.git')) {
 . (Join-Path $kit 'skills/dev-kit/scripts/kitpaths.ps1')
 $legacy = Join-Path (Split-Path $kit) '.claude-runtime'
 if ((Test-Path $legacy) -and $legacy -ne (Get-KitPath runtime)) { $msgs += "old runtime at $($legacy): carry it over once no agents run: pwsh -File $(Join-Path $PSScriptRoot 'kit-setup.ps1') -Migrate $legacy" }
+# Workflows die with the session that ran them: list launches with no completion (launch-record.ps1) and QA runs whose autoclose
+# watcher went quiet, so the coordinator resumes them instead of rebuilding them by hand. Not after a compaction (same session:
+# its workflows still run). A fresh session has no heartbeat armed yet: say so when there is something to supervise.
+$hook = $null
+if ([Console]::IsInputRedirected) { try { $hook = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch {} }
+if (-not $hook -or $hook.source -ne 'compact') {
+  $stopped = @(& (Join-Path $PSScriptRoot 'launch-record.ps1') -List -Brief 2>$null)
+  if ($stopped.Count) { $msgs += "workflow runs with no completion (stopped with the last session? resume them, orchestrate E6; finished: launch-record.ps1 -Done): $($stopped -join '; '); no heartbeat is armed in this session (E1)" }
+}
 if ($py) {
-  $lint = & $py (Join-Path $PSScriptRoot 'kit-lint.py') $kit --summary --warn --no-flow 2>$null
+  $lint =& $py (Join-Path $PSScriptRoot 'kit-lint.py') $kit --summary --warn --no-flow 2>$null
   if ($lint) { $msgs += ($lint -join ' ') }
   $portKit = Join-Path $PSScriptRoot 'port-kit.py'
   if (Test-Path $portKit) {
