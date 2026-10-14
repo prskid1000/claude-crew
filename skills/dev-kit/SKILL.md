@@ -24,7 +24,7 @@ MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start
 | `scripts/wt.ps1` | steps 1, 2, 5, 6 (`new`, `sync`, `commit`, `remove`, `status`) |
 | `scripts/stack.ps1` | step 3 |
 | `scripts/check.ps1`, `scripts/gate.ps1` | step 4 and 6 (every build/test; `gate.ps1 -Cmd` for anything check.ps1 doesn't cover) |
-| `scripts/node-spec.mjs` | step 4b: the test command `stack.ps1` / `check.ps1 -Step test` use for a web project with no unit-test target (`*.spec.ts` under node, bundled with the project's esbuild; DOM specs under the project's jsdom, TestBed specs NOT RUN) |
+| `scripts/node-spec.mjs` | step 4b: the test command `stack.ps1` / `check.ps1 -Step test` use for a web project with no unit-test target (`*.spec.ts` under node, bundled with the project's esbuild; DOM specs under the project's jsdom, TestBed specs NOT RUN; real `@angular/core` with `check.ps1 -RealAngular`, auto-on for specs importing `@angular/forms`) |
 | `scripts/lib/spec-shim.mjs` | library imported by `node-spec.mjs` (jasmine/jest-style describe/it/expect/spyOn); never run by hand |
 | `scripts/lbcheck.py` | run by `check.ps1 -Step migrations` (step 4c) |
 | `scripts/keepboth.py` | step 6, on an append-only changelog rebase conflict |
@@ -48,8 +48,8 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/wt.ps1 new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>   # 1. worktree (deps linked)
 & $K/wt.ps1 sync -Dir <wt>                                       # 2. rebase onto latest target - before editing
 & $K/stack.ps1 -Dir <wt>/<module>                                # 3. this module's build/test commands
-& $K/check.ps1 -Dir <wt>/<module>                                # 4. compile + typecheck + lint (gated)
-& $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "<names>"    # 4b. targeted tests only (no test target: node-spec.mjs runs the specs)
+& $K/check.ps1 -Dir <wt>/<module>                                # 4. compile + typecheck + lint (gated; "typecheck UNRUN" = say so in the MR)
+& $K/check.ps1 -Dir <wt>/<module> -Step test -Tests "<names>"    # 4b. targeted tests only (no test target: node-spec.mjs runs the specs; exit 4 = start Docker for container tests)
 & $K/check.ps1 -Dir <wt>/<module> -Step migrations               # 4c. if you touched DB migrations (must print ISSUES 0)
 & $K/wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. re-read <brief>.contracts.md, rebase + re-check before push

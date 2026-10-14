@@ -19,7 +19,10 @@ Quick lint checks the files changed on the branch plus untracked ones. TypeScrip
 once with a temp tsconfig and then prints only the errors in your changed files plus one BASELINE line, failing only on yours.
 A per-project marker (<runtime>/cache/tsbuild/ts5103.<hash>.flag, keyed on the ignoreDeprecations value and the TypeScript version)
 makes later runs skip the first tsc run that is bound to fail; a baseline-only fallback run is recorded as ok in the gate history.
-Exit code: 0 ok, non-zero = the first failing step's exit code (3 = the gate could not start it in time).
+A node-spec test run uses the real @angular/core with -RealAngular (auto-on when a named spec imports @angular/forms). Container tests
+(*ContainerTest / *IT, or Testcontainers in the module) first need `docker info` to answer within 5 s, else exit 4 with a start hint.
+A fallback typecheck whose baseline exceeds 200 errors is reported UNRUN (linked node_modules do not match the branch), not ok.
+Exit code: 0 ok, non-zero = the first failing step's exit code (3 = the gate could not start it in time, 4 = Docker not running).
 #>
 param(
   [string]$Dir = (Get-Location).Path,
@@ -28,7 +31,8 @@ param(
   [string]$Files = '',
   [switch]$AllTests,
   [string]$Since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),   # migrations: only report changelog files named with a timestamp >= this
-  [switch]$Show
+  [switch]$Show,
+  [switch]$RealAngular   # test with node-spec.mjs: real @angular/core instead of the stub (auto-on when a named spec imports @angular/forms)
 )
 $ErrorActionPreference = 'Stop'
 $K = Split-Path $MyInvocation.MyCommand.Path
@@ -85,7 +89,10 @@ function Invoke-Typecheck([string]$TcCmd) {
     & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
     $rc = $LASTEXITCODE
     $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
+    $nErr = @($out -match '^(.+?\(\d+,\d+\): )?error TS\d+').Count
     if (-not @($out -match 'error TS5103').Count) {
+      # hundreds of errors on a plain run: split them like the fallback below (yours fail; a huge baseline is UNRUN)
+      if ($rc -and $nErr -gt $script:TypecheckUnrunAbove) { return (Split-TypecheckErrors $out $rc $null $null) }
       $out | ForEach-Object { Write-Host $_ }
       if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
       return $rc
@@ -116,6 +123,12 @@ function Invoke-Typecheck([string]$TcCmd) {
   $out2 = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Skip $out.Count })
   if ($rc -eq 3 -and -not $out2.Count) { return 3 }   # the gate could not start it
   if (@($out2 -match 'error TS5103').Count) { Remove-Item -LiteralPath $flag -ErrorAction SilentlyContinue }   # the fallback is no cure here: next run starts over
+  return (Split-TypecheckErrors $out2 $rc $fbCmd $fbStart)
+}
+
+# Errors in changed files (and config errors) fail the check; the rest is the BASELINE. A baseline above $TypecheckUnrunAbove means
+# the node_modules do not match the branch: UNRUN. $GateCmd/$Since mark the gate sample ok when only baseline errors remain.
+function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
   $changed = @(Get-ChangedFiles | ForEach-Object { $_.ToLower() })
   $mine = [Collections.Generic.List[string]]::new(); $mineN = 0; $baseN = 0; $baseFiles = @{}; $cur = $null; $blocks = 0
   foreach ($l in $out2) {
@@ -132,9 +145,18 @@ function Invoke-Typecheck([string]$TcCmd) {
   Write-Host "BASELINE: $baseN errors outside your changes (in $($baseFiles.Count) files; not failing this check; full log: $log)"
   if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or in the config)"; return 1 }
   if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }   # tsc failed without diagnostics
-  if ($rc) { Set-GateSampleOk $fbCmd $fbStart }   # baseline errors only: this check passed, so its gate sample is a pass too
+  # A huge baseline means the linked node_modules do not match this branch (missing or wrong-version packages): every file errors,
+  # so an error your change causes in an unchanged file hides in it. That run checked nothing: UNRUN, not a pass (no gate ok either).
+  if ($baseN -gt $script:TypecheckUnrunAbove) {
+    $gd = (git -C $st.dir rev-parse --git-dir 2>$null); if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
+    $tgt = if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim() } else { '<target>' }
+    Write-Host "[check] typecheck UNRUN: $baseN baseline errors (> $script:TypecheckUnrunAbove) - the linked node_modules do not match this branch, so real errors hide in the baseline. Say 'typecheck unrun' in the MR; the lead can set kit.local.json linkFromByTarget.$tgt to a checkout whose node_modules match $tgt (dev-kit reference/configuration.md)."
+    return 'unrun'
+  }
+  if ($rc -and $GateCmd) { Set-GateSampleOk $GateCmd $Since }   # baseline errors only: this check passed, so its gate sample is a pass too
   return 0
 }
+$script:TypecheckUnrunAbove = 200
 
 # gate.ps1 records ok = (exit code 0) per run in its history.json; a fallback typecheck that failed only on baseline errors passed
 # this check, so its sample (newest one of this command since the run started) is turned into ok (marked baseline), under the
@@ -160,6 +182,45 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
     $h | ConvertTo-Json -Depth 3 | Set-Content "$hf.tmp" -ErrorAction Stop
     Move-Item "$hf.tmp" $hf -Force -ErrorAction Stop
   } catch {} finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
+}
+
+# Container tests (Testcontainers) need a running Docker: without it each one burns minutes in Maven/Gradle and then fails looking
+# like a code bug. Judged before the gate: a test named *ContainerTest / *IT, or a named test class (or -AllTests) in a module whose
+# build file references testcontainers and whose source uses it. `docker info` gets 5 s; on failure exit 4 with a start hint.
+function Test-DockerForContainerTests {
+  $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
+  $need = @($names | Where-Object { $_ -match '(Container|IT)(Test)?$' }).Count -gt 0
+  if (-not $need) {
+    $bf = @('pom.xml', 'build.gradle', 'build.gradle.kts') | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($bf -and (Get-Content -LiteralPath $bf -Raw) -match 'testcontainers') {
+      if ($AllTests -and -not $names.Count) { $need = $true }
+      else {
+        $roots = @('src/test', 'src/integrationTest') | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { Test-Path -LiteralPath $_ }
+        foreach ($n in $names) {
+          $src = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Include "$n.java", "$n.kt" -ErrorAction SilentlyContinue } | Select-Object -First 1)
+          if ($src.Count -and (Get-Content -LiteralPath $src[0].FullName -Raw) -match '@Testcontainers|@Container\b|import\s+org\.testcontainers|extends\s+\w*Container\w*Test\b') { $need = $true; break }
+        }
+      }
+    }
+  }
+  if (-not $need) { return 0 }
+  $docker = Get-Command docker -ErrorAction SilentlyContinue | Select-Object -First 1
+  $ok = $false; $why = 'docker is not on PATH'
+  if ($docker) {
+    try {
+      $psi = [Diagnostics.ProcessStartInfo]::new($docker.Source, 'info --format "{{.ServerVersion}}"')
+      $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false
+      $p = [Diagnostics.Process]::Start($psi)
+      $outTask = $p.StandardOutput.ReadToEndAsync(); $errTask = $p.StandardError.ReadToEndAsync()
+      if (-not $p.WaitForExit(5000)) { try { $p.Kill($true) } catch {}; $why = 'docker info did not answer within 5 s' }
+      elseif ($p.ExitCode -eq 0 -and "$($outTask.Result)".Trim()) { $ok = $true }
+      else { $why = "docker info failed: $((("$($errTask.Result)" -split "`n") | Where-Object { $_.Trim() } | Select-Object -First 1))" }
+    } catch { $why = "docker info could not run: $($_.Exception.Message)" }
+  }
+  if ($ok) { Write-Host '[check] container tests: Docker is running'; return 0 }
+  Write-Host "[check] container tests need Docker, and it is not available ($why)."
+  Write-Host "[check] Start it (Windows/macOS: Docker Desktop; Linux: the docker service), poll 'docker info' until it answers, then re-run. A container test that fails because Docker was down is not a code failure."
+  return 4
 }
 
 if ($Step -eq 'migrations') {
@@ -200,6 +261,19 @@ foreach ($s in $steps) {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
     $cmd = $cmd -replace '\{tests\}', $Tests
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
+  }
+  if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs' -and $cmd -notmatch '--real-angular') {
+    # the @angular/core stub breaks @angular/forms (FormControl & co. need real core exports): such specs run on the real core
+    $why = if ($RealAngular) { '-RealAngular' } else {
+      $hit = @(@($Tests -split '[,\s]+' | Where-Object { $_ }) | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { $_ -match '\.(spec|test)\.\w+$' -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+               Where-Object { (Get-Content -LiteralPath $_ -Raw) -match '[''"]@angular/forms[''"]' } | Select-Object -First 1)
+      if ($hit.Count) { "$(Split-Path $hit[0] -Leaf) imports @angular/forms" }
+    }
+    if ($why) { $cmd += ' --real-angular'; Write-Host "[check] node-spec with the real @angular/core ($why)" }
+  }
+  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') {   # -Show reports the Docker check without stopping
+    $rc = Test-DockerForContainerTests
+    if ($rc -and -not $Show) { exit $rc }
   }
   if ($cmd -match '\{sln\}') {
     # .NET: the solution in the stack dir, else the single project there (a test project folder has only its .csproj)
@@ -247,12 +321,13 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }                                                       # Gradle build cache
   if ($Show) { "$s : $cmd"; continue }
-  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $rc = [int](@(Invoke-Typecheck $cmd)[-1]) }
+  $unrun = $false
+  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else { & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   }
-  if (-not $Show) { Write-Host "[check] $s ok" }
+  if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }
 if (-not $Show -and -not $ran) { Write-Host "[check] nothing to run for $Step" }
 exit 0

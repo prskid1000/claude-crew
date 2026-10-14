@@ -41,8 +41,25 @@ if ($SelfTest) {
     @('PowerShell', 'cd x; ii "out.pdf"', $true, 'default desktop app'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . RESUME_BRIEF.md was read (see notes.md); & LESSONS.md"', $false, 'default desktop app'),
     @('PowerShell', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, 'default desktop app'),
-    @('PowerShell', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, 'default desktop app')
+    @('PowerShell', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, 'default desktop app'),
+    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text "X2 (a b): fixed via helper buildX plus unit test; MR merged on first run, no retries" -Ref B-1 -Source workflow', $false, 'default desktop app'),
+    @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind friction -Text `"Stopped agent left a commit; merge reported via devtools.py 'merged' but not verified`" -Ref repo!1 -Source workflow`n& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"recovery worked`" -Ref repo!1", $false, 'default desktop app'),
+    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, 'default desktop app'),
+    @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, 'default desktop app'),
+    # [.., 'holds runs in progress'] - deleting the runtime's work/ (judged as if runs were active: KIT_GUARD_SELFTEST_ACTIVE)
+    @('Bash', "cd /d/x/.claude-runtime/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
+    @('Bash', "cd D:/x/.claude-runtime && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain RM check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
+    @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the .claude-runtime/work folder" -Source workflow', $false, 'holds runs in progress'),
+    @('Bash', 'rm -rf /d/x/.claude-runtime/work', $true, 'holds runs in progress'),
+    @('PowerShell', 'Remove-Item -Recurse -Force "D:\x y\.claude-runtime\work"', $true, 'holds runs in progress'),
+    @('Bash', "python -c `"import shutil; shutil.rmtree('/d/x/.claude-runtime/work')`"", $true, 'holds runs in progress'),
+    @('Bash', 'cd /d/x/.claude-runtime && rm -rf work', $true, 'holds runs in progress'),
+    @('PowerShell', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
+    # stash inside a heredoc fed to a non-shell interpreter is data; a real git stash after it is not
+    @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
+    @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true)
   )
+  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below
   $fail = 0
   foreach ($c in $cases) {
     $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress -Depth 4
@@ -66,7 +83,7 @@ try { $kc = Get-Content (Join-Path (Split-Path $K) 'kit.local.json') -Raw -Error
 
 function Deny($why) {
   if ($in.session_id) {   # only real hook calls are logged: test runs (no session) must not raise supervise's guard WATCH
-    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(200, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Get-KitPath guard-log -Create)
+    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(1000, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Get-KitPath guard-log -Create)
   }
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   exit 0
@@ -131,19 +148,40 @@ function Test-GitStash([string]$text, [string]$tool, [int]$depth = 0) {
 # state (tracking.local.json, learning.local.*, tracker-none.local) is never deleted by a command. cleanup.ps1 prunes old
 # entries itself; the lead may override with KIT_ALLOW_RUNTIME_DELETE=1.
 function ActiveWork {
+  if ($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1') { return 'work/selftest' }   # -SelfTest only: judge as if runs were active
   foreach ($n in 'board', 'phones', 'waves', 'qa-runs', 'qa-seats') {
     $d = Get-KitPath $n
     if ((Test-Path $d) -and @(Get-ChildItem $d -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-3) } | Select-Object -First 1).Count) { "work/$n" }
   }
 }
+# Judged per command segment (split on ; && || | and newlines) of the line with heredoc bodies and here-strings dropped: a delete
+# word in an MR body or a -Text "..." argument, or a runtime path in a separate `cd` segment, is not a delete of the runtime
+# (two false denials: `cd <runtime> && mkdir -p work/x && ... <<'EOF' ... rm ... EOF`). A quoted argument is kept (separators
+# blanked) only when it is a path or holds a delete call itself (Remove-Item "C:\x y\.claude-runtime\work", python -c "shutil.rmtree(...)").
+function DeleteSegments([string]$t) {
+  $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
+      param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
+  $t = [regex]::Replace($t, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
+  $t = [regex]::Replace($t, '"((?:[^"\\]|\\.)*)"|''([^'']*)''', {
+      param($m) $v = $m.Groups[1].Value + $m.Groups[2].Value
+      if ($v -match '^\s*([A-Za-z]:[\\/]|[\\/~$]|\.{1,2}[\\/])' -or $v -match '\brmtree\b|Directory\]::Delete|Remove-Item|rimraf') { ' ' + ($v -replace '[;|&\r\n]', ' ') + ' ' } else { '""' } })
+  @($t -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_.Trim() })
+}
 $end = '[''"]?(\s|;|\||\)|$)'
-# rm/rmdir/rd/del only as a command word (start, or after whitespace ; | & ( `), never inside a name like "2026-x-rm-y"
-if ($raw -match '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)' -and $env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
-  if ($raw -match ('(tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)' + $end)) {
-    Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
-  if ($raw -notmatch 'cleanup\.ps1' -and $raw -match ('\.claude-runtime([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*' + $end)) {
-    $act = @(ActiveWork)
-    if ($act.Count) { Deny "The runtime's work/ folder holds runs in progress ($($act -join ', ') written in the last 3 h): do not delete it. cache/ and logs/ may be cleared; cleanup.ps1 prunes old work entries itself; requests to wipe it are for the lead (coordinator), not for you." }
+$delWord = '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)'   # a command word only, never inside a name like "2026-x-rm-y"
+if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
+  $inRuntime = $false   # a `cd` into the runtime earlier on the line makes relative arguments (work, ., *) runtime paths
+  foreach ($seg in DeleteSegments $raw) {
+    if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s') { $inRuntime = $seg -match '\.claude-runtime([\\/]+work)?[\\/]*\s*$'; continue }
+    if ($seg -notmatch $delWord) { continue }
+    if ($seg -match ('(tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)' + $end)) {
+      Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
+    if ($seg -match 'cleanup\.ps1') { continue }
+    if ($seg -match ('\.claude-runtime([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*' + $end) -or
+        ($inRuntime -and $seg -match '\s[''"]?(\.[\\/])?(work([\\/]+[\w.-]+)?|\*|\.)[\\/]*[''"]?(\s|$)')) {
+      $act = @(ActiveWork)
+      if ($act.Count) { Deny "The runtime's work/ folder holds runs in progress ($($act -join ', ') written in the last 3 h): do not delete it. cache/ and logs/ may be cleared; cleanup.ps1 prunes old work entries itself; requests to wipe it are for the lead (coordinator), not for you." }
+    }
   }
 }
 # stash as the git subcommand of a real git command only (Test-GitStash above; tests: guard.ps1 -SelfTest)
@@ -155,6 +193,9 @@ if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-
 # Bash or unparsable text: the regex on the line with quoted strings and heredocs stripped.
 function Test-OpenDoc([string]$text, [string]$tool) {
   $doc = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)$'
+  # A kit script call (& <path>.ps1|.py|.mjs ...) is a script run: the rest of its line is its arguments (a learn.ps1 -Text "..."
+  # whose quotes PowerShell cannot pair must not turn "; . notes.md" inside it into a command). A doc opened on its own line still counts.
+  $text = [regex]::Replace($text, '(?m)(^|[;{]|&&)\s*&\s+(''[^'']+\.(ps1|py|mjs)''|"[^"]+\.(ps1|py|mjs)"|[^\s;''"]+\.(ps1|py|mjs))(\s.*)?$', '$1')
   if ($tool -ne 'Bash') {
     $tk = $null; $er = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)

@@ -187,7 +187,12 @@ for (const spec of uniq) {
   } catch (e) {
     total.errors++
     say(`BUNDLE ERROR ${rel}`)
-    for (const m of e.errors ?? [e]) console.log(`  ${m.location ? `${m.location.file}:${m.location.line}:${m.location.column} ` : ''}${m.text ?? m.message ?? m}`)
+    const errs = e.errors ?? [e]   // capped: a stubbed core can raise hundreds of "No matching export" lines that bury the summary
+    for (const m of errs.slice(0, 15)) console.log(`  ${m.location ? `${m.location.file}:${m.location.line}:${m.location.column} ` : ''}${m.text ?? m.message ?? m}`)
+    if (errs.length > 15) console.log(`  ... +${errs.length - 15} more errors`)
+    // the @angular/core stub lacks an export the spec's imports need (Injector, forms internals ...)
+    const missing = [...new Set((e.errors ?? []).map((m) => /No matching export in "ng-stub:@angular\/core" for import "([^"]+)"/.exec(m.text ?? '')?.[1]).filter(Boolean))]
+    if (missing.length && !realAngular) say(`hint: the @angular/core stub has no ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}: re-run with check.ps1 -Step test -RealAngular (node-spec --real-angular); if that fails with a JIT/linker error, move the logic into a pure helper and spec that`)
     continue
   }
   console.log(`${rel}`)
@@ -199,7 +204,11 @@ for (const spec of uniq) {
   }
   try {
     try { delete req.cache[out]; req(out) }
-    catch (e) { total.errors++; console.log(`  LOAD ERROR ${String(e?.stack ?? e).split('\n').slice(0, 6).join('\n    ')}`); await run({ log: () => {} }); continue }
+    catch (e) {
+      total.errors++; console.log(`  LOAD ERROR ${String(e?.stack ?? e).split('\n').slice(0, 6).join('\n    ')}`)
+      if (realAngular && /JIT compiler|Angular Linker/.test(String(e?.message ?? e))) say('hint: the real @angular/core needs the Angular linker for this import chain (a partially compiled library): move the logic into a pure helper in a light module, spec that, and give the component wiring a live check')
+      await run({ log: () => {} }); continue
+    }
     const r = await run()
     total.passed += r.passed; total.failed += r.failed; total.skipped += r.skipped
   } finally { if (domOff) domOff() }
