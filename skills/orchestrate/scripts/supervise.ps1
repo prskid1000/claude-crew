@@ -277,6 +277,10 @@ if ($AutoFix) {
     $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
     $fields = @{ liveCheckedAt = $o.liveCheckedAt }; if ($new.Count) { $fields.liveOn = @(@($o.liveOn) + $new | Where-Object { $_ } | Select-Object -Unique) }
     Set-KitTaskFields $o.task $fields
+    # a person may have tested and closed the task by hand (no QA run covers it): only read the tracker once a deploy is new
+    if ($new.Count -and (Test-TrackerStatus $(try { (Get-TrackerTask $o.task).status } catch { '' }) 'closed')) {
+      Set-KitTaskFields $o.task @{ qaCovered = @('closed') }; continue
+    }
     if ($new.Count) {
       Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($new -join ', ') (QA only on the environment the task is tested on)" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
