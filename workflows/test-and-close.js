@@ -117,10 +117,10 @@ const CHECKS_SCHEMA = {
           what_was_done: { type: 'string' },
           observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
           evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/' },
-          attempts: { type: 'integer', description: 'how many times you ran this check (LLM-driven / timing checks: 5+)' },
+          attempts: { type: 'integer', description: 'how many times you ran this check (1 for a single run; LLM-driven / timing checks: 5+)' },
           window: { type: 'string', description: 'when it ran, as conditions + UTC times: e.g. "first 5 min after a restart, 14:02-14:10 UTC", "after 2 h idle"' },
         },
-        required: ['id', 'subtask_id', 'screen', 'result', 'what_was_done', 'observed', 'evidence'],
+        required: ['id', 'subtask_id', 'screen', 'result', 'what_was_done', 'observed', 'evidence', 'attempts'],
       },
     },
     findings: { type: 'array', items: { type: 'string' } },
@@ -269,6 +269,14 @@ Findings:
 ${finds || '(none)'}`
 }
 
+// Attempts a refutation needs: the first tester's own count; when it is missing on an intermittent-looking FAIL (timeout, 50x,
+// cold start, stall, LLM-driven), 5, so one clean warm re-run comes out inconclusive instead of refuting it.
+const INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
+function attemptsNeeded(c) {
+  if (c.attempts) return c.attempts
+  return INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1
+}
+
 function verifyPrompt(it, fails, ports, L) {
   return `Verify these FAILED checks from scratch (your agent definition: be skeptical of the first tester, confirm a real difference from Expected).
 
@@ -277,7 +285,7 @@ Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<check
 Tasks and MRs: ${(it.subtasks || []).map((s) => `${s.id}${s.mrs ? ` (MRs: ${s.mrs})` : ''}`).join('; ')}
 
 FAILED CHECKS:
-${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}\n  conditions of the first tester: ${c.attempts || 1} attempt(s)${c.window ? `, window: ${c.window}` : ', window: not recorded (read the evidence timestamps)'}`).join('\n')}
+${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}\n  conditions of the first tester: ${c.attempts ? `${c.attempts} attempt(s)` : attemptsNeeded(c) > 1 ? `attempts not recorded on an intermittent-looking failure: run it ${attemptsNeeded(c)} times` : '1 attempt'}${c.window ? `, window: ${c.window}` : ', window: not recorded (read the evidence timestamps)'}`).join('\n')}
 ${seatBlock(it, `verify:${it.code}`)}
 ${COMMON}
 ${laneBlock(it, ports, L)}
@@ -371,9 +379,11 @@ async function runItem(it, idx, L) {
       let outcome = x.outcome || (x.confirmed ? 'confirmed' : 'refuted')
       // fewer attempts than the first tester never refutes an intermittent FAIL (LLM-driven / timing checks).
     // (no apostrophes inside nested template literals: kit-lint's string stripper loses track of them)
-      if (outcome === 'refuted' && (c.attempts || 1) > 1 && (x.attempts || 1) < c.attempts) {
+      // attempts missing on an intermittent-looking FAIL counts as 5 (attemptsNeeded), so one warm re-run is inconclusive.
+      const need = attemptsNeeded(c)
+      if (outcome === 'refuted' && need > 1 && (x.attempts || 1) < need) {
         outcome = 'inconclusive'
-        x.observed = `${x.observed} (${x.attempts || 1} attempt(s) against ${c.attempts} by the first tester)`
+        x.observed = `${x.observed} (${x.attempts || 1} attempt(s) against ${c.attempts ? `${need} by the first tester` : `${need} needed for an intermittent failure`})`
       }
       c.evidence = [...c.evidence, ...(x.evidence || [])]
       if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
