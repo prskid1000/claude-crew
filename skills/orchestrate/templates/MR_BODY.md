@@ -8,11 +8,13 @@
 
 ## Not in this MR
 - <deferred item> — <reason: product decision / external / follow-up MR !n>
+- Behaviour limits: <what this change deliberately does not handle (inputs, roles, states, data) and what happens then> (or "none")
 
 ## Verified
 - Checks: `check.ps1 -Step quick` ✅ · tests `<names>` ✅ · migrations `ISSUES 0` ✅
 - Manual / staging: <what you saw, with evidence links (screenshots, request/response JSON)>
 - Not run: <gate or test that did not run, and why> (or "nothing")
+- Hook reformatting: <files the commit hooks (lint-staged, formatters) rewrote beyond your change> (or "none")
 - Pure logic: <committed spec file that covers it, or the pasted node/python output that proves it> (or "none")
 - UI: <committed structural spec, or a 1366x768 screenshot link (+ a wide one for layout)> (or "not a UI change")
 

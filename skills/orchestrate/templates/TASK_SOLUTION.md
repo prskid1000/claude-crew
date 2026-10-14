@@ -4,7 +4,7 @@
 - <user-visible change 1>
 - <user-visible change 2>
 
-**MRs**: <API !n (merged)> · <Web !n (merged)> · <App !n>
+**MRs**: <API !n (MERGED|SCHEDULED|OPEN)> · <Web !n (MERGED|SCHEDULED|OPEN)> · <App !n (MERGED|SCHEDULED|OPEN)> (the state the host shows now: SCHEDULED = merge-when-green set, not merged yet)
 **Deployed?** <not yet — needs the next staging/prod deploy> | <yes, <env> on <date>>
 **After deploy**: <settings/data to seed, or "nothing">
 **Deferred**: <item — reason>, or "none"
