@@ -12,7 +12,8 @@ Phone leases: an app-testing agent owns its phone end to end. The coordinator ne
   & $P release -Agent APP1 [-Keep]    # close our app, free the lease; the phone shuts down unless another agent is waiting for it (or -Keep)
   & $P status                         # leases ("down, leased by X" = offline but still held), waiting agents, running phones
 A lease is kept when its lane goes offline: no other agent gets that lane, and a failed re-boot of a lane you already held keeps
-the lease (run ensure again); only a fresh acquire that cannot boot gives its new lease back.
+the lease (run ensure again); a fresh acquire whose first boot fails (not for memory) retries once with a cold boot, lease
+kept; only when that also fails does it give its new lease back.
 
 Manual use (a person, not an agent): & $P acquire -Agent manual -Lane Osprey ... & $P release -Agent manual. A 'manual' lease is never reclaimed
 by the supervisor (only a reminder after 4 h); agents wait for it like any lease.
@@ -123,6 +124,11 @@ switch ($Action) {
     $serial = "emulator-$($got.port)"
     $memQueued = $false
     if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
+    if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
+      # a new lease whose first boot failed for an emulator reason (not memory): one cold retry, lease kept (often a hung warm snapshot)
+      "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
+      $memQueued = Boot $got -Cold -Until $deadline
+    }
     if (-not (Running $got)) {
       if ($script:had) {   # a lane we already held went offline and did not come back: keep the lease, never hand it to another agent
         throw "$($got.name) is offline and did not boot$(if ($memQueued) { " (no memory turn in the gate within -WaitMinutes $WaitMinutes)" }); lease kept: run phone.ps1 ensure -Agent $Agent again, or release it"
