@@ -16,6 +16,7 @@ new:
   every node_modules next to a tracked package.json, and every .venv next to pyproject.toml/requirements.txt;
   it warns when the worktree's package.json dependencies differ from the source's (wrong versions = confusing tsc/build errors);
 - copies generated hook folders that worktrees miss (.husky/_).
+commit: first adds whatever of those a worktree lacks (one not made by `new`) from the main checkout, so its hooks really run.
 Never run npm/yarn/pip install inside a linked folder: it writes into the source checkout.
 #>
 param(
@@ -31,6 +32,43 @@ function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBound
 function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
   (@('dependencies', 'devDependencies') | ForEach-Object { if ($p.$_) { $p.$_.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
+}
+# Links node_modules next to every tracked package.json and .venv next to Python projects from $src, only where missing.
+# Returns the links it made.
+function Add-DepLinks($path, $src, $target) {
+  $made = @()
+  foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
+    $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
+    if ((Test-Path $from) -and -not (Test-Path $to)) {
+      New-DirLink $to $from; $made += $to
+      $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
+      if ($a -ne $b) { Write-Warning "$pj dependencies differ from $src - linked node_modules may be the wrong versions.$(if ($target) { " Use -LinkFrom <a checkout of $target with matching installs>." })" }
+    }
+  }
+  foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
+    $rel = Split-Path $py; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel '.venv'); $to = Join-Path $path (Join-Path $rel '.venv')
+    if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $made += $to }
+  }
+  $made
+}
+# Copies generated hook folders worktrees miss (.husky/_) from the first source that has each one.
+function Copy-HookDirs($path, $sources) {
+  foreach ($hs in @($sources | Where-Object { $_ } | ForEach-Object { (Resolve-Path $_).Path } | Select-Object -Unique)) {
+    foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
+      $to = Join-Path $path $h.FullName.Substring($hs.Length).TrimStart('\', '/')
+      if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
+    }
+  }
+}
+# git sees a symlink as a file, so a dir-only ignore rule (node_modules/) misses it and `wt.ps1 commit` (git add -A) would
+# commit the link: exclude each linked path (a junction on Windows is a directory and stays ignored as before)
+function Exclude-Links($path, $links) {
+  if (-not $links -or $KitIsWindows) { return }
+  $ex = Join-Path (git -C $path rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
+  New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null
+  $have = @(if (Test-Path $ex) { Get-Content $ex })
+  $add = @($links | ForEach-Object { '/' + [IO.Path]::GetRelativePath($path, $_).Replace('\', '/') } | Where-Object { $_ -notin $have })
+  if ($add) { Add-Content $ex $add }
 }
 
 switch ($Action) {
@@ -84,21 +122,7 @@ switch ($Action) {
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
-    $links = @()
-    # node_modules next to every tracked package.json
-    foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
-      $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
-      if ((Test-Path $from) -and -not (Test-Path $to)) {
-        New-DirLink $to $from; $links += $to
-        $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
-        if ($a -ne $b) { Write-Warning "$pj dependencies differ from $src - linked node_modules may be the wrong versions. Use -LinkFrom <a checkout of $Target with matching installs>." }
-      }
-    }
-    # .venv next to Python projects
-    foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
-      $rel = Split-Path $py; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel '.venv'); $to = Join-Path $path (Join-Path $rel '.venv')
-      if ((Test-Path $from) -and -not (Test-Path $to)) { New-DirLink $to $from; $links += $to }
-    }
+    $links = @(Add-DepLinks $path $src $Target)
     # kit.local.json repos[].linkPaths: git-ignored local files/folders every worktree needs (credentials, local.properties,
     # .env ...), taken from the dependency source (else the main checkout). Folders are linked, files are copied.
     foreach ($lp in @($r.linkPaths) | Where-Object { $_ }) {
@@ -109,24 +133,11 @@ switch ($Action) {
       New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
       if ((Get-Item $from).PSIsContainer) { New-DirLink $to $from; $links += $to } else { Copy-Item $from $to }
     }
-    # generated hook folders worktrees miss. A dependency checkout installed with --ignore-scripts has no .husky/_ (husky's
-    # prepare script never ran), so fall back to the main checkout for any hook folder the link source lacks.
-    foreach ($hs in @($src, (Resolve-Path $Repo).Path | Select-Object -Unique)) {
-      foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
-        $to = Join-Path $path $h.FullName.Substring($hs.Length).TrimStart('\', '/')
-        if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
-      }
-    }
+    # A dependency checkout installed with --ignore-scripts has no .husky/_ (husky's prepare script never ran), so fall back to
+    # the main checkout for any hook folder the link source lacks.
+    Copy-HookDirs $path @($src, $Repo)
     Meta $path 'links' ($links -join "`n")
-    # git sees a symlink as a file, so a dir-only ignore rule (node_modules/) misses it and `wt.ps1 commit` (git add -A) would
-    # commit the link: exclude each linked path (a junction on Windows is a directory and stays ignored as before)
-    if ($links -and -not $KitIsWindows) {
-      $ex = Join-Path (git -C $path rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
-      New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null
-      $have = @(if (Test-Path $ex) { Get-Content $ex })
-      $add = @($links | ForEach-Object { '/' + [IO.Path]::GetRelativePath($path, $_).Replace('\', '/') } | Where-Object { $_ -notin $have })
-      if ($add) { Add-Content $ex $add }
-    }
+    Exclude-Links $path $links
     "worktree: $path"
     "branch:   $Branch (from origin/$Target)"
     if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $src)" }
@@ -141,6 +152,20 @@ switch ($Action) {
   }
   'commit' {
     if (-not $Message) { throw 'commit needs -Message' }
+    # A worktree not made by `new` (a hand-made release-merge worktree, say) lacks .husky/_ and the node_modules its hooks run
+    # (husky.sh not found, then 'prettier' not recognized): add whatever is missing from the main checkout first.
+    # main checkout = the common git dir's core.worktree (a submodule: .git/modules/<name>, which `git worktree list` reports as
+    # the main worktree itself), else the common dir's parent (<main>/.git)
+    $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
+    $cw = git --git-dir="$common" config core.worktree
+    $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
+    if ($main -and (Test-Path (Join-Path $main '.git')) -and (Resolve-Path $main).Path -ne (Resolve-Path $Dir).Path) {
+      $main = (Resolve-Path $main).Path
+      $added = @(Add-DepLinks $Dir $main $null)
+      Copy-HookDirs $Dir @($main)
+      Exclude-Links $Dir $added
+      if ($added) { "linked from ${main}: $(($added | ForEach-Object { [IO.Path]::GetRelativePath($Dir, $_) }) -join ', ')" }
+    }
     $hp = (git -C $Dir config core.hooksPath)
     $c = @()
     # A hooksPath folder without hook scripts (e.g. a husky v8 repo whose `.husky/_` holds only husky.sh) skips hooks too.
