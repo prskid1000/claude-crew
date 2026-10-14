@@ -24,7 +24,7 @@ MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start
 | `scripts/wt.ps1` | steps 1, 2, 5, 6 (`new`, `sync`, `commit`, `remove`, `status`) |
 | `scripts/stack.ps1` | step 3 |
 | `scripts/check.ps1`, `scripts/gate.ps1` | step 4 and 6 (every build/test; `gate.ps1 -Cmd` for anything check.ps1 doesn't cover) |
-| `scripts/node-spec.mjs` | step 4b: the test command `stack.ps1` / `check.ps1 -Step test` use for a web project with no unit-test target (pure-logic `*.spec.ts` under node, bundled with the project's esbuild) |
+| `scripts/node-spec.mjs` | step 4b: the test command `stack.ps1` / `check.ps1 -Step test` use for a web project with no unit-test target (`*.spec.ts` under node, bundled with the project's esbuild; DOM specs under the project's jsdom, TestBed specs NOT RUN) |
 | `scripts/lib/spec-shim.mjs` | library imported by `node-spec.mjs` (jasmine/jest-style describe/it/expect/spyOn); never run by hand |
 | `scripts/lbcheck.py` | run by `check.ps1 -Step migrations` (step 4c) |
 | `scripts/keepboth.py` | step 6, on an append-only changelog rebase conflict |

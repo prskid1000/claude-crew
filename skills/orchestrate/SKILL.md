@@ -72,7 +72,7 @@ agents to push and open the MR as Draft with `Not run: <gate>` (dev-kit **Gate**
 | E2 | supervise prints **ACT** | do the action it prints (unclear: `reference/supervising.md`) |
 | E3 | supervise prints **WATCH** | nothing now; re-check next round; leave healthy agents alone |
 | E4 | supervise prints **LIVE** (a promoted task's MRs are deployed) | agents test it: /test-and-close (R11); a person tests: tester guide via `qa-kit` (R9) |
-| E5 | A workflow finished (notification) | `wave-report.ps1 -Run <id>` (never parse the truncated notification); reconcile; then: open findings → follow-up /dev-wave (one group per file owner); deployed → E4; failed checks → E9; then ALWAYS → E14 |
+| E5 | A workflow finished (notification) | `wave-report.ps1 -Run <id>` (never parse the truncated notification); MR state comes from `mrs[].mergeState` / wave-report.ps1, never from summary prose; reconcile; then: open findings → follow-up /dev-wave (one group per file owner); deployed → E4; failed checks → E9; then ALWAYS → E14 |
 | E6 | An agent or workflow stopped (usage limit, API timeout, RAM, you) with work left | `supervise.ps1 -MarkStopped <run>` if you stopped it; /dev-wave `mode: 'resume'` (`templates/RESUME_BRIEF.md`) from its worktrees; never restart from scratch |
 | E7 | A pipeline fails on an agent's MR | inside a reviewed wave: automatic (the CI gate makes it a blocking finding for the fix round); after the wave: a fix round = /dev-wave for that area, or direct if one small fix (R14) |
 | E8 | A review finding on an already-merged MR | a follow-up MR: should-fix findings → follow-up /dev-wave; one small fix → direct (R14) |

@@ -46,6 +46,9 @@ foreach ($x in $results) {
       }
       elseif (-not $p) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); needsLiveCheck = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
     }
+    # the ship step's report holds devtools.py merge's confirmed state per MR (the build/fix reports are snapshots from before it)
+    'ship' { if ($agents.Contains($id) -and $x.r.mrs) { foreach ($sm in @($x.r.mrs | Where-Object { $_ })) { $u = ([string]$sm.url).TrimEnd('/').ToLower()
+      foreach ($m in $agents[$id].mrs) { if (([string]$m.url).TrimEnd('/').ToLower() -eq $u -and $sm.mergeState) { $m.mergeState = [string]$sm.mergeState; $m.merged = ($sm.mergeState -eq 'MERGED') } } } } }
     'review' { foreach ($f in $x.r.findings) { [void]$findings.Add([ordered]@{ agent = $id; severity = $f.severity; file = $f.file; line = $f.line; problem = $f.problem; fix = $f.fix; mr = $f.mr }) } }
     { $_ -in 'test', 'retest' } { if ($x.r.checks) { $c = @($x.r.checks); $qa[$id] = [ordered]@{ checks = $c.Count; pass = @($c | Where-Object result -in 'PASS', 'PASS_WITH_NOTE').Count; fail = @($c | Where-Object result -eq 'FAIL').Count; notTested = @($c | Where-Object result -eq 'NOT_TESTED').Count } } }
     'close' { if ($qa.Contains($id)) { $qa[$id].published = [bool]$x.r.ok } }
@@ -56,13 +59,8 @@ foreach ($x in $results) {
 # non-nit finding (fix, or a reasoned rebuttal in its summary). Listed separately so the lead can still read what was done.
 $addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.agent].fixedRound })
 $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
-$out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
-$wavesDir = Get-KitPath waves -Create
-$out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $wavesDir "$Run.json")
-if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
-
-"=== $Run $(if ($running) { "(running: $($running -join ', '))" } else { '(complete)' })"
-# the agent's "merged" is a snapshot from when it finished (usually merge-when-green still pending): ask GitLab now
+# the agent's "merged" is a snapshot from when it finished (usually merge-when-green still pending): ask GitLab now, before the
+# JSON is saved, so waves/<run>.json and -Json carry the live state too
 # (glab talks to the host it is logged in to; self-hosted: GITLAB_HOST / kit.local.json "gitHost")
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
   $h = glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json
@@ -70,6 +68,12 @@ foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -an
   elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') {   # GitHub PRs
   $h = gh pr view $m.url --json state,autoMergeRequest 2>$null | ConvertFrom-Json
   if ($h.state -eq 'MERGED') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.autoMergeRequest) { $m.mergeState = 'SCHEDULED' } } } }
+$out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
+$wavesDir = Get-KitPath waves -Create
+$out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $wavesDir "$Run.json")
+if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
+
+"=== $Run $(if ($running) { "(running: $($running -join ', '))" } else { '(complete)' })"
 function Sum($xs, $k) { [int](@($xs | ForEach-Object { $_[$k] }) | Measure-Object -Sum).Sum }
 $isSched = { param($m) -not $m.merged -and $m.mergeState -eq 'SCHEDULED' }
 $cut = { param($s, $n) $s = [string]$s; $s.Substring(0, [math]::Min($n, $s.Length)) }

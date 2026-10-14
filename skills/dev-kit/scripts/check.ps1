@@ -13,10 +13,12 @@ command and runs it through the memory gate (gate.ps1).
 
 -Dir is the folder with the build file (pom.xml, package.json, *.sln, pyproject.toml, ...), or anything below it.
 Tests are targeted: -Step test needs -Tests unless you pass -AllTests (full suites are slow and eat RAM).
-A web project with no unit-test target runs its specs with node-spec.mjs (pure-logic specs under node, no TestBed/DOM).
+A web project with no unit-test target runs its specs with node-spec.mjs (specs under node, DOM specs under the project's jsdom, no TestBed).
 Quick lint checks the files changed on the branch plus untracked ones. TypeScript typecheck output goes to
 <runtime>/logs/typecheck-<repo>-<time>.log; on TS5103 (an ignoreDeprecations value the installed TypeScript rejects) it retries
 once with a temp tsconfig and then prints only the errors in your changed files plus one BASELINE line, failing only on yours.
+A per-project marker (<runtime>/cache/tsbuild/ts5103.<hash>.flag, keyed on the ignoreDeprecations value and the TypeScript version)
+makes later runs skip the first tsc run that is bound to fail; a baseline-only fallback run is recorded as ok in the gate history.
 Exit code: 0 ok, non-zero = the first failing step's exit code (3 = the gate could not start it in time).
 #>
 param(
@@ -49,7 +51,7 @@ function Get-ChangedFiles {
   @($list | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique)
 }
 
-# tsc typecheck through the gate with its output in <runtime>/logs. On TS5103 retry once with a temp tsconfig (runtime cache, deleted
+# tsc typecheck through the gate with its output in <runtime>/logs. On TS5103 (or a cached TS5103 marker) retry once with a temp tsconfig (runtime cache, deleted
 # after) that extends the project's and sets a valid ignoreDeprecations, using the repo's own node_modules/.bin/tsc; then print only
 # the errors in changed files plus a BASELINE line for the rest, and fail only on changed files (and on config errors, TS5xxx/TS6xxx).
 function Invoke-Typecheck([string]$TcCmd) {
@@ -58,14 +60,6 @@ function Invoke-Typecheck([string]$TcCmd) {
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
   $repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
   $log = Join-Path (Get-KitPath logs -Create) "typecheck-$repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
-  & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
-  $rc = $LASTEXITCODE
-  $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
-  if (-not @($out -match 'error TS5103').Count) {
-    $out | ForEach-Object { Write-Host $_ }
-    if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
-    return $rc
-  }
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
   $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
   # the repo's own tsc: nearest node_modules/.bin going up to the git root (a worktree links node_modules from its main checkout)
@@ -76,11 +70,30 @@ function Invoke-Typecheck([string]$TcCmd) {
     if (-not $top -or $d -eq $top) { break }
     $parent = Split-Path $d; if (-not $parent -or $parent -eq $d) { break }; $d = $parent
   }
-  $ver = '5.0'
-  if ($bin) { try { if ([int](((Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $bin)) 'typescript/package.json') -Raw | ConvertFrom-Json).version -split '\.')[0]) -ge 6) { $ver = '6.0' } } catch {} }
+  $ver = '5.0'; $tsVer = ''
+  if ($bin) { try { $tsVer = [string](Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $bin)) 'typescript/package.json') -Raw | ConvertFrom-Json).version; if ([int](($tsVer -split '\.')[0]) -ge 6) { $ver = '6.0' } } catch {} }
+  $raw = try { Get-Content -LiteralPath $base -Raw } catch { '' }
+  # TS5103 is decided by the project's ignoreDeprecations value and the installed TypeScript: once hit, a marker keyed on both skips
+  # the first tsc run (bound to fail, ~10-15 s and ~1 GB each time); a changed value or TypeScript version gives a new key
+  $igd = if ($raw -match '"ignoreDeprecations"\s*:\s*"([^"]*)"') { $Matches[1] } else { '' }
+  $md5 = { param($s) [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
+  $flag = Join-Path (Get-KitPath tsbuild -Create) "ts5103.$(& $md5 "$($base.ToLower())|$igd|$tsVer").flag"
+  if (Test-Path -LiteralPath $flag) {
+    $out = @()
+    Write-Host "[check] TS5103 known for this project (marker $(Split-Path $flag -Leaf)): skipping the first tsc run"
+  } else {
+    & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
+    $rc = $LASTEXITCODE
+    $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
+    if (-not @($out -match 'error TS5103').Count) {
+      $out | ForEach-Object { Write-Host $_ }
+      if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
+      return $rc
+    }
+    Set-Content -LiteralPath $flag -Value "$base | ignoreDeprecations '$igd' | typescript $tsVer"
+  }
   $cfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
   # without files/include in the project's config, tsc's default include is the folder of the -p config (the temp one): pin it
-  $raw = try { Get-Content -LiteralPath $base -Raw } catch { '' }
   if ($raw -notmatch '"(files|include)"\s*:') {
     $pd = (Split-Path $base).Replace('\', '/')
     $ex = @('node_modules', 'bower_components', 'jspm_packages')
@@ -92,14 +105,17 @@ function Invoke-Typecheck([string]$TcCmd) {
   $tmp = Join-Path (Get-KitPath cache -Create) "tsconfig.ts5103.$hash.$PID.json"
   $tsb = Join-Path (Get-KitPath tsbuild -Create) "$hash.ts5103.tsbuildinfo"
   $tsc = if ($bin) { "`"$bin`"" } else { 'npx tsc' }
-  Write-Host "[check] typecheck hit TS5103 (ignoreDeprecations): retrying with a temp tsconfig (ignoreDeprecations $ver) and $(if ($bin) { $bin } else { 'npx tsc' })"
+  Write-Host "[check] typecheck TS5103 (ignoreDeprecations) fallback: running with a temp tsconfig (ignoreDeprecations $ver) and $(if ($bin) { $bin } else { 'npx tsc' })"
+  $fbCmd = "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
+  $fbStart = [DateTimeOffset]::Now
   try {
     $cfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8
-    & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
+    & (Join-Path $K 'gate.ps1') -Dir $st.dir -Cmd $fbCmd
     $rc = $LASTEXITCODE
   } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
   $out2 = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Skip $out.Count })
   if ($rc -eq 3 -and -not $out2.Count) { return 3 }   # the gate could not start it
+  if (@($out2 -match 'error TS5103').Count) { Remove-Item -LiteralPath $flag -ErrorAction SilentlyContinue }   # the fallback is no cure here: next run starts over
   $changed = @(Get-ChangedFiles | ForEach-Object { $_.ToLower() })
   $mine = [Collections.Generic.List[string]]::new(); $mineN = 0; $baseN = 0; $baseFiles = @{}; $cur = $null; $blocks = 0
   foreach ($l in $out2) {
@@ -116,7 +132,34 @@ function Invoke-Typecheck([string]$TcCmd) {
   Write-Host "BASELINE: $baseN errors outside your changes (in $($baseFiles.Count) files; not failing this check; full log: $log)"
   if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or in the config)"; return 1 }
   if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }   # tsc failed without diagnostics
+  if ($rc) { Set-GateSampleOk $fbCmd $fbStart }   # baseline errors only: this check passed, so its gate sample is a pass too
   return 0
+}
+
+# gate.ps1 records ok = (exit code 0) per run in its history.json; a fallback typecheck that failed only on baseline errors passed
+# this check, so its sample (newest one of this command since the run started) is turned into ok (marked baseline), under the
+# gate's own mutex. Best effort: nothing changes when the sample or the file is missing or unreadable.
+function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
+  $hf = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'history.json'
+  if (-not (Test-Path -LiteralPath $hf)) { return }
+  $pre = if ($GateCmd.Length -gt 60) { $GateCmd.Substring(0, 60) } else { $GateCmd }
+  $fromUtc = $Since.UtcDateTime.AddSeconds(-2)
+  $mx = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate'); $got = $false
+  try {
+    try { $got = $mx.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+    if (-not $got) { return }
+    $h = Get-Content -LiteralPath $hf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    if ($h -isnot [hashtable]) { return }
+    $best = $null; $bestAt = [datetime]::MinValue
+    foreach ($k in @($h.Keys)) { foreach ($s in @($h[$k])) {
+      if (-not $s -or $s.ok -or -not $s.at -or -not ([string]$s.cmd).StartsWith($pre)) { continue }
+      $at = ([datetime]$s.at).ToUniversalTime()
+      if ($at -ge $fromUtc -and $at -gt $bestAt) { $best = $s; $bestAt = $at } } }
+    if (-not $best) { return }
+    $best.ok = $true; $best.baseline = $true
+    $h | ConvertTo-Json -Depth 3 | Set-Content "$hf.tmp" -ErrorAction Stop
+    Move-Item "$hf.tmp" $hf -Force -ErrorAction Stop
+  } catch {} finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
 if ($Step -eq 'migrations') {
@@ -152,7 +195,7 @@ foreach ($s in $steps) {
   # a web project without a unit-test target (e.g. a stack override that sets none): node-spec.mjs runs the specs under node
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$(Join-Path $K 'node-spec.mjs')`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
-  if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs') { Write-Host '[check] no unit-test target: running node-spec.mjs (pure-logic specs under node; TestBed/DOM specs are reported NOT RUN)' }
+  if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs') { Write-Host '[check] no unit-test target: running node-spec.mjs (specs under node; DOM specs under the project''s jsdom if it has one; TestBed/fakeAsync specs are reported NOT RUN)' }
   if ($cmd -match '\{tests\}') {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
     $cmd = $cmd -replace '\{tests\}', $Tests

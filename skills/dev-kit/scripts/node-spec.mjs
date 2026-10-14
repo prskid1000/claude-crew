@@ -7,12 +7,13 @@
 // Each spec is bundled with the project's own esbuild (resolved from its node_modules; none -> "no esbuild", exit 2), with the
 // project's tsconfig (paths/baseUrl aliases, experimentalDecorators), then run with the jasmine/jest-style globals of
 // lib/spec-shim.mjs (describe/it/expect/beforeEach/spyOn ...). '@angular/core' is replaced by a small stub (decorators are no-ops,
-// EventEmitter/signal/computed work, inject() throws) unless --real-angular. Pure-logic specs only: a spec that uses TestBed,
-// fakeAsync or the DOM is reported NOT RUN (exit 1), never passed.
+// EventEmitter/signal/computed work, inject() throws) unless --real-angular. A spec that uses TestBed, @angular/core/testing,
+// fakeAsync or waitForAsync is reported NOT RUN (exit 1), never passed. A DOM spec (document./window.) runs under the project's
+// own jsdom when it resolves from its node_modules (no layout: sizes are 0); without jsdom it is NOT RUN too.
 // <spec> = a path (relative to --dir, default the current folder), several separated by spaces or commas, or a part of a spec's
 // path ("price-calc" finds src/app/x/price-calc.spec.ts). No spec given = every spec under --dir (slow on a big app).
 // Exit: 0 all passed, 1 a failure / bundle error / NOT RUN spec, 2 no esbuild or no spec found.
-import { createRequire } from 'node:module'
+import Module, { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { join, resolve, relative } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -119,13 +120,61 @@ mkdirSync(outRoot, { recursive: true })
 say(`no unit-test target: running ${uniq.length} spec file(s) under node (esbuild ${esbuild.version}${tsconfig ? ', ' + relative(dir, tsconfig) : ''}${realAngular ? '' : ', @angular/core stubbed'})`)
 install()
 const req = createRequire(join(dir, 'package.json'))
+// jsdom: only the project's own (never installed); resolved once, on the first DOM spec
+let jsdomMod, jsdomWhy = ''
+function getJsdom() {
+  if (jsdomMod !== undefined) return jsdomMod
+  jsdomMod = null
+  let path
+  try { path = req.resolve('jsdom') } catch { jsdomWhy = `jsdom is not resolvable from ${dir}'s node_modules`; return null }
+  try { jsdomMod = req(path) } catch {
+    // jsdom loads the optional `canvas` package whenever it resolves; a canvas without its native build breaks jsdom itself:
+    // load jsdom again with canvas hidden (jsdom then runs without canvas support)
+    const orig = Module._resolveFilename
+    Module._resolveFilename = function (r, ...rest) {
+      if (r === 'canvas') { const e = new Error("Cannot find module 'canvas'"); e.code = 'MODULE_NOT_FOUND'; throw e }
+      return orig.call(this, r, ...rest)
+    }
+    try {
+      for (const k of Object.keys(req.cache)) if (/[\\/]jsdom[\\/]/.test(k)) delete req.cache[k]
+      jsdomMod = req(path)
+    } catch (e) { jsdomWhy = `jsdom failed to load (${String(e?.message ?? e).split('\n')[0]})` }
+    finally { Module._resolveFilename = orig }
+  }
+  return jsdomMod
+}
+// puts a fresh jsdom window's globals on globalThis (window, document, navigator, HTMLElement, Event, ...); returns the undo
+function domOn({ JSDOM }) {
+  const win = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'http://localhost/', pretendToBeVisual: true }).window
+  const saved = []
+  const set = (k, v) => {
+    try { saved.push([k, Object.getOwnPropertyDescriptor(globalThis, k)]); Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true }) }
+    catch { saved.pop() }
+  }
+  set('window', win); set('document', win.document); set('navigator', win.navigator)
+  for (const k of Object.getOwnPropertyNames(win)) {
+    if (k.startsWith('_') || k in globalThis) continue
+    let v; try { v = win[k] } catch { continue }
+    set(k, v)
+  }
+  return () => {
+    for (const [k, d] of saved.reverse()) { try { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k] } catch {} }
+    win.close()
+  }
+}
 const total = { passed: 0, failed: 0, skipped: 0, notRun: 0, errors: 0 }
 for (const spec of uniq) {
   const rel = relative(dir, spec).replace(/\\/g, '/')
   const src = readFileSync(spec, 'utf8')
-  if (/\bTestBed\b|@angular\/core\/testing|\bfakeAsync\b|\bwaitForAsync\b|\bdocument\.|\bwindow\./.test(src)) {
+  if (/\bTestBed\b|@angular\/core\/testing|\bfakeAsync\b|\bwaitForAsync\b/.test(src)) {
     total.notRun++
-    say(`NOT RUN ${rel}: it uses TestBed / fakeAsync / the DOM, which node-spec cannot provide - test the pure logic, or ask for a test target`)
+    say(`NOT RUN ${rel}: it uses TestBed / fakeAsync / waitForAsync, which node-spec cannot provide - test the pure logic, or ask for a test target`)
+    continue
+  }
+  const usesDom = /\bdocument\.|\bwindow\./.test(src)
+  if (usesDom && !getJsdom()) {
+    total.notRun++
+    say(`NOT RUN ${rel}: it uses the DOM and ${jsdomWhy} - test the pure logic, or ask for a test target`)
     continue
   }
   const out = join(outRoot, rel.replace(/[\\/:]/g, '__') + '.cjs')
@@ -142,10 +191,18 @@ for (const spec of uniq) {
     continue
   }
   console.log(`${rel}`)
-  try { delete req.cache[out]; req(out) }
-  catch (e) { total.errors++; console.log(`  LOAD ERROR ${String(e?.stack ?? e).split('\n').slice(0, 6).join('\n    ')}`); await run({ log: () => {} }); continue }
-  const r = await run()
-  total.passed += r.passed; total.failed += r.failed; total.skipped += r.skipped
+  // DOM spec: the project's own jsdom provides window/document for this spec only (globals set before loading, removed after run)
+  let domOff = null
+  if (usesDom) {
+    try { domOff = domOn(getJsdom()) } catch (e) { total.errors++; console.log(`  JSDOM ERROR ${String(e?.message ?? e)}`); continue }
+    say(`DOM spec under jsdom (no layout: sizes are 0): ${rel}`)
+  }
+  try {
+    try { delete req.cache[out]; req(out) }
+    catch (e) { total.errors++; console.log(`  LOAD ERROR ${String(e?.stack ?? e).split('\n').slice(0, 6).join('\n    ')}`); await run({ log: () => {} }); continue }
+    const r = await run()
+    total.passed += r.passed; total.failed += r.failed; total.skipped += r.skipped
+  } finally { if (domOff) domOff() }
 }
 say(`${total.passed} passed, ${total.failed} failed, ${total.skipped} skipped, ${total.errors} bundle/load errors, ${total.notRun} not run (${uniq.length} file(s); bundles: ${outRoot})`)
 const bad = total.failed + total.errors + total.notRun

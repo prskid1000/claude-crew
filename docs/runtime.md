@@ -31,7 +31,7 @@ durable state left inside the runtime (`RUNTIME-DURABLE`).
 | `chrome-profiles` | `cache/chrome-profiles/` | `web/browser.mjs` | `cleanup.ps1`, `swarm-down.ps1` | the next `session()` creates a profile and logs in |
 | `sessions` | `cache/sessions/` | `web/browser.mjs` (shared logins) | `web/browser.mjs` | logs in again |
 | `tokens` | `cache/tokens/` | `api.ps1` | `api.ps1` | logs in again |
-| `tsbuild` | `cache/tsbuild/` | `check.ps1` (incremental `tsc`) | `check.ps1` | the next type-check is a full one |
+| `tsbuild` | `cache/tsbuild/` | `check.ps1` (incremental `tsc`, `ts5103.<hash>.flag` markers) | `check.ps1` | the next type-check is a full one (and re-learns TS5103) |
 | `android-swarm` | `cache/android-swarm/` (or `swarm.config.json` `outDir`) | `app-build.ps1`, `swarm-up.ps1`, `metro-start.ps1`, `phone.ps1` (`_config.ps1`) | android-swarm scripts | `app-build.ps1` (slow: keep it, or migrate it with `kit-setup.ps1 -Migrate <old> -Apk`) |
 | `android-tmp` | `cache/android-tmp/` | `android/ui.ps1` (UI dumps) | `android/ui.ps1` | recreated on the next dump |
 | `stopped` | `cache/stopped/<run>` | `supervise.ps1 -MarkStopped` | `supervise.ps1`, `wave-report.ps1` | a stopped run is flagged as idle again: mark it again |

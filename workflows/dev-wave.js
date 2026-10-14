@@ -67,6 +67,9 @@ NOT_MERGED. Report it as that MR's mergeState and set merged=true ONLY for MERGE
 later (at most 3 runs in total), then report the last word - except "waiting for producer <ref>": the producer MR is not merged yet,
 do not re-run, report WAIT (track.ps1 merges it after its producer). CONFLICT / PIPELINE_FAILED / NOT_MERGED: do not retry, say why in the summary.`
 
+// MR URLs compared across reports: agents differ in trailing '/', query/fragment and case
+const nu = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()
+
 // the build/memory gate (gate.ps1) queues work under $env:CLAUDE_AGENT; without it the owner is guessed from the worktree name
 const AGENT_ENV = (name) => `
 AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${name}';  (Bash: export CLAUDE_AGENT='${name}';) - the build gate
@@ -86,7 +89,7 @@ const REPORT = {
     testerGuide: { type: 'string', description: 'testing instructions for the tester: link to the published tester guide (complex change) or to the tracker comment with the how-to-test steps (simple change); "none: <reason>" only for changes with nothing to test (docs, kit, refactor without behaviour change)' },
     seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
     foreignHooks: { type: 'array', items: { type: 'string' }, description: 'one-line hooks left in another agent area' },
-    summary: { type: 'string', description: '<=200 words' },
+    summary: { type: 'string', description: '<=200 words; do not state MR merge status here, mrs[].mergeState carries it' },
     changedLines: { type: 'number', description: 'added + removed lines over all your MRs (git diff --numstat origin/<target>...HEAD)' },
     changedFiles: { type: 'array', items: { type: 'string' }, description: 'repo-relative paths changed by your MRs' },
   },
@@ -250,7 +253,7 @@ const results = await pipeline(
     // merge, don't replace: the fix agent reports only its fixes, the build report holds the items done
     const uniq = (a) => [...new Set(a)]
     const byId = (a) => [...new Map(a.map((d) => [d.id, d])).values()]
-    const mrs = [...r2.mrs, ...x.report.mrs.filter((m) => !r2.mrs.some((n) => n.url === m.url))]
+    const mrs = [...r2.mrs, ...x.report.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
     const fixedX = { ...x, findings: [...x.findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: true, report: { ...x.report, mrs, worktrees: uniq([...x.report.worktrees, ...r2.worktrees]),
       done: uniq([...x.report.done, ...r2.done]), deferred: byId([...x.report.deferred, ...r2.deferred]),
       needsLiveCheck: uniq([...x.report.needsLiveCheck, ...r2.needsLiveCheck]), seed: uniq([...(x.report.seed || []), ...(r2.seed || [])]),
@@ -307,12 +310,15 @@ async function ship(a, x) {
   // keep the build report (done/deferred/live checks/summary); take only the MR states and add the ship note
   if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
   // merged only on a confirmed MERGED (devtools.py's last status word); an agent's merged=true without a word is not proof
-  const state = new Map(r3.mrs.map((m) => [m.url, m.mergeState || (m.merged ? 'NOT_MERGED' : 'OPEN')]))
-  return { ...x, report: { ...x.report, mrs: x.report.mrs.map((m) => {
-    const s = m.merged ? 'MERGED' : (state.get(m.url) || m.mergeState || 'OPEN')
+  // URLs compared normalised (trailing '/', query, case): a mismatch once left merged MRs reported OPEN
+  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'NOT_MERGED' : 'OPEN')]))
+  const mrs = x.report.mrs.map((m) => {
+    const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN')
     return { ...m, mergeState: s, merged: s === 'MERGED' }
-  }),
-    summary: `${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
+  })
+  // the computed state goes first: summary prose (written before the merge) once said "open" for MRs that had merged
+  const stateLine = `MR state (from devtools.py merge, authoritative): ${mrs.map((m) => `${m.url} ${m.mergeState}`).join(', ')}`
+  return { ...x, report: { ...x.report, mrs, summary: `${stateLine}\n\n${x.report.summary}\n\nMerge scheduling: ${r3.summary}` } }
 }
 
 const out = results.filter(Boolean)
