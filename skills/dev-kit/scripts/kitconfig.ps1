@@ -57,3 +57,15 @@ $KitConf = [pscustomobject]@{
   # Claude Code keeps this workspace's sessions (workflow journals) in ~/.claude/projects/<workspace path with non-alphanumerics as '-'>
   ClaudeProjectDir  = (Join-Path (Join-Path $HOME '.claude/projects') ($__ws -replace '[^A-Za-z0-9]', '-'))
 }
+
+# List arguments: `pwsh -File x.ps1 -Only 'T1','T2'` hands the list over as ONE literal string ("'T1','T2'"), and agents also pass
+# "T1, T2" or "T1 T2". Split-KitList turns any of these into clean items: quoted items are taken as they are (they may hold
+# commas, e.g. annotate's 'x,y,w,h,label'), the rest is split on -Sep and trimmed of quotes and spaces.
+function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
+  @(foreach ($v in @($Values)) {
+      $v = "$v"
+      $q = [regex]::Matches($v, '''([^'']*)''|"([^"]*)"')
+      if ($q.Count -and [regex]::Replace($v, '''[^'']*''|"[^"]*"', '') -match '^[\s,;]*$') { foreach ($m in $q) { $m.Groups[1].Value + $m.Groups[2].Value } }
+      else { $v -split $Sep | ForEach-Object { $_.Trim().Trim("'", '"').Trim() } }
+    }) | Where-Object { $_ }
+}

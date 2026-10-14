@@ -80,7 +80,9 @@ function watch(page, apiPattern) {
       net.failed.push(e)
     }
   })
-  page.on('pageerror', (err) => net.failed.push({ status: 'JS', url: page.url(), body: String(err).slice(0, 400) }))
+  // capped: a page in an error loop raised thousands of JS errors and grew this buffer without bound
+  net.jsErrors = 0
+  page.on('pageerror', (err) => { if (++net.jsErrors <= 50) net.failed.push({ status: 'JS', url: page.url(), body: String(err).slice(0, 400) }) })
   page.on('dialog', (d) => d.accept().catch(() => {}))
   return net
 }
@@ -140,6 +142,9 @@ async function restoreLogin(page, t, tenant, as) {
   return !!tok && !page.url().includes(t.webLogin.path)
 }
 
+// a CDP call that never answers (a page busy in a script loop) fails after 60 s instead of puppeteer's 180 s default
+const PROTO_MS = 60000
+
 // Connect to (or start) the long-lived headless Chrome on `port`, logged in as target/tenant/as.
 export async function session({ port, target, tenant, as = 'admin' } = {}) {
   if (!port) throw new Error('session(): pass a port (one per target+tenant+user)')
@@ -151,7 +156,7 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
   const VIEW = { width: Number(bo.width), height: Number(bo.height) }
   let browser
   try {
-    browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW })
+    browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS })
   } catch {
     const dir = `${PROFILES}/${port}`
     mkdirSync(dir, { recursive: true })
@@ -159,7 +164,7 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
     child.unref()
     for (let i = 0; i < 40 && !browser; i++) {
       await sleep(500)
-      try { browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW }) } catch {}
+      try { browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS }) } catch {}
     }
     if (!browser) throw new Error(`could not start Chrome on port ${port}`)
   }
@@ -186,14 +191,27 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
 }
 
 export async function killSession(port) {
-  try { const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}` }); await b.close() } catch {}
+  try { const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }); await b.close() } catch {}
 }
 
 // wait for XHR to go quiet
+// Capped at 8 s (a page that polls never goes idle), and stopped early when the page floods JS errors (> 100 while waiting):
+// waiting on a broken page only burned the tester's time (a 20 s wait per action, hundreds of errors a second).
 export async function settle(page, ms = 1200) {
-  try { await page.waitForNetworkIdle({ idleTime: 700, timeout: 20000 }) } catch {}
+  let errs = 0
+  const onErr = () => { errs++ }
+  page.on('pageerror', onErr)
+  let tick
+  const flood = new Promise((r) => { tick = setInterval(() => { if (errs > 100) r() }, 200) })
+  try { await Promise.race([page.waitForNetworkIdle({ idleTime: 700, timeout: 8000 }).catch(() => {}), flood]) } catch {}
+  clearInterval(tick)
+  page.off('pageerror', onErr)
+  if (errs > 100) { console.error(`[browser] settle: ${errs} page errors while waiting - stopped waiting (error flood on ${page.url().slice(0, 120)})`); return }
   await sleep(ms)
 }
+
+const TIMED_OUT = Symbol('timed out')
+const capped = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(() => r(TIMED_OUT), ms) })]).finally(() => clearTimeout(t)) }
 
 export async function go(page, path) {
   await page.goto(url(path), { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
@@ -206,8 +224,10 @@ export async function text(page, selector = 'body') {
 }
 
 // Real mouse click on the innermost visible element whose text / title / aria-label matches (exact first, then contains).
+// The DOM walk is capped at 15 s (it once hung a tester on a huge, error-looping page); then puppeteer's own text query
+// (::-p-text, innermost matches) and the element's boundingBox are used instead.
 export async function clickText(page, label, { nth = 0, within = 'body', exact = false, right = false } = {}) {
-  const box = await page.evaluate(({ label, nth, within, exact }) => {
+  let box = await capped(page.evaluate(({ label, nth, within, exact }) => {
     const root = document.querySelector(within) || document.body
     const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' }
     const all = [...root.querySelectorAll('*')].filter(vis)
@@ -221,7 +241,18 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
     el.scrollIntoView({ block: 'center' })
     const r = el.getBoundingClientRect()
     return { x: r.x + r.width / 2, y: r.y + r.height / 2, n: hits.length }
-  }, { label, nth, within, exact })
+  }, { label, nth, within, exact }), 15000)
+  if (box === TIMED_OUT) {
+    console.error(`[browser] clickText "${label}": the DOM walk took > 15 s - falling back to a text query + boundingBox`)
+    box = null
+    const hs = await capped(page.$$(`${within === 'body' ? '' : within + ' '}::-p-text(${JSON.stringify(label)})`), 15000).catch(() => [])
+    const el = Array.isArray(hs) ? hs[nth] : null
+    if (el) {
+      await capped(el.scrollIntoView(), 5000).catch(() => {})
+      const b = await capped(el.boundingBox(), 5000).catch(() => null)
+      if (b && b !== TIMED_OUT) box = { x: b.x + b.width / 2, y: b.y + b.height / 2, n: hs.length, fallback: true }
+    }
+  }
   if (!box) throw new Error(`clickText: "${label}" not found`)
   await page.mouse.click(box.x, box.y, { button: right ? 'right' : 'left' })
   await settle(page, 700)

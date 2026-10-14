@@ -17,7 +17,7 @@ must exist (in shots\, evidence\ or findable in the run dir), else it throws and
 anyway, dropping the missing names and noting them in the check's "observed". On publish, off-standard names are only a warning.
 -Check runs only this check (no copies, uploads or tracker calls) and exits 1 with the list when evidence is missing, a file in
 shots\/evidence\ has an off-standard name (a suggested standard name is printed for each), a listed file has a type that is
-never published ("listed but unsupported type") or a check id appears twice in results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
+never published ("listed but unsupported type"), a cited file is empty (0 bytes; -FixNames never renames it) or a check id appears twice in results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
 references in results.json (each rename is printed); duplicate check ids are never fixed automatically.
 
 Run dir layout (see the qa-kit SKILL.md):
@@ -110,8 +110,12 @@ if ($Check) {
     if ($cand -notmatch $script:EvidenceName -or $taken.Contains($cand)) { return $null }
     $null = $taken.Add($cand); $cand
   }
+  # a cited file of 0 bytes is a failed capture, not evidence: reported below and never renamed (a standard name would make it look valid)
+  $cited = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e) { $cited[[string]$e] = [string]$c.id } } }
+  $emptyFiles = @($files | Where-Object { $_.Length -eq 0 -and $cited.ContainsKey($_.Name) })
+  $emptyNames = @($emptyFiles | ForEach-Object Name)
   $suggest = [ordered]@{}
-  foreach ($b in $badNames) { $suggest[$b] = Get-StandardName $b }
+  foreach ($b in $badNames) { $suggest[$b] = if ($emptyNames -contains $b) { $null } else { Get-StandardName $b } }
   if ($FixNames -and $suggest.Count) {
     $resFile = "$D\results.json"; $raw = [IO.File]::ReadAllText($resFile)
     foreach ($b in @($suggest.Keys)) {
@@ -131,7 +135,11 @@ if ($Check) {
   if ($lostList.Count) { $fail = $true; "$Code evidence check: $($lostList.Count) file(s) listed in results.json but missing:"; $lostList | ForEach-Object { "  $_" } }
   if ($badNames.Count) {
     $fail = $true; "$Code evidence check: $($badNames.Count) off-standard name(s) (reference/evidence-standard.md; -Check -FixNames renames them):"
-    $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } else { '(no suggestion: rename by hand)' })" }
+    $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } elseif ($emptyNames -contains $_) { '(empty file: not renamed, see below)' } else { '(no suggestion: rename by hand)' })" }
+  }
+  if ($emptyFiles.Count) {
+    $fail = $true; "$Code evidence check: $($emptyFiles.Count) empty file(s) cited (0 bytes: the capture failed; re-capture or drop them from results.json; -FixNames leaves them):"
+    $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)\$($_.Name)" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
   if ($badTypes.Count) {
@@ -139,7 +147,7 @@ if ($Check) {
     $badTypes | ForEach-Object { "  $_" }
   }
   if ($fail) { exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, unique check ids)"; exit 0
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids)"; exit 0
 }
 if ($lostList.Count -and -not $AllowMissing) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run (or pass -AllowMissing to publish without them)."

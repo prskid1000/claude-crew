@@ -109,7 +109,7 @@ function SshState($s, $sha) {
 }
 
 # `pwsh -File deployed.ps1 -Mrs 'a!1','b!2'` hands over the quotes literally; strip them and split on commas/spaces.
-$out = foreach ($m in @($Mrs -split '[\s,]+' | ForEach-Object { $_.Trim("'", '"') } | Where-Object { $_ })) {
+$out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }

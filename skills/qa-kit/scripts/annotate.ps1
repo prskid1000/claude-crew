@@ -1,4 +1,4 @@
-﻿<#
+<#
 Marks up a screenshot in one call: rectangles, arrows and text labels, so a reviewer sees at once what the evidence is about.
 Works on PNG/JPEG from any source (web, Android, desktop). Pure PowerShell + System.Drawing, no installs.
 Windows only: .NET supports System.Drawing only there. On Linux/macOS mark the element before the shot instead
@@ -6,7 +6,7 @@ Windows only: .NET supports System.Drawing only there. On Linux/macOS mark the e
 
   $A = '<workspace>/.claude/skills/qa-kit/scripts/annotate.ps1'
   & $A -In shots/GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing' -Text '40,40,Expected: wraps inside A4'
-  -Rect 'x,y,w,h[,label]'      -Arrow 'x1,y1,x2,y2[,label]' (tip at x2,y2)      -Text 'x,y,text'      (each repeatable / comma lists)
+  -Rect 'x,y,w,h[,label]'      -Arrow 'x1,y1,x2,y2[,label]' (tip at x2,y2)      -Text 'x,y,text'      (each repeatable: a PowerShell list or items joined with ';')
   -Out <file>  default: overwrites -In (keep the evidence name); -Copy writes <base>-marked.<ext> next to -In instead
   (the original stays; list both in results.json); -Color red|orange|green|blue (default red); -Scale for very large shots.
 Coordinates are image pixels (Android: uiautomator bounds are already pixels; web: CSS px x devicePixelRatio).
@@ -19,6 +19,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate.ps1 needs Windows (System.Drawing). On Linux/macOS use browser.mjs mark() before shot(); for Android name the element in the check note.' }
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit/scripts/kitconfig.ps1')   # Split-KitList
+# one literal string from pwsh -File ("'1,2,3,4,a','5,6,7,8'") or ';'-joined items: one item each (an item's own commas stay)
+$Rect = @(Split-KitList $Rect ';'); $Arrow = @(Split-KitList $Arrow ';'); $Text = @(Split-KitList $Text ';')
 Add-Type -AssemblyName System.Drawing
 $src = (Resolve-Path $In).Path
 if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
@@ -44,19 +47,19 @@ function Label([string]$t, [float]$x, [float]$y) {
   $g.DrawString($t, $font, $fg, $x + 4 * $k, $y + $k)
 }
 function Parts($s) { $p = $s -split ',', 5; $p }
-foreach ($r in ($Rect | ForEach-Object { $_ -split ';' } | Where-Object { $_ })) {
+foreach ($r in $Rect) {
   $p = $r -split ',', 5; $x = [float]$p[0]; $y = [float]$p[1]; $w = [float]$p[2]; $h = [float]$p[3]
   $g.DrawRectangle($pen, $x, $y, $w, $h)
   if ($p.Count -ge 5) { $ly = if ($y - 30 * $k -ge 0) { $y - 30 * $k } else { $y + $h + 4 * $k }; Label $p[4] $x $ly }
 }
-foreach ($a in ($Arrow | ForEach-Object { $_ -split ';' } | Where-Object { $_ })) {
+foreach ($a in $Arrow) {
   $p = $a -split ',', 5; $x1 = [float]$p[0]; $y1 = [float]$p[1]; $x2 = [float]$p[2]; $y2 = [float]$p[3]
   $ap = New-Object Drawing.Pen $col, (4 * $k)
   $ap.CustomEndCap = New-Object Drawing.Drawing2D.AdjustableArrowCap 4, 4, $true
   $g.DrawLine($ap, $x1, $y1, $x2, $y2)
   if ($p.Count -ge 5) { Label $p[4] ($x1 - 10 * $k) ($y1 - 30 * $k) }
 }
-foreach ($t in ($Text | Where-Object { $_ })) { $p = $t -split ',', 3; Label $p[2] ([float]$p[0]) ([float]$p[1]) }
+foreach ($t in $Text) { $p = $t -split ',', 3; Label $p[2] ([float]$p[0]) ([float]$p[1]) }
 $g.Dispose(); $img0.Dispose(); $ms.Dispose()
 $fmt = if ($Out -match '\.jpe?g$') { [Drawing.Imaging.ImageFormat]::Jpeg } else { [Drawing.Imaging.ImageFormat]::Png }
 $bmp.Save($Out, $fmt); $bmp.Dispose()

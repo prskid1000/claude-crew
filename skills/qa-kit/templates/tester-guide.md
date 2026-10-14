@@ -26,6 +26,7 @@ not apply). A step you cannot do = NOT_TESTED (say which), not FAIL.
 |---|---|---|---|
 | APK commit (app checks) | the fix must be in the build the phone runs | <app build holding commit/MR, e.g. `deployed.ps1 -Mrs <repo>!<iid>`> | <commit shown by `phone.ps1 acquire` / the app's version> |
 | Device clock or time step | <date / shift / day-boundary behaviour> | <set the device or server time to …, or wait until …> | <the date/time the screen shows> |
+| Role and screen permissions | <a screen switched off for the test role hides the change (menu entry missing, 403)> | <role / screen switches to turn on for the test user, and where> | <the screen opens from the menu as the test user> |
 | Seed records and profile flags | <the records and user/tenant flags the checks need> | <API calls or screens; prefix created data QA-<CODE>> | <ids / values read back> |
 | Reindex / cache refresh | <search or cached data must include the seed> | <job, endpoint or command> | <the seed appears in search / the list> |
 
