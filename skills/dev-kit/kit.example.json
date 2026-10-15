@@ -1,261 +1,116 @@
 {
-  "_readme": "Optional. Copy to kit.local.json (git-ignored) and fill what applies; every key has a default. Read by dev-kit/scripts/kitconfig.ps1 (PowerShell scripts), devtools.py and guard.ps1. Paths: forward slashes work on every OS (Windows: C:/src). See skills/dev-kit/reference/configuration.md.",
+  "_readme": "Every key is optional (a missing key = the default described in README 'Configuration'). kit.ps1 setup -WriteLocal writes skills/dev-kit/kit.local.json from this file (minus localFiles) and each localFiles entry to its path; all of them are git-ignored. Fill the <...> values. Paths: forward slashes work on every OS.",
   "gitHost": "gitlab.com",
+  "gitHostType": "gitlab",
   "githubHost": "github.com",
-  "gitlabGroup": "<your-gitlab-group>",
+  "gitlabGroup": "<your-gitlab-group or github owner>",
   "reposRoot": "/path/to/src",
-  "worktreeRoots": [
-    "/path/to/src-wt"
-  ],
-  "trackerRepos": [
-    "backend",
-    "frontend",
-    "mobile-app"
-  ],
-  "trackerLists": [
-    "<tracker list id whose promoted tasks mark-in-test.ps1 checks>"
-  ],
-  "productTargets": [
-    {
-      "pathRegex": "^product-a/",
-      "targetRegex": "^a-",
-      "label": "product A test env"
-    }
-  ],
-  "repoAliases": {
-    "api": "backend",
-    "web": "frontend",
-    "app": "mobile-app"
-  },
-  "localEnv": {
-    "_readme": "Optional local pre-staging envs (local-env skill). Secrets: <kit>/localenv.local/<env>.env (dotenv), never here.",
-    "maxLeaseMinutes": 120,
-    "idle": {
-      "minMinutes": 15,
-      "maxMinutes": 60
+  "worktreeRoots": ["/path/to/src-wt"],
+  "trackerRepos": ["backend", "frontend", "mobile-app"],
+  "trackerLists": ["<tracker container whose promoted tasks deploy intest checks: list id / owner/repo / project key>"],
+  "productTargets": [ { "pathRegex": "^product-a/", "targetRegex": "^a-", "label": "product A test env" } ],
+  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
+  "tracker": {
+    "_readme": "type: none (default) | clickup | github | gitlab | jira. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples for each backend: _examples.",
+    "type": "none",
+    "repo": "<owner/name or group/project, for github/gitlab issues>",
+    "list": "<default list id / Jira project key for new tasks>",
+    "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
+    "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH- / PROJ- ; default from type>",
+    "statuses": {
+      "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
+      "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]
     },
+    "_examples": {
+      "clickup": { "type": "clickup", "list": "<list id>", "branchTag": "CU-", "statuses": { "review": "for review", "failedTesting": "failed testing", "closed": "complete" } },
+      "jira": { "type": "jira", "list": "PROJ", "branchTag": "", "issueType": "Task", "subtaskType": "Subtask", "statuses": { "inProgress": "In Progress", "review": "In Review", "promoted": "Merged", "inTest": "QA", "failedTesting": "QA Failed", "closed": "Done" } },
+      "github": { "type": "github", "repo": "owner/name", "branchTag": "GH-", "statuses": { "failedTesting": "failed-testing" } }
+    }
+  },
+  "reports": { "_readme": "type: gdocs (Google Docs + Drive via gws; default when gws is installed) | markdown (files in the run folder, carried by the tracker comment)", "type": "markdown" },
+  "driveParent": "<Google Drive folder or shared-drive id for testing docs and reports (reports.type gdocs)>",
+  "qa": { "_readme": "outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"] },
+  "deploy": { "_readme": "minIntervalHours: at most one deploy per test env per window (a number, or per target with a default). The coordinator batches merged work into one ask per env (orch.ps1 deploy plan).", "minIntervalHours": { "default": 4, "<target>": 24 } },
+  "tests": { "_readme": "Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
+  "localEnv": {
+    "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
+    "maxLeaseMinutes": 120,
+    "idle": { "minMinutes": 15, "maxMinutes": 60 },
     "envs": {
       "shop": {
         "description": "API + web of the shop",
         "services": [
-          {
-            "name": "db",
-            "external": true,
-            "port": 5432
-          },
-          {
-            "name": "search",
-            "external": true,
-            "port": 9200,
-            "start": "opensearch -Ehttp.port=9200",
-            "health": "http://localhost:9200"
-          },
-          {
-            "name": "api",
-            "repo": "backend",
-            "dir": "api",
-            "port": 8080,
-            "health": "http://localhost:8080/health",
-            "dependsOn": [
-              "db",
-              "search"
-            ],
-            "build": "mvn -q package -DskipTests",
-            "artifact": "target/api-*.jar",
-            "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}",
-            "debugPort": 5005
-          },
-          {
-            "name": "web",
-            "repo": "frontend",
-            "port": 4200,
-            "hot": true,
-            "dependsOn": [
-              "api"
-            ],
-            "start": "npx ng serve --port {port}"
-          }
+          { "name": "db", "external": true, "port": 5432 },
+          { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://localhost:8080/health", "dependsOn": ["db"],
+            "build": "mvn -q package -DskipTests", "artifact": "target/api-*.jar",
+            "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
+          { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
         ],
-        "tasks": {
-          "apk": {
-            "repo": "mobile-app",
-            "cmd": "npx react-native build-android --mode=release",
-            "gated": true,
-            "env": {
-              "API_URL": "http://{lanIp}:8080"
-            }
-          }
-        },
-        "smoke": [
-          {
-            "name": "api health",
-            "service": "api",
-            "url": "http://localhost:8080/health"
-          }
-        ],
-        "db": {
-          "snapshot": "pg_dump -Fc shop > /tmp/{snapshot}.dump",
-          "restore": "pg_restore --clean -d shop /tmp/{snapshot}.dump"
-        },
-        "sandbox": {
-          "services": [
-            "api"
-          ],
-          "max": 2,
-          "portOffset": 100,
-          "env": {
-            "DB_PORT": "{+5432}"
-          },
-          "db": {
-            "clone": "<script: start a DB server on {+5432} with a copy of the test data>",
-            "drop": "<script: stop it, delete its data>",
-            "sweep": "<script: remove copies not in {keep}>"
-          }
-        }
+        "tasks": { "seed": { "repo": "backend", "cmd": "<command that loads the baseline fixtures>", "gated": true } },
+        "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
+        "db": { "snapshot": "pg_dump -Fc shop > /tmp/{snapshot}.dump", "restore": "pg_restore --clean -d shop /tmp/{snapshot}.dump" },
+        "sandbox": { "services": ["api"], "max": 2, "portOffset": 100, "env": { "DB_PORT": "{+5432}" },
+          "db": { "clone": "<script: a DB server on {+5432} with a copy of the test data>", "drop": "<script: stop it, delete its data>", "sweep": "<script: remove copies not in {keep}>" } }
       }
     }
   },
-  "protectedBranches": [
-    "staging"
-  ],
-  "driveParent": "<Google Drive folder or shared-drive id for tester guides (reports.type gdocs)>",
-  "tracker": {
-    "_readme": "type: clickup (default) | github | gitlab | jira | none. github/gitlab need repo; jira needs env JIRA_BASE_URL/JIRA_EMAIL/JIRA_API_TOKEN. statuses maps logical names to your board's names (a list = first is set, all match).",
-    "type": "clickup",
-    "repo": "<owner/name or group/project, for github/gitlab>",
-    "list": "<default list id / Jira project key for new tasks>",
-    "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
-    "branchTag": "CU-",
-    "statuses": {
-      "open": [
-        "open",
-        "to do"
-      ],
-      "inProgress": "in progress",
-      "review": [
-        "for review",
-        "in review"
-      ],
-      "promoted": "promoted",
-      "inTest": [
-        "in test",
-        "for test"
-      ],
-      "closed": [
-        "closed",
-        "complete",
-        "done"
-      ]
-    }
-  },
-  "reports": {
-    "_readme": "type: gdocs (Google Docs + Drive via the gws CLI; default when gws is installed) | markdown (report.md in the QA run folder, carried by the tracker comment)",
-    "type": "markdown",
-    "guide": "complex"
-  },
-  "qa": {
-    "_readme": "closeWithNotTested: true = finalize closes a tested task with NOT_TESTED checks and moves those to one '[Test] <run> — untested checks (n)' task (run.json tracker.closeWithNotTested wins). outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE, never keep a task open).",
-    "closeWithNotTested": false,
-    "outOfScope": [
-      "<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker, an external dashboard>"
-    ]
-  },
-  "cleanup": {
-    "maxBrowserProfiles": 4
-  },
-  "memory": {
-    "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored, set by kit-setup.ps1); true = keep Claude Code's default location.",
-    "keepDefault": false
-  },
-  "kitAudit": {
-    "_readme": "everyDays: the SessionStart nudge asks for a kit-auditor run when the last kit audit is older (default 7; 0 = off).",
-    "everyDays": 7
-  },
-  "build": {
-    "_readme": "mavenOffline: Maven runs with -o (offline) when ~/.m2/repository exists (default true); false = always online.",
-    "mavenOffline": true
-  },
-  "gate": {
-    "_readme": "Memory gate (gate.ps1). keepFreeGB (default 15% of RAM, min 6; env CLAUDE_GATE_KEEP_FREE_GB wins) = RAM every build leaves free. startHeapGB = first heap for a project with no build history (then learned); heapMinGB = the floor.",
-    "heapMinGB": 4,
-    "startHeapGB": {
-      "gradle": 12,
-      "maven": 8,
-      "node": 4
-    }
-  },
-  "supervise": {
-    "ramActPct": 90,
-    "minDiskFreeGB": 30
-  },
+  "protectedBranches": ["staging"],
+  "cleanup": { "maxBrowserProfiles": 4 },
+  "memory": { "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored); true = keep the user's own setting.", "keepDefault": false },
+  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kit-auditor run when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
+  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
+  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor.", "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } },
+  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30 },
   "repos": [
-    {
-      "name": "backend",
-      "aliases": [
-        "api"
-      ],
-      "checkout": "<workspace>/repos/backend",
-      "target": "main",
+    { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main",
+      "deploys": [ { "target": "staging", "branch": "staging", "job": "deploy-staging" } ] },
+    { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
       "deploys": [
-        {
-          "target": "staging",
-          "branch": "staging",
-          "job": "deploy-staging"
-        }
-      ]
+        { "target": "staging", "branch": "staging", "job": "deploy-staging" },
+        { "target": "<env deployed by hand onto a host>", "ssh": { "host": "<user>@<host>", "key": "<path to the ssh key file>", "repoDir": "<repo checkout on the host>", "appDir": "<installed app dir>", "exclude": ["data"] } },
+        { "target": "<env deployed by hand, no way to check>", "manual": true },
+        { "target": "<test phones of an app repo>", "laneApk": true }
+      ],
+      "linkFromByTarget": { "<other target branch>": "<a checkout of that branch with its own install>" },
+      "linkPaths": ["<git-ignored file or folder every worktree needs, e.g. local credentials or local.properties>"] }
+  ],
+  "bugfixMandate": ["<the owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"],
+  "localOnly": ["skills/<org-only-skill>", "skills/tech-audit/reference/projects/<your-project>.md"],
+  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
+  "localFiles": {
+    "skills/qa-kit/targets.local.json": {
+      "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password].",
+      "default": "my-staging",
+      "keepFreeGB": 8,
+      "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000 },
+      "targets": {
+        "my-staging": {
+          "web": "https://staging.example.com", "api": "https://staging-api.example.com", "apiPattern": "/api/", "defaultTenant": "", "tenantHeader": "",
+          "auth": { "type": "login", "path": "/api/authenticate", "contentType": "json", "body": { "username": "{user}", "password": "{pass}" }, "tokenField": "id_token", "header": "Authorization: Bearer {token}" },
+          "webLogin": { "path": "/login", "fields": { "#username": "{user}", "#password": "{pass}" }, "rememberMeLabel": "Remember me", "submit": "button[type=submit]", "tokenKeys": ["access_token"] },
+          "users": { "admin": ["qa-admin", "<password>"], "qa-user-1": ["qa-user-1", "<password>"] }
+        },
+        "local": { "web": "http://localhost:4200", "api": "http://localhost:8080", "auth": { "type": "login", "path": "/api/authenticate", "contentType": "json", "body": { "username": "{user}", "password": "{pass}" }, "tokenField": "id_token", "header": "Authorization: Bearer {token}" }, "users": { "admin": ["qa-admin", "<password>"] } },
+        "static-token-api": { "api": "https://api.staging.example.com", "auth": { "type": "token", "header": "X-Api-Key: {token}" }, "users": { "admin": ["", "<api key>"] } },
+        "basic-auth-api": { "api": "https://legacy.staging.example.com", "auth": { "type": "basic" }, "users": { "admin": ["qa-user", "<password>"] } }
+      }
     },
-    {
-      "name": "web",
-      "aliases": [
-        "ui"
+    "skills/android-swarm/swarm.config.json": {
+      "_readme": "Lanes = AVD names (swarm.ps1 avd create). Each lane has its own test login ('user', a key in targets.local.json) and 'notes'. localManifests: the app's own manifests that allow cleartext (debug variants), merged into the release build by swarm.ps1 build -Local; localReverse: ports acquire -Apk local reverses to this machine (the local API).",
+      "avdDir": "",
+      "outDir": "",
+      "headless": false,
+      "lanes": [
+        { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "test account 1, data prefix QA-L1-" },
+        { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "test account 2, data prefix QA-L2-" }
       ],
-      "checkout": "<workspace>/repos/web",
-      "target": "main",
-      "linkFrom": "<a worktree whose node_modules can be linked (optional)>",
-      "deploys": [
-        {
-          "target": "staging",
-          "branch": "staging",
-          "job": "deploy-staging"
-        },
-        {
-          "target": "<env deployed by hand onto a host>",
-          "ssh": {
-            "host": "<user>@<host>",
-            "key": "<path to the ssh key file>",
-            "repoDir": "<repo checkout on the host>",
-            "appDir": "<installed app dir>",
-            "exclude": [
-              "data"
-            ]
-          }
-        },
-        {
-          "target": "<env deployed by hand, no way to check>",
-          "manual": true
-        },
-        {
-          "target": "<test phones of an app repo (the emulator lane APK)>",
-          "laneApk": true
-        }
-      ],
-      "linkFromByTarget": {
-        "<other target branch>": "<a checkout of that branch with its own install (e.g. git worktree add --detach + frozen-lockfile install)>"
-      },
-      "linkPaths": [
-        "<git-ignored file or folder every worktree needs, e.g. api/local-credentials.json or app/android/local.properties>"
-      ]
+      "app": {
+        "kind": "react-native", "package": "com.example.app", "appDir": "/path/to/example-app/app", "branch": "main",
+        "buildTask": "assembleRelease", "buildArgs": "-PreactNativeArchitectures=x86_64 -Dorg.gradle.workers.max=4",
+        "apkGlob": "app/build/outputs/apk/release/*.apk", "permissions": ["CAMERA", "ACCESS_FINE_LOCATION"],
+        "localManifests": ["src/debugOptimized/AndroidManifest.xml", "src/debug/AndroidManifest.xml"], "localReverse": [8080],
+        "javaHome": "", "javaVersions": [17, 21]
+      }
     }
-  ],
-  "bugfixMandate": [
-    "<the task owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"
-  ],
-  "localOnly": [
-    "skills/<org-only-skill>",
-    "skills/tech-audit/reference/projects/<your-project>.md"
-  ],
-  "orgTerms": [
-    "<your org name>",
-    "<your product names, hosts, tenant names>"
-  ]
+  }
 }

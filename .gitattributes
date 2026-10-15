@@ -2,4 +2,4 @@
 *.js text eol=lf
 *.mjs text eol=lf
 # git hooks run under sh: LF only
-.githooks/pre-push text eol=lf
+.githooks/* text eol=lf

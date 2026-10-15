@@ -1,16 +1,18 @@
 # dev-wave (ported procedure, not a native Antigravity workflow)
 
-> Run a wave of parallel dev agents (any stack) from a brief: implement + ship each area, independent MR review, one fix round, reconcile
+> The dev flow for a wave of parallel dev agents (any stack): code, testing-goals doc, reproduce + test on the local env (loop), decision pauses, independent review, CI, merge (producers first), human testing doc + tracker, batched deploy ask
 
-**When to run it:** Coding with more than 2 work items or tasks, one item spanning 2+ repos, or one large item (new feature or epic, migrations, many screens)
+**When to run it:** Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)
 
 Antigravity has no pipeline/phase scripting engine equivalent to Claude Code's Workflow tool, so this is a manual run procedure, not an automated script. Drive it yourself as the coordinator: delegate each phase to the matching subagent in `.agents/agents/*.md` yourself, in the phase order below.
 
 ## Phases
 
-1. **Build** -- one agent per area: worktree, code, gated checks, MRs, merge when green
-2. **Review** -- independent reviewer per agent reads its MR diffs
-3. **Fix** -- one follow-up round for blocking review findings
-4. **Learn** -- signals + LESSONS.md updates (40-line cap) from this wave
+1. **Build** -- one agent per area: worktree, code, testing goals, local test loop, MRs, testing doc
+2. **Decide** -- items paused for an owner decision wait for the answer, then resume
+3. **Review** -- independent reviewer per agent + CI pipelines
+4. **Fix** -- one fix round (local tests again), then merge in order and register the tracker task
+5. **Deploy** -- the merged work joins the deploy batch; the coordinator asks the owner (never deploys)
+6. **Learn** -- signals + lessons from this wave, cleanup
 
 Full argument shape and step-by-step mechanics: the canonical source is `.claude/workflows/dev-wave.js` (read its header comment and the `orchestrate` skill before running this by hand).
