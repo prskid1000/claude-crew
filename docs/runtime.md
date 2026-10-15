@@ -47,6 +47,7 @@ durable state left inside the runtime (`RUNTIME-DURABLE`).
 | `localenv-logs` | `logs/localenv/<env>-<svc>.log` (+ `.prev`), `<env>-<svc>-build.log`, `<env>-loop.log`, `<env>-train.log`, `<env>-db.log`, `<env>-smoke.log`, `<env>-events.jsonl` | `localenv.ps1`, `localenvd.ps1` | `localenv.ps1 logs` / `events`, people, `/kit-retro` | history only |
 | `localenv-history` | `cache/localenv-history.json` | `localenv.ps1` (RAM footprint per env/service) | `localenv.ps1` (start admission) | per-stack defaults until services start again |
 | `retros` | `logs/retros/retro-<time>.md` | `/kit-retro` | people | history only (the changes are in the kit's git history) |
+| `kit-audits` | `logs/kit-audits/audit-<date>.md` (+ `cache/kit-audit-lint.json`) | `kit-auditor` (kit-audit step 9; `kit-audit.py scan`) | the lead, the next audit | history only (fixes are on the audit branches) |
 
 `cleanup.ps1` prunes old entries (sessions > 8 h, tokens > 3 d, stop markers > 7 d, loose evidence > 14 d, wave reports > 14 d,
 briefs and docs > 30 d, QA run bulk > 30 d, retro reports > 90 d, idle browser profiles) and rotates `logs/*.log`.
@@ -58,6 +59,7 @@ Outside the runtime, on purpose: the memory gate's ledger (`<OS temp>/claude-bui
 |---|---|---|---|---|
 | `signals` | `learning.local.jsonl` | `learn.ps1` (agents, every workflow's Learn step) | `retro-nudge.ps1`, `status.ps1`, `learn.ps1 -Show/-Stats`, `/kit-retro` | none needed: never inside the runtime (`cleanup.ps1` keeps the newest 5000 lines) |
 | `last-retro` | `learning.local.stamp` | `/kit-retro` (last step) | `retro-nudge.ps1`, `status.ps1`, `learn.ps1 -Stats` | without it every signal counts as new |
+| `last-kit-audit` | `kit-audit.local.stamp` | `kit-audit.py stamp` (kit-auditor, last step) | `retro-nudge.ps1` (weekly nudge), `kit-audit.py due` | the next session says "kit audit due" |
 | `tracking` | `tracking.local.json`: `tasks` (task -> MRs, `onMerged`, `done`, QA/live fields) and `automerge` (merge-when-green intents) | `track.ps1` (`add`, `run`, `-Rebuild`), `devtools.py merge` (`automerge`), `supervise.ps1` (live / QA-covered fields) | `track.ps1`, `supervise.ps1`, `bug-brief.ps1` | `track.ps1 -Rebuild`: every open (or recently merged) MR in `trackerRepos` with `<tracker tag><id>` in its branch or title becomes a `-Discover` task again |
 | `tracker-none` | `tracker-none.local/` | `tracker.ps1` with `tracker.type` none | `tracker.ps1` | it is the local tracker itself: back it up if you rely on it |
 | `localenv-env` | `localenv.local/<env>.env` | people (dotenv: DB passwords, cloud keys of a local env) | `localenv.ps1` (service, build and task environment) | re-enter the values: they are secrets kept nowhere else |

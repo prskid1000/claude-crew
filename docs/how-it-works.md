@@ -14,7 +14,7 @@ flowchart LR
   C -->|R7| MR[mr-reviewer]
   O --> W
   S -->|Files index: step N| F[reference · template · script]
-  W -->|spawns| A[agent types<br/>dev-agent · mr-reviewer · qa-tester · qa-verifier]
+  W -->|spawns| A[agent types<br/>dev-agent · mr-reviewer · qa-tester · qa-verifier · kit-auditor]
   A -->|Load first| S
   H[[settings.json hooks]] --> G[guard · kit-health · retro-nudge · cleanup]
 ```

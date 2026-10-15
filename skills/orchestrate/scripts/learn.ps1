@@ -22,7 +22,7 @@ Signals are durable local knowledge: <kit>/learning.local.jsonl (git-ignored; Ge
 -Lesson, -Bump and -Fixed trim automatically. Counts, new lines, retiring and the cap go through this script; merging or
 condensing lesson lines (to stay under the cap without losing rules) is a normal Edit of LESSONS.md.
 
--Skill: orchestrate | dev-kit | qa-kit | android-swarm | tech-audit | <project name>
+-Skill: orchestrate | dev-kit | qa-kit | android-swarm | tech-audit | local-env | kit-audit | <project name>
 -Kind : friction (slow/awkward) | failure (tool/script broke) | defect-missed | false-positive | rule-violation |
         stale-env | flaky | idea | win (something that worked well and should become the default)
 #>
