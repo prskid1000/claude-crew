@@ -9,7 +9,7 @@ Targets (base URLs, auth style, users) come from ..\targets.local.json (copy tar
 
 Prints "HTTP <status>" then the response body. Logs in once per target+tenant+user and caches the token
 (re-login on 401). Auth types: login (json or form body, token from tokenField), token (static), basic, none.
--Save never stores passwords: only method, URL, request body, status and response body.
+-Save never stores passwords: only method, URL, request body, status, response headers (cookies redacted) and body.
 #>
 param(
   [string]$Method = 'GET',
@@ -80,23 +80,26 @@ function Call($tk) {
   $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = 'application/json' }
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
-  try { $r = Invoke-WebRequest @p; return @([int]$r.StatusCode, $r.Content, $r.Headers['Content-Type']) }
+  # response headers go into the evidence too (Content-Disposition, Location, caching ...); cookies redacted
+  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)set-cookie|authorization') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
+  try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
     $resp = $_.Exception.Response
-    if ($resp) { return @([int]$resp.StatusCode, $_.ErrorDetails.Message, [string]$resp.Content.Headers.ContentType) } else { return @(0, "ERR $($_.Exception.Message)", '') }
+    if ($resp) { $hm = HeaderMap (@($resp.Headers) + @($resp.Content.Headers)); return @([int]$resp.StatusCode, $_.ErrorDetails.Message, [string]$resp.Content.Headers.ContentType, $hm) } else { return @(0, "ERR $($_.Exception.Message)", '', [ordered]@{}) }
   }
 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $res = Call $tok
 if ($res[0] -eq 401 -and $t.auth.type -eq 'login') { $tok = Login; $sw.Restart(); $res = Call $tok }
 $sw.Stop()
-$status, $content, $ctype = $res
+$status, $content, $ctype, $rhead = $res
 # binary responses (image/PDF/file downloads) come back as byte[]: keep the bytes as a file, put a text stub in the evidence/output
 if ($content -is [byte[]]) {
   $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
   if ($Save) {
     $bdir = if ($OutDir) { $OutDir } else { Get-KitPath evidence }; New-Item -ItemType Directory -Force $bdir | Out-Null
-    $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '.bin' } }
+    $ext = if ([string]$rhead['content-disposition'] -match 'filename\*?=(?:UTF-8'''')?"?([^";]+)') { [IO.Path]::GetExtension($Matches[1]) } else { '' }
+    if (-not $ext) { $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '.bin' } } }
     $bf = Join-Path $bdir "$Save.body$ext"; [IO.File]::WriteAllBytes($bf, $bytes); $content += " saved to $bf"
   }
 }
@@ -112,7 +115,7 @@ if ($Save) {
   [ordered]@{
     meta     = [ordered]@{ code = $code; check = $check; target = $Target; tenant = $Tenant; user = [string]$u[0]; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); durationMs = $sw.ElapsedMilliseconds; tool = 'api.ps1' }
     request  = [ordered]@{ method = $Method.ToUpper(); url = $uri; headers = $red; body = (Parse $Body) }
-    response = [ordered]@{ status = $status; headers = [ordered]@{ 'content-type' = [string]$ctype }; body = (Parse $content) }
+    response = [ordered]@{ status = $status; headers = $(if ($rhead) { $rhead } else { [ordered]@{ 'content-type' = [string]$ctype } }); body = (Parse $content) }
   } | ConvertTo-Json -Depth 30 | Out-File (Join-Path $OutDir "$Save.json") -Encoding utf8
 }
 "HTTP $status"

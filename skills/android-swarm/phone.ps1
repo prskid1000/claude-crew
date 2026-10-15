@@ -123,11 +123,16 @@ switch ($Action) {
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
     $serial = "emulator-$($got.port)"
     $memQueued = $false
-    if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
-    if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
-      # a new lease whose first boot failed for an emulator reason (not memory): one cold retry, lease kept (often a hung warm snapshot)
-      "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
-      $memQueued = Boot $got -Cold -Until $deadline
+    try {
+      if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
+      if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
+        # a new lease whose first boot failed for an emulator reason (not memory): one cold retry, lease kept (often a hung warm snapshot)
+        "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
+        $memQueued = Boot $got -Cold -Until $deadline
+      }
+    } catch {   # a boot that throws (emulator missing, gate error) must not leave a fresh lease behind for an hour
+      if (-not $script:had) { Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue } }
+      throw
     }
     if (-not (Running $got)) {
       if ($script:had) {   # a lane we already held went offline and did not come back: keep the lease, never hand it to another agent

@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 Is a merged MR live on a test environment? Answers from the CI, not from memory: the MR's merge commit must be on
-the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "On" = an ancestor, or (squashed "merge main
+the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "On" = an ancestor, or a squash-merged deploy MR
+into that branch whose source head held the merge commit, or (squashed "merge main
 into staging" / cherry-picks) the MR is on its target branch and none of its files differ between that branch and the deploy ref.
 
   $D = '<kit>/skills/qa-kit/scripts/deployed.ps1'
@@ -47,7 +48,19 @@ function ContentOn($p, $mr, $sha, $ref) {
   if (-not $cmp) { return $false }
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
-function OnRef($p, $mr, $sha, $ref) { (IsAncestor $p $sha $ref) -or (ContentOn $p $mr $sha $ref) }
+# A squash-merged deploy MR (<source> -> <deploy branch>) lands one new commit whose parent is the old deploy head: the MR's commit is
+# no ancestor, and ContentOn fails once a later, undeployed commit on the source touches the same files. Live when a deploy MR into
+# $branch, merged after this MR, had a source head holding the MR's commit and its own landing commit is on $ref.
+function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
+  if (-not $branch -or -not $mr.merged_at) { return $false }
+  $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
+    $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1
+    if ($land -and $dm.sha -and (IsAncestor $p $sha $dm.sha) -and (IsAncestor $p $land $ref)) { return $true }
+  }
+  $false
+}
+function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
 # App repos (laneApk): the stamp android-swarm app-build.ps1 writes next to the lane APK (apk/app.json: branch, commit, appDir, built).
 # laneApk = true -> <swarm.config.json outDir, else Get-KitPath android-swarm>/apk/app.json; a string = the path of that app.json.
 function LaneApk($d) {
@@ -127,7 +140,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
       if (-not $ai -or -not $ai.commit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = 'no lane APK stamp (android-swarm apk/app.json): build the APK with app-build.ps1' }; continue }
       $apk = "APK $($ai.commit) ($($ai.branch), built $($ai.built))"
       $on = LocalAncestor $ai.appDir $sha $ai.commit
-      if (-not $on) { $on = OnRef $p $mr $sha $ai.commit }   # no local checkout, or squashed / cherry-picked content: ask the git host
+      if (-not $on) { $on = OnRef $p $mr $sha $ai.commit $ai.branch }   # no local checkout, or squashed / cherry-picked content: ask the git host
       if ($on) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the lane $apk (phones get it on their next phone.ps1 acquire)" } }
       else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the lane ${apk}: rebuild it (app-build.ps1) from a branch holding the merge" } }
       continue
@@ -136,6 +149,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
       $s = $d.ssh; $st = SshState $s $sha
       if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }
       $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
+      if ($st.rc -gt 1 -and -not $st.head) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')" }; continue }   # a wrong repoDir is not 'not deployed'
       if (-not $st.anc) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the host checkout ($where)" }; continue }
       if ($st.rc -gt 1) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "in the host checkout, but the compare failed: $(($st.diff | Select-Object -First 2) -join '; ')" }; continue }
       if ($st.diff.Count) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "in the host checkout ($where), but $($st.diff.Count) of $($st.files) tracked file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')" }; continue }
@@ -144,7 +158,8 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
     }
     if ($d.manual) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'MANUAL'; detail = 'deployed by hand: confirm with the owner or an ssh check' }; continue }
     if ($d.awsStack) {   # deployed by hand (no CI job): live only if the CloudFormation stack was updated after the merge
-      $upd = aws cloudformation describe-stacks --region $(if ($d.region) { $d.region } else { 'eu-west-1' }) --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
+      $ra = if ($d.region) { @('--region', $d.region) } else { @() }   # no region configured: the AWS CLI profile / AWS_REGION default
+      $upd = aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
       if (-not $upd) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)" }; continue }
       $at, $st, $created = "$upd" -split '\s+'
       if ($at -eq 'None') { $at = $created }   # a stack never updated since creation
@@ -159,7 +174,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
     # a pipeline created before the merge cannot contain it: skip those without asking for their jobs
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
       $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
-      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha))) { $hit = $job; break }
+      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
     }
     if ($hit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "$($d.job) finished $($hit.finished_at)" } }
     else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "on $($d.branch), but no successful $($d.job) includes it yet" } }

@@ -58,7 +58,7 @@ switch ($Action) {
     $dir = if ($Arg2) { $Arg2 } else { Join-Path (Get-KitPath shots) $tag }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $f = Join-Path $dir "$Arg.png"
-    & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null; if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }
     "saved $f"
   }
   'shotmark' {
@@ -73,7 +73,7 @@ switch ($Action) {
            else { ($all | Where-Object { $_.text -eq $want } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$want*" } | Select-Object -First 1) }
       if ($n) { "$($n.l - 6),$($n.t - 6),$($n.w + 12),$($n.h + 12),$(if ($Arg3) { $Arg3 } else { $n.text })" } else { Write-Warning "NOT FOUND: $want (screenshot taken without a mark for it)" }
     }
-    & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f | Out-Null
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null; if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }
     if ($rects -and -not $KitIsWindows) { Write-Warning 'marks need annotate.ps1 (Windows only): screenshot saved unmarked - name the element in the check note'; $rects = $null }
     if ($rects) { & (Join-Path (Split-Path $PSScriptRoot) 'annotate.ps1') -In $f -Rect @($rects) | Out-Null }
     "saved $f$(if ($rects) { " with $(@($rects).Count) mark(s)" })"
