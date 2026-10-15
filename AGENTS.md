@@ -9,6 +9,19 @@ the top of `CLAUDE.md` (and `GEMINI.md`). Edit only here — never duplicate con
 tools drift apart. Mechanics that only Claude Code has (the Workflow tool, the Skill tool, agent spawning, hooks) are noted in
 `CLAUDE.md`'s own section below the import, not here, since they don't apply to Codex/Antigravity.
 
+## Writing (hard rule, every agent and session)
+Why: every word is read, and paid for, by agents and people; short text is read right the first time.
+Scope: all prose: replies, reports, briefs, MR/PR bodies, tracker comments, tester guides, QA reports, docs, lessons, commit
+bodies, code comments. Code itself: normal clarity.
+- Result first, then only what the reader needs to act. Shape: `<thing> <state/action> <reason>` -> next step.
+- Lists and fragments, one fact per line, each fact once; link (MR, task, guide, run) instead of repeating it.
+- Exact over descriptive: ids, paths, numbers, commands, error text. Active voice; short common words; full technical terms,
+  no invented abbreviations.
+- Budgets (a stricter skill or template limit wins): final reply ≤ 150 words; tracker comment ≤ 8 lines; MR/PR body: template
+  sections, ≤ 3 lines each; lesson 1 line; code comment 1 line saying why; guide: steps + one Expected per check.
+- Cut: greetings, preamble, task recap, hedges, praise, filler adverbs, closing summaries.
+- Before sending: delete every word whose removal loses nothing. A longer-than-needed text is a defect.
+
 ## Router
 Classify every request before acting: check the rows top to bottom; **the first row whose conditions all hold wins**. Go to its
 **Target** after loading the **Load first** skill. A mixed request is split and each part routed on its own, in the same turn.
@@ -43,8 +56,8 @@ Skills a target needs at a later step are loaded at that step (its Files index s
   asked or asking first, then say in one line what started (workflow, agents, repos) and why. An org that wants to be asked first
   says so in its org rules; then propose instead. A request already running in a workflow is never launched twice: add to it
   through the contracts file (R1). Size each workflow to the session's size guideline.
-- **Local env (pre-staging):** with `localEnv` configured, dev agents deploy their branch to the env, test and `promote` it there
-  (`local-env`, dev-kit step 6b) before merging. The env is local: deploying to it needs no person's yes; test environments still do.
+- **Local env (optional pre-staging):** only when the owner or the brief asks for a local check do dev agents deploy their branch
+  to the env, test and `promote` it there (`local-env`, dev-kit step 6b). The env is local: deploying to it needs no person's yes.
 - **Coding and testing in one request:** R13/R14 now; R11 (or R9) once a person has deployed. **Deploys, and merges into
   branches that deploy, always need a person's yes.**
 

@@ -8,7 +8,7 @@ session on router row R14 (one small change).
 **Not when:** coordinating agents -> `orchestrate`; testing deployed work -> `qa-kit`; static audit -> `tech-audit`; reviewing
 MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start them).
 **Hands off to:** the coordinator (your final reply; `track.ps1` promotes the task), `qa-kit` testers through your tester guide
-(step 7b), `mr-reviewer` inside a reviewed /dev-wave, `local-env` at step 6b (pre-staging check, when `localEnv` runs your repo).
+(step 7b), `mr-reviewer` inside a reviewed /dev-wave, `local-env` at step 6b (only when the owner or your brief asks for a local check).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
@@ -53,7 +53,7 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/check.ps1 -Dir <wt>/<module> -Step migrations               # 4c. if you touched DB migrations (must print ISSUES 0)
 & $K/wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. re-read <brief>.contracts.md, rebase + re-check before push
-# 6b. localEnv runs this repo: local-env skill steps 1-6 (deploy -Dir <wt>, use, test, promote, release) = pre-staging
+# 6b. ONLY when the owner/brief asks for a local check: local-env skill steps 1-6 (deploy -Dir <wt>, use, test, promote, release)
 git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
 python $K/devtools.py doc "<title>" <guide.html>                  # 7b. tester guide (complex change) -> link it on the task + MR;
