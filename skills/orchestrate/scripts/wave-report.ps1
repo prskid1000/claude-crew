@@ -10,9 +10,8 @@ notification text is truncated and not plain JSON. Works for /dev-wave, /test-an
 #>
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\kitconfig.ps1')
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\githost.ps1')   # $KitConf + Invoke-HostApi
 $proj = $KitConf.ClaudeProjectDir   # this workspace's Claude Code sessions
-if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 $dir = Get-ChildItem $proj -Directory | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Join-Path $_.FullName "subagents\workflows\$Run" } | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $dir) { [Console]::Error.WriteLine("wave-report: workflow $Run not found under $proj"); exit 1 }   # throw is suppressed under SilentlyContinue
 $ev = @(Get-Content (Join-Path $dir 'journal.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
@@ -63,7 +62,7 @@ $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.
 # JSON is saved, so waves/<run>.json and -Json carry the live state too
 # (glab talks to the host it is logged in to; self-hosted: GITLAB_HOST / kit.local.json "gitHost")
 foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
-  $h = glab api "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)" 2>$null | ConvertFrom-Json
+  $h = Invoke-HostApi "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)"
   if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } }
   elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') {   # GitHub PRs
   $h = gh pr view $m.url --json state,autoMergeRequest 2>$null | ConvertFrom-Json

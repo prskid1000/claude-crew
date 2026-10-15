@@ -26,14 +26,13 @@ Use it before holding a QA item as "not deployed yet", and supervise.ps1 -AutoFi
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\kitconfig.ps1')
-if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\githost.ps1')   # $KitConf + Invoke-HostApi (GitLab / GitHub)
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
 # memoised: supervise checks many MRs on the same branches/pipelines each round (unmemoised: 100+ sequential API calls, > 2 min)
 $memo = @{}
-function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = glab api $path 2>$null | ConvertFrom-Json }; $memo[$path] }
+function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
 function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
 # A squashed "merge main into staging" (or a cherry-pick) carries the MR's content without its commit: ancestry says no.
 # Fallback: the MR is on its target branch (e.g. main) and none of its files differ between that branch and $ref.
@@ -128,6 +127,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # kitconfig.ps1
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
   $p = [uri]::EscapeDataString($(if ($group) { "$group/$($r.name)" } else { $r.name })); $ref = "$($r.name)!$iid"
   $mr = Api "projects/$p/merge_requests/$iid"
+  if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward merges have no merge commit: the MR head (sha) is what landed on the target
   $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1

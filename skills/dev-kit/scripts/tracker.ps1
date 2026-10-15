@@ -14,7 +14,8 @@ As a script (structured results print as JSON):
   & $TR describe <id> <text | file.md>   # replace the description
   & $TR rename <id> "<name>"
   & $TR attach <id> <file> [-Text "<comment>"]   # report/guide: GitHub/GitLab post the file's text as a comment; ClickUp/Jira attach it
-  & $TR list <list> <status>             # [{ id, name, assignees[{id,username}] }] tasks of a list in a status (ClickUp; others: [])
+  & $TR list <list> <status>             # [{ id, name, status, assignees[{id,username}] }] tasks of a list in a logical status
+                                         # (<list> = list id / owner/name or group/project repo / Jira project key / none: any; '' = tracker.list or tracker.repo)
   Options: -Type <backend> (else $env:KIT_TRACKER_TYPE, else kit.local.json tracker.type, else clickup) · -DryRun (or
   $env:KIT_TRACKER_DRYRUN=1): print the CLI / REST call instead of running it.
 
@@ -33,7 +34,7 @@ Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issue
   none     no tracker: every task is kept in <kit>/tracker-none.local/ (durable, git-ignored; create returns LOCAL-<n>) and
            every call is logged to <runtime>/logs/tracker-none.log; nothing fails
 Logical statuses (tracker.statuses overrides any; a value may be a list - the first name is set, all names match):
-  open, inProgress, review, promoted, inTest, closed
+  open, inProgress, review, promoted, inTest, failedTesting, closed
 Works in PowerShell 7 (jira attachments need it); the rest also runs in Windows PowerShell 5.1.
 #>
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
@@ -54,7 +55,7 @@ if ($__trType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 
 
 $__trStatus = [ordered]@{
   open = @('open', 'to do'); inProgress = @('in progress'); review = @('for review', 'in review'); promoted = @('promoted')
-  inTest = @('in test', 'for test'); closed = @('closed', 'complete', 'done')
+  inTest = @('in test', 'for test'); failedTesting = @('failed testing', 'test failed'); closed = @('closed', 'complete', 'done')
 }
 $__trCfgSt = Get-KitSetting 'tracker.statuses' $null
 if ($__trCfgSt) { foreach ($__p in $__trCfgSt.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | ForEach-Object { [string]$_ }) } }
@@ -448,18 +449,41 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 }
 
 function Get-TrackerTasks([string]$List, [string]$Status) {
-  # tasks of one list in one status: [{ id, name, assignees[] }]. ClickUp only for now (lists are a ClickUp notion); other backends -> @()
+  # tasks of one list in one logical status: [{ id, name, status, assignees[{id,username}] }]. <List> = the backend's container:
+  # ClickUp list id, GitHub owner/name, GitLab group/project, Jira project key; none = any (or its list); '' = tracker.list / tracker.repo
   $st = Resolve-TrackerStatus $Status
+  if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
+  $who = { param($id, $u) [pscustomobject]@{ id = "$id"; username = "$u" } }
   switch ($__trType) {
     'clickup' {
       foreach ($pg in 0..6) {   # 100 per page
         $arr = @(__TrJson (__TrCli 'clickup' @('task', 'list', '--list-id', $List, '--status', $st, '--page', "$pg", '--json')))
         $arr = @($arr | Where-Object { $_ -and $_.id })
-        foreach ($t in $arr) { [pscustomobject]@{ id = [string]$t.id; name = [string]$t.name; assignees = @($t.assignees | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; username = "$($_.username)" } }) } }
+        foreach ($t in $arr) { [pscustomobject]@{ id = [string]$t.id; name = [string]$t.name; status = $st; assignees = @($t.assignees | ForEach-Object { & $who $_.id $_.username }) } }
         if ($arr.Count -lt 100) { break }
       }
     }
-    default { Write-Warning "tracker ($__trType): list lookup is not supported; pass task ids instead"; @() }
+    'github' {
+      $r = if ($List -match '/') { $List } else { (__TrRef '0')[0] }
+      $a = @('issue', 'list', '-R', $r, '--limit', '200', '--json', 'number,title,assignees')
+      $a += if (__TrIsClosed $st) { @('--state', 'closed') } else { @('--state', 'open', '--label', "status:$st") }
+      @(__TrJson (__TrCli 'gh' $a)) | Where-Object { $_ -and $_.number } | ForEach-Object { [pscustomobject]@{ id = "$($_.number)"; name = [string]$_.title; status = $st; assignees = @($_.assignees | ForEach-Object { & $who $_.login $_.login }) } }
+    }
+    'gitlab' {
+      $r = if ($List -match '/') { $List } else { (__TrRef '0')[0] }
+      $q = if (__TrIsClosed $st) { 'state=closed' } else { "state=opened&labels=$([uri]::EscapeDataString("status:$st"))" }
+      @(__TrGl 'GET' "projects/$([uri]::EscapeDataString($r))/issues?$q&per_page=100" $null) | Where-Object { $_ -and $_.iid } | ForEach-Object { [pscustomobject]@{ id = "$($_.iid)"; name = [string]$_.title; status = $st; assignees = @($_.assignees | ForEach-Object { & $who $_.id $_.username }) } }
+    }
+    'jira' {
+      $jql = "project = `"$List`" AND status = `"$st`""
+      $j = __TrJira 'GET' "search/jql?jql=$([uri]::EscapeDataString($jql))&fields=summary,assignee&maxResults=200" $null
+      @($j.issues) | Where-Object { $_ -and $_.key } | ForEach-Object { [pscustomobject]@{ id = $_.key; name = [string]$_.fields.summary; status = $st; assignees = @($_.fields.assignee | Where-Object { $_ } | ForEach-Object { & $who $_.accountId $_.displayName }) } }
+    }
+    default {
+      @(Get-ChildItem $__trNoneDir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
+          Where-Object { (-not $List -or "$($_.list)" -eq $List) -and ((Test-TrackerStatus "$($_.status)" $Status) -or "$($_.status)" -ieq $st) } |
+          ForEach-Object { [pscustomobject]@{ id = $_.id; name = $_.name; status = $_.status; assignees = @($_.assignees | ForEach-Object { & $who $_ $_ }) } })
+    }
   }
 }
 

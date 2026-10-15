@@ -5,11 +5,12 @@ the dev agent instead of scheduling a merge that will never happen.
   & <workspace>/.claude/skills/dev-kit/scripts/pipe-wait.ps1 -Mrs https://gitlab.example.com/group/api/-/merge_requests/12,https://... [-MaxMinutes 8]
 
 Output: {"done":true|false,"mrs":[{"mr":url,"status":"success|failed|running|...","job":"<failed job>","error":"<last error lines>"}]}
-done=false = some pipelines still running after -MaxMinutes (call again). Exit 0 always (read the JSON).
+done=false = some pipelines still running after -MaxMinutes (call again). Exit codes: 0 always (read the JSON; done=false = still running).
 GitLab MRs (.../-/merge_requests/<n>) through glab; GitHub pull requests (.../pull/<n>) through gh (status = the PR's checks).
 #>
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'githost.ps1')   # Invoke-HostApi; the MR URL decides the host (a GitLab URL forces GitLab below)
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
 # GitHub: the PR's check runs / commit statuses folded into the GitLab-style statuses the callers read
 function GhState($url) {
@@ -33,18 +34,18 @@ function State($url) {
   if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
   if ($url -notmatch '^https?://(?<h>[^/]+)/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
   $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
-  $env:GITLAB_HOST = $Matches.h   # glab api would otherwise ask gitlab.com (self-hosted servers: the MR's own host)
-  $m = glab api "projects/$proj/merge_requests/$iid" 2>$null | ConvertFrom-Json
+  $env:GITLAB_HOST = $Matches.h; $script:HostType = 'gitlab'   # glab would otherwise ask gitlab.com (self-hosted servers: the MR's own host)
+  $m = Invoke-HostApi "projects/$proj/merge_requests/$iid"
   if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }
   $p = $m.head_pipeline
   if (-not $p) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }
   $o = [ordered]@{ mr = $url; status = $p.status }
   if ($p.status -eq 'failed') {
-    $job = @(glab api "projects/$proj/pipelines/$($p.id)/jobs" 2>$null | ConvertFrom-Json | Where-Object status -eq 'failed')[0]
+    $job = @(Invoke-HostApi "projects/$proj/pipelines/$($p.id)/jobs" | Where-Object status -eq 'failed')[0]
     if ($job) {
       $o.job = $job.name
-      $trace = (glab api "projects/$proj/jobs/$($job.id)/trace" 2>$null) -split "`n" | ForEach-Object { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
+      $trace = ([string](Invoke-HostApi "projects/$proj/jobs/$($job.id)/trace")) -split "`n" | ForEach-Object { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
       $o.error = (@($trace | Where-Object { $_ -match '(?i)error|fail|invalid|exception|\[ERROR\]' } | Select-Object -Last 8) -join "`n")
     }
   }

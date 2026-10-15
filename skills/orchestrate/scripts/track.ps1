@@ -23,7 +23,7 @@ Holds (no status change) while a still-running wave's saved report (<runtime>/wo
 MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
 are mapped by tracker.statuses; a backend's own status names work too).
 Config (skills/dev-kit/kit.local.json): gitHost, gitlabGroup, trackerRepos (searched by -Discover), repoAliases (short names agents use,
-e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit/scripts/tracker.ps1). glab for MRs.
+e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter merges), tracker (dev-kit/scripts/tracker.ps1). MRs through dev-kit/scripts/githost.ps1 (GitLab / GitHub).
 File: <kit>/tracking.local.json (durable, git-ignored; Get-KitPath tracking): { tasks: {<task>: ...}, automerge: {<ref>: time} }
 (automerge = merge-when-green intents from devtools.py merge, re-armed by `run`). supervise.ps1 -AutoFix calls `run` every round.
 #>
@@ -34,12 +34,12 @@ if ($Rebuild) { $Action = 'rebuild' }
 function Fail([string]$m) { [Console]::Error.WriteLine("track: $m"); exit 1 }
 if (-not $Action) { Fail 'usage: track.ps1 add|remove|show|run|rebuild ... (or -Rebuild)' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf, Get-KitPath, Read-/Update-KitTracking + Get-TrackerTask, ...
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\githost.ps1')   # Invoke-HostApi (GitLab / GitHub)
 $wavesDir = Get-KitPath waves
 $script:holds = 0
 # HOLD = waiting by design (review/fix still running): listed with -Detail, otherwise only counted at the end of `run`
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
 function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { '' } }
-if (-not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 $group = $KitConf.GitlabGroup
 $groupRx = if ($group) { '(?:' + [regex]::Escape($group) + '/)?' } else { '' }
 $alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $alias[$p.Name] = [string]$p.Value } }
@@ -64,7 +64,7 @@ function NormTask($id) {
 function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
-  $m = glab api "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)" 2>$null | ConvertFrom-Json
+  $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
   foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)") { return (NormTask $Matches.id) } }
   ''
 }
@@ -75,8 +75,8 @@ function Find-TaskMrs($task) {
   @(foreach ($r in @($KitConf.TrackerRepos)) {
       $pp = ProjPath $r; if (-not $pp) { continue }
       $enc = $pp -replace '/', '%2F'
-      @(@(glab api "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50" 2>$null | ConvertFrom-Json) +
-        @(glab api "projects/$enc/merge_requests?state=opened&per_page=100" 2>$null | ConvertFrom-Json | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
+      @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
+        @(Invoke-HostApi "projects/$enc/merge_requests?state=opened&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
         Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
     }) | Select-Object -Unique
 }
@@ -138,7 +138,7 @@ function MrState($ref) {
   if ($ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return 'bad-ref' }
   $proj = ProjPath $Matches.repo
   if (-not $proj) { return 'bad-ref (use <group/repo>!<iid>, or set "gitlabGroup" in kit.local.json)' }
-  $m = glab api "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)" 2>$null | ConvertFrom-Json
+  $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
   if (-not $m) { return 'unknown' }
   if ($m.state -eq 'opened' -and $m.head_pipeline.status -in 'failed', 'canceled') { return "opened (pipeline $($m.head_pipeline.status))" }
   # a conflicting MR never merges, even with merge-when-green set (a sibling MR rewrote the same lines): someone must rebase it
@@ -160,7 +160,7 @@ switch ($Action) {
     foreach ($r in $repos) {
       $pp = ProjPath $r; if (-not $pp) { "skip $r : use <group/repo> or set ""gitlabGroup"""; continue }
       $q = "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString($tag))&in=title,source_branch&state=all&updated_after=$since&per_page=100"
-      foreach ($m in @(glab api $q 2>$null | ConvertFrom-Json) | Where-Object { $_ -and $_.state -ne 'closed' }) {
+      foreach ($m in @(Invoke-HostApi $q) | Where-Object { $_ -and $_.state -ne 'closed' }) {
         if ("$($m.source_branch) $($m.title)" -notmatch "(?i)$([regex]::Escape($tag))(?<id>[A-Za-z0-9]+)") { continue }
         $id = $Matches.id
         if (-not $found[$id]) { $found[$id] = @{ mrs = @(); states = @() } }
@@ -200,8 +200,8 @@ switch ($Action) {
       foreach ($pair in @($MergeAfter -split '\s*,\s*' | Where-Object { $_ })) {
         $p = $pair -split '>', 2; if ($p.Count -ne 2 -or (NormRef $p[0]) -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { continue }
         $pp = ProjPath $Matches.repo; $ci = $Matches.iid; if (-not $pp -or (MrState (NormRef $p[1])) -eq 'merged') { continue }
-        $enc = $pp -replace '/', '%2F'; $m = glab api "projects/$enc/merge_requests/$ci" 2>$null | ConvertFrom-Json
-        if ($m.merge_when_pipeline_succeeds) { $null = glab api -X POST "projects/$enc/merge_requests/$ci/cancel_merge_when_pipeline_succeeds" 2>$null; "NOTE: cancelled the scheduled merge of $(NormRef $p[0]): it merges after $(NormRef $p[1])" }
+        $enc = $pp -replace '/', '%2F'; $m = Invoke-HostApi "projects/$enc/merge_requests/$ci"
+        if ($m.merge_when_pipeline_succeeds) { $null = Invoke-HostApi "projects/$enc/merge_requests/$ci/cancel_merge_when_pipeline_succeeds" -Method POST; "NOTE: cancelled the scheduled merge of $(NormRef $p[0]): it merges after $(NormRef $p[1])" }
       }
     }
     # a finished task stays finished unless new MRs were added; reopened, its deploy/QA state belonged to the earlier MRs
@@ -241,7 +241,7 @@ switch ($Action) {
       foreach ($ref in @($am.Keys)) {
         if ($ref -notmatch '^(?<proj>.+)!(?<iid>\d+)$') { continue }
         $amProj = $Matches.proj; $enc = $amProj -replace '/', '%2F'; $iid = $Matches.iid
-        $m = glab api "projects/$enc/merge_requests/$iid" 2>$null | ConvertFrom-Json
+        $m = Invoke-HostApi "projects/$enc/merge_requests/$iid"
         if (-not $m) { $keep[$ref] = $am[$ref]; continue }
         if ($m.state -ne 'opened') { continue }
         $keep[$ref] = $am[$ref]
@@ -250,9 +250,9 @@ switch ($Action) {
         if (-not $m.head_pipeline) { continue }
         # a registered producer still open (-MergeAfter added after this was scheduled), or its review still running: merge-after merges it later
         if ((ProducerOpen $amProj $iid) -or (InFlight "$(($amProj -split '/')[-1])!$iid")) { continue }
-        $a = @('-X', 'PUT', "projects/$enc/merge_requests/$iid/merge", '-f', 'squash=true', '-f', 'should_remove_source_branch=true')
-        if ($m.head_pipeline.status -ne 'success') { $a += @('-f', 'merge_when_pipeline_succeeds=true') }
-        $r = glab api @a 2>$null | ConvertFrom-Json
+        $fl = @{ squash = 'true'; should_remove_source_branch = 'true' }
+        if ($m.head_pipeline.status -ne 'success') { $fl.merge_when_pipeline_succeeds = 'true' }
+        $r = Invoke-HostApi "projects/$enc/merge_requests/$iid/merge" -Method PUT -Fields $fl
         "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
       }
       # forget only what was checked here: devtools.py may have added an intent meanwhile

@@ -21,6 +21,7 @@ param([string]$Session, [switch]$Json, [int]$IdleMin = 25, [switch]$AutoFix,   #
 $ErrorActionPreference = 'SilentlyContinue'
 $skills = Split-Path (Split-Path (Split-Path $PSCommandPath))   # <kit>/skills
 . (Join-Path $skills 'dev-kit/scripts/tracker.ps1')   # $KitConf + tracker verbs (tracker.type in kit.local.json)
+. (Join-Path $skills 'dev-kit/scripts/githost.ps1')   # Invoke-HostApi (GitLab / GitHub)
 . (Join-Path $skills 'dev-kit/scripts/sysinfo.ps1')   # RAM / processes on Windows, Linux and macOS
 $swarm = Join-Path $skills 'android-swarm'
 $runTotal = 0; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
@@ -237,7 +238,7 @@ if ($AutoFix) {
   # who (an active board agent, heartbeat < 30 min) has this MR's source branch checked out in one of its worktrees?
   function OwnerOf($repo, $iid) {
     $proj = if ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $repo }
-    $src = (glab api "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid" 2>$null | ConvertFrom-Json).source_branch
+    $src = (Invoke-HostApi "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid").source_branch
     if (-not $src) { return $null }
     foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 30 })) {
       foreach ($w in @($e.worktrees)) {
