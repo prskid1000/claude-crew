@@ -31,6 +31,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/track.ps1` | step 5 (`add -Task -Mrs`, `-MergeAfter`); run by supervise every round |
 | `scripts/board.ps1` | agents' step 0 (`join`/`beat`/`check`/`leave`); read by supervise |
 | `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
+| `scripts/mark-in-test.ps1` | E4, when the owner asks to keep promoted tasks moving to "in test" (`-Apply`; `-Quiet` in a loop); needs `trackerLists` in `kit.local.json` for tasks `track.ps1` does not know |
 | `scripts/status.ps1` | step 4, live dashboard (`-Open -Watch`) |
 | `scripts/cleanup.ps1` | E18 after a wave; SessionStart hook (daily, async); every workflow's last step; `-WorktreesOnly` by track.ps1 when a task's MRs all merged |
 | `scripts/kit-lint.py`, `scripts/kitgraph_lib.py` | K3 and E16 (0 problems before a push); SessionStart summary via kit-health.ps1; the pre-push hook (`--org-terms`) |
