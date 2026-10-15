@@ -143,6 +143,13 @@
     "type": "markdown",
     "guide": "complex"
   },
+  "qa": {
+    "_readme": "closeWithNotTested: true = finalize closes a tested task with NOT_TESTED checks and moves those to one '[Test] <run> — untested checks (n)' task (run.json tracker.closeWithNotTested wins). outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE, never keep a task open).",
+    "closeWithNotTested": false,
+    "outOfScope": [
+      "<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker, an external dashboard>"
+    ]
+  },
   "cleanup": {
     "maxBrowserProfiles": 4
   },

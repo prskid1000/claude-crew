@@ -43,6 +43,7 @@ Bad: `screenshot1.png`, `F2 T4.jpeg`, `test.json`, `F2-T4_final_FINAL.jpeg`.
 | FAIL | screenshot of the failure state **and** the failing call JSON (`s.net.failed` → `saveNet`) or the error/log excerpt, plus exact steps in `what_was_done` |
 | PASS_WITH_NOTE | the evidence a PASS needs, and the note says what differs from the guide |
 | NOT_TESTED | no file needed; `observed` says why and what was tried |
+| OUT_OF_SCOPE | no file needed; `observed` names the channel (`qa.outOfScope`) |
 | Verify (re-test) | the verifier's own files, with `_verify` in the name |
 
 ## 4. Formats

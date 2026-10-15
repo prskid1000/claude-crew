@@ -12,13 +12,14 @@ As a script (structured results print as JSON):
   & $TR owner                            # who new tasks are assigned to: tracker.owner, else your OS full name matched to a tracker member
   & $TR url <id>
   & $TR describe <id> <text | file.md>   # replace the description
+  & $TR rename <id> "<name>"
   & $TR attach <id> <file> [-Text "<comment>"]   # report/guide: GitHub/GitLab post the file's text as a comment; ClickUp/Jira attach it
   Options: -Type <backend> (else $env:KIT_TRACKER_TYPE, else kit.local.json tracker.type, else clickup) · -DryRun (or
   $env:KIT_TRACKER_DRYRUN=1): print the CLI / REST call instead of running it.
 
 Dot-sourced (PowerShell callers):  . $TR [-Type x] [-DryRun]   then
   Get-TrackerTask, Set-TrackerStatus, Add-TrackerComment, Get-TrackerComments, New-TrackerTask, Get-TrackerUrl, Get-TrackerOwner,
-  Set-TrackerDescription, Add-TrackerAttachment, Resolve-TrackerStatus, Test-TrackerStatus <status> <logical...>
+  Set-TrackerDescription, Set-TrackerName, Add-TrackerAttachment, Resolve-TrackerStatus, Test-TrackerStatus <status> <logical...>
 
 Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issueType", "subtaskType" }; skills/dev-kit/reference/configuration.md):
   clickup  the clickup CLI (default when tracker.type is unset)
@@ -228,6 +229,8 @@ function Set-TrackerStatus([string]$Id, [string]$Status) {
       # lists name the same status differently ("for review" / "in review"): try each alias until one exists on the task's list
       $names = @($name); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { $names = @($__trStatus[$k]) } }
       foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $Id); if ("$out" -notmatch 'no matching status') { return $out } }
+      # no alias exists on the task's list: callers (track.ps1, mark-in-test, finalize) used to read this as done
+      if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $Id (set tracker.statuses.$Status in kit.local.json)" }
       $out
     }
     'github' {
@@ -416,6 +419,16 @@ function Set-TrackerDescription([string]$Id, [string]$Text) {
   }
 }
 
+function Set-TrackerName([string]$Id, [string]$Name) {
+  switch ($__trType) {
+    'clickup' { __TrCli 'clickup' @('task', 'edit', $Id, '--name', $Name) }
+    'github' { $r, $n = __TrRef $Id; __TrCli 'gh' @('issue', 'edit', $n, '-R', $r, '--title', $Name) }
+    'gitlab' { $null = __TrGl 'PUT' (__TrGlPath $Id) @{ title = $Name }; "renamed #$((__TrRef $Id)[1])" }
+    'jira' { $null = __TrJira 'PUT' "issue/$Id" @{ fields = @{ summary = $Name } }; "renamed $Id" }
+    default { $null = __TrNone $Id "rename $Name" { param($o) $o.name = $Name }; "renamed $Id (tracker none)" }
+  }
+}
+
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   # A report or guide file: GitHub/GitLab get its text as a comment (they have no task attachments); ClickUp/Jira attach the file
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
@@ -448,6 +461,7 @@ switch ($__v) {
   'url' { Get-TrackerUrl $__id }
   'owner' { Get-TrackerOwner }
   'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
+  'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
   'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
-  default { Get-Content $PSCommandPath -TotalCount 34 | Select-Object -Skip 1; exit 1 }
+  default { Get-Content $PSCommandPath -TotalCount 35 | Select-Object -Skip 1; exit 1 }
 }

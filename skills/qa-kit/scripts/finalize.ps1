@@ -26,6 +26,10 @@ Run dir layout (see the qa-kit SKILL.md):
   <code>/shots/*.jpeg|png  <code>/evidence/*.json|jsonl|ndjson|log (types: $script:EvidenceExt in lib/report.ps1)
 Writes <code>/report.html (+ report.md for markdown) and <code>/finalize.json. tracker.closeStatus may be a logical status (closed).
 Subtasks that still have PENDING checks (tested later in another lane) get a comment but stay open.
+NOT_TESTED checks keep a subtask open, unless tracker.closeWithNotTested (run.json; default kit.local.json qa.closeWithNotTested) is
+true: then it closes and its untested checks go to one "[Test] <title> — untested checks (n)" task per run under tracker.parent
+(<run>/untested.json; later items rename it and rewrite its list). OUT_OF_SCOPE checks (qa.outOfScope channels) never keep it open.
+The summary line says why a subtask stayed open (waiting for / kept open).
 #>
 param(
   [Parameter(Mandatory)][string]$RunDir,
@@ -219,21 +223,71 @@ $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name, mapped by tracker.statuses
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # github/gitlab use tracker.repo; clickup/jira need a list/project
+# NOT_TESTED checks keep a task open unless run.json tracker.closeWithNotTested (or kit.local.json qa.closeWithNotTested) is true;
+# then the task closes and its untested checks move to one "[Test] <title> — untested checks (n)" task per run (under tracker.parent)
+$closeNT = if ($null -ne $tr -and $null -ne $tr.closeWithNotTested) { [bool]$tr.closeWithNotTested } else { [bool](Get-KitSetting 'qa.closeWithNotTested' $false) }
 # the last item on a shared task decides the close: sibling items' NOT_TESTED checks and untracked failures keep it open too
 function SiblingHold($id) {
-  $nt = 0; $err = $null
+  $nt = 0; $err = $null; $uerr = $null
   foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
     $f = "$RunDir\$c\finalize.json"; if (-not (Test-Path $f)) { continue }
     $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
-    if ($r) { $nt += [int]$r.notTested; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
+    if ($r) { $nt += [int]$r.notTested; if ($r.bugError) { $err = "$c`: $($r.bugError)" }; if ($r.untestedError) { $uerr = "$c`: $($r.untestedError)" } }
   }
-  [pscustomobject]@{ notTested = $nt; bugError = $err }
+  [pscustomobject]@{ notTested = $nt; bugError = $err; untestedError = $uerr }
+}
+# one [Test] task per run: <run>/untested.json holds its id and every item's untested checks; a mutex keeps parallel finalize runs to one task
+function Add-UntestedChecks($st, [object[]]$ntChecks) {
+  $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
+  $mx = [Threading.Mutex]::new($false, "Global\kit-untested-$h")
+  $own = $true; try { $own = $mx.WaitOne(120000) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
+  try {
+    $f = "$RunDir\untested.json"
+    $s = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { [pscustomobject]@{ id = $null; url = $null; entries = @() } }
+    $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
+    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name
+      checks = @($ntChecks | ForEach-Object { [pscustomobject]@{ id = $_.id; screen = $_.screen; observed = $_.observed; cause = $_.cause } }) }
+    $n = [int](($entries | ForEach-Object { @($_.checks).Count } | Measure-Object -Sum).Sum)
+    $name = "[Test] $title — untested checks ($n)"
+    $body = "## Untested checks`n`nQA run **$title** on $($run.target) closed these tasks with checks it could not test. Retest each once its blocker is resolved.`n`n" +
+      (($entries | ForEach-Object { "### $($_.taskName) ($(TaskUrl $_.task)), package $($_.code)`n" + ((@($_.checks) | ForEach-Object { "- **$($_.id)** $($_.screen): $($_.observed)$(if ($_.cause) { " (cause: $($_.cause))" })" }) -join "`n") }) -join "`n`n")
+    if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
+    else {
+      $t = New-TrackerTask -List $bugList -Name $name -Description $body -Parent $tr.parent -Assignee $tr.owner -Priority '3'
+      if (-not $t.id) { return $null }
+      $s = [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { TaskUrl $t.id }); entries = @() }
+    }
+    $s.entries = $entries
+    $s | ConvertTo-Json -Depth 6 | Out-File $f -Encoding utf8
+    [pscustomobject]@{ id = $s.id; url = $s.url }
+  } finally { if ($own) { $mx.ReleaseMutex() }; $mx.Dispose() }
+}
+function Add-Untested($rec, $st, [object[]]$ntChecks) {
+  if (-not $ntChecks.Count -or -not $closeNT -or $rec.untested) { return }
+  if (-not $canCreate) { $rec.untestedError = 'no tracker list for the [Test] task'; return }
+  $u = TrySay { Add-UntestedChecks $st $ntChecks } 'record the untested checks in the [Test] task'
+  if ($u.id) { $rec.untested = $u.id; $rec.untestedError = $null; $u.url } else { $rec.untestedError = '[Test] task could not be created' }
+}
+# close or say why not: sets waitingFor / keptOpen / closed on $rec; returns 'notTested' when NOT_TESTED checks keep it open
+function Resolve-Close($rec, $st, [int]$nt, [int]$pend) {
+  $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
+  if ($others.Count) { $rec.waitingFor = $others; return }
+  $sib = SiblingHold $st.id
+  $ntAll = $nt + $sib.notTested
+  if ($ntAll -and -not $closeNT) { $rec.keptOpen = "$ntAll check(s) not tested"; return 'notTested' }
+  if ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task'; return }   # never close while failures are tracked nowhere
+  if ($sib.bugError) { $rec.keptOpen = "failed checks have no bug task ($($sib.bugError))"; return }
+  if ($rec.untestedError) { $rec.keptOpen = "untested checks have no [Test] task ($($rec.untestedError))"; return }
+  if ($sib.untestedError) { $rec.keptOpen = "untested checks have no [Test] task ($($sib.untestedError))"; return }
+  if ($pend) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }
+  if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $fails = @($mine | Where-Object { $_.result -eq 'FAIL' }); $nt = Cnt $mine 'NOT_TESTED'; $pend = Cnt $mine 'PENDING'
-  $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $fails.Count; notTested = $nt; pending = $pend; bug = $null; closed = $false }
+  $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: a channel the org never tests (qa.outOfScope); never keeps a task open
+  $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $fails.Count; notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false }
   $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
   if ($NoTracker) {
     # a dry run must not overwrite a posted record (the next real run would post again); its own records are marked
@@ -248,19 +302,16 @@ foreach ($st in @($item.subtasks)) {
     if ($prevRec) {
       $rec.bug = $prevRec.bug
       $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($fails.Count -and -not $rec.bug) { 'failed checks have no bug task' }
-      $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
-      $sib = if ($others.Count) { $null } else { SiblingHold $st.id }
-      if ($others.Count) { $rec.waitingFor = $others }
-      elseif (($nt + $sib.notTested) -and -not $tr.closeWithNotTested) { $rec.keptOpen = "$($nt + $sib.notTested) check(s) not tested" }
-      elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
-      elseif ($sib.bugError) { $rec.keptOpen = "failed checks have no bug task ($($sib.bugError))" }
-      elseif (-not $pend) { if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } }
+      $rec.untested = $prevRec.untested
+      $null = Add-Untested $rec $st $ntChecks   # e.g. closeWithNotTested switched on since the first run
+      $null = Resolve-Close $rec $st $nt $pend
       $out.subtasks += $rec; continue
     }
     $icon = if ($fails.Count) { '❌' } elseif ($nt -or $pend) { '⚠️' } else { '✅' }
-    $msg = "$icon " + $(if ($item.retest) { "Retest of the fix ($Date): $pass of $($mine.Count) checks pass" } else { "Test results ($($run.target), $Date): $pass of $($mine.Count) checks pass" })
+    $msg = "$icon " + $(if ($item.retest) { "Retest of the fix ($Date): $pass of $($mine.Count - $oos) checks pass" } else { "Test results ($($run.target), $Date): $pass of $($mine.Count - $oos) checks pass" })
     if ($fails.Count) { $msg += ", $($fails.Count) failed ($(($fails | ForEach-Object id) -join ', '))" }
     if ($nt) { $msg += ", $nt not tested" }
+    if ($oos) { $msg += ", $oos out of scope" }
     if ($pend) { $msg += ". $pend check(s) are tested next in another lane" }
     if ($fails.Count -and $canCreate) {
       $body = "## Failed checks`n`nFound while testing **$($st.name)** on $($run.target) ($Date).`n`n" +
@@ -276,6 +327,8 @@ foreach ($st in @($item.subtasks)) {
       else { $rec.bugError = 'bug task could not be created'; Write-Warning "$($st.id): could not create the bug task for $(($fails | ForEach-Object id) -join ', ') - task kept open" }
     }
     elseif ($fails.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
+    $uUrl = Add-Untested $rec $st $ntChecks
+    if ($uUrl) { $msg += ". Untested checks moved to $uUrl" }
     if ($reportFile) {
       $msg += ". Full report with screenshots and API evidence: $docUrl (evidence in $D)"
       $null = TrySay { Add-TrackerAttachment $st.id $reportFile $msg } "post the report on $($st.id)"
@@ -284,18 +337,12 @@ foreach ($st in @($item.subtasks)) {
       $msg += ". Full report with screenshots and API evidence: $docUrl"
       $null = TrySay { Add-TrackerComment $st.id $msg } "comment on $($st.id)"
     }
-    # a task shared by several items (e.g. one feature, one guide per dev group) closes only when the last of them has finalized
-    $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
-    $sib = if ($others.Count) { $null } else { SiblingHold $st.id }
-    if ($others.Count) { $rec.waitingFor = $others }
-    # NOT_TESTED checks (this item's or a sibling's) keep the task open (e.g. a dependency not deployed yet): closing would hide the untested part
-    elseif (($nt + $sib.notTested) -and -not $tr.closeWithNotTested) { $ntAll = $nt + $sib.notTested; $rec.keptOpen = "$ntAll check(s) not tested"; $null = TrySay { Add-TrackerComment $st.id "Not closed: $ntAll check(s) could not be tested yet (see the reports). Retest them once their blocker is resolved." } "comment on $($st.id)" }
-    elseif ($rec.bugError) { $rec.keptOpen = 'failed checks have no bug task' }   # never close while failures are tracked nowhere
-    elseif ($sib.bugError) { $rec.keptOpen = "failed checks have no bug task ($($sib.bugError))" }
-    elseif (-not $pend) { if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } }
+    # a task shared by several items (e.g. one feature, one guide per dev group) closes only when the last of them has finalized;
+    # NOT_TESTED checks (this item's or a sibling's) keep it open unless closeNT (closing would hide the untested part)
+    if ((Resolve-Close $rec $st $nt $pend) -eq 'notTested') { $null = TrySay { Add-TrackerComment $st.id "Not closed: $($rec.keptOpen) yet (see the reports). Retest them once their blocker is resolved." } "comment on $($st.id)" }
   }
   $out.subtasks += $rec
 }
 $out | ConvertTo-Json -Depth 6 | Out-File $fin -Encoding utf8
 "$Code report ($rtype): $docUrl"
-$out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, fail $($_.fail), not tested $($_.notTested), pending $($_.pending), bug $($_.bug), closed $($_.closed)" }
+$out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, fail $($_.fail), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), [Test] $($_.untested), closed $($_.closed)$(if ($_.waitingFor) { " (waiting for $(@($_.waitingFor) -join ', '))" } elseif ($_.keptOpen -and -not $_.closed) { " (kept open: $($_.keptOpen))" })" }

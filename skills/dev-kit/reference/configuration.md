@@ -41,6 +41,10 @@ All keys are optional. Read by `dev-kit/scripts/kitconfig.ps1` (PowerShell scrip
 | `localOnly` | `[]` | kit-setup.ps1, kit-lint.py, pre-push hook | Kit paths that are local overlay (org-only skills, project profiles, extra rules): `kit-setup.ps1 -Exclude` (run by kit-health at SessionStart) writes them into the clone's `.git/info/exclude` so they never show in `git status`, the pre-push hook blocks them, kit-lint treats them as overlay |
 | `orgTerms` | `[]` | kit-lint.py `--org-terms`, pre-push hook | Org words (names, hosts, ids) that must never appear in the published kit; the coordinator scans the kit with them before every push (orchestrate K3) and `.githooks/pre-push` blocks a push that carries one |
 | `memory.keepDefault` | `false` | kit-setup.ps1 (and kit-health at session start) | `false`: Claude Code auto memory is kept in `<kit>/memory/` (git-ignored; `autoMemoryDirectory` written into `settings.local.json`). `true`: don't set it per clone, so a user-level `autoMemoryDirectory` (e.g. one structured memory folder in the user's home for every project) or the harness default applies |
+| `trackerLists` | `[]` | mark-in-test.ps1 | ClickUp list ids whose promoted tasks (assigned to the tracker owner) `mark-in-test.ps1` moves to in test once deployed |
+| `productTargets` | `[]` (any deployed test env) | mark-in-test.ps1 | Several products on one deploy branch: `[{ pathRegex, targetRegex, label }]`: a task whose MRs change files under `pathRegex` needs a deploy target matching `targetRegex` |
+| `qa.closeWithNotTested` | `false` | finalize.ps1 (run.json `tracker.closeWithNotTested` wins) | `true`: a tested task closes although checks are NOT_TESTED; those checks move to one `[Test] <run title> — untested checks (n)` task per QA run under `tracker.parent` (renamed and re-listed as later items add theirs). `false`: NOT_TESTED keeps the task open |
+| `qa.outOfScope` | `[]` | qa-tester (test-and-close prompt), qa-kit G1 (run.json `outOfScope` wins) | Channels agent QA never tests, e.g. `["Slack", "WhatsApp", "email delivery", "Sentry", "external dashboards"]`: a step that only exercises one is `OUT_OF_SCOPE` (reported, never keeps a task open, never a FAIL) |
 | `cleanup.maxBrowserProfiles` | `4` | cleanup.ps1 | With no QA seat or QA agent active, keep only this many most recently used headless-browser profiles (one in use is never removed) |
 
 ### Tracker (`tracker.type`)
@@ -57,6 +61,7 @@ $TR = '<workspace>/.claude/skills/dev-kit/scripts/tracker.ps1'
 & $TR create -List <list> -Name "<name>" -Description <text | file.md> [-Parent <id>] [-Assignee <user>] [-Priority 1-4]   # JSON { id, url }
 & $TR url <id>
 & $TR describe <id> <text | file.md>   # replace the description
+& $TR rename <id> "<name>"
 & $TR attach <id> <file> [-Text "<comment>"]
 # any verb: -DryRun (or $env:KIT_TRACKER_DRYRUN=1) prints the CLI/REST call instead; -Type <backend> overrides the config
 ```

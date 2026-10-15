@@ -23,7 +23,8 @@ or the full run.json object (write it to <runDir>/run.json too — finalize.ps1 
   context: 'deployed builds, tenants/accounts to use, existing test data, known changed screens ...',
   contextFiles: ['C:/.../product-rules.md'],        // optional: files every tester reads first
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
-  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // backend = kit.local.json tracker.type (tracker.ps1)
+  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed', closeWithNotTested: false },   // backend = kit.local.json tracker.type (tracker.ps1); closeWithNotTested default: kit.local.json qa.closeWithNotTested
+  outOfScope: ['<channel>'],                 // optional: channels agent QA never tests (default kit.local.json qa.outOfScope): OUT_OF_SCOPE, never keeps a task open
   webParallel: 5, apiParallel: 5,
   verify: true,                              // false = no independent re-test of FAILs: they go straight to bug tasks (args or run.json)
   learn: true,                               // 'auto' = learn step only when the run had failures / NOT_TESTED / retries / errors
@@ -113,7 +114,7 @@ const CHECKS_SCHEMA = {
           id: { type: 'string', description: 'check number exactly as in the guide; X1, X2 ... for defects found off-script' },
           subtask_id: { type: 'string', description: 'tracker id of the task this check belongs to' },
           screen: { type: 'string' },
-          result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'PENDING'] },
+          result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
           what_was_done: { type: 'string' },
           observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
           evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/' },
@@ -165,6 +166,7 @@ AGENT BOARD — join first: & ${ORCH}/board.ps1 join -Agent <CODE> -Run ${(R.run
 RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note; not deployed = NOT_TESTED; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
 "QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress.
+OUT_OF_SCOPE (not NOT_TESTED): a step that only exercises a channel agent QA never tests here: ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope (none listed = none)`}. Name the channel in observed; still test the in-app part.
 
 ENVIRONMENT AND CONTEXT
 - Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there).
@@ -404,7 +406,7 @@ async function runItem(it, idx, L) {
     }
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
-  const line = `${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, pending ${n('PENDING')}`
+  const line = `${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
   if (it.skipClose) {
     // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
     // finalize.ps1 -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.

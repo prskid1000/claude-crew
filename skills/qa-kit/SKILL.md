@@ -30,10 +30,11 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 | `scripts/annotate.ps1` | step 4, marking a FAIL screenshot (any image) |
 | `scripts/finalize.ps1`, `scripts/lib/report.ps1` | step 6 (`finalize.ps1 -Check`, evidence check only); run by /test-and-close's close step; by the lead for `skipClose` items (L3) |
 | `scripts/autoclose.ps1` | L2, started in the background with every run |
+| `tests/test-finalize.ps1`, `tests/test-deployed.ps1` | after changing finalize.ps1, lib/report.ps1 or deployed.ps1 (kit maintenance): `pwsh -File tests/<file>` |
 | `scripts/add-retest.ps1` | L3, when a bug task's fix went live (retest item) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`. Check the SQL/MCP tools once (database and MCP servers drop often) and note their state in the run log: replica SQL then goes through the run's own SQL helper script with the SQL helper's own venv python (its path is in the org rules; system python lacks boto3); on replica lag or timeout fall back to API GETs (`/api/site-visits/{id}`, `/api/runs/{id}/stops`, `/api/mail-audits`) and re-query later; a tool being down alone is never NOT_TESTED.
+0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`. Check the SQL/MCP tools once (database and MCP servers drop often) and note their state in the run log: replica SQL then goes through the run's own SQL helper script with the SQL helper's own venv python (its path is in the org rules; system python lacks boto3); on replica lag or timeout fall back to the product's read APIs (GETs of the records the check touches) and re-query later; a tool being down alone is never NOT_TESTED.
 1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
    -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`. Keep the phone lease
    through any wait under ~30 min (a lead decision, a deploy, a rebuild): release shuts the emulator down and re-acquiring queues
@@ -82,6 +83,9 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      a 5xx in a restart window, check the service log for a worker recycle. Count or list questions: before testing compute every
      plausible DB definition of the entity (flags, types, active/deleted); numbers that change between sessions and each match some
      definition are a FAIL (definition drift), not data drift.
+   - **OUT_OF_SCOPE**: the step only exercises a channel the org never tests by agent QA (kit.local.json `qa.outOfScope`, run.json
+     `outOfScope` wins; e.g. chat/messaging apps, email delivery, error trackers, external dashboards): `observed` names the channel.
+     Never keeps the task open, never a FAIL; the in-app part of the same check (the request the app sends, the record it saves) is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only, never defects.
 6. **Leave:** write `results.json` and run `scripts/finalize.ps1 -RunDir <run> -Code <CODE> -Check -FixNames` (publishes nothing;
    renames off-standard evidence to `CODE-checkId_NN_slug` per `reference/evidence-standard.md` and rewrites results.json; exit 1 lists
@@ -100,7 +104,8 @@ instead; it is never a missing capability and never on its own a reason for NOT_
 - G0. Read `LESSONS.md`; know the change (MRs, task) and the target environment.
 - G1. Fill `templates/tester-guide.html` (`gdocs`) or `templates/tester-guide.md` (`markdown`): check ids, environment, accounts, data to
   prepare, steps and a concrete Expected per check, plus "unchanged" checks for what must not change. Always fill "Before you start /
-  Feature switches": every setting or role that switches the feature on, checked ON before testing (a gate the tester cannot switch = NOT_TESTED).
+  Feature switches": every setting or role that switches the feature on, checked ON before testing (a gate the tester cannot switch = NOT_TESTED). A step that only checks a channel in `qa.outOfScope`
+  (kit.local.json) is labelled "(out of scope for agent QA: <channel>)", so agent testers return OUT_OF_SCOPE for it.
 - G2. Publish: `python ../dev-kit/scripts/devtools.py doc "<title>" <guide file>` (a `.md` guide is converted to HTML first, so tables survive).
 - G3. Link it on the task (`tracker.ps1 comment` / `attach`) and in the MR; simple change → a how-to-test comment instead.
 
@@ -110,12 +115,10 @@ instead; it is never a missing capability and never on its own a reason for NOT_
   Pre-run deploy check: `scripts/deployed.ps1 -Mrs <every item's MRs>`; resolve each MANUAL repo (deployed by hand) with the owner or an
   ssh check before launching and write the answer in the run's `lead-notes.md`; NOT-DEPLOYED items wait or are left out.
   Pre-run prerequisites: for every guide, check on the target tenant/role each feature flag or setting (current value, who switches and
-  restores it; ask the owner when one was turned off on purpose), the test data and accounts the steps need (a driver with a stocked van,
-  franchise data, a soft-delete column, a role with the right authority and the role's screen switches (a screen switched OFF for the
-  role makes deep links silently redirect to home), the record/stop/order types the scenario needs such as a
-  COLLECT_DROP stop), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
-  result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data (APPLY, allocate,
-  resource) so testers never write to someone else's run, the lane driver login's tenant, feature flags (product personas and modes) and company country/timezone against the guide's tenant (the test tenant's country/timezone may differ from the product's home market), reference data (stored procedures a report needs, reason-code lookups, an employee-linked QA login, an invoiced record; create or toggle through the API, restore at teardown), and server config the feature needs (e.g. an MCP URL); write
+  restores it; ask the owner when one was turned off on purpose), the test data and accounts the steps need (a user with the stock or
+  records the flow needs, a soft-delete column, a role with the right authority and the role's screen switches (a screen switched OFF for the
+  role makes deep links silently redirect to home), the record types the scenario needs), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
+  result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data so testers never write to someone else's run, the lane app login's tenant, feature flags (product personas and modes) and company country/timezone against the guide's tenant (the test tenant's country/timezone may differ from the product's home market), reference data (stored procedures a report needs, reason-code lookups, an employee-linked QA login, an invoiced record; create or toggle through the API, restore at teardown), and server config the feature needs (e.g. an MCP URL); write
   each into `lead-notes.md`. Create up front what the API can create. Mark checks the lead cannot unblock as NOT_TESTED in run.json
   (item `skip` with the reason, the missing thing named) before testers start; an environment-level gate the tester cannot switch is
   NOT_TESTED with the setting named, never FAIL.

@@ -14,7 +14,8 @@ Non-negotiables:
   -Claims emulator-55xx,chrome:<port>,...`. On a CLAIM or DUPLICATE warning, stop and report instead of using the phone/port. `board.ps1 beat -Session <token> -Status "<check id>"` at each check; `leave` when done.
 - PASS only for expected behaviour you saw. Any defect is FAIL — also off-script ones (extra checks X1, X2 …).
   PASS_WITH_NOTE only for out-of-date guide text whose intent holds, or purely cosmetic differences. Never hide defects in notes.
-- Before a FAIL, confirm the change is deployed; if not, NOT_TESTED "not deployed yet".
+- Before a FAIL, confirm the change is deployed; if not, NOT_TESTED "not deployed yet". A step that only exercises a channel the org
+  never tests by agent QA (kit.local.json `qa.outOfScope`) is OUT_OF_SCOPE, naming the channel.
 - Mark FAIL screenshots so the defect is obvious: app `ui.ps1 shotmark`, web `mark()`, any image `qa-kit/scripts/annotate.ps1` (box / arrow / label).
 - Evidence for every tested check, named `<CODE>-<checkId>_<desc>`; list only files that exist. Look at screenshots with Read.
 - Tools: `qa-kit/scripts/api.ps1` (API), `qa-kit/scripts/web/browser.mjs` (web; ≤ 2 Chrome ports, kill them when done),

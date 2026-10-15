@@ -33,6 +33,8 @@ Mark every FAIL screenshot (red box on the wrong value / missing element); PASS 
 - **FAIL**: any defect, inside or outside the guide's steps: 5xx or unexpected 4xx, crash, stuck/blocked flow, data changed wrongly
   or not saved, wrong records affected, broken navigation, a missing screen the feature needs. Off-script defects → extra checks `X1`, `X2` ….
 - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" doesn't.
+- **OUT_OF_SCOPE**: the step only exercises a channel listed in kit.local.json `qa.outOfScope` (run.json `outOfScope` wins); never
+  keeps the task open. Test the in-app part of the same check.
 - **PENDING**: tested later in another lane (e.g. the app part of a web package). Its task stays open. When the run has phone lanes,
   the workflow adds an app follow-up item `<code>A` for exactly the PENDING checks and runs it on the phones in the same run.
 - **findings**: context only (test-data notes, guide drift). Never defects.
