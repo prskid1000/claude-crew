@@ -58,5 +58,7 @@ $L = '<workspace>/.claude/skills/local-env/scripts/localenv.ps1'
 - A `MIGRATIONS` layer in the main env changes the shared local DB for every layer: say so. Only a restore of the snapshot taken
   before it undoes it.
 - `up`, `down`, `drop`, `refresh`: owner / coordinator only.
+- Env database: read it with the org's read-only DB tool when it has a target for the local DB (org rules / the org's database
+  skill), never a DB client by hand; create test data through the env's API (`qa-kit/scripts/api.ps1 -Target <local target>`), not SQL.
 - Out of RAM: starts wait, then fail with the biggest users listed; report it, never kill other processes.
 - Learn: `& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill local-env -Kind <kind> -Text "<what + fix>"`.
