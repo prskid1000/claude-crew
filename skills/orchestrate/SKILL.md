@@ -29,6 +29,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/bug-brief.ps1` | E9, one call per QA bug task |
 | `scripts/launch-record.ps1` | steps 3 and 7, right after each workflow launch (`-RunId -Script -ArgsJson`); E5 `-Done`; E6 the resume line; `-List -Brief` run by kit-health.ps1 |
 | `scripts/track.ps1` | step 5 (`add -Task -Mrs`, `-MergeAfter`); run by supervise every round |
+| `tests/test-track.ps1` | after changing track.ps1 (kit maintenance, K3): `pwsh -File tests/test-track.ps1` |
 | `scripts/board.ps1` | agents' step 0 (`join`/`beat`/`check`/`leave`); read by supervise |
 | `scripts/learn.ps1` | E13 signal, E15 lessons (`-Lesson`, `-Fixed`, `-Trim`), `-Show`/`-Stats` |
 | `scripts/mark-in-test.ps1` | E4, when the owner asks to keep promoted tasks moving to "in test" (`-Apply`; `-Quiet` in a loop); needs `trackerLists` in `kit.local.json` for tasks `track.ps1` does not know |
@@ -99,7 +100,7 @@ agents to push and open the MR as Draft with `Not run: <gate>` (dev-kit **Gate**
   config through `*.local.json`; org-only parts are local overlay, git-ignored or `localOnly`). Prefer making the script handle it
   over telling agents to.
 - K3. `python <kit>/skills/orchestrate/scripts/kit-lint.py` must print 0 problems (it regenerates `<runtime>/cache/kit-flow.html`); parse every
-  touched .ps1, `node --check` touched .js/.mjs (workflows wrapped as in CONTRIBUTING), `kit-cost.ps1 -Steps` after a workflow change;
+  touched .ps1, `node --check` touched .js/.mjs (workflows wrapped as in CONTRIBUTING), `kit-cost.ps1 -Steps` after a workflow change; the touched skill's `tests/*` (Files index) and `guard.ps1 -SelfTest`;
   org-term scan: `kit-lint.py --org-terms <kit>/skills/dev-kit/kit.local.json` (its `orgTerms` list; the pre-push hook runs it too).
 - K4. `git -C <kit> status` shows only kit files (org-only ones: `localOnly`); commit (Conventional Commits), `git pull --rebase`,
   push: the versioned pre-push hook blocks org terms and ignored/local files. K5. Nothing to sync: every session in this workspace

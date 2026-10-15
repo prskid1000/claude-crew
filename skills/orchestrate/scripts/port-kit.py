@@ -14,8 +14,10 @@ import re
 import shutil
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parents[4]  # .../<workspace> (holds .claude; usually NOT a git repo itself)
-KIT = WORKSPACE / ".claude"                       # the kit repo (origin = claude-crew); canonical + pushable
+# the kit = the folder this script lives in, 3 levels up (<kit>/skills/orchestrate/scripts): normally <workspace>/.claude, but a
+# second clone or a worktree of the kit (any folder name) must port its own files, not the workspace's .claude
+KIT = Path(__file__).resolve().parents[3]          # the kit repo (canonical + pushable)
+WORKSPACE = KIT.parent                             # where the CLIs look for .codex/.agents (deployed copies)
 CLAUDE_AGENTS = KIT / "agents"
 CLAUDE_WORKFLOWS = KIT / "workflows"
 CLAUDE_SETTINGS = KIT / "settings.json"
@@ -292,6 +294,9 @@ def deploy():
     .codex//.agents from the session cwd, not from inside .claude). The workspace root usually
     isn't a git repo itself, so this copy is a deploy target, not a second source of truth --
     same relationship as the kit repo itself being cloned into <workspace>/.claude."""
+    if KIT.name != '.claude':   # a second clone / worktree of the kit: its parent is no workspace, write nothing there
+        print(f'not deployed: {KIT} is not a workspace''s .claude folder (the ports inside the kit are updated)')
+        return
     deployed = []
     for src_dir, dst_dir in ((KIT / ".codex", WORKSPACE / ".codex"), (KIT / ".agents", WORKSPACE / ".agents")):
         if dst_dir.exists():
@@ -310,21 +315,29 @@ def deploy():
 def check_stale():
     """--check: exit 1 if .codex/.agents would change, without writing. Wired into
     kit-health.ps1 (SessionStart) so drift between .claude/agents and the ported
-    copies surfaces the same way any other kit-health nudge does."""
+    copies surfaces the same way any other kit-health nudge does. Generates every port into a
+    temp copy and compares contents (only checking that the files exist missed every edit)."""
+    import contextlib, io, tempfile
+    g = globals()
+    outs = ("CODEX_AGENTS", "GRAVITY_AGENTS", "CODEX_CONFIG", "GRAVITY_HOOKS", "CODEX_WORKFLOWS", "GRAVITY_WORKFLOWS")
+    real = {k: g[k] for k in outs}
     stale = []
-    for src in sorted(CLAUDE_AGENTS.glob("*.md")):
-        fields, _ = parse_frontmatter(src.read_text(encoding="utf-8"))
-        name = fields.get("name", src.stem)
-        for path in (CODEX_AGENTS / f"{name}.toml", GRAVITY_AGENTS / f"{name}.md"):
-            if not path.exists():
-                stale.append(name)
-    for src in sorted(CLAUDE_WORKFLOWS.glob("*.js")):
-        wfields = parse_workflow_meta(src.read_text(encoding="utf-8"))
-        if not wfields or "name" not in wfields:
-            continue
-        for path in (CODEX_WORKFLOWS / f"{wfields['name']}.md", GRAVITY_WORKFLOWS / f"{wfields['name']}.md"):
-            if not path.exists():
-                stale.append(wfields["name"])
+    with tempfile.TemporaryDirectory() as tmp:
+        for k in outs:
+            g[k] = Path(tmp) / real[k].relative_to(KIT)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                port_agents()
+                port_hooks()
+                port_workflows()
+        finally:
+            g.update(real)
+        for f in sorted(Path(tmp).rglob("*")):
+            if f.is_file():
+                rel = f.relative_to(tmp)
+                have = KIT / rel
+                if not have.exists() or have.read_text(encoding="utf-8") != f.read_text(encoding="utf-8"):
+                    stale.append(str(rel).replace("\\", "/"))
     if stale:
         print(f"port-kit: stale or missing ports for {sorted(set(stale))}; run "
               f"'python -X utf8 skills/orchestrate/scripts/port-kit.py'")

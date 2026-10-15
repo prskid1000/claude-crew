@@ -108,6 +108,7 @@ if ($Lesson -or $Fixed -or $Bump -or $Trim) {
 }
 
 if (-not ($Skill -and $Kind -and $Text)) { throw 'need -Skill -Kind -Text (or -Show / -Stats / -Lesson / -Fixed / -Trim)' }
-[ordered]@{ at = (Get-Date).ToString('s'); skill = $Skill; kind = $Kind; text = $Text; ref = $Ref; source = $Source } |
-  ConvertTo-Json -Compress | Add-Content $file
+$sig = [ordered]@{ at = (Get-Date).ToString('s'); skill = $Skill; kind = $Kind; text = $Text; ref = $Ref; source = $Source } | ConvertTo-Json -Compress
+# many agents record at once: an unlocked append can hit a sharing violation and drop the signal silently
+Invoke-KitLocked $file { Add-Content -LiteralPath $file $sig -Encoding utf8 }
 "recorded ($Skill/$Kind)"

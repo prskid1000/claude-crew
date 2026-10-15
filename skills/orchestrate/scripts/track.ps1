@@ -8,6 +8,7 @@ so nobody has to watch pipelines and flip statuses by hand.
   & $T add  -Task abc124 -Discover                 # find the task's MRs itself (<tracker tag><id>, e.g. CU-<id>, in title/branch) on every run;
                                                   # completes only once the task is already in review (its agent sets that after all MRs)
   & $T add  -Task abc125 -MergeAfter 'frontend!203>backend!102'   # schedule the web merge only once the API MR merged
+  & $T remove -Task abc125 [-Mrs frontend!203]  # forget a wrongly registered task (or only those MRs and their merge-after pairs)
   & $T show [-Detail]           # open tracked tasks and MR states (-Detail: finished ones too)
   & $T -Rebuild [-Force]        # tracking file lost? recreate it (also `rebuild`): every open (or merged in the last 14 d) MR in
                                 # trackerRepos whose branch/title carries <tracker tag><id> becomes a -Discover task again (done
@@ -16,6 +17,8 @@ so nobody has to watch pipelines and flip statuses by hand.
   & $T run [-Detail]            # check now: when every MR of a task is merged, set the statuses in order, comment once, mark done
                                 # (prints actions only; HOLD lines are counted unless -Detail - supervise uses -Detail)
 
+-Task is the tracker id without its tag (CU-abc123 -> abc123); a placeholder ('0', 'none', '-') is refused. An MR whose title carries
+<tracker tag><id> of another task is registered under the title's task (the title wins over -Task and the branch name).
 Holds (no status change) while a still-running wave's saved report (<runtime>/work/waves/*.json) has a blocking review finding on one of the MRs.
 MR refs: <repo>!<iid> in the kit.local.json "gitlabGroup" (or <group/repo>!<iid>). Default -OnMerged = "promoted" (logical tracker statuses
 are mapped by tracker.statuses; a backend's own status names work too).
@@ -24,10 +27,12 @@ e.g. {"api":"backend"}), reposRoot (main checkouts, used to schedule -MergeAfter
 File: <kit>/tracking.local.json (durable, git-ignored; Get-KitPath tracking): { tasks: {<task>: ...}, automerge: {<ref>: time} }
 (automerge = merge-when-green intents from devtools.py merge, re-armed by `run`). supervise.ps1 -AutoFix calls `run` every round.
 #>
-param([Parameter(Position = 0)][ValidateSet('add', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
+param([Parameter(Position = 0)][ValidateSet('add', 'remove', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
-if (-not $Action) { throw 'usage: track.ps1 add|show|run|rebuild ... (or -Rebuild)' }
+# a throw does not stop this script ($ErrorActionPreference = 'SilentlyContinue' suppresses it): refuse with Fail
+function Fail([string]$m) { [Console]::Error.WriteLine("track: $m"); exit 1 }
+if (-not $Action) { Fail 'usage: track.ps1 add|remove|show|run|rebuild ... (or -Rebuild)' }
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit\scripts\tracker.ps1')   # $KitConf, Get-KitPath, Read-/Update-KitTracking + Get-TrackerTask, ...
 $wavesDir = Get-KitPath waves
 $script:holds = 0
@@ -47,6 +52,44 @@ function NormRef($r) {
   $r
 }
 function Load($t) { (Read-KitTracking).tasks[$t] }
+# a task id as stored: no tag (CU-abc -> abc), no quotes; '' for a placeholder ('0' once registered an MR under task 0 and every
+# promote failed on /task/0)
+function NormTask($id) {
+  $id = "$id".Trim().Trim("'", '"').Trim()
+  if ($KitConf.TrackerTag) { $id = $id -replace "^(?i)$([regex]::Escape($KitConf.TrackerTag))", '' }
+  if ($id -match '^(0+|-+|none|null|undefined|n/?a|tbd|task|id)?$') { return '' }
+  $id
+}
+# the task an MR's title (else its branch) names with <tracker tag><id>; '' when neither does or the MR cannot be read
+function TaskOfMr($ref) {
+  if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
+  $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
+  $m = glab api "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)" 2>$null | ConvertFrom-Json
+  foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)") { return (NormTask $Matches.id) } }
+  ''
+}
+# open/merged MRs of a task in trackerRepos: <tracker tag><task> in the title (GitLab search), or in the source branch of an open MR
+# (the MR search has no branch scope: in=source_branch was ignored, so branch-only tags were never found)
+function Find-TaskMrs($task) {
+  $tagged = "$($KitConf.TrackerTag)$task"
+  @(foreach ($r in @($KitConf.TrackerRepos)) {
+      $pp = ProjPath $r; if (-not $pp) { continue }
+      $enc = $pp -replace '/', '%2F'
+      @(@(glab api "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50" 2>$null | ConvertFrom-Json) +
+        @(glab api "projects/$enc/merge_requests?state=opened&per_page=100" 2>$null | ConvertFrom-Json | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
+        Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
+    }) | Select-Object -Unique
+}
+# an unmerged producer registered for this MR (any task's mergeAfter '<this>><producer>'): re-arming it would break the merge order
+function ProducerOpen($proj, $iid) {
+  foreach ($x in @((Read-KitTracking).tasks.Values)) {
+    foreach ($pair in @($x.mergeAfter)) {
+      $p = "$pair" -split '>', 2; if ($p.Count -ne 2) { continue }
+      if ((NormRef $p[0]) -match '^(?<r>[\w./-]+)!(?<i>\d+)$' -and $Matches.i -eq $iid -and ($proj -ieq $Matches.r -or $proj -like "*/$($Matches.r)") -and (MrState (NormRef $p[1])) -ne 'merged') { return $true }
+    }
+  }
+  $false
+}
 $script:doneFields = 'doneAt', 'liveOn', 'liveCheckedAt', 'qaCovered'   # state of a finished task (supervise: deploy / QA); cleared on reopen
 function Save($o) {
   # another process (an agent's `add`) may have written since we loaded: keep its MRs / merge orders instead of overwriting them
@@ -136,22 +179,57 @@ switch ($Action) {
     "rebuilt $tf : $n task(s) from $($repos.Count) repo(s) ($nDone already done; MRs with $tag<id> updated in the last 14 days)"
   }
   'add' {
-    if (-not $Task) { throw 'add needs -Task' }
+    $given = $Task; $Task = NormTask $Task
+    $refs = @(@($Mrs -split '\s*,\s*') | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
+    # the MR title's task wins: a placeholder or a branch-name id (a reused branch) once registered MRs under the wrong task
+    $titled = @($refs | ForEach-Object { TaskOfMr $_ } | Where-Object { $_ } | Select-Object -Unique)
+    if ($titled.Count -eq 1 -and $titled[0] -ne $Task) { "NOTE: the MR title names task $($titled[0]) - registering under it$(if ($Task) { ", not $Task" })"; $Task = $titled[0] }
+    elseif ($titled.Count -gt 1 -and (-not $Task -or $titled -notcontains $Task)) { Fail "add: the MRs name different tasks in their titles ($($titled -join ', ')): register each task with its own MRs" }
+    if (-not $Task) { Fail "add needs a real -Task id (got '$given'; the tracker id without its tag, as in the MR title)" }
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('s') } }
+    $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)   # normalised before counting: a known MR given as a URL is not new
     $before = @($o.mrs).Count
-    $o.mrs = @(@($o.mrs) + @($Mrs -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique)
+    if ($Discover -and @($KitConf.TrackerRepos).Count) { $refs = @(@($refs) + @(Find-TaskMrs $Task) | Select-Object -Unique) }   # now, not only at the next run
+    $o.mrs = @(@($o.mrs) + $refs | Where-Object { $_ } | Select-Object -Unique)
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
     if ($Discover) { $o.discover = $true }
     if ($Wave) { $o.wave = $Wave }   # a dev-wave still fixing this task (started before the task existed): hold until it ends
-    if ($MergeAfter) { $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique) }
+    if ($MergeAfter) {
+      $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique)
+      # a consumer already scheduled (merge-when-green) before its order was registered would merge first: cancel it, merge-after re-schedules it
+      foreach ($pair in @($MergeAfter -split '\s*,\s*' | Where-Object { $_ })) {
+        $p = $pair -split '>', 2; if ($p.Count -ne 2 -or (NormRef $p[0]) -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { continue }
+        $pp = ProjPath $Matches.repo; $ci = $Matches.iid; if (-not $pp -or (MrState (NormRef $p[1])) -eq 'merged') { continue }
+        $enc = $pp -replace '/', '%2F'; $m = glab api "projects/$enc/merge_requests/$ci" 2>$null | ConvertFrom-Json
+        if ($m.merge_when_pipeline_succeeds) { $null = glab api -X POST "projects/$enc/merge_requests/$ci/cancel_merge_when_pipeline_succeeds" 2>$null; "NOTE: cancelled the scheduled merge of $(NormRef $p[0]): it merges after $(NormRef $p[1])" }
+      }
+    }
     # a finished task stays finished unless new MRs were added; reopened, its deploy/QA state belonged to the earlier MRs
     if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
     elseif (-not $o.done) { $o.done = $false }
-    Save $o; "tracking $Task : $($o.mrs -join ', ') -> on all merged: $($o.onMerged -join ' -> ')"
+    Save $o; $s = Load $Task   # print what is stored (other processes' MRs and merge orders merged in): a re-add shows the real state
+    "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
+  }
+  'remove' {
+    $raw = "$Task".Trim().Trim("'", '"')   # an exact stored key first (legacy entries: '0', 'CU-<id>'), else the normalised id
+    $Task = if ($raw -and (Read-KitTracking).tasks.ContainsKey($raw)) { $raw } else { NormTask $raw }
+    if (-not $Task) { Fail 'remove needs -Task' }
+    $rm = @(@($Mrs -split '\s*,\s*') | ForEach-Object { NormRef $_ } | Where-Object { $_ })
+    $script:hit = $false
+    Update-KitTracking {
+      param($all)
+      if (-not $all.tasks.ContainsKey($Task)) { return }
+      $script:hit = $true
+      if (-not $rm.Count) { $all.tasks.Remove($Task); return }
+      $x = $all.tasks[$Task]
+      $x.mrs = @(@($x.mrs) | Where-Object { (NormRef $_) -notin $rm })
+      $x.mergeAfter = @(@($x.mergeAfter) | Where-Object { $p = "$_" -split '>', 2; (NormRef $p[0]) -notin $rm -and (NormRef $p[-1]) -notin $rm })
+    }
+    if (-not $script:hit) { "not tracked: $Task" } elseif ($rm.Count) { "removed $($rm -join ', ') from $Task" } else { "removed task $Task" }
   }
   'show' {
     $all = @((Read-KitTracking).tasks.Values | ForEach-Object { [pscustomobject]$_ })
-    foreach ($o in $all | Where-Object { $Detail -or -not $_.done }) { "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') }
+    foreach ($o in $all | Where-Object { $Detail -or -not $_.done }) { "$($o.task) done=$($o.done) -> $($o.onMerged -join '>') : " + (($o.mrs | ForEach-Object { "$_=$(MrState $_)" }) -join ', ') + $(if (@($o.mergeAfter).Count) { " | merge-after: $(@($o.mergeAfter) -join ', ')" }) }
     if (-not $Detail) { "($(@($all | Where-Object done).Count) finished task(s) hidden; -Detail lists them)" }
   }
   'run' {
@@ -162,7 +240,7 @@ switch ($Action) {
       $keep = @{}
       foreach ($ref in @($am.Keys)) {
         if ($ref -notmatch '^(?<proj>.+)!(?<iid>\d+)$') { continue }
-        $enc = $Matches.proj -replace '/', '%2F'; $iid = $Matches.iid
+        $amProj = $Matches.proj; $enc = $amProj -replace '/', '%2F'; $iid = $Matches.iid
         $m = glab api "projects/$enc/merge_requests/$iid" 2>$null | ConvertFrom-Json
         if (-not $m) { $keep[$ref] = $am[$ref]; continue }
         if ($m.state -ne 'opened') { continue }
@@ -170,6 +248,8 @@ switch ($Action) {
         if ($m.merge_when_pipeline_succeeds -or $m.draft -or $m.has_conflicts -or $m.detailed_merge_status -eq 'conflict' -or $m.head_pipeline.status -in 'failed', 'canceled') { continue }
         # no head pipeline (yet): GitLab would merge a merge-when-green request at once - wait for the next round
         if (-not $m.head_pipeline) { continue }
+        # a registered producer still open (-MergeAfter added after this was scheduled), or its review still running: merge-after merges it later
+        if ((ProducerOpen $amProj $iid) -or (InFlight "$(($amProj -split '/')[-1])!$iid")) { continue }
         $a = @('-X', 'PUT', "projects/$enc/merge_requests/$iid/merge", '-f', 'squash=true', '-f', 'should_remove_source_branch=true')
         if ($m.head_pipeline.status -ne 'success') { $a += @('-f', 'merge_when_pipeline_succeeds=true') }
         $r = glab api @a 2>$null | ConvertFrom-Json
@@ -182,28 +262,7 @@ switch ($Action) {
     foreach ($o in @((Read-KitTracking).tasks.Values)) {
       if ($o.done) { continue }
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      if ($o.discover) {
-        # a config gap, not an MR problem: only worth saying when nothing was registered by hand either
-        if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: track.ps1 add -Task $($o.task) -Mrs <repo>!<iid>)" } }
-        foreach ($r in @($KitConf.TrackerRepos)) {
-          $pp = ProjPath $r; if (-not $pp) { continue }
-          $found = @(glab api "projects/$($pp -replace '/', '%2F')/merge_requests?search=$([uri]::EscapeDataString("$($KitConf.TrackerTag)$($o.task)"))&in=title,source_branch&state=all&per_page=50" 2>$null | ConvertFrom-Json | Where-Object { $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" })
-          $o.mrs = @(@($o.mrs) + $found | Where-Object { $_ } | Select-Object -Unique)
-        }
-        Save $o
-        if (-not @($o.mrs).Count) { continue }
-        $cur = TaskStatus $o.task
-        if (-not (Test-TrackerStatus $cur 'review')) {
-          # Its agent may still be shipping (more MRs to come) - or it shipped but failed to set the review status (a wrong
-          # tracker command can leave a task untouched for hours). Once every discovered MR has been merged for 20 min, complete it.
-          $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
-          if (-not $allMerged) { $o.Remove('allMergedAt'); Save $o; continue }
-          if (-not $o.allMergedAt) { $o.allMergedAt = (Get-Date).ToString('s'); Save $o; continue }
-          if (((Get-Date) - [datetime]$o.allMergedAt).TotalMinutes -lt 20) { continue }
-          if (-not $Quiet) { "NOTE $($o.task): status '$cur' was never set to review, but all MRs merged 20+ min ago - completing it" }
-        }
-      }
-      # ordered merges: '<dependent>><dependency>' -> when the dependency merged, schedule the dependent (merge-when-green)
+      # ordered merges: '<dependent>><dependency>' -> when the dependency merged, schedule the dependent (merge-when-green) - before the discover/status gates below, which skip a task that is still in progress
       foreach ($pair in @($o.mergeAfter)) {
         if ($pair -notmatch '^(?<dep>[^>]+)>(?<on>.+)$') { continue }
         $dep = $Matches.dep.Trim(); $on = $Matches.on.Trim()
@@ -216,7 +275,24 @@ switch ($Action) {
           $res = if (-not (Test-Path $wt)) { "no checkout at $wt - set ""reposRoot"" in kit.local.json" } else { python (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'dev-kit\scripts\devtools.py') merge $wt $Matches.iid 2>&1 }
           if (-not $Quiet) { "MERGE-AFTER $($o.task): $on merged -> $dep : $res" }
         }
-        if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }; if ($o.mrs -notcontains $on) { $o.mrs = @(@($o.mrs) + $on) }
+        if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }   # only the dependent: the producer may be another task's MR
+      }
+      if ($o.discover) {
+        # a config gap, not an MR problem: only worth saying when nothing was registered by hand either
+        if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: track.ps1 add -Task $($o.task) -Mrs <repo>!<iid>)" } }
+        $o.mrs = @(@($o.mrs) + @(Find-TaskMrs $o.task) | Where-Object { $_ } | Select-Object -Unique)
+        Save $o
+        if (-not @($o.mrs).Count) { continue }
+        $cur = TaskStatus $o.task
+        if (-not (Test-TrackerStatus $cur 'review')) {
+          # Its agent may still be shipping (more MRs to come) - or it shipped but failed to set the review status (a wrong
+          # tracker command can leave a task untouched for hours). Once every discovered MR has been merged for 20 min, complete it.
+          $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
+          if (-not $allMerged) { $o.Remove('allMergedAt'); Save $o; continue }
+          if (-not $o.allMergedAt) { $o.allMergedAt = (Get-Date).ToString('s'); Save $o; continue }
+          if (((Get-Date) - [datetime]$o.allMergedAt).TotalMinutes -lt 20) { continue }
+          if (-not $Quiet) { "NOTE $($o.task): status '$cur' was never set to review, but all MRs merged 20+ min ago - completing it" }
+        }
       }
       $states = @{}; foreach ($m in $o.mrs) { $states[$m] = MrState $m }
       $failed = @($states.GetEnumerator() | Where-Object { $_.Value -match 'pipeline (failed|canceled)|closed|conflict' })
