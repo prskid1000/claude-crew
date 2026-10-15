@@ -157,8 +157,9 @@ switch ($Action) {
     if ($Dir) {
       $Dir = (Resolve-Path $Dir).Path
       $Branch = "$(git -C $Dir rev-parse --abbrev-ref HEAD)".Trim()
-      $common = Split-Path "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir)".Trim()
-      $hit = $envRepos.Values | Where-Object { (Resolve-Path $_.cfg.checkout).Path -eq (Resolve-Path $common).Path } | Select-Object -First 1
+      # same repository = same common git dir (a submodule's is <super>/.git/modules/<name>, not <checkout>/.git)
+      $common = (Resolve-Path "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir)".Trim()).Path
+      $hit = $envRepos.Values | Where-Object { (Resolve-Path "$(git -C $_.cfg.checkout rev-parse --path-format=absolute --git-common-dir)".Trim() -ErrorAction SilentlyContinue).Path -eq $common } | Select-Object -First 1
       if (-not $hit) { throw "[$e] $Dir is not a worktree of a repo this env runs ($($envRepos.Keys -join ', '))" }
       $Repo = @($hit.name)
       if (@(git -C $Dir status --porcelain --untracked-files=no).Count) { Write-Warning "$Dir has uncommitted changes: only committed work is deployed (wt.ps1 commit first)" }

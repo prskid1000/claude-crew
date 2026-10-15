@@ -218,8 +218,8 @@ function Owned($x) {
 }
 # a process serving one of the env's ports counts as the env's own when it runs from the env's run copies or worktrees
 function EnvProcess([int]$p, [string]$e) {
-  $c = "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)"
-  if (-not $KitIsWindows) { $c = "$(ps -o args= -p $p 2>$null)" }
+  # Get-CimInstance does not exist off Windows (a missing command is fatal under Stop): ask ps there
+  $c = if ($KitIsWindows) { "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)" } else { "$(ps -o args= -p $p 2>$null)" }
   $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("_exec -Env $e "))
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
@@ -625,7 +625,7 @@ function GraceMin([string]$e, $s) {
   $start = if ($xs.Count) { ($xs | Measure-Object -Maximum).Maximum } else { 120 }
   [math]::Min($script:IdleMaxM, [math]::Max($script:IdleMinM, [math]::Round(3 * $start / 60, 1)))
 }
-function KeepFreeGB { $m = Get-SysMem; [double](Get-KitSetting 'localEnv.keepFreeGB' (Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($m.TotalGB * 0.15, 1))))) }
+function KeepFreeGB { if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }; $m = Get-SysMem; [double](Get-KitSetting 'localEnv.keepFreeGB' (Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($m.TotalGB * 0.15, 1))))) }
 # Memory pressure: RAM under the keep-free floor, or a gated build waiting for room for over a minute
 function Pressure {
   if ((Get-SysMem).AvailGB -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
