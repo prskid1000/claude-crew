@@ -40,7 +40,7 @@ function Add-DepLinks($path, $src, $target) {
   foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
     $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
     if ((Test-Path $from) -and -not (Test-Path $to)) {
-      New-DirLink $to $from; $made += $to
+      $null = Set-NodeModules $to $from $src $path; $made += $to   # one junction, or a farm when it holds workspace packages (sysinfo.ps1)
       $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
       if ($a -ne $b) { Write-Warning "$pj dependencies differ from $src - linked node_modules may be the wrong versions.$(if ($target) { " Use -LinkFrom <a checkout of $target with matching installs>." })" }
     }
@@ -195,7 +195,7 @@ switch ($Action) {
       if ($dirty) { throw "uncommitted or untracked files in $Dir - commit/push or delete them, or pass -Force:`n$($dirty | Select-Object -First 10 | Out-String)" }
     }
     $undo = @(foreach ($l in $links) { , @($l, [string]@((Get-Item $l -Force).Target)[0]) })
-    foreach ($l in $links) { if (Test-Path $l) { Remove-DirLink $l } }   # removes only the link (junction/symlink), never the linked folder
+    foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }   # links only, never the linked folders (a node_modules farm: its links, then the folder)
     $main = ((git -C $Dir worktree list --porcelain | Select-Object -First 1) -replace '^worktree ', '')
     git -C $main worktree remove $(if ($Force) { '--force' }) $Dir
     if ($LASTEXITCODE) {

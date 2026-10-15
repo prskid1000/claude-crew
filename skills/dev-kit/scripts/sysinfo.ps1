@@ -113,6 +113,61 @@ function Remove-DirLink([string]$Path) {
   else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }             # rm on a symlink (no trailing slash, no -r) removes only the link
 }
 
+# node_modules for a worktree, linked from an installed checkout ($From = <checkout>/<rel>/node_modules), never installed.
+# A monorepo's node_modules holds its workspace packages as links back INTO the checkout (@scope/pkg -> <checkout>/common/pkg):
+# one junction to that folder would make a worktree build the checkout's copy of the shared code (wrong branch), and bundlers
+# such as Metro reject files outside the project. Then $To becomes a "farm": a real folder whose entries link to the installed
+# packages, with workspace links re-pointed into the worktree ($WtRoot). Without workspace links: one junction, as before.
+# Idempotent (a marker records the source); returns $true when it changed something.
+function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
+  $SrcRoot = $SrcRoot.TrimEnd('\', '/'); $WtRoot = $WtRoot.TrimEnd('\', '/')
+  $tgtOf = { param($i) $x = "$(@($i.Target)[0])"; if (-not [IO.Path]::IsPathRooted($x)) { $x = [IO.Path]::GetFullPath((Join-Path (Split-Path $i.FullName) $x)) }; $x.TrimEnd('\', '/') }
+  $inSrc = { param($x) $x.StartsWith($SrcRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or $x.StartsWith($SrcRoot + '/', [StringComparison]::OrdinalIgnoreCase) }
+  $entries = @(Get-ChildItem -LiteralPath $From -Force -ErrorAction SilentlyContinue)
+  $ws = @(foreach ($e in $entries) {
+      if ($e.LinkType -and (& $inSrc (& $tgtOf $e))) { $e }
+      elseif ($e.Name.StartsWith('@') -and -not $e.LinkType -and $e.PSIsContainer) { Get-ChildItem -LiteralPath $e.FullName -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType -and (& $inSrc (& $tgtOf $_)) } }
+    })
+  $mk = { param($path, $target) if ($KitIsWindows) { $null = New-Item -ItemType Junction -Path $path -Target $target } else { $null = New-Item -ItemType SymbolicLink -Path $path -Target $target } }
+  $item = Get-Item -LiteralPath $To -Force -ErrorAction SilentlyContinue
+  if (-not $ws.Count) {
+    if ($item -and $item.LinkType -and (& $tgtOf $item) -eq $From.TrimEnd('\', '/')) { return $false }
+    if ($item) { Remove-NodeModules $To }
+    New-DirLink $To $From; return $true
+  }
+  $marker = Join-Path $To '.kit-farm.json'; $want = "$From|$WtRoot"
+  if ($item -and -not $item.LinkType -and (Test-Path $marker) -and (Get-Content $marker -Raw).Trim() -eq $want) { return $false }
+  if ($item) { Remove-NodeModules $To }
+  New-Item -ItemType Directory -Force $To | Out-Null
+  $add = { param($e, $dest)
+    if ($e.LinkType) { $x = & $tgtOf $e; if (& $inSrc $x) { $m = $WtRoot + $x.Substring($SrcRoot.Length); if (Test-Path $m) { $x = $m } }; & $mk $dest $x }
+    elseif ($e.PSIsContainer) { & $mk $dest $e.FullName }
+    else { Copy-Item -LiteralPath $e.FullName $dest }
+  }
+  foreach ($e in $entries) {
+    $dest = Join-Path $To $e.Name
+    if ($e.Name.StartsWith('@') -and -not $e.LinkType -and $e.PSIsContainer) {
+      New-Item -ItemType Directory -Force $dest | Out-Null
+      foreach ($c in Get-ChildItem -LiteralPath $e.FullName -Force -ErrorAction SilentlyContinue) { & $add $c (Join-Path $dest $c.Name) }
+    } else { & $add $e $dest }
+  }
+  Set-Content -LiteralPath $marker $want
+  $true
+}
+# Removes a node_modules link or farm without ever touching the installed packages it links to
+function Remove-NodeModules([string]$Path) {
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  if (-not $item) { return }
+  if ($item.LinkType) { Remove-DirLink $Path; return }
+  # Directory.Delete on a junction/symlink removes only the link (fast: no cmd.exe per entry for thousands of packages)
+  $unlink = { param($x) if ($KitIsWindows) { [IO.Directory]::Delete($x) } else { Remove-DirLink $x } }
+  foreach ($c in Get-ChildItem -LiteralPath $Path -Force) {
+    if ($c.LinkType) { & $unlink $c.FullName }
+    elseif ($c.PSIsContainer) { foreach ($g in Get-ChildItem -LiteralPath $c.FullName -Force) { if ($g.LinkType) { & $unlink $g.FullName } else { throw "Remove-NodeModules: $($g.FullName) is not a link - not deleting a real folder" } }; Remove-Item -LiteralPath $c.FullName -Force }
+    else { Remove-Item -LiteralPath $c.FullName -Force }
+  }
+  Remove-Item -LiteralPath $Path -Force
+}
 function Get-DirLinks([string]$Dir, [int]$Depth = 4) {
   if ($KitIsWindows) { Get-ChildItem $Dir -Recurse -Depth $Depth -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue }
   else { Get-ChildItem $Dir -Recurse -Depth $Depth -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType -eq 'SymbolicLink' -and (Test-Path -PathType Container $_.FullName) } }
