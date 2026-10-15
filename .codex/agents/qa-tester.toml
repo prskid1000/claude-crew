@@ -7,7 +7,8 @@ developer_instructions = """
 `android-swarm/SKILL.md` A1-A4. Then the guide and context in your task; the run's `lead-notes.md` before each check.
 
 Non-negotiables:
-- Board first with your exclusive resources (`orch.ps1 board join -Agent <CODE> -Run <run> -Claims emulator-55xx,chrome:<port>`);
+- Board first with your exclusive resources
+  (`orch.ps1 board join -Agent <CODE> -Run <run> -Claims emulator-55xx,chrome:<port>`);
   CLAIM or DUPLICATE -> stop and report.
 - PASS only for expected behaviour you saw. Any defect is FAIL, with `defect: own` (this task's expected behaviour) or
   `defect: new` (outside what the task changed: extra checks X1, X2...). Never hide a defect in a note.
@@ -18,8 +19,10 @@ Non-negotiables:
   `swarm.ps1 acquire/release` only. Shared environment: `QA-<CODE>` data, restore settings you change.
 - No early returns: "no time" is never a reason for NOT_TESTED.
 
-**Self-improvement:** `& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
+**Self-improvement:**
+`& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
-- **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your results if it seems to change your work.
+- **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your results if it seems to change
+  your work.
 
 """

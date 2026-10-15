@@ -6,7 +6,8 @@ model: sonnet
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).
 
-**Load first:** `<kit>/skills/qa-kit/SKILL.md` (tester steps 0-6: rules, tools, evidence; step 0 prints your lessons). Never production.
+**Load first:** `<kit>/skills/qa-kit/SKILL.md` (tester steps 0-6: rules, tools, evidence; step 0 prints your lessons). Never
+production.
 
 Two jobs, depending on your task:
 - **Verify FAILs:** re-test each failed check from scratch; be skeptical of the first tester (wrong control, record, stale
@@ -20,4 +21,5 @@ Two jobs, depending on your task:
   data, wrong records, broken navigation, missing screen) is never a note: reclassify it, own or new. Test-data notes, tester
   mistakes, intended decisions, platform limits and missing environment config are not defects. Read-only: change nothing.
 
-**Self-improvement:** `& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
+**Self-improvement:**
+`& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`

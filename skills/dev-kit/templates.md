@@ -3,6 +3,45 @@
 Every brief, doc, body and report the flows fill. Copy the section you need into a file in the scratchpad or run folder,
 fill the `<...>` parts, delete what does not apply. Which step fills which section: the Files index of the skill that uses it.
 
+## Writing standards (every artefact the kit reads or writes)
+One table, read at the step that writes the artefact (the skill's Files index says which). Dense, not thin: fewer words, the
+same facts. Every limit is a ceiling, not a target. `python -X utf8 <kit>/skills/orchestrate/kittool.py prose --kind <kind>
+<file>` measures a produced text (exit 1 = findings); generators (`devtools.py mr/comment/finish/newtask`, `dev.ps1 wt commit`,
+`orch.ps1 bugbrief/decide`, `qa.ps1 finalize`) run it and print findings; nothing is truncated. A finding is fixed by rewriting.
+Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
+`<Section>:` that section (`_` for a space). Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
+`cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
+`options` A/B lines · `recommended` · `verdict` PASS / FAIL / BLOCKED · `conv` Conventional Commits subject.
+Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
+"in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
+"happy to" · "great job" · "as an AI" · task recap · restating the template's own words.
+
+| Kind | Purpose | Format (sections in order) | Limits | Required facts |
+|---|---|---|---|---|
+| skill | how an agent does one job | front matter, Load when, Not when, Hands off to, Files, numbered steps, Rules, Learn | 3200t 130ch | path |
+| skill-step | one numbered step | `N. **Name:** action -> result` + commands | 90w 30sw | cmd |
+| agent | an agent's contract | front matter, Load first, non-negotiables, report shape, self-improvement | 900t 130ch | path |
+| rule | a hard rule for one file kind | `paths:` front matter (path-scoped), bullets | 900t 12b 130ch | — |
+| reference | a guide inside a SKILL.md / README | `##` per topic, bullets, tables | each:250w 130ch | path |
+| lesson | one LESSONS.md line | `- <when> -> <do this> (<why>)` | 1l 50w 300ch | — |
+| history | one LESSONS.md History entry | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
+| wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
+| bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
+| testing-goals | what must be true before merge | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
+| testing-doc | the human testing doc a tester follows | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected evidence |
+| qa-report | the QA run report | header table, a verdict line per check, defects, not tested | 900w each:15b 25sw | id verdict evidence |
+| result-note | a results.json `note` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
+| mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
+| mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
+| commit | commit message | subject; blank line; body bullets | first:72ch 12l 100ch | conv |
+| task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
+| task-description | tracker task description | Problem, Goal, Acceptance (bullets), Links | 200w each:6b | link |
+| comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | link |
+| comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
+| comment-deploy | the batched deploy ask / record | env, MRs (merge order), window, ask or result | 8l 120w | link |
+| decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
+| final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
+| owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 ```markdown
 # Wave brief: <wave name>, <date>
@@ -96,22 +135,20 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 ```
 
 ## MR body
-`devtools.py mr` warns on a missing `## Task`, `## What changed`, `## Verified`, `## How to test`.
+`devtools.py mr` checks it (kind `mr-body`): sections in this order, limits from "Writing standards".
 ```markdown
-## Task
-<task URL> — <one-line goal>
-## What changed
+## Summary
+<task URL> — <one-line goal and outcome>
+## Changes
 - <behaviour change, user terms> · Technical: <files / endpoints / migrations>
-## Not in this MR
-- <deferred item — reason> · Behaviour limits: <what it deliberately does not handle> (or "none")
-## Verified
+## How tested
 - Checks: check quick ✅ · tests `<names>` ✅ · touched-class tests ✅ · migrations ISSUES 0 ✅
 - Local env: <env> r<n>: goals G1-Gn PASS (testing-goals doc) · Not run: <what, why> (or "nothing")
 - UI: <committed spec or screenshot link> (or "not a UI change") · Pure logic: <spec file> (or "none")
-## How to test
-Human testing doc: <link>
-## Related
-- Sibling MRs: <refs> (merge order: producers first) · Needs after deploy: <settings / data> (or "nothing")
+## Risks
+- <deferred item — reason> · Behaviour limits: <not handled> · Needs after deploy: <settings / data> (or "none")
+## Links
+- Testing doc: <link> · Sibling MRs: <refs> (merge order: producers first)
 ```
 
 ## Task solution comment

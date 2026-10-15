@@ -206,6 +206,7 @@ switch ($Action) {
       else { Write-Warning "core.hooksPath=$hp does not exist in this worktree - hooks would be skipped" }
     }
     if (-not $NoStage) { git -C $Dir add -A }   # stage everything in the worktree (agents expect commit to include their changes)
+    $null = Test-KitProse -Kind commit -Text $Message
     git -C $Dir @c commit -m $Message
     exit $LASTEXITCODE
   }

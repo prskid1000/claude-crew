@@ -872,6 +872,8 @@ if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing
 Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D\report.html" -Encoding utf8
 
 # 3. The report: Google Doc (gdocs) or report.md in the run folder (markdown)
+$null = Test-KitProse -Kind result-note -Path "$D\results.json"
+$null = Test-KitProse -Kind qa-report -Text (Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-String)
 $reportFile = $null
 if ($map.local) {
   $reportFile = "$D\report.md"

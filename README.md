@@ -193,7 +193,7 @@ flowchart LR
 flowchart LR
   skills_dev_kit_SKILL_md[dev-kit]
   skills_dev_kit_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill dev-kit prin| LESSONS_md[LESSONS.md]
-  skills_dev_kit_SKILL_md -->|step 4 (Testing goals), step 6 (MR body, Human t| skills_dev_kit_templates_md[templates.md]
+  skills_dev_kit_SKILL_md -->|Writing standards at every step that writes text| skills_dev_kit_templates_md[templates.md]
   skills_dev_kit_SKILL_md -->|steps 1-5 (wt, stack, check, gate, tracker), CI | skills_dev_kit_dev_ps1[dev.ps1]
   skills_dev_kit_SKILL_md -->|library dot-sourced by every kit script (config,| skills_dev_kit_lib_ps1[lib.ps1]
   skills_dev_kit_SKILL_md -->|step 6 (mr, doc, finish), step 7 (merge), rebase| skills_dev_kit_devtools_py[devtools.py]
@@ -209,7 +209,7 @@ flowchart LR
   skills_kit_audit_SKILL_md[kit-audit]
   skills_kit_audit_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill kit-audit| LESSONS_md[LESSONS.md]
   skills_kit_audit_SKILL_md -->|steps 1-3 (audit setup| skills_orchestrate_kittool_py[kittool.py]
-  skills_kit_audit_SKILL_md -->|step 9: Audit report, filled into runtime/logs/k| skills_dev_kit_templates_md[templates.md]
+  skills_kit_audit_SKILL_md -->|step 6: Writing standards (the limits kittool.py| skills_dev_kit_templates_md[templates.md]
 ```
 <!-- kit-graph:end -->
 

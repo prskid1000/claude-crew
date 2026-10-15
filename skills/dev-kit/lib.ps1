@@ -318,6 +318,17 @@ function Resolve-Tool {
 # Python 3 launcher: 'python' on Windows (python3 there is often the Store stub), python3 first elsewhere
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
+# templates.md "Writing standards": findings of `kittool.py prose` for a text about to be published or handed on (printed as
+# warnings, returned as strings; the text is never cut). -Path a file, or -Text (written to a temp file first).
+function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
+  $tool = $KitCmd.kittool; if (-not $tool -or -not (Test-Path $tool)) { return @() }
+  $tmp = $null
+  if (-not $Path) { $tmp = Join-Path (Get-KitTemp) "kit-prose-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 6)).md"; [IO.File]::WriteAllText($tmp, $Text); $Path = $tmp }
+  try { $r = & (Get-Python) -X utf8 $tool prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
+  $found = @(if ($r) { $r.findings })
+  foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
+  $found
+}
 # Starts a program that outlives this shell (and a tool timeout): hidden window on Windows; on Linux/macOS through
 # `setsid nohup` (plain nohup where setsid is missing, e.g. macOS) with output to -Log (default: a kit-bg-*.log in the OS temp)
 function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {

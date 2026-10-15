@@ -26,9 +26,11 @@ test-only, deploy or kit row.
 State every run shares: launch record (`orch.ps1 launch`), agent board (`board`), tracking (`.state/tracking.json`, `track`),
 decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps. Launch by path:
-`Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's own words).
+`Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's own
+words).
 
-**Dev flow** (/dev-wave, or one `dev-agent`, or you on a small change): 1 code -> 2 testing-goals doc -> 3 reproduce + test on the
+**Dev flow** (/dev-wave, or one `dev-agent`, or you on a small change): 1 code -> 2 testing-goals doc -> 3 reproduce + test on
+the
 local env (loop, max 3 rounds) -> 4 review, CI, merge (producers first), human testing doc, tracker promoted (no user gate) ->
 5 deploy batch: `deploy plan` -> ask the owner ONCE per env -> after the deploy `deploy record` + `deploy intest` -> testers.
 
@@ -45,17 +47,21 @@ local env (loop, max 3 rounds) -> 4 review, CI, merge (producers first), human t
 | deploy batch | the workflow ends with `deployBatch` (it never deploys) | E5 |
 | stopped / restarted | launch record without completion | E3: resume from the record |
 
-**Test-only flow** (/test-and-close, deployed work on a test env): per item test -> retest when > 25% NOT_TESTED -> note audit ->
-verify every FAIL -> finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new defect
+**Test-only flow** (/test-and-close, deployed work on a test env): per item test -> retest when > 25% NOT_TESTED -> note audit
+->
+verify every FAIL -> finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new
+defect
 -> one [Bug] per ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3).
 
 ## Steps (you = the coordinator)
 0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts live in the brief / run.json / memory / the repo's CLAUDE.md.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
-2. **Brief:** `dev-kit/templates.md` "Wave brief" in the scratchpad (bugs: `orch.ps1 bugbrief -Task <id> ...` per task).
+2. **Brief:** `dev-kit/templates.md` "Wave brief" in the scratchpad (limits: "Writing standards", kinds `wave-brief`,
+   `owner-message`) (bugs: `orch.ps1 bugbrief -Task <id> ...` per task).
 3. **Launch** `/dev-wave` with `{ brief, agents:[{id, items, area, dependsOn?}], mode, kitDir, mandate, holdMerge? }`; then
    `orch.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'`; then E1.
-4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook blocks it).
+4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook
+   blocks it).
 5. **Deploy** (E5) and **close**: reconcile backlog vs merged MRs; list only what is open, each with a reason.
 - T1-T4 (test-only): run folder + `run.json` (qa-kit L1) -> `/test-and-close { runDir, kitDir }` -> `launch` record -> E1.
 ~15 dev agents queue fine on the memory gate. Dev waves and app-lane QA on one machine: cap `lanes` at 2.

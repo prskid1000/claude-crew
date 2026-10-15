@@ -9,7 +9,7 @@ the checks below before every push. `kittool.py lint` enforces what it can; its 
   `GEMINI.md`). Git-ignored local files (`*.local.*`, `swarm.config.json`, `.runtime/`, `.state/`) never count. One script per
   concern area; references and templates fold into the SKILL.md or `dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
 - **Token budgets** [BUDGET] (tokens = UTF-8 bytes / 4): always-loaded (`CLAUDE.md` + `AGENTS.md` + always-on rules) 3500 ·
-  SKILL.md 3200 · agent 900 · rule 900 · template / example 2600 · README / CONTRIBUTING 7000 · LESSONS.md 30000 (40 lines per
+  SKILL.md 3200 · agent 900 · rule 900 · template / example 2600 · `dev-kit/templates.md` 4000 · README / CONTRIBUTING 7000 · LESSONS.md 30000 (40 lines per
   skill section) · workflow 12000 · .ps1 45000 · .py 40000 · .mjs 8000 · json 3000 · tests 10000 · total 360000. `kittool.py
   lint` prints the top consumers when one is over.
 - **Every file reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md (Router) -> skill / workflow / agent
@@ -38,6 +38,8 @@ the checks below before every push. `kittool.py lint` enforces what it can; its 
   the same report shape (`agents|results`, `deployBatch`, `decisions`, `retroDue`). Check: wrap and `node --check`, `kittool.py cost --steps`.
 - **Rule**: always-loaded only for short hard rules every session needs; path-scoped (`paths:` front matter) for one kind of file
   (examples: `examples/rules.md`).
+- **Text** [PROSE]: every artefact type has a row in `dev-kit/templates.md` "Writing standards" (purpose, sections, limits,
+  required facts); a new artefact type adds a row; generators call `kittool.py prose` and print findings, never truncate.
 - **Config key**: optional, today's behaviour as the default, a row in README "Configuration", a sample in `kit.example.json` [CONFIG-UNDOC].
 - **Hook**: `pwsh` exec form with `${CLAUDE_PROJECT_DIR}/.claude/...`; SessionStart work < 2 s, slow work `"async": true`.
 

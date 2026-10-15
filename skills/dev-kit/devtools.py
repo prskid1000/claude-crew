@@ -5,7 +5,7 @@ come from the worktree's `origin` remote, the MR target from the worktree's reco
   python devtools.py subtasks <parentId> [status ...]               id | status | name
   python devtools.py newtask <listId|-> <parentId|-> <assignee|-> "<name>" <desc.md>
   python devtools.py status <taskId> "<status>"                     logical (review, promoted, inTest, closed) or the tracker's own name
-  python devtools.py comment <taskId> <file.md | "text">
+  python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
   python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + one solution comment (guide link appended if missing) + status
   python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
   python devtools.py merge <worktree> <iid>                         squash-merge now (green, or no CI) or schedule merge-when-green;
@@ -176,7 +176,25 @@ def subtasks(parent, statuses=None):
     return out
 
 
+def prose(kind, text):
+    """templates.md "Writing standards": print the findings of kittool.py prose for a text about to be published (never truncates)."""
+    tool = os.path.join(KIT_DIR, 'skills', 'orchestrate', 'kittool.py')
+    if not os.path.isfile(tool):
+        return []
+    try:
+        r = subprocess.run([sys.executable, '-X', 'utf8', tool, 'prose', '--kind', kind, '-', '--json'], input=text, capture_output=True,
+                           text=True, encoding='utf-8', timeout=30)
+        found = json.loads(r.stdout).get('findings', [])
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return []
+    for f in found:
+        print(f'[prose] {kind}: {f} (templates.md "Writing standards": rewrite, nothing was cut)', file=sys.stderr)
+    return found
+
+
 def new_task(list_id, parent, assignee, name, desc_md, priority='2'):
+    prose('task-name', name)
+    prose('task-description', desc_md)
     args = ['create', '-Name', name, '-Description', desc_md, '-Priority', priority]
     if list_id and list_id != '-':
         args += ['-List', list_id]
@@ -192,7 +210,8 @@ def set_status(tid, status):
     return _tracker('status', tid, status)
 
 
-def comment(tid, text):
+def comment(tid, text, kind='comment-status'):
+    prose(kind, text)
     return _tracker('comment', tid, text)
 
 
@@ -203,11 +222,11 @@ def finish(tid, guide_url, solution_md, status='review'):
     md = t.get('description') or ''
     # a failed lookup has no id/name: describing would overwrite the real description with just the guide line
     if t.get('id') and t.get('name') and guide_url not in md:
-        _tracker('describe', tid, f'Testing guide: {guide_url}\n\n{md}')
+        _tracker('describe', tid, f'Testing doc: {guide_url}\n\n{md}')
     # one comment: the solution, plus the guide link only when the solution doesn't carry it already
     if guide_url not in solution_md:
-        solution_md = f'{solution_md.rstrip()}\n\nHow to test: follow the tester guide {guide_url}.'
-    comment(tid, solution_md)
+        solution_md = f'{solution_md.rstrip()}\n\n**Testing doc**: {guide_url}'
+    comment(tid, solution_md, 'comment-solution')
     set_status(tid, status)
 
 
@@ -260,13 +279,13 @@ def target_of(worktree):
     return None
 
 
-MR_SECTIONS = ('## Task', '## What changed', '## Verified', '## How to test')  # dev-kit/MR_BODY.md
+MR_SECTIONS = ('## Summary', '## Changes', '## How tested', '## Risks', '## Links')  # templates.md "MR body"
 FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
 
 def _verified_gaps(body_md):
-    """'## Verified' should say what was not run and how pure logic was proven (templates.md "MR body"): True when it has neither line."""
-    m = re.search(r'^## Verified[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
+    """'## How tested' should say what was not run and how pure logic was proven (templates.md "MR body"): True when it has neither line."""
+    m = re.search(r'^## How tested[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
     sec = m.group(1) if m else ''
     return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
 
@@ -275,7 +294,7 @@ UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/l
 
 
 def _ui_line_missing(worktree, tgt, body_md):
-    """templates.md "MR body" '## Verified' carries '- UI: <spec / screenshot> (or "not a UI change")': the changed UI files when the body has no
+    """templates.md "MR body" '## How tested' carries '- UI: <spec / screenshot> (or "not a UI change")': the changed UI files when the body has no
     UI: line and the diff against origin/<target> touches templates or styles, else []."""
     if re.search(r'(?im)^\s*[-*]?\s*(\*\*)?UI(\*\*)?\s*:', body_md) or not tgt:
         return []
@@ -286,9 +305,11 @@ def _ui_line_missing(worktree, tgt, body_md):
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
-        print(f'[mr] body is missing {missing} - see .claude/skills/dev-kit/MR_BODY.md', file=sys.stderr)
+        print(f'[mr] body is missing {missing} - see templates.md "MR body"', file=sys.stderr)
+    prose('mr-title', title)
+    prose('mr-body', body_md)
     if _verified_gaps(body_md):
-        print('[mr] "## Verified" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
+        print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
               ' - say what was not run (or "Not run: nothing") - see templates.md "MR body"', file=sys.stderr)
     link = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/'}.get(TRACKER_TYPE)
     if link and link not in body_md:
@@ -303,7 +324,7 @@ def mr_create(worktree, title, body_md, tgt=None):
                          ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
     ui = _ui_line_missing(worktree, tgt, body_md)
     if ui:
-        print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## Verified" has no'
+        print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## How tested" has no'
               ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - see templates.md "MR body"', file=sys.stderr)
     if host == 'gitlab':
         out = _run([GLAB, 'mr', 'create', '--source-branch', src, '--target-branch', tgt, '--title', title,
@@ -881,7 +902,7 @@ if __name__ == '__main__':
     elif cmd == 'status':
         print(set_status(a[1], a[2]))
     elif cmd == 'comment':
-        print(comment(a[1], _text(a[2])))
+        print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
         finish(a[1], a[2], _body(a[3]), *(a[4:5] or []))
         print('done')

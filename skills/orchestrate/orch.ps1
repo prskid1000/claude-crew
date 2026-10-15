@@ -1196,6 +1196,7 @@ Phones (app bugs): the local-env APK (``swarm.ps1 build -Local``, ``swarm.ps1 ac
 $dir = Get-KitPath briefs -Create
 $out = Join-Path $dir "$Task.md"
 Set-Content $out $md -Encoding utf8
+$null = Test-KitProse -Kind bug-brief -Path $out
 $m = if ($Mandate) { $Mandate } elseif ($cfg.bugfixMandate) { @($cfg.bugfixMandate) } else { Write-Warning 'no mandate: pass -Mandate or set kit.local.json "bugfixMandate" (agents drop their items for later chat messages without one)'; @() }
 # model: dev-wave builds on sonnet unless the agent is marked complex (strongest model). Complex = more than 2 failed checks, or any
 # check that isn't cosmetic (label / colour / i18n / raw key / date format / typo / alignment ...): logic, data or crash bugs.
@@ -1694,6 +1695,7 @@ function Invoke-Decide {
       $o = [ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')"; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('s') }
       & $save ([pscustomobject]$o)
+      $null = Test-KitProse -Kind decision-request -Text ("$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $Recommend")
       & $note $Contracts ("## DECISION NEEDED $($o.id) ($Agent, item $Item)`n$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $(if ($Recommend) { $Recommend } else { 'none' })`nAnswer: pending (the coordinator appends it below)")
       "DECISION $($o.id) pending: item $Item stops (needs decision); continue your other items. Wait: orch.ps1 decide wait -Id $($o.id)"
     }

@@ -105,7 +105,7 @@ ${JSON.stringify(all)}
 Steps:
 1. Dedupe and resolve conflicts; drop low-confidence proposals without evidence.
 2. APPLY directly: add/update/remove-lesson and promote-to-rule changes (LESSONS.md, SKILL.md, rules/*.md, tech-audit project profiles).
-   LESSONS.md holds only active rules per ## <skill> section, newest first, one line each, merged duplicates. Use ${C}/skills/orchestrate/orch.ps1 learn:
+   LESSONS.md holds only active rules per ## <skill> section, newest first, one line each (<= 50 words, <= 300 chars: dev-kit/templates.md "Writing standards", kinds lesson / history; kittool.py lint PROSE), merged duplicates. Use ${C}/skills/orchestrate/orch.ps1 learn:
    -Skill <s> -Lesson "(n×) <line>" [-Project <p>] to add, -Fixed "<words>" for a lesson the kit now handles or that was promoted/obsolete
    (moved verbatim to ## History), then -Skill <s> -Trim for every skill you touched (enforces ≤ 40 lines; never delete lessons by hand).
 3. ${A.applyScripts ? 'ALSO APPLY script-change / default-change / template-change proposals, then re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check-style check every changed .js/.mjs; revert any change that breaks parsing.' : 'Do NOT apply script-change / default-change / template-change: list them for approval with the exact edit.'}

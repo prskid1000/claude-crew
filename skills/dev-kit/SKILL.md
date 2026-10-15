@@ -14,7 +14,7 @@ review; `orch.ps1 deploy` batches the deploy), testers through the human testing
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill dev-kit` prints this skill's section (+ the local one) |
-| `templates.md` | step 4 (Testing goals), step 6 (MR body, Human testing doc, Task solution), D1 (Decision request), briefs (orchestrate step 2) |
+| `templates.md` | "Writing standards" at every step that writes text; step 4 (Testing goals), step 6 (MR body, Human testing doc, Task solution), D1 (Decision request), briefs (orchestrate step 2) |
 | `dev.ps1` | steps 1-5 (`wt`, `stack`, `check`, `gate`, `tracker`), CI wait (`pipes`), PreToolUse hook (`guard`) |
 | `lib.ps1` | library dot-sourced by every kit script (config, paths, OS, tracker and git-host adapters); never run by hand |
 | `devtools.py` | step 6 (`mr`, `doc`, `finish`), step 7 (`merge`), rebase conflicts (`keepboth`), check migrations (`lbcheck`, run by `check`) |
@@ -35,7 +35,7 @@ $D = '<kit>/skills/dev-kit/dev.ps1'; $O = '<kit>/skills/orchestrate/orch.ps1'; $
 & $D check -Dir <wt>/<module>                                                  #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched             #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations                                 #    if you touched migrations: ISSUES 0
-& $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks really run
+& $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks run
 #   5. LOCAL TEST LOOP (local-env SKILL.md "Local testing"): deploy, lease, run every goal; failed -> back to 3 (max 3 rounds,
 #      then report BLOCKED with the failing goals); 0 errors + every goal reached -> 6
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
@@ -55,9 +55,12 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
 - No `localEnv` configured for your repo: step 5 = the automated tests only; say "local env: none" in the MR and the report.
 
 **Rules**
-- **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds and
-  pushes; `check -Worktree <wt> -Session <t>` before each commit (another writer -> stop, tell the coordinator); `leave` at the end.
-- **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into a
+- **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds
+  and
+  pushes; `check -Worktree <wt> -Session <t>` before each commit (another writer -> stop, tell the coordinator); `leave` at the
+  end.
+- **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
+  a
   linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `dev.ps1 check` (or `gate -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo
   directly; waiting is normal, a killed build is not a code failure. Tool timeout 600000 ms (or `run_in_background`). A gate
@@ -85,13 +88,16 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   migration; a rollback for every schema/data change where the tool has one; append-only changelog conflicts:
   `python devtools.py keepboth <file>`; before every push `check -Step migrations` = ISSUES 0 (Liquibase; other tools: the
   repo's own check). Local env DB drift (a leftover table, a missing user): report it, never "fix" the shared DB by hand.
-- **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per repo,
-  title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
+- **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per
+  repo,
+  title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own
+  branch.
 - **Tracker:** always `dev.ps1 tracker` (any backend; logical statuses `inProgress` -> `review` once the MR, the testing doc and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
   `inTest` or `closed` yourself.
 - **Evidence:** UI -> screenshots, backend -> `qa.ps1 api -Save` JSON (names: qa-kit SKILL.md "Evidence"); never production;
   a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 
-**Learn:** something cost time, failed or worked unusually well -> `& $O learn -Skill dev-kit -Kind <kind> -Text "<what + fix>"`.
+**Learn:** something cost time, failed or worked unusually well ->
+`& $O learn -Skill dev-kit -Kind <kind> -Text "<what + fix>"`.
 The guard hook's message names the right command when it blocks something.

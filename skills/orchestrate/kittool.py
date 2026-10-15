@@ -26,6 +26,7 @@ lint checks (the same graph flow draws; strict: every problem fails, --warn repo
   FILE-CAP        more than 50 tracked files (ports .codex/ .agents/ GEMINI.md excluded)
   BUDGET          a file or the kit over its token budget (CONTRIBUTING "Hard rules"); the top consumers are listed
   SCRIPT-HEADER   an entry script without a header block naming its usage and "Exit codes"
+PROSE           a kit file, lesson or History line breaks its templates.md "Writing standards" limits
 DESKTOP-OPEN    a script opens a file, browser or app on the desktop without an explicit --open / -Open flag
   LESSONS-CAP     a LESSONS.md skill section over 40 lines
   README-GRAPH    README.md graph sections out of date (kittool.py flow --readme; the pre-commit hook runs it)
@@ -121,7 +122,7 @@ REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '
 GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 FILE_CAP = 50
 # token budgets (UTF-8 bytes / 4), CONTRIBUTING "Hard rules"
-BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'doc': 7000, 'lessons': 30000,
+BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
            'workflow': 12000, 'ps1': 45000, 'py': 40000, 'mjs': 8000, 'json': 3000, 'tests': 10000, 'total': 360000}
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/paths.json'
@@ -778,6 +779,8 @@ def lint(k, g=None, org_terms=None):
             return 'lessons'
         if f in ('README.md', 'CONTRIBUTING.md'):
             return 'doc'
+        if f == 'skills/dev-kit/templates.md':   # every template + the Writing standards table
+            return 'templates'
         if f.startswith('workflows/'):
             return 'workflow'
         if f.endswith('.md'):
@@ -818,7 +821,25 @@ def lint(k, g=None, org_terms=None):
                 continue
             if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
                 bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (CONTRIBUTING "Script")')
-    # ---- lessons: 40 lines per skill section
+    # ---- writing standards (templates.md): the kit's own files, each lesson and History line
+    try:
+        wkinds, wbanned = writing_standards(KIT)
+    except Exception:   # no templates.md yet: nothing to measure against
+        wkinds, wbanned = {}, []
+    if wkinds:
+        for f in counted:
+            kind = 'skill' if f.endswith('/SKILL.md') else 'agent' if f.startswith('agents/') else \
+                'rule' if f.startswith('rules/') and f.endswith('.md') else ''
+            if kind in wkinds:
+                for p_ in prose_check(kind, k.texts.get(f, ''), wkinds[kind], wbanned):
+                    bad('PROSE', f, f'{kind}: {p_} (templates.md "Writing standards")')
+        cur = ''
+        for ln, line in enumerate(k.texts.get('LESSONS.md', '').split('\n'), 1):
+            if line.startswith('## '):
+                cur = 'history' if line.startswith('## History') else 'lesson'
+            elif line.startswith('- ') and cur in wkinds:
+                for p_ in prose_check(cur, line, wkinds[cur], wbanned):
+                    bad('PROSE', f'LESSONS.md:{ln}', f'{cur}: {p_}')    # ---- lessons: 40 lines per skill section
     lt = k.texts.get('LESSONS.md', '')
     for m in re.finditer(r'^## (?!History)(\S+)\n(.*?)(?=^## |\Z)', lt, re.S | re.M):
         n = len([l for l in m.group(2).splitlines() if l.startswith('- ')])
@@ -2413,6 +2434,154 @@ def cmd_cost(a):
     return 0
 
 
+# ================================ prose: measure a produced text against templates.md "Writing standards"
+REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
+          'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\bCU-\w+',
+          'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
+          'cmd': r'`[^`]*\b(?:pwsh|python|node|git|dev\.ps1|orch\.ps1|qa\.ps1|kit\.ps1|swarm\.ps1|localenv\.ps1|kittool\.py|devtools\.py|npm|&)\b[^`]*`',
+          'evidence': r'\.(?:png|jpe?g|json|log|txt|html?)\b|https?://\S+',
+          'expected': r'(?i)\bexpected\b', 'options': r'(?m)^\s*[-*]?\s*(?:Option\s+)?A[:)]', 'recommended': r'(?i)\brecommended\b',
+          'verdict': r'\b(?:PASS|FAIL|BLOCKED|PASS_WITH_NOTE|NOT_TESTED)\b',
+          'conv': r'^(?:feat|fix|refactor|perf|docs|test|chore|build|ci|style|revert)(?:\([^)]+\))?!?: \S'}
+
+
+def writing_standards(kit):
+    """templates.md "Writing standards" -> ({kind: {format, limits, required}}, [banned regex])."""
+    t = read(os.path.join(kit, 'skills', 'dev-kit', 'templates.md'))
+    sec = section(t, 'Writing standards') or ''
+    kinds = {}
+    for row in sec.split('\n'):
+        c = [x.strip() for x in row.strip().strip('|').split('|')]
+        if len(c) == 5 and c[0] not in ('Kind', '---') and not c[0].startswith('-'):
+            kinds[c[0]] = {'purpose': c[1], 'format': c[2], 'limits': c[3], 'required': [] if c[4] in ('—', '-', '') else c[4].split()}
+    m = re.search(r'Banned everywhere:(.*?)(?:\n\n|\n\|)', sec, re.S)
+    banned = [r'\b' + re.escape(b) + r'\b' for b in re.findall(r'"([^"]+)"', m.group(1))] if m else []
+    if m and 'greetings' in m.group(1):
+        banned += [r'^\s*(?:hi|hello|hey|dear)\b', r'\bthank(?:s| you)\b']
+    return kinds, banned
+
+
+def prose_parts(text):
+    """(prose lines without fenced code, sections {name: [lines]}) of a Markdown text."""
+    lines, fence = [], False
+    text = re.sub(r'\A---\n.*?\n---\n', '', text.replace('\r\n', '\n'), flags=re.S)   # front matter: one-line fields by design
+    for l in text.split('\n'):
+        if l.lstrip().startswith('```'):
+            fence = not fence
+            continue
+        if not fence:
+            lines.append(l)
+    secs, cur = {}, None
+    for l in lines:
+        h = re.match(r'^##\s+(.+?)\s*$', l)
+        if h:
+            cur = h.group(1)
+            secs[cur] = []
+        elif cur:
+            secs[cur].append(l)
+    return lines, secs
+
+
+def words(s):
+    return len(re.findall(r"[A-Za-z0-9][\w'’.-]*", re.sub(r'`[^`]*`|https?://\S+', 'x', s)))
+
+
+def prose_check(kind, text, spec, banned):
+    """Findings (strings) for one produced text of one kind."""
+    out = []
+    lines, secs = prose_parts(text)
+    body = [l for l in lines if l.strip()]
+    flat = '\n'.join(lines)
+    for tok in spec['limits'].replace(';', ' ').split():
+        m = re.match(r'^(?:(each|first|[A-Z][\w ()/-]*?):)?(\d+)(w|t|l|ch|sw|b)$', tok)
+        if not m:
+            continue
+        scope, n, u = (m.group(1) or '').replace('_', ' ') or None, int(m.group(2)), m.group(3)
+        targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else secs if scope == 'each' else {scope: secs.get(scope, [])}
+        for name, ls in targets.items():
+            txt = '\n'.join(ls)
+            if u == 'w' and words(txt) > n:
+                out.append(f'{name}: {words(txt)} words (max {n})')
+            elif u == 't' and (len(txt.encode("utf-8")) + 3) // 4 > n:
+                out.append(f'{name}: {(len(txt.encode("utf-8")) + 3) // 4} tokens (max {n})')
+            elif u == 'l' and len([l for l in ls if l.strip()]) > n:
+                out.append(f'{name}: {len([l for l in ls if l.strip()])} lines (max {n})')
+            elif u == 'b':
+                nb = len([l for l in ls if re.match(r'^(?:[-*]|\d+\.)\s', l)])
+                if nb > n:
+                    out.append(f'{name}: {nb} bullets (max {n})')
+            elif u == 'ch':
+                for i, l in enumerate(ls, 1):
+                    if len(l) > n and not l.lstrip().startswith('|') and not re.search(r'https?://', l) and not re.fullmatch(r'\s*(?:\*\*[^*]+\*\*\s*)?`[^`]+`\s*', l):   # a lone command cannot wrap
+                        out.append(f'{name}: line {i} is {len(l)} chars (max {n}): {l[:60]}...')
+                        break
+            elif u == 'sw':
+                prose = re.sub(r'(?m)^\s*\|.*$', '', txt)
+                for s in re.split(r'(?<=[.!?])\s+|\n', prose):
+                    if words(s) > n:
+                        out.append(f'{name}: a sentence of {words(s)} words (max {n}): {s.strip()[:60]}...')
+                        break
+    want = re.findall(r'##\s+([^,#]+?)\s*(?:,|$)', spec['format'])
+    if want:
+        have = list(secs)
+        missing = [w for w in want if w not in have]
+        if missing:
+            out.append(f'missing sections: {", ".join("## " + w for w in missing)} (format: {spec["format"]})')
+        order = [w for w in have if w in want]
+        if not missing and order != want:
+            out.append(f'sections out of order: {" > ".join(order)} (format: {" > ".join(want)})')
+    for r in spec['required']:
+        rx = REQ_RX.get(r)
+        if rx and not re.search(rx, text if r != 'conv' else (body[0] if body else ''), re.M):
+            out.append(f'required fact missing: {r}')
+    for b in banned:
+        mm = re.search(b, flat, re.I | re.M)
+        if mm:
+            out.append(f'filler: "{mm.group(0).strip()}"')
+    return out
+
+
+def result_notes(obj):
+    """Every note string in a results.json (any depth)."""
+    if isinstance(obj, dict):
+        for k_, v in obj.items():
+            if k_ in ('note', 'notes', 'finding') and isinstance(v, str):
+                yield v
+            else:
+                yield from result_notes(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from result_notes(v)
+
+
+def cmd_prose(a):
+    """kittool.py prose --kind <kind> <file | -> [--json] | --kinds"""
+    kit = KIT_DIR
+    kinds, banned = writing_standards(kit)
+    if '--kinds' in a:
+        for k_, s in kinds.items():
+            print(f'{k_:17} {s["limits"]:32} {s["purpose"]}')
+        return 0
+    kind = a[a.index('--kind') + 1] if '--kind' in a and a.index('--kind') + 1 < len(a) else ''
+    files = [x for i, x in enumerate(a) if not x.startswith('--') and (i == 0 or a[i - 1] != '--kind')]
+    if kind not in kinds or not files:
+        print(f'kittool prose: --kind <{"|".join(kinds)}> <file | -> [--json]', file=sys.stderr)
+        return 2
+    src = files[0]
+    text = sys.stdin.read() if src == '-' else read(src)
+    if kind == 'result-note' and src.endswith('.json'):
+        found = []
+        for n in result_notes(json.loads(text)):
+            found += [f'note "{n[:50]}": {f}' for f in prose_check(kind, n, kinds[kind], banned)]
+    else:
+        found = prose_check(kind, text, kinds[kind], banned)
+    if '--json' in a:
+        print(json.dumps({'kind': kind, 'file': src, 'findings': found}))
+    else:
+        for f in found:
+            print(f'PROSE {kind} {src}: {f}')
+    return 1 if found else 0
+
 # ================================ main ================================
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -2427,5 +2596,7 @@ if __name__ == '__main__':
         sys.exit(audit_main(rest))
     if cmd == 'cost':
         sys.exit(cmd_cost(rest))
+    if cmd == 'prose':
+        sys.exit(cmd_prose(rest))
     print(__doc__)
     sys.exit(2)

@@ -3,9 +3,11 @@ name: local-env
 description: "Load when: you reproduce, debug or test a change on the local env (dev flow steps 2 and 5), or you start, stop, refresh or inspect a local env (kit.local.json localEnv). Not when: no localEnv is configured -> dev-kit automated tests only; testing deployed work on a test env -> qa-kit; phone lanes themselves -> android-swarm."
 ---
 
-**Load when** (all must hold): `kit.local.json` has `localEnv.envs`; you reproduce or test a change locally (dev-kit steps 2, 5),
+**Load when** (all must hold): `kit.local.json` has `localEnv.envs`; you reproduce or test a change locally (dev-kit steps 2,
+5),
 or you are the coordinator running / repairing an env.
-**Not when:** no `localEnv` -> `dev-kit` (automated tests only); a deployed test env -> `qa-kit`; booting phones -> `android-swarm`.
+**Not when:** no `localEnv` -> `dev-kit` (automated tests only); a deployed test env -> `qa-kit`; booting phones ->
+`android-swarm`.
 **Hands off to:** `dev-kit` step 6 (MRs + human testing doc) after every goal passed; `qa-kit` tools (`qa.ps1 api`,
 `browser.mjs`, `qa.ps1 ui`) for the checks; `android-swarm` for a phone with the local-env APK.
 **Files** (every file in this folder; read or run each only at its step):
@@ -18,14 +20,16 @@ or you are the coordinator running / repairing an env.
 
 ## Model
 - Env = ONE shared running instance of its services (`localEnv.envs.<env>`: any stack, any shape: a service is a start command
-  in a folder; ports unique across envs). Release N = target commit + agent branches merged as **layers** (`localenv/<env>`, never pushed).
+  in a folder; ports unique across envs). Release N = target commit + agent branches merged as **layers** (`localenv/<env>`,
+  never pushed).
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch; a
   failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up for N min and is never cut by a
   switch-over. Services stop after idle grace, at once under memory pressure; starts wait for RAM + CPU (the gate's floor).
 - **Migrations** (`localEnv.migrations` rules): LIGHT (reversible, small) run on the main env and are reverted exactly when the
   layer leaves; HEAVY (drops data, unbounded, no rollback, unauditable) get a sandbox (own build + DB copy, `sb<k>-<svc>`) or a
   DB snapshot first. `deploy` / `status` print the class and why; `migrations -Branch <b>` = dry run with the revert plan.
-- Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed here.
+- Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed
+  here.
 
 ## Steps
 ```powershell
@@ -41,21 +45,26 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 ```
 0. `orch.ps1 learn -Read -Skill local-env`.
 1-2. REFUSED: `dev.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
-3. Lease only the services you test, for an honest length; renew with `use` before it ends. Test data: prefix with your agent id.
+3. Lease only the services you test, for an honest length; renew with `use` before it ends. Test data: prefix with your agent
+   id.
 5. Sandboxed (deploy said SANDBOX): test the `sb<k>-*` instances, then `promote` moves the branch into the main env.
 
 ## Local testing (dev flow step 5)
-1. The testing-goals doc (`dev-kit/templates.md`) lists every goal with its check, Expected and proof. Deploy your branch (step 2).
+1. The testing-goals doc (`dev-kit/templates.md`) lists every goal with its check, Expected and proof. Deploy your branch (step
+   2).
 2. Data: reuse the env's baseline fixtures (the org's baseline file / seeded test tenant or account named in org rules or the
    brief); verify by id before creating anything; create only what is missing through the env's API (`qa.ps1 api -Target <local
    target>`), never SQL; prefix it with your agent id; note what you created in the goals doc.
-3. Run each goal with the tool its proof names: API -> `qa.ps1 api -Target <local target> -Save`; web -> `browser.mjs` (headless);
+3. Run each goal with the tool its proof names: API -> `qa.ps1 api -Target <local target> -Save`; web -> `browser.mjs`
+   (headless);
    app -> a phone with the local-env APK: `swarm.ps1 build -Local [-AppDir <your app worktree>]`, then `swarm.ps1 acquire -Agent
-   <id> -Apk local` (installs it, reverses `app.localReverse` ports to this machine; log in against the local server), `qa.ps1 ui ...`,
+   <id> -Apk local` (installs it, reverses `app.localReverse` ports to this machine; log in against the local server), `qa.ps1
+   ui ...`,
    `swarm.ps1 release` when done. Save evidence as in qa-kit "Evidence" (the human doc reuses it).
 4. A goal fails, a log shows an error, or a request returns 5xx: Debug locally, fix (dev-kit step 3), commit, deploy again,
    re-run ALL goals (a fix can break an earlier one). Max 3 rounds; then report BLOCKED with the failing goals and evidence.
-5. Every goal PASS and the logs clean: `promote`, `release`, then dev-kit step 6. Put "Local env <env> r<n>: goals passed" in the
+5. Every goal PASS and the logs clean: `promote`, `release`, then dev-kit step 6. Put "Local env <env> r<n>: goals passed" in
+   the
    MR and the report.
 
 ## Debug locally (every bug: QA run, [Bug] task, failedTesting task, user report, a failing local check)
@@ -70,9 +79,11 @@ $L = '<kit>/skills/local-env/localenv.ps1'
    test env (qa-kit tools, never production) and continue.
 
 **Rules**
-- No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install there.
+- No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install
+  there.
 - A migration layer changes the shared local DB for every layer: say so. Unsure? `migrations -Env <env> -Branch <b>` first.
-- Local DB drift (a leftover table, a missing user or grant) breaking a deploy: report it to the coordinator (`refresh` / owner),
+- Local DB drift (a leftover table, a missing user or grant) breaking a deploy: report it to the coordinator (`refresh` /
+  owner),
   never repair the shared DB by hand.
 - `up`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed;
   report it, never kill other processes.

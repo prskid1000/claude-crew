@@ -4,10 +4,12 @@ description: "Load when: you test deployed work on a test environment (qa-tester
 ---
 
 **Load when** (all must hold): the work is testing DEPLOYED changes on a test environment (never production): you are a
-`qa-tester` / `qa-verifier`, the main session checking one change, the lead preparing a test-only run, or a person testing by hand.
+`qa-tester` / `qa-verifier`, the main session checking one change, the lead preparing a test-only run, or a person testing by
+hand.
 **Not when:** several deployed tasks tested by agents -> `/test-and-close` (load `orchestrate`); before merge -> `local-env`
 (dev flow step 5); booting phones -> `android-swarm`; fixing what failed -> `dev-kit` (bugfix wave).
-**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /test-and-close), the coordinator (failedTesting
+**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /test-and-close), the coordinator
+(failedTesting
 tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Files** (every file in this folder; read or run each only at its step):
 
@@ -19,24 +21,34 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`. Check the
+0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`. Check
+   the
    SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says); `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone
-   serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and report. Phones: `swarm.ps1 acquire|release` (keep the lease through waits < 30 min).
+   serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and report. Phones: `swarm.ps1
+   acquire|release` (keep the lease through waits < 30 min).
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
-3. **Test each check:** API `qa.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]`;
+3. **Test each check:** API
+   `qa.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]`;
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
    app `qa.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
-4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`, `qa.ps1 annotate`).
+4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
+   `qa.ps1 annotate`).
 5. **Verdict per check — defects are never notes:**
-   - **PASS**: the expected behaviour was seen. **PASS_WITH_NOTE** only for (a) guide text out of date because later intended work
-     changed the flow and the intent holds, (b) a purely cosmetic difference, (c) the Expected cannot be met for a reason outside the
+   - **PASS**: the expected behaviour was seen. **PASS_WITH_NOTE** only for (a) guide text out of date because later intended
+     work
+     changed the flow and the intent holds, (b) a purely cosmetic difference, (c) the Expected cannot be met for a reason
+     outside the
      change (platform limit, imprecise wording the code shows was never intended): check the code or ask the lead, quote both
-     readings, (d) a check the guide makes conditional whose condition is false here ("not applicable: <condition>", with evidence).
-   - **FAIL**: any defect: 5xx or unexpected 4xx, crash, stuck flow, data wrong or not saved, wrong records, broken navigation, a
-     missing screen; a silent 200 with empty data; a wrong answer stated as fact (LLM checks: compare with the DB); errors in the
-     first turns after a restart. Set **`defect`**: `own` = this task's expected behaviour failed (the task goes to failedTesting
+     readings, (d) a check the guide makes conditional whose condition is false here ("not applicable: <condition>", with
+     evidence).
+   - **FAIL**: any defect: 5xx or unexpected 4xx, crash, stuck flow, data wrong or not saved, wrong records, broken navigation,
+     a
+     missing screen; a silent 200 with empty data; a wrong answer stated as fact (LLM checks: compare with the DB); errors in
+     the
+     first turns after a restart. Set **`defect`**: `own` = this task's expected behaviour failed (the task goes to
+     failedTesting
      and back to its developer); `new` = a defect outside what the task changed (a regression elsewhere, found on the way: extra
      checks `X1`, `X2`...; it becomes the ask's [Bug] task).
    - **Retests of a fix** fail on the sibling path: run the whole reported flow end to end and every screen that reads the same
@@ -49,7 +61,10 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
-6. **Leave:** write `results.json`, run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames` until exit 0; `board leave`,
+6. **Leave:** write `results.json` (each `note`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
+   "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames` until exit 0 (it prints [prose]
+   findings);
+   `board leave`,
    release seat / phone / Chrome ports (`killSession()`); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
@@ -57,9 +72,11 @@ all checks pass -> **closed** · an own check FAILED or checks not tested comple
 fallback `inProgress` + comment), the comment lists the failed / untested checks and why, NO new task · a new / unexpected
 defect -> ONE `[Bug] <ask> — new defects (n)` task under the task's original ask (appended to an open one) · PENDING -> open.
 
-**Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected change
+**Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
+change
 may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`; never
-deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; app lanes: only your serial, never `adb kill-server`.
+deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; app lanes: only your serial, never
+`adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`
@@ -78,19 +95,23 @@ deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; 
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`dev.ps1 tracker status <task> closed` + a comment with the evidence);
-  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
+  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new
+  defect
   -> `dev.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
 
 ## Lead steps (a test-only run; orchestrate T1-T4)
 - L0. Machine setup once: `kit.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
-  passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` = gdocs, git host).
+  passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
+  gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/test-and-close.js`; one
   item per testing doc: `{code, title, guideFile, lane: web|api|app, subtasks:[{id,name,mrs}], retest?, only?, dups?}`), guides
   exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, the baseline data (reuse
   it: verify by id before creating), reindex, server config; what the lead cannot unblock -> item `skip` with the reason.
-- L2. Launch `/test-and-close { runDir, kitDir }`; `launch` record (orchestrate). Lead notes are the only channel to running testers.
-- L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on disk);
+- L2. Launch `/test-and-close { runDir, kitDir }`; `launch` record (orchestrate). Lead notes are the only channel to running
+  testers.
+- L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on
+  disk);
   a fix went live and needs a retest -> `qa.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.
 
 **Learn:** `orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.

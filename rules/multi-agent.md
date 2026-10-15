@@ -4,9 +4,10 @@
 **What to load or launch:** the Router in `AGENTS.md` (first matching row wins; workflows launch autonomously; deploys need a
 person's yes). These rules hold whatever the route:
 
-- Builds and tests go through `<kit>/skills/dev-kit/dev.ps1 check` (stack auto-detected; the machine-wide memory gate queues them;
+- Builds and tests go through `<kit>/skills/dev-kit/dev.ps1 check` (stack auto-detected; the machine-wide memory gate queues
+  them;
   the guard hook blocks ungated builds). Targeted tests plus the tests of touched files (`-Touched`).
-- Parallel work happens in worktrees (`dev.ps1 wt`); commit with `dev.ps1 wt commit` (hooks really run). Never `git stash`, never
+- Parallel work happens in worktrees (`dev.ps1 wt`); commit with `dev.ps1 wt commit` (hooks run). Never `git stash`, never
   `--no-verify`, never install packages into linked `node_modules` / `.venv`.
 - Rebase onto the latest target before editing, before pushing and before merging; merge only on a green pipeline, producers
   (DB / API / library) before consumers (web / app / clients).

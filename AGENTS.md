@@ -13,8 +13,9 @@ import. Edit only here. Claude Code-only mechanics (hooks, the Workflow and Skil
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
 - Lists and fragments, one fact per line, each fact once; link (MR, task, doc, run) instead of repeating it.
 - Exact over descriptive (ids, paths, numbers, commands, error text); active voice; short common words; no invented abbreviations.
-- Budgets (a stricter skill or template limit wins): final reply <= 150 words; tracker comment <= 8 lines; MR body: template
-  sections, <= 3 lines each; lesson 1 line; code comment 1 line saying why; testing doc: steps + one Expected per check.
+- Format and limits per artefact (briefs, docs, MR, commit, tracker texts, reports, owner messages, kit files): the table
+  `skills/dev-kit/templates.md` "Writing standards", read when you write one; `kittool.py prose --kind <kind> <file>` measures
+  it. Fewer words, same facts: dense and specific, never vaguer. Code comment: 1 line saying why.
 - Cut greetings, preamble, recaps, hedges, praise, filler, closing summaries. A longer-than-needed text is a defect.
 
 ## The two flows

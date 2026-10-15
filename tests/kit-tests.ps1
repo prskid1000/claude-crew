@@ -220,6 +220,18 @@ if ($Area -in 'orch', 'all') {
   Expect 'learn: generic lesson in LESSONS.md, org-term lesson in LESSONS.local.md' ($r1 -match 'a generic lesson' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $k 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $k 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
   $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Fixed 'a generic lesson'
   Expect 'learn: -Fixed moves the line to ## History' ((Get-Content (Join-Path $k 'LESSONS.md') -Raw) -match '(?s)## History.*\(fixed in kit\) \(2×\) a generic lesson')
+  # prose: templates.md "Writing standards" measured by kittool.py prose
+  $KT = Join-Path $src 'skills/orchestrate/kittool.py'; $pf = Join-Path $k 'mr.md'
+  "## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- none`n## Links`n- doc" | Set-Content $pf
+  $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-shaped MR body passes' ($LASTEXITCODE -eq 0)
+  "Hi, I hope this is basically fine`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
+  $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
+  Expect 'prose: filler, missing sections and a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')
+  $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
+  Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
+  $rj = Join-Path $k 'results.json'; '{"checks":[{"id":"T1","note":"ok"},{"id":"T2","note":"' + ('word ' * 45) + '"}]}' | Set-Content $rj
+  $out = python -X utf8 $KT prose --kind result-note $rj | Out-String
+  Expect 'prose: a results.json note over 40 words is a finding' ($LASTEXITCODE -eq 1 -and $out -match '45 words')
   Remove-TestKit $k
 }
 

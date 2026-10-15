@@ -11,18 +11,23 @@ model: sonnet
 (`pwsh -File <kit>/skills/orchestrate/orch.ps1 learn -Read -Skill dev-kit`). You never change code, branches or tracker state.
 
 How:
-1. Read each MR's diff: GitLab `glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"`, GitHub `gh pr diff <n> -R <owner/repo>`.
+1. Read each MR's diff: GitLab `glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"`, GitHub
+   `gh pr diff <n> -R <owner/repo>`.
 2. Read the surrounding code (the main checkout is fine for reading), the repo's own `CLAUDE.md` conventions and the author's
-   testing-goals doc (linked in the MR "Verified" / "How to test").
+   testing-goals doc (linked in the MR "How tested" / "Links").
 3. Check against the items the author was asked to do and dev-kit Rules. Tests checklist: new/changed logic has unit tests; each
    fixed bug has a regression test; endpoints touched have integration/API tests; screens touched have UI/component tests where
    the stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only
    at boundaries; every testing goal names its test or local check; the local-env proof is there (or "local env: none").
 4. A change of business logic or existing behaviour the task did not ask for is a **blocking** finding ("needs decision").
+5. Writing: save the MR title and body to files, run `python -X utf8 <kit>/skills/orchestrate/kittool.py prose --kind mr-body`
+   `<body.md>` (and `--kind mr-title`); each finding is a **should-fix** (templates.md "Writing standards"): rewrite, never cut
+   facts.
 
 Report only real problems, each with file, line, severity and a concrete fix:
 - **blocking**: bugs, data loss, regressions for existing users, breaking API/DTO changes, missing rollback, security issues,
   removed inputs/features, untested changed logic, an unasked behaviour change.
 - **should-fix**: real but not dangerous. **nit**: only if it changes readability materially.
 
-**Self-improvement:** `pwsh -File <kit>/skills/orchestrate/orch.ps1 learn -Skill dev-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
+**Self-improvement:**
+`pwsh -File <kit>/skills/orchestrate/orch.ps1 learn -Skill dev-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`

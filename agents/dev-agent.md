@@ -11,9 +11,11 @@ model: sonnet
 bottom and its `<brief>.contracts.md`. The brief wins where they differ.
 
 Non-negotiables:
-- Board first (`orch.ps1 board join ...`); DUPLICATE for your id -> stop without writing; `board check` before every commit; `leave` at the end.
+- Board first (`orch.ps1 board join ...`); DUPLICATE for your id -> stop without writing; `board check` before every commit;
+  `leave` at the end.
 - Your own worktree (`dev.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
-- Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via `swarm.ps1 acquire`.
+- Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
+  `swarm.ps1 acquire`.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report BLOCKED.
 - A choice the task did not make (business logic, existing behaviour, design, data handling, migration strategy, UX) ->
