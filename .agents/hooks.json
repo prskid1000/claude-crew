@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/dev-kit/scripts/guard.ps1",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/dev-kit/dev.ps1 guard",
             "timeout": 10
           }
         ]
@@ -19,17 +19,12 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/retro-nudge.ps1",
-        "timeout": 10
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/kit.ps1 health",
+        "timeout": 15
       },
       {
         "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/kit-health.ps1",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/scripts/cleanup.ps1 -IfDue -Quiet",
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/orch.ps1 cleanup -IfDue -Quiet",
         "timeout": 600
       }
     ]

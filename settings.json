@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Edit(/.claude/.claude-runtime/**)",
+      "Edit(/.claude/.runtime/**)",
       "PowerShell(& *.claude\\skills\\*)",
       "PowerShell(& '*.claude\\skills\\*)",
       "PowerShell(python *.claude\\skills\\*)",
@@ -10,6 +10,7 @@
       "PowerShell(& '*.claude/skills/*)",
       "PowerShell(python *.claude/skills/*)",
       "PowerShell(python3 *.claude/skills/*)",
+      "PowerShell(pwsh *.claude/tests/*)",
       "Bash(pwsh *.claude/skills/*)",
       "Bash(python3 *.claude/skills/*)",
       "PowerShell(node *)",
@@ -26,8 +27,6 @@
       "PowerShell(glab auth status*)",
       "PowerShell(gh pr *)",
       "PowerShell(gh auth status*)",
-      "PowerShell(clickup task view *)",
-      "PowerShell(clickup comment list *)",
       "PowerShell(gws drive files export *)",
       "Bash(git status*)",
       "Bash(git log*)",
@@ -54,26 +53,20 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/retro-nudge.ps1"],
-            "timeout": 10
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "health"],
+            "timeout": 15
           },
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/kit-health.ps1"],
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/cleanup.ps1", "-IfDue", "-Quiet"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "cleanup", "-IfDue", "-Quiet"],
             "timeout": 600,
             "async": true
           },
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/kit-health.ps1", "-Flow", "-Fetch"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "health", "-Flow", "-Fetch"],
             "timeout": 120,
             "async": true
           }
@@ -87,7 +80,7 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/dev-kit/scripts/guard.ps1"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/dev-kit/dev.ps1", "guard"],
             "timeout": 10
           }
         ]
@@ -98,7 +91,7 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/scripts/guard-sendmessage.ps1"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "guard-sendmessage"],
             "timeout": 10
           }
         ]
