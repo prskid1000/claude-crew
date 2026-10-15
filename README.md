@@ -46,6 +46,7 @@ agent types, which load their skill first. Details and the full routing graph: [
 | `mr-reviewer` | Read-only reviewer: bugs, regressions, breaking changes, missing rollbacks, scope creep |
 | `qa-tester` | Runs one tester guide (web/API/Android) and returns verdicts with evidence |
 | `qa-verifier` | Re-tests every FAIL and audits PASS_WITH_NOTE for hidden defects |
+| `kit-auditor` | Weekly (or on request): kit setup, missing config, recovery of broken state, deep audit and fixes on a kit branch |
 
 | Workflow | What it runs |
 |---|---|
@@ -53,7 +54,7 @@ agent types, which load their skill first. Details and the full routing graph: [
 | `/test-and-close` | QA pools → note audit → independent verify → publish report + bug tasks → Learn |
 | `/kit-retro` | Parallel analysts mine signals → lesson/rule changes for approval |
 
-Skills (`dev-kit`, `orchestrate`, `qa-kit`, `android-swarm`, `tech-audit`) hold the rules and scripts behind each agent and
+Skills (`dev-kit`, `orchestrate`, `qa-kit`, `android-swarm`, `local-env`, `tech-audit`, `kit-audit`) hold the rules and scripts behind each agent and
 workflow — what each one does and its tools: [docs/skills.md](docs/skills.md).
 
 ## Setup

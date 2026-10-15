@@ -30,3 +30,6 @@
   Metro), `swarm-avd.ps1` (create all lanes from one template; reset cold/snapshots/wipe/recreate).
 - **tech-audit** — static audit of one module for bugs, performance and tech debt with strict false-positive discipline;
   fixed 23-key findings schema, validator and styled summary.
+- **kit-audit** — the `kit-auditor` agent's procedure (weekly via the SessionStart nudge, `kitAudit.everyDays`): setup and
+  missing-config check, recovery of broken kit state, a deep audit of every kit file and flow, fixes pushed on a `kit/audit-<date>`
+  branch for the lead to merge; `kit-audit.py` (setup / config / recover / scan / stamp) does the mechanical checks.

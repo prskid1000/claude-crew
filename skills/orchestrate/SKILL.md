@@ -8,7 +8,7 @@ argument-hint: "[epic / sheet / task list]"
 **Not when:** you are a `dev-agent` -> `dev-kit`; a `qa-tester` / `qa-verifier` -> `qa-kit`; one small change -> do it directly with
 `dev-kit` (R14); a manual tester guide -> `qa-kit` (R9).
 **Hands off to:** `/dev-wave` (spawns `dev-agent` + `mr-reviewer`), `/test-and-close` (spawns `qa-tester` + `qa-verifier`),
-`/kit-retro`; a one-off `mr-reviewer` (R7); `android-swarm` for the APK (step 6).
+`/kit-retro`; a one-off `mr-reviewer` (R7); one `kit-auditor` (R1b, E21); `android-swarm` for the APK (step 6).
 **Files** (every file in this folder; read or run each only at its step or event row):
 
 | File | Read / run at |
@@ -39,7 +39,7 @@ argument-hint: "[epic / sheet / task list]"
 | `scripts/kit-health.ps1` | SessionStart hook: kit git state (uncommitted, behind/ahead), pre-push gate, old runtime, kit-lint summary (E17); `-Flow -Fetch` async |
 | `scripts/kit-setup.ps1` | install / repair (hooksPath, `localOnly` excludes, runtime folders); `-Exclude` from kit-health; `-Migrate <old runtime>` (E17) |
 | `scripts/kit-cost.ps1`, `scripts/kit-cost.mjs` | K3 after a workflow or SKILL.md change (`-Steps`, `-Baseline`) |
-| `scripts/retro-nudge.ps1` | SessionStart hook: the E14 nudge |
+| `scripts/retro-nudge.ps1` | SessionStart hook: the E14 retro nudge and the E21 kit audit nudge (`kitAudit.everyDays`) |
 | `scripts/guard-sendmessage.ps1` | PreToolUse hook: blocks SendMessage to workflow agents (E10) |
 | `scripts/port-kit.py` | R2 ("Change the kit"): regenerates `.codex`/`.agents` (Codex/Antigravity agents, hooks, workflow procedure docs) from `agents/*.md`/`workflows/*.js`/`settings.json`, then deploys to the workspace root; `--check` run by kit-health.ps1 (SessionStart) |
 
@@ -92,6 +92,7 @@ agents to push and open the MR as Draft with `Not run: <gate>` (dev-kit **Gate**
 | E18 | A wave finished | workflows run `cleanup.ps1 -WorktreeIdleHours 0` themselves (merged worktrees and their local branches go at once; MRs merged later are swept when track.ps1 sees them merge); after a stopped run, run it yourself |
 | E19 | A new repo or project joins | `dev-kit/scripts/stack.ps1 -Dir <module>`; wrong commands → `.claude-stack.json` (`reference/layout.md` "Adding a new project") |
 | E20 | A deploy (or a merge into a branch that deploys) is needed | ask a person; never deploy yourself |
+| E21 | SessionStart says "kit audit due", or the owner asks to audit, recover or repair the kit, set it up or fix missing config (R1b) | no `kit-auditor` on `board.ps1 show -Run kit-audit`: spawn ONE `Agent({ subagent_type: 'kit-auditor', prompt: 'Run the kit audit (kit-audit skill). Focus: <all / setup / config / recover / audit>. Owner: <their words or "weekly audit">.' })`. Its report: merge its pushed `kit/audit-<date>` branch into the kit once no agents run (E17 rule: `git -C <kit> merge --ff-only` after a pull, or rebase it first), push, run `port-kit.py` in the live kit; relay its ASK list to the owner; proposals -> a kit change (K1-K6) once approved |
 
 ## Change the kit (HEAL and extending)
 - K1. Read `reference/extending.md` (where each kind of part goes, the patterns kit-lint enforces); `reference/layout.md` for the layout.

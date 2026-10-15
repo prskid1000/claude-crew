@@ -4,7 +4,7 @@
 claude-crew/  =  <workspace>/.claude/   (git clone; edit in place)
 ├── CLAUDE.md                     the Router + template: CLIs, tracker workflow, org specifics
 ├── settings.json                 hooks (guard, kit health, retro nudge, cleanup, kit-flow page, git fetch) + permissions
-├── agents/                       dev-agent · mr-reviewer · qa-tester · qa-verifier
+├── agents/                       dev-agent · mr-reviewer · qa-tester · qa-verifier · kit-auditor
 ├── rules/                        multi-agent.md (always) · db-migrations.md (by path) · your *.local.md org rules
 ├── workflows/                    dev-wave.js · test-and-close.js · kit-retro.js
 ├── skills/                       each SKILL.md = Load when / Not when / Hands off to + a Files index (file -> step) + steps;
@@ -13,7 +13,8 @@ claude-crew/  =  <workspace>/.claude/   (git clone; edit in place)
 │   ├── orchestrate/              SKILL.md, LESSONS.md, HISTORY.md, reference/, templates/, scripts/
 │   ├── qa-kit/                   SKILL.md, LESSONS.md, HISTORY.md, targets.example.json, reference/, templates/, scripts/{web,android,lib}
 │   ├── android-swarm/            SKILL.md, LESSONS.md, HISTORY.md, reference/, swarm.example.json, avd-template.ini, *.ps1
-│   └── tech-audit/                SKILL.md, reference/ (full guide, schema, example, project template), scripts/
+│   ├── tech-audit/                SKILL.md, reference/ (full guide, schema, example, project template), scripts/
+│   └── kit-audit/                SKILL.md, LESSONS.md, HISTORY.md, reference/audit-checklist.md, templates/, scripts/kit-audit.py
 ├── .githooks/pre-push            org-term + local-file gate (git config core.hooksPath .githooks)
 ├── docs/                         install.md · runtime.md (what is regenerable) · kit-cost.md (token budget) · configuration.md
 ├── examples/rules/                path-scoped rule examples (Java backend, Angular frontend)

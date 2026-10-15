@@ -178,7 +178,7 @@ if ($map.local) {
 }
 elseif ($prev -and $prev.folderId) {
   $map.folderId = $prev.folderId; $map.folderLink = $prev.folderLink
-  foreach ($p in $prev.files.PSObject.Properties) { $map.files[$p.Name] = $p.Value }
+  foreach ($pf in $prev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value }   # not $p: that IS $P (the --params JSON used below)
 } else {
   $meta = @{ name = "$title $Code - test evidence ($Date)"; mimeType = 'application/vnd.google-apps.folder' }
   if ($run.driveParent) { $meta.parents = @($run.driveParent) }

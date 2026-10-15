@@ -13,8 +13,8 @@ What it cleans (only kit-created things; never repos, never anything in use):
   - idle Gradle / Kotlin compile daemons (GBs each) when no gated Gradle build is running
   - shared web logins (cache/sessions) > 8 h, API tokens (cache/tokens) > 3 days, stop markers (cache/stopped) > 7 days, launch records (work/launches) > 3 days
   - loose evidence (work/evidence) > 14 days, android shots / temp xml (work/shots, cache/android-tmp) > 3 days
-  - wave reports (work/waves) > 14 days, bug briefs and markdown docs (work/briefs, work/docs) > 30 days, retro reports
-    (logs/retros) > 90 days
+  - wave reports (work/waves) > 14 days, bug briefs and markdown docs (work/briefs, work/docs) > 30 days, retro and kit audit
+    reports (logs/retros, logs/kit-audits) > 90 days
   - QA run folders > 30 days (results.json, finalize.json and report.html are kept as a record)
   - tsc incremental caches > 30 days; gate ledger entries of dead builds
   - Claude session temp dirs (<OS temp>/claude/<project>/<session>: scratchpad, task outputs) untouched > 7 days
@@ -95,6 +95,7 @@ foreach ($f in Get-ChildItem (Get-KitPath waves) -File) { if (Old $f (14 * 24)) 
 foreach ($f in Get-ChildItem (Get-KitPath launches) -File) { if (Old $f 72) { Gone $f.FullName 'launch record > 3 d' } }
 foreach ($d in 'briefs', 'docs') { foreach ($f in Get-ChildItem (Get-KitPath $d) -File) { if (Old $f (30 * 24)) { Gone $f.FullName "$d > 30 d" } } }
 foreach ($f in Get-ChildItem (Get-KitPath retros) -File) { if (Old $f (90 * 24)) { Gone $f.FullName 'retro report > 90 d' } }
+foreach ($f in Get-ChildItem (Get-KitPath kit-audits) -File) { if (Old $f (90 * 24)) { Gone $f.FullName 'kit audit report > 90 d' } }
 
 # 3. old QA runs: keep the record, drop the bulk
 foreach ($r in Get-ChildItem (Get-KitPath qa-runs) -Directory) {

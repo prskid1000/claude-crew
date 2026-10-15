@@ -12,6 +12,16 @@
     "frontend",
     "mobile-app"
   ],
+  "trackerLists": [
+    "<tracker list id whose promoted tasks mark-in-test.ps1 checks>"
+  ],
+  "productTargets": [
+    {
+      "pathRegex": "^product-a/",
+      "targetRegex": "^a-",
+      "label": "product A test env"
+    }
+  ],
   "repoAliases": {
     "api": "backend",
     "web": "frontend",
@@ -145,6 +155,10 @@
   },
   "cleanup": {
     "maxBrowserProfiles": 4
+  },
+  "kitAudit": {
+    "_readme": "everyDays: the SessionStart nudge asks for a kit-auditor run when the last kit audit is older (default 7; 0 = off).",
+    "everyDays": 7
   },
   "build": {
     "_readme": "mavenOffline: Maven runs with -o (offline) when ~/.m2/repository exists (default true); false = always online.",
