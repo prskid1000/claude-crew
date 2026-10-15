@@ -33,7 +33,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 | `scripts/add-retest.ps1` | L3, when a bug task's fix went live (retest item) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`.
+0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`. Check the SQL/MCP tools once (<sql MCP>, <local DB MCP>, <other MCP> drop often) and note their state in the run log: replica SQL then goes through the run's own SQL helper script with the SQL helper's own venv python (its path is in the org rules; system python lacks boto3); on replica lag or timeout fall back to API GETs (`/api/site-visits/{id}`, `/api/runs/{id}/stops`, `/api/mail-audits`) and re-query later; a tool being down alone is never NOT_TESTED.
 1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
    -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`. Keep the phone lease
    through any wait under ~30 min (a lead decision, a deploy, a rebuild): release shuts the emulator down and re-acquiring queues
@@ -49,7 +49,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
    PASS (UI) = one shot of the result (state change: before + after); PASS (API) = the request/response JSON; FAIL = failure shot
    **and** the failing call JSON (`saveNet`) or log excerpt + exact steps; verify = your own `_verify` files. Never a blank/loading/login
    page; open each image with Read before listing it; name each file to this standard when you save it and cite in results.json only
-   files that exist and are not 0 bytes (`finalize.ps1 -FixNames` is a safety net, not the naming step). Mark every FAIL screenshot: app
+   files that exist and are not 0 bytes (`finalize.ps1 -FixNames` is a safety net, not the naming step; it renames files and rewrites results.json on disk). A listed file that is missing: capture it or record the gap in the run log, never drop the entry silently. Mark every FAIL screenshot: app
    `ui.ps1 shotmark <name> "<text>|#<id>" ["label"]`, web `mark(page, selector)` before `shot()`, any image `scripts/annotate.ps1 -In <f> -Rect 'x,y,w,h,label'`
    (`-Copy` keeps the original and writes `<name>-marked.<ext>`). Setup evidence for no one check: `<CODE>-00-<what>` (e.g. the deploy check).
 5. **Verdict per check — defects are never notes:**
@@ -71,7 +71,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
      that reads the same stored record or rule (e.g. home step cards as well as the screen in the bug), and the screen a gate or check
      navigates to, using the same fixture (a gate fix can leave that screen's loader on the old rule, which leaves the flow stuck).
      Date/shift-rule fixes: also cross midnight and run a second shift on the same day through to End of Day.
-   - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried. "Not deployed yet" counts; "no time" never does.
+   - **NOT_TESTED**: only when truly impossible here, with the reason and what you tried; tag each with `cause` in results.json (`no-mail-sandbox` | `phone-only` | `undeployed` | `env-data` | `tool-down`). A check that mails real recipients gets a non-mailing proof (the repo query on the replica with QA data) or is asked of the owner during prep, not left NOT_TESTED. "Not deployed yet" counts; "no time" never does.
      A part of the Expected you did not exercise (a second theme not rendered, a timeout path not triggered, checked via API only because
      the UI path is missing) is its own NOT_TESTED check, never a note; an unreachable screen the feature needs is FAIL.
    - **LLM-driven checks** (an AI assistant or decider) are intermittent: after a redeploy or long idle do a warm-up turn, then run
@@ -115,7 +115,7 @@ instead; it is never a missing capability and never on its own a reason for NOT_
   role makes deep links silently redirect to home), the record/stop/order types the scenario needs such as a
   COLLECT_DROP stop), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
   result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data (APPLY, allocate,
-  resource) so testers never write to someone else's run, and server config the feature needs (e.g. an MCP URL); write
+  resource) so testers never write to someone else's run, the lane driver login's tenant, feature flags (<feature> persona, <feature> mode) and company country/timezone against the guide's tenant (the test tenant may be AE, not UK: +3h), reference data (the CustomerAgingReportGenerate stored procedure in information_schema.routines, feature_PARTIAL_DELIVERY_REASON codes, an employee-linked QA login, an INVOICED invoice; create or toggle through the API, restore at teardown), and server config the feature needs (e.g. an MCP URL); write
   each into `lead-notes.md`. Create up front what the API can create. Mark checks the lead cannot unblock as NOT_TESTED in run.json
   (item `skip` with the reason, the missing thing named) before testers start; an environment-level gate the tester cannot switch is
   NOT_TESTED with the setting named, never FAIL.
