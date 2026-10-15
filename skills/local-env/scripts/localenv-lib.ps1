@@ -4,7 +4,8 @@ Library dot-sourced by localenv.ps1 (CLI) and localenvd.ps1 (the per-env control
 Config, state, layers/builds, processes, admission, leases and demand. See localenv.ps1 for the model.
 
 State per env: Get-KitPath localenv /<env>.json, locked read-modify-write (Update-State). Fields:
-  release   { n, at, train, repos: { <repo>: { target, targetSha, layers: [ { branch, agent, sha, migrations, promoted? } ] } } }
+  release   { n, at, train, repos: { <repo>: { target, targetSha, layers: [ { branch, agent, sha, migrations, mclass?, since?, mtag?, promoted? } ] } } }
+            mclass = { class, effective: light|heavy, why[], count, manifest, ids[] } (Get-MigClass); since = release it went live in
   releases  [ last releases (summaries) ]
   services  { <svc>: { status: up|starting|down|failed|blocked, pid, port, release, artifact, startedAt, upAt, lastNeed, gb, restarts[], why } }
   leases    { <agent>: { services[], repos[], until, release, session, note, at } }
@@ -297,6 +298,93 @@ function Resolve-Ref([string]$d, [string]$b) {
   $null
 }
 function HasMigrations([string]$checkout, [string]$target, [string]$sha) { [bool](@(git -C $checkout diff --name-only "origin/$target...$sha" 2>$null) -match $script:MigPattern) }
+
+# ---------------------------------------------------------------- migration classes: LIGHT = exact revert, HEAVY = sandbox / snapshot
+# migrations.py audits the changeSets a branch adds (rules: localEnv.migrations + envs.<env>.migrations, see configuration.md).
+# LIGHT counts only with a db.rollback hook (and migrations.mode != snapshot); otherwise every migration is handled as HEAVY.
+function MigCfg([string]$e) {
+  $m = [ordered]@{ pattern = $script:MigPattern }
+  foreach ($src in @($script:LE.migrations, (Get-EnvCfg $e).migrations) | Where-Object { $_ }) { foreach ($p in $src.PSObject.Properties) { if ($p.Name -notlike '_*') { $m[$p.Name] = $p.Value } } }
+  $m
+}
+function MigMode([string]$e) { if ("$((MigCfg $e).mode)" -ne 'snapshot' -and (Get-EnvCfg $e).db.rollback) { 'classify' } else { 'snapshot' } }
+function MigRoot([string]$e) { Join-Path (Get-KitPath localenv -Create) "migrations/$e" }
+function MigCfgFile([string]$e) {
+  $t = (MigCfg $e) | ConvertTo-Json -Depth 8
+  $f = Join-Path (MigRoot $e) "config-$([BitConverter]::ToString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($t))).Replace('-', '').Substring(0, 8)).json"
+  if (-not (Test-Path $f)) { New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content $f $t -Encoding utf8 }
+  $f
+}
+# the folders of the env's services in a repo: migrations elsewhere in the repo (another product) do not touch this env
+function MigUnder([string]$e, [string]$rn) {
+  $s = @(EnvServices $e | Where-Object { $_.repo -and (Get-RepoCfg $_.repo).name -eq $rn })
+  if (-not $s.Count -or @($s | Where-Object { -not $_.dir }).Count) { return @() }
+  @($s | ForEach-Object { "$($_.dir)".Replace('\', '/').Trim('/') } | Select-Object -Unique)
+}
+function Invoke-MigPy([string]$e, [string[]]$a) {
+  $errF = LogFile $e 'migrations'
+  $out = & (Get-Python) -X utf8 (Join-Path $PSScriptRoot 'migrations.py') @a 2>> $errF
+  if ($LASTEXITCODE) { throw "migrations.py $($a[0]) failed (exit $LASTEXITCODE): $((Get-Content $errF -Tail 3) -join ' | ')" }
+  ($out -join "`n") | ConvertFrom-Json -AsHashtable
+}
+# Classify one repo's migrations of a deploy. $null = none for this env; else @{ class; effective; why[]; count; manifest; ids[] }
+function Get-MigClass([string]$e, $r, [string]$sha) {
+  try {
+    $cf = MigCfgFile $e
+    $d = Join-Path (MigRoot $e) "$($r.name)/$($sha.Substring(0, 12))-$([IO.Path]::GetFileNameWithoutExtension($cf).Substring(7))"
+    $m = Join-Path $d 'manifest.json'
+    if (-not (Test-Path $m)) {
+      $a = @('classify', '--repo', $r.cfg.checkout, '--base', "origin/$($r.target)", '--head', $sha, '--config', $cf, '--save', $d)
+      $u = MigUnder $e $r.name; if ($u.Count) { $a += @('--under', ($u -join ',')) }
+      $null = Invoke-MigPy $e $a
+    }
+    $j = Get-Content $m -Raw | ConvertFrom-Json -AsHashtable
+  } catch { return @{ class = 'heavy'; effective = 'heavy'; why = @("classification failed: $("$_".Split("`n")[0])"); count = 0; manifest = $null; ids = @() } }
+  if ($j.class -eq 'none') { return $null }
+  $eff = $j.class; $why = @($j.reasons)
+  if ($eff -eq 'light' -and (MigMode $e) -ne 'classify') { $eff = 'heavy'; $why = @('no db.rollback hook (or migrations.mode snapshot): LIGHT changeSets are handled as HEAVY') }
+  @{ class = $j.class; effective = $eff; why = $why; count = @($j.changesets).Count; manifest = $m; ids = @($j.changesets | ForEach-Object { "$($_.file)::$($_.id)" }) }
+}
+function MigText($mc) {
+  if (-not $mc) { return '' }
+  if ($mc.effective -eq 'light') { "MIGRATIONS LIGHT ($($mc.count) changeSets: no snapshot, exact revert when the layer leaves)" }
+  else { "MIGRATIONS HEAVY ($(@($mc.why)[0])$(if (@($mc.why).Count -gt 1) { " +$(@($mc.why).Count - 1) more" }))" }
+}
+function LayerLight($l) { [bool]($l.migrations -and $l.mclass -and $l.mclass.effective -eq 'light' -and $l.mclass.manifest) }
+function ReqHeavy($r, [string]$rn) { [bool]($r.migrations[$rn] -and -not ($r.mclass -and $r.mclass[$rn] -and $r.mclass[$rn].effective -eq 'light')) }
+# Plan the revert of leaving LIGHT layers' changeSets that the new release no longer has (in $wt or in a staying layer), newest
+# first. Returns @{ count; revert[]; kept[]; blocked[]; manifest; searchPath; changelog; cmd }: cmd = the db.rollback command.
+function Get-MigRevertPlan([string]$e, [string]$rn, [object[]]$leaving, [object[]]$staying, [string]$wt, [string]$tag) {
+  $out = Join-Path (MigRoot $e) "$rn/revert-$tag"
+  Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+  Get-ChildItem (Split-Path $out) -Directory -Filter 'revert-*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+  $a = @('plan', '--config', (MigCfgFile $e), '--out', $out, '--leaving', (@($leaving | ForEach-Object { $_.mclass.manifest }) -join ','))
+  $st = @($staying | Where-Object { $_.mclass.manifest }); if ($st.Count) { $a += @('--staying', (@($st | ForEach-Object { $_.mclass.manifest }) -join ',')) }
+  if ($wt) { $a += @('--repo', $wt) }
+  $p = Invoke-MigPy $e $a
+  $p.branches = @($leaving.branch); $p.tag = @($leaving | ForEach-Object { $_.mtag } | Where-Object { $_ })[0]
+  $p.vars = @{ manifest = $p.manifest; count = $p.count; searchPath = $p.searchPath; changelog = $p.changelog; tag = "$($p.tag)"; repo = $rn; repoWt = "$((EnvRepos $e)[$rn].wt)"; branch = ($p.branches -join ',') }
+  $p.cmd = if ($p.count) { Get-HookCmd $e 'rollback' $p.vars } else { $null }
+  $p
+}
+# Run a plan's db.rollback, then check with db.applied (when set) that no reverted changeSet is still listed. $null = done, else why.
+function Invoke-MigRevertPlan([string]$e, $p) {
+  if (-not $p.count) { return $null }
+  $err = Invoke-Hook $e 'rollback' $p.vars
+  if ($err) { return $err }
+  if (-not (Get-EnvCfg $e).db.applied) { return $null }
+  $err = Invoke-Hook $e 'applied' $p.vars
+  if ($err) { return "revert ran, check failed: $err" }
+  $left = @($p.revert | Where-Object { $k = "$($_.file)::$($_.id)::$($_.author)"; @($script:HookOut | Where-Object { "$_".Contains($k) }).Count })
+  if ($left.Count) { return "revert ran but db.applied still lists $(@($left | ForEach-Object { "$($_.file)::$($_.id)" }) -join ', ')" }
+  $null
+}
+function MigPlanText($p) {
+  if (-not $p) { return '' }
+  if ($p.blocked.Count) { return "revert blocked: $(@($p.blocked | ForEach-Object { "$($_.key) uses $(@($_.uses) -join ', ')" }) -join '; ')" }
+  if (-not $p.count) { return "nothing to revert ($(@($p.kept).Count) changeSets stay in the release)" }
+  "revert $($p.count) changeSets newest first ($(@($p.revert | Select-Object -First 4 | ForEach-Object { "$($_.file | Split-Path -Leaf)::$($_.id)" }) -join ', ')$(if ($p.count -gt 4) { ', ...' })): $(if ($p.cmd) { $p.cmd } else { 'no db.rollback hook' })"
+}
 # Point one repo's env branch at: origin/<target> (fetched unless -NoFetch) + $layers merged in order.
 # Returns @{ kept; dropped = @(@{ layer; why; files }) ; targetSha }. Conflicting layers are dropped, never half-merged.
 function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch) {
@@ -368,14 +456,22 @@ function Invoke-Shell([string]$cmd, [string]$log, $vars) {
 # ---------------------------------------------------------------- hooks (db snapshot / restore) and smoke checks
 # Run one env hook command (envs.<env>.db.<name>): placeholders as everywhere plus $vars ({snapshot}); env vars from the env file.
 # Returns $null on success, else the error text. Output goes to <logs>/<env>-db.log.
-function Invoke-Hook([string]$e, [string]$name, [hashtable]$vars = @{}) {
+function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $db = (Get-EnvCfg $e).db
-  if (-not $db -or -not $db.$name) { return "no db.$name hook configured" }
+  if (-not $db -or -not $db.$name) { return $null }
   $cmd = Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
   foreach ($k in $vars.Keys) { $cmd = $cmd.Replace("{$k}", "$($vars[$k])") }
+  $cmd
+}
+# $script:HookOut = the hook's output lines (db.applied is read from it)
+function Invoke-Hook([string]$e, [string]$name, [hashtable]$vars = @{}) {
+  $cmd = Get-HookCmd $e $name $vars
+  if (-not $cmd) { return "no db.$name hook configured" }
   $log = LogFile $e 'db'
   Add-Content $log "== $(Now) $name : $cmd"
+  $n0 = @(Get-Content $log).Count
   $code = Invoke-Shell $cmd $log (EnvVars $e ([pscustomobject]@{}))
+  $script:HookOut = @(Get-Content $log | Select-Object -Skip $n0)
   Event $e "db-$name" @{ code = $code; vars = $vars }
   if ($code) { return "db.$name failed (exit $code): $((Get-Content $log -Tail 8) -join ' | ')" }
   $null

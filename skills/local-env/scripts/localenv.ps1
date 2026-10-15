@@ -13,6 +13,7 @@ check. Stack-agnostic: a service is a start command in a folder (default from de
   & $L release -Env <env> -Agent <id>
   & $L promote -Env <env> -Agent <id> -Branch <b> [-Note "<passed>"]
   & $L task    -Env <env> -Task <name> -Agent <id>      # a configured one-shot command on the env's code (APK, DB reset, ...)
+  & $L migrations -Env <env> [-Branch <b> | -Dir <worktree>]   # LIGHT/HEAVY per changeSet + revert plan (dry run, no deploy)
   & $L logs    -Env <env> -Service <s> [-Tail 80];  & $L events -Env <env> [-Tail 30]
   owner / coordinator:
   & $L up      -Env <env> [-Services ..] [-Minutes 120] # hold services up (a person working in the browser)
@@ -22,7 +23,7 @@ check. Stack-agnostic: a service is a start command in a folder (default from de
 Model, lifecycle, leases, trains, sandboxes: ../SKILL.md. Calls return within -Wait min (8); requests keep going in the controller.
 #>
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'up', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'up', 'down', 'drop', 'refresh', '_exec')][string]$Action,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
@@ -105,7 +106,7 @@ function Show-Status([string]$env1) {
   }
   $o = [pscustomobject]@{
     env = $env1; release = $st.release.n; releasedAt = $st.release.at
-    repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
+    repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; mclass = $(if ($_.migrations) { if ($_.mclass) { "$($_.mclass.effective)".ToUpper() } else { 'HEAVY' } }); mcount = $_.mclass.count; mwhy = @($_.mclass.why); promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
     train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); requests = @($st.train.requests).Count } })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
     services = @($svc)
@@ -134,7 +135,7 @@ function Show-Status([string]$env1) {
     if ($x.state -in 'down', 'failed' -and $x.why) { $extra += $x.why }
     '  {0,-14} {1,-16} {2,6} {3,6} GB  {4}' -f $x.service, $x.state, $(if ($x.port) { ":$($x.port)" }), $x.gb, ($extra -join ' | ')
   }
-  foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { '  MIGRATIONS' }) } }
+  foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { "  MIGRATIONS $($l.mclass)$(if ($l.mclass -eq 'LIGHT') { " ($($l.mcount) changeSets, exact revert on leave)" } elseif (@($l.mwhy).Count) { ": $(@($l.mwhy)[0])" } else { ' (snapshot)' })" }) } }
   if ($o.sandboxes) { "  sandboxes: $($o.sandboxes -join '; ')" }
   if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] until $($_.until) (r$($_.release))$(if ($_.note) { " $($_.note)" })" }) -join '; ')" }
   if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] until $($_.until)" }) -join '; ')" }
@@ -167,13 +168,20 @@ switch ($Action) {
     $targets = if ($Repo) { @($Repo | ForEach-Object { (Get-RepoCfg $_).name }) } else { @($envRepos.Values | Where-Object { Resolve-Ref $_.cfg.checkout $Branch } | ForEach-Object name) }
     $targets = @($targets | Where-Object { $envRepos.Contains($_) })
     if (-not $targets) { throw "[$e] branch $Branch not found in any repo of this env ($($envRepos.Keys -join ', '))" }
-    $shas = @{}; $mig = @{}
+    $shas = @{}; $mig = @{}; $mcls = @{}
     foreach ($rn in $targets) {   # the commit deployed is the one at request time: later commits need a new deploy
       $sha = Resolve-Ref $envRepos[$rn].cfg.checkout $Branch; if (-not $sha) { throw "[$e] $Branch not found in $rn" }
       $shas[$rn] = $sha; $mig[$rn] = HasMigrations $envRepos[$rn].cfg.checkout $envRepos[$rn].target $sha
+      if ($mig[$rn]) { $mcls[$rn] = Get-MigClass $e $envRepos[$rn] $sha; if (-not $mcls[$rn]) { $mig[$rn] = $false; $mcls.Remove($rn) } }
     }
-    $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = $shas; migrations = $mig }
-    "[$e] deploy $Branch ($(($shas.Keys | ForEach-Object { "$_ @ $($shas[$_].Substring(0, 9))" }) -join ', ')) queued as request $rid$(if (@($mig.Values | Where-Object { $_ }).Count) { ' - it has MIGRATIONS: they change the shared local DB' })"
+    $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = $shas; migrations = $mig; mclass = $mcls }
+    "[$e] deploy $Branch ($(($shas.Keys | ForEach-Object { "$_ @ $($shas[$_].Substring(0, 9))" }) -join ', ')) queued as request $rid"
+    foreach ($rn in $mcls.Keys) {
+      $mc = $mcls[$rn]
+      "[$e]   $rn $(MigText $mc) - they change the shared local DB"
+      if ($mc.effective -eq 'light') { "[$e]   changeSets: $(@($mc.ids | Select-Object -First 6) -join ', ')$(if ($mc.count -gt 6) { ', ...' }); plan: localenv.ps1 migrations -Env $e -Branch $Branch" }
+      else { foreach ($w in @($mc.why | Select-Object -First 5)) { "[$e]   HEAVY because $w" }; "[$e]   -> $(if (SandboxCfg $e) { 'own sandbox (own DB copy)' } elseif ((Get-EnvCfg $e).db.snapshot) { 'main env, DB snapshot first' } else { 'main env, no restore point (no db.snapshot hook)' })" }
+    }
     $null = Wait-Request $rid
   }
   'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; $null = Wait-Request $rid }
@@ -270,6 +278,29 @@ switch ($Action) {
       $code = $LASTEXITCODE
     } finally { Update-State $e { param($x) $x.leases.Remove($key) } }
     if ($code) { throw "[$e] task $Task failed (exit $code)" }
+  }
+  'migrations' {
+    # dry run: the class of each changeSet and the exact revert (db.rollback command) that would run if the layer left now
+    $envRepos = EnvRepos $e; $st = Read-State $e
+    "[$e] migrations mode: $(MigMode $e)$(if ((MigMode $e) -ne 'classify') { ' (no db.rollback hook: every migration is HEAVY)' })"
+    if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path $Dir).Path rev-parse --abbrev-ref HEAD)".Trim() }
+    $items = if ($Branch) {
+      foreach ($r in $envRepos.Values) { $sha = Resolve-Ref $r.cfg.checkout $Branch; if ($sha -and (HasMigrations $r.cfg.checkout $r.target $sha)) { $mc = Get-MigClass $e $r $sha; if ($mc) { @{ rn = $r.name; layer = @{ branch = $Branch; sha = $sha; migrations = $true; mclass = $mc }; staying = @() } } } }
+    } else {
+      foreach ($rn in $st.release.repos.Keys) { $ls = @(Layers $st $rn); foreach ($l in $ls | Where-Object { $_.migrations }) { @{ rn = $rn; layer = $l; staying = @($ls | Where-Object { $_.branch -ne $l.branch }) } } }
+    }
+    if (-not @($items).Count) { "[$e] no migration layers$(if ($Branch) { " in $Branch" })"; return }
+    foreach ($it in $items) {
+      $l = $it.layer; $mc = $l.mclass
+      "== $($it.rn) $($l.branch) @ $("$($l.sha)".Substring(0, 9)): $(if ($mc) { MigText $mc } else { 'MIGRATIONS HEAVY (deployed before classification)' })"
+      if ($mc.manifest -and (Test-Path $mc.manifest)) {
+        foreach ($c in @((Get-Content $mc.manifest -Raw | ConvertFrom-Json).changesets)) { '   {0,-5} {1}::{2}{3}{4}' -f "$($c.class)".ToUpper(), $c.file, $c.id, $(if ($c.why) { "  [$($c.rule)] $($c.why)" }), $(if ($c.guarded) { '  (precondition may MARK_RAN)' }) }
+      }
+      if (LayerLight $l) {
+        $p = Get-MigRevertPlan $e $it.rn @($l) $it.staying '' "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        "   on leave: $(MigPlanText $p)"
+      } else { "   on leave: no revert (HEAVY): $(if (SandboxCfg $e) { 'its sandbox goes; ' })the main env DB keeps it unless a snapshot from before it is restored" }
+    }
   }
   'logs' { if (-not $Services) { throw 'logs needs -Service' }; $f = LogFile $e $Services[0]; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { "no log yet: $f" } }
   'events' { $f = Join-Path (Get-KitPath localenv-logs) "$e-events.jsonl"; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { 'no events yet' } }

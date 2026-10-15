@@ -3,8 +3,9 @@
 Controller of one local env; started by localenv.ps1, never by hand. Model: ../SKILL.md.
   localenvd.ps1 -Env <env>               env loop: lifecycle (stop idle / under pressure, start what is needed, restart crashes),
                                          sandbox upkeep, one train worker at a time. One per env (mutex); exits after loopExitMinutes idle.
-  localenvd.ps1 -Env <env> -Train <id>   train worker: sandbox routing, merge, gated build, culprit search, stage, lease waits,
-                                         DB snapshot, switch-over, smoke, rollback, release record.
+  localenvd.ps1 -Env <env> -Train <id>   train worker: sandbox routing (HEAVY migrations), merge, gated build, culprit search, stage,
+                                         lease waits, exact revert of leaving LIGHT migration layers, DB snapshot (HEAVY), switch-over,
+                                         smoke, rollback, release record.
 Logs: <logs>/<env>-loop.log, <env>-train.log, <env>-events.jsonl.
 #>
 param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train)
@@ -42,14 +43,14 @@ function Run-Train {
   $own = @($reqs.agent | Where-Object { $_ } | Select-Object -Unique)
   $envRepos = EnvRepos $e
   $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
-  $notes = [Collections.Generic.List[string]]::new()
+  $notes = [Collections.Generic.List[string]]::new(); $migNote = @{}
 
   # 1. sandboxes first: a migration deploy (repo with sandbox services) never reaches the main env from here
   $sandboxed = @{}
   $sbCfg = SandboxCfg $e
   if ($sbCfg) {
     foreach ($r in @($reqs | Where-Object { $_.kind -eq 'deploy' -and -not $_.noSandbox })) {
-      $rn = @($r.shas.Keys | Where-Object { $repo = $_; $r.migrations[$repo] -and @($sbCfg.services | Where-Object { (RepoOf $e (Svc $e $_)) -eq $repo }).Count }) | Select-Object -First 1
+      $rn = @($r.shas.Keys | Where-Object { $repo = $_; (ReqHeavy $r $repo) -and @($sbCfg.services | Where-Object { (RepoOf $e (Svc $e $_)) -eq $repo }).Count }) | Select-Object -First 1
       if (-not $rn) { continue }
       $sandboxed[$r.id] = $true
       $live = (Read-State $e).sandboxes
@@ -59,7 +60,7 @@ function Run-Train {
       if (-not $k) { $results[$r.id] = @{ outcome = 'refused'; message = "all sandboxes busy ($(((Read-State $e).sandboxes.Values | ForEach-Object { "$($_.branch) ($($_.agent))" }) -join ', ')): deploy again once one is promoted or dropped" }; continue }
       Phase "sandbox sb$k for $($r.branch) (migrations)"
       $res = New-Sandbox $e $k $envRepos[$rn] @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; migrations = $true; request = $r.id }
-      $results[$r.id] = if ($res.ok) { @{ outcome = 'sandbox'; message = $res.message } } else { @{ outcome = 'rejected'; message = $res.message } }
+      $results[$r.id] = if ($res.ok) { @{ outcome = 'sandbox'; message = "$(if ($r.mclass) { "$(MigText $r.mclass[$rn]): " })$($res.message)" } } else { @{ outcome = 'rejected'; message = $res.message } }
       if (-not $res.ok) { Remove-Sandbox $e "sb$k" }
     }
   }
@@ -74,7 +75,8 @@ function Run-Train {
   foreach ($r in @($reqs | Where-Object { -not $sandboxed[$_.id] })) {
     switch ($r.kind) {
       'deploy' { foreach ($rn in @($r.shas.Keys)) {
-          $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; request = $r.id }
+          $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; mclass = $(if ($r.mclass) { $r.mclass[$rn] }); request = $r.id }
+          if ($l.migrations) { $migNote[$r.id] = "$rn $(MigText $(if ($l.mclass) { $l.mclass } else { @{ effective = 'heavy'; why = @('promoted from its sandbox') } }))" }
           $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }) + @($l); if (-not $affected.Contains($rn)) { $affected.Add($rn) }; $byBranch["$rn|$($r.branch)"] = $r.id } }
       'drop' { foreach ($rn in $envRepos.Keys) { if (@($want[$rn].branch) -contains $r.branch) { $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }); if (-not $affected.Contains($rn)) { $affected.Add($rn) } } } }
       'refresh' { foreach ($rn in $envRepos.Keys) { if (-not $affected.Contains($rn)) { $affected.Add($rn) } } }
@@ -104,7 +106,7 @@ function Run-Train {
     foreach ($d in $res.dropped) {
       $rid = $byBranch["$rn|$($d.layer.branch)"]
       if ($rid -and (& $isNew $d.layer)) { $results[$rid] = @{ outcome = 'refused'; message = "$rn : $($d.why)" } }
-      else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if ($d.layer.migrations) { ' - it had migrations: the local DB keeps them' })") }
+      else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if (LayerLight $d.layer) { ' - its LIGHT migrations are reverted with this release' } elseif ($d.layer.migrations) { ' - it had HEAVY migrations: the local DB keeps them' })") }
     }
     $kept = @($res.kept); $targetSha = $res.targetSha
     # nothing to do when the result equals the live release and every artifact service of the repo has its staged copy
@@ -166,10 +168,38 @@ function Run-Train {
   $switchNames = @($switch | ForEach-Object name)
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
   if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $block @() $own }
-  # a release with new migration layers: snapshot the DB first (db.snapshot hook), so a failed start or smoke can restore it
+  # LIGHT migration layers leaving the main env (dropped, replaced, conflicting, gone): plan the exact revert of the changeSets the
+  # new release no longer has; it runs at the switch-over with the repo's services stopped. A staying layer that uses what a revert
+  # removes blocks it: then the latest snapshot from before the leaving layer is restored, else the DB keeps them (said in notes).
+  $reverts = @{}; $restores = @{}
+  foreach ($rn in @($ok)) {
+    $keepKeys = @($repoOut[$rn].layers | ForEach-Object { Key $_ })
+    foreach ($l in @($cur[$rn] | Where-Object { $_.migrations -and -not (LayerLight $_) -and (Key $_) -notin $keepKeys })) { $notes.Add("HEAVY migration layer $($l.branch) left $rn : the DB keeps its changes (no exact revert; restore a snapshot from before it to undo)") }
+    $leaving = @($cur[$rn] | Where-Object { (LayerLight $_) -and (Key $_) -notin $keepKeys })
+    if (-not $leaving.Count) { continue }
+    try { $p = Get-MigRevertPlan $e $rn $leaving @($repoOut[$rn].layers | Where-Object { $_.migrations -and $_.mclass }) $envRepos[$rn].wt $tag }
+    catch { $notes.Add("revert plan for $($leaving.branch -join ', ') in $rn failed, the DB keeps their changeSets: $("$_".Split("`n")[0])"); continue }
+    if ($p.blocked.Count) {
+      $since = [int](@($leaving | ForEach-Object { if ($_.since) { [int]$_.since } else { [int]$st.release.n } }) | Measure-Object -Minimum).Minimum
+      $sn = @($st.snapshots | Where-Object { $_ -and [int]$_.release -le $since }) | Select-Object -Last 1
+      if ($sn -and (Get-EnvCfg $e).db.restore) { $restores[$rn] = $sn.name; $notes.Add("$rn : $(MigPlanText $p) -> restoring snapshot $($sn.name) instead (the services re-apply the live layers' migrations on start)") }
+      else { $notes.Add("$rn : $(MigPlanText $p); no snapshot from before $($leaving.branch -join ', '): the DB keeps their changeSets") }
+      continue
+    }
+    if ($p.count -and -not $p.cmd) { $notes.Add("$rn : $(MigPlanText $p)"); continue }
+    if ($p.count) { $reverts[$rn] = $p; Phase "planned db revert in $rn : $($p.count) changeSets of $($leaving.branch -join ', ')" $block @($affected) }
+  }
+  # a release with new HEAVY migration layers: snapshot the DB first (db.snapshot hook), so a failed start or smoke can restore it.
+  # New LIGHT layers take no snapshot: a db.tag hook (optional) marks the DB before them, a failure reverts their changeSets.
   $snap = $null
   $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations }).Count })
-  $mig = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { $_.migrations }) })
+  $lightNew = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { LayerLight $_ }) })
+  if ($lightNew.Count) {
+    $notes.Add("LIGHT migration layers $(@($lightNew.branch) -join ', '): no snapshot; their changeSets are reverted exactly when they leave")
+    if ((Get-EnvCfg $e).db.tag) { $mt = "$e-$tag"; $err = Invoke-Hook $e 'tag' @{ tag = $mt }; if ($err) { $notes.Add("db.tag failed: $err") } else { foreach ($l in $lightNew) { $l.mtag = $mt } } }
+  }
+  $mig = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { $_.migrations -and -not (LayerLight $_) }) })
+  $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations -and -not (LayerLight $_) }).Count })
   if ($mig.Count -and (Get-EnvCfg $e).db.snapshot) {
     Phase 'db snapshot (migration layers)' $block @($affected)
     $snap = "$e-before-$tag"
@@ -181,7 +211,7 @@ function Run-Train {
   # one rollback path (failed start or smoke): a DB restore undoes every migration of this train, so every repo with migration
   # layers rolls back with it; services stop before the restore and restart on their previous release
   $prevSvc = @{}; foreach ($s in $switch) { $prevSvc[$s.name] = $st2.services[$s.name] }
-  $flag = @{ restored = $false }
+  $flag = @{ restored = $false; reverted = @() }
   $rollback = { param([string[]]$repos, $why)
     $set = [Collections.Generic.List[string]]::new(); foreach ($x in $repos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } }
     if ($snap -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) { foreach ($x in $migRepos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } } }
@@ -196,6 +226,15 @@ function Run-Train {
       foreach ($s in $svcs) { Stop-Svc $e $s 'rollback: DB restore' }
       $err = Invoke-Hook $e 'restore' @{ snapshot = $snap }; $notes.Add($(if ($err) { "db restore of $snap FAILED: $err" } else { "db restored from $snap" })); $flag.restored = $true
     }
+    # no snapshot covers them: revert the changeSets the new LIGHT layers may have applied (those the previous release has stay)
+    foreach ($rn in $set) {
+      if ($flag.restored -and $rn -in $migRepos) { continue }
+      $nl = @($newLayers[$rn] | Where-Object { LayerLight $_ }); if (-not $nl.Count) { continue }
+      foreach ($s in @($svcs | Where-Object { (RepoOf $e $_) -eq $rn })) { Stop-Svc $e $s 'rollback: db revert' }
+      try { $p = Get-MigRevertPlan $e $rn $nl @($cur[$rn] | Where-Object { $_.migrations -and $_.mclass }) '' "rb-$tag"; $err = if ($p.blocked.Count) { MigPlanText $p } else { Invoke-MigRevertPlan $e $p } } catch { $err = "$_".Split("`n")[0] }
+      $notes.Add($(if ($err) { "db revert of $(@($nl.branch) -join ', ') in $rn FAILED, the DB may keep their changeSets: $err" } else { "db revert of $(@($nl.branch) -join ', ') in $rn : $($p.count) changeSets reverted" }))
+    }
+    foreach ($rn in @($set | Where-Object { $_ -in $flag.reverted })) { $notes.Add("$rn rolled back after its leaving layers' changeSets were reverted: the previous release re-applies them when it starts") }
     foreach ($rn in $set) {
       $rs = @($svcs | Where-Object { (RepoOf $e $_) -eq $rn })
       $noCopy = @($rs | Where-Object { $_.artifact -and -not ($prevSvc[$_.name].artifact -and (Test-Path $prevSvc[$_.name].artifact)) })
@@ -212,6 +251,27 @@ function Run-Train {
         try { Start-Svc $e $s ([int]$p.release) $art } catch { $notes.Add("rollback of $($s.name) failed too: $("$_".Split("`n")[0])") }
       }
     }
+  }
+  # leaving layers' DB changes go first, with the repo's services stopped (the new release must not start on them)
+  foreach ($rn in @(@($reverts.Keys) + @($restores.Keys) | Select-Object -Unique)) {
+    if ($rn -notin $ok) { continue }
+    foreach ($s in @($switch | Where-Object { (RepoOf $e $_) -eq $rn })) { Stop-Svc $e $s 'db revert of leaving migration layers' }
+    if ($restores[$rn]) {
+      Phase "db restore $($restores[$rn]) ($rn)" $block @($affected)
+      $err = Invoke-Hook $e 'restore' @{ snapshot = $restores[$rn] }
+      if ($err) { & $rollback @($rn) "db restore of $($restores[$rn]) failed: $err"; continue }
+      $notes.Add("db restored from $($restores[$rn])"); $flag.reverted += $rn; continue
+    }
+    $p = $reverts[$rn]
+    Phase "db revert in $rn : $($p.count) changeSets of $($p.branches -join ', ')" $block @($affected)
+    $err = Invoke-MigRevertPlan $e $p
+    if ($err) {
+      & $rollback @($rn) "db revert failed: $err"
+      foreach ($q in @($reqs | Where-Object { $_.kind -eq 'drop' -and $_.branch -in $p.branches })) { $results[$q.id] = @{ outcome = 'rolled back'; message = "db revert failed, the layer stays: $err" } }
+      continue
+    }
+    $flag.reverted += $rn
+    $notes.Add("db revert in $rn : $($p.count) changeSets of $($p.branches -join ', ') reverted$(if ((Get-EnvCfg $e).db.applied) { ', verified (db.applied)' } else { ' (not verified: no db.applied hook)' })")
   }
   Phase 'switching over' $block @($affected)
   foreach ($s in $switch) {
@@ -235,13 +295,18 @@ function Record-Train {
     if ($changed.Count) {
       foreach ($rn in $changed) {
         # promotions made while the train ran (same branch + commit) are kept
-        foreach ($l in @($repoOut[$rn].layers)) { $was = @($x.release.repos[$rn].layers | Where-Object { $_ -and (Key $_) -eq (Key $l) -and $_.promoted }) | Select-Object -First 1; if ($was) { $l.promoted = $was.promoted } }
+        foreach ($l in @($repoOut[$rn].layers)) {
+          $was = @($x.release.repos[$rn].layers | Where-Object { $_ -and (Key $_) -eq (Key $l) }) | Select-Object -First 1
+          if ($was.promoted) { $l.promoted = $was.promoted }
+          $l.since = if ($was -and $was.since) { $was.since } elseif ($was) { [int]$x.release.n } else { $newN }   # first release with this commit live
+        }
         $x.release.repos[$rn] = $repoOut[$rn]
       }
       $x.release.n = $newN; $x.release.at = (Now); $x.release.train = $Train
       foreach ($sn in $artifacts.Keys) { if (-not $x.services[$sn]) { $x.services[$sn] = @{ status = 'down' } }; if ($x.services[$sn].status -ne 'up') { $x.services[$sn].artifact = $artifacts[$sn]; $x.services[$sn].release = $newN } }
       $x.releases = @(@($x.releases) + @(@{ n = $newN; at = (Now); train = $Train; changed = $changed; notes = @($notes) }) | Select-Object -Last 20)
     }
+    foreach ($id in @($migNote.Keys)) { if ($results[$id] -and $results[$id].outcome -eq 'live') { $results[$id].message = (@($results[$id].message, $migNote[$id]) | Where-Object { $_ }) -join '; ' } }
     foreach ($r in $x.requests) { if ($results.ContainsKey($r.id)) { $r.status = 'done'; $r.result = $results[$r.id]; $r.result.release = $(if ($results[$r.id].outcome -eq 'live') { $(if ($changed.Count) { $newN } else { $x.release.n }) }) } }
     $x.train = $null
   }
