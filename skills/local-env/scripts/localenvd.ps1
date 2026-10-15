@@ -1,16 +1,11 @@
 #Requires -Version 7
 <#
-The controller of one local env (started by localenv.ps1 when needed; never by hand). Two modes:
-
-  localenvd.ps1 -Env <env>               the env's loop: lifecycle (start what is needed, stop what idles past its grace or under
-                                         memory pressure, restart crashes with backoff), and starts one train worker at a time for
-                                         queued deploy / drop / refresh requests. One loop per env (a named mutex); it exits once
-                                         nothing runs and nothing is asked for localEnv.loopExitMinutes (default 10).
-  localenvd.ps1 -Env <env> -Train <id>   a train worker: takes the requests the loop gave it, merges every deployed branch on the
-                                         target, builds through the gate, finds the culprit when the build fails (the others still
-                                         go live), stages artifacts, waits for the leases it affects, switches over, rolls back a
-                                         service whose new release does not come up, and records release n+1 with a result per request.
-Log: Get-KitPath localenv-logs /<env>-loop.log and /<env>-train.log; events in /<env>-events.jsonl.
+Controller of one local env; started by localenv.ps1, never by hand. Model: ../SKILL.md.
+  localenvd.ps1 -Env <env>               env loop: lifecycle (stop idle / under pressure, start what is needed, restart crashes),
+                                         sandbox upkeep, one train worker at a time. One per env (mutex); exits after loopExitMinutes idle.
+  localenvd.ps1 -Env <env> -Train <id>   train worker: sandbox routing, merge, gated build, culprit search, stage, lease waits,
+                                         DB snapshot, switch-over, smoke, rollback, release record.
+Logs: <logs>/<env>-loop.log, <env>-train.log, <env>-events.jsonl.
 #>
 param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train)
 . (Join-Path $PSScriptRoot 'localenv-lib.ps1')
@@ -18,13 +13,15 @@ $e = $EnvName
 $ErrorActionPreference = 'Stop'
 
 # ================================================================ train worker
-function Wait-Leases([string[]]$services, [string[]]$repos) {
+# Wait until no lease covers $services / $repos. Leases of agents whose own requests ride this train are skipped (they asked for
+# the change; waiting for them would deadlock). Leases end by time (capped), by release, or when their owner dies (Prune).
+function Wait-Leases([string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
   $said = $null
   while ($true) {
     $o = @{ who = @() }
     Update-State $e { param($x)
       Prune $x
-      $o.who = @($x.leases.Keys | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
+      $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
       if ($x.train) { $x.train.waitingFor = @($o.who) }
     }
     if (-not $o.who.Count) { return }
@@ -36,16 +33,45 @@ function Phase([string]$p, [string[]]$blockServices = @(), [string[]]$blockRepos
   Update-State $e { param($x) if ($x.train) { $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
   "[$e] train $Train : $p"
 }
+function Key($l) { "$($l.branch)@$($l.sha)" }
+
 function Run-Train {
   $st = Read-State $e
   if (-not $st.train -or $st.train.id -ne $Train) { "[$e] train $Train is not the env's current train: nothing to do"; return }
   $reqs = @($st.requests | Where-Object { $_.id -in @($st.train.requests) })
+  $own = @($reqs.agent | Where-Object { $_ } | Select-Object -Unique)
   $envRepos = EnvRepos $e
-  $cur = @{}; foreach ($rn in $envRepos.Keys) { $cur[$rn] = @(Layers $st $rn) }
-  $want = @{}; foreach ($rn in $envRepos.Keys) { $want[$rn] = @($cur[$rn]) }
-  $affected = [Collections.Generic.List[string]]::new()
-  $byBranch = @{}   # "<repo>|<branch>" -> request id (whose result a layer decides)
-  foreach ($r in $reqs) {
+  $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
+  $notes = [Collections.Generic.List[string]]::new()
+
+  # 1. sandboxes first: a migration deploy (repo with sandbox services) never reaches the main env from here
+  $sandboxed = @{}
+  $sbCfg = SandboxCfg $e
+  if ($sbCfg) {
+    foreach ($r in @($reqs | Where-Object { $_.kind -eq 'deploy' -and -not $_.noSandbox })) {
+      $rn = @($r.shas.Keys | Where-Object { $repo = $_; $r.migrations[$repo] -and @($sbCfg.services | Where-Object { (RepoOf $e (Svc $e $_)) -eq $repo }).Count }) | Select-Object -First 1
+      if (-not $rn) { continue }
+      $sandboxed[$r.id] = $true
+      $live = (Read-State $e).sandboxes
+      foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Phase "replacing sandbox $key ($($r.branch))"; Remove-Sandbox $e $key }
+      $used = @((Read-State $e).sandboxes.Keys | ForEach-Object { [int]"$_".Substring(2) })
+      $k = 1..[int]$(if ($sbCfg.max) { $sbCfg.max } else { 2 }) | Where-Object { $_ -notin $used } | Select-Object -First 1
+      if (-not $k) { $results[$r.id] = @{ outcome = 'refused'; message = "all sandboxes busy ($(((Read-State $e).sandboxes.Values | ForEach-Object { "$($_.branch) ($($_.agent))" }) -join ', ')): deploy again once one is promoted or dropped" }; continue }
+      Phase "sandbox sb$k for $($r.branch) (migrations)"
+      $res = New-Sandbox $e $k $envRepos[$rn] @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; migrations = $true; request = $r.id }
+      $results[$r.id] = if ($res.ok) { @{ outcome = 'sandbox'; message = $res.message } } else { @{ outcome = 'rejected'; message = $res.message } }
+      if (-not $res.ok) { Remove-Sandbox $e "sb$k" }
+    }
+  }
+  foreach ($r in @($reqs | Where-Object { $_.kind -eq 'drop' })) {
+    $live = (Read-State $e).sandboxes
+    foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Phase "removing sandbox $key"; Remove-Sandbox $e $key; $results[$r.id].message = "sandbox $key removed" }
+  }
+
+  # 2. what the main env should run: current layers +/- this train's requests
+  $cur = @{}; $want = @{}; foreach ($rn in $envRepos.Keys) { $cur[$rn] = @(Layers $st $rn); $want[$rn] = @($cur[$rn]) }
+  $affected = [Collections.Generic.List[string]]::new(); $byBranch = @{}
+  foreach ($r in @($reqs | Where-Object { -not $sandboxed[$_.id] })) {
     switch ($r.kind) {
       'deploy' { foreach ($rn in @($r.shas.Keys)) {
           $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; request = $r.id }
@@ -54,23 +80,26 @@ function Run-Train {
       'refresh' { foreach ($rn in $envRepos.Keys) { if (-not $affected.Contains($rn)) { $affected.Add($rn) } } }
     }
   }
-  $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
-  $notes = [Collections.Generic.List[string]]::new()
-  $newN = [int]$st.release.n + 1
-  $repoOut = @{}; $artifacts = @{}; $okRepos = @()
+  $newN = [int]$st.release.n + 1; $tag = "r$newN-$Train"
+  $repoOut = @{}; $artifacts = @{}; $newLayers = @{}
+  $ok = [Collections.Generic.List[string]]::new()
+  if (-not $affected.Count) { Record-Train; return }
 
-  # 1. code: wait for task leases on the repos (they read the worktree); a live repo (a service runs from its worktree) also waits
-  #    for the leases on those services, because syncing it changes what they serve
+  # 3. code: wait for leases that read the worktrees (tasks on these repos, services running straight from them, and services
+  #    adopted from before run-from-copy that lock their build output)
   $liveSvcs = @(EnvServices $e | Where-Object { $_.repo -and -not $_.artifact -and (RepoOf $e $_) -in $affected } | ForEach-Object name)
-  $liveBlock = @(@($liveSvcs) + @(Dependents $e $liveSvcs) | Select-Object -Unique)
-  Phase 'waiting for leases (code)' $liveBlock @($affected)
-  Wait-Leases $liveBlock @($affected)
-  Phase 'merging and building' $liveBlock @($affected)
+  $adopted = @(EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -in $affected -and $st.services[$_.name].status -eq 'up' -and -not $st.services[$_.name].artifact } | ForEach-Object name)
+  $codeSvcs = @(@($liveSvcs) + $adopted | Select-Object -Unique)
+  $codeBlock = @(@($codeSvcs) + @(Dependents $e $codeSvcs) | Select-Object -Unique)
+  Phase 'waiting for leases (code)' $codeBlock @($affected)
+  Wait-Leases $codeBlock @($affected) $own
+  foreach ($n in $adopted) { "[$e] $n runs from its build output (started before run-from-copy): stopping it for the build"; Stop-Svc $e (Svc $e $n) 'rebuilt: restarts from a staged copy' }
+  Phase 'merging and building' $codeBlock @($affected)
 
   foreach ($rn in $affected) {
     $r = $envRepos[$rn]
-    $prevKey = @($cur[$rn] | ForEach-Object { "$($_.branch)@$($_.sha)" })
-    $isNew = { param($l) "$($l.branch)@$($l.sha)" -notin $prevKey }
+    $prevKeys = @($cur[$rn] | ForEach-Object { Key $_ })
+    $isNew = { param($l) (Key $l) -notin $prevKeys }
     $res = Sync-Repo $e $r @($want[$rn])
     foreach ($d in $res.dropped) {
       $rid = $byBranch["$rn|$($d.layer.branch)"]
@@ -78,8 +107,10 @@ function Run-Train {
       else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if ($d.layer.migrations) { ' - it had migrations: the local DB keeps them' })") }
     }
     $kept = @($res.kept); $targetSha = $res.targetSha
+    # nothing to do when the result equals the live release and every artifact service of the repo has its staged copy
     $live = $st.release.repos[$rn]
-    if ([int]$st.release.n -gt 0 -and $live -and $live.targetSha -eq $targetSha -and (@($kept | ForEach-Object { "$($_.branch)@$($_.sha)" }) -join '|') -eq (@($cur[$rn] | ForEach-Object { "$($_.branch)@$($_.sha)" }) -join '|')) {
+    $missing = @(EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -eq $rn -and -not ($st.services[$_.name].artifact -and (Test-Path $st.services[$_.name].artifact)) })
+    if ([int]$st.release.n -gt 0 -and $live -and $live.targetSha -eq $targetSha -and -not $missing.Count -and (@($kept | ForEach-Object { Key $_ }) -join '|') -eq ($prevKeys -join '|')) {
       "[$e] $rn unchanged (same target commit and layers): no build"
       foreach ($l in $kept) { if ($l.request -and $results[$l.request].outcome -eq 'live') { $results[$l.request].message = 'already live' } }
       continue
@@ -88,63 +119,135 @@ function Run-Train {
     if ($err) {
       # culprit search: the old layers built before, so look among the new ones (smallest failing prefix, one build per step)
       $base = @($kept | Where-Object { -not (& $isNew $_) }); $cands = @($kept | Where-Object { & $isNew $_ })
-      $try = { param($set) $null = Sync-Repo $e $r @($set) -NoFetch; $script:lastErr = Build-Repo $e $rn; -not $script:lastErr }
-      Phase "build failed in $rn : finding the culprit among $($cands.Count) new layer(s)" $liveBlock @($affected)
+      $state = @{ err = $err }
+      $try = { param($set) $null = Sync-Repo $e $r @($set) -NoFetch; $state.err = Build-Repo $e $rn; -not $state.err }
+      Phase "build failed in $rn : finding the culprit among $($cands.Count) new layer(s)" $codeBlock @($affected)
       if (-not $cands.Count -or -not (& $try $base)) {
-        foreach ($l in $cands) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : the target + the layers already live do not build either, so nothing new can go live: $($script:lastErr)" } } }
-        $notes.Add("$rn does not build on its target + current layers: kept the running release")
-        $kept = $base; $cands = @()
+        foreach ($l in $cands) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : the target + the layers already live do not build either: $($state.err)" } } }
+        $notes.Add("$rn does not build on its target + current layers: kept the running release ($($state.err))")
+        $null = Sync-Repo $e $r @($cur[$rn]) -NoFetch   # leave the worktree on the live release's code
+        continue
       }
       while ($cands.Count) {
         if (& $try (@($base) + @($cands))) { break }
-        $lo = 1; $hi = $cands.Count; $failLog = $script:lastErr
-        while ($lo -lt $hi) { $mid = [int][math]::Floor(($lo + $hi) / 2); if (& $try (@($base) + @($cands[0..($mid - 1)]))) { $lo = $mid + 1 } else { $hi = $mid; $failLog = $script:lastErr } }
+        $lo = 1; $hi = $cands.Count; $failLog = $state.err
+        while ($lo -lt $hi) { $mid = [int][math]::Floor(($lo + $hi) / 2); if (& $try (@($base) + @($cands[0..($mid - 1)]))) { $lo = $mid + 1 } else { $hi = $mid; $failLog = $state.err } }
         $bad = $cands[$lo - 1]
         if ($bad.request) { $results[$bad.request] = @{ outcome = 'rejected'; message = "$rn : the build fails with this branch (and passes without it): $failLog" } }
         "[$e] culprit in $rn : $($bad.branch) ($($bad.agent))"
-        $cands = @($cands | Where-Object { $_ -ne $bad })
+        $cands = @($cands | Where-Object { (Key $_) -ne (Key $bad) })
       }
       $kept = @($base) + @($cands)
       $null = Sync-Repo $e $r $kept -NoFetch
       $err = Build-Repo $e $rn
       if ($err) { $notes.Add("$rn still does not build after removing culprits: kept the running release ($err)"); foreach ($l in $kept | Where-Object { & $isNew $_ }) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : $err" } } }; continue }
     }
-    $artifacts += (Stage-Artifacts $e $rn $newN)
+    $newLayers[$rn] = @($kept | Where-Object { & $isNew $_ })
+    $artifacts += (Stage-Artifacts $e $rn $tag)
     $repoOut[$rn] = @{ target = $r.target; targetSha = $targetSha; layers = @($kept) }
-    $okRepos += $rn
+    $ok.Add($rn)
+  }
+  # a request is all or nothing: refused/rejected in one repo -> taken out of every other repo of this train too
+  $failed = @($results.Keys | Where-Object { $results[$_].outcome -ne 'live' })
+  foreach ($rn in @($ok)) {
+    if (-not @($repoOut[$rn].layers | Where-Object { $_.request -in $failed }).Count) { continue }
+    $keep = @($repoOut[$rn].layers | Where-Object { $_.request -notin $failed })
+    "[$e] $rn : taking out layers whose request failed in another repo"
+    $null = Sync-Repo $e $envRepos[$rn] $keep -NoFetch
+    $err = Build-Repo $e $rn
+    if ($err) { $null = $ok.Remove($rn); $repoOut.Remove($rn); foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }; $notes.Add("$rn : rebuild without the failed requests failed, kept the running release ($err)"); continue }
+    $repoOut[$rn].layers = $keep; $newLayers[$rn] = @($newLayers[$rn] | Where-Object { $_.request -notin $failed })
+    foreach ($kv in (Stage-Artifacts $e $rn $tag).GetEnumerator()) { $artifacts[$kv.Key] = $kv.Value }
   }
 
-  # 2. switch over: restart the running services of the repos that changed (hot ones reload by themselves)
-  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $okRepos -and (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not ($_.hot -and -not $_.artifact) })
+  # 4. switch over (fresh state: services the loop started meanwhile are included, ones stopped meanwhile are not)
+  $st2 = Read-State $e
+  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and (Managed $_) -and $st2.services[$_.name].status -eq 'up' -and -not ($_.hot -and -not $_.artifact) })
   $switchNames = @($switch | ForEach-Object name)
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
-  if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @(); Wait-Leases $block @() }
-  Phase 'switching over' $block @()
-  foreach ($s in $switch) {
-    $prev = (Read-State $e).services[$s.name]
-    try { Start-Svc $e $s $newN $artifacts[$s.name] }
-    catch {
-      $why = "$_".Split("`n")[0]
-      "[$e] $($s.name) failed on release $newN : rolling back"
-      $rn = RepoOf $e $s
-      foreach ($l in @($repoOut[$rn].layers | Where-Object { "$($_.branch)@$($_.sha)" -notin @($cur[$rn] | ForEach-Object { "$($_.branch)@$($_.sha)" }) })) { if ($l.request) { $results[$l.request] = @{ outcome = 'rolled back'; message = "$($s.name) did not come up with it: $why" } } }
-      $repoOut.Remove($rn); $okRepos = @($okRepos | Where-Object { $_ -ne $rn })
-      if ($s.artifact -and $prev.artifact -and (Test-Path $prev.artifact)) { try { Start-Svc $e $s ([int]$prev.release) $prev.artifact } catch { $notes.Add("rollback of $($s.name) failed too: $_") } }
-      else { $null = Sync-Repo $e $envRepos[$rn] @($cur[$rn]) -NoFetch; $null = Build-Repo $e $rn; try { Start-Svc $e $s ([int]$prev.release) $null } catch { $notes.Add("rollback of $($s.name) failed too: $_") } }
+  if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $block @() $own }
+  # a release with new migration layers: snapshot the DB first (db.snapshot hook), so a failed start or smoke can restore it
+  $snap = $null
+  $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations }).Count })
+  $mig = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { $_.migrations }) })
+  if ($mig.Count -and (Get-EnvCfg $e).db.snapshot) {
+    Phase 'db snapshot (migration layers)' $block @($affected)
+    $snap = "$e-before-$tag"
+    $err = Invoke-Hook $e 'snapshot' @{ snapshot = $snap }
+    if ($err) { $notes.Add("db snapshot failed, release goes on without a restore point: $err"); $snap = $null }
+    else { Update-State $e { param($x) $x.snapshots = @(@($x.snapshots) + @(@{ name = $snap; at = (Now); release = $newN; layers = @($mig.branch) }) | Where-Object { $_ } | Select-Object -Last 10) } }
+  } elseif ($mig.Count) { $notes.Add("migration layers ($(@($mig.branch) -join ', ')) change the shared DB: no db.snapshot hook, no restore point") }
+
+  # one rollback path (failed start or smoke): a DB restore undoes every migration of this train, so every repo with migration
+  # layers rolls back with it; services stop before the restore and restart on their previous release
+  $prevSvc = @{}; foreach ($s in $switch) { $prevSvc[$s.name] = $st2.services[$s.name] }
+  $flag = @{ restored = $false }
+  $rollback = { param([string[]]$repos, $why)
+    $set = [Collections.Generic.List[string]]::new(); foreach ($x in $repos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } }
+    if ($snap -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) { foreach ($x in $migRepos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } } }
+    foreach ($rn in $set) {
+      "[$e] rolling back $rn : $why"
+      foreach ($l in @($newLayers[$rn])) { if ($l.request) { $results[$l.request] = @{ outcome = 'rolled back'; message = $why } } }
+      $repoOut.Remove($rn); $null = $ok.Remove($rn)
+      foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }
+    }
+    $svcs = @($switch | Where-Object { (RepoOf $e $_) -in $set })
+    if ($snap -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) {
+      foreach ($s in $svcs) { Stop-Svc $e $s 'rollback: DB restore' }
+      $err = Invoke-Hook $e 'restore' @{ snapshot = $snap }; $notes.Add($(if ($err) { "db restore of $snap FAILED: $err" } else { "db restored from $snap" })); $flag.restored = $true
+    }
+    foreach ($rn in $set) {
+      $rs = @($svcs | Where-Object { (RepoOf $e $_) -eq $rn })
+      $noCopy = @($rs | Where-Object { $_.artifact -and -not ($prevSvc[$_.name].artifact -and (Test-Path $prevSvc[$_.name].artifact)) })
+      $prevArt = @{}
+      if (@($rs | Where-Object { -not $_.artifact }).Count -or $envRepos[$rn].live -or $noCopy.Count) {
+        $null = Sync-Repo $e $envRepos[$rn] @($cur[$rn]) -NoFetch
+        $berr = Build-Repo $e $rn
+        if ($berr) { $notes.Add("rollback build of $rn failed: $berr") } elseif ($noCopy.Count) { $prevArt = Stage-Artifacts $e $rn "r$($st.release.n)-rb$Train" }
+      }
+      foreach ($s in $rs) {
+        $p = $prevSvc[$s.name]
+        $art = if ($prevArt[$s.name]) { $prevArt[$s.name] } elseif ($s.artifact -and $p.artifact -and (Test-Path $p.artifact)) { $p.artifact } else { $null }
+        if ($s.artifact -and -not $art) { $notes.Add("rollback of $($s.name): no build of the previous release, left stopped"); continue }
+        try { Start-Svc $e $s ([int]$p.release) $art } catch { $notes.Add("rollback of $($s.name) failed too: $("$_".Split("`n")[0])") }
+      }
     }
   }
+  Phase 'switching over' $block @($affected)
+  foreach ($s in $switch) {
+    $rn = RepoOf $e $s
+    if ($rn -notin $ok) { continue }
+    try { Start-Svc $e $s $newN $artifacts[$s.name] }
+    catch { & $rollback @($rn) "$($s.name) did not come up with it: $("$_".Split("`n")[0])" }
+  }
+  if ($switch.Count -and $ok.Count -and (Get-EnvCfg $e).smoke) {
+    Phase 'smoke checks' $block @($affected)
+    $sf = Test-Smoke $e
+    if ($sf) { & $rollback @($ok) "smoke check failed: $sf" }
+  }
+  Record-Train
+}
 
-  # 3. record the release and every request's result
+# Record the release and every request's result; clears the train. Uses Run-Train's variables (dynamic scope).
+function Record-Train {
   $changed = @($repoOut.Keys)
   Update-State $e { param($x)
     if ($changed.Count) {
-      foreach ($rn in $changed) { $x.release.repos[$rn] = $repoOut[$rn] }
+      foreach ($rn in $changed) {
+        # promotions made while the train ran (same branch + commit) are kept
+        foreach ($l in @($repoOut[$rn].layers)) { $was = @($x.release.repos[$rn].layers | Where-Object { $_ -and (Key $_) -eq (Key $l) -and $_.promoted }) | Select-Object -First 1; if ($was) { $l.promoted = $was.promoted } }
+        $x.release.repos[$rn] = $repoOut[$rn]
+      }
       $x.release.n = $newN; $x.release.at = (Now); $x.release.train = $Train
-      foreach ($sn in $artifacts.Keys) { if (-not $x.services[$sn]) { $x.services[$sn] = @{ status = 'down' } }; if ($x.services[$sn].status -ne 'up' -or $x.services[$sn].release -ne $newN) { if ($x.services[$sn].status -ne 'up') { $x.services[$sn].artifact = $artifacts[$sn]; $x.services[$sn].release = $newN } } }
+      foreach ($sn in $artifacts.Keys) { if (-not $x.services[$sn]) { $x.services[$sn] = @{ status = 'down' } }; if ($x.services[$sn].status -ne 'up') { $x.services[$sn].artifact = $artifacts[$sn]; $x.services[$sn].release = $newN } }
       $x.releases = @(@($x.releases) + @(@{ n = $newN; at = (Now); train = $Train; changed = $changed; notes = @($notes) }) | Select-Object -Last 20)
     }
     foreach ($r in $x.requests) { if ($results.ContainsKey($r.id)) { $r.status = 'done'; $r.result = $results[$r.id]; $r.result.release = $(if ($results[$r.id].outcome -eq 'live') { $(if ($changed.Count) { $newN } else { $x.release.n }) }) } }
     $x.train = $null
+  }
+  foreach ($r in @($reqs | Where-Object { $_.noSandbox -and $results[$_.id].outcome -eq 'live' })) {
+    $live = (Read-State $e).sandboxes
+    foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Remove-Sandbox $e $key; $notes.Add("sandbox $key removed: $($r.branch) is live in the main env") }
   }
   Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes) }
   $notes | ForEach-Object { "[$e] $_" }
@@ -152,17 +255,21 @@ function Run-Train {
 }
 
 if ($Train) {
+  # the loop writes the train record before it starts this worker; wait briefly for it
+  for ($i = 0; $i -lt 20 -and -not ((Read-State $e).train.id -eq $Train); $i++) { Start-Sleep -Milliseconds 250 }
   try { Run-Train *>&1 | Tee-Object -FilePath (LogFile $e 'train') -Append }
   catch {
-    "[$e] train $Train crashed: $_ $($_.ScriptStackTrace)" | Add-Content (LogFile $e 'train')
-    Update-State $e { param($x) foreach ($r in $x.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($x.train.requests)) { $r.status = 'done'; $r.result = @{ outcome = 'error'; message = "train crashed: $_" } } }; $x.train = $null }
+    $why = "$_"; "[$e] train $Train crashed: $why $($_.ScriptStackTrace)" | Add-Content (LogFile $e 'train')
+    Update-State $e { param($x) foreach ($r in $x.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($x.train.requests)) { $r.status = 'done'; $r.result = @{ outcome = 'error'; message = "train crashed: $why" } } }; $x.train = $null }
   }
   exit
 }
 
 # ================================================================ the env loop
 $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { "Global\kit-localenv-loop-$e" } else { "kit-localenv-loop-$e" }))
-try { if (-not $mx.WaitOne(0)) { exit } } catch [Threading.AbandonedMutexException] { }
+$owned = $false
+try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
+if (-not $owned) { exit }
 $log = LogFile $e 'loop'
 function Say([string]$m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $log }
 Say "loop started (pid $PID)"
@@ -173,14 +280,13 @@ try {
     Update-State $e { param($x) Prune $x; $x.loop = @{ pid = $PID; beat = (Now) } }
     $st = Read-State $e
 
-    # ---- trains: one worker at a time takes every queued request (a batch)
+    # ---- trains: one worker at a time takes every queued request (a batch). The record comes first, then the process.
     $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
     if (-not $st.train -and $queued.Count) {
-      $tid = [guid]::NewGuid().ToString('n').Substring(0, 6)
-      $pwsh = (Get-Process -Id $PID).Path
-      $wp = Start-Process -FilePath $pwsh -ArgumentList "-NoProfile -NonInteractive -File `"$PSCommandPath`" -Env $e -Train $tid" -WindowStyle Hidden -PassThru
-      $ids = @($queued.id)
-      Update-State $e { param($x) $x.train = @{ id = $tid; pid = $wp.Id; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
+      $tid = [guid]::NewGuid().ToString('n').Substring(0, 6); $ids = @($queued.id)
+      Update-State $e { param($x) $x.train = @{ id = $tid; pid = $null; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
+      $wp = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList "-NoProfile -NonInteractive -File `"$PSCommandPath`" -Env $e -Train $tid" -WindowStyle Hidden -PassThru
+      Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $x.train.pid = $wp.Id } }
       Say "train $tid started for $($ids.Count) request(s): $(($queued | ForEach-Object { "$($_.kind) $($_.branch)" }) -join '; ')"
       $st = Read-State $e
     }
@@ -195,33 +301,10 @@ try {
     foreach ($a in $st.holds.Keys) { & $addNeed @($st.holds[$a].services) "hold:$a" }
     foreach ($n in $clientNeed.Keys) { & $addNeed @($n) 'clients' }
     $block = @($st.train.blockServices)
-    $needsBuild = $false
     $needNames = @($need.Keys)
-    Update-State $e { param($z) foreach ($n in @($z.services.Keys)) { if ($n -notin $needNames -and $z.services[$n].need) { $z.services[$n].need = @() } } }   # reasons that ended
+    Update-State $e { param($z) foreach ($n in @($z.services.Keys)) { if ($z.services[$n].need -and $n -notin $needNames) { $z.services[$n].need = @() } } }   # reasons that ended
 
-    # ---- lifecycle: start what is needed (dependencies first), restart crashes with backoff
-    foreach ($s in EnvServices $e | Where-Object { Managed $_ }) {
-      $x = $st.services[$s.name]
-      if (-not $need[$s.name]) { continue }
-      Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{ status = 'down' } }; $z.services[$s.name].lastNeed = (Now); $z.services[$s.name].need = @($need[$s.name]) }
-      if (($s.name -in $block) -or ($x.status -eq 'starting' -and (Alive $x.pid))) { continue }
-      if (Healthy $e $s) { if ($x.status -ne 'up') { Update-State $e { param($z) $z.services[$s.name].status = 'up' } }; continue }
-      if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # its dependencies come up first
-      $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
-      if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries in 30 min, then it stays failed until a deploy or `up`
-      if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
-      Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
-      try { Start-Svc $e $s ([int]$st.release.n) $x.artifact *>&1 | ForEach-Object { Say "$_" } } catch { Say "start of $($s.name) failed: $("$_".Split("`n")[0])" }
-      $st = Read-State $e
-    }
-    # nothing built yet (first use, or an artifact missing): queue a refresh, which builds release 1 / re-stages artifacts
-    if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -ne 'done' }).Count) {
-      $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
-      Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'refresh'; agent = 'controller'; at = (Now); status = 'queued' }) }
-      Say 'queued a refresh: a needed service has no build yet'
-    }
-
-    # ---- stop what idles past its grace (dependents first), or anything idle at once under memory pressure
+    # ---- stop first (frees RAM for what must start): idle past its grace (dependents first), or idle at once under pressure
     $pressure = Pressure
     $running = @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block })
     $idle = @($running | Where-Object {
@@ -234,11 +317,57 @@ try {
       $s = $idle[0]   # one per tick, biggest first
       $why = if ($pressure) { "idle, stopped under memory pressure ($pressure)" } else { "idle for $(GraceMin $e $s) min" }
       Say "stopping $($s.name): $why"; Stop-Svc $e $s $why
+      $st = Read-State $e
+    }
+
+    # ---- start what is needed (dependencies first), restart crashes with backoff
+    $needsBuild = $false
+    foreach ($s in EnvServices $e | Where-Object { Managed $_ }) {
+      $x = $st.services[$s.name]
+      if (-not $need[$s.name]) { continue }
+      Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{ status = 'down' } }; $z.services[$s.name].lastNeed = (Now); $z.services[$s.name].need = @($need[$s.name]) }
+      if ($s.name -in $block) { continue }
+      if (Healthy $e $s) { if ($x.status -ne 'up') { Update-State $e { param($z) $z.services[$s.name].status = 'up' } }; continue }
+      if ($x.status -eq 'starting' -and (Owned $x) -and $x.startedAt -and ((Get-Date) - [datetime]$x.startedAt).TotalMinutes -lt [double]$(if ($s.startMinutes) { $s.startMinutes } else { 10 })) { continue }
+      if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # its dependencies come up first
+      $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
+      if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries in 30 min, then failed until a deploy or `up`
+      if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
+      Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
+      try { Start-Svc $e $s ([int]$st.release.n) $x.artifact *>&1 | ForEach-Object { Say "$_" } } catch { Say "start of $($s.name) failed: $("$_".Split("`n")[0])" }
+      $st = Read-State $e
+    }
+    # nothing built yet (first use, or an artifact missing): queue one refresh, which builds and stages
+    if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -ne 'done' }).Count) {
+      $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
+      Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'refresh'; agent = 'controller'; at = (Now); status = 'queued' }) }
+      Say 'queued a refresh: a needed service has no build yet'
+    }
+
+    # ---- sandboxes: a lease on an instance keeps it; idle past sandbox.idleHours (4) -> drop (instances, DB copy, worktree go)
+    if ($st.sandboxes.Count) {
+      $sbIdleH = [double]$(if ((SandboxCfg $e).idleHours) { (SandboxCfg $e).idleHours } else { 4 })
+      foreach ($key in @($st.sandboxes.Keys)) {
+        $sbx = $st.sandboxes[$key]
+        $inUse = @($st.leases.Values | Where-Object { @($_.services | Where-Object { $_ -like "$key-*" }).Count }).Count
+        if ($inUse) { Update-State $e { param($z) if ($z.sandboxes[$key]) { $z.sandboxes[$key].lastUse = (Now) } }; continue }
+        if (((Get-Date) - [datetime]$sbx.lastUse).TotalHours -ge $sbIdleH -and -not @($st.requests | Where-Object { $_.status -ne 'done' -and $_.branch -eq $sbx.branch }).Count) {
+          $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
+          Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'drop'; branch = $sbx.branch; agent = 'controller'; at = (Now); status = 'queued' }) }
+          Say "sandbox $key ($($sbx.branch)) idle $sbIdleH h: drop queued"
+        }
+      }
+    }
+    # DB copies no sandbox owns (left by a crash): sandbox.db.sweep with {keep} = this env's live sandboxes, every ~30 min
+    if ((SandboxCfg $e).db.sweep -and $tick % 600 -eq 2) {
+      $keep = @($st.sandboxes.Keys) -join ','
+      $cmd = (Expand-Placeholders ([string](SandboxCfg $e).db.sweep) $e ([pscustomobject]@{}) $KitConf.Workspace '').Replace('{keep}', $(if ($keep) { $keep } else { 'none' }))
+      $null = Invoke-Shell $cmd (LogFile $e 'db') (EnvVars $e ([pscustomobject]@{}))
     }
 
     # ---- exit once nothing runs and nothing is asked for a while
     $st = Read-State $e
-    $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or
+    $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or $st.sandboxes.Count -or
       @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
     if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { Say 'idle: loop exits'; break }
     Start-Sleep 3

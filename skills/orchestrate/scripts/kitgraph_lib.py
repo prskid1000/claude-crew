@@ -666,7 +666,9 @@ def lint(k, g=None, org_terms=None):
                 if not ('.local.' in f or any(f == p or f.startswith(p + '/') for p in k.local_only))]
         scan += [(f, read(os.path.join(k.dir, f))) for f in k.repo_files if f.split('/')[0] != 'LICENSE']
         # whole words; a term with a capital letter matches case-sensitively (e.g. a folder name vs the English word)
-        pats = [(t.strip(), re.compile(r'(?<![\w-])' + re.escape(t.strip()) + r'(?![\w-])', 0 if t.strip() != t.strip().lower() else re.I))
+        # a term ending in * is a prefix (task-id stems, codes that continue with more characters)
+        pats = [(t.strip(), re.compile(r'(?<![\w-])' + re.escape(t.strip().rstrip('*')) + ('' if t.strip().endswith('*') else r'(?![\w-])'),
+                                      0 if t.strip() != t.strip().lower() else re.I))
                 for t in org_terms if t.strip()]
         for where, text in scan:
             for t, rx in pats:

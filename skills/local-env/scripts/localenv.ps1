@@ -19,15 +19,7 @@ check. Stack-agnostic: a service is a start command in a folder (default from de
   & $L down    -Env <env> [-Services ..]                # stop now: drops holds and leases on them, ignores browser traffic 30 min
   & $L drop    -Env <env> -Branch <b>;  & $L refresh -Env <env>   # remove a layer / rebuild everything on the latest targets
 
-Model (details in SKILL.md): each env's code is a numbered RELEASE (target commit + ordered agent branches merged on top as
-layers, in worktrees localenv-<env>-<repo> on local branch localenv/<env>, never pushed). A controller (localenvd.ps1, started
-here on demand, one loop per env) does all the work: requests queue and run as TRAINS (every request queued when a train starts,
-one merge + one gated build + one switch-over; a failing build finds its culprit and the others still go live); services with an
-"artifact" run from a staged copy, so builds happen while they serve and a rollback is a restart; LEASES (declared services and
-minutes, capped by maxLeaseMinutes, ended at once when the agent's board session dies) are never cut by a deploy - a ready
-switch-over waits for them and blocks new ones on the same services; services run only while needed (leases, holds, real
-client traffic, dependencies) and stop after an adaptive idle grace, or at once under memory pressure.
-Every call returns within -Wait minutes (default 8: under the agent tool timeout); a request keeps going in the controller.
+Model, lifecycle, leases, trains, sandboxes: ../SKILL.md. Calls return within -Wait min (8); requests keep going in the controller.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'up', 'down', 'drop', 'refresh', '_exec')][string]$Action,
@@ -43,7 +35,7 @@ if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see skills/dev-kit/reference/configuration.md).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status') { if ((EnvNames).Count -eq 1) { $EnvName = (EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
 
 function Ensure-Loop {
@@ -106,7 +98,7 @@ function Show-Status([string]$env1) {
     $listens = if ($h -and $KitIsWindows -and $ids) { @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -in $ids } | ForEach-Object LocalPort | Sort-Object -Unique) } else { @() }
     $idleMin = if ($h -and $x.lastNeed) { [int]((Get-Date) - [datetime]$x.lastNeed).TotalMinutes } else { $null }
     [pscustomobject]@{
-      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif ($x.pid -and (Alive $x.pid)) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } else { 'down' })
+      service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } else { 'down' })
       port = $s.port; gb = $(if ($ids) { TreeGB $ids $all } else { 0 }); release = $x.release; need = @($x.need | Where-Object { $_ }); idleMin = $idleMin; graceMin = $(if (Managed $s) { GraceMin $env1 $s }); listens = $listens
       why = $x.why; hot = [bool]$s.hot
     }
@@ -120,6 +112,7 @@ function Show-Status([string]$env1) {
     leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = ([datetime]$l.until).ToString('HH:mm'); release = $l.release; note = $l.note } })
     holds = @($st.holds.Keys | ForEach-Object { [pscustomobject]@{ who = $_; services = @($st.holds[$_].services); until = ([datetime]$st.holds[$_].until).ToString('HH:mm') } })
     recent = @($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
+    sandboxes = @($st.sandboxes.Keys | Sort-Object | ForEach-Object { $x = $st.sandboxes[$_]; "$_ $($x.branch) ($($x.agent)) $(@($x.services | ForEach-Object { $s = Svc $env1 $_; "$_ :$($s.port) $(if (Healthy $env1 $s) { 'up' } else { 'down' })" }) -join ', ')$(if ($x.promoted) { ' PROMOTED' })" })
     loop = $(if ($st.loop -and (Alive $st.loop.pid)) { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
   }
   if ($Agent -and $Agent -ne 'main' -and $st.leases[$Agent]) {
@@ -142,6 +135,7 @@ function Show-Status([string]$env1) {
     '  {0,-14} {1,-16} {2,6} {3,6} GB  {4}' -f $x.service, $x.state, $(if ($x.port) { ":$($x.port)" }), $x.gb, ($extra -join ' | ')
   }
   foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { '  MIGRATIONS' }) } }
+  if ($o.sandboxes) { "  sandboxes: $($o.sandboxes -join '; ')" }
   if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] until $($_.until) (r$($_.release))$(if ($_.note) { " $($_.note)" })" }) -join '; ')" }
   if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] until $($_.until)" }) -join '; ')" }
   if ($o.recent) { "  recent: $($o.recent -join '; ')" }
@@ -195,9 +189,12 @@ switch ($Action) {
       Update-State $e { param($x)
         Prune $x
         $blocked = @($x.train.blockServices | Where-Object { $_ -in $names })
-        if (-not $blocked.Count -or $x.leases[$Agent]) {   # a renewal is never blocked
+        $old = $x.leases[$Agent]
+        if ($old -and $blocked.Count) {   # a train waits on this lease: the lease stays, but is not extended (no starvation)
+          $o.ok = $true; $o.rel = $old.release; $o.until = [datetime]$old.until; $o.capped = $true
+        } elseif (-not $blocked.Count) {
           $x.leases[$Agent] = @{ services = $names; repos = @(); until = (Get-Date).AddMinutes($min).ToString('o'); release = [int]$x.release.n; session = $Session; note = $Note; at = (Now) }
-          $o.ok = $true; $o.rel = $x.release.n
+          $o.ok = $true; $o.rel = $x.release.n; $o.until = (Get-Date).AddMinutes($min)
         } else { $o.why = "train $($x.train.id) is switching $($blocked -join ', ') ($($x.train.phase))" }
       }
       if ($o.ok) { break }
@@ -207,7 +204,7 @@ switch ($Action) {
       Start-Sleep 3
     }
     Event $e 'lease' @{ agent = $Agent; services = $names; minutes = $min }
-    "[$e] lease for $Agent on $($names -join ', ') until $((Get-Date).AddMinutes($min).ToString('HH:mm')) (release $($o.rel)). Renew: use again; end: release."
+    "[$e] lease for $Agent on $($names -join ', ') until $($o.until.ToString('HH:mm')) (release $($o.rel)).$(if ($o.capped) { ' Not extended: a train waits for it - release when done.' } else { ' Renew: use again; end: release.' })"
     Ensure-Loop
     if (Wait-Up $names) { Show-Status $e }
   }
@@ -233,6 +230,16 @@ switch ($Action) {
   }
   'promote' {
     if (-not $Branch) { throw 'promote needs -Branch' }
+    $sbs = (Read-State $e).sandboxes; $key = @($sbs.Keys | Where-Object { $sbs[$_].branch -eq $Branch }) | Select-Object -First 1
+    if ($key) {
+      # promoted in its sandbox: deploy the same commit into the main env (migrations: snapshot first); the sandbox goes once live
+      $sbx = $sbs[$key]
+      Update-State $e { param($x) $x.sandboxes[$key].promoted = @{ by = $Agent; at = (Now); note = $Note } }
+      $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = @{ $sbx.repo = $sbx.sha }; migrations = @{ $sbx.repo = $true }; noSandbox = $true }
+      "[$e] $Branch promoted in sandbox $key; deploying it into the main env as request $rid (migrations: the shared DB changes)"
+      $null = Wait-Request $rid
+      return
+    }
     $o = @{ hit = @() }
     Update-State $e { param($x) foreach ($rn in @($x.release.repos.Keys)) { foreach ($l in @($x.release.repos[$rn].layers | Where-Object { $_ })) { if ($l.branch -eq $Branch) { $l.promoted = @{ by = $Agent; at = (Now); release = $x.release.n; sha = $l.sha; note = $Note }; $o.hit += $rn } } } }
     if (-not $o.hit) { throw "[$e] $Branch is not live here: deploy it first, test, then promote" }
@@ -246,7 +253,7 @@ switch ($Action) {
     # a code lease on the repo: no train changes its worktree while the task reads it
     $until = (Get-Date).AddMinutes($Wait); $o = @{}
     while ($true) {
-      Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); until = (Get-Date).AddMinutes($MaxLeaseMin).ToString('o'); release = [int]$x.release.n; note = "task $Task"; at = (Now) }; $o.ok = $true } }
+      Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); until = (Get-Date).AddMinutes($MaxLeaseMin).ToString('o'); release = [int]$x.release.n; note = "task $Task"; at = (Now); pid = $PID }; $o.ok = $true } }
       if ($o.ok) { break }
       if ((Get-Date) -gt $until) { "[$e] a train is changing $rn : run the task again later"; return }
       Start-Sleep 3
@@ -258,7 +265,7 @@ switch ($Action) {
       "[$e] task $Task in $dir : $cmd"
       With-Env (EnvVars $e $t) {
         if ($t.gated) { & (Join-Path $script:DK 'gate.ps1') -Dir $dir -Cmd $cmd }
-        else { Push-Location $dir; try { if ($KitIsWindows) { & cmd.exe /d /s /c $cmd } else { & /bin/sh -c $cmd } } finally { Pop-Location } }
+        else { Push-Location $dir; try { if ($KitIsWindows) { $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-task-$Task.cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null; Set-Content -LiteralPath $bat "@echo off`r`n$cmd" -Encoding ascii; & cmd.exe /d /c "`"$bat`"" } else { & /bin/sh -c $cmd } } finally { Pop-Location } }
       }
       $code = $LASTEXITCODE
     } finally { Update-State $e { param($x) $x.leases.Remove($key) } }

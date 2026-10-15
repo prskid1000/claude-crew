@@ -11,7 +11,7 @@ description: "Load when: you build the test APK, create, boot or reset emulator 
 
 | File | Read / run at |
 |---|---|
-| `LESSONS.md` | step A0 / L0, before touching a phone |
+| `LESSONS.md` (+ LESSONS.local.md next to it: org/project lessons, git-ignored, when present) | step A0 / L0, before touching a phone |
 | `HISTORY.md` | never read for work (retired lessons) |
 | `reference/scripts-and-platforms.md` | L1-L4 (build variants, create/reset lanes, modes, memory, manual leases) and on Linux/macOS |
 | `swarm.example.json` | L0: copy to `swarm.config.json` (lanes, app, optional `outDir`) |

@@ -47,7 +47,8 @@ else {
   }
   # lines added by the pushed commits (catches a term that was committed and later removed from the working tree)
   # whole words; a term with a capital letter matches case-sensitively (the same rule as kit-lint ORG-TERM)
-  $rx = @($terms | ForEach-Object { $t = $_.Trim(); [pscustomobject]@{ term = $t; rx = [regex]::new('(?<![\w-])' + [regex]::Escape($t) + '(?![\w-])', $(if ($t -cne $t.ToLower()) { 'None' } else { 'IgnoreCase' })) } })
+  # a term ending in * is a prefix (same rule as kit-lint)
+  $rx = @($terms | ForEach-Object { $t = $_.Trim(); $stem = $t.TrimEnd('*'); [pscustomobject]@{ term = $t; rx = [regex]::new('(?<![\w-])' + [regex]::Escape($stem) + $(if ($t.EndsWith('*')) { '' } else { '(?![\w-])' }), $(if ($stem -cne $stem.ToLower()) { 'None' } else { 'IgnoreCase' })) } })
   foreach ($r in $revs) {
     foreach ($line in @(git -C $root show --format= --unified=0 --no-color $r)) {
       if (-not $line.StartsWith('+') -or $line.StartsWith('+++')) { continue }

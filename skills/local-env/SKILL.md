@@ -12,7 +12,7 @@ the main session / coordinator running, stopping or debugging an env.
 | File | Read / run at |
 |---|---|
 | `LESSONS.md` (+ LESSONS.local.md next to it: org/project lessons, git-ignored, when present) | step 0 |
-| `scripts/localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh` |
+| `scripts/localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh`; `_exec` internal |
 | `scripts/localenvd.ps1` | never by hand: the controller `localenv.ps1` starts (env loop, train workers) |
 | `scripts/localenv-lib.ps1` | library dot-sourced by both scripts; never run by hand |
 
@@ -29,6 +29,9 @@ the main session / coordinator running, stopping or debugging an env.
 - **Lifecycle**: a service runs while needed (lease, `up`, browser traffic, dependents); stops after idle grace (~3x start time,
   15-60 min), at once under memory pressure. Crash -> restart, 3 tries / 30 min. Starts wait for RAM + CPU (gate's floor).
 - Dependencies: linked from one install per target (`wt.ps1`; workspace packages point into the worktree). Never installed here.
+- **Migrations**: with `sandbox` configured, a deploy whose branch has migrations runs in its own sandbox (own build, own DB copy,
+  instances `sb<k>-<svc>`); `promote` there moves it to the main env (DB snapshot first, restored if the release fails).
+  Without a sandbox it joins the main env flagged `MIGRATIONS` (snapshot when `db.snapshot` is set).
 - Secrets: dotenv `<kit>/localenv.local/<env>.env` only.
 
 ## Steps
@@ -47,11 +50,13 @@ $L = '<workspace>/.claude/skills/local-env/scripts/localenv.ps1'
 0. Read `LESSONS.md`.
 1-2. Refused: `wt.ps1 sync`, resolve, deploy again. Rejected / rolled back: read the message + `logs`, fix, deploy again.
 3. Declare only the services you test and an honest length; renew with `use` before it ends. Test data: prefix with your agent id.
-5. Put "Locally promoted on <env> r<n>" in your final reply and MR body.
+5. Sandboxed (deploy said SANDBOX): test the `sb<k>-*` instances (lease them), then `promote` = deploy into the main env.
+   Put "Locally promoted on <env> r<n>" in your final reply and MR body.
 
 **Rules**
 - No dev servers by hand (guard blocks them with `localEnv` set); never edit env worktrees, push `localenv/*`, or install there.
-- `MIGRATIONS` layer changes the shared local DB for all layers: say so; dropping it does not undo it.
+- A `MIGRATIONS` layer in the main env changes the shared local DB for every layer: say so. Only a restore of the snapshot taken
+  before it undoes it.
 - `up`, `down`, `drop`, `refresh`: owner / coordinator only.
 - Out of RAM: starts wait, then fail with the biggest users listed; report it, never kill other processes.
 - Learn: `& <workspace>/.claude/skills/orchestrate/scripts/learn.ps1 -Skill local-env -Kind <kind> -Text "<what + fix>"`.

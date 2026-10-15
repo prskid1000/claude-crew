@@ -34,7 +34,7 @@ Data sources (read what exists; missing files just mean no data yet):
 - ${rp('qa-runs')}/*/ — run.json, <code>/results.json, finalize.json, autoclose.log: NOT_TESTED reasons, audit reclassifications, verify "not reproduced" rates
 - ${rp('audits')}/ — tech-audit findings and review outcomes, if any
 - Kit structure problems: python ${C}/skills/orchestrate/scripts/kit-lint.py --warn --no-flow (unrouted parts, unlisted files, fuzzy triggers, dangling paths)
-- Current kit: ${C}/skills/*/SKILL.md, ${C}/skills/*/LESSONS.md (active rules; ${C}/skills/*/HISTORY.md = moved/fixed lessons: read it only to spot a fixed problem that came back), ${C}/skills/tech-audit/reference/projects/*.md, ${C}/rules/*.md, ${C}/agents/*.md, ${C}/workflows/*.js`
+- Current kit: ${C}/skills/*/SKILL.md, ${C}/skills/*/LESSONS.md and LESSONS.local.md (active rules; .local = project/org lessons; ${C}/skills/*/HISTORY.md = moved/fixed lessons: read it only to spot a fixed problem that came back), ${C}/skills/tech-audit/reference/projects/*.md, ${C}/rules/*.md, ${C}/agents/*.md, ${C}/workflows/*.js`
 
 const PROPOSALS = {
   type: 'object',
@@ -81,7 +81,7 @@ ${SOURCES}
 
 Find RECURRING patterns (≥ 2 occurrences) and clear wins. For each, propose the smallest durable improvement:
 - add-lesson / update-lesson (increment the (n×) count) / remove-lesson (obsolete or contradicted) in the right LESSONS.md
-  (project-specific lessons go under that project's heading; audit false-positive lessons go to the project profile in tech-audit);
+  (project-specific lessons: learn.ps1 -Project <name>, which writes LESSONS.local.md, never the published file; audit false-positive lessons go to the project profile in tech-audit);
 - promote-to-rule: a lesson seen ≥ 3× and still true → a short rule in the relevant SKILL.md or rules/*.md (and remove it from LESSONS.md);
 - script-change / default-change / template-change: describe precisely what to change and why (file, function, new value).
 Every proposal needs evidence with counts. Do not edit anything. Prefer fewer, sharper proposals.`, { label: `analyse:${l.key}`, phase: 'Analyse', schema: PROPOSALS, ...pick('analyse') })))

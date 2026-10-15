@@ -33,7 +33,8 @@ if (-not (Test-Path (Join-Path $AppDir "android/$gw")) -and -not (Test-Path (Joi
     ((Get-Content (Join-Path $AppDir 'package.json') -Raw) -match '"expo"\s*:')) {
   "no android/ in $AppDir (Expo app): npx expo prebuild --platform android --no-install"
   Push-Location $AppDir
-  try { $env:CI = '1'; & npx expo prebuild --platform android --no-install 2>&1 | Select-Object -Last 5; if ($LASTEXITCODE) { throw "expo prebuild failed (exit $LASTEXITCODE)" } } finally { Pop-Location }
+  $ci = $env:CI
+  try { $env:CI = '1'; & npx expo prebuild --platform android --no-install 2>&1 | Select-Object -Last 5; if ($LASTEXITCODE) { throw "expo prebuild failed (exit $LASTEXITCODE)" } } finally { $env:CI = $ci; Pop-Location }
 }
 $android = if (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android')" }
 

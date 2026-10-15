@@ -104,7 +104,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
 
 function New-DirLink([string]$Path, [string]$Target) {
-  if ($KitIsWindows) { cmd /c mklink /J "$Path" "$Target" | Out-Null }
+  if ($KitIsWindows) { cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" } }
   else { New-Item -ItemType SymbolicLink -Path $Path -Target $Target | Out-Null }
 }
 
@@ -120,7 +120,8 @@ function Remove-DirLink([string]$Path) {
 # packages, with workspace links re-pointed into the worktree ($WtRoot). Without workspace links: one junction, as before.
 # Idempotent (a marker records the source); returns $true when it changed something.
 function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
-  $SrcRoot = $SrcRoot.TrimEnd('\', '/'); $WtRoot = $WtRoot.TrimEnd('\', '/')
+  $norm = { param($x) [IO.Path]::GetFullPath($x).TrimEnd('\', '/') }   # "a\.\node_modules" and "a\node_modules" are one path
+  $To = & $norm $To; $From = & $norm $From; $SrcRoot = & $norm $SrcRoot; $WtRoot = & $norm $WtRoot
   $tgtOf = { param($i) $x = "$(@($i.Target)[0])"; if (-not [IO.Path]::IsPathRooted($x)) { $x = [IO.Path]::GetFullPath((Join-Path (Split-Path $i.FullName) $x)) }; $x.TrimEnd('\', '/') }
   $inSrc = { param($x) $x.StartsWith($SrcRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or $x.StartsWith($SrcRoot + '/', [StringComparison]::OrdinalIgnoreCase) }
   $entries = @(Get-ChildItem -LiteralPath $From -Force -ErrorAction SilentlyContinue)
@@ -161,6 +162,14 @@ function Remove-NodeModules([string]$Path) {
   if ($item.LinkType) { Remove-DirLink $Path; return }
   # Directory.Delete on a junction/symlink removes only the link (fast: no cmd.exe per entry for thousands of packages)
   $unlink = { param($x) if ($KitIsWindows) { [IO.Directory]::Delete($x) } else { Remove-DirLink $x } }
+  # scan first: a farm holds only links, files and @scope folders of links; anything else -> refuse before deleting anything
+  foreach ($c in Get-ChildItem -LiteralPath $Path -Force) {
+    if ($c.PSIsContainer -and -not $c.LinkType) {
+      if (-not $c.Name.StartsWith('@')) { throw "Remove-NodeModules: $($c.FullName) is a real folder - $Path is not a link farm, nothing deleted" }
+      $real = @(Get-ChildItem -LiteralPath $c.FullName -Force | Where-Object { -not $_.LinkType }) | Select-Object -First 1
+      if ($real) { throw "Remove-NodeModules: $($real.FullName) is not a link - $Path is not a link farm, nothing deleted" }
+    }
+  }
   foreach ($c in Get-ChildItem -LiteralPath $Path -Force) {
     if ($c.LinkType) { & $unlink $c.FullName }
     elseif ($c.PSIsContainer) { foreach ($g in Get-ChildItem -LiteralPath $c.FullName -Force) { if ($g.LinkType) { & $unlink $g.FullName } else { throw "Remove-NodeModules: $($g.FullName) is not a link - not deleting a real folder" } }; Remove-Item -LiteralPath $c.FullName -Force }

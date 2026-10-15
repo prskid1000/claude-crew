@@ -25,7 +25,7 @@ durable state left inside the runtime (`RUNTIME-DURABLE`).
 | `phones` | `work/phones/<lane>.json` | `phone.ps1` (leases), `swarm-avd.ps1` (voids a lease on reset) | `supervise.ps1`, `swarm-avd.ps1` | phones count as free; agents acquire again |
 | `qa-seats` | `work/qa-seats/` | `qa-seat.ps1` (memory seats, item claims) | `supervise.ps1`, `cleanup.ps1` | testers take seats again |
 | `launches` | `work/launches/<runId>.json` | `launch-record.ps1` (the coordinator, after each workflow launch; `-Done` at E5) | `kit-health.ps1` (SessionStart: stopped runs to resume), `cleanup.ps1` (> 3 days) | the coordinator rebuilds the launch by hand (script, args, run folder) |
-| `localenv` | `work/localenv/<env>.json` | `local-env/scripts/localenv.ps1` (layers, leases, deploy queue, service pids) | `localenv.ps1` | the env forgets its layers and leases: running services show "up (not started here)"; agents deploy their branches again |
+| `localenv` | `work/localenv/<env>.json`, `run/<env>/<svc>/<release-train>/` (staged artifacts), `run/*.cmd` (launchers), `.no-hooks` | `localenv.ps1`, `localenvd.ps1` (loop, train worker; state: release, services, leases, holds, requests, train, sandboxes, snapshots) | `localenv.ps1`, `localenvd.ps1` | the env forgets layers, leases and sandboxes; running services show "up (adopted)" and are rebuilt into copies by the next train; agents deploy again |
 | `audits` | `work/audits/<project>/` | tech-audit agents (when the profile names no findings folder) | the lead, `/kit-retro` | re-run the audit (keep findings you need in the project's own folder) |
 | `docs` | `work/docs/` | `devtools.py doc` (markdown reports) | people (the file is attached to the task) | publish again |
 | `evidence` | `work/evidence/` | `api.ps1 -Save` without `-OutDir` | testers | re-run the call (run evidence lives in the run folder) |
@@ -44,7 +44,7 @@ durable state left inside the runtime (`RUNTIME-DURABLE`).
 | `guard-log` | `logs/guard.log` | `guard.ps1` | `supervise.ps1` (WATCH), `retro-nudge.ps1`, `status.ps1`, `/kit-retro` | the next retro sees fewer guard blocks |
 | `cleanup-log` | `logs/cleanup.log` | `cleanup.ps1` | `status.ps1`, the workflows' last step | history only |
 | `tracker-log` | `logs/tracker-none.log` | `tracker.ps1` (`tracker.type` none) | people | history only |
-| `localenv-logs` | `logs/localenv/<env>-<service>.log` | `localenv.ps1` (each service's output; `.prev` = the run before) | `localenv.ps1 logs`, people | history only |
+| `localenv-logs` | `logs/localenv/<env>-<svc>.log` (+ `.prev`), `<env>-<svc>-build.log`, `<env>-loop.log`, `<env>-train.log`, `<env>-db.log`, `<env>-smoke.log`, `<env>-events.jsonl` | `localenv.ps1`, `localenvd.ps1` | `localenv.ps1 logs` / `events`, people, `/kit-retro` | history only |
 | `localenv-history` | `cache/localenv-history.json` | `localenv.ps1` (RAM footprint per env/service) | `localenv.ps1` (start admission) | per-stack defaults until services start again |
 | `retros` | `logs/retros/retro-<time>.md` | `/kit-retro` | people | history only (the changes are in the kit's git history) |
 

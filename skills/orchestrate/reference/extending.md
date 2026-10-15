@@ -24,7 +24,7 @@ in the local overlay, §8), commit and push (orchestrate K3-K4).
 - `skills/<name>/SKILL.md` with frontmatter `description: "Load when: <concrete conditions>. Not when: <condition> -> <sibling>. ..."`
   (under ~400 chars; conditions an agent can check, not topics) [SKILL-DESC].
 - The body opens with four blocks [SKILL-BLOCK]: **Load when** (all must hold) · **Not when** (-> which sibling) · **Hands off to**
-  (the workflow, agent or skill that comes next) · **Files** (every file in the folder with its step; `LESSONS.md` at step 0,
+  (the workflow, agent or skill that comes next) · **Files** (every file in the folder with its step; `LESSONS.md` (+ LESSONS.local.md: org/project lessons, git-ignored) at step 0,
   `HISTORY.md` "never read for work").
 - Then numbered steps. Add `LESSONS.md` (≤ 40 lines, `learn.ps1` manages it) if agents will learn from it.
 - Add a **Router** row in `CLAUDE.md` (or an org router row for a local skill, §8) placed where its conditions are more specific

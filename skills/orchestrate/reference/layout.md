@@ -30,6 +30,7 @@ edited in place and updated with `git pull`. Local files stay out of git (`.giti
 │   │                             + scripts\ api · web/browser.mjs · android/ui · finalize (+lib/report.ps1) · autoclose
 │   │                             + targets.local.json (environments, logins; copy targets.example.json)
 │   ├── android-swarm\            N emulators in parallel for any APK (+ swarm.config.json, LESSONS.md)
+│   ├── local-env\                shared local pre-staging envs: scripts\ localenv (CLI) · localenvd (controller) · localenv-lib
 │   ├── tech-audit\               static audit of one module → findings JSON + styled summary (+ reference/projects/<project>.md)
 │   └── <your own skills>         on-demand references for your org (observability queries, database access, ...)
 ├── agents\                       dev-agent · mr-reviewer · qa-tester · qa-verifier   (subagent types)

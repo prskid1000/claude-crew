@@ -52,7 +52,8 @@
             ],
             "build": "mvn -q package -DskipTests",
             "artifact": "target/api-*.jar",
-            "start": "java -jar \"{artifact}\" --server.port={port}"
+            "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}",
+            "debugPort": 5005
           },
           {
             "name": "web",
@@ -73,6 +74,32 @@
             "env": {
               "API_URL": "http://{lanIp}:8080"
             }
+          }
+        },
+        "smoke": [
+          {
+            "name": "api health",
+            "service": "api",
+            "url": "http://localhost:8080/health"
+          }
+        ],
+        "db": {
+          "snapshot": "pg_dump -Fc shop > /tmp/{snapshot}.dump",
+          "restore": "pg_restore --clean -d shop /tmp/{snapshot}.dump"
+        },
+        "sandbox": {
+          "services": [
+            "api"
+          ],
+          "max": 2,
+          "portOffset": 100,
+          "env": {
+            "DB_PORT": "{+5432}"
+          },
+          "db": {
+            "clone": "<script: start a DB server on {+5432} with a copy of the test data>",
+            "drop": "<script: stop it, delete its data>",
+            "sweep": "<script: remove copies not in {keep}>"
           }
         }
       }

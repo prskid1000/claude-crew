@@ -67,7 +67,13 @@ if ($SelfTest) {
     @('Bash', 'yarn start', $true, 'local env'),
     @('PowerShell', 'dotnet watch run', $true, 'local env'),
     @('PowerShell', '& D:/kit/skills/local-env/scripts/localenv.ps1 up -Env shop', $false, 'local env'),
-    @('PowerShell', 'git commit -m "fix: ng serve proxy"', $false, 'local env')
+    @('PowerShell', 'git commit -m "fix: ng serve proxy"', $false, 'local env'),
+    @('Bash', 'rg "ng serve" src', $false, 'local env'),
+    @('Bash', 'git log -S bootRun --oneline', $false, 'local env'),
+    @('Bash', 'npm run dev:build', $false, 'local env'),
+    @('PowerShell', 'dotnet run -- migrate', $false, 'local env'),
+    @('Bash', 'cd web && yarn start', $true, 'local env'),
+    @('Bash', 'git push origin --delete localenv/shop', $false, 'local env')
   )
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below (also: judge as if localEnv were configured)
   $fail = 0
@@ -234,11 +240,15 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
 # Local environments (local-env skill): the env branches localenv/<env> are local merges of every agent's layer, never pushed;
 # with localEnv configured, dev servers run only as env services (one instance, shared, RAM-checked), never started by hand.
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
-  if ($push.Value -match '(^|[\s:/])localenv/') { Deny 'localenv/<env> is a local env branch (a merge of every agent''s layer): never push it. Push your own branch; the local env takes it with localenv.ps1 deploy -Dir <worktree>.' }
+  if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { Deny 'localenv/<env> is a local env branch (a merge of every agent''s layer): never push it. Push your own branch; the local env takes it with localenv.ps1 deploy -Dir <worktree>.' }
 }
-if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatch 'localenv\.ps1|metro-start\.ps1' -and
-    $cmd -match '(spring-boot:run|\bbootRun\b|\bng\s+serve\b|\bdotnet\s+(run|watch)\b|\b(react-native|expo)\s+start\b|manage\.py\s+runserver|\buvicorn\s|\bflask\s+run\b|(^|[\s;&|(])(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\b)') {
-  Deny "Dev servers run in the shared local env (one instance per env, RAM-checked), not by hand: & $(Join-Path (Split-Path (Split-Path $K)) 'local-env/scripts/localenv.ps1') up|deploy|use -Env <env> (envs: localenv.ps1 envs). Logs: localenv.ps1 logs -Env <env> -Service <s>."
+if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatch 'localenv\.ps1|metro-start\.ps1') {
+  $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\s*$'
+  foreach ($seg in @($cmd -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    if ($seg -match $server) {
+      Deny "Dev servers run in the shared local env (one instance per env, RAM-checked), not by hand: & $(Join-Path (Split-Path (Split-Path $K)) 'local-env/scripts/localenv.ps1') use|up -Env <env> (envs: localenv.ps1 envs). Logs: localenv.ps1 logs -Env <env> -Service <s>."
+    }
+  }
 }
 # heavy builds/tests must go through the gate
 $gated = $cmd -match 'gate\.ps1|check\.ps1|app-build\.ps1'
