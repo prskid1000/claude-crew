@@ -32,7 +32,8 @@ $dir = Get-KitPath board -Create
 $staleMin = 20
 function All { foreach ($f in Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue) { try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; $e | Add-Member -Force NoteProperty file $f.FullName; $e } catch {} } }
 function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
-function Norm($p) { if (-not $p) { return }; if ($p -match '[\\/:]') { [IO.Path]::GetFullPath($p).TrimEnd('\').ToLower() } else { $p.ToLower() } }   # paths or plain claims (emulator-5556, chrome:9601)
+# paths are resolved; plain claims (emulator-5556, chrome:9601) only lowercased (GetFullPath made 'chrome:9601' <cwd>\chrome:9601)
+function Norm($p) { if (-not $p) { return }; if ($p -match '[\\/]|^[A-Za-z]:') { [IO.Path]::GetFullPath($p).TrimEnd('\').ToLower() } else { $p.ToLower() } }   # paths or plain claims (emulator-5556, chrome:9601)
 # "86abc F2, X1, X2" -> 86abc F2, 86abc X1, 86abc X2: bug-fix items list check ids after their task id, and two bug tasks both have an X1
 function ItemKeys($s) {
   $task = $null

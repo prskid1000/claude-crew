@@ -14,12 +14,14 @@ As a script (structured results print as JSON):
   & $TR describe <id> <text | file.md>   # replace the description
   & $TR rename <id> "<name>"
   & $TR attach <id> <file> [-Text "<comment>"]   # report/guide: GitHub/GitLab post the file's text as a comment; ClickUp/Jira attach it
+  & $TR list <list> <status>             # [{ id, name, assignees[{id,username}] }] tasks of a list in a status (ClickUp; others: [])
   Options: -Type <backend> (else $env:KIT_TRACKER_TYPE, else kit.local.json tracker.type, else clickup) · -DryRun (or
   $env:KIT_TRACKER_DRYRUN=1): print the CLI / REST call instead of running it.
 
 Dot-sourced (PowerShell callers):  . $TR [-Type x] [-DryRun]   then
   Get-TrackerTask, Set-TrackerStatus, Add-TrackerComment, Get-TrackerComments, New-TrackerTask, Get-TrackerUrl, Get-TrackerOwner,
-  Set-TrackerDescription, Set-TrackerName, Add-TrackerAttachment, Resolve-TrackerStatus, Test-TrackerStatus <status> <logical...>
+  Set-TrackerDescription, Set-TrackerName, Add-TrackerAttachment, Get-TrackerTasks <list> <status>, Resolve-TrackerStatus,
+  Test-TrackerStatus <status> <logical...>
 
 Backends (kit.local.json "tracker": { "type", "statuses", "repo", "list", "issueType", "subtaskType" }; skills/dev-kit/reference/configuration.md):
   clickup  the clickup CLI (default when tracker.type is unset)
@@ -445,6 +447,22 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   }
 }
 
+function Get-TrackerTasks([string]$List, [string]$Status) {
+  # tasks of one list in one status: [{ id, name, assignees[] }]. ClickUp only for now (lists are a ClickUp notion); other backends -> @()
+  $st = Resolve-TrackerStatus $Status
+  switch ($__trType) {
+    'clickup' {
+      foreach ($pg in 0..6) {   # 100 per page
+        $arr = @(__TrJson (__TrCli 'clickup' @('task', 'list', '--list-id', $List, '--status', $st, '--page', "$pg", '--json')))
+        $arr = @($arr | Where-Object { $_ -and $_.id })
+        foreach ($t in $arr) { [pscustomobject]@{ id = [string]$t.id; name = [string]$t.name; assignees = @($t.assignees | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; username = "$($_.username)" } }) } }
+        if ($arr.Count -lt 100) { break }
+      }
+    }
+    default { Write-Warning "tracker ($__trType): list lookup is not supported; pass task ids instead"; @() }
+  }
+}
+
 # ---------- script mode ----------
 if ($MyInvocation.InvocationName -eq '.') { return }
 $ErrorActionPreference = 'Stop'
@@ -463,5 +481,6 @@ switch ($__v) {
   'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
   'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
   'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
+  'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
   default { Get-Content $PSCommandPath -TotalCount 35 | Select-Object -Skip 1; exit 1 }
 }

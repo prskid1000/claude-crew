@@ -1,7 +1,7 @@
 # Extending the kit (orchestrate reference)
 
 Read at orchestrate K1, before adding or changing any kit part. Every part must be reachable on an explicit path:
-**CLAUDE.md Router row → skill (its numbered steps) → the Files-index row that binds a reference / template / script to a step →
+**AGENTS.md Router row → skill (its numbered steps) → the Files-index row that binds a reference / template / script to a step →
 workflow → agent type.** `kit-lint.py` enforces what it can (codes in brackets); run it until it prints 0 problems (orchestrate K3).
 The kit is the workspace's `.claude` folder, a git clone of the kit repo: edit it in place, keep everything generic (org specifics go
 in the local overlay, §8), commit and push (orchestrate K3-K4).
@@ -27,7 +27,7 @@ in the local overlay, §8), commit and push (orchestrate K3-K4).
   (the workflow, agent or skill that comes next) · **Files** (every file in the folder with its step; `LESSONS.md` (+ LESSONS.local.md: org/project lessons, git-ignored) at step 0,
   `HISTORY.md` "never read for work").
 - Then numbered steps. Add `LESSONS.md` (≤ 40 lines, `learn.ps1` manages it) if agents will learn from it.
-- Add a **Router** row in `CLAUDE.md` (or an org router row for a local skill, §8) placed where its conditions are more specific
+- Add a **Router** row in `AGENTS.md` (imported by `CLAUDE.md`; or an org router row for a local skill, §8) placed where its conditions are more specific
   than the rows below it [ROUTER-UNROUTED, ROUTER-TARGET].
 
 ## 3. An agent type (`agents/<name>.md`)

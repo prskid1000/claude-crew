@@ -285,8 +285,8 @@ if ($AutoFix) {
       Flag 'ACT' "LIVE $($o.task): all MRs ($(@($o.mrs) -join ', ')) deployed to $($new -join ', ') (QA only on the environment the task is tested on)" "Ready for QA (unless a run already covers it): & qa-kit\scripts\add-retest.ps1 -RunDir <run> -Task $($o.task) -Code <code>R -Mrs '$(@($o.mrs) -join ',')' then Workflow test-and-close { runDir, only: ['<code>R'], instance: 'w<next>' }"
     }
   }
-  foreach ($s in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 }) {   # finished without `leave`
-    $f = Join-Path $board "$($s.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }
+  foreach ($gone in $stale | Where-Object { ($now - [datetime]$_.beat).TotalHours -ge 2 }) {   # finished without `leave` (not $s: same variable as $S, the scripts folder used below)
+    $f = Join-Path $board "$($gone.session).json"; if (Test-Path $f) { $o = Get-Content $f -Raw | ConvertFrom-Json; $o.status = 'left'; $o | ConvertTo-Json | Set-Content $f }
   }
   # under memory pressure clean now (idle Gradle/Kotlin daemons alone held ~6 GB at 91%); otherwise only when due
   if ($pct -ge 85) { foreach ($l in @(& (Join-Path $S 'cleanup.ps1') | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> cleanup.ps1: $l" 'Re-check memory next round.' } }

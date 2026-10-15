@@ -40,11 +40,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kitpaths import kit_path, locked  # noqa: E402  (the kit's one path map: kitpaths.json)
 
 
-def _run(cmd, cwd=None):
+def _run(cmd, cwd=None, check=False):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8')
-    return ((p.stdout or '') + (p.stderr or '')).strip()
+    out = ((p.stdout or '') + (p.stderr or '')).strip()
+    if check and p.returncode:   # a failed write (status, comment, create) must not print 'done' and exit 0
+        raise SystemExit(f'failed (exit {p.returncode}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
+    return out
 
 
 def _json(out):
@@ -88,7 +91,9 @@ def _tracker(*args):
                 tmp.append(p)
                 x = p
             argv.append(x)
-        return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', TRACKER, *argv])
+        # reads ('view', 'url', ...) stay lenient (finish() handles a failed lookup); writes fail loudly
+        return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', TRACKER, *argv],
+                    check=bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach'))
     finally:
         for p in tmp:
             try:
@@ -172,7 +177,8 @@ def target_of(worktree):
     gd = gd if os.path.isabs(gd) else os.path.join(worktree, gd)
     f = os.path.join(gd, 'claude-target')
     if os.path.exists(f):
-        return open(f).read().strip() or None
+        with open(f, encoding='utf-8-sig') as fh:
+            return fh.read().strip() or None
     # 1. kit.local.json repos[]: the entry whose checkout is this worktree's main checkout, or whose name/alias is the remote's repo name
     common = _run(['git', '-C', worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
     main = os.path.normcase(os.path.dirname(os.path.normpath(common))) if os.path.isdir(common) else ''

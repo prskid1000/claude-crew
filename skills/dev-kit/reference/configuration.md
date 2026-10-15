@@ -170,7 +170,6 @@ Evidence files never contain passwords or auth headers (`[redacted]`).
 | `CHROME_PATH` | Chrome/Edge/Chromium binary for `browser.mjs` (default: the usual install folders per OS, then `google-chrome`, `chromium`, `microsoft-edge` ... on `PATH`) |
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Android SDK (default `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux, `~/Library/Android/sdk` on macOS) |
 | `ANDROID_AVD_HOME` | Where the lane AVDs live when `swarm.config.json` has no `avdDir` (default `~/.android/avd`) |
-| `ANDROID_HOME`, `ANDROID_AVD_HOME` | Android SDK and AVD folders |
 | `ANDROID_SERIAL` | The phone an app-lane agent drives (set on every command) |
 | `GITLAB_HOST` | `glab` host (the scripts set it from `gitHost` when it isn't `gitlab.com`) |
 | `KIT_TRACKER_TYPE` | Overrides `tracker.type` (e.g. `none` for a dry session) |

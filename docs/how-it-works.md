@@ -1,6 +1,6 @@
 # How agents find their way: one explicit graph
 
-Nothing in the kit is reached by fuzzy description matching. Every session loads `CLAUDE.md`, whose **Router** is an
+Nothing in the kit is reached by fuzzy description matching. Every session loads `CLAUDE.md` (which imports `AGENTS.md`), whose **Router** is an
 ordered table: classify the request, the first row whose conditions all hold wins, and it names exactly one target. Each
 skill's `SKILL.md` opens with **Load when / Not when / Hands off to** and a **Files** index that binds every file in its
 folder to the numbered step that reads or runs it. Workflows spawn the agent types; each agent loads its skill first. While

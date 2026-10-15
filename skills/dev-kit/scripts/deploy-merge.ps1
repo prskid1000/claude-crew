@@ -35,7 +35,9 @@ $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object {
 if (-not $wt) { throw "wt.ps1 new failed: $out" }
 "worktree: $wt"
 git -C $wt fetch -q origin $From $To
-$ahead = git -C $wt rev-list --count "origin/$To..origin/$From"
+if ($LASTEXITCODE) { "fetch of origin $From $To FAILED (exit $LASTEXITCODE): wrong -From/-To or offline; worktree left at $wt"; exit 1 }
+$ahead = "$(git -C $wt rev-list --count "origin/$To..origin/$From")".Trim()
+if ($LASTEXITCODE -or $ahead -notmatch '^\d+$') { "rev-list origin/$To..origin/$From FAILED: '$ahead'; worktree left at $wt"; exit 1 }   # [int]'' is 0: read as 'nothing to merge'
 if ([int]$ahead -eq 0) { & (Join-Path $K 'wt.ps1') remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$From has no commits that origin/$To lacks (worktree removed)"; exit 0 }
 $mo = git -C $wt merge --no-ff --no-commit "origin/$From" 2>&1; $mrc = $LASTEXITCODE   # committed below through wt.ps1 commit (hooks)
 $mo | Select-Object -Last 3

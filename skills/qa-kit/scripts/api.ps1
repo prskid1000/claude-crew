@@ -9,7 +9,8 @@ Targets (base URLs, auth style, users) come from ..\targets.local.json (copy tar
 
 Prints "HTTP <status>" then the response body. Logs in once per target+tenant+user and caches the token
 (re-login on 401). Auth types: login (json or form body, token from tokenField), token (static), basic, none.
--Save never stores passwords: only method, URL, request body, status, response headers (cookies redacted) and body.
+-Save never stores passwords: only method, URL, request body, status, response headers and body; secret-named headers and
+JSON fields (password, token, secret, api key, cookie, authorization) at any depth become '[redacted]'. -OutDir: absolute path.
 #>
 param(
   [string]$Method = 'GET',
@@ -24,6 +25,9 @@ param(
   [int]$TimeoutSec = 180
 )
 $ErrorActionPreference = 'Stop'
+# an object bound to -OutDir arrives as its type name ('System.Collections.Hashtable', '@{meta=; ...}': a $o/$O clash in the
+# caller) and became a folder under the current directory: only an absolute path is accepted
+if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
 # Git Bash (MSYS) rewrites a '/api/x' argument to 'C:/Program Files/Git/api/x' before pwsh sees it: undo that
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
 $here = Split-Path $MyInvocation.MyCommand.Path
@@ -70,7 +74,7 @@ function AuthHeaders($tok) {
 }
 $tok = $null
 switch ($t.auth.type) {
-  'login' { $tok = if (Test-Path $cache) { (Get-Content $cache -Raw).Trim() } else { Login } }
+  'login' { $tok = if (Test-Path $cache) { ([string](Get-Content $cache -Raw)).Trim() }; if (-not $tok) { $tok = Login } }   # an empty cache file (cut write) logs in again
   'token' { $tok = if ($t.auth.token) { $t.auth.token } else { [string]$u[1] } }
 }
 
@@ -81,7 +85,7 @@ function Call($tk) {
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
   # response headers go into the evidence too (Content-Disposition, Location, caching ...); cookies redacted
-  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)set-cookie|authorization') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
+  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)cookie|authorization|token|key|secret|password') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
   try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
     $resp = $_.Exception.Response
@@ -109,7 +113,15 @@ if ($Save) {
   # Evidence envelope per reference/evidence-standard.md: meta + request (secrets redacted) + response
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
-  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { $s | ConvertFrom-Json } catch { $s } }
+  # secrets in JSON bodies (a login's password, a response's access_token) are redacted at any depth: evidence is published
+  function Redact($o) {
+    if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $script:secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
+    if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $script:secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
+    if ($o -is [array]) { return , @($o | ForEach-Object { Redact $_ }) }
+    $o
+  }
+  $script:secretKey = '(?i)passw|^pass$|^pwd$|secret|token|api_?key|authorization|cookie'
+  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { Redact ($s | ConvertFrom-Json) } catch { $s } }
   $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match '(?i)authorization|cookie|token|key|secret|password') { '[redacted]' } else { $script:sentHeaders[$k] } }
   $code, $check = if ($Save -match '^([A-Za-z0-9]+)-([A-Za-z]*\d+)') { $Matches[1], $Matches[2] } else { '', '' }
   [ordered]@{

@@ -185,7 +185,8 @@ elseif ($prev -and $prev.folderId) {
   foreach ($pf in $prev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value }   # not $p: that IS $P (the --params JSON used below)
 } else {
   $meta = @{ name = "$title $Code - test evidence ($Date)"; mimeType = 'application/vnd.google-apps.folder' }
-  if ($run.driveParent) { $meta.parents = @($run.driveParent) }
+  $dp = if ($run.driveParent) { [string]$run.driveParent } else { [string](Get-KitSetting 'driveParent' '') }   # run.json wins, else kit.local.json (as documented)
+  if ($dp) { $meta.parents = @($dp) }
   $f = Invoke-Gws @('drive', 'files', 'create', '--json', ($meta | ConvertTo-Json -Compress), '--params', $P)
   Share $f.id
   $map.folderId = $f.id; $map.folderLink = $f.webViewLink
@@ -225,7 +226,7 @@ $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.li
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # github/gitlab use tracker.repo; clickup/jira need a list/project
 # NOT_TESTED checks keep a task open unless run.json tracker.closeWithNotTested (or kit.local.json qa.closeWithNotTested) is true;
 # then the task closes and its untested checks move to one "[Test] <title> — untested checks (n)" task per run (under tracker.parent)
-$closeNT = if ($null -ne $tr -and $null -ne $tr.closeWithNotTested) { [bool]$tr.closeWithNotTested } else { [bool](Get-KitSetting 'qa.closeWithNotTested' $false) }
+$closeNT = "$(if ($null -ne $tr -and $null -ne $tr.closeWithNotTested) { $tr.closeWithNotTested } else { Get-KitSetting 'qa.closeWithNotTested' $false })" -eq 'True'   # [bool]'false' is $true
 # the last item on a shared task decides the close: sibling items' NOT_TESTED checks and untracked failures keep it open too
 function SiblingHold($id) {
   $nt = 0; $err = $null; $uerr = $null
@@ -272,6 +273,7 @@ function Add-Untested($rec, $st, [object[]]$ntChecks) {
 function Resolve-Close($rec, $st, [int]$nt, [int]$pend) {
   $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
   if ($others.Count) { $rec.waitingFor = $others; return }
+  if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
   $ntAll = $nt + $sib.notTested
   if ($ntAll -and -not $closeNT) { $rec.keptOpen = "$ntAll check(s) not tested"; return 'notTested' }
@@ -285,6 +287,8 @@ function Resolve-Close($rec, $st, [int]$nt, [int]$pend) {
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
   if (-not $mine.Count -and @($item.subtasks).Count -eq 1) { $mine = $checks }
+  $dupOf = if ($item.dups) { [string]$item.dups.($st.id) } else { '' }   # run.json dups: {duplicateId: primaryId} share the primary's checks
+  if (-not $mine.Count -and $dupOf) { $mine = @($checks | Where-Object { $_.subtask_id -eq $dupOf }) }
   $pass = (Cnt $mine 'PASS') + (Cnt $mine 'PASS_WITH_NOTE'); $fails = @($mine | Where-Object { $_.result -eq 'FAIL' }); $nt = Cnt $mine 'NOT_TESTED'; $pend = Cnt $mine 'PENDING'
   $ntChecks = @($mine | Where-Object { $_.result -eq 'NOT_TESTED' }); $oos = Cnt $mine 'OUT_OF_SCOPE'   # OUT_OF_SCOPE: a channel the org never tests (qa.outOfScope); never keeps a task open
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $fails.Count; notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false }

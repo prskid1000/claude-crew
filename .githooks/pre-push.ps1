@@ -40,6 +40,7 @@ else {
   else {
     $out = Join-Path ([IO.Path]::GetTempPath()) "kit-prepush-$PID.json"
     & $py (Join-Path $root 'skills/orchestrate/scripts/kit-lint.py') $root --warn --no-flow --org-terms ($terms -join ',') --json $out | Out-Null
+    if (-not (Test-Path $out)) { $hits += "LINT        kit-lint.py failed (exit $LASTEXITCODE, no JSON): the org-term scan of the working tree did not run" }
     $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
     foreach ($p in $probs | Where-Object code -eq 'ORG-TERM') { $hits += "ORG TERM    $($p.where): $($p.problem)" }
     $other = @($probs | Where-Object code -ne 'ORG-TERM')

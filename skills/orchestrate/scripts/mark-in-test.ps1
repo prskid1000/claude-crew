@@ -32,17 +32,12 @@ $track = if ($trackFile -and (Test-Path $trackFile)) { Get-Content $trackFile -R
 if ($track) { foreach ($p in $track.tasks.PSObject.Properties) { $cand[$p.Name] = @{ mrs = @($p.Value.mrs); name = '' } } }
 $ownerId = try { "$(Get-TrackerOwner)".Trim() } catch { '' }
 $lists = @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique
-if ($KitConf.TrackerType -eq 'clickup' -and $lists.Count -and (Get-Command clickup -ErrorAction SilentlyContinue)) {
-  $promotedName = (Resolve-TrackerStatus 'promoted')
+if ($KitConf.TrackerType -eq 'clickup' -and $lists.Count) {   # through the tracker adapter (Get-TrackerTasks), never the CLI directly
   foreach ($l in $lists) {
-    foreach ($pg in 0..6) {
-      $arr = @(clickup task list --list-id $l --status $promotedName --page $pg --json 2>$null | Out-String | ConvertFrom-Json)
-      if (-not $arr.Count -or -not $arr[0].id) { break }
-      foreach ($t in $arr) {
-        if ($ownerId -and -not (@($t.assignees | ForEach-Object { "$($_.id)" }) -contains $ownerId)) { continue }
-        if (-not $cand.Contains($t.id)) { $cand[$t.id] = @{ mrs = @(); name = $t.name } } elseif (-not $cand[$t.id].name) { $cand[$t.id].name = $t.name }
-      }
-      if ($arr.Count -lt 100) { break }
+    $arr = try { @(Get-TrackerTasks $l 'promoted') } catch { Write-Warning "mark-in-test: list $l lookup failed: $($_.Exception.Message)"; @() }
+    foreach ($t in $arr) {
+      if ($ownerId -and -not (@($t.assignees | ForEach-Object { "$($_.id)" }) -contains $ownerId)) { continue }
+      if (-not $cand.Contains($t.id)) { $cand[$t.id] = @{ mrs = @(); name = $t.name } } elseif (-not $cand[$t.id].name) { $cand[$t.id].name = $t.name }
     }
   }
 }

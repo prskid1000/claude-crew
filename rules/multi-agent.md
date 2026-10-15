@@ -1,7 +1,7 @@
 # Multi-agent work, builds and QA (all repos in this workspace)
 
 `<workspace>` = the folder that holds this `.claude` folder (the directory Claude Code was started in); kit scripts find it themselves.
-**What to load or launch for a request:** the Router in `.claude/CLAUDE.md` (first matching row wins; workflows launch autonomously,
+**What to load or launch for a request:** the Router in `.claude/AGENTS.md` (imported by `CLAUDE.md`) (first matching row wins; workflows launch autonomously,
 deploys need a person's yes). The rules below hold whatever the route.
 
 - Builds and tests (Maven, Gradle, dotnet/msbuild, ng/tsc/jest/vitest, pytest, cargo, ...) always go through

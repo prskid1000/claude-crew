@@ -34,7 +34,7 @@ flowchart LR
   B & Q -.signals.-> L[(learning)] --> K[/kit-retro/] --> C
 ```
 
-Every session loads `CLAUDE.md`, whose **Router** classifies the request (first matching row wins) and names one target —
+Every session loads `CLAUDE.md` (which imports `AGENTS.md`), whose **Router** classifies the request (first matching row wins) and names one target —
 a skill, a workflow, or an agent. Each skill's `SKILL.md` says when to load it and indexes its own files; workflows spawn
 agent types, which load their skill first. Details and the full routing graph: [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -61,7 +61,7 @@ workflow — what each one does and its tools: [docs/skills.md](docs/skills.md).
 
 1. Clone as your workspace's `.claude` and run the installer — full steps, config files, hooks check, and first run:
    [docs/install.md](docs/install.md).
-2. Edit `CLAUDE.md` (the Router template) with your CLIs, tracker workflow, org specifics.
+2. Edit `AGENTS.md` (the Router template; `CLAUDE.md` imports it) with your CLIs, tracker workflow, org specifics.
 3. Pick a tracker and report output in `skills/dev-kit/kit.local.json` — see
    [skills/dev-kit/reference/configuration.md](skills/dev-kit/reference/configuration.md).
 

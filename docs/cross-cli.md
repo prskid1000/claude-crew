@@ -1,6 +1,6 @@
 # Cross-CLI support (Codex, Antigravity)
 
-The *instructions* (Router, CLIs, org specifics) and the four agent roles are also usable from **OpenAI's Codex CLI** and
+The *instructions* (Router, CLIs, org specifics) and the five agent roles are also usable from **OpenAI's Codex CLI** and
 **Google's Antigravity/`agy` CLI**, generated from the same Claude Code source by one script, so there is one place to edit:
 
 ```powershell

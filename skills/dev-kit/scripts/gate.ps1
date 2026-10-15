@@ -158,9 +158,9 @@ if ($jvmKind -or $nodeKind -or $gradleKind) {
   # Gradle (Android: Gradle + Kotlin + Hermes) starts high and learns down; Maven/Node start at the floor.
   # JVMs run G1 with tight free-ratios + periodic GC, so the heap tracks LIVE data and the recorded peak can fall
   # (without that a JVM fills whatever -Xmx it gets and the learned estimate never drops).
-  $startGB = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }
-  $maxGB = [math]::Max($startGB, 8)
-  $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling((($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.25) } else { $startGB }
+  $startHeap = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }   # not $startGB: same variable as the $StartGB table
+  $maxGB = [math]::Max($startHeap, 8)
+  $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling((($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.25) } else { $startHeap }
   $heap = [math]::Min($maxGB, [math]::Max($HeapMinGB, $heap))
   if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history yet: assume the heap can fill up
 }

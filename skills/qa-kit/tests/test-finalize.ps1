@@ -49,5 +49,18 @@ try {
   $e = New-Run 'E' $null @(@{ code = 'E1'; task = 'T5'; checks = , @('C1', 'PASSED') })
   $o = Fin $e 'E1'
   Expect 'unknown verdict still publishes' (Test-Path "$e/E1/report.md")
+  # a second subtask no check names stays open (0 of 0 is not a pass); a dups entry shares the primary's checks
+  $f = New-Run 'F' $null @(@{ code = 'F1'; task = 'T6'; checks = , @('C1', 'PASS') })
+  $r = Get-Content "$f/run.json" -Raw | ConvertFrom-Json; $r.items[0].subtasks = @($r.items[0].subtasks) + @([pscustomobject]@{ id = 'T7'; name = 'Task T7' }); $r | ConvertTo-Json -Depth 8 | Set-Content "$f/run.json"
+  $null = Fin $f 'F1'; $s = (Get-Content "$f/F1/finalize.json" -Raw | ConvertFrom-Json).subtasks
+  Expect 'untagged subtask kept open' ((@($s | Where-Object id -eq 'T6')[0]).closed -and -not (@($s | Where-Object id -eq 'T7')[0]).closed)
+  $g = New-Run 'G' $null @(@{ code = 'G1'; task = 'T8'; checks = , @('C1', 'PASS') })
+  $r = Get-Content "$g/run.json" -Raw | ConvertFrom-Json; $r.items[0].subtasks = @($r.items[0].subtasks) + @([pscustomobject]@{ id = 'T9'; name = 'Task T9' }); $r.items[0] | Add-Member dups ([pscustomobject]@{ T9 = 'T8' }); $r | ConvertTo-Json -Depth 8 | Set-Content "$g/run.json"
+  $null = Fin $g 'G1'
+  Expect 'dups subtask closes with its primary' (@((Get-Content "$g/G1/finalize.json" -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.closed }).Count -eq 2)
+  # closeWithNotTested written as the string "false" stays off
+  $h = New-Run 'H' 'false' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'NOT_TESTED') })
+  $null = Fin $h 'H1'
+  Expect 'closeWithNotTested "false" keeps it open' (-not (Rec $h 'H1').closed)
 } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 "$fails failure(s)"; exit [int]($fails -gt 0)

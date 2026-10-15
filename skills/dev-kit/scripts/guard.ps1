@@ -73,7 +73,14 @@ if ($SelfTest) {
     @('Bash', 'npm run dev:build', $false, 'local env'),
     @('PowerShell', 'dotnet run -- migrate', $false, 'local env'),
     @('Bash', 'cd web && yarn start', $true, 'local env'),
-    @('Bash', 'git push origin --delete localenv/shop', $false, 'local env')
+    @('Bash', 'git push origin --delete localenv/shop', $false, 'local env'),
+    # [.., 'Hooks must run'] - skipping commit hooks: --no-verify, its short form -n, an emptied hooksPath
+    @('Bash', 'git commit -n -m "x"', $true, 'Hooks must run'),
+    @('PowerShell', 'git -C x commit -nm "x"', $true, 'Hooks must run'),
+    @('Bash', 'git -c core.hooksPath=/dev/null commit -m x', $true, 'Hooks must run'),
+    @('Bash', 'git commit --no-edit --amend', $false, 'Hooks must run'),
+    @('PowerShell', 'git commit -m "use -n for a dry run"', $false, 'Hooks must run'),
+    @('Bash', 'git log -n 3; git commit -m x', $false, 'Hooks must run')
   )
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below (also: judge as if localEnv were configured)
   $fail = 0
@@ -99,7 +106,10 @@ try { $kc = Get-Content (Join-Path (Split-Path $K) 'kit.local.json') -Raw -Error
 
 function Deny($why) {
   if ($in.session_id) {   # only real hook calls are logged: test runs (no session) must not raise supervise's guard WATCH
-    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$(($raw -replace "[\r\n\t]+", " // ").Substring(0, [math]::Min(1000, ($raw -replace "[\r\n\t]+", " // ").Length)))" | Add-Content (Get-KitPath guard-log -Create)
+    $one = $raw -replace "[\r\n\t]+", " // "
+    # head + tail: the line that tripped a long multi-line command is often near its end (1000-char heads hid it)
+    if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
+    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$one" | Add-Content (Get-KitPath guard-log -Create)
   }
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   exit 0
@@ -229,7 +239,9 @@ function Test-OpenDoc([string]$text, [string]$tool) {
 }
 if (Test-OpenDoc $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) {
   Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
-if ($cmd -match '--no-verify|core\.hooksPath=/dev/null|HUSKY=0|SKIP_HOOKS') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
+# git commit -n / -nm / -an is --no-verify too
+if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
+    $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run. Commit with $(Join-Path $K 'wt.ps1') commit (it fixes hooksPath in worktrees); fix what the hook reports." }
 # judged per push command: a protected name elsewhere in a compound line (git log origin/main; git push --force-with-lease) is not a push target
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value

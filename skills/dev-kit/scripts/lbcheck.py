@@ -55,12 +55,12 @@ def apply(fname, cs, report):
             tables.setdefault(tn, {})
             for c in el:
                 if local(c.tag) == 'column':
-                    tables[tn][c.get('name').lower()] = c.get('type')
+                    tables[tn][(c.get('name') or '').lower()] = c.get('type')
         elif t == 'addColumn':
             tables.setdefault(tn, {})
             for c in el:
                 if local(c.tag) == 'column':
-                    cn = c.get('name').lower()
+                    cn = (c.get('name') or '').lower()
                     if cn in tables[tn] and report and not guarded:
                         issues.append(f'{fname} {cs.get("id")}: addColumn {tn}.{cn} already exists ({tables[tn][cn]})')
                     tables[tn][cn] = c.get('type')
@@ -84,7 +84,7 @@ def walk(path, fname):
         issues.append(f'PARSE ERROR {fname}: {e}')
         return
     ts = re.match(r'(\d{14})', os.path.basename(fname))
-    report = (bool(ts) and ts.group(1) >= SINCE) or (not ts and (SINCE == '0' or os.path.basename(fname) in CHANGED))
+    report = (bool(ts) and ts.group(1) >= SINCE) or os.path.basename(fname) in CHANGED or (not ts and SINCE == '0')   # a changed old changelog counts too
     if report:
         # CI rule: a changeSet whose comment (XML comment or <comment>) says it is not reversible must still carry a NON-EMPTY
         # <rollback> (an empty <rollback/> is rejected too). The XML parser drops comments, so check the raw text per changeSet.
@@ -106,8 +106,9 @@ def walk(path, fname):
                 node.append(ET.Element('rollback'))  # keep the marker, drop its content
             apply(fname, node, report)
         elif t == 'include':
-            f = node.get('file')
-            walk(resolve(f, os.path.dirname(path)), f)
+            f = node.get('file') or ''
+            if f.lower().endswith('.xml'):   # .sql / .yaml includes are valid Liquibase, not XML: not a PARSE ERROR
+                walk(resolve(f, os.path.dirname(path)), f)
         elif t == 'includeAll':
             d = resolve(node.get('path'), os.path.dirname(path))
             for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:

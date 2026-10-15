@@ -163,6 +163,10 @@
   "cleanup": {
     "maxBrowserProfiles": 4
   },
+  "memory": {
+    "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored, set by kit-setup.ps1); true = keep Claude Code's default location.",
+    "keepDefault": false
+  },
   "kitAudit": {
     "_readme": "everyDays: the SessionStart nudge asks for a kit-auditor run when the last kit audit is older (default 7; 0 = off).",
     "everyDays": 7
