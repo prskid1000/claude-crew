@@ -30,7 +30,7 @@ try {
   # closeWithNotTested: both items close, one [Test] task under the parent, renamed to the total
   $b = New-Run 'B' $true @(@{ code = 'B1'; task = 'T2'; checks = , @('C1', 'NOT_TESTED') }, @{ code = 'B2'; task = 'T3'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED'), @('C3', 'NOT_TESTED')) })
   $null = Fin $b 'B1'; $null = Fin $b 'B2'
-  $u = Get-Content "$b/untested.json" -Raw | ConvertFrom-Json; $t = Get-Content (Join-Path $store "$($u.id).json") -Raw | ConvertFrom-Json
+  $u = (Get-Content "$b/untested.json" -Raw | ConvertFrom-Json).groups.P1; $t = Get-Content (Join-Path $store "$($u.id).json") -Raw | ConvertFrom-Json
   Expect 'one [Test] task for the run' (@(Get-ChildItem $store -Filter 'LOCAL-*.json' | Where-Object { (Get-Content $_.FullName -Raw) -match '\[Test\]' }).Count -eq 1)
   Expect '[Test] task named with the total' ($t.name -eq '[Test] Run B — untested checks (3)')
   Expect '[Test] task under the parent, both tasks listed' ($t.parent -eq 'P1' -and $t.description -match 'Task T2' -and $t.description -match 'Task T3')
@@ -62,5 +62,21 @@ try {
   $h = New-Run 'H' 'false' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'NOT_TESTED') })
   $null = Fin $h 'H1'
   Expect 'closeWithNotTested "false" keeps it open' (-not (Rec $h 'H1').closed)
+  # [Test] and [Bug] tasks: one per original ask (the tested task's parent), named after it, under it; a later run appends
+  New-Item -ItemType Directory -Force $store | Out-Null
+  foreach ($x in @(@('PA', 'Ask A', $null), @('PQ', 'Ask Q', $null), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) {
+    @{ id = $x[0]; name = $x[1]; status = 'open'; parent = $x[2]; list = 'L1'; assignees = @(); description = ''; comments = @() } | ConvertTo-Json | Set-Content (Join-Path $store "$($x[0]).json")
+  }
+  $m = New-Run 'M' $true @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'NOT_TESTED'), @('C2', 'FAIL')) }, @{ code = 'M2'; task = 'TQ'; checks = , @('C1', 'NOT_TESTED') })
+  $null = Fin $m 'M1'; $null = Fin $m 'M2'
+  $all = @(Get-ChildItem $store -Filter 'LOCAL-*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+  $tA = @($all | Where-Object { $_.name -like '`[Test`]*' -and $_.parent -eq 'PA' }); $tQ = @($all | Where-Object { $_.name -like '`[Test`]*' -and $_.parent -eq 'PQ' })
+  Expect 'one [Test] task per ask, under the ask' ($tA.Count -eq 1 -and $tQ.Count -eq 1)
+  Expect '[Test] task named after the ask' ($tA[0].name -eq '[Test] Ask A — untested checks (1)')
+  Expect '[Bug] task under the ask' (@($all | Where-Object { $_.name -like '`[Bug`]*' -and $_.parent -eq 'PA' }).Count -eq 1)
+  $n2 = New-Run 'N' $true @(@{ code = 'N1'; task = 'TA2'; checks = , @('C1', 'NOT_TESTED') })
+  $null = Fin $n2 'N1'
+  $tA = @(Get-ChildItem $store -Filter 'LOCAL-*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.name -like '`[Test`]*' -and $_.parent -eq 'PA' })
+  Expect 'a later run appends to the open [Test] task' ($tA.Count -eq 1 -and $tA[0].name -eq '[Test] Ask A — untested checks (2)' -and $tA[0].description -match 'Task TA2' -and $tA[0].description -match 'Task TA \(')
 } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 "$fails failure(s)"; exit [int]($fails -gt 0)
