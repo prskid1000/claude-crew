@@ -624,7 +624,7 @@ switch ($Action) {
 #   -Mode Release : the built APK (swarm.ps1 build). Preferred for automated testing.
 #   -Mode None    : boot + slim only.
 #   -Headless      : no emulator windows (less GPU/desktop clutter; adb, screenshots and qa.ps1 ui work the same).
-#                    Default comes from swarm.config.json "headless" (per lane or top level); otherwise windows are shown.
+#                    The default: windows only where swarm.config.json says "headless": false (per lane or top level).
 function Invoke-Up {
 param(
   [int]$Count = 0,                 # 0 = all lanes
@@ -632,7 +632,7 @@ param(
   [switch]$ColdBoot,               # ignore the snapshot (a lane stuck "offline" in adb)
   [ValidateSet('Release', 'None')][string]$Mode = 'Release',
   [switch]$Headless,               # no windows (see above)
-  [switch]$ShowAll                 # force windows even where the config says headless
+  [switch]$ShowAll                 # show windows (the owner asked to watch)
 )
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
@@ -664,7 +664,7 @@ foreach ($name in $Lanes) {
     $ini = Join-Path $c.avdDir "$name.avd\emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
-    $noWin = -not $ShowAll -and ($Headless -or $l.headless -or ($c.headless -and $l.headless -ne $false)); if ($noWin) { $a += '-no-window' }
+    $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # a window only when asked: -ShowAll or headless: false; if ($noWin) { $a += '-no-window' }
     # start via WMI so the emulator is not a child of this shell (a tool timeout would otherwise kill it).
     # SW_HIDE: no console/terminal window per emulator (they piled up and stayed open after the phone exited). The phone's own
     # window belongs to the qemu child process and still shows unless -no-window. (WMI rejects CREATE_NO_WINDOW: ReturnValue 21.)
@@ -712,7 +712,7 @@ if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
 
 # ---------------------------------------------------------------- down: stop lanes (run by release)
 # Stops the swarm emulators cleanly (snapshot saved), removes adb reverse rules and, by default, kills leftover
-# headless test browsers started by qa-kit/scripts/web/browser.mjs (<runtime>/cache/chrome-profiles). Nothing else is touched.
+# headless test browsers started by qa-kit/browser.mjs (<runtime>/cache/chrome-profiles). Nothing else is touched.
 function Invoke-Down {
 param([string[]]$Lanes, [switch]$KeepBrowsers)
 $c = Get-SwarmConfig

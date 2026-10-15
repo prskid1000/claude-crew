@@ -953,14 +953,14 @@ function Invoke-Typecheck([string]$TcCmd) {
     }
     Set-Content -LiteralPath $flag -Value "$base | ignoreDeprecations '$igd' | typescript $tsVer"
   }
-  $cfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
+  $tsCfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
   # without files/include in the project's config, tsc's default include is the folder of the -p config (the temp one): pin it
   if ($raw -notmatch '"(files|include)"\s*:') {
     $pd = (Split-Path $base).Replace('\', '/')
     $ex = @('node_modules', 'bower_components', 'jspm_packages')
     try { $j = $raw | ConvertFrom-Json; if ($j.exclude) { $ex = @($j.exclude) } } catch {}
-    $cfg.include = @("$pd/**/*")
-    $cfg.exclude = @($ex | ForEach-Object { if ([IO.Path]::IsPathRooted($_)) { $_ } else { "$pd/$_" } })
+    $tsCfg.include = @("$pd/**/*")
+    $tsCfg.exclude = @($ex | ForEach-Object { if ([IO.Path]::IsPathRooted($_)) { $_ } else { "$pd/$_" } })
   }
   $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
   $tmp = Join-Path (Get-KitPath cache -Create) "tsconfig.ts5103.$hash.$PID.json"
@@ -970,7 +970,7 @@ function Invoke-Typecheck([string]$TcCmd) {
   $fbCmd = "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
   $fbStart = [DateTimeOffset]::Now
   try {
-    $cfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8
+    $tsCfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8
     & $KitCmd.dev gate -Dir $st.dir -Cmd $fbCmd
     $rc = $LASTEXITCODE
   } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
@@ -1317,6 +1317,11 @@ if ($SelfTest) {
     @('PowerShell', '& D:\kit\skills\dev-kit\LESSONS.md', $true, 'default desktop app'),
     @('PowerShell', '& "C:\x y\notes.txt"', $true, 'default desktop app'),
     @('PowerShell', 'Invoke-Item .\report.html', $true, 'default desktop app'),
+@('PowerShell', 'Start-Process .\out\kit-flow.html', $true, 'default desktop app'),
+@('PowerShell', 'Start-Process https://example.com', $true, 'default desktop app'),
+@('Bash', 'xdg-open out/report.html', $true, 'default desktop app'),
+@('Bash', 'cmd /c start "" report.pdf', $true, 'default desktop app'),
+@('PowerShell', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
     @('PowerShell', 'cd x; ii "out.pdf"', $true, 'default desktop app'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, 'default desktop app'),
     @('PowerShell', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, 'default desktop app'),
@@ -1491,7 +1496,8 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 # stash as the git subcommand of a real git command only (Test-GitStash above; tests: dev.ps1 guard -SelfTest)
 if (Test-GitStash $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: dev.ps1 wt commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm.ps1 avd reset).' }
-# PowerShell's call operator (or Invoke-Item) on a document does not read it: it opens it in the desktop's default app
+# Opening a document or URL on the owner's desktop (& / . / Invoke-Item / Start-Process / start / explorer / xdg-open / open) does
+# not read it: it pops up the default app or browser. Kit rule: nothing opens on the desktop unless the owner asked (--open).
 # (a learn step once ran `& LESSONS.md` and popped it open in the owner's editor).
 # PowerShell: judged on the parse tree (a document path inside a quoted -Text "..." argument once tripped the raw-line regex);
 # Bash or unparsable text: the regex on the line with quoted strings and heredocs stripped.
@@ -1508,12 +1514,12 @@ function Test-OpenDoc([string]$text, [string]$tool) {
         $el = @($ca.CommandElements); if (-not $el.Count) { continue }
         $val = { param($e) if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $e.Value } else { $e.Extent.Text.Trim('''"') } }
         if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
-        if ((& $val $el[0]) -match '^(Invoke-Item|ii)$' -and @($el | Select-Object -Skip 1 | Where-Object { (& $val $_) -match $doc }).Count) { return $true }
+        if ((& $val $el[0]) -match '^(Invoke-Item|ii|Start-Process|start|saps|explorer(\.exe)?|xdg-open|open)$' -and @($el | Select-Object -Skip 1 | Where-Object { (& $val $_) -match "$doc|^https?://" }).Count) { return $true }
       }
       return $false
     }
   }
-  (StripData $text) -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii)\s+[^\s;|&]+\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)(\s|;|\||\)|$)'
+  (StripData $text) -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii|Start-Process|start|explorer(\.exe)?|xdg-open|open|cmd(\.exe)?\s+/c\s+start(\s+"")?)\s+([^\s;|&]+\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)|https?://\S+)(\s|;|\||\)|$)'
 }
 if (Test-OpenDoc $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) {
   Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }

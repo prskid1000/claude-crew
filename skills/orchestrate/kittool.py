@@ -26,6 +26,7 @@ lint checks (the same graph flow draws; strict: every problem fails, --warn repo
   FILE-CAP        more than 50 tracked files (ports .codex/ .agents/ GEMINI.md excluded)
   BUDGET          a file or the kit over its token budget (CONTRIBUTING "Hard rules"); the top consumers are listed
   SCRIPT-HEADER   an entry script without a header block naming its usage and "Exit codes"
+DESKTOP-OPEN    a script opens a file, browser or app on the desktop without an explicit --open / -Open flag
   LESSONS-CAP     a LESSONS.md skill section over 40 lines
   README-GRAPH    README.md graph sections out of date (kittool.py flow --readme; the pre-commit hook runs it)
   ORG-TERM        an org term in a published file (only with --org-terms)
@@ -802,6 +803,21 @@ def lint(k, g=None, org_terms=None):
         head = '\n'.join(k.texts.get(f, '').splitlines()[:40])
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
             bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (dev-kit/templates.md "Script header")')
+    # ---- nothing opens on the owner's desktop (file, browser, app) unless an explicit --open / -Open flag asked for it
+    rx_open = {'.py': r'os\.startfile\(|webbrowser\.open|\[\s*[\'"](?:xdg-open|open)[\'"]',
+                '.ps1': r'^\s*(?:Invoke-Item|ii)\s|Start-Process\s+(?:-FilePath\s+)?[\'"]?(?:https?://|[^\s\'"]+\.(?:html?|md|pdf|png|jpe?g|txt|csv|log)\b)|\bcmd(?:\.exe)?\s+/c\s+start\b|^\s*(?:start|explorer(?:\.exe)?)\s+\S',
+                '.mjs': r'\bexec(?:Sync)?\(\s*[\'"`](?:start|open|xdg-open)\s|\bimport\s.*[\'"]open[\'"]',
+                '.js': r'\bexec(?:Sync)?\(\s*[\'"`](?:start|open|xdg-open)\s'}
+    for f in counted:
+        ext = os.path.splitext(f)[1]
+        if ext not in rx_open or f.startswith(GENERATED):
+            continue
+        ls = k.texts.get(f, '').splitlines()
+        for i, line in enumerate(ls):
+            if re.match(r'\s*(#|//|@\(\s*'')', line) or not re.search(rx_open[ext], line):   # comments, guard self-test data
+                continue
+            if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
+                bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (CONTRIBUTING "Script")')
     # ---- lessons: 40 lines per skill section
     lt = k.texts.get('LESSONS.md', '')
     for m in re.finditer(r'^## (?!History)(\S+)\n(.*?)(?=^## |\Z)', lt, re.S | re.M):
@@ -1472,6 +1488,24 @@ def port_deploy():
     print(f"deployed -> {', '.join(str(p) for p in deployed)}")
 
 
+def deployed_stale():
+    """The workspace copies port_deploy writes (<workspace>/.codex, .agents, AGENTS.md, GEMINI.md) that differ from the kit;
+    [] when the kit is no installed <workspace>/.claude (a worktree or second clone deploys nothing)."""
+    if KIT.name != '.claude':
+        return []
+    bad = []
+    for name in ('.codex', '.agents'):
+        src, dst = KIT / name, WORKSPACE / name
+        a = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob('*') if p.is_file()} if src.exists() else {}
+        b = {p.relative_to(dst).as_posix(): p.read_bytes() for p in dst.rglob('*') if p.is_file()} if dst.exists() else {}
+        if a != b:
+            bad.append(name + '/')
+    for name in ('AGENTS.md', 'GEMINI.md'):
+        if not (WORKSPACE / name).exists() or (WORKSPACE / name).read_bytes() != (KIT / name).read_bytes():
+            bad.append(name)
+    return bad
+
+
 def check_stale():
     """--check: exit 1 if .codex/.agents would change, without writing. Wired into
     kit.ps1 health (SessionStart) so drift between .claude/agents and the ported
@@ -1515,6 +1549,10 @@ def cmd_port(a):
         if not gm.exists() or gm.read_text(encoding='utf-8') != GEMINI_MD:
             print("kittool port: GEMINI.md stale or missing; run 'python -X utf8 skills/orchestrate/kittool.py port'")
             rc = 1
+        stale_ws = deployed_stale()
+        if stale_ws:
+            print(f"kittool port: workspace copies differ from the kit: {stale_ws}; run 'python -X utf8 skills/orchestrate/kittool.py port'")
+            rc = 1
         return rc
     port_agents()
     port_hooks()
@@ -1542,7 +1580,7 @@ def example_of(ex_rel):
 SAFE_DEFAULTS = {'kitAudit.everyDays', 'cleanup.maxBrowserProfiles', 'supervise.ramActPct', 'supervise.minDiskFreeGB',
                  'build.mavenOffline', 'gate.heapMinGB'}
 # subtrees whose keys are user-chosen names (or samples): never "missing" against the example
-USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'gate.startHeapGB', 'lanes', 'app')
+USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples', 'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests')
 PLACEHOLDER = re.compile(r'<[^>]+>|/path/to|example\.(com|app)|your[- ]', re.I)
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
              'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
@@ -1641,7 +1679,14 @@ def strip_ps_comments(text):
 
 def config_doc_keys(kit):
     doc = section(aread(kit, 'README.md'), 'Configuration') or ''
-    return doc, set(re.findall(r'`([A-Za-z][\w]*(?:\.[\w]+)*)', doc))
+    keys = set(re.findall(r'`([A-Za-z][\w]*(?:\.[\w]+)*)', doc))
+    for row in doc.split('\n'):   # a row's sub-keys named in its Meaning cell: `tracker` ... `statuses` -> tracker.statuses
+        cells = row.split('|')
+        if len(cells) > 3:
+            heads = re.findall(r'`([A-Za-z][\w.]*)', cells[1])
+            for w in re.findall(r'`([A-Za-z]\w*)', '|'.join(cells[2:])):
+                keys.update(f'{h}.{w}' for h in heads)
+    return doc, keys
 
 
 def script_config_keys(kit, files):
@@ -2079,7 +2124,7 @@ def cmd_scan(kit):
             if l.startswith('ORG-TERM'):
                 out('ACT', 'GENERIC-ORG-TERM', l.split()[1].rstrip(':'), l.split(':', 1)[1].strip())
     pk = os.path.join(kit, 'skills', 'orchestrate', 'kittool.py')
-    rc, o, e = run([py(), '-X', 'utf8', pk, '--check'], timeout=60)
+    rc, o, e = run([py(), '-X', 'utf8', pk, 'port', '--check'], timeout=60)
     if rc:
         out('ACT', 'PORT-DRIFT', 'kittool.py port --check', (o or e)[:300], f'python -X utf8 {pk} port')
     agents = {os.path.basename(f)[:-3] for f in files if re.match(r'agents/[^/]+\.md$', f)}
@@ -2178,8 +2223,8 @@ def doc_flags(kit, files):
     for f in files:
         if f.endswith('.ps1'):
             code = strip_ps_comments(aread(kit, f))
-            m = re.search(r'(?is)^\s*param\s*\((.*?)\)\s*$', code, re.M) or re.search(r'(?is)\bparam\s*\((.*?)\)\s*\n', code)
-            if m:
+            # every param block in the file (an area script has one per verb function): a flag is fine when some verb takes it
+            for m in re.finditer(r'(?is)\bparam\s*\((.*?)\)\s*\n', code):
                 ps = {x.lower() for x in re.findall(r'\$(\w+)', m.group(1))} | {x.lower() for x in re.findall(r"Alias\('([^']+)'", m.group(1))}
                 params.setdefault(os.path.basename(f), set()).update(ps)
     for f in files:

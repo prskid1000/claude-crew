@@ -24,7 +24,9 @@ the checks below before every push. `kittool.py lint` enforces what it can; its 
   `Exit codes:` (0 ok · 1 problem found · 2 usage error); shared parameter names `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun
   -Json -Quiet`; JSON output for machines; no silent failures (a failed call is UNKNOWN, never a state); idempotent where possible;
   every path through `Get-KitPath` / `kit_path` / `kitPath` / `rp()` [RUNTIME-RAW, RUNTIME-MAP]; network calls bounded (lib.ps1
-  sets git timeouts; `Invoke-GitFetch`, memoised host / tracker reads). Template: `dev-kit/templates.md` "Script header".
+  sets git timeouts; `Invoke-GitFetch`, memoised host / tracker reads); never opens a file, browser or app on the desktop unless an
+  explicit `--open` / `-Open` flag asks [DESKTOP-OPEN] (hooks, lint and generators stay silent; the guard blocks agents' opens too).
+  Template: `dev-kit/templates.md` "Script header".
 - **Skill** [SKILL-DESC, SKILL-BLOCK, FILES-*]: front matter `description: "Load when: ... Not when: ... -> <sibling>."`; then
   **Load when**, **Not when**, **Hands off to**, **Files** (every file in the folder, plus `<kit>/...` files it binds, each with
   its step), numbered steps, **Rules**, **Learn**. Lessons: the skill's `## <skill>` section of `LESSONS.md` (`learn -Read`).
@@ -47,5 +49,7 @@ pwsh -NoProfile -File tests/kit-tests.ps1                         # all areas (o
 python -X utf8 skills/orchestrate/kittool.py lint --org-terms skills/dev-kit/kit.local.json
 python -X utf8 skills/orchestrate/kittool.py cost --steps         # after a workflow change
 ```
-The pre-commit hook regenerates the README graph sections and blocks on lint problems; the pre-push hook blocks org terms and
-ignored / local files. Commit with `dev.ps1 wt commit` (Conventional Commits).
+The pre-commit hook regenerates the README graph sections and the ports (`kittool.py port`: `.codex/`, `.agents/`, `GEMINI.md`,
+plus the workspace copies when the kit is an installed `<workspace>/.claude`), stages them, and blocks while `port --check`
+still differs or lint finds problems; the pre-push hook re-runs `port --check` and blocks stale ports, org terms and ignored /
+local files. SessionStart (`kit.ps1 health`) only reports. Generated ports never count toward the file cap. Commit with `dev.ps1 wt commit` (Conventional Commits).

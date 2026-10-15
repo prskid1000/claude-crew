@@ -269,6 +269,7 @@ exit 2
 #                  settings.local.json, targets/swarm configs, kit.local.json "localOnly" paths, runtime output, ...)
 #   2. ORG TERM    kittool.py lint --org-terms finds an org term in a published file of the working tree, or a pushed commit adds a
 #                  line with one. Terms: "orgTerms" in skills/dev-kit/kit.local.json (or $env:KIT_ORG_TERMS, comma list).
+#   3. PORTS       kittool.py port --check differs (generated .codex/ .agents/ GEMINI.md or the workspace copies are stale)
 # The kit's other lint problems are printed as a warning only.
 function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
@@ -321,6 +322,10 @@ else {
   }
 }
 
+# 3. stale ports (the pre-commit hook regenerates them; a commit made without the hook leaves them stale)
+$py3 = Get-Python
+if ($py3) { $pc = & $py3 -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE) { $hits += "PORTS       stale generated ports: $("$pc".Trim()) - run kittool.py port and commit" } }
+
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
   $hits | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
@@ -331,7 +336,8 @@ exit 0
 }
 
 # ---------------------------------------------------------------- precommit: the pre-commit gate (graph sections in README, lint)
-# Regenerates the README graph sections (kittool flow --readme), stages README.md when they changed, and fails the commit while
+# Regenerates the README graph sections (kittool flow --readme) and the ports (kittool port: .codex/, .agents/, GEMINI.md, plus the
+# workspace copies when the kit is an installed <workspace>/.claude), stages them, fails when port --check still differs or while
 # kit-lint finds blocking problems (unreached files, budgets, file cap, conventions). Run by .githooks/pre-commit.
 function Invoke-PreCommit {
   $root = $KitConf.Kit
@@ -339,6 +345,13 @@ function Invoke-PreCommit {
   & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
+  # ports: regenerate (and deploy to the workspace when this is an installed <workspace>/.claude), stage the kit-side files
+  & $py -X utf8 $KitCmd.kittool port | Out-Null
+  if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - kittool port failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
+  $gen = @('.codex', '.agents', 'GEMINI.md') | Where-Object { Test-Path (Join-Path $root $_) }
+  if (@(git -C $root status --porcelain -- @gen).Count) { git -C $root add -A -- @gen; Write-Host 'pre-commit: ports regenerated and staged' }
+  $chk = & $py -X utf8 $KitCmd.kittool port --check 2>&1
+  if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - ports still differ after regeneration: $chk" -ForegroundColor Red; exit 1 }
   $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
   $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue

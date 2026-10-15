@@ -37,7 +37,7 @@ argument-hint: "[focus: setup | config | recover | audit | all]"
    a config key with today's default, the org's value in the report's "kit.local.json additions". Any stack, migration tool, local
    env shape, deploy mechanism and tracker must work through config.
 6. **Consistency:** Files indexes vs disk; README "Configuration" vs the keys scripts read (both ways); Router vs skills, agents
-   and workflows; agent tools vs what their skill runs; ports (`kittool.py port --check`); the README graph current; every file
+   and workflows; agent tools vs what their skill runs; ports in the kit and the workspace copies (`kittool.py port --check`; the pre-commit hook regenerates them, pre-push blocks stale ones); the README graph current; no script opens the desktop without `--open` (DESKTOP-OPEN); every file
    reached from the root with a reason on each edge; budgets and the 50-file cap; script headers (usage, exit codes, shared params).
 7. **Improve:** `& $O learn -Stats`, `-Show -Last 300`, the newest `<runtime>/logs/retros/*.md`, `<runtime>/logs/guard.log`; a
    `## History` "(fixed in kit)" problem seen again = a regression finding. Each pattern -> the smallest durable change.
