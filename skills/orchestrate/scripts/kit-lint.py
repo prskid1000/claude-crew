@@ -40,7 +40,11 @@ def opt(name, has_value=False):
         return None
     i = args.index(name)
     args.pop(i)
-    return args.pop(i) if has_value else True
+    if not has_value:
+        return True
+    if i >= len(args) or args[i].startswith('--'):
+        sys.exit(f'kit-lint: {name} needs a value (see the usage at the top of kit-lint.py)')
+    return args.pop(i)
 
 
 SUMMARY, WARN, NOFLOW = opt('--summary'), opt('--warn'), opt('--no-flow')
