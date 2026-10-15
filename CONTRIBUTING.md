@@ -21,6 +21,9 @@ Thanks for helping. A few rules keep the kit useful for everyone:
    Get-ChildItem skills, .githooks -Recurse -Filter *.ps1 | ForEach-Object { $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e); if ($e) { "$($_.Name): $($e[0].Message)" } }
    node --check skills/qa-kit/scripts/web/browser.mjs
    python -m py_compile skills/dev-kit/scripts/devtools.py   # and the other .py files
+   pwsh -NoProfile -File skills/dev-kit/scripts/guard.ps1 -SelfTest
+   Get-ChildItem skills/*/tests/test*.ps1 | ForEach-Object { pwsh -NoProfile -File $_.FullName }   # offline script tests; python -X utf8 for tests/*.py
+   python -X utf8 skills/orchestrate/scripts/port-kit.py --check   # .codex/.agents ports match agents/workflows/hooks
    ```
    Workflow files (`workflows/*.js`) run inside Claude Code's workflow runtime: to syntax-check one, wrap it in
    `async function __wf(){ ... }`, replace `export const meta` with `const meta`, and run `node --check` on the result.

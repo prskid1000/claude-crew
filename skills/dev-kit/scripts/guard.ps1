@@ -48,7 +48,7 @@ if ($SelfTest) {
     @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, 'default desktop app'),
     # [.., 'holds runs in progress'] - deleting the runtime's work/ ({RT} = the runtime folder name; judged as if runs were active)
     @('Bash', "cd /d/x/{RT}/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
-    @('Bash', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain RM check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
+    @('Bash', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the {RT}/work folder" -Source workflow', $false, 'holds runs in progress'),
     @('Bash', 'rm -rf /d/x/{RT}/work', $true, 'holds runs in progress'),
     @('PowerShell', 'Remove-Item -Recurse -Force "D:\x y\{RT}\work"', $true, 'holds runs in progress'),

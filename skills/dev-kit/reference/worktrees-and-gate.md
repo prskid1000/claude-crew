@@ -41,7 +41,7 @@ Other agents merge all the time; a stale base means avoidable conflicts.
 ## 3. Builds and tests go through the memory gate
 - **Use `check.ps1`** (or `gate.ps1 -Cmd "<cmd>"` for anything it doesn't cover). Never run Maven, Gradle, dotnet/msbuild,
   ng/tsc/jest/vitest, cargo, pytest suites or e2e runners directly: six parallel builds once took the machine to 100% RAM.
-- The gate starts a build only when it leaves ≥ 12 GB free after every running build's estimate. Waiting is normal.
+- The gate starts a build only when it leaves `gate.keepFreeGB` free (default 15% of RAM, at least 6 GB) after every running build's estimate. Waiting is normal.
   A build that gets killed is not a code failure: run it again.
 - **Targeted tests only** (`-Tests`). Full suites, `mvn install`, `-T`, parallel workers are off unless the brief says so.
 - **No long-running processes**: no dev servers, no emulators (the QA swarm owns them), at most one headless browser.

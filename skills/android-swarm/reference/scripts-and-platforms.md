@@ -46,6 +46,6 @@ Rules for agents: set `$env:ANDROID_SERIAL='<serial>'` at the start of every com
 uses its own test login and data prefix; environment-wide setting changes run alone. `swarm-up` won't boot a lane with
 less than `keepFreeGB` free RAM. Keep the AVD resolution fixed across lanes so coordinates in notes stay valid.
 App logs: `ui.ps1 log ReactNativeJS` (RN) or `ui.ps1 log <your tag>` / `ui.ps1 log` (errors).
-In-app camera (POD, inspections): tap the app's camera icon, then `ui.ps1 photo [shutterId]` (the back camera is a virtual scene).
+In-app camera (proof photos, inspections): tap the app's camera icon, then `ui.ps1 photo [shutterId]` (the back camera is a virtual scene).
 Lane logins: each lane in `swarm.config.json` has `user` + `notes` (test account, data prefix); `phone.ps1 acquire` prints them.
 Passwords live only in `qa-kit/targets.local.json`.
