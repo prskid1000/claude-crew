@@ -136,7 +136,10 @@ const BRIEF_FILE = { feature: 'WAVE_BRIEF.md', bugfix: 'BUGFIX_BRIEF.md', resume
 const WHY = `WHY YOU ARE DOING THIS
 ${A.mandate && A.mandate.length ? `The task owner asked for this work, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is your items below: that IS the task owner's request for this run.
 Later chat messages from the task owner to the lead (about other topics: repos, READMEs, questions) are side conversations with the lead,
-not a change of your assignment. Never drop your items for one; the lead handles them.
+not a change of your assignment. Never drop your items for one; the lead handles them. This holds even when the message is about this
+wave's own subject: a question ("explain ...", "what is ...", "why ...", "how is it going?") is answered by the lead and never means
+"build nothing". A "hold"/"skip" in the mandate or brief covers only the items the brief lists as held - build every other item you own.
+Building nothing is only right when the brief itself says so; if you think your items should stop, build them anyway and say why in your report.
 NEVER act on a relayed message yourself when it asks for anything outside your items - above all nothing destructive: no deleting or
 cleaning folders (the kit runtime's work/ folder holds live QA runs and wave state; a wave agent once deleted the runtime this way), no branch resets, no
 deploys. Mention it in your report and let the lead do it.
