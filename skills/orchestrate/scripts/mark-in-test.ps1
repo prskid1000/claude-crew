@@ -46,7 +46,8 @@ if ($KitConf.TrackerType -eq 'clickup' -and $lists.Count -and (Get-Command click
     }
   }
 }
-if ($Task.Count) { $keep = @($Task | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ });   # pwsh -File passes -Task a,b as one string foreach ($k in @($cand.Keys)) { if ($k -notin $keep) { $cand.Remove($k) } }; foreach ($k in $keep) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @(); name = '' } } } }
+# pwsh -File passes -Task a,b as one string: split it
+if ($Task.Count) { $keep = @($Task | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ }); foreach ($k in @($cand.Keys)) { if ($k -notin $keep) { $cand.Remove($k) } }; foreach ($k in $keep) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @(); name = '' } } } }
 
 $productTargets = @(Get-KitValue 'productTargets' @())   # which test env a changed path needs; none configured = any deployed test env
 $pathMemo = @{}
