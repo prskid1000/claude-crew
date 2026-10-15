@@ -1,4 +1,4 @@
-﻿<#
+<#
 Builds the test APK of the app in swarm.config.json (or -AppDir) through the machine-wide memory gate, and copies it
 to <out>/apk/app.apk (+ app-<commit>.apk; <out> = <runtime>/cache/android-swarm, see _config.ps1). app.apk is installed on every lane by
 phone.ps1, so a build of any other checkout (-AppDir pointing at a worktree / feature branch) only writes app-<branch>-<commit>.apk
@@ -27,6 +27,14 @@ if (-not $PSBoundParameters.ContainsKey('BuildArgs')) { $BuildArgs = [string]$c.
 $gate = Join-Path (Split-Path $c.dir) 'dev-kit/scripts/gate.ps1'
 . (Join-Path (Split-Path $c.dir) 'dev-kit/scripts/sysinfo.ps1')
 $gw = if ($KitIsWindows) { 'gradlew.bat' } else { 'gradlew' }   # the gate runs it as .\gradlew.bat (Windows) or ./gradlew
+# Expo continuous native generation: android/ is generated, not committed, so a fresh worktree has none. Generate it from the
+# app config with the linked node_modules (prebuild --no-install installs nothing); a checkout that has it is left as it is.
+if (-not (Test-Path (Join-Path $AppDir "android/$gw")) -and -not (Test-Path (Join-Path $AppDir $gw)) -and (Test-Path (Join-Path $AppDir 'package.json')) -and
+    ((Get-Content (Join-Path $AppDir 'package.json') -Raw) -match '"expo"\s*:')) {
+  "no android/ in $AppDir (Expo app): npx expo prebuild --platform android --no-install"
+  Push-Location $AppDir
+  try { $env:CI = '1'; & npx expo prebuild --platform android --no-install 2>&1 | Select-Object -Last 5; if ($LASTEXITCODE) { throw "expo prebuild failed (exit $LASTEXITCODE)" } } finally { Pop-Location }
+}
 $android = if (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android')" }
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()

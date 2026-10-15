@@ -36,7 +36,7 @@ $K = Join-Path (Split-Path (Split-Path (Split-Path $PSCommandPath))) 'dev-kit/sc
 . (Join-Path $K 'sysinfo.ps1')
 $tmp = Get-KitTemp
 if (-not $WorktreeRoot) { $WorktreeRoot = $KitConf.WorktreeRoots }
-$keepBranches = '^(' + ((@('main', 'master', 'develop') + @($KitConf.ProtectedBranches | ForEach-Object { [regex]::Escape($_) })) -join '|') + ')$'
+$keepBranches = '^(' + ((@('main', 'master', 'develop', 'localenv/.+') + @($KitConf.ProtectedBranches | ForEach-Object { [regex]::Escape($_) })) -join '|') + ')$'
 $mark = Get-KitPath last-cleanup -Create; $log = Get-KitPath cleanup-log -Create
 if ($IfDue -and (Test-Path $mark) -and ((Get-Date) - [datetime](Get-Content $mark -Raw).Trim()).TotalHours -lt 20) { exit 0 }
 

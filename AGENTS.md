@@ -29,6 +29,7 @@ Skills a target needs at a later step are loaded at that step (its Files index s
 | R10 | One deployed change, checked by you in this session (one screen or endpoint, no tester guide run) | direct, qa-kit rules | `qa-kit` |
 | R11 | Deployed tasks on a test environment, each with a tester guide or how-to-test comment, are to be tested by agents | `/test-and-close` | `orchestrate` |
 | R12 | Emulators, phones or the test APK outside a running /test-and-close: build the APK, create or reset lanes, a manual lease | `android-swarm` | — |
+| R12b | Start, stop, deploy to, test or debug on a local environment (the one shared running instance of an app on this machine, `localEnv` in `kit.local.json`), or build an APK or run a task from it | `local-env` | — |
 | R13 | Coding with more than 2 work items or tasks, one item spanning 2+ repos, or one large item (new feature or epic, migrations, many screens) | `/dev-wave` | `orchestrate` |
 | R14 | Coding: one small change (one item in one repo: one screen, file or endpoint, a quick fix, a config edit) | direct, dev-kit rules | `dev-kit` |
 | R15 | A question, an explanation, an analysis or a plan; no code change | direct | — |
@@ -42,6 +43,8 @@ Skills a target needs at a later step are loaded at that step (its Files index s
   asked or asking first, then say in one line what started (workflow, agents, repos) and why. An org that wants to be asked first
   says so in its org rules; then propose instead. A request already running in a workflow is never launched twice: add to it
   through the contracts file (R1). Size each workflow to the session's size guideline.
+- **Local env (pre-staging):** with `localEnv` configured, dev agents deploy their branch to the env, test and `promote` it there
+  (`local-env`, dev-kit step 6b) before merging. The env is local: deploying to it needs no person's yes; test environments still do.
 - **Coding and testing in one request:** R13/R14 now; R11 (or R9) once a person has deployed. **Deploys, and merges into
   branches that deploy, always need a person's yes.**
 

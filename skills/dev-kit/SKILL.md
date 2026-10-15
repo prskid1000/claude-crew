@@ -8,12 +8,12 @@ session on router row R14 (one small change).
 **Not when:** coordinating agents -> `orchestrate`; testing deployed work -> `qa-kit`; static audit -> `tech-audit`; reviewing
 MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start them).
 **Hands off to:** the coordinator (your final reply; `track.ps1` promotes the task), `qa-kit` testers through your tester guide
-(step 7b), `mr-reviewer` inside a reviewed /dev-wave.
+(step 7b), `mr-reviewer` inside a reviewed /dev-wave, `local-env` at step 6b (pre-staging check, when `localEnv` runs your repo).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
 |---|---|
-| `LESSONS.md` | step 0, before anything else |
+| `LESSONS.md` (+ LESSONS.local.md next to it: org/project lessons, git-ignored, when present) | step 0, before anything else |
 | `HISTORY.md` | never read for work (retired lessons) |
 | `reference/tracker.md` | step 0b, before your first tracker call |
 | `reference/worktrees-and-gate.md` | step 0/1 when board.ps1 or wt.ps1 warns; step 4 when the gate holds a build > 10 min or kills it |
@@ -53,6 +53,7 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/check.ps1 -Dir <wt>/<module> -Step migrations               # 4c. if you touched DB migrations (must print ISSUES 0)
 & $K/wt.ps1 commit -Dir <wt> -Message "feat(scope): ..."         # 5. commit with hooks really running
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. re-read <brief>.contracts.md, rebase + re-check before push
+# 6b. localEnv runs this repo: local-env skill steps 1-6 (deploy -Dir <wt>, use, test, promote, release) = pre-staging
 git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
 python $K/devtools.py doc "<title>" <guide.html>                  # 7b. tester guide (complex change) -> link it on the task + MR;
@@ -69,7 +70,7 @@ Setup (S1, once per workspace, coordinator): copy `kit.example.json` to `kit.loc
 - **Worktrees:** one per repo via `wt.ps1 new`; deps-differ warning → `-LinkFrom <checkout of the target branch>`; never install into a
   linked `node_modules`/`.venv` (say what you need instead); remove with `wt.ps1 remove`. `wt.ps1 sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `check.ps1` (or `gate.ps1 -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo directly;
-  waiting is normal, a killed build is not a code failure (re-run). Targeted tests only. No dev servers, no emulators, ≤ 1 headless browser.
+  waiting is normal, a killed build is not a code failure (re-run). Targeted tests only. No dev servers by hand (they run in the local env: `local-env`), no emulators, ≤ 1 headless browser.
   A gate still queued when you are told to stop or your turn ends is unrun: never leave commits local. Push, open the MR as Draft with
   `Not run: <gate>` in the MR body (MR_BODY "Verified") and the tracker comment, and report mergeState `NOT_MERGED`.
   Call `check.ps1` / `gate.ps1` with a tool timeout of 600000 ms (or `run_in_background` for builds over 10 min): the 120 s default

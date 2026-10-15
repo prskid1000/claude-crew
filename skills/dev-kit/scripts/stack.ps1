@@ -7,6 +7,7 @@ Works for any repo — nothing project-specific lives here.
 
 Looks in -Dir first, then walks up to the git root, and uses the nearest match.
 Commands use placeholders filled by check.ps1: {tests} (test filter), {files} (paths), {sln} (solution file).
+run = the dev server / app start command local-env's localenv.ps1 uses when a service names no start ({port} = its port).
 
 Override for one repo/folder: put `.claude-stack.json` next to the marker file, e.g.
   { "stack": "custom", "commands": { "compile": "make", "test": "make test T={tests}" } }
@@ -76,7 +77,7 @@ function Get-NodeTools($d) {
 }
 
 function Get-Stack($d) {
-  $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; build = $null; format = $null }
+  $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; build = $null; format = $null; run = $null }
   $s = $null; $deps = @()
 
   if (Test-Path (Join-Path $d 'pom.xml')) {
@@ -88,6 +89,7 @@ function Get-Stack($d) {
     $c.compile = "$mvn $off-q compile"
     $c.test = "$mvn $off-q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
     $c.build = "$mvn $off-q package -DskipTests"
+    if ((ReadText (Join-Path $d 'pom.xml')) -match 'spring-boot') { $c.run = "$mvn $($off)spring-boot:run" }
   }
   elseif ((Has $d 'build.gradle') -or (Has $d 'build.gradle.kts') -or (Has $d 'settings.gradle*')) {
     $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
@@ -113,6 +115,7 @@ function Get-Stack($d) {
       $c.compile = "$gw classes -q"
       $c.test = "$gw test --tests {tests}"
       $c.build = "$gw assemble"
+      $c.run = if ((@(Get-ChildItem -LiteralPath $d -Filter 'build.gradle*' -File -ErrorAction SilentlyContinue | ForEach-Object { ReadText $_.FullName }) -join ' ') -match 'org\.springframework\.boot') { "$gw bootRun" } else { "$gw run" }
     }
   }
   elseif ((Has $d '*.sln') -or (Has $d '*.csproj') -or (Has $d '*.fsproj') -or (Has $d '*.vbproj')) {
@@ -137,6 +140,7 @@ function Get-Stack($d) {
       $c.test = 'dotnet test "{sln}" -nologo --filter "{tests}"'
       $c.format = 'dotnet format "{sln}" --verify-no-changes'
       $c.build = 'dotnet build "{sln}" -nologo -v q -c Release'
+      if ((Has $d '*.csproj') -or (Has $d '*.fsproj')) { $c.run = 'dotnet run --urls http://localhost:{port}' }   # a project folder (not a solution root)
     }
   }
   elseif (Test-Path (Join-Path $d 'angular.json')) {
@@ -161,6 +165,7 @@ function Get-Stack($d) {
     elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
     else { $c.test = NodeSpecCmd }   # no test target: node-spec.mjs runs pure-logic specs
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
+    $c.run = 'npx ng serve --port {port}'
   }
   elseif (Test-Path (Join-Path $d 'package.json')) {
     $n = Get-NodeTools $d; $deps = @('node_modules')
@@ -175,6 +180,9 @@ function Get-Stack($d) {
     if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = NodeRun $pm 'build' '' }
     $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null
     if ($s -eq 'react-native' -and $agw) { $c.build = "cd android && $agw assembleRelease" }
+    # dev server: Metro for React Native (Expo or bare), else the project's own dev / start script
+    $c.run = if ($s -eq 'react-native') { if ($n.Deps -contains 'expo') { 'npx expo start --port {port}' } else { 'npx react-native start --port {port}' } }
+             elseif ($n.Scripts -contains 'dev') { NodeRun $pm 'dev' '' } elseif ($n.Scripts -contains 'start') { NodeRun $pm 'start' '' } else { $null }
   }
   elseif ((Has $d 'pyproject.toml') -or (Has $d 'requirements*.txt') -or (Has $d 'setup.py') -or (Has $d 'Pipfile')) {
     $s = 'python'; $deps = @('.venv')
@@ -199,15 +207,16 @@ function Get-Stack($d) {
       $c.lint = if ($have -match 'ruff' -and ($ruffCfg -or -not ($flakeCfg -and $have -match 'flake8'))) { "$py -m ruff check {files}" } elseif ($have -match 'flake8') { "$py -m flake8 {files}" } else { $null }
       $c.test = if ($have -match 'pytest' -or $pytestCfg) { "$py -m pytest {tests} -q" } else { "$py -m unittest {tests}" }
     }
+    if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }   # Django; other frameworks: .claude-stack.json commands.run
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
   elseif (Test-Path (Join-Path $d 'go.mod')) {
     $s = 'go'
-    $c.compile = 'go build ./...'; $c.test = 'go test ./... -run "{tests}"'; $c.lint = 'go vet ./...'; $c.format = 'gofmt -l .'
+    $c.compile = 'go build ./...'; $c.run = 'go run .'; $c.test = 'go test ./... -run "{tests}"'; $c.lint = 'go vet ./...'; $c.format = 'gofmt -l .'
   }
   elseif (Test-Path (Join-Path $d 'Cargo.toml')) {
     $s = 'rust'
-    $c.compile = 'cargo check -q'; $c.test = 'cargo test {tests}'; $c.lint = 'cargo clippy -q'; $c.build = 'cargo build --release'; $c.format = 'cargo fmt --check'
+    $c.compile = 'cargo check -q'; $c.test = 'cargo test {tests}'; $c.lint = 'cargo clippy -q'; $c.build = 'cargo build --release'; $c.run = 'cargo run'; $c.format = 'cargo fmt --check'
   }
   elseif (Test-Path (Join-Path $d 'CMakeLists.txt')) {
     $s = 'cmake'

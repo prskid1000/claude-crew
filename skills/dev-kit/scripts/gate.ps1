@@ -1,4 +1,4 @@
-﻿#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
+#Requires -Version 7   # ConvertFrom-Json -AsHashtable; under Windows PowerShell 5.1 every load is null and actions run on empty ids
 <#
 Machine-wide memory gate for heavy builds and tests, so parallel agents (plus other Claude sessions, IDEs,
 emulators and browsers) never run the machine out of RAM. Stack-agnostic: Maven, Gradle/Android, .NET,
@@ -26,7 +26,7 @@ There is no fixed limit on parallel builds. A build starts only when
   builds started in the last 30 min goes first, then the longest-waiting; a smaller build may backfill only while the head of
   the queue doesn't fit and has waited < 20 min; after that only a SMALL build (its kind's median <= 120 s and need <= 2 GB, from
   history) that fits may, one at a time. Owner = $env:CLAUDE_AGENT, else the worktree folder minus its repo suffix
-  (b-java-<repo> -> b-java), else its first dash part (x1-backend -> x1).
+  (b-api-backend -> b-api), else its first dash part (x1-backend -> x1).
 - history.json samples: { gb, sec, ok, at, code, cmd (first 60 chars) }; older samples lack at / code / cmd.
 - heap caps follow load INTELLIGENTLY: ceiling = start value or learned peak x 1.25; floor = what this project's build really
   uses (learned peak x 1.1, min 4 GB). With N builds queued each gets an equal share of the free memory, clamped between floor
@@ -173,7 +173,7 @@ function Set-HeapEnv([int]$gb) {
   }
 }
 
-# Owner for fair turns: explicit agent id, else the worktree folder minus its repo suffix (b-load-java-<repo> in repo <repo>
+# Owner for fair turns: explicit agent id, else the worktree folder minus its repo suffix (b-load-api-backend in repo backend
 # -> b-load-java); a folder without that suffix (the main checkout, other names) -> its first dash part (x1-backend -> x1).
 function Get-OwnerName([string]$Leaf, [string]$Repo) {
   if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { return $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) }

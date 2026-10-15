@@ -17,6 +17,25 @@
     "web": "frontend",
     "app": "mobile-app"
   },
+  "localEnv": {
+    "_readme": "Optional local environments (local-env skill, localenv.ps1): one shared always-on instance per env that agents deploy their branches to before the test environments. Secrets go in <kit>/localenv.local/<env>.env (dotenv), never here.",
+    "leaseMinutes": 15,
+    "drainMinutes": 10,
+    "cpuMaxPct": 90,
+    "envs": {
+      "shop": {
+        "description": "API + web of the shop",
+        "services": [
+          { "name": "db", "external": true, "port": 5432 },
+          { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://localhost:8080/health", "startMinutes": 8 },
+          { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "start": "npx ng serve --port {port}" }
+        ],
+        "tasks": {
+          "apk": { "repo": "mobile-app", "cmd": "npx react-native build-android --mode=release", "gated": true, "env": { "API_URL": "http://{lanIp}:8080" } }
+        }
+      }
+    }
+  },
   "protectedBranches": [
     "staging"
   ],

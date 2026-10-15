@@ -9,12 +9,14 @@ LESSONS.md short. Signals are raw observations; /kit-retro and each workflow's l
   & $L -Stats                    # counts per skill/kind since the last retro
 
 Lessons (learn steps, /kit-retro, the lead):
-  & $L -Skill qa-kit -Lesson "(2×) <one actionable line>" [-Project <name>]   # new ACTIVE lesson: top of ## General (or ## Project: <name>)
+  & $L -Skill qa-kit -Lesson "(2×) <one actionable line>" [-Project <name>]   # new ACTIVE lesson: top of ## General; -Project: ## Project: <name> in LESSONS.local.md (git-ignored)
   & $L -Skill dev-kit -Bump "<unique words of a lesson>" [-Append "<extra clause>"]   # seen again: (n×) -> (n+1×), optional clause
   & $L -Skill dev-kit -Fixed "<unique words of a lesson>"   # the kit now handles it: move that line to HISTORY.md as "(fixed in kit) ..."
   & $L -Skill dev-kit -Trim [-Max 40]                       # enforce the cap: move "(fixed in kit)" lines, then the oldest
                                                             # (bottom) lines, verbatim to HISTORY.md until LESSONS.md has <= Max lines
 LESSONS.md = active rules agents read (newest first, one line each); HISTORY.md next to it = moved lines, never read by agents.
+Project/org lessons (-Project) live in LESSONS.local.md / HISTORY.local.md next to them: git-ignored, never published (the kit stays generic).
+-Bump / -Fixed / -Trim work on LESSONS.md, or on LESSONS.local.md with -Project or when only that file holds the match.
 Signals are durable local knowledge: <kit>/learning.local.jsonl (git-ignored; Get-KitPath signals), the last-retro time in
 <kit>/learning.local.stamp. Deleting the runtime folder never loses them.
 -Lesson, -Bump and -Fixed trim automatically. Counts, new lines, retiring and the cap go through this script; merging or
@@ -49,6 +51,14 @@ if ($Lesson -or $Fixed -or $Bump -or $Trim) {
   $sd = Join-Path (Split-Path (Split-Path $PSScriptRoot)) $Skill
   $lf = Join-Path $sd 'LESSONS.md'; $hf = Join-Path $sd 'HISTORY.md'
   if (-not (Test-Path $lf)) { throw "no LESSONS.md in skill '$Skill' ($lf)" }
+  # org/project lessons go to the git-ignored LESSONS.local.md (the published kit carries no project specifics)
+  $llf = Join-Path $sd 'LESSONS.local.md'
+  $key = if ($Bump) { $Bump } elseif ($Fixed) { $Fixed } else { $null }
+  $useLocal = $Project -or ($key -and (Test-Path $llf) -and -not (Select-String -LiteralPath $lf -SimpleMatch -Pattern $key -Quiet) -and (Select-String -LiteralPath $llf -SimpleMatch -Pattern $key -Quiet))
+  if ($useLocal) {
+    $lf = $llf; $hf = Join-Path $sd 'HISTORY.local.md'
+    if (-not (Test-Path $lf)) { [IO.File]::WriteAllText($lf, "# $Skill - org/project lessons (LOCAL ONLY: git-ignored, never published)`nRead with LESSONS.md at step 0. Written by learn.ps1 -Lesson ... -Project <name>; same one-line format.`n") }
+  }
   $L = [System.Collections.Generic.List[string]]@((Get-Content $lf -Raw) -split "`r?`n")
   while ($L.Count -and $L[$L.Count - 1] -eq '') { $L.RemoveAt($L.Count - 1) }
   $moved = New-Object System.Collections.Generic.List[string]
@@ -60,7 +70,7 @@ if ($Lesson -or $Fixed -or $Bump -or $Trim) {
       if ($Project) { $L.Add(''); $L.Add($head); $L.Add($line) }
       else { $first = -1; for ($i = 0; $i -lt $L.Count; $i++) { if ($L[$i] -match '^- ') { $first = $i; break } }; if ($first -lt 0) { $first = $L.Count }; $L.Insert($first, $line) }
     } else { $L.Insert($at + 1, $line) }
-    "lesson added to $Skill/LESSONS.md ($head)"
+    "lesson added to $Skill/$(Split-Path $lf -Leaf) ($head)"
   }
   if ($Bump) {
     $hit = @(0..($L.Count - 1) | Where-Object { $L[$_] -match '^- ' -and $L[$_].Contains($Bump) })
@@ -70,7 +80,7 @@ if ($Lesson -or $Fixed -or $Bump -or $Trim) {
     $m = [regex]::Match($s, '\((\d+)×\)')
     $s = if ($m.Success) { $s.Remove($m.Index, $m.Length).Insert($m.Index, "($([int]$m.Groups[1].Value + 1)×)") } else { "$s (2×)" }
     $L[$hit[0]] = $s
-    "lesson bumped in $Skill/LESSONS.md: $($m.Success ? "($([int]$m.Groups[1].Value + 1)×)" : '(2×)')"
+    "lesson bumped in $Skill/$(Split-Path $lf -Leaf): $($m.Success ? "($([int]$m.Groups[1].Value + 1)×)" : '(2×)')"
   }
   if ($Fixed) {
     $hit = @(0..($L.Count - 1) | Where-Object { $L[$_] -match '^- ' -and $L[$_].Contains($Fixed) })
@@ -93,7 +103,7 @@ if ($Lesson -or $Fixed -or $Bump -or $Trim) {
     if ($h -notmatch '(?m)^## Moved by learn\.ps1') { $h += "`n`n## Moved by learn.ps1 (-Fixed / -Trim), oldest first" }
     [IO.File]::WriteAllText($hf, $h + "`n" + ($moved -join "`n") + "`n")
   }
-  "$Skill/LESSONS.md: $($L.Count) lines (max $Max)$(if ($moved.Count) { "; moved $($moved.Count) to HISTORY.md" })"
+  "$Skill/$(Split-Path $lf -Leaf): $($L.Count) lines (max $Max)$(if ($moved.Count) { "; moved $($moved.Count) to HISTORY.md" })"
   return
 }
 

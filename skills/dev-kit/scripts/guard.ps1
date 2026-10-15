@@ -57,9 +57,19 @@ if ($SelfTest) {
     @('PowerShell', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
     # stash inside a heredoc fed to a non-shell interpreter is data; a real git stash after it is not
     @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
-    @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true)
+    @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
+    # [.., 'local env'] - local env branches are never pushed; dev servers start only through localenv.ps1 (when localEnv is configured)
+    @('PowerShell', 'git -C x push origin localenv/shop', $true, 'local env'),
+    @('Bash', 'git push -u origin HEAD:localenv/shop', $true, 'local env'),
+    @('PowerShell', 'git push -u origin f/CU-1-x', $false, 'local env'),
+    @('PowerShell', 'cd api; .\mvnw.cmd spring-boot:run', $true, 'local env'),
+    @('Bash', 'npx ng serve --port 4200', $true, 'local env'),
+    @('Bash', 'yarn start', $true, 'local env'),
+    @('PowerShell', 'dotnet watch run', $true, 'local env'),
+    @('PowerShell', '& D:/kit/skills/local-env/scripts/localenv.ps1 up -Env shop', $false, 'local env'),
+    @('PowerShell', 'git commit -m "fix: ng serve proxy"', $false, 'local env')
   )
-  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below
+  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below (also: judge as if localEnv were configured)
   $fail = 0
   foreach ($c in $cases) {
     $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1].Replace('{RT}', '.claude-runtime') } } | ConvertTo-Json -Compress -Depth 4
@@ -220,6 +230,15 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   if ($p -match '(--force(?![-\w])|\s-f\b)' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after wt.ps1 sync.'
   }
+}
+# Local environments (local-env skill): the env branches localenv/<env> are local merges of every agent's layer, never pushed;
+# with localEnv configured, dev servers run only as env services (one instance, shared, RAM-checked), never started by hand.
+foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
+  if ($push.Value -match '(^|[\s:/])localenv/') { Deny 'localenv/<env> is a local env branch (a merge of every agent''s layer): never push it. Push your own branch; the local env takes it with localenv.ps1 deploy -Dir <worktree>.' }
+}
+if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatch 'localenv\.ps1|metro-start\.ps1' -and
+    $cmd -match '(spring-boot:run|\bbootRun\b|\bng\s+serve\b|\bdotnet\s+(run|watch)\b|\b(react-native|expo)\s+start\b|manage\.py\s+runserver|\buvicorn\s|\bflask\s+run\b|(^|[\s;&|(])(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\b)') {
+  Deny "Dev servers run in the shared local env (one instance per env, RAM-checked), not by hand: & $(Join-Path (Split-Path (Split-Path $K)) 'local-env/scripts/localenv.ps1') up|deploy|use -Env <env> (envs: localenv.ps1 envs). Logs: localenv.ps1 logs -Env <env> -Service <s>."
 }
 # heavy builds/tests must go through the gate
 $gated = $cmd -match 'gate\.ps1|check\.ps1|app-build\.ps1'

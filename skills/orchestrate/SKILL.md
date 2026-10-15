@@ -13,7 +13,7 @@ argument-hint: "[epic / sheet / task list]"
 
 | File | Read / run at |
 |---|---|
-| `LESSONS.md` | step 0, before planning anything |
+| `LESSONS.md` (+ LESSONS.local.md next to it: org/project lessons, git-ignored, when present) | step 0, before planning anything |
 | `HISTORY.md` | never read for work (retired lessons; `/kit-retro` checks it for regressions) |
 | `reference/coordinator-duties.md` | step 0, the first time you coordinate in a session; E12 HEAL |
 | `reference/supervising.md` | E2, when an ACT flag's printed action is unclear; E5 the finish checklist |

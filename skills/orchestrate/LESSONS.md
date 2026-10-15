@@ -1,7 +1,7 @@
 # Coordination lessons — active rules (read before planning a wave or a QA run; ≤ 40 lines)
 Newest first, one line each, `(n×)` = times seen. Fixed/old entries live in `HISTORY.md` (never read it for work).
 
-- (2×) Before launching a bugfix wave for a task, check no QA retest of it is running (a retest publish closes the task and raises a new bug task); give bug-brief.ps1 repo@branch when a repo ships two products from different branches (web: RM branch vs main), inferred from the QA run's deploy target.
+- (2×) Before launching a bugfix wave for a task, check no QA retest of it is running (a retest publish closes the task and raises a new bug task); give bug-brief.ps1 repo@branch when a repo ships two products from different branches (e.g. one web repo, two product branches), inferred from the QA run's deploy target.
 - (6×) MR state in a wave report comes from devtools.py merge output or glab mr view, never from an agent's report prose; record scheduled (waiting for green) and merged (state MERGED confirmed) as two states, and reconcile before scheduling downstream steps (consumer MRs, tracker promote).
 - (3×) App fixes that need a phone clock or seed step (shift/midnight/end-of-day): dev agents cannot run them, so do not leave them as needsLiveCheck until after deploy. Once the wave's MR is green, build the branch APK (android-swarm) and run one qa-tester retest with the brief's clock and seed steps before the merge into the deploying branch (B-EOD3, B-EODX4 deferred twice; the post-deploy run APPX4 then failed on a shift-start bound).
 - The owner asks for something destructive (clean a folder, reset a branch) while waves run: do it yourself after they finish; agents must never act on relayed requests outside their items.

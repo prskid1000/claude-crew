@@ -13,7 +13,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 
 | File | Read / run at |
 |---|---|
-| `LESSONS.md` | step 0 (and G0, L0), before anything else |
+| `LESSONS.md` (+ LESSONS.local.md next to it: org/project lessons, git-ignored, when present) | step 0 (and G0, L0), before anything else |
 | `HISTORY.md` | never read for work (retired lessons) |
 | `reference/evidence-standard.md` | step 4 when you save anything other than a screenshot or `api.ps1 -Save` JSON, or a name is unclear |
 | `reference/tools-and-rules.md` | step 3 for a tool not shown below; step 4 when marking a FAIL shot; step 5 for a borderline verdict |
@@ -33,7 +33,7 @@ orchestrate E9), the person who tests by hand (the published guide, G3).
 | `scripts/add-retest.ps1` | L3, when a bug task's fix went live (retest item) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`. Check the SQL/MCP tools once (<sql MCP>, <local DB MCP>, <other MCP> drop often) and note their state in the run log: replica SQL then goes through the run's own SQL helper script with the SQL helper's own venv python (its path is in the org rules; system python lacks boto3); on replica lag or timeout fall back to API GETs (`/api/site-visits/{id}`, `/api/runs/{id}/stops`, `/api/mail-audits`) and re-query later; a tool being down alone is never NOT_TESTED.
+0. Read `LESSONS.md` (general + per-project UI gotchas), then the guide and the run's `context` / `contextFiles`. Check the SQL/MCP tools once (database and MCP servers drop often) and note their state in the run log: replica SQL then goes through the run's own SQL helper script with the SQL helper's own venv python (its path is in the org rules; system python lacks boto3); on replica lag or timeout fall back to API GETs (`/api/site-visits/{id}`, `/api/runs/{id}/stops`, `/api/mail-audits`) and re-query later; a tool being down alone is never NOT_TESTED.
 1. **Seat + board:** `scripts/qa-seat.ps1 acquire` (as the workflow says); `orchestrate/scripts/board.ps1 join -Agent <CODE> -Run <run>
    -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE → stop and report. Phones: `../android-swarm/phone.ps1 acquire|release`. Keep the phone lease
    through any wait under ~30 min (a lead decision, a deploy, a rebuild): release shuts the emulator down and re-acquiring queues
@@ -115,7 +115,7 @@ instead; it is never a missing capability and never on its own a reason for NOT_
   role makes deep links silently redirect to home), the record/stop/order types the scenario needs such as a
   COLLECT_DROP stop), a search/index rebuild (reindex) on each tenant when the change adds indexed fields (then compare each search
   result with the unsearched list for exact counts), a QA-owned record for any step that saves on shared data (APPLY, allocate,
-  resource) so testers never write to someone else's run, the lane driver login's tenant, feature flags (<feature> persona, <feature> mode) and company country/timezone against the guide's tenant (the test tenant may be AE, not UK: +3h), reference data (the CustomerAgingReportGenerate stored procedure in information_schema.routines, feature_PARTIAL_DELIVERY_REASON codes, an employee-linked QA login, an INVOICED invoice; create or toggle through the API, restore at teardown), and server config the feature needs (e.g. an MCP URL); write
+  resource) so testers never write to someone else's run, the lane driver login's tenant, feature flags (product personas and modes) and company country/timezone against the guide's tenant (the test tenant may be AE, not UK: +3h), reference data (the CustomerAgingReportGenerate stored procedure in information_schema.routines, feature_PARTIAL_DELIVERY_REASON codes, an employee-linked QA login, an INVOICED invoice; create or toggle through the API, restore at teardown), and server config the feature needs (e.g. an MCP URL); write
   each into `lead-notes.md`. Create up front what the API can create. Mark checks the lead cannot unblock as NOT_TESTED in run.json
   (item `skip` with the reason, the missing thing named) before testers start; an environment-level gate the tester cannot switch is
   NOT_TESTED with the setting named, never FAIL.

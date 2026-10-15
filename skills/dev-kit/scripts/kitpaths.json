@@ -30,12 +30,16 @@
     "guard-log": "logs/guard.log",
     "cleanup-log": "logs/cleanup.log",
     "tracker-log": "logs/tracker-none.log",
-    "retros": "logs/retros/"
+    "retros": "logs/retros/",
+    "localenv": "work/localenv/",
+    "localenv-logs": "logs/localenv/",
+    "localenv-history": "cache/localenv-history.json"
   },
   "durable": {
     "signals": "learning.local.jsonl",
     "last-retro": "learning.local.stamp",
     "tracking": "tracking.local.json",
-    "tracker-none": "tracker-none.local/"
+    "tracker-none": "tracker-none.local/",
+    "localenv-env": "localenv.local/"
   }
 }

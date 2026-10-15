@@ -56,6 +56,19 @@ function Get-SysMem {
 # the available figure (their page cache keeps MemFree near zero on a healthy machine, so "free" alone would block everything)
 function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
 
+# Busy CPU in percent of all cores (0-100): Windows processor load, Linux /proc/stat over 0.5 s, macOS ps %cpu / cores
+function Get-SysCpu {
+  if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
+  if (Test-Path /proc/stat) {
+    $read = { $f = ((Get-Content /proc/stat -TotalCount 1) -split '\s+' | Select-Object -Skip 1 | Where-Object { $_ } | ForEach-Object { [double]$_ }); @{ idle = $f[3] + $f[4]; all = ($f | Measure-Object -Sum).Sum } }
+    $a = & $read; Start-Sleep -Milliseconds 500; $b = & $read
+    $d = $b.all - $a.all; if ($d -le 0) { return 0 }
+    return [math]::Round(100 * (1 - ($b.idle - $a.idle) / $d), 0)
+  }
+  $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
+  [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
+}
+
 # etime from ps: [[dd-]hh:]mm:ss
 function ConvertFrom-PsElapsed([string]$e) {
   if ($e -notmatch '^(\d+-)?(\d+:){1,2}\d+$') { return $null }
