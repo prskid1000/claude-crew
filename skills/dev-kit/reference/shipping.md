@@ -1,6 +1,7 @@
 # Scope, evidence and shipping (dev-kit reference)
 
-Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester guide: §7) and on a merge conflict (§8.3).
+Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester guide: §7), on a merge conflict (§8.3) and by the
+coordinator before a deploy-branch merge (§9).
 
 ## Conventions (every repo)
 - **Branch:** feature `f/<tag><task-id>-<slug>` (`<tag>` = kit.local.json `tracker.branchTag`, e.g. `CU-`; it lets `track.ps1 -Discover`
@@ -49,6 +50,13 @@ Read at dev-kit step 7 (before opening MRs: §8), step 7b (writing the tester gu
    **your** branch. Never force-push a target branch.
 4. Several MRs are fine for a big stream; merge each before starting the next.
 
+## 9. Deploy branches (coordinator only, after a person's yes)
+- `deploy-merge.ps1` merges with `--no-commit` and commits through `wt.ps1 commit`, so the repo's commit hooks run (a plain `git merge`
+  commit skips pre-commit: a CI job that checks the hook's marker then fails the deploy pipeline).
+- By hand (a deploy MR from a `deploy/...` branch, e.g. after `git merge -s ours`): `git -C <wt> merge --no-commit <ref>`, then
+  `wt.ps1 commit -Dir <wt> -NoStage -Message "<msg>"`; never a plain merge commit.
+- Squash-merged deploy MRs are fine for `deployed.ps1`: it follows the deploy MR's source head.
+
 ## The full loop (incl. coordinator steps)
 
 ```powershell
@@ -65,7 +73,7 @@ $K = '<workspace>/.claude/skills/dev-kit/scripts'; $B = '<workspace>/.claude/ski
 & $K/wt.ps1 sync -Dir <wt>; & $K/check.ps1 -Dir <wt>/<module>    # 6. rebase + re-check before push
 git -C <wt> push -u origin <branch>
 python $K/devtools.py mr <wt> "<title>" body.md                  # 7. MR/PR (GitLab or GitHub, from the remote)
-python $K/devtools.py merge <wt> <iid>                           # 8. schedules "merge when pipeline succeeds" and returns at once (the supervisor re-arms it if a later push drops it)
+python $K/devtools.py merge <wt> <iid>                           # 8. merges now or schedules "merge when pipeline succeeds"; waits <= 90 s for a pipeline (the supervisor re-arms a dropped schedule)
 & $K/deploy-merge.ps1 -Repo <checkout> -To <deploy branch> -Check <module> [-Push]   # coordinator: merge the main line (-From, default: repo target / origin HEAD) into a deploy branch; auto-resolves add/add conflicts left by an earlier squashed merge
 & <workspace>/.claude/skills/orchestrate/scripts/track.ps1 add -Task <task id> -Mrs <repo>!<iid>,...   # 8b. the coordinator's heartbeat promotes the task when all merge
 & $B leave -Session <token> -Status done                         # 9. leave the board

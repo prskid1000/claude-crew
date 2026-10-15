@@ -60,6 +60,14 @@ def _text(arg):
     return open(arg, encoding='utf-8').read() if os.path.isfile(arg) else arg
 
 
+def _body(arg):
+    """A body that must come from a file (mr, finish, newtask): a missing file is an error, never the file name as the body
+    (an MR once opened with the literal 'body.md' as its description). Multi-line text passes as it is."""
+    if os.path.isfile(arg) or '\n' in arg:
+        return _text(arg)
+    raise SystemExit(f'file not found: {arg} - write it first (nothing was created)')
+
+
 # ---------- Tracker (tracker.ps1: clickup | github | gitlab | jira | none, from kit.local.json "tracker") ----------
 TRACKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tracker.ps1')
 PWSH = shutil.which('pwsh') or shutil.which('powershell')
@@ -238,10 +246,18 @@ def mr_create(worktree, title, body_md, tgt=None):
         out = _run([GLAB, 'mr', 'create', '--source-branch', src, '--target-branch', tgt, '--title', title,
                     '--description', body_md, '--remove-source-branch', '--squash-before-merge', '--yes'], cwd=worktree)
         m = re.findall(r'https://[^\s/]+/\S+/merge_requests/\d+', out)
+        if not m and 'already exists' in out.lower():   # a retry after a timed-out first call: report the MR that call opened
+            _, proj = remote(worktree)
+            ex = _json(_run([GLAB, 'api', f"projects/{proj.replace('/', '%2F')}/merge_requests?state=opened&source_branch={src}"]))
+            m = [x['web_url'] for x in ex if isinstance(x, dict) and x.get('web_url')] if isinstance(ex, list) else []
+            if m:
+                print(f'[mr] an open MR from {src} already exists (a previous call opened it): {m[-1]} - update its description if needed', file=sys.stderr)
     else:
         out = _run([GH, 'pr', 'create', '--head', src, '--base', tgt, '--title', title, '--body', body_md], cwd=worktree)
         m = re.findall(r'https://[^\s/]+/\S+/pull/\d+', out)
-    return m[-1] if m else out
+    if not m:
+        raise SystemExit(f'MR not created: {out[:500]}')
+    return m[-1]
 
 
 def _remember_automerge(ref):
@@ -364,7 +380,11 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
         for pair in t.get('mergeAfter') or []:
             dep, sep, on = str(pair).partition('>')
             d, o = _norm_ref(dep), _norm_ref(on)
-            if not sep or not d or not o or str(d[1]) != str(iid) or not _same_repo(d[0], proj):
+            if not sep or not d or not o or str(d[1]) != str(iid):
+                continue
+            if not _same_repo(d[0], proj):   # same iid, repo name not matched: a missing alias silently skips the merge order
+                print(f'[merge] mergeAfter {pair} (task {tid}) names repo {d[0]}, this remote is {proj}: not applied'
+                      ' - add kit.local.json repoAliases if they are the same repo', file=sys.stderr)
                 continue
             st = state_of(o[0], o[1])
             if st != 'merged':
@@ -378,10 +398,11 @@ def auto_merge(worktree, iid, max_wait=90):
     finishes inside an agent's tool timeout. The result's LAST line is exactly one status word (merge_word):
     MERGED / SCHEDULED / WAIT (run again in a few minutes) / CONFLICT / PIPELINE_FAILED / NOT_MERGED, read back from the host.
     A consumer MR whose registered producer (track.ps1 -MergeAfter) is not merged yet is not merged: WAIT ("waiting for producer")."""
+    iid = str(iid).strip().rsplit('!', 1)[-1].lstrip('#')   # '!203' / 'web!203' / '#12' -> the number
     host, proj = remote(worktree)
     waiting = unmerged_producers(proj, iid, lambda r, i: _host_mr_state(host, proj, r, i))
     if waiting:
-        lines = [f'waiting for producer {ref} ({st}; task {tid}): {proj}!{iid} merges only after it' for ref, st, tid in waiting]
+        lines =[f'waiting for producer {ref} ({st}; task {tid}): {proj}!{iid} merges only after it' for ref, st, tid in waiting]
         if any(st == 'closed' for _, st, _ in waiting):
             return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (track.ps1 mergeAfter) with the coordinator\nNOT_MERGED'
         return '\n'.join(lines) + '\nnot merged now: track.ps1 run (supervise) merges it once the producer merged\nWAIT'
@@ -413,11 +434,18 @@ def auto_merge(worktree, iid, max_wait=90):
                 from datetime import datetime, timezone
                 src_proj = m.get('source_project_id') or enc
                 ref = (m.get('source_branch') or '').replace('/', '%2F')
+                sha = m.get('sha') or ''
 
+                # pipelines of the MR's HEAD commit only: an older commit's pipeline (before a rebase / force-push, or the branch's
+                # previous push) once made merge arm merge-when-green with no head pipeline (GitLab may then merge without CI), or
+                # return WAIT at once instead of waiting for the new pipeline to appear
                 def _no_ci():
-                    pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines'])) or []
-                    refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&per_page=1'])) if ref else {}
-                    return (not pls and isinstance(refp, list) and not refp), bool(pls)
+                    pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines']))
+                    pls = [p for p in pls if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(pls, list) else []
+                    refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&sha={sha}&per_page=1'])) if ref else {}
+                    refp = [p for p in refp if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(refp, list) else None
+                    head = pls or refp or []
+                    return (not head and refp is not None), bool(head)
 
                 when = m.get('updated_at') or m.get('created_at') or ''
                 age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
@@ -435,6 +463,10 @@ def auto_merge(worktree, iid, max_wait=90):
                 if not has and not no_ci:
                     left = int(max(30, 310 - age - waited)) if none_yet else 60
                     return f'WAIT: no pipeline on !{iid} yet (a pipeline is still expected); run merge again in {left} s\nWAIT'
+        if st == 'manual' or st == 'skipped':   # merge-when-green would never fire: say so instead of SCHEDULED
+            return f'pipeline {st} on !{iid}: start its manual jobs (or ask the coordinator), then run merge again\nNOT_MERGED'
+        if st == 'scheduled':
+            return f'pipeline scheduled (delayed job) on !{iid}: run merge again once it runs\nWAIT'
         if st != 'success' and not no_ci:
             args += ['-f', 'merge_when_pipeline_succeeds=true']
         put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
@@ -607,17 +639,17 @@ if __name__ == '__main__':
         for row in subtasks(a[1], a[2:] or None):
             print(' | '.join(row))
     elif cmd == 'newtask':
-        print(new_task(a[1], a[2], a[3], a[4], _text(a[5])))
+        print(new_task(a[1], a[2], a[3], a[4], _body(a[5])))
     elif cmd == 'status':
         print(set_status(a[1], a[2]))
     elif cmd == 'comment':
         print(comment(a[1], _text(a[2])))
     elif cmd == 'finish':
-        finish(a[1], a[2], _text(a[3]), *(a[4:5] or []))
+        finish(a[1], a[2], _body(a[3]), *(a[4:5] or []))
         print('done')
     elif cmd == 'mr':
-        print(mr_create(a[1], a[2], _text(a[3]), *(a[4:5] or [])))
-    elif cmd == 'merge':          # schedules the merge on green and returns at once
+        print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
+    elif cmd == 'merge':          # merges now / schedules merge-when-green; waits <= 90 s for a pipeline to appear
         print(auto_merge(a[1], a[2]))
     elif cmd == 'merge-wait':     # old behaviour: poll until merged (blocks up to 90 min)
         print(merge_when_green(a[1], a[2]))

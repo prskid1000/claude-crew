@@ -7,6 +7,8 @@ command and runs it through the memory gate (gate.ps1).
   & $K/check.ps1 -Dir <dir> -Step test -Tests "FooTest,BarTest"
   & $K/check.ps1 -Dir <dir> -Step test -Tests "src/a.spec.ts"
   & $K/check.ps1 -Dir <dir> -Step lint -Files "src/a.ts src/b.ts"
+(-Tests / -Files: comma or space separated; each runner gets its own list form. Python script-style checks, .py files with no
+test cases, run one by one with the project's python instead of unittest/pytest, which would collect nothing and exit 5.)
   & $K/check.ps1 -Dir <dir> -Step build                       # full build (heavy, use before shipping only)
   & $K/check.ps1 -Dir <dir> -Step migrations                  # Liquibase sanity check, if the repo has master.xml
   & $K/check.ps1 -Dir <dir> -Show                             # print what would run
@@ -259,7 +261,18 @@ foreach ($s in $steps) {
   if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs') { Write-Host '[check] no unit-test target: running node-spec.mjs (specs under node; DOM specs under the project''s jsdom if it has one; TestBed/fakeAsync specs are reported NOT RUN)' }
   if ($cmd -match '\{tests\}') {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
-    $cmd = $cmd -replace '\{tests\}', $Tests
+    # -Tests "a,b" or "a b": each runner gets its own list form (commas used to reach eslint/jest/pytest as one name, spaces broke -Dtest)
+    $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
+    $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
+    # script-style checks (validation/*.py run at import, no test cases): unittest/pytest collect nothing and exit 5 - run each file instead
+    $scripts = if ($pyRun -and $tl.Count) { @($tl | Where-Object { $_ -match '\.py$' -and (Test-Path -LiteralPath (Join-Path $st.dir $_) -PathType Leaf) -and -not (Select-String -LiteralPath (Join-Path $st.dir $_) -Pattern '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)' -Quiet) }) } else { @() }
+    if ($scripts.Count -and $scripts.Count -eq $tl.Count) {
+      $cmd = ($scripts | ForEach-Object { "$pyRun `"$_`"" }) -join ' && '
+      Write-Host "[check] $($scripts.Count) script-style check file(s) without test cases: running each with python (exit code = the script's)"
+    } else {
+      $joined = if ($cmd -match '-Dtest=\{tests\}') { $tl -join ',' } elseif ($cmd -match '--tests \{tests\}') { $tl -join ' --tests ' } elseif ($cmd -match '--include \{tests\}') { $tl -join ' --include ' } elseif ($cmd -match '(-run|-R) "\{tests\}"') { $tl -join '|' } else { $tl -join ' ' }
+      $cmd = $cmd.Replace('{tests}', $joined)
+    }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
   if ($s -eq 'test' -and $cmd -match 'node-spec\.mjs' -and $cmd -notmatch '--real-angular') {
@@ -299,7 +312,7 @@ foreach ($s in $steps) {
   $batches = @($cmd)
   if ($cmd -match '\{files\}') {
     $batches = @()
-    $list = if ($Files) { @([regex]::Matches($Files, '"[^"]*"|\S+') | ForEach-Object Value) } else { @('.') }
+    $list = if ($Files) { @([regex]::Matches($Files, '"[^"]*"|[^\s,]+') | ForEach-Object Value) } else { @('.') }   # space or comma separated
     $room = 7000 - $cmd.Length; $cur = @()
     foreach ($f in $list) {
       if ($cur.Count -and (($cur -join ' ').Length + $f.Length + 1) -gt $room) { $batches += $cmd -replace '\{files\}', ($cur -join ' '); $cur = @() }

@@ -4,6 +4,9 @@ Fixed-in-kit, historical and coordinator-only lessons moved out of LESSONS.md, k
 `learn.ps1 -Trim` and `/kit-retro` append here when LESSONS.md goes over its 40-line cap.
 
 ## Moved out of LESSONS.md (fixed in kit / historical / coordinator-only)
+- (fixed in kit, 2026-10-15) wt.ps1 commit -Dir <not a worktree> committed in the enclosing repo: sync/commit/status/remove refuse unless -Dir is the top of a worktree; -Dir defaults to the current folder; commit -MessageFile.
+- (fixed in kit, 2026-10-15) deploy-merge.ps1 committed clean deploy merges with plain git merge (no pre-commit hook, CI marker job failed): it always merges --no-commit and commits through wt.ps1 commit (shipping.md §9).
+- (fixed in kit, 2026-10-15) devtools.py mr opened an MR with the body file's name as body (file missing): refused now; a retry after a timed-out create returns the existing MR. merge read an older commit's pipeline (WAIT at once, or merge-when-green armed with no head pipeline): only the head commit's pipelines count. check.ps1 -Tests/-Files take commas or spaces; script-style python checks run directly (no unittest exit 5).
 - (fixed in kit) Cross-platform scripts: on Linux/macOS pwsh, `& "$dir\x.ps1"` is read as module\command and fails, a backslash path passed to a native tool (git, adb, node, python) is not a path, `$env:TEMP`/`USERPROFILE`/`LOCALAPPDATA` are empty, and a symlinked `node_modules` is a file to git (a dir-only ignore misses it, `git add -A` commits it). Use Join-Path, sysinfo.ps1 (RAM, processes, links, temp, SDK) and wt.ps1 (excludes linked folders).
 - Briefs must git-grep the target branch before listing work on a second branch (a feature may exist only on one product's branch).
 - Items that need a product concept get deferred by every agent: collect them into one decisions doc and run a follow-up wave once the owner has decided. (2×)

@@ -8,10 +8,16 @@ Never use it on real code conflicts. Re-run the build check afterwards.
 """
 import re, sys
 
-pat = re.compile(r'<<<<<<< [^\r\n]*\r?\n(.*?)(?:\|\|\|\|\|\|\| [^\r\n]*\r?\n.*?)?=======\r?\n(.*?)>>>>>>> [^\r\n]*\r?\n', re.S)
+left = 0
+
+pat = re.compile(r'<<<<<<< [^\r\n]*\r?\n(.*?)(?:\|\|\|\|\|\|\| [^\r\n]*\r?\n.*?)?=======\r?\n(.*?)>>>>>>> [^\r\n]*(?:\r?\n|\Z)', re.S)   # last block may end the file
 for path in sys.argv[1:]:
     text = open(path, encoding='utf-8', newline='').read()
     n = len(pat.findall(text))
     text = pat.sub(lambda m: m.group(1) + m.group(2), text)
     open(path, 'w', encoding='utf-8', newline='').write(text)
     print(path, 'resolved', n, 'block(s)')
+    if re.search(r'^(<<<<<<<|>>>>>>>) ', text, re.M):   # a block the pattern could not take: never report success
+        print(path, 'STILL HAS CONFLICT MARKERS: resolve by hand', file=sys.stderr)
+        left += 1
+sys.exit(1 if left else 0)

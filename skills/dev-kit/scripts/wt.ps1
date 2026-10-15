@@ -4,7 +4,7 @@ Git worktrees for parallel agents, for any repo and stack.
   $K = '<workspace>/.claude/skills/dev-kit/scripts'
   & $K/wt.ps1 new    -Repo <main checkout> -Branch <branch> -Target <target branch> -Name <agent prefix> [-LinkFrom <checkout>]
   & $K/wt.ps1 sync   -Dir <worktree>                 # fetch + rebase onto the target (do it before editing, before push, before merge)
-  & $K/wt.ps1 commit -Dir <worktree> -Message "<msg>" # commit with the repo's hooks really running (fixes .husky in worktrees)
+  & $K/wt.ps1 commit -Dir <worktree> -Message "<msg>" | -MessageFile <file>   # commit with the repo's hooks really running (fixes .husky in worktrees)
   & $K/wt.ps1 status -Dir <worktree>                 # branch, target, ahead/behind, dirty files, linked deps
   & $K/wt.ps1 remove -Dir <worktree> [-Force]        # unlink deps safely, then remove the worktree
   & $K/wt.ps1 list   -Repo <main checkout>
@@ -18,15 +18,27 @@ new:
 - copies generated hook folders that worktrees miss (.husky/_).
 commit: first adds whatever of those a worktree lacks (one not made by `new`) from the main checkout, so its hooks really run.
 Never run npm/yarn/pip install inside a linked folder: it writes into the source checkout.
+sync/commit/status/remove: -Dir defaults to the current folder and must be the top of a git worktree (else they refuse: git -C would
+fall through to an enclosing repo and commit its files). A merge (deploy branch: git merge --no-commit ...) is committed with commit too.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [switch]$Force, [switch]$NoStage
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'sysinfo.ps1')
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
+# -Dir (default: the current folder) must be the top of a git worktree: inside a plain folder git -C walks up to an enclosing
+# repo (a superproject), and commit's add -A once swept that repo's unrelated files into a commit
+function Resolve-Wt($d) {
+  if (-not $d) { $d = (Get-Location).Path }
+  if (-not (Test-Path -LiteralPath $d -PathType Container)) { throw "no such folder: $d" }
+  $d = (Resolve-Path -LiteralPath $d).Path.TrimEnd('\', '/')
+  $pre = git -C $d rev-parse --show-prefix 2>$null   # '' only at the top of a worktree (junction/symlink paths compare right too)
+  if ($LASTEXITCODE -or "$pre".Trim()) { throw "$d is not the top of a git worktree (git toplevel: $(git -C $d rev-parse --show-toplevel 2>$null)) - refusing; pass the worktree folder as -Dir" }
+  $d
+}
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
 function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { $v | Set-Content $f } elseif (Test-Path $f) { Get-Content $f } }
 function DepHash($pkgJson) {
@@ -114,7 +126,7 @@ switch ($Action) {
       }
     }
     G -C $Repo fetch -q origin $Target | Out-Null
-    $remoteBranch = git -C $Repo ls-remote --heads origin $Branch
+    $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # a bare name matches by suffix (fix also matched f/fix)
     git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
     # the local branch outlives `wt.ps1 remove`: check it out again as it is (-B would reset it and lose unpushed commits)
     if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch already exists - checked it out as it is$(if ($remoteBranch) { " (also on origin: compare with origin/$Branch before pushing)" })" }
@@ -143,6 +155,7 @@ switch ($Action) {
     if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $src)" }
   }
   'sync' {
+    $Dir = Resolve-Wt $Dir
     $t = Meta $Dir 'target'; if (-not $t) { throw "no target recorded for $Dir - run: git -C $Dir rebase origin/<target>" }
     if (git -C $Dir status --porcelain --untracked-files=no) { throw 'uncommitted changes - commit them first (a WIP commit is fine; never git stash, it is shared across worktrees)' }
     G -C $Dir fetch -q origin $t | Out-Null
@@ -151,7 +164,9 @@ switch ($Action) {
     "rebased onto origin/$t"
   }
   'commit' {
-    if (-not $Message) { throw 'commit needs -Message' }
+    $Dir = Resolve-Wt $Dir
+    if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
+    if (-not $Message -or -not $Message.Trim()) { throw 'commit needs -Message or -MessageFile' }
     # A worktree not made by `new` (a hand-made release-merge worktree, say) lacks .husky/_ and the node_modules its hooks run
     # (husky.sh not found, then 'prettier' not recognized): add whatever is missing from the main checkout first.
     # main checkout = the common git dir's core.worktree (a submodule: .git/modules/<name>, which `git worktree list` reports as
@@ -169,7 +184,8 @@ switch ($Action) {
     $hp = (git -C $Dir config core.hooksPath)
     $c = @()
     # A hooksPath folder without hook scripts (e.g. a husky v8 repo whose `.husky/_` holds only husky.sh) skips hooks too.
-    if ($hp -and -not (Test-Path (Join-Path (Join-Path $Dir $hp) 'pre-commit')) -and -not (Test-Path (Join-Path (Join-Path $Dir $hp) 'prepare-commit-msg'))) {
+    $hpFull = if ($hp -and [IO.Path]::IsPathRooted($hp)) { $hp } elseif ($hp) { Join-Path $Dir $hp }
+    if ($hp -and -not (Test-Path (Join-Path $hpFull 'pre-commit')) -and -not (Test-Path (Join-Path $hpFull 'prepare-commit-msg'))) {
       if (Test-Path (Join-Path $Dir '.husky')) { $c = @('-c', 'core.hooksPath=.husky') }
       else { Write-Warning "core.hooksPath=$hp does not exist in this worktree - hooks would be skipped" }
     }
@@ -178,6 +194,7 @@ switch ($Action) {
     exit $LASTEXITCODE
   }
   'status' {
+    $Dir = Resolve-Wt $Dir
     $t = Meta $Dir 'target'
     "branch: $((git -C $Dir rev-parse --abbrev-ref HEAD).Trim())   target: $t"
     if ($t) { git -C $Dir fetch -q origin $t 2>$null; "ahead/behind origin/${t}: $((git -C $Dir rev-list --left-right --count "HEAD...origin/$t") -replace '\s+', ' / ')" }
@@ -186,7 +203,7 @@ switch ($Action) {
     $l = Meta $Dir 'links'; if ($l) { "linked: $($l -join ', ')" }
   }
   'remove' {
-    $Dir = (Resolve-Path $Dir).Path
+    $Dir = Resolve-Wt $Dir
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
     # entries inside a node_modules farm (a real folder of links) belong to the farm: removed and restored with it
     $farms = @($links | Where-Object { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })

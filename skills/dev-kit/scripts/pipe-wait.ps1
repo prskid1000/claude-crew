@@ -50,10 +50,11 @@ function State($url) {
   }
   $o
 }
-$end = (Get-Date).AddMinutes($MaxMinutes)
+$start = Get-Date; $end = $start.AddMinutes($MaxMinutes)
 do {
   $states = @($list | ForEach-Object { State $_ })
-  $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing' })
+  # right after a push the pipeline does not exist yet: 'no-pipeline' counts as busy for 3 min (after that: a repo without MR CI)
+  $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled' -or ($_.status -eq 'no-pipeline' -and ((Get-Date) - $start).TotalMinutes -lt 3) })
   if (-not $busy -or (Get-Date) -gt $end) { break }
   Start-Sleep 30
 } while ($true)

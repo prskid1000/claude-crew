@@ -32,6 +32,7 @@ MRs -> `mr-reviewer` agent; emulators -> `android-swarm` (dev agents never start
 | `scripts/tracker.ps1` | step 0b and 7b/8 (status, comment, attach) |
 | `scripts/pipe-wait.ps1` | run by /dev-wave's CI step (MR pipelines before merge) |
 | `scripts/deploy-merge.ps1` | coordinator only, after a person approved a deploy: merges the main line into a deploy branch |
+| `tests/test-wt.ps1`, `tests/test_devtools.py` | after changing wt.ps1, deploy-merge.ps1 or devtools.py (kit maintenance): `pwsh -File tests/test-wt.ps1`; `python -X utf8 tests/test_devtools.py` |
 | `scripts/guard.ps1` | PreToolUse hook (blocks stash, --no-verify, force-push, adb kill-server, ungated builds) |
 | `scripts/kitconfig.ps1`, `scripts/sysinfo.ps1` | libraries dot-sourced by the other scripts (config, OS specifics); never run by hand |
 | `scripts/kitpaths.json`, `scripts/kitpaths.ps1`, `scripts/kitpaths.py`, `scripts/kitpaths.mjs` | libraries: the one map of runtime and durable local paths (`Get-KitPath` / `kit_path` / `kitPath`); every script resolves paths through them, never by hand |
