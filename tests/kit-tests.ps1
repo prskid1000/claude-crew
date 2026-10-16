@@ -705,6 +705,12 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!1','api!3' -By tester
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy record: the window holds the next ask (WAIT), the pending request is cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
+  # an MR is checked only against its repo's deploys; a failed check names the deploy and why
+  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
+  $fx2 = Join-Path (Split-Path $k) 'deploy-fixture2.json'; @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } | ConvertTo-Json -Depth 6 | Set-Content $fx2
+  $dr = pwsh -NoProfile -File $O deploy request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String
+  Expect 'deploy request: only the MR repo''s deploys, UNKNOWN says which and why' ($dr -match 'DEPLOY stage: UNKNOWN: the deploy check failed: api!5: cannot reach the host' -and $dr -notmatch 'pystage')
+  $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!5' -By tester
   # deploy.trigger owner (default): merged work waits READY for "deploy <env>"; supervise never asks
   @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
   $null = pwsh -NoProfile -File $O deploy request -Mrs 'api!3' -Run w3 -Offline $fx
@@ -749,7 +755,7 @@ if ($Area -in 'orch', 'all') {
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
 $global:sets = @(); $global:cmts = @()
-function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+$global:q = 0; function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { if ($Path -match 'search=') { $global:q++ }; [pscustomobject]@{ state = 'merged' } }
 function Get-TrackerTask($id) { [pscustomobject]@{ status = 'promoted'; subtasks = @() } }
 function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
 function Add-TrackerComment($id, $text) { $global:cmts += [pscustomobject]@{ id = $id; text = $text } }
@@ -767,13 +773,16 @@ $c1 = @($global:cmts | Where-Object id -eq 't6').Count
 $null = Invoke-Track add -Task t6 -HoldPromotion ''
 $null = Invoke-Track run -Detail
 "hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object id -eq 't6').Count -eq 1)"
+$KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'; $global:q = 0
+$null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
+"throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) { [pscustomobject]@{ code = 2; out = 'qa.ps1: usage error'; err = ''; timedOut = $false } }
 $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
 "unknown:$(@($p | Where-Object status -eq 'UNKNOWN').Count -ge 1 -and -not @($p | Where-Object status -eq 'NOTHING').Count)"
 '@
   $ttf = Join-Path (Split-Path $k) 'track-test.ps1'; Set-Content $ttf $tt
   $res = @(pwsh -NoProfile -File $ttf $O 2>&1)
-  foreach ($x in 'skip', 'once', 'hold', 'unknown') { Expect "track/deploy: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt)" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
   if (@($res | Where-Object { "$_" -match ':True$' }).Count -ne 4) { $res | Select-Object -Last 8 }
   $lkf = Join-Path (& { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath cache -Create }) 'supervise.lock'
   @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 } | ConvertTo-Json | Set-Content $lkf

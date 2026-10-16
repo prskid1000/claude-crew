@@ -133,7 +133,7 @@ def _run(cmd, cwd=None, check=False, write=None):
     tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
     end = min(time.time() + sec, STOP_AT[0] or float('inf'))
     for i in range(1, tries + 1):
-        left = max(10 if STOP_AT[0] else 1, int(end - time.time()))
+        left = max(10 if STOP_AT[0] else 1, int((end - time.time()) / (2 if i == 1 and tries > 1 else 1)))   # a read keeps half for its one retry
         try:   # a hung CLI must not outlive the tool timeout
             p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=left)
             out, rc, hung = ((p.stdout or '') + (p.stderr or '')).strip(), p.returncode, False
