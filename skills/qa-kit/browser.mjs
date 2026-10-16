@@ -40,8 +40,9 @@ const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().reso
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export const targetOf = (name) => CFG.targets[name || CFG.default] || (() => { throw new Error(`unknown target "${name}" (known: ${Object.keys(CFG.targets).join(', ')})`) })()
-let BASE = ''   // go()'s relative paths
-export const url = (p) => (/^https?:/.test(p) ? p : BASE + p)
+let BASE = ''   // the last session's web: a fallback for pages without a session
+export const url = (p, base = BASE) => (/^https?:/.test(p) ? p : base + p)
+const pageUrl = (page, p) => url(p, page.__qa ? page.__qa.t.web : BASE)   // each tab resolves against its own target
 
 function watch(page, apiPattern) {
   const net = { failed: [], calls: [], jsErrors: 0 }
@@ -78,7 +79,7 @@ async function applyState(page, st) {
   }
 }
 async function step(page, s, f) {
-  if (s.goto) await nav(page, url(f(s.goto)), 'networkidle2')
+  if (s.goto) await nav(page, pageUrl(page, f(s.goto)), 'networkidle2')
   for (const [sel, v0] of Object.entries(s.fill || {})) {
     const v = f(v0); if (!v) continue
     await page.waitForSelector(sel, { timeout: 60000 }); await page.click(sel, { clickCount: 3 }).catch(() => {}); await page.type(sel, v)
@@ -92,8 +93,8 @@ async function login(page, t, tenant, as) {
   const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
   const f = (s) => fill(s, user, pass, tenant, otp)
-  if (type === 'storageState') { await applyState(page, JSON.parse(readFileSync(L.file, 'utf8'))); await nav(page, t.web + '/', 'networkidle2') }
-  else if (type === 'script') await (await import(pathToFileURL(resolve(L.script)).href)).default({ page, user, pass, tenant, target: t, totp: otp && totp(otp) })
+  if (type === 'storageState') { await applyState(page, JSON.parse(readFileSync(resolve(__HERE, L.file), 'utf8'))); await nav(page, t.web + '/', 'networkidle2') }
+  else if (type === 'script') await (await import(pathToFileURL(resolve(__HERE, L.script)).href)).default({ page, user, pass, tenant, target: t, totp: otp && totp(otp) })
   else {
     await nav(page, t.web + (L.path || '/'), 'networkidle2')
     if (!onLogin(page, t)) return   // logged in: never log out
@@ -128,7 +129,7 @@ const PROTO_MS = 60000
 const MAX_TABS = 8, TAB_WAIT_MS = 300000   // per shared browser; a 9th caller waits <= 5 min
 export const sessionKey = (target, tenant, as) => `${target}|${tenant || ''}|${as}`.replace(/[^\w.|-]/g, '_')
 const keyFile = (key) => key.replace(/\|/g, '__')
-const PORT_BASE = 21000, PORT_SLOTS = 2000
+const PORT_BASE = Number(process.env.KIT_BROWSER_PORT_BASE || CFG.browser?.portBase || 21000), PORT_SLOTS = 2000
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h }
 // create-exclusive lock file, stale takeover
 export async function withLock(name, fn, { staleMs = 180000, waitMs = 240000 } = {}) {
@@ -251,21 +252,23 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
   const t0 = targetOf(target)
   tenant = tenant ?? t0.defaultTenant ?? ''
   const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
-  const key = sessionKey(target, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }
+  const key = sessionKey(tn, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
   if (eng !== 'chrome') ({ browser, page } = await pwPage(eng, bo, VIEW))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
-    port = await sessionPort(target, tenant, as)
+    port = await sessionPort(tn, tenant, as)
     const conn = () => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS })
-    try { browser = await conn() } catch {
-      const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
+    try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
+      try { return await conn() } catch {}
+      let b; const dir = `${PROFILES}/${keyFile(key)}`; mkdirSync(dir, { recursive: true })
       spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
-      for (let i = 0; i < 40 && !browser; i++) { await sleep(500); try { browser = await conn() } catch {} }
-      if (!browser) throw new Error(`could not start Chrome on port ${port}`)
-    }
+      for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
+      if (!b) throw new Error(`could not start Chrome on port ${port}`)
+      return b
+    }) }
     // a notification prompt eats header clicks
     await browser.defaultBrowserContext().overridePermissions(t.web, ['notifications', 'geolocation', 'clipboard-read', 'clipboard-write']).catch(() => {})
     page = await openTab(browser, key, { agent: agentId })
@@ -296,11 +299,11 @@ const scrollTo = (el) => (el.scrollIntoView ? el.scrollIntoView() : el.scrollInt
 const capped = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(() => r(TIMED_OUT), ms) })]).finally(() => clearTimeout(t)) }
 
 export async function go(page, path) {
-  await nav(page, url(path), 'networkidle2')
-  const q = page.__qa
-  if (q && q.t.webLogin && url(path).startsWith(q.t.web) && onLogin(page, q.t) && !String(path).includes(loginPath(q.t))) {
+  const q = page.__qa, u = pageUrl(page, path)
+  await nav(page, u, 'networkidle2')
+  if (q && q.t.webLogin && u.startsWith(q.t.web) && onLogin(page, q.t) && !String(path).includes(loginPath(q.t))) {
     await ensureLogin(page, q.t, q.tenant, q.as, q.key)   // expired: once, then retry
-    await nav(page, url(path), 'networkidle2')
+    await nav(page, u, 'networkidle2')
   }
   await settle(page)
 }
@@ -373,7 +376,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// evidence names (evidence-standard.md); same literal as qa.ps1 $script:EvidenceName
+// evidence names (qa-kit SKILL.md "Evidence"); same literal as qa.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" is not <CODE>-<check>_<nn>_<what>.<ext> (F2-T4_01_order-saved.jpeg)`)

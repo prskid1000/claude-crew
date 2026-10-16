@@ -79,17 +79,13 @@ switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
     $Repo = (Resolve-Path $Repo).Path
-    if (-not $Root) {
-      $kcRoot = $null
-      try { if ($env:CLAUDE_WT_ROOT -or (Get-KitValue 'worktreeRoots' $null)) { $kcRoot = @($KitConf.WorktreeRoots)[0] } } catch { }
-      $Root = if ($kcRoot) { $kcRoot } else { (Split-Path $Repo) + '-wt' }
-    }
+    if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
     if (Test-Path $path) { throw "$path exists: resume there (wt status -Dir $path) or pick another -Name" }
     # a missing configured dep source is an error, no fallback
     $r = $null
-    $kc = Join-Path $PSScriptRoot 'kit.local.json'
-    if (Test-Path $kc) {
+    $kc = $KitConf.ConfigFile
+    if ($kc -and (Test-Path $kc)) {
       $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
       $r = @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
     }
@@ -209,7 +205,7 @@ switch ($Action) {
     }
     "removed $Dir"
   }
-  'list' { git -C $Repo worktree list }
+  'list' { git -C $(if ($Repo) { $Repo } else { (Get-Location).Path }) worktree list }
 }
 }
 
@@ -551,13 +547,15 @@ if ($jvmKind -or $nodeKind -or $gradleKind) {
   $heap = [math]::Min($maxGB, [math]::Max($HeapMinGB, $heap))
   if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history: the heap can fill up
 }
-function Set-HeapEnv([int]$gb) {
+# $Cmd is a parameter (no script scope): returned
+function Set-HeapEnv([int]$gb, [string]$c) {
   if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }
   if ($nodeKind) { $env:NODE_OPTIONS = "$nodeKeep --max-old-space-size=$($gb * 1024)".Trim() }
-  if ($gradleKind -and $script:Cmd -notmatch 'org\.gradle\.jvmargs') {
+  if ($gradleKind -and $c -notmatch 'org\.gradle\.jvmargs') {
     # a -D overrides org.gradle.jvmargs
-    $script:Cmd = ([regex]'(gradlew(\.bat)?|\bgradle)(?=\s|$)').Replace($script:Cmd, "`$1 `"-Dorg.gradle.jvmargs=-Xmx${gb}g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000 -Dfile.encoding=UTF-8`"", 1)
+    $c = ([regex]'(gradlew(\.bat)?|\bgradle)(?=\s|$)').Replace($c, "`$1 `"-Dorg.gradle.jvmargs=-Xmx${gb}g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000 -Dfile.encoding=UTF-8`"", 1)
   }
+  $c
 }
 
 function Get-OwnerName([string]$Leaf, [string]$Repo) {
@@ -676,7 +674,7 @@ while ((Get-Date) -lt $deadline) {
       }
     }
     if ($left -ge $KeepFreeGB -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
-      if ($heap -gt 0) { Set-HeapEnv $heap }
+      if ($heap -gt 0) { $Cmd = Set-HeapEnv $heap $Cmd }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
@@ -886,10 +884,11 @@ function Test-DockerForContainerTests {
     if ($bf -and (Get-Content -LiteralPath $bf -Raw) -match 'testcontainers') {
       if ($AllTests -and -not $names.Count) { $need = $true }
       else {
-        $roots = @('src/test', 'src/integrationTest') | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { Test-Path -LiteralPath $_ }
+        $roots = @('src/test', 'src/integrationTest', 'test', 'tests', '__tests__') | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { Test-Path -LiteralPath $_ }
         foreach ($n in $names) {
-          $src = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Include "$n.java", "$n.kt" -ErrorAction SilentlyContinue } | Select-Object -First 1)
-          if ($src.Count -and (Get-Content -LiteralPath $src[0].FullName -Raw) -match '@Testcontainers|@Container\b|import\s+org\.testcontainers|extends\s+\w*Container\w*Test\b') { $need = $true; break }
+          $inc = @('.java', '.kt', '.py', '.ts', '.js', '.go', '.cs') | ForEach-Object { "$n$_"; "$n.*$_" }
+          $src = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Include $inc -ErrorAction SilentlyContinue } | Select-Object -First 1)
+          if ($src.Count -and (Get-Content -LiteralPath $src[0].FullName -Raw) -match '(?i)@Testcontainers|@Container\b|testcontainers|extends\s+\w*Container\w*Test\b') { $need = $true; break }
         }
       }
     }
@@ -915,7 +914,7 @@ if ($Step -eq 'migrations') {
   $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
   $masters = @($all | Where-Object { $_ -match '\.xml$' })
   $det = & (Get-Python) -X utf8 $KitCmd.devtools migrations detect --repo $top 2>$null | ConvertFrom-Json -AsHashtable
-  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($det) { $det.GetEnumerator() | ForEach-Object { "$($_.Key) ($($_.Value) files)" } })
+  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($det) { $det.GetEnumerator() | ForEach-Object { "$($_.Key) ($($_.Value)$(if ($_.Value -is [long]) { ' files' }))" } })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }

@@ -24,8 +24,8 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
-      if ((Test-Path $lock) -and ((Get-Date) - (Get-Item $lock).LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }
-      else { Start-Sleep -Milliseconds 100 }
+      if ((Test-Path $lock) -and ((Get-Date) - (Get-Item $lock).LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }   # a live holder keeps it open: the remove fails
+      Start-Sleep -Milliseconds 100
     }
   }
   # warn + return too: SilentlyContinue ignores a throw
@@ -85,6 +85,7 @@ function Get-KitSetting([string]$Path, $Default) {
   $cur
 }
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
+$__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # github / gitlab status labels
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
 # task tag in branches (fix/<tag><id>-slug) and MR titles
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
@@ -197,9 +198,9 @@ function ConvertFrom-PsElapsed([string]$e) {
 
 function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows, no CommandLine/Created
   $all = if ($KitIsWindows) {
-    $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
+    $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
     foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
-      [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
+      [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; Path = $p.ExecutablePath; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
     }
   }
   else {
@@ -211,7 +212,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
       $id = [int]$Matches[1]; $cl = $Matches[5]; $n = [string]$names[$id]
       $exe = Split-Path (($cl -split '\s+')[0]) -Leaf
       if ($n.Length -ge 15 -and $exe.StartsWith($n)) { $n = $exe }
-      [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
+      [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; Path = ($cl -split '\s+')[0]; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
     }
   }
   if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }
@@ -301,19 +302,19 @@ function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes 
 $script:KitLiveCache = @{}
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
 # live: owner hold before until | pid | running workflow step (live-steps) | board beat (session, else agent) < idle.beatMinutes
-# | coordinator: heartbeat < 20 min | holder process
+# | coordinator: heartbeat < idle.beatMinutes | holder process
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitSetting 'idle.beatMinutes' 20); $a = "$($l.agent)"
   if ($l.owner -or ($l.until -and -not $a -and -not $l.holderPid)) { return [datetime]$l.until -gt $now }   # a pre-lease hold keeps its minutes
   if ($l.pid -and (Get-Process -Id ([int]$l.pid) -ErrorAction SilentlyContinue)) { return $true }
-  $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt 15) { $s } } catch {} }
+  $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt $bm) { $s } } catch {} }
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
   $b = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
     Where-Object { $_.status -ne 'left' -and $(if ($l.session) { $_.session -eq $l.session } else { $_.agent -and $_.agent -in @($a, $l.holder) }) })
   if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Get-Process -Id ([int]$_.pid) -ErrorAction SilentlyContinue)) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
-  if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt 20) { return $true } }
+  if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt $bm) { return $true } }
   (Test-KitHolder $l) -eq $true
 }
 # keep? live: seen = now; else kept idle.graceMinutes past seen (graceLeft)
@@ -330,6 +331,7 @@ function Update-KitLease($l) {
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($cmd.CommandType -eq 'ExternalScript') { $app = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $cmd = $app } }   # an npm .ps1 shim: its .cmd keeps the timeout
   if (-not $cmd) { return & $res 127 '' "$Exe is not on PATH" }
   if ($cmd.CommandType -ne 'Application') {
     $o = @(& $Exe @A 2>&1); $c = [int]$LASTEXITCODE; $so = @(); $se = @()
@@ -608,6 +610,7 @@ function __TrAttachText($a) {
 }
 
 # github/gitlab ids: "12", "#12", "owner/name#12"
+function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 function __TrRef([string]$Id) {
   if ($Id -match '^(?<r>[^#\s]+)#(?<n>\S+)$') { return @($Matches.r, $Matches.n) }
   if (-not $__trRepo -and -not $__trDry) { throw "tracker ($__trType): set ""tracker"": { ""repo"": ""owner/name"" } in kit.local.json" }
@@ -616,8 +619,8 @@ function __TrRef([string]$Id) {
 function __TrRepoOf([string]$List) { if ($List -match '/') { $List } else { (__TrRef '0')[0] } }
 function __TrLabelStatus($labels, [bool]$closed) {
   if ($closed) { return @($__trStatus.closed)[0] }
-  $l = @($labels | Where-Object { $_ -like 'status:*' } | Select-Object -First 1)
-  if ($l) { return ([string]$l[0]).Substring(7) }
+  $l = @($labels | Where-Object { $_ -like "$__trLp*" } | Select-Object -First 1)
+  if ($l) { return ([string]$l[0]).Substring($__trLp.Length) }
   @($__trStatus.open)[0]
 }
 function __TrIsClosed([string]$name) { Test-TrackerStatus $name 'closed' }
@@ -738,9 +741,9 @@ Register-KitAdapter 'tracker' 'clickup' @{
   }
   'owner' = { param($a) if ($a.name) { __TrClickupMemberId $a.name } }
 }
-# adapter:tracker/github: gh CLI; status = a status:<name> label (closed = closed issue)
+# adapter:tracker/github: gh CLI; status = a <tracker.statusLabelPrefix><name> label (closed = closed issue)
 Register-KitAdapter 'tracker' 'github' @{
-  'url' = { param($a) $r, $n = __TrRef $a.id; "https://$(Get-KitValue 'githubHost' 'github.com')/$r/issues/$n" }
+  'url' = { param($a) $r, $n = __TrRef $a.id; "https://$(__GhHost)/$r/issues/$n" }
   'view' = { param($a)
     $r, $n = __TrRef $a.id
     $j = __TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'number,title,state,url,labels,assignees,body')); if (-not $j.number) { return }
@@ -751,12 +754,12 @@ Register-KitAdapter 'tracker' 'github' @{
   'status' = { param($a)
     $r, $n = __TrRef $a.id; $name = $a.status
     $j = __TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'state,labels'))
-    $old = @($j.labels.name | Where-Object { $_ -like 'status:*' -and $_ -ne "status:$name" })
+    $old = @($j.labels.name | Where-Object { $_ -like "$__trLp*" -and $_ -ne "$__trLp$name" })
     $edit = @('issue', 'edit', $n, '-R', $r); foreach ($o in $old) { $edit += @('--remove-label', $o) }
     if (__TrIsClosed $name) { if ($old) { $null = __TrCli 'gh' $edit }; return (__TrCli 'gh' @('issue', 'close', $n, '-R', $r)) }
     if ($j.state -eq 'CLOSED') { $null = __TrCli 'gh' @('issue', 'reopen', $n, '-R', $r) }
-    $null = __TrCli 'gh' @('label', 'create', "status:$name", '-R', $r, '--force', '--color', 'ededed')
-    __TrCli 'gh' ($edit + @('--add-label', "status:$name"))
+    $null = __TrCli 'gh' @('label', 'create', "$__trLp$name", '-R', $r, '--force', '--color', 'ededed')
+    __TrCli 'gh' ($edit + @('--add-label', "$__trLp$name"))
   }
   'comment' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'comment', $n, '-R', $r) $a.text }
   'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.author.login; date = (__TrDate $_.createdAt); text = [string]$_.body } } }
@@ -777,7 +780,7 @@ Register-KitAdapter 'tracker' 'github' @{
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
     $c = @('issue', 'list', '-R', (__TrRepoOf $a.list), '--limit', '200', '--json', 'number,title,assignees')
-    $c += if (__TrIsClosed $a.status) { @('--state', 'closed') } else { @('--state', 'open', '--label', "status:$($a.status)") }
+    $c += if (__TrIsClosed $a.status) { @('--state', 'closed') } else { @('--state', 'open', '--label', "$__trLp$($a.status)") }
     @(__TrJson (__TrCli 'gh' $c)) | Where-Object { $_ -and $_.number } | ForEach-Object { __TrRow "$($_.number)" ([string]$_.title) $a.status @($_.assignees | ForEach-Object { __TrWho $_.login $_.login }) }
   }
   'owner' = { param($a) [string](__TrCli 'gh' @('api', 'user', '--jq', '.login')) }
@@ -792,9 +795,9 @@ Register-KitAdapter 'tracker' 'gitlab' @{
   }
   'status' = { param($a)
     $p = __TrGlPath $a.id; $name = $a.status; $j = __TrGl 'GET' $p $null
-    $old = @($j.labels | Where-Object { $_ -like 'status:*' -and $_ -ne "status:$name" })
+    $old = @($j.labels | Where-Object { $_ -like "$__trLp*" -and $_ -ne "$__trLp$name" })
     $b = @{}; if ($old) { $b.remove_labels = $old -join ',' }
-    if (__TrIsClosed $name) { $b.state_event = 'close' } else { $b.add_labels = "status:$name"; if ($j.state -eq 'closed') { $b.state_event = 'reopen' } }
+    if (__TrIsClosed $name) { $b.state_event = 'close' } else { $b.add_labels = "$__trLp$name"; if ($j.state -eq 'closed') { $b.state_event = 'reopen' } }
     $res = __TrGl 'PUT' $p $b; if ($res) { "status of #$($res.iid): $name" }
   }
   'comment' = { param($a) $res = __TrGl 'POST' (__TrGlPath $a.id '/notes') @{ body = $a.text }; if ($res) { "commented on #$((__TrRef $a.id)[1])" } }
@@ -812,7 +815,7 @@ Register-KitAdapter 'tracker' 'gitlab' @{
   'rename' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ title = $a.name }; "renamed #$((__TrRef $a.id)[1])" }
   'attach' = { param($a) __TrAttachText $a }
   'list' = { param($a)
-    $q = if (__TrIsClosed $a.status) { 'state=closed' } else { "state=opened&labels=$([uri]::EscapeDataString("status:$($a.status)"))" }
+    $q = if (__TrIsClosed $a.status) { 'state=closed' } else { "state=opened&labels=$([uri]::EscapeDataString("$__trLp$($a.status)"))" }
     @(__TrGl 'GET' "projects/$([uri]::EscapeDataString((__TrRepoOf $a.list)))/issues?$q&per_page=100" $null) | Where-Object { $_ -and $_.iid } | ForEach-Object { __TrRow "$($_.iid)" ([string]$_.title) $a.status @($_.assignees | ForEach-Object { __TrWho $_.id $_.username }) }
   }
   'owner' = { param($a) [string](__TrGl 'GET' 'user' $null).username }
@@ -838,7 +841,7 @@ Register-KitAdapter 'tracker' 'jira' @{
       issuetype = @{ name = $(if ($a.parent) { Get-KitSetting 'tracker.subtaskType' 'Subtask' } else { Get-KitSetting 'tracker.issueType' 'Task' }) } }
     if ($a.parent) { $f.parent = @{ key = $a.parent } }
     if ($a.assignee) { $f.assignee = if ($__trType -eq 'jira') { @{ accountId = $a.assignee } } else { @{ name = $a.assignee } } }
-    if ($a.priority) { $f.priority = @{ name = (__TrPrioName $a.priority 'Highest High Medium Low') } }
+    if ($a.priority) { $f.priority = @{ name = (__TrPrioName $a.priority ([string](Get-KitSetting 'tracker.priorities' 'Highest High Medium Low'))) } }
     $t = __TrJira 'POST' 'issue' @{ fields = $f }
     if ($t.key) { [pscustomobject]@{ id = $t.key; url = Get-TrackerUrl $t.key } } elseif ($__trDry) { [pscustomobject]@{ id = '<new>'; url = '' } }
   }
@@ -963,7 +966,7 @@ Register-KitAdapter 'tracker' 'youtrack' @{
     if (-not $p -and -not $__trDry) { throw "tracker (youtrack): no project '$($a.list)' (tracker.list = a project short name)" }
     $t = __TrYt 'POST' 'issues?fields=idReadable' @{ project = @{ id = $p.id }; summary = $a.name; description = $a.description }
     $id = if ($t.idReadable) { $t.idReadable } elseif ($__trDry) { '<new>' } else { return }
-    $c = @(if ($a.parent) { "subtask of $($a.parent)" }; if ($a.assignee) { "for $($a.assignee)" }; if ($a.priority) { "Priority $(__TrPrioName $a.priority 'Critical Major Normal Minor')" })
+    $c = @(if ($a.parent) { "subtask of $($a.parent)" }; if ($a.assignee) { "for $($a.assignee)" }; if ($a.priority) { "Priority $(__TrPrioName $a.priority ([string](Get-KitSetting 'tracker.priorities' 'Critical Major Normal Minor')))" })
     if ($c) { __TrYtCmd $id ($c -join ' ') }
     [pscustomobject]@{ id = $id; url = Get-TrackerUrl $id }
   }
@@ -1099,7 +1102,7 @@ function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' 
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
 $script:HostType = [string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))
 if ($script:HostType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
-if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (Get-KitValue 'githubHost' 'github.com') -ne 'github.com') { $env:GH_HOST = [string](Get-KitValue 'githubHost' 'github.com') }
+if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (__GhHost) -ne 'github.com') { $env:GH_HOST = [string](__GhHost) }
 # MR/PR URL of any host -> @{ repo; n; type } (Azure: org/project/repo)
 $script:MrSegRx = '(?:-/merge_requests|pulls?|pull-requests|pullrequest)'
 function ConvertFrom-MrUrl([string]$Url) {
@@ -1148,7 +1151,7 @@ function __Rest([string]$Base, [string]$Env, [string]$Auth, [string]$Method, [st
 function __Files($files) { @($files | ForEach-Object { [pscustomobject]@{ new_path = $_.filename; old_path = $(if ($_.previous_filename) { $_.previous_filename } else { $_.filename }) } }) }
 function __CiWord([string]$w) {
   switch -Regex ($w) { '^(success|successful|succeeded|neutral|passed)$' { 'success' } '^(skipped|not_built|not_executed)$' { 'skipped' } '^(cancel+ed|aborted|stopped)$' { 'canceled' }
-    '^(fail|failure|failed|error|timed_out|action_required|startup_failure|unstable|partiallysucceeded)$' { 'failed' } '^(manual|paused|blocked|waiting)$' { 'manual' } '^scheduled$' { 'scheduled' } '^(pending|queued|created|notstarted|postponed)$' { 'pending' } default { 'running' } }
+    '^(fail|failure|failed|error|errored|broken|infrastructure_fail|timed_out|action_required|startup_failure|unstable|partiallysucceeded)$' { 'failed' } '^(manual|paused|blocked|waiting)$' { 'manual' } '^scheduled$' { 'scheduled' } '^(pending|queued|created|notstarted|postponed)$' { 'pending' } default { 'running' } }
 }
 function __CiRoll([string[]]$S) { $S = @($S | Where-Object { $_ }); if (-not $S.Count) { return $null }; foreach ($w in 'failed', 'canceled', 'running', 'pending', 'manual', 'scheduled') { if ($S -contains $w) { return $w } }; if ($S -contains 'success') { 'success' } else { 'skipped' } }
 # emulated merge-when-green: the intent in tracking.automerge; orch.ps1 track run merges once green
@@ -1201,7 +1204,7 @@ Register-KitAdapter 'git-host' 'github' @{
     __GhPr $a
   }
   'mr.unauto' = { param($a) $null = __Gh @('pr', 'merge', $a.n, '-R', $a.repo, '--disable-auto'); __GhPr $a }
-  'mr.url' = { param($a) "https://$(Get-KitValue 'githubHost' 'github.com')/$($a.repo)/pull/$($a.n)" }
+  'mr.url' = { param($a) "https://$(__GhHost)/$($a.repo)/pull/$($a.n)" }
   'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; if ($c.merge_base_commit.sha) { [pscustomobject]@{ id = $c.merge_base_commit.sha } } }
   'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; if ($c.sha) { [pscustomobject]@{ id = $c.sha; committed_date = $c.commit.committer.date } } }
   'repo.compare' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.from)...$(__Enc $a.to)"; if ($c) { [pscustomobject]@{ diffs = (__Files $c.files) } } }
@@ -1410,11 +1413,11 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   while ($i -lt $Tokens.Count) {
     $t = "$($Tokens[$i])"
     if ($t -in '--help', '-?' -or ($t -in '-h', '-help' -and -not @($own | Where-Object { $_ -ieq $t.TrimStart('-') }).Count)) { & $help }
-    if ($t -match '^--\w') { throw "$($Fn -replace '^Invoke-', ''): unknown option $t (parameters take one dash; --help prints the usage)" }
+    if ($t -match '^--\w') { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): unknown option $t (parameters take one dash; --help prints the usage)"); exit 2 }   # usage error = exit 2
     if ($t -match '^-([A-Za-z][\w-]*)(?::(.*))?$') {
       $n = $Matches[1]; $inline = $Matches[2]
       $p = @($own | Where-Object { $_ -ieq $n }); if (-not $p.Count) { $p = @($own | Where-Object { @($meta[$_].Aliases) -contains $n }) }; if (-not $p.Count) { $p = @($own | Where-Object { $_ -like "$n*" }) }
-      if ($p.Count -ne 1) { throw "$($Fn -replace '^Invoke-', ''): unknown or ambiguous parameter -$n" }
+      if ($p.Count -ne 1) { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): unknown or ambiguous parameter -$n"); exit 2 }
       $pm = $meta[$p[0]]; $i++
       # a splatted @{ Mode = 'None' } arrives as -Mode: then the value
       if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }

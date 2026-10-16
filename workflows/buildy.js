@@ -19,7 +19,7 @@ export const meta = {
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume' | 'duel' (2 agents, args.duel),
  duel: { question, approaches?: ['<A>', '<B>'], rounds: 3 }, review: true | false | 'auto' (skip < 40 lines, nothing sensitive),
  localRetries: 1, envFixCycles: 2, envFixWaitMinutes: 300, requireLocal: false, decisionWaitMinutes: 300,
- roles: { '<repo>': 'producer' | 'consumer' } (repos[].role; else by name), holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
+ roles: { '<repo>': 'producer' | 'consumer' } (else by repo name), holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  models: { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }, complex: ['X1'],
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
@@ -28,7 +28,9 @@ Returns { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, 
 const A0 = args || {}   // recorded as given (resume); A = this run's batch (args.batch areas; the rest -> next)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
 const IN = BATCH ? A0.agents.slice(0, BATCH) : A0.agents || []
-const A = BATCH ? { ...A0, agents: IN.map((a) => ({ ...a, dependsOn: [].concat(a.dependsOn || []).filter((p) => IN.some((b) => b.id === p)) })) } : A0
+// producers outside a run's list ship in another run
+const own = (gs) => gs.map((a) => ({ ...a, dependsOn: [].concat(a.dependsOn || []).filter((p) => gs.some((b) => b.id === p)) }))
+const A = BATCH ? { ...A0, agents: own(IN) } : A0
 const KIT = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const K = `${KIT}/skills/dev-kit`
 const DEV = `${K}/dev.ps1`
@@ -237,7 +239,7 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 const PLAN = [...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
 takeBudget(await recordArgs('buildy', RUN, A0, MODE === 'duel' ? 'Duel' : 'Build', PLAN), A.agents.length)
-const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents, batch: undefined, ...extra } })
+const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(A.agents.length * BUD.stopAt * BUD.cap / BUD.estimate))
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: run ${batch} area(s) per run (args.batch)`)
@@ -345,6 +347,7 @@ RECORD>>>`, { label: 'duel-ask', phase: 'Duel', schema: OK_SCHEMA, agentType: 'd
   await agent(`STEP: your POC (devy ${L.id}) lost the duel (${did}: ${ans}). Remove its remote branch ${pocs[1 - w].branch} if you pushed it
 (git push origin --delete <branch>); leave the worktree for cleanup; the findings stay in ${file}. Return ok=true.`, { label: `duel-close:${L.id}`, phase: 'Duel', schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
   AGENTS = [{ ...A.agents[w], note: `${A.agents[w].note || ''}\nDUEL WON (${did}: ${ans}): ship your POC through the full dev flow (steps 4-9) from your worktree(s) ${pocs[w].worktrees.join(', ')}; the debate record is ${file}.` }]
+  DEPS[A.agents[w].id] = []   // the loser never settles
   log(`duel: the owner chose POC ${side(w)} (${A.agents[w].id}); it continues the dev flow, ${L.id}'s branch is closed`)
  }
 }

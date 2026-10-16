@@ -28,7 +28,7 @@ function Get-SwarmConfig {
   if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
   # non-Gradle kinds: 'command|artifact glob' (app.buildCmd / app.artifact override)
-  $pre = @{ flutter = 'flutter build apk --release|build/app/outputs/flutter-apk/app-release.apk'; maui = 'dotnet publish -f net9.0-android -c Release|bin/Release/*/publish/*-Signed.apk'
+  $pre = @{ flutter = 'flutter build apk --release|build/app/outputs/flutter-apk/app-release.apk'; maui = 'dotnet publish -f {tfm} -c Release|bin/Release/*/publish/*-Signed.apk'
     capacitor = 'npx cap sync android && cd android && {gw} assembleRelease|android/app/build/outputs/apk/release/*.apk'; ios = 'xcodebuild -scheme {scheme} -sdk iphonesimulator -derivedDataPath build/kit build|build/kit/Build/Products/*-iphonesimulator/*.app' }
   $bc, $ar = "$($pre[$c.app.kind])" -split '\|'
   foreach ($k in @{ buildCmd = $bc; artifact = $ar; permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not $c.app.($k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
@@ -42,7 +42,8 @@ function Get-SwarmConfig {
   $c | Add-Member -Force out $out
   $c | Add-Member -Force apkDir $apkDir
   $c | Add-Member -Force appFile (Join-Path $apkDir "app.$(if ($c.kind -eq 'ios') { 'app' } else { 'apk' })")
-  $av = @{ abi = 'x86_64'; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore' }   # arm64-v8a on Apple silicon
+  $abi = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
+  $av = @{ abi = $abi; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore' }
   if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { $av[$p.Name] = $p.Value } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
@@ -197,17 +198,18 @@ switch ($Action) {
       if (-not (Running $got)) {
         # wait for RAM in 1-min gate turns, still a waiter (a release then keeps its lane up); a lane that frees up wins, this boot is dropped
         $env:KIT_SWARM_TURN_MIN = 1
-        do {
-          $memQueued = Boot $got -Until (Get-Date).AddSeconds(30)
-          if (-not $memQueued -or (Running $got)) { break }
-          if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date }
-          $sw = Locked {
-            $f = @($lanes | Where-Object { $_.name -ne $got.name -and -not (Lease $_.name) -and (Running $_) })[0]
-            if ($f) { Remove-Item (Join-Path $dir "$($got.name).json") -Force; Save-Json (@{ lane = $f.name; serial = (LaneSerial $f); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '')) (Join-Path $dir "$($f.name).json"); $f }
-          }
-          if ($sw) { Write-Host "$($got.name): boot dropped, $($sw.name) is free and running"; $got = $sw; $memQueued = $false; break }
-        } while ((Get-Date) -lt $deadline)
-        Remove-Item Env:KIT_SWARM_TURN_MIN -ErrorAction SilentlyContinue
+        try {
+          do {
+            $memQueued = Boot $got -Until (Get-Date).AddSeconds(30)
+            if (-not $memQueued -or (Running $got)) { break }
+            if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date }
+            $sw = Locked {
+              $f = @($lanes | Where-Object { $_.name -ne $got.name -and -not (Lease $_.name) -and (Running $_) })[0]
+              if ($f) { Remove-Item (Join-Path $dir "$($got.name).json") -Force; Save-Json (@{ lane = $f.name; serial = (LaneSerial $f); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '')) (Join-Path $dir "$($f.name).json"); $f }
+            }
+            if ($sw) { Write-Host "$($got.name): boot dropped, $($sw.name) is free and running"; $got = $sw; $memQueued = $false; break }
+          } while ((Get-Date) -lt $deadline)
+        } finally { Remove-Item Env:KIT_SWARM_TURN_MIN -ErrorAction SilentlyContinue }   # also when Boot throws
       }
       Remove-Item $wf -Force -ErrorAction SilentlyContinue
       if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
@@ -364,7 +366,7 @@ $commit = (git -C $AppDir rev-parse --short HEAD).Trim()
 $log = Join-Path $c.out 'build.log'
 $t0 = Get-Date
 if ($cmd) {
-  & $gate -Dir $AppDir -Cmd "$($cmd.Replace('{gw}', $(if ($KitIsWindows) { $gw } else { "./$gw" })).Replace('{scheme}', [string]$c.app.scheme)) $BuildArgs > `"$log`" 2>&1" -WaitMinutes 120
+  & $gate -Dir $AppDir -Cmd "$($cmd.Replace('{gw}', $(if ($KitIsWindows) { $gw } else { "./$gw" })).Replace('{scheme}', [string]$c.app.scheme).Replace('{tfm}', $(if ($c.app.tfm) { [string]$c.app.tfm } else { 'net9.0-android' }))) $BuildArgs > `"$log`" 2>&1" -WaitMinutes 120
   if ($LASTEXITCODE) { Get-Content $log -Tail 15; throw "build failed (exit $LASTEXITCODE) - see $log" }
   $apk = Get-Item (Join-Path $AppDir $c.app.artifact) -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
   if (-not $apk) { throw "this build left no app.artifact $($c.app.artifact) under $AppDir" }
@@ -522,14 +524,14 @@ function Stop-Lane($l) {
 switch ($Action) {
   'list' {
     foreach ($l in $all) {
-      '{0,-8} {1,-14} avd={2,-8} {3,-5} {4}' -f $l.name, "emulator-$($l.port)", $(if (Test-Path (Join-Path $avdHome "$($l.name).avd\config.ini")) { 'present' } else { 'MISSING' }),
+      '{0,-8} {1,-14} avd={2,-8} {3,-5} {4}' -f $l.name, "emulator-$($l.port)", $(if (Test-Path (Join-Path $avdHome "$($l.name).avd/config.ini")) { 'present' } else { 'MISSING' }),
         $(if (Running $l) { 'up' } else { 'down' }), $(if ($h = Holder $l) { "leased by $h" } else { '' })
     }
   }
   'create' {
     $made = @()
     foreach ($l in $all) {
-      if (Test-Path (Join-Path $avdHome "$($l.name).avd\config.ini")) { "$($l.name) exists - kept (reset -Level recreate rebuilds it)"; continue }
+      if (Test-Path (Join-Path $avdHome "$($l.name).avd/config.ini")) { "$($l.name) exists - kept (reset -Level recreate rebuilds it)"; continue }
       New-Avd $l.name; $made += $l.name
     }
     if ($made -and -not $NoBoot) { & $KitCmd.swarm up -Lanes $made -Mode None -ColdBoot | Select-Object -Last 3 }
@@ -606,7 +608,7 @@ foreach ($name in $Lanes) {
   }
   if (-not (Test-LaneUp $l)) {
     if (-not (Turn 'emulator' 4.5)) { continue }
-    $ini = Join-Path $c.avdDir "$name.avd\emulator-user.ini"
+    $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
     $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # window only with -ShowAll or headless: false
@@ -679,7 +681,7 @@ foreach ($l in @($c.lanes) | Where-Object { -not $Lanes -or $Lanes -contains $_.
   } else { "$($l.name) not running" }
 }
 if (-not $KeepBrowsers) {
-  $hc = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|google chrome|microsoft edge)(\.exe)?$' | Where-Object { $_.CommandLine -match '--headless' -and $_.CommandLine -match 'chrome-profiles' }
+  $hc = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|headless_shell|google chrome|microsoft edge|firefox|MiniBrowser|WebKitWebProcess)(\.exe)?$' | Where-Object { $_.CommandLine -match '--?headless|-juggler' -and $_.CommandLine -match 'chrome-profiles' }
   $hc | ForEach-Object { Stop-SysProcess $_.Id }
   "killed $(@($hc).Count) headless test browser processes"
 }

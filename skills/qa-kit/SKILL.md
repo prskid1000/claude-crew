@@ -26,7 +26,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    the
    SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
-   no load, stress or parallel request floods on a shared env unless a check of the guide asks for it.
+   no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
    `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
    report. Phones: `swarm.ps1

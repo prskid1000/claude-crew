@@ -8,7 +8,7 @@
  python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top, one solution comment (+ guide link), status
  python devtools.py mr <worktree> "<title>" <body.md> [target]   open a merge/pull request from the current branch
- python devtools.py merge <worktree> <iid>   squash-merge now (green / no CI) or arm merge-when-green; waits <= 90 s;
+ python devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
  python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] <file> ...   host evidence files (gdocs: Drive) -> JSON
@@ -269,7 +269,8 @@ if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api o
 
 def host_kind(host):
     """Adapter name of a host (as lib.ps1 Get-HostKind)."""
-    if host == GITLAB_HOST and CFG.get('gitHostType'):
+    # gitHost unset: gitHostType names any origin host
+    if CFG.get('gitHostType') and (host == GITLAB_HOST or (not CFG.get('gitHost') and host != GITHUB_HOST)):
         return CFG['gitHostType']
     if host == GITHUB_HOST:
         return 'github'
@@ -362,6 +363,10 @@ def _ui_line_missing(worktree, tgt, body_md):
     return [f for f in out.splitlines() if UI_FILES.search(f.strip())]
 
 
+TASK_LINK = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/', 'jira-server': '/browse/',
+             'linear': 'linear.app', 'azure': '_workitems', 'youtrack': '/issue/'}
+
+
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
@@ -371,7 +376,7 @@ def mr_create(worktree, title, body_md, tgt=None):
     if _verified_gaps(body_md):
         print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
              ' - say what was not run (or "Not run: nothing") - see templates.md "MR body"', file=sys.stderr)
-    link = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/', 'jira': '/browse/'}.get(TRACKER_TYPE)
+    link = TASK_LINK.get(TRACKER_TYPE)
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
     if FOOTER not in body_md:
@@ -610,7 +615,7 @@ def _auto_merge(worktree, iid, max_wait):
 
 
 def merge_when_green(worktree, iid, timeout_min=90):
-    """Poll; squash-merge when green, never on failure / conflict. Prefer auto_merge."""
+    """Poll; merge (per repos[].mergeMethod) when green, never on failure / conflict. Prefer auto_merge."""
     host, proj = remote(worktree)
     if held(proj):
         return f'{proj}!{iid} is held for approval (kit.local.json holdMerge)\nNOT_MERGED'
@@ -971,7 +976,7 @@ Reports files named >= since (yyyyMMddHHmmss) or listed in env LBCHECK_CHANGED (
         for mm in re.finditer(r'<changeSet\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</changeSet>', raw, re.S) if report else ():   # ET drops comments
             rb = re.search(r'<rollback\s*/>|<rollback\b[^>]*>(.*?)</rollback>', mm.group(2), re.S)
             if re.search(r'not\s+reversible|irreversible|non-reversible|cannot\s+be\s+(rolled|reverted)|no\s+rollback', mm.group(2), re.I) and not (rb and (rb.group(1) or '').strip()):
-                issues.append(f'{fname} {mm.group(1)}: marked not reversible but its <rollback> is missing or empty (CI rejects both): write a real reverse statement')
+                issues.append(f'{fname} {mm.group(1)}: marked not reversible but its <rollback> is missing or empty (a revert would fail): write a real reverse statement')
         for node in root:
             t = local(node.tag)
             if t == 'changeSet':
@@ -1083,6 +1088,10 @@ def selftest():
         expect('a lost merge-when-green intent is reported', 'could not record' in err.getvalue())
     finally:
         g.update(saved); CFG.clear(); CFG.update(cfg0)
+    fd, cp = tempfile.mkstemp(suffix='.json'); os.write(fd, b'{"dialect": "PostgreSQL"}'); os.close(fd)
+    expect('dialect alias', load_cfg(cp)['dialect'] == 'postgres'); os.remove(cp)
+    cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
+    expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
     _report_selftest(expect)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
@@ -1110,7 +1119,7 @@ AUTO = {'createTable', 'addColumn', 'renameColumn', 'renameTable', 'renameView',
 NON_CHANGE = {'preConditions', 'rollback', 'comment', 'validCheckSum', 'property'}
 
 DEFAULTS = {
- 'pattern': r'(?i)(^|/)(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)',
+ 'pattern': r'(?i)(^|/)(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)(?!(?:.*\.)?(?:md|txt|rst)$)',   # not docs
  'logicalRoot': r'^(?:.*/)?src/main/resources/',   # classpath path (DATABASECHANGELOG.FILENAME)
  'smallDataRows': 20,
  'referenceTables': r'(?i)(^|_)(ref|lookup|types?|status(es)?|configs?|settings?|authorit(y|ies)|permissions?|roles?|menus?|features?|translations?)$',
@@ -1133,6 +1142,7 @@ DIALECTS = {
  'oracle': ([r'\bMODIFY\b', r'^MERGE\s+INTO\b', r'^(BEGIN|DECLARE)\s+\S', r'\bEXECUTE\s+IMMEDIATE\b'], [r'^CREATE\s+SEQUENCE\b', r'^COMMENT\s+ON\b']),
 }
 DIALECTS['mariadb'] = DIALECTS['mysql']
+DIALECT_ALIAS = {'postgresql': 'postgres', 'pg': 'postgres', 'mssql': 'sqlserver', 'mongo': 'mongodb'}
 # first match decides each item (changeSet, then each change); a HEAVY item makes the changeSet HEAVY
 DEFAULT_RULES = [
  {'id': 'runs-always', 'scope': 'changeset', 'attr': {'runAlways': '(?i)^true$'}, 'class': 'heavy', 'why': 'runAlways: runs on every start, no exact rollback'},
@@ -1165,8 +1175,10 @@ def load_cfg(path):
         cfg.update({k: v for k, v in user.items() if v is not None})
     rules = cfg.get('rules') or DEFAULT_RULES
     cfg['rules'] = list(cfg.get('extraRules') or []) + list(rules)
+    dia = (cfg.get('dialect') or '').lower()
+    cfg['dialect'] = DIALECT_ALIAS.get(dia, dia)   # db.engine spellings
     for d, (hv, lt) in DIALECTS.items():
-        if (cfg.get('dialect') or d).lower() == d:
+        if (cfg['dialect'] or d) == d:
             cfg['heavySql'], cfg['lightSql'] = list(cfg['heavySql']) + hv, list(cfg['lightSql']) + lt
     return cfg
 
@@ -1333,6 +1345,7 @@ MIG_TOOLS = {
 # down files (read with their up) and tool plumbing: never a changeSet of their own
 NOT_MIG = re.compile(r'\.down\.sql$|(^|/)U\d[^/]*__[^/]*\.sql$|(^|/)revert/[^/]+\.sql$|/down\.sql$|(^|/)(__init__|env)\.py$|\.Designer\.cs$|ModelSnapshot\.cs$|'
                      r'migration_lock\.toml$|(^|/)sqitch\.(plan|conf)$|\.(md|txt|mako)$')
+MIG_EXT = r'(?i)\.(sql|xml|ya?ml|json|py|rb|php|exs?|[cm]?[jt]s|go|cs|java|kt)$'
 # code calls -> change types; '' = a table block (its column calls belong to it)
 OPS = {'createtable': 'createTable', 'createmodel': 'createTable', 'addcolumn': 'addColumn', 'addfield': 'addColumn', 'addreference': 'addColumn',
  'dropcolumn': 'dropColumn', 'removecolumn': 'dropColumn', 'removefield': 'dropColumn', 'droptable': 'dropTable', 'deletemodel': 'dropTable',
@@ -1722,12 +1735,19 @@ def mig_main(argv):
     cfg = load_cfg(a.config)
     if a.cmd == 'rules': res = {'rules': cfg['rules'], **{k: cfg[k] for k in DEFAULTS}}
     elif a.cmd == 'detect':   # tracked migrations per tool, Liquibase aside (dev.ps1 check -Step migrations)
-        res = {}
-        for f in (git(a.repo, 'ls-files') or '').splitlines():
-            if any(re.search(t['file'], f) for t in MIG_TOOLS.values()) and not re.search(r'(?i)liquibase|changelog', f):
+        res, unknown = {}, []
+        fs = (git(a.repo, 'ls-files') or '').splitlines()
+        lb_master = any(re.search(r'(?i)master\.(xml|ya?ml|json|sql)$', f) for f in fs)
+        for f in fs:
+            lb, n = re.search(r'(?i)liquibase|changelog', f), None
+            if any(re.search(t['file'], f) for t in MIG_TOOLS.values()) and not lb:
                 p = os.path.join(a.repo, *f.split('/'))
                 n = mig_tool(f, open(p, encoding='utf-8', errors='replace').read() if os.path.isfile(p) else '', cfg)[0]
                 if n: res[n] = res.get(n, 0) + 1
+            # no tool parses it: UNRUN
+            if not n and re.search(cfg['pattern'], f) and not NOT_MIG.search(f) and not (lb and lb_master) and re.search(MIG_EXT, f):
+                unknown.append(f)
+        if unknown: res['unknown tool'] = ', '.join(unknown[:5])
     elif a.cmd == 'classify': res = classify(a, cfg)
     else:
         res = plan(a, cfg)
@@ -2018,8 +2038,8 @@ class Tools(unittest.TestCase):
   g2 = r.branch('g2', {'db/m/00002_b.sql': GO.format('CREATE TABLE b (id INT)', 'DROP TABLE b;')})
   g3 = r.branch('g3', {'db/m/00003_c.sql': GO.format('CREATE TABLE c (id INT)', 'DROP TABLE c;')})
   d = tempfile.mkdtemp(prefix='mig-ord-'); r.classify(g2, save=d + '/a'); r.classify(g3, save=d + '/b')
-  self.assertEqual(run('detect', '--repo', r.d), {})
-  r.g('checkout', '-q', 'g3'); self.assertEqual(run('detect', '--repo', r.d), {'goose': 1})
+  self.assertEqual(list(run('detect', '--repo', r.d)), ['unknown tool'])   # a changelog, no master: UNRUN
+  r.g('checkout', '-q', 'g3'); self.assertEqual(run('detect', '--repo', r.d)['goose'], 1)
   p = run('plan', '--leaving', d + '/a/manifest.json', '--staying', d + '/b/manifest.json')
   self.assertIn('goose order', p['blocked'][0]['uses'][0])
   shutil.rmtree(r.d, ignore_errors=True); shutil.rmtree(d, ignore_errors=True)

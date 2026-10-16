@@ -16,7 +16,8 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 
 Lanes and the app: `swarm.config.json` (git-ignored; `orch.ps1 setup -WriteLocal` writes it):
 `lanes[] {name, port | udid, user, notes, headless}`, `avd {abi, api, device, tag}`, `app {kind, package, appDir, buildTask,
-buildArgs, apkGlob | buildCmd + artifact, permissions, localManifests, localReverse, branch, javaHome, javaVersions}`.
+buildArgs, apkGlob | buildCmd + artifact, tfm (maui; net9.0-android), permissions, localManifests, localReverse, branch,
+javaHome, javaVersions}`.
 Device kinds (`kit.local.json` `devices.type`): android (default) · ios (Simulators, macOS; `qa.ps1 ui`
 shot / openurl / log, `$env:KIT_DEVICE=<udid>`) · none (verbs refuse; app checks NOT_TESTED). Output (APKs, logs, `swarm.json`):
 `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
@@ -44,7 +45,7 @@ shot / openurl / log, `$env:KIT_DEVICE=<udid>`) · none (verbs refuse; app check
 - L1. Lane APK: `swarm.ps1 build` (memory gate; fast-forwards a clean checkout to `origin/<branch>`; refuses a branch without
   `app.branch`); a side checkout writes `app-<branch>-<commit>.apk` unless `-Shared`.
 - L2. `swarm.ps1 avd create` once per machine; a stuck or corrupt lane: `avd reset -Lanes <name> -Level
-  cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; Apple silicon: `abi` `arm64-v8a`).
+  cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; default `abi` = the host's: `arm64-v8a` or `x86_64`).
 - L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `acquire` and
   `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes
   while a web pool or a dev wave runs.

@@ -10,7 +10,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Overlapping agents rebase only after the sibling MR merges (one conflict resolution, not two).
 - QA results are fixed at once: one bugbrief per failedTesting or [Bug] task, ONE /buildy for all open now; give `bugbrief` repo@branch when a repo ships two products from different branches.
 - Always pass `mandate` (the owner's words) to /buildy and /testy: the harness relays the latest chat message as "the request that wins". (3×)
-- A merged MR that adds a dependency: add it to the shared linkFrom tree yourself (`npm pack` + tar into `node_modules/<pkg>`, exact version); never a full install there.
+- A merged MR that adds a dependency: add it to the shared linkFrom tree yourself (the exact version, unpacked in place); never a full install there.
 - Briefs: git-grep the target branch before listing work on a second branch; quote producer contracts verbatim; port a sibling wave's review findings; items needing a product concept -> one decisions doc, a follow-up wave. (4×)
 - Answer QA testers in `<runDir>/lead-notes.md` (they re-read it), never SendMessage; items a run could not publish: `qa.ps1 finalize` from the on-disk results.json.
 - Confirm API MRs merged before QA; register consumers with `orch.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'`. (6×)
@@ -23,10 +23,10 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - An API status-code change: grep the API specs for the endpoint and delete old known-bug blocks in the same MR (500->400 breaks pinned specs). (2×)
 - Never persist secrets from a task or queue payload (headers, env, tokens) to a db, WAL, log or temp file: process memory only, store NULL, chmod db files on open; grep host env var NAMES before removing a fallback. (2×)
 - Mixed CRLF/LF edits: `-Raw .Replace` with `n no-ops, `[IO.File]` relative paths resolve against the process cwd, python without newline='' drops CRLF: use Edit + `git diff`, or a script with absolute paths. (3×)
-- Web local checks: linked node_modules can be older than the target: typecheck/builds may fail, tsc skips templates, spec.mjs can't bundle framework-DI specs. Spec framework-free helpers; templates: local env or "left to CI". No reinstall. (5×)
+- Linked shared dependencies can be older than the target: typechecks / builds may fail, spec.mjs can't bundle framework-DI specs. Spec framework-free helpers; the rest: local env or "left to CI". No reinstall. (5×)
 - A guard fix for one app goes to its sibling copy in the same wave; a fix that clears or matches state matches method and path, not any success. (2×)
 - Git host 500/502 or CI gateway timeout: check the job log, retry on the same sha, merge only after green; never change code for it. (4×)
-- The read-only SQL MCP often fails to connect: the org's fallback (read-only), noted in the MR; migration timestamps come from the coordinator; changelog includes in timestamp order. (4×)
+- A read-only DB tool can fail to connect: the org's read-only fallback, noted in the MR; migration ids come from the coordinator, applied in id order. (4×)
 - Testing docs: each Expected from the shipped code, not the brief or the bug text; re-read the final diff; a timing Expected comes from a measurement. (3×)
 - Screenshot clones of flex/grid pages keep the live height: set flex-grow 0 / flex-basis auto in the clone; the picture starts with the first table row. (2×)
 - Resumed or split task: `track` promotes once every known MR merged; register planned repos (`track add -Task <id> -Discover`) before any sibling merges; read the status before setting one. (2×)
@@ -43,12 +43,12 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
 - Mappers building an entity in steps: a flag read early misses parties resolved later; grep later setters, add a post-pass and a final-entity test. (3×)
 - Feature gates: gate only what the feature introduced, on the flag; on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (13×)
-- Shared multi-env services: env is part of tenant identity (DB name, cache key); external calls after commit on a bounded executor; read-only views get a wall-clock bound; secret temp files in a 0700 folder swept by age. (2×)
-- Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate changeSets, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
+- Shared multi-env services: the env is part of every key (DB name, cache key); external calls after commit on a bounded executor; read-only views get a wall-clock bound; secret temp files in a 0700 folder swept by age. (2×)
+- Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## qa-kit
-- Local web start needs free RAM for the gate (12.4 GB + keep 10 GB): check RAM first, or testers run API checks first. (2×)
-- An upstream AI service's 5xx fails assistant checks: check that service's health before FAIL; file it under its owner. (4×)
+- A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (2×)
+- An upstream service's 5xx fails the checks that use it: check that service's health before FAIL; file it under its owner. (4×)
 - Every NOT_TESTED check states its cause in results.json and the outcome line. (5×)
 - Check the MCP servers the run uses before it starts (record in lead-notes.md); checks needing a down server use the API or scripts. (2×)
 - `finalize -Check -FixNames` fixes names only: confirm each listed file exists with a supported type and compare results.json with the uploaded list. (4×)
@@ -56,7 +56,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A FAIL found in a retest: check the build from before the MR (old build or git blame); not caused by the MR -> `defect: new` with that evidence. (2×)
 - A retest of a fix in shared code covers every caller and screen on the same code path or record. (3×)
 - Flags switched on for a retest are restored at teardown and noted in lead-notes.md. (3×)
-- Lanes sharing one admin user share the assistant chat list: one session key per lane; delete only your own files. (3×)
+- Lanes sharing one user share its per-user server state: one session key per lane; delete only your own data. (3×)
 - Lead notes can widen scope: re-read lead-notes.md before each check; a required check goes into the run item (`qa.ps1 retest -Only <ids>` + the guide). (4×)
 - Before any FAIL run `qa.ps1 deployed` for EVERY repo of the task; an owner-confirmed manual deploy counts after an API marker check; re-check the test app's version before finalising FAILs. (8×)
 - Layout fixes: test the smallest and largest viewports with real wheel scrolling (scrollIntoView hides overflow:hidden clipping). (3×)
@@ -66,10 +66,10 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A skipped item: its reason goes into run.json. (2×)
 - A server-side config check (model, temperature, fallback) from the API lane: verify the deployed code and its unit tests, name unseen env overrides; unprovable -> NOT_TESTED with cause.
 - A test env's signing key can differ from repo config: prove cross-product token refusal by unit test or the deployed key; check a separate service is deployed first.
-- Library overlays render outside the component (`.cdk-overlay-container`): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
+- Library overlays render outside the component (an overlay container): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
 
 ## local-env
-- Reversible (LIGHT) changeSets are reverted exactly (rollbackCount on a cut-down changelog) instead of per-deploy snapshots; only HEAVY ones get a sandbox or snapshot.
+- Reversible (LIGHT) migrations are reverted exactly (the tool's revert) instead of per-deploy snapshots; only HEAVY ones get a sandbox or snapshot.
 - Sandbox DBs: never renamed schema copies (apps hardcode schema names); a separate DB server per sandbox with real names; verify the main DB (data AND markers) is untouched after the first run.
 - Local DB drift (leftover table, missing definer or grant) fails migrations: report it for `refresh` / the owner; never repair the shared DB by hand.
 
@@ -85,4 +85,9 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 ## revy
 
 ## Decisions
-- 2026-10-16 Kit size cap: context the kit grew past 300k tokens · decision `_manifest.caps.totalTokens` (owner): trim first (dense prose, one-line comments, no function removed), else `kittool.py budget raise` (x1.1) · consequences lint BUDGET above it, BUDGET-CAP on other cap edits.
+- 2026-10-16 Kit size cap: context the kit grew past its 360k-token cap · decision `_manifest.caps.totalTokens` (owner): trim first (dense prose, one-line comments, no function removed), else `kittool.py budget raise` (x1.1) · consequences lint BUDGET above it, BUDGET-CAP on other cap edits.
+- 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
+- 2026-10-16 Crew: context many agent types · decision 4 agents devy, revy, checky, kitty (owner) · consequences lint AGENT-TYPE / NON-CREW; old names only in `_manifest.renamed`.
+- 2026-10-16 NOT_TESTED: context untested checks closed tasks · decision one stronger retry, then failedTesting on shared envs; local items ENV-FIX, never failedTesting (owner).
+- 2026-10-16 Leases: context resources held by fixed hours · decision every resource has a live holder; no holder for idle.graceMinutes -> released; services start only from a lease or a person (owner) · consequences lint LEASE-HOLDER.
+- 2026-10-16 Readability: context indentation halving and aliases to save tokens · decision normal indentation and full cmdlet names (owner).

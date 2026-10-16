@@ -197,9 +197,9 @@ flowchart LR
 <!-- kit-graph:start table-budget -->
 | Tool / window | Budget | Source |
 |---|---|---|
-| claude-1m | 967000 | Claude Code model-config docs: 1M models compact at ~967k |
+| claude-1m | 967000 | Claude Code docs: 1M models compact at ~967k |
 | claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
-| codex | 0.9 x window | community-derived: 0.9 x ~/.codex/models_cache.json window x effective %; auto_compact_token_limit wins |
+| codex | 0.9 x window | 0.9 x the models_cache.json window; auto_compact_token_limit wins |
 | antigravity | 0.8 x window | unverified: 0.8 x the model window |
 | unknown | 160000 | 0.8 x 200k |
 <!-- kit-graph:end -->
@@ -278,13 +278,13 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 |---|---|---|
 | `gitHost`, `gitHostType`, `githubHost`, `gitlabGroup` | gitlab.com | the git host (type from the host) and the group / owner for short refs &lt;repo&gt;!&lt;iid&gt; |
 | `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches` | /path/to/src | checkouts (default the workspace), worktrees (&lt;repos&gt;-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop) |
-| `commitStyle`, `locale.cosmeticPattern`, `locale.testCommentPattern` |  | subject rule conventional (free / a regex); English defaults: small QA check, testing comment |
+| `commitStyle`, `locale.cosmeticPattern`, `locale.testCommentPattern`, `locale.proseTerms` |  | subject rule conventional (free / a regex); English defaults: small QA check, testing comment, prose required words ({expected: regex, ...}) |
 | `devices` | {"type": "android"} | type: android (default) / ios (Simulators, macOS) / none (verbs refuse, app checks NOT_TESTED) |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField (a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField / probeRegex (first group; a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
-| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2} | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram) |
+| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round) |
 | `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
 | `bugfixMandate`, `localOnly`, `orgTerms` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
@@ -292,9 +292,9 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name or group/project, for… | type: none (default) / clickup / github / gitlab / jira (Cloud) / jira-server / linear / azure / youtrack / command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples: _examples. |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name or group/project, for… | type: none (default) / clickup / github / gitlab / jira (Cloud) / jira-server / linear / azure / youtrack / command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github / gitlab status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
 | `reports` | {"type": "markdown"} | type: gdocs (Google Doc + Drive evidence via gws; default with gws) / markdown, html, pdf (a kept file; pdf: headless Chrome / Edge or pdfCommand '{in} {out}') / confluence (env CONFLUENCE_URL, CONFLUENCE_TOKEN [+ CONFLUENCE_EMAIL]; space, parent page id) / notion (env NOTION_TOKEN; parent page id) / command (command '&lt;cli&gt; {title} {path} {parent}' printing the URL). share (gdocs): anyone (default) / domain:&lt;domain&gt; / none; confluence / notion: the space / parent page permissions |
-| `qa` | {"outOfScope": ["&lt;a channel agent QA never tests, e.g. a chat app,… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). |
+| `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind. |
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them) |
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
@@ -303,7 +303,7 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 | `kitAudit` | {"everyDays": 7} | everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off). |
 | `build` | {"mavenOffline": true} | mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true). |
 | `gate` | {"heapMinGB": 4, "startHeapGB": {"gradle": 12, "maven": 8, "node": 4}} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor. |
-| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | The budget rule: an agent's budget = its tool's DEFAULT compaction point (orch.ps1 budget; the kit sets none; defaults: README table); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split (batch), at runStopAt x cap no new item starts, the rest returns as next. estimate: per agent / item |
+| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`, `ANDROID_HOME`, `ANDROID_SERIAL`, `CHROME_PATH`.
@@ -353,7 +353,7 @@ refuses unfilled ones); then `port`, lint 0, tests.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 35750 · total 396000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 436000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
   Over a budget: trim first (dense prose, dedupe, never golf that hurts reading); only when trimming cannot make room,
   `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any

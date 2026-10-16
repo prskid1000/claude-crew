@@ -27,7 +27,7 @@ lint checks (flow draws them; each fails, --warn only reports):
   JUNK  runtime output or reserved names · RUNTIME-RAW / -MAP / -DURABLE  hand-built paths; a workflow KP differs from _paths
   CONFIG-UNDOC  a kit.example.json key missing from README "Configuration"
   FILE-CAP / PLUMBING-CAP  over _manifest.caps.content / .plumbing (ports excluded) · BUDGET  a file or the kit over its tokens · BUDGET-CAP  totalTokens not a budget-raise step
-  SCRIPT-HEADER  no usage + "Exit codes" header · PROSE  breaks templates.md "Writing standards" · DESKTOP-OPEN  opens without --open
+  SCRIPT-HEADER  no usage + "Exit codes" header · YAML  .github/workflows/*.yml invalid · PROSE  breaks templates.md "Writing standards" · DESKTOP-OPEN  opens without --open
   LESSONS-CAP  a LESSONS.md section over 40 lines · README-GRAPH  graph sections stale · ORG-TERM  an org term (--org-terms)
   MANIFEST / SCHEMA  files vs _manifest and its JSON Schemas · LEASE-HOLDER  a lease / hold written without New-KitLease
   OLD-NAME / AGENT-TYPE / TODO-STUB  a renamed name left; a workflow agent() without a crew agentType; a scaffolding stub left  NON-CREW / DECISION-WORDING  a non-crew agent spawned in an agent, skill or workflow; a decision rule without "user-visible"
@@ -112,7 +112,7 @@ REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '
 GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
-CAPS = {'content': 30, 'plumbing': 8, 'totalTokens': 396000}   # only a fallback: kit.example.json _manifest.caps is the source (lint MANIFEST)
+CAPS = {'content': 30, 'plumbing': 8, 'totalTokens': 436000}   # only a fallback: kit.example.json _manifest.caps is the source (lint MANIFEST)
 CAP_BASE = 360000   # totalTokens moves only in `budget raise` steps from here: x1.1, rounded to 1k (lint BUDGET-CAP)
 TRIM_FIRST = 'trim first (dense prose, dedupe; never golf that hurts reading); if impossible: kittool.py budget raise -Reason "<why trimming cannot make room>"'
 
@@ -145,7 +145,7 @@ def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count 
     return len(t.encode('utf-8')) // 4
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 35750}
+  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 39300}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -776,6 +776,11 @@ def lint(k, g=None, org_terms=None):
         for f, n, cap in over:
             fix = TRIM_FIRST if f == 'kit total' else 'trim it (dense prose, dedupe) or move text to a file with room'
             bad('BUDGET', f, f'{n} tokens (cap {cap}): {fix}; top consumers: {top}')
+    # ---- CI workflow YAML (an invalid one fails its run in 0 s)
+    for f in counted:
+        if re.match(r'\.github/workflows/[^/]+\.ya?ml$', f):
+            for ln, why in yaml_problems(read(osp.join(k.dir, f))):
+                bad('YAML', f, f'line {ln}: {why}')
     # ---- script headers: usage + exit codes up top
     for f in counted:
         if not f.endswith(('.ps1', '.py', '.mjs')) or f.startswith(GENERATED):
@@ -3127,7 +3132,11 @@ def cmd_setup(kit, fix):
             out('ACT', 'SETUP-CLI', exe, 'not on PATH (the kit needs it)')
     tt = (os.environ.get('KIT_TRACKER_TYPE') or get(cfg, 'tracker.type') or 'none').lower()
     need = {'clickup': ['clickup'], 'github': ['gh'], 'gitlab': ['glab'], 'jira': [], 'none': []}.get(tt, [])
-    host_cli = {'github': 'gh', 'gitlab': 'glab'}.get(get(cfg, 'gitHostType') or ('github' if 'github' in str(get(cfg, 'gitHost') or '') else 'gitlab'))   # GitHub Enterprise: gitHostType
+    hk = get(cfg, 'gitHostType') or next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure|visualstudio'), ('gitea', 'gitea|forgejo|codeberg')) if re.search(rx, str(get(cfg, 'gitHost') or ''))), 'gitlab')
+    host_cli = {'github': 'gh', 'gitlab': 'glab'}.get(hk)   # REST hosts need a token, no CLI
+    for v in {'bitbucket': ['BITBUCKET_TOKEN'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'gitea': ['GITEA_TOKEN']}.get(hk, []):
+        if not os.environ.get(v):
+            out('ASK', 'SETUP-AUTH', v, f'environment variable not set (git host {hk})')
     for exe in sorted(set(need + [host_cli] if host_cli else need)):
         if not shutil.which(exe):
             out('ASK', 'SETUP-CLI', exe, f'not on PATH (tracker.type {tt} / git host need it): install it and log in by hand')
@@ -3137,10 +3146,10 @@ def cmd_setup(kit, fix):
             rc, o, e = run([shutil.which(exe)] + auth[1:], timeout=30)
             if rc:
                 out('ASK', 'SETUP-AUTH', exe, 'not logged in (auth status failed): the owner logs in by hand, never headlessly')
-    if tt == 'jira':
-        for v in ('JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'):
-            if not os.environ.get(v):
-                out('ASK', 'SETUP-AUTH', v, 'environment variable not set (tracker.type jira)')
+    envs = {'jira': ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'], 'jira-server': ['JIRA_BASE_URL'] + ([] if os.environ.get('JIRA_TOKEN') or (os.environ.get('JIRA_EMAIL') and os.environ.get('JIRA_API_TOKEN')) else ['JIRA_TOKEN']), 'linear': ['LINEAR_API_KEY'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'youtrack': ['YOUTRACK_URL', 'YOUTRACK_TOKEN']}
+    for v in envs.get(tt, []):
+        if not os.environ.get(v):
+            out('ASK', 'SETUP-AUTH', v, f'environment variable not set (tracker.type {tt})')
     rt = (os.environ.get('KIT_REPORT_TYPE') or get(cfg, 'reports.type') or ('gdocs' if shutil.which('gws') else 'markdown')).lower()
     if rt == 'gdocs' and not shutil.which('gws'):
         out('ASK', 'SETUP-CLI', 'gws', 'reports.type gdocs needs the gws CLI on PATH, logged in')
@@ -3854,8 +3863,35 @@ def character_block(ch, width=128):
 
 def old_name_rx(old):
     # bare, file or joined name (last-<old>, <old>s, <old>-x); <name>.stamp sharing the stem is no reference
-    return re.compile(r'(?<![\w/.-])((?:\w+-)*)' + re.escape(old) + r'((?:s|-\w+)*)(?![\w-])(?!\.(?:local\.)?stamp\b)')
+    return re.compile(r'(?<![\w.-])((?:\w+-)*)' + re.escape(old) + r'((?:s|-\w+)*)(?![\w-])(?!\.(?:local\.)?stamp\b)')
 
+
+def yaml_problems(text):
+    """[(line, why)]: a plain scalar holding ': ' (or ending in ':') is invalid YAML; PyYAML, when installed, parses it too."""
+    out, block = [], None
+    for i, ln in enumerate(text.split('\n'), 1):
+        s = ln.rstrip(); ind = len(s) - len(s.lstrip(' '))
+        if block is not None:
+            if not s.strip() or ind > block:
+                continue
+            block = None
+        if not s.strip() or s.lstrip().startswith('#'):
+            continue
+        m = re.match(r'''^\s*(?:-\s+)?(?:"[^"]*"|'[^']*'|[^\s#'"{\[][^:#]*?)\s*:(?:\s+(.*))?$''', s)
+        v = re.sub(r'\s+#.*$', '', (m.group(1) or '') if m else '').strip()
+        if re.match(r'^[|>][-+0-9]*$', v):
+            block = ind
+        elif v and v[0] not in '"\'[{&*!|>' and (': ' in v or v.endswith(':')):
+            out.append((i, f'plain scalar with ": " (quote it): {v[:60]}'))
+    try:
+        import yaml
+        yaml.safe_load(text)
+    except ImportError:
+        pass
+    except Exception as e:   # yaml.YAMLError
+        mk = getattr(e, 'problem_mark', None)
+        out.append(((mk.line + 1) if mk else 0, str(e).split('\n')[0]))
+    return out
 
 def adapter_blocks(text, kind):
     """{name: code} of each `adapter:<kind>/<name>` block (to the next adapter / adapter-end marker)."""
@@ -3970,7 +4006,7 @@ def registry_lint(k, bad):
             continue
         t = k.texts.get(f) or ''
         if f == PATHS_JSON:
-            t = re.sub(r'"renamed":\s*\{[^}]*\}', '', t)   # the migration note itself
+            t = re.sub(r'"(renamed|moved)":\s*\{[^}]*\}', '', t)   # the migration notes themselves
         for o, rx in pats:
             m = rx.search(t)
             if m:
@@ -4199,6 +4235,10 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
             parts = name.split('.')
             for x in parts[:-1]:
                 cur = cur.setdefault(x, {})
+                if not isinstance(cur, dict):
+                    sys.exit(f'kittool new: {x} in {name} is not an object')
+            if parts[-1] in cur:
+                sys.exit(f'kittool new: {name} already exists (its default stays)')
             cur[parts[-1]] = f'{TODO}: the default'
         p = osp.join(kit, PATHS_JSON)
         d = json.loads(read(p))
@@ -4413,8 +4453,10 @@ def cmd_remove(a):
         d = json.loads(read(p))
         cur = d
         for x in name.split('.')[:-1]:
-            cur = cur.get(x, {})
-        cur.pop(name.split('.')[-1], None)
+            cur = cur.get(x) if isinstance(cur, dict) else None
+        if not isinstance(cur, dict) or name.split('.')[-1] not in cur:
+            sys.exit(f'kittool remove: no config key {name} in {PATHS_JSON}')
+        cur.pop(name.split('.')[-1])
         with open(p, 'w', encoding='utf-8', newline='\n') as fh:
             fh.write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
         _sub_file(kit, 'README.md', lambda t: re.sub(r'^\| `' + re.escape(name) + r'` \|.*\n', '', t, count=1, flags=re.M))
@@ -4479,7 +4521,7 @@ def cmd_release(a):
 
 # ==== prose: check a text against templates.md "Writing standards"
 REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
-  'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\bCU-\w+',
+  'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\b[A-Z]{2,}-[A-Za-z0-9]+',   # any tracker tag + id
   'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
   'cmd': r'`[^`]*\b(?:pwsh|python|node|git|dev\.ps1|orch\.ps1|qa\.ps1|swarm\.ps1|localenv\.ps1|kittool\.py|devtools\.py|npm|&)\b[^`]*`',
   'evidence': r'\.(?:png|jpe?g|json|log|txt|html?)\b|https?://\S+',
@@ -4530,6 +4572,9 @@ def commit_rx():   # commitStyle: conventional | free | <regex>
     st = (load_json(osp.join(main_clone(KIT_DIR), 'skills', 'dev-kit', 'kit.local.json'))[0] or {}).get('commitStyle', 'conventional')
     return REQ_RX['conv'] if st == 'conventional' else r'\S' if st == 'free' else st
 
+def locale_terms():   # locale.proseTerms: {expected, recommended, ...: regex} for texts not in English
+    return ((load_json(osp.join(main_clone(KIT_DIR), 'skills', 'dev-kit', 'kit.local.json'))[0] or {}).get('locale') or {}).get('proseTerms') or {}
+
 def prose_check(kind, text, spec, banned):
     """Findings (strings) for one produced text of one kind."""
     out = []
@@ -4569,7 +4614,7 @@ def prose_check(kind, text, spec, banned):
         if not missing and order != want:
             out.append(f'sections out of order: {" > ".join(order)} (format: {" > ".join(want)})')
     for r in spec['required']:
-        rx = commit_rx() if r == 'conv' else REQ_RX.get(r)
+        rx = commit_rx() if r == 'conv' else (locale_terms().get(r) or REQ_RX.get(r))
         if rx and not re.search(rx, text if r != 'conv' else (body[0] if body else ''), re.M):
             out.append(f'required fact missing: {r}')
     for b in banned:
@@ -4630,7 +4675,8 @@ def cmd_budget(a):
         print(f'kit total {total} of cap {cap} ({total * 100 // cap}%); next raise step {cap_next(cap)}')
         return 0
     low = [x.lower() for x in a]
-    why = a[low.index('-reason') + 1].strip() if '-reason' in low and low.index('-reason') + 1 < len(a) else ''
+    flag = next((x for x in ('-reason', '--reason') if x in low), None)
+    why = a[low.index(flag) + 1].strip() if flag and low.index(flag) + 1 < len(a) else ''
     if a[0] != 'raise' or not why:
         print(cmd_budget.__doc__, file=sys.stderr)
         return 2

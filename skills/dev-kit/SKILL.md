@@ -80,8 +80,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
     `tests.<stack>.testFor` maps a source name to its test names for `-Touched`).
   - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
     (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
-- **Commits:** Conventional Commits + the attribution trailer your harness or org asks for; `wt commit` only; never
-  `--no-verify`, never type a hook's marker, never change shared git config, never `git stash`.
+- **Commits:** subject per `commitStyle` (default Conventional Commits) + the attribution trailer your harness or org asks
+  for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash`.
   Checkpoint: a WIP commit (`chore(wip): <step>`) after each step 1-5, so a crash or restart loses no edits.
 - **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.

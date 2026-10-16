@@ -51,7 +51,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
-if (R.select && !R.runDir) await recordArgs(RUN0, '', 'Prepare')   // the run is recorded again with its plan once its items are known
+if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
 // PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
  phase('Prepare')
@@ -571,11 +571,11 @@ if (BATCH) R = { ...R, items: R.items.slice(0, BATCH) }
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
 const PLAN = [...R.items.map((it) => `checky/${modelFor(it).model || ''}:1,checky/${MODELS.verify}:1,step/${MODELS.close}:1,item:1`), `step/haiku:3,kitty/${MODELS.learn}:1`].join(',')
 try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(await recordArgs(RUN0, R.runDir, 'Test', PLAN)) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
-const nextCall = (codes) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, only: codes } })
+const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(R.items.length * BUD.stopAt * BUD.cap / BUD.estimate))
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: test ${batch} item(s) per run (args.batch)`)
- return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: { scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, batch } } }
+ return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: nextCall(ARGS0.only, { batch }) }
 }
 async function gate(phaseName) {   // before a new item; measures only near the stop line
  if (BUD.stop || !BUD.cap) return !BUD.stop

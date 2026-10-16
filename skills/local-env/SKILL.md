@@ -24,7 +24,9 @@ or you are the coordinator running / repairing an env.
   never pushed).
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch; a
   failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up while its holder is live
-  (README "Leases"), never cut by a switch-over. Services stop after idle grace, at once under memory pressure; starts wait for
+  (README "Leases"), never cut by a switch-over; only a person's `-Owner` lease ends at a time. Only leases and holds start
+  (or crash-restart) services; no holder: stop after `idle.graceMinutes` + idle grace (normal idle), at once under memory
+  pressure; starts wait for
   RAM + CPU (the gate's floor).
 - **Migrations** (`localEnv.migrations` rules): LIGHT (reversible, small) run on the main env and are reverted exactly when the
   layer leaves; HEAVY (drops data, unbounded, no rollback, unauditable) get a sandbox (own build + DB copy, `sb<k>-<svc>`) or a
@@ -40,7 +42,7 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 & $L envs; & $L status -Env <env>                                       # 1. which env serves your repo; what is live
 & $L deploy -Env <env> -Agent <id> -Dir <worktree>                      # 2. committed work only -> LIVE r<n> | REFUSED | REJECTED | ROLLED BACK
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
-& $L use -Env <env> -Agent <id> -Services <svc,..> -Minutes <m> -Session <board token> -Note "<goals>"   # 3. lease, then test
+& $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals
 & $L logs -Env <env> -Service <svc>; & $L events -Env <env>             #    debug (see "Debug locally")
 & $L promote -Env <env> -Agent <id> -Branch <branch> -Note "<goals passed>"   # 5. every goal passed (pre-staging stamp)
@@ -48,8 +50,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 ```
 0. `orch.ps1 learn -Read -Skill local-env`.
 1-2. REFUSED: `dev.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
-3. Lease only the services you test, for an honest length; renew with `use` before it ends. Test data: prefix with your agent
-   id.
+3. Lease only the services you test; it lives while you do (README "Leases"); exit 3 = no lease yet, call again.
+   Test data: prefix with your agent id.
 5. Sandboxed (deploy said SANDBOX): test the `sb<k>-*` instances, then `promote` moves the branch into the main env.
 
 ## Local testing (dev flow step 5)
@@ -93,7 +95,7 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 **Rules**
 - No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install
   there.
-- A migration layer changes the shared local DB for every layer: say so. Unsure? `migrations -Env <env> -Branch <b>` first.
+- A migration layer changes the shared local DB for every layer: say so.
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
   yourself"), never repair the shared DB by hand.
 - `up` (only named services), `unhold`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then

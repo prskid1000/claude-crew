@@ -1,15 +1,15 @@
 {
- "_readme": "Every key is optional (a missing key = the default described in README 'Configuration'). orch.ps1 setup -WriteLocal writes skills/dev-kit/kit.local.json from this file (minus localFiles and the _-prefixed kit sections) and each localFiles entry to its path; all of them are git-ignored. Fill the <...> values. Paths: forward slashes work on every OS.",
+ "_readme": "Every key is optional (missing = the README 'Configuration' default). orch.ps1 setup -WriteLocal writes kit.local.json from this file (minus localFiles and _ sections) and each localFiles entry to its path, all git-ignored. Fill the <...> values; forward slashes work on every OS.",
  "_doc": { "_readme": "README Configuration rows of keys without a _readme (kittool.py generates the table)",
   "gitHost, gitHostType, githubHost, gitlabGroup": "the git host (type from the host) and the group / owner for short refs <repo>!<iid>",
   "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop)",
-  "commitStyle, locale.cosmeticPattern, locale.testCommentPattern": "subject rule conventional (free / a regex); English defaults: small QA check, testing comment",
+  "commitStyle, locale.cosmeticPattern, locale.testCommentPattern, locale.proseTerms": "subject rule conventional (free / a regex); English defaults: small QA check, testing comment, prose required words ({expected: regex, ...})",
   "devices": "type: android (default) / ios (Simulators, macOS) / none (verbs refuse, app checks NOT_TESTED)",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
-  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField (a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk",
+  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField / probeRegex (first group; a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
-  "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram)",
+  "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: browser profiles kept",
   "bugfixMandate, localOnly, orgTerms": "words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks",
@@ -29,7 +29,7 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | clickup | github | gitlab | jira (Cloud) | jira-server | linear | azure | youtrack | command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples: _examples.",
+  "_readme": "type: none (default) | clickup | github | gitlab | jira (Cloud) | jira-server | linear | azure | youtrack | command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github / gitlab status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
   "type": "none",
   "repo": "<owner/name or group/project, for github/gitlab issues>",
   "list": "<list of new tasks: ClickUp list id, Jira / YouTrack project key, Linear team key, Azure area path>",
@@ -50,7 +50,7 @@
  },
  "reports": { "_readme": "type: gdocs (Google Doc + Drive evidence via gws; default with gws) | markdown, html, pdf (a kept file; pdf: headless Chrome / Edge or pdfCommand '{in} {out}') | confluence (env CONFLUENCE_URL, CONFLUENCE_TOKEN [+ CONFLUENCE_EMAIL]; space, parent page id) | notion (env NOTION_TOKEN; parent page id) | command (command '<cli> {title} {path} {parent}' printing the URL). share (gdocs): anyone (default) | domain:<domain> | none; confluence / notion: the space / parent page permissions", "type": "markdown" },
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
- "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
+ "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
  "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
@@ -84,15 +84,15 @@
  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor.", "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } },
- "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2 },
+ "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 25 },
  "idle": { "graceMinutes": 10, "beatMinutes": 20 },
- "budget": { "_readme": "The budget rule: an agent's budget = its tool's DEFAULT compaction point (orch.ps1 budget; the kit sets none; defaults: README table); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split (batch), at runStopAt x cap no new item starts, the rest returns as next. estimate: per agent / item",
+ "budget": { "_readme": "An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item",
   "handoffAt": 0.8, "runStopAt": 0.8,
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "step": 15000, "item": 30000 },
   "defaults": {
-   "claude-1m": { "tokens": 967000, "source": "Claude Code model-config docs: 1M models compact at ~967k" },
+   "claude-1m": { "tokens": 967000, "source": "Claude Code docs: 1M models compact at ~967k" },
    "claude-200k": { "tokens": 167000, "source": "conservative 83.5% of 200k (docs: at the limit)" },
-   "codex": { "fraction": 0.9, "source": "community-derived: 0.9 x ~/.codex/models_cache.json window x effective %; auto_compact_token_limit wins" },
+   "codex": { "fraction": 0.9, "source": "0.9 x the models_cache.json window; auto_compact_token_limit wins" },
    "antigravity": { "fraction": 0.8, "source": "unverified: 0.8 x the model window" },
    "unknown": { "tokens": 160000, "source": "0.8 x 200k" } } },
  "repos": [
@@ -115,10 +115,9 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/qa-kit/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | cookie (csrfCookie, csrfHeader) | token | basic | query (param) | command (cmd {method} {url} prints Name: value headers) | none; cert + certPass: mTLS; api may hold {tenant}.",
+   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | cookie (csrfCookie, csrfHeader) | token | basic | query (param) | command (cmd {method} {url} prints Name: value headers) | none; cert + certPass: mTLS; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
-   "keepFreeGB": 8,
-   "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000 },
+   "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000 },
    "targets": {
     "my-staging": {
      "web": "https://staging.example.com", "api": "https://staging-api.example.com", "apiPattern": "/api/", "defaultTenant": "", "tenantHeader": "",
@@ -132,7 +131,7 @@
    }
   },
   "skills/android-swarm/swarm.config.json": {
-   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its own test login ('user': targets.local.json) and 'notes'. avd {abi, api, device, tag}: lane image. app.kind: react-native | native | kmp | flutter | maui | capacitor | ios. localManifests: the app's cleartext manifests (debug variants) merged into the release build by build -Local; localReverse: ports acquire -Apk local reverses to this machine (local API).",
+   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp | flutter | maui | capacitor | ios. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,
@@ -150,7 +149,7 @@
   }
  },
  "_manifest": {
-  "_readme": "The kit's registry (never copied into kit.local.json): the crew, skills, workflows, Router rows, Events rows and caps. Names live only here: kittool.py lint checks every file against it (MANIFEST, SCHEMA, OLD-NAME, AGENT-TYPE), kittool.py new / rename / remove edit it, port writes each agent's Character block and README's Crew table from it. renamed = the migration note (old -> new) orch.ps1 setup -Migrate applies to local state.",
+  "_readme": "The kit's registry (never copied into kit.local.json): crew, skills, workflows, Router / Events rows, caps. Names live only here: lint checks files against it, kittool.py new / rename / remove edit it, port writes Character blocks and the Crew table. renamed: old -> new (setup -Migrate applies it).",
   "agents": {
    "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "dev-kit", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
     "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
@@ -169,13 +168,14 @@
   },
   "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14"],
-   "ram": { "_readme": "supervise RAM categories by process name (no .exe), after the kit process trees (kit); the rest is unknown. supervise.ramNames overrides per key", "kit": "^(claude|codex|antigravity)$",
+   "ram": { "_readme": "supervise RAM categories by process name (no .exe), after the kit process trees (kit), then windowsPath (exe path); the rest is unknown, RAM no process owns is windows. supervise.ramNames overrides per key", "kit": "^(claude|codex|antigravity)$",
    "windows": "^(System|Registry|Idle|Secure System|smss|csrss|wininit|winlogon|services|lsass|LsaIso|svchost|dwm|fontdrvhost|Memory Compression|MsMpEng|Search\\w+|spoolsv|WmiPrvSE|RuntimeBroker|sihost|taskhostw|ctfmon|explorer|\\w*Host|audiodg|conhost|dllhost|NVIDIA.*|nv\\w+|tailscaled?|Intel.*)$",
     "browsers": "^(chrome|msedge|msedgewebview2|firefox|brave|opera|vivaldi)$",
     "apps": "^(slack|ms-teams|teams|outlook|olk|winword|excel|powerpnt|onenote|code|cursor|idea64|devenv|postman|spotify|discord|zoom|whatsapp.*|telegram|notion|smartconnect|windowsterminal|wt|mstsc|putty|anydesk|teamviewer)$",
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
-    "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$" },
-  "caps": { "content": 30, "plumbing": 8, "totalTokens": 396000 },
+    "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
+    "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
+  "caps": { "content": 30, "plumbing": 8, "totalTokens": 436000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github gitlab jira jira-server linear azure youtrack command none" },
@@ -190,7 +190,7 @@
    "CONTRIBUTING.md": "README.md", "examples/rules.md": "README.md", "multi-agent.md": "AGENTS.md" }
  },
  "_paths": {
-  "_readme": "The ONE map of the kit's local state (never copied into kit.local.json). Scripts never build these paths by hand: PowerShell Get-KitPath (lib.ps1), Python kit_path (devtools.py / kittool.py), Node kitPath (spec.mjs / browser.mjs) and each workflow's rp() helper resolve names from here (kit-lint RUNTIME-RAW / RUNTIME-MAP enforce it). 'runtime' entries live under <runtime> = $CLAUDE_RUNTIME, else <kit>/.runtime: disposable (work/ = in-flight runs, cache/ = rebuilt on demand, logs/ = append-only). 'durable' entries live under <kit>/.state/ (git-ignored): knowledge and task state that must survive a runtime wipe. Folders end in '/'. orch.ps1 setup -Migrate moves the old layout (.claude-runtime, *.local.* state at the kit root) here.",
+  "_readme": "The one map of local state (never copied into kit.local.json): scripts resolve names (Get-KitPath, kit_path, kitPath, rp(); lint RUNTIME-RAW / -MAP). runtime: under $CLAUDE_RUNTIME, else <kit>/.runtime, disposable (work/ runs, cache/, logs/ append-only); durable: <kit>/.state/, survives a runtime wipe. Folders end in '/'. setup -Migrate moves old layouts.",
   "runtimeDir": ".runtime",
   "stateDir": ".state",
   "legacy": {

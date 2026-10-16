@@ -245,9 +245,12 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
   git -C $ud init -q; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m init
   $out = pwsh @np $D check -Dir $ud -Step typecheck 2>&1 | Out-String
   Expect 'check: a typecheck UNRUN exits 5' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN')
-  New-Item -ItemType Directory -Force "$ud/db/migrate" | Out-Null; 'def change; end' | Set-Content "$ud/db/migrate/20240101000000_x.rb"; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m rb
+  New-Item -ItemType Directory -Force "$ud/db/migrate", "$ud/database/migrations" | Out-Null; 'def change; end' | Set-Content "$ud/db/migrate/20240101000000_x.rb"
+  'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m rb
   $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
-  Expect 'check: migrations of a tool with no kit check are UNRUN (exit 5)' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: rails')
+  Expect 'check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: rails' -and $out -match '000000_x\.php' -and $out -notmatch 'CHANGELOG')
+  $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
+  Expect 'gate: gradle gets the heap cap' ($out -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
   # guard: a non-JSON payload denies (logged); empty stdin allows
   $gbad = '{not json' | Px $D guard | Out-String
   $gnone = '' | Px $D guard | Out-String
@@ -347,7 +350,7 @@ async function agent(prompt, o) {
  return _ok('[]')
 }
 const parallel = async (fns) => Promise.all(fns.map((f) => f()))
-const args = { brief: 'C:/b/duel.md', mode: 'duel', duel: { question: 'cache or index?', rounds: 2 }, agents: [{ id: 'D1', items: 'A1', area: 'q' }, { id: 'D2', items: 'A1', area: 'q' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const args = { brief: 'C:/b/duel.md', mode: 'duel', duel: { question: 'cache or index?', rounds: 2 }, agents: [{ id: 'D1', items: 'A1', area: 'q' }, { id: 'D2', items: 'A1', area: 'q', dependsOn: ['D1'] }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
 run(args, agent, _n, _n, pipeline, parallel).then((o) => {
  const deb = calls.filter((c) => /^debate:/.test(c.label))
  console.log(`duel-pocs:${calls.filter((c) => /^duel:D[12]$/.test(c.label) && c.agentType === 'devy').length === 2 && calls.some((c) => c.label === 'duel-compare' && c.agentType === 'revy')}`)
@@ -358,6 +361,13 @@ run(args, agent, _n, _n, pipeline, parallel).then((o) => {
 }).catch(_err)
 '@
   Expect-Each (Invoke-Js dw-duel $jsu $wfd) 'buildy duel: #' 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only' -Show 5
+  # buildy: a batch's next run drops producers outside its list
+  $jsn = @'
+const agent = async (p, o) => /^record-args/.test(o.label) ? _rec() : /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]')
+const o1 = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, agent, _n, _n, pipeline)
+console.log(`batch-next:${!!(await run(o1.next.args, agent, _n, _n, pipeline).catch(_err))}`)
+'@
+  Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
   Remove-TestKit $k
 }
 
@@ -528,6 +538,20 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
 '@
   $res = Invoke-Js tc-select $js2 $wf
   Expect-Each $res 'testy select: #' 'prepare', 'record', 'item-target' -Show 5
+  # testy runDir: args recorded first; next keeps only, lanes, instance
+  $js7 = @'
+let first
+const mk = (rec) => async (p, o) => { first = first || { l: o.label, p }
+ return /^load-run/.test(o.label) ? { json: JSON.stringify({ items: [1, 2, 3, 4].map((n) => ({ code: `F${n}`, lane: 'api' })) }) }
+  : /^record-args/.test(o.label) ? _ok(rec) : /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('') }
+const args = { runDir: 'C:/runs/R9', kitDir: 'C:/kit', learn: false, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
+const keep = (n, only) => !!n && n.args.lanes[0] === 'L' && n.args.instance === 'w2' && n.args.only.join() === only
+run(args, mk('RECORDED'), _n, _n, null).then(async (o) => {
+ const r = await run(args, mk('RECORDED BUDGET {"cap":100,"estimate":1000}'), _n, _n, null)
+ console.log(`kept:${first.l === 'record-args' && first.p.includes("-RunDir 'C:/runs/R9'") && keep(o.next, 'F2,F3') && r.refused && keep(r.next, 'F1,F2,F3')}`)
+}).catch(_err)
+'@
+  Expect-Each (Invoke-Js tc-next $js7 $wf) 'testy runDir: #' 'kept' -Show 5
   # ---- review batch 2: qa.ps1, testy, browser.mjs
   $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
   $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
@@ -540,6 +564,11 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
   $null = pwsh @np $Q seat acquire -Agent test:C3 -Kind api -KeepFreeGB 100000 -WaitMinutes 0; $c3 = $LASTEXITCODE
   $null = pwsh @np $Q seat release -Agent test:C3
   Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; still waiting exits 4' ($c1 -eq 3 -and $o1 -match 'ALREADY' -and $o2 -notmatch 'ALREADY' -and $c3 -eq 4)
+  New-Item -ItemType Directory -Force "$sd/seats" | Out-Null
+  $sw = { param($n, $o) ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) | ConvertTo-Json | Set-Content "$sd/seats/$n.json" }
+  & $sw L1 @{ holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
+  $null = pwsh @np $Q seat status
+  Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path "$sd/seats/L1.json") -and -not (Test-Path "$sd/seats/L2.json") -and (Get-Content "$sd/seats/L3.json" | ConvertFrom-Json).seen); Remove-Item "$sd/seats/L*"
   $sr = New-Run 'SR' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') }, @{ code = 'S2'; task = 'TS'; checks = , @('C2', 'PASS') })
   $ps = @('S1', 'S2' | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', "`"$Q`"", 'finalize', '-RunDir', "`"$sr`"", '-Code', $_ -PassThru -WindowStyle Hidden })
   $ps | Wait-Process -Timeout 180
@@ -582,6 +611,14 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
   $ro = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-String
   $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
   Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
+  # tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
+  $kl = "$k/skills/dev-kit/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
+  foreach ($x in @('PY', 'Ask Y', $null), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { @{ id = $x[0]; name = $x[1]; status = 'open'; parent = $x[2]; list = 'L1'; description = '' } | ConvertTo-Json | Set-Content "$store/$($x[0]).json" }
+  $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'new') })
+  (Get-Content "$by/run.json" -Raw) -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
+  (Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
+  $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
+  Expect 'bugPrefix: bug reused, renamed, stripped by retest; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (2)' -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
   # deployed: an unanswered git host is UNKNOWN, not NOT-DEPLOYED
   $t2 = @'
 . $args[0]
@@ -597,17 +634,18 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
   $f2 = Join-Path (Kd) 'deployed-null.ps1'; Set-Content $f2 $t2
   $res = @(pwsh @np $f2 $Q 2>&1)
   Expect 'deployed: no answer from the git host = UNKNOWN; an answer = NOT-DEPLOYED' ((@($res) -contains 'down:UNKNOWN') -and (@($res) -contains 'up:NOT-DEPLOYED'))
-  @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $k 'skills/qa-kit/targets.local.json')
+  @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $k 'skills/qa-kit/targets.local.json')
   $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
   $null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
-  Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2)
+  $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
+  Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $wo -match 'no api URL')
   $gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
   $sv = "$(Kd)/s.cjs"; $P = 18000 + $PID % 1000
   Set-Content $sv @'
 require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
   if (u === '/login') return /R1/.test(b) ? j({ access_token: 'A2' }) : j({ access_token: 'A1', refresh_token: 'R1' }, 200, { 'set-cookie': ['sid=1', 'XSRF-TOKEN=x1'] })
-  const ok = { '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/h': h['x-sig'] === 's1' }[u]
+  const ok = { '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
   u === '/v' ? j({ v: { sha: process.argv[3] } }) : j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
   $srv = Start-Process node -ArgumentList $sv, $P, $s1 -PassThru -NoNewWindow; Start-Sleep 1
@@ -616,6 +654,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
     tt = & $T @{ type = 'none' } '/t/{tenant}'; th = & $T @{ type = 'command'; cmd = 'echo X-Sig: s1' } } } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $k 'skills/qa-kit/targets.local.json')
   $ok = foreach ($x in 'tc/c', 'tr/b', 'tq/q', 'tt/x', 'th/h') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
   Expect "api auth kinds ($ok)" (@($ok).Count -eq 5 -and (Get-Content "$(Kd)/A1-C1_01_tq.json" -Raw) -match 'api_key=\[redacted\]')
+  Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
   Set-Content "$(Kd)/dp.ps1" @'
 . $args[0]; $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
 foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
@@ -623,9 +662,14 @@ $g, $a, $b = $args[1..3]; $r = @{ checkout = $g }; $memo = @{}; function ssh { $
 "cmd:$((Probe @{ probe = "git -C $g rev-parse HEAD" } $r) -eq $b)"; "url:$((Probe @{ probe = $args[4]; probeField = 'v.sha' } $r) -eq $a)"
 $v = Probe @{ tag = '^v\d' } $r; "tag:$($v -eq 'v1' -and (LocalAncestor $g $a $v) -and -not (LocalAncestor $g $b $v))"
 $null = SshState @{ sudo = $false } 'x'; $x = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($sh -split ' ')[1])); "ssh:$($x -match 'shasum -a 256' -and $x -notmatch 'sudo -n')"
+"rx:$((Probe @{ probe = 'echo 1234567 rev dead123'; probeRegex = 'rev (\w+)' } $r) -eq 'dead123')"
+function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
+Invoke-Deployed -Mrs 'web!5' -Detail
 '@
-  $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill()
-  foreach ($x in 'cmd', 'url', 'tag', 'ssh') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
+  '{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"}]}]}' | Set-Content $kl
+  $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
+  foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
+  Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
   # browser.mjs: mocks, then local fixture servers
   $nm = "$src/skills/qa-kit/node_modules"; $qk = "$k/skills/qa-kit"
   if (Test-Path "$nm/puppeteer-core") {
@@ -642,6 +686,10 @@ await Promise.all([job(1), job(2)]); const uniq = new Set([a, await P('s', 't', 
 rmSync(m.kitPath('browser-ports')); console.log(a === await P('s', 't', 'a') && uniq, /^(\d),\1,/.test(seen.join(',')), existsSync(m.kitPath('browser-ports')))
 '@
     Expect 'browser.mjs: stable port per user key, locked logins' ("$res" -eq 'true true true')
+    $env:KIT_BROWSER_PORT_BASE = 30000
+    $res = NodeT base "const u = [], pg = (web) => ({ __qa: { t: { web } }, goto: async (x) => u.push(x), on() {}, off() {}, waitForNetworkIdle: async () => {} })`nawait m.go(pg('a'), '/x'); await m.go(pg('b'), '/y'); console.log(u + '' === 'a/x,b/y', (await m.sessionPort('pb', 't', 'a')) >= 30000)"
+    Remove-Item Env:KIT_BROWSER_PORT_BASE
+    Expect 'browser.mjs: each tab uses its own target; browser.portBase' ("$res" -eq 'true true')
     # tab cap: 9 concurrent openers -> 8 tabs, the 9th waits; a full browser fails clearly; dead / left holders are swept
     $res = NodeT tabs @'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
@@ -685,18 +733,18 @@ const app = http.createServer((q, s) => {
 })
 await new Promise((r) => app.listen(0, r))
 const web = `http://127.0.0.1:${app.address().port}`, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
-writeFileSync(TF, JSON.stringify({ targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
+writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
   sso: { web, browser: { engine: 'chromium' }, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
 const b = await import(BM + '?a'), home = async (s) => (await b.text(s.page)).includes('home'), out = async (k, f) => console.log(k + ':' + await f().catch((e) => e.message))
 console.log('totp:' + (b.totp(U.admin[2], 59000) === '287082'))
 process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
-await out('chrome', async () => { const s = await b.session({ target: 'form', tenant: 'a' }), r = await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
+await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 PW && (process.env.KIT_PLAYWRIGHT = PW)
 for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.session({ target: 'sso', tenant: 'b' }), r = s.engine === 'chromium' && await home(s) && posts === 3; await s.done(); return r })
 await out('hint', () => b.session({ target: 'ff' }).then(() => false, (e) => /playwright install firefox/.test(e.message)))
 process.exit(0)
 '@ "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
-    foreach ($x in 'totp', 'pin', 'chrome', 'sso', 'shared', 'hint') { Expect "browser.mjs login: $x" ((@($res) -contains "${x}:true") -or ($nopw -and $x -in 'sso', 'shared', 'hint')) }
+    foreach ($x in 'totp', 'pin', 'chrome', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
     [IO.Directory]::Delete("$qk/node_modules")   # the junction only
   } else { 'SKIP browser.mjs (no puppeteer-core in skills/qa-kit)' }
   # testy: web testers share the per-user Chrome; scoped retries -> results-retry.json; publish -ExpectChecks
@@ -822,10 +870,11 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh @np $O launch -Self -Script testy.js -Run select-stg -ArgsFile $saf -Fnv (& { . $O; Get-KitFnv $sa }) -RunDir 'C:/rt/qa-runs/d-stg'
   $sr = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Get-Content -Raw | ConvertFrom-Json
   Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'select-stg')
-  $sl0 = pwsh @np $O launch -List -Brief | Out-String; $sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
-  $sr | Add-Member -Force completed (Get-Date).ToString('o'); $sr | ConvertTo-Json -Depth 10 | Set-Content $sf.FullName
-  $sl1 = pwsh @np $O launch -List -Brief | Out-String
-  Expect 'launch -List: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $sl1 -notmatch 'select-stg')
+  $sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
+  $sr | Add-Member -Force holderPid 999999; $sr | ConvertTo-Json -Depth 10 | Set-Content $sf.FullName   # its session is gone
+  $sl0 = pwsh @np $O launch -List -Brief | Out-String
+  $dn = pwsh @np $O launch -Done -Run select-stg 2>&1 | Out-String; $sl1 = pwsh @np $O launch -List -Brief | Out-String
+  Expect 'launch -Done -Run: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $dn -match 'marked completed: self-testy' -and $sl1 -notmatch 'select-stg')
   # orch batch 2: board TAKEOVER under lock; self records per args hash; promotion hold; passed statuses
   # never re-applied; "All MRs merged" once; deploy plan UNKNOWN on a failed check; supervise step-aside;
   # LESSONS.md lock freed on a failed -Bump; top-level --help; MergedTip on a submodule
@@ -869,18 +918,27 @@ $null = Invoke-Track run -Detail
 $KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'; $global:q = 0
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
+function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run
+$null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
+"keep:$((Read-KitTracking).tasks['t8'].holdPromotion -eq 'late')"
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) { [pscustomobject]@{ code = 2; out = 'qa.ps1: usage error'; err = ''; timedOut = $false } }
 $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
 "unknown:$(@($p | Where-Object status -eq 'UNKNOWN').Count -ge 1 -and -not @($p | Where-Object status -eq 'NOTHING').Count)"
 '@
   $ttf = Join-Path (Kd) 'track-test.ps1'; Set-Content $ttf $tt
   $res = @(pwsh @np $ttf $O 2>&1)
-  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt)" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  if (@($res | Where-Object { "$_" -match ':True$' }).Count -ne 4) { $res | Select-Object -Last 8 }
+  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle', 'keep') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  if (@($res | Where-Object { "$_" -match ':True$' }).Count -ne 6) { $res | Select-Object -Last 8 }
   $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
   @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 } | ConvertTo-Json | Set-Content $lkf
   $sv = pwsh @np $O supervise -Brief -Session me | Out-String
   Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, no .lock left' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-Path "$lkf.lock"))
+  $lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
+  $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
+  $lw = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
+  Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
+  $er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web') }); holds = @() }) (Get-Date) }
+  Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
   $null = pwsh @np $O learn -Skill revy -Bump 'no such lesson words'; $bc2 = $LASTEXITCODE
   Expect 'learn -Bump miss: exit 1, LESSONS.md lock released' ($bc2 -eq 1 -and -not (Test-Path (Join-Path $k 'LESSONS.md.lock')))
   $hlp = pwsh @np $O --help | Out-String; $hc2 = $LASTEXITCODE; $null = pwsh @np $O nope; $nc = $LASTEXITCODE
@@ -894,6 +952,9 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
   $gd = "$(git -C "$sm/super/m" rev-parse --path-format=absolute --git-common-dir)".Trim()
   $mt = & { . $O; $fa = (Get-Command Invoke-Cleanup).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'MergedTip' }, $true) | Select-Object -First 1; . ([scriptblock]::Create($fa.Extent.Text)); $global:seen = @(); function Invoke-HostVerb([string]$Verb, [hashtable]$A) { $global:seen += $A.repo; @() }; $null = MergedTip $gd 'f/x'; $global:seen -join ' ' }
   Expect 'cleanup: MergedTip on a submodule''s git dir asks the submodule''s project, not the superproject' ($mt -match 'g/subrepo' -and $mt -notmatch 'superrepo')
+  $sd = TkPath $k sessions -Create; foreach ($n in 'tabs-t__u.json', 'old-login.json') { $p = Join-Path $sd $n; '{}' | Set-Content $p; (Get-Item $p).LastWriteTime = (Get-Date).AddHours(-9) }
+  $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
+  Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
   $nt = @'
 . $args[0]
 $env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type clickup
@@ -908,9 +969,9 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   $res = @(pwsh @np $nf (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
   Expect-Each $res 'outbox: #' 'queued', 'sent', 'real'
   $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
-  @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
+  @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
   $rd = Join-Path (Kd) 'runs/S'; New-Item -ItemType Directory -Force $rd | Out-Null
-  @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/claims/S__S1.json"
+  @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } | ConvertTo-Json | Set-Content "$sd/claims/S__S1.json"
   $null = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat status
   $cl = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat acquire -Agent test:S1 -Kind api -RunDir $rd -Code S1 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String
   Expect 'seats: a dead holder''s seat is freed, its claim taken over' (-not (Test-Path "$sd/seats/test_D1.json") -and $cl -notmatch 'ALREADY' -and (Get-Content "$sd/claims/S__S1.json" -Raw | ConvertFrom-Json).owner -eq 'w1')
@@ -934,6 +995,8 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
   $wc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
   Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
+  $yq = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('qa-kit').search('see skills/qa-kit/qa.ps1') is not None)"
+  Expect 'lint YAML: an unquoted ": " in a workflow fails, quoted / block scalars pass; old names after a /' ("$yq" -eq 'True [] True')
   $rj = Join-Path $k 'results.json'; '{"checks":[{"id":"T1","note":"ok"},{"id":"T2","note":"' + ('word ' * 45) + '"}]}' | Set-Content $rj
   $out = python -X utf8 $KT prose --kind result-note $rj | Out-String
   Expect 'prose: a results.json note over 40 words is a finding' ($LASTEXITCODE -eq 1 -and $out -match '45 words')
@@ -1046,8 +1109,9 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   Expect "kittool new / rename / remove (new $okNew, rename $okRen, remove $okRem)" ($okNew -and $okRen -and $okRem)
   Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s); release: SemVer tag' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and $rel -match '^# v\d+\.\d+\.\d+')
   $bj = Join-Path $kc 'skills/dev-kit/kit.example.json'; $bt = { & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String }
-  $b1 = & $bt; $c1 = $LASTEXITCODE
-  foreach ($p in $bj, $KT2) { (Get-Content $p -Raw) -replace '(totalTokens[''"]:\s*)\d+', '${1}360000' | Set-Content $p -NoNewline }; git -C $kc commit -qam cap
+  $capTo = { param($v) foreach ($p in $bj, $KT2) { (Get-Content $p -Raw) -replace '(totalTokens[''"]:\s*)\d+', "`${1}$v" | Set-Content $p -NoNewline }; git -C $kc commit -qam cap }
+  & $capTo 480000; $b1 = & $bt; $c1 = $LASTEXITCODE   # a cap step above any kit size: refused
+  & $capTo 360000
   $b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 396000'
   (Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
   Expect 'budget raise: refused under the cap, x1.1 over it; a manual cap edit = BUDGET-CAP' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '360000 -> 396000' -and $c2 -and $l3 -match 'BUDGET-CAP')
@@ -1072,11 +1136,16 @@ print(f'kittool-misc:{ok_main and ok_prose}')
     flags = @(@{ level = 'ASK'; what = 'Teams 2.4 GB 💤 — close it?'; action = 'ask' }, @{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }); detailFile = 'r.md' }
   $r1 = (& { . $O; Format-KitReport $rd -Width 160 -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd -Ascii -Width 80 }) -join "`n"
   $want1 = @('| Agent | Doing |', '|---|---|', '| 🛠️ 1 × devy (+10kT) | build 1 (P1) |', '| 🧪 2 × checky (+20kT) | ⏸ env-fix 1 (J1) · test 1 (W1) |', '',
-    "🖥️ **RAM** $('🟦' * 2)🟨🟧🟪$('🟫' * 4)$('⬛' * 6)$('⬜' * 5) **48 / 64 GB**", '🟦 Kit 5 · 🟨 Your browsers 4 · 🟧 Your apps 3 · 🟩 Servers 1', '🟪 WSL 2 · 🟫 Windows 13 · ⬛ Unknown 20 (foo 0.6) · ⬜ Free 16 · 🛡️ Floor 8', 'top apps: Teams 2.4 💤 (💤 idle · 📈 +1 GB)', '',
+    "🖥️ **RAM** $('🟦' * 2)🟨🟧🟪$('🟫' * 4)$('⬛' * 6)$('⬜' * 5) **48 / 64 GB**", '🟦 Kit 5 · 🟨 Your browsers 4 · 🟧 Your apps 3 · 🟩 Servers 1', '🟪 WSL 2 · 🟫 Windows 13 · ⬛ Unknown 20 (foo 0.6) · ⬜ Free 16', 'top apps: Teams 2.4 💤 (💤 idle · 📈 +1 GB)', '',
     '| Resource | Used by | RAM | Resource | Used by | RAM |', '|---|---|---|---|---|---|', '| 🟢 rm · api | W1 | 3 | 🔴 hm · api | down: memory | — |', '| 🌐 rm·acme·admin | W1 | 2 |  | |  |', '',
     '🚩 **Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- ❓ **ASK** · Teams 2.4 GB 💤 — close it? -> ask', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
   Expect 'supervise report snapshot (-Agents, wide)' ($r1 -eq $want1)
   Expect 'supervise report: below the floor red, -Ascii, narrow, no agents by default' ($r2 -match '\*\*RAM\*\* \[KKBBAVW{5}U{7}\.\.\] \*\*58 / 64 GB\*\*' -and $r2 -match '\| Resource \| Used by \| RAM \|\r?\n\|---\|---\|---\|\r?\n\| rm - api \| W1 \| 3 \|' -and (& { . $O; Format-KitReport $rd }) -join '' -match '(🟥){2}' -and ((& { . $O; Format-KitReport $rd }) -join '') -notmatch 'Agent')
+  $rd.ram.servers = 0; $r3 = (& { . $O; Format-KitReport $rd }) -join "`n"
+  Expect 'supervise report: a 0.0 category leaves the legend' ($r3 -notmatch 'Servers' -and $r3 -match 'Unknown 20')
+  $rn = (Get-Content (Join-Path $k 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json)._manifest.ram; $pr = { param($i, $n, $p, $g) [pscustomobject]@{ Id = $i; Name = $n; Path = $p; WorkingSet = $g * 1GB; Private = $g * 1GB; Cpu = 0 } }
+  $rb = & { . $O; Get-KitRamBuckets @((& $pr 1 'svchost.exe' 'C:\Windows\System32\svchost.exe' 1), (& $pr 2 'vtool.exe' 'C:\Program Files\Realtek\vtool.exe' 1), (& $pr 3 'wslhost.exe' 'C:\x\wslhost.exe' 1), (& $pr 4 'mystery.exe' 'D:\x.exe' 2)) @{} $rn ([pscustomobject]@{ TotalGB = 16; AvailGB = 6 }) }
+  Expect 'supervise RAM: Windows paths + RAM no process owns = Windows, wsl* = WSL (first match), the rest unknown' ($rb.bk.windows -eq 7 -and $rb.bk.vms -eq 1 -and $rb.bk.unknown -eq 2)
   $an = & { . $O; $n = Get-Date; $c = @{ usedGB = 40; cpu = 95; runs = @(@{ id = 'wf1'; at = $n.AddMinutes(-25).ToString('o'); path = 'j.jsonl' }); trains = @(@{ env = 'shop'; key = 't1 build' })
       logs = @(@{ path = 'api.log'; errors = 2; first = 'ERROR boom' }); restarts = @(@{ env = 'shop'; svc = 'api'; n = 3 }); outbox = 4; toolErrors = 2; errorRun = 'wf1'; lint = '2 problem(s)'
       adopted = @(@{ env = 'shop'; svc = 'web'; port = 4200 }); stray = @('junk.txt') }
@@ -1169,8 +1238,8 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
   Expect 'devtools.py migrations selftest' ($LASTEXITCODE -eq 0)
   # localenv usage errors exit 2; a start-lock timeout throws, never runs unlocked
   $k2 = New-TestKit le2; $L2 = Join-Path $k2 'skills/local-env/localenv.ps1'
-  @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ engine = 'postgres'; name = 'shop'; user = 'u' } } } } } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $k2 'skills/dev-kit/kit.local.json')
-  Expect 'localenv: db.engine presets fill unset hooks' ((& { . $L2; $script:LE.envs.shop.db.snapshot }) -match '^pg_dump -Fc -h 127\.0\.0\.1 -p 5432 -U u -f .+\.dump\" shop$')
+  @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ engine = 'PostgreSQL'; name = 'shop'; user = 'u' } } } } } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $k2 'skills/dev-kit/kit.local.json')
+  Expect 'localenv: db.engine aliases + presets fill unset hooks' ((& { . $L2; "$($script:LE.envs.shop.db.engine) $($script:LE.envs.shop.db.snapshot)" }) -match '^postgres pg_dump -Fc -h 127\.0\.0\.1 -p 5432 -U u -f .+\.dump\" shop$')
   $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
   $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
   $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
@@ -1187,6 +1256,9 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
   $u1 = Px $L2 up -Env shop 2>&1 | Out-String; $c4 = $LASTEXITCODE; $null = Px $L2 unhold -Env shop -Agent main 2>&1
   Expect "localenv: up refuses without -Services; unhold ends a hold" ($c4 -eq 1 -and $u1 -match 'up needs -Services' -and -not @((Get-Content $lf -Raw | ConvertFrom-Json).holds.PSObject.Properties).Count)
   Expect 'localenv: usage errors exit 2; a start-lock timeout throws' ($c1 -eq 2 -and $c2 -eq 2 -and $c3 -eq 2 -and (Get-Content $L2 -Raw) -match 'if \(-not \$got\) \{ \$mx\.Dispose\(\); throw')
+  $r3 = & { . $L2; $st = @{ leases = @{ live = @{ agent = 'A'; until = (Get-Date).AddMinutes(-5).ToString('o'); holderPid = $PID }; own = @{ owner = $true; until = (Get-Date).AddMinutes(-1).ToString('o') } }; holds = @{}; requests = @() }; Prune $st
+    "$(@('with t as (select 1) select 1;', 'db.o.find({})', 'select 1; drop t', 'select "a"', 'call p()') | ForEach-Object { Test-ReadOnlySql $_ })|$(@('CHANGELOG.md', 'db/m/README.md', 'db/changelog/1.xml', 'migrations/1.sql') -match $script:MigPattern -join ',')|$($st.leases.Keys)|$(Leased 'clients')$(Leased 'clients', 'lease:A')|$(IdleWhy 15 '')" }
+  Expect "localenv: read-only sql; docs are no migrations; a live holder outlives until; only a lease starts; idle why ($r3)" ($r3 -like 'True True False False False|db/changelog/1.xml,migrations/1.sql|live|FalseTrue|idle: no holder*' -and $r3 -notmatch 'restart')
   Remove-TestKit $k2
   # swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; ios serial = udid; avd; build command
   $swt = @'
@@ -1209,11 +1281,11 @@ $script:SwarmCfg = [pscustomobject]@{ kind = 'ios'; lanes = @([pscustomobject]@{
 $j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'B', '-Reverse', '8080') | Select-Object -Last 1 | ConvertFrom-Json
 $s = "$tmp/sdk"; New-Item -ItemType Directory -Force "$s/platform-tools", "$s/system-images/a35/g/arm64-v8a", "$tmp/a" | Out-Null; Copy-Item $adb "$s/platform-tools"
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; port = 5570 }); adb = "$s/platform-tools/adb.cmd"; avdDir = "$tmp/avd"; apkDir = $tmp; out = $tmp; appFile = "$tmp/app.apk"
-  avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb'; artifact = 'o/*.apk' } }
+  avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb {tfm}'; artifact = 'o/*.apk' } }
 $null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw
 Set-Content "$tmp/gate.ps1" 'param($v, $Dir, $Cmd, $WaitMinutes) New-Item -ItemType Directory -Force "$Dir/o" | Out-Null; Set-Content "$Dir/o/x.apk" $Cmd'; $KitCmd.dev = "$tmp/gate.ps1"
 git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate')
-"kinds:$($j.serial -eq 'U1' -and -not @($j.reverse).Count) $($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb')"
+"kinds:$($j.serial -eq 'U1' -and -not @($j.reverse).Count) $($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb net9\.0-android')"
 '@
   $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
   $res = @(Px "$sf.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $sf 2>&1)

@@ -2,7 +2,7 @@
 qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/qa-kit/qa.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
   deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env?
-  api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-Save <name> -OutDir <abs dir>]
+  api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
@@ -30,7 +30,7 @@ $script:Palette = @{
 }
 $script:Font = "font-family:Arial,Helvetica,sans-serif"
 $script:Cell = "border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;font-size:10pt"
-# evidence names (evidence-standard.md 2); sync with browser.mjs EVIDENCE_NAME, $script:EvidenceExt, -FixNames
+# evidence names (SKILL.md "Evidence"); sync with browser.mjs EVIDENCE_NAME, $script:EvidenceExt, -FixNames
 $script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$'
 # types finalize publishes
 $script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'
@@ -237,7 +237,7 @@ function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
   foreach ($t in $queued) { if ($ws.ContainsKey([int]$t.pid)) { $sum += [double]$t.need } }
   [math]::Round($sum, 1)
 }
-$need = @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind]
+$need = [double](Get-KitSetting "qa.seatGB.$Kind" @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind])
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
 function Locked([scriptblock]$b) {
   $got = $false
@@ -246,16 +246,23 @@ function Locked([scriptblock]$b) {
 }
 function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
-# a seat whose holder is gone or > 3 h old is released
-function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3 -or (Test-KitHolder $o) -eq $false) { Remove-Item $_.FullName -Force } else { $o } }) }
+# README "Leases" (dead: idle.graceMinutes from first seen); old record without holder: 6 h
+function LeaseLive($o, [string]$file) {
+  if ($null -eq $o.PSObject.Properties['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
+  $v = [pscustomobject]@{ agent = "$($o.lease)"; holderPid = $o.holderPid; holderStart = $o.holderStart; seen = $o.seen }
+  $live = Update-KitLease $v; $o | Add-Member -Force seen $v.seen; $o | ConvertTo-Json | Set-Content $file; $live
+}
+function Read-Seat($p) { try { Get-Content $p -Raw | ConvertFrom-Json } catch { $null } }   # half-written: skipped
+function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Read-Seat $_.FullName; if (-not $o) { return }; if (LeaseLive $o $_.FullName) { $o } else { Remove-Item $_.FullName -Force } }) }
 $holder = Get-KitHolder
+$lease = (($Agent -split ':', 2)[-1] -split '@')[0]   # item code: Test-KitLive matches step labels, board
 
 switch ($Action) {
   'status' {
-    $s = Seats
+    $s = Locked { Seats }
     "free RAM $(FreeGB) GB, $(Get-GatePromisedGB) GB promised by the memory gate, keep $KeepFreeGB GB free (gate.keepFreeGB); $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
-    Get-ChildItem $wait -Filter *.json | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) ($($w.kind)) since $($w.since)" }
-    Get-ChildItem $claims -Filter *.json | ForEach-Object { $c = Get-Content $_.FullName -Raw | ConvertFrom-Json; "claim: $($c.run)/$($c.code) by $($c.owner) since $($c.since)" }
+    Get-ChildItem $wait -Filter *.json | Sort-Object LastWriteTime | ForEach-Object { $w = Read-Seat $_.FullName; if ($w) { "waiting: $($w.agent) ($($w.kind)) since $($w.since)" } }
+    Get-ChildItem $claims -Filter *.json | ForEach-Object { $c = Read-Seat $_.FullName; if ($c) { "claim: $($c.run)/$($c.code) by $($c.owner) since $($c.since)" } }
   }
 
   'release' {
@@ -273,12 +280,9 @@ switch ($Action) {
       $verdict = Locked {
         if (Test-Path (Join-Path $RunDir "$Code/finalize.json")) { return "ALREADY: $Code was finished and published" }
         if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
-        if (Test-Path $cf) {
-          $c = Get-Content $cf -Raw | ConvertFrom-Json
-          $alive = Test-KitHolder $c   # $null unknown: only that expires after 6 h
-          if ($c.owner -ne $Owner -and ($alive -eq $true -or ($null -eq $alive -and ((Get-Date) - [datetime]$c.since).TotalHours -lt 6))) { return "ALREADY: $Code is being tested by worker $($c.owner)" }   # a dead holder's claim is free
-        }
-        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content $cf
+        $c = if (Test-Path $cf) { Read-Seat $cf }
+        if ($c -and $c.owner -ne $Owner -and (LeaseLive $c $cf)) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + $holder) | ConvertTo-Json | Set-Content $cf
         $null
       }
       if ($verdict) { $verdict; exit 3 }
@@ -286,7 +290,7 @@ switch ($Action) {
     # 2. memory seat (fair FIFO)
     $me = Safe $Agent; $wf = Join-Path $wait "$me.json"
     if (Test-Path (Join-Path $seats "$me.json")) { "seat already held: $Agent"; exit 0 }
-    $rec = { ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json }
+    $rec = { ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json }
     if (-not (Test-Path $wf)) { & $rec | Set-Content $wf }
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $told = $false
     while ($true) {
@@ -374,6 +378,7 @@ function Probe($d, $r) {
   if ($d.tag) { git -C $r.checkout fetch -q --tags 2>$null; return @(git -C $r.checkout tag --sort=-creatordate 2>$null | Where-Object { $_ -match $d.tag })[0] }
   $o = if ($d.probe -match '^https?://') { try { (Invoke-WebRequest $d.probe -ConnectionTimeoutSeconds 30).Content } catch { '' } } else { (Invoke-Sh $d.probe) -join "`n" }
   if ($d.probeField) { try { $j = $o | ConvertFrom-Json; foreach ($k in $d.probeField.Split('.')) { $j = $j.$k }; $o = "$j" } catch { $o = '' } }
+  if ($d.probeRegex) { $m = [regex]::Match("$o", [string]$d.probeRegex); return $(if ($m.Success) { $m.Groups[1].Value } else { '' }) }
   [regex]::Match("$o", '\b[0-9a-f]{7,40}\b').Value
 }
 # one memoised ssh call (script as base64); rc 0 match, 1 DIFF, 2 failed
@@ -476,7 +481,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {
     $hit = $null
     # a pipeline older than the merge cannot hold it
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
-      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
+      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
       if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
     }
     if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
@@ -506,6 +511,7 @@ param(
   [string]$Save = $null,            # without .json
   [string]$OutDir = $null,          # default: <runtime>/work/evidence
   [hashtable]$Headers = @{},
+  [string]$ContentType = 'application/json',
   [int]$TimeoutSec = 180
 )
 $ErrorActionPreference = 'Stop'
@@ -526,7 +532,8 @@ if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.P
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
 if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
-$base = $t.api.Replace('{tenant}', $Tenant).TrimEnd('/')
+if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
+$base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 $a = $t.auth
 if ($a.type -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
@@ -568,7 +575,7 @@ elseif ($a.type -eq 'token') { $tok = if ($a.token) { $a.token } else { [string]
 function Call($tk) {
   $h = AuthHeaders $tk; foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
   if ($Tenant -and $t.tenantHeader) { $h[$t.tenantHeader] = $Tenant }
-  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = 'application/json' } + $tls
+  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType } + $tls
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
   # cookies redacted
@@ -596,7 +603,7 @@ if ($content -is [byte[]]) {
 }
 
 if ($Save) {
-  # evidence-standard.md envelope
+  # evidence envelope (SKILL.md "Evidence")
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
   # secrets redacted at any depth
@@ -654,12 +661,13 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
 if (-not $Check) { New-Item -ItemType Directory -Force "$D/evidence" | Out-Null }
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
 foreach ($c in @($res.checks)) {
+  if ($null -eq $c.PSObject.Properties['evidence']) { $c | Add-Member NoteProperty evidence @() }
   $c.evidence = @(@($c.evidence) | Where-Object { $_ -and [string]$_ -notmatch '\.(mjs|cjs|js|jsx|ts|tsx|java|kt|ps1|py|sh)$|\s' } | ForEach-Object {
       $e = [string]$_; $leaf = Split-Path $e -Leaf
-      if (-not (Test-Path "$D/shots\$leaf") -and -not (Test-Path "$D/evidence\$leaf")) {
+      if (-not (Test-Path "$D/shots/$leaf") -and -not (Test-Path "$D/evidence/$leaf")) {
         $src = if ([IO.Path]::IsPathRooted($e) -and (Test-Path $e)) { $e } elseif (Test-Path (Join-Path $D $e)) { Join-Path $D $e } else { (Get-ChildItem $RunDir -Recurse -File -Filter $leaf -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
         if (-not $src) { $lost.Add([pscustomobject]@{ check = $c; name = $leaf }) }
-        elseif (-not $Check) { Copy-Item $src "$D/evidence\$leaf" -Force }
+        elseif (-not $Check) { Copy-Item $src "$D/evidence/$leaf" -Force }
       }
       $leaf } | Select-Object -Unique)
 }
@@ -733,7 +741,7 @@ if ($Check) {
   $fail = $false
   if ($lostList.Count) { $fail = $true; "$Code evidence check: $($lostList.Count) file(s) listed in results.json but missing:"; $lostList | ForEach-Object { "  $_" } }
   if ($badNames.Count) {
-    $fail = $true; "$Code evidence check: $($badNames.Count) off-standard name(s) (reference/evidence-standard.md; -Check -FixNames renames them):"
+    $fail = $true; "$Code evidence check: $($badNames.Count) off-standard name(s) (qa-kit SKILL.md Evidence; -Check -FixNames renames them):"
     $badNames | ForEach-Object { "  $_ -> $(if ($suggest[$_]) { $suggest[$_] } elseif ($emptyNames -contains $_) { '(empty file: not renamed, see below)' } else { '(no suggestion: rename by hand)' })" }
   }
   if ($emptyFiles.Count) {
@@ -787,7 +795,7 @@ if ($ev.folderId) {
 # 2. Styled report
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
-$guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId) { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
+$guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
 Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8
@@ -855,7 +863,8 @@ function Add-NewDefects($st, [object[]]$defects) {
     $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; base = ''; baseCount = 0; entries = @() } }
     if (-not $s.id -and $ask.id) {
       $tested = @(@($run.items) | ForEach-Object { @($_.subtasks) | ForEach-Object id })
-      $open = try { @((Get-TrackerTask $ask.id).subtasks | Where-Object { "$($_.name)" -like '`[Bug`] *' -and $_.id -notin $tested -and -not (Test-TrackerStatus $_.status 'closed') }) | Select-Object -First 1 } catch { $null }
+      $bp = [WildcardPattern]::Escape([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]'))
+      $open = try { @((Get-TrackerTask $ask.id).subtasks | Where-Object { "$($_.name)" -like "$bp *" -and $_.id -notin $tested -and -not (Test-TrackerStatus $_.status 'closed') }) | Select-Object -First 1 } catch { $null }
       if ($open) {
         $o = Get-TrackerTask $open.id
         $s.id = $open.id; $s.url = $(if ($open.url) { $open.url } else { TaskUrl $open.id }); $s.base = [string]$o.description
@@ -1039,13 +1048,13 @@ if (-not $Only) {
     if ($ids.Count) { $Only = $ids; break }
   }
 }
-if (-not $Title) { $Title = "RETEST $($t.name -replace '^\[Bug\]\s*', '')" }
+if (-not $Title) { $Title = "RETEST $($t.name -replace "^$([regex]::Escape([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]')))\s*", '')" }
 $md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status)`n`n" +
   "RETEST of the fix: run the failed checks ($($Only -join ', ')) again on the deployed build, same steps and data where possible. " +
   "Check the fix is deployed first (qa.ps1 deployed -Mrs $Mrs); not deployed = NOT_TESTED.`n`n## Description`n`n$($t.description)`n`n## Comments (oldest first)`n"
 foreach ($x in $c) { $md += "`n---`n**$($x.user)** $($x.date)`n`n$($x.text)`n" }
 New-Item -ItemType Directory -Force "$RunDir/tasks" | Out-Null
-$gf = "$RunDir/tasks\$Task.md"; Set-Content $gf $md -Encoding utf8
+$gf = "$RunDir/tasks/$Task.md"; Set-Content $gf $md -Encoding utf8
 $old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir/$Code" $_ } | Where-Object { Test-Path $_ })
 if ($old.Count) {   # reused code: archive the earlier round
   $arc = Join-Path "$RunDir/$Code" "archive-$(Get-Date -Format yyyyMMdd-HHmmss)"; New-Item -ItemType Directory -Force $arc | Out-Null
