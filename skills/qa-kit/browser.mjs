@@ -21,12 +21,13 @@
 // from PowerShell, not git-bash. Linux/macOS: Chrome/Edge/Chromium in usual folders / PATH; CHROME_PATH overrides.
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
-const CFG = JSON.parse(readFileSync(new globalThis.URL('./targets.local.json', import.meta.url), 'utf8'))
+const TF = new globalThis.URL('./targets.local.json', import.meta.url)
+const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }   // none: sweeps still work
 // --- kit paths (kit.example.json _paths): <runtime> = $CLAUDE_RUNTIME | <kit>/.runtime; durable: <kit>/.state
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
@@ -66,8 +67,7 @@ const BROWSERS = [
   ]),
 ].filter(Boolean)
 const CHROME = BROWSERS.find((p) => existsSync(p))
-// Per-target (or top-level) "browser": { lang, timezone, width, height }, default en-GB, local zone, 1600x1000;
-// lang = Accept-Language / navigator.language (date, number formats).
+// per-target (or top-level) "browser": { lang (Accept-Language, date/number formats), timezone, width, height }; en-GB, local, 1600x1000
 const browserOpts = (t) => ({ lang: 'en-GB', timezone: '', width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -153,7 +153,7 @@ async function restoreLogin(page, t, tenant, as) {
 // a hung CDP call fails in 60 s, not puppeteer's 180 s
 const PROTO_MS = 60000
 
-const MAX_TABS = 8   // per shared browser; then callers wait (<= 5 min) for a tab
+const MAX_TABS = 8, TAB_WAIT_MS = 300000   // per shared browser; a 9th caller waits <= 5 min for a free tab, then fails
 // per target+tenant+user: Chrome profile, unique registry port, login lock
 export const sessionKey = (target, tenant, as) => `${target}|${tenant || ''}|${as}`.replace(/[^\w.|-]/g, '_')
 const keyFile = (key) => key.replace(/\|/g, '__')
@@ -201,12 +201,72 @@ async function ensureLogin(page, t, tenant, as, key) {
     if (!(await restoreLogin(page, t, tenant, as).catch(() => false))) await login(page, t, tenant, as)
   }, { waitMs: 120000 })
 }
+// tab registry <sessions>/tabs-<key>.json { tabId: { agent, pid, at } }: holder dead or off the board = orphan
+const tabsFile = (key) => `${kitPath('sessions', { create: true })}/tabs-${keyFile(key)}.json`
+const readJson = (f, d) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return d } }
+const saveJson = (f, o) => { writeFileSync(`${f}.tmp`, JSON.stringify(o)); renameSync(`${f}.tmp`, f) }
+const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
+function leftBoard(agent) {   // every board entry of the agent says left
+  const d = kitPath('board')
+  const es = existsSync(d) ? readdirSync(d).filter((f) => f.endsWith('.json')).map((f) => readJson(join(d, f), null)).filter((e) => e && e.agent === agent) : []
+  return es.length > 0 && es.every((e) => e.status === 'left')
+}
+const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
+// close orphan tabs (caller holds the tabs lock); a tab nobody registered (older client) is an orphan after 10 min
+async function sweep(browser, key) {
+  const f = tabsFile(key), reg = readJson(f, {}), keep = {}, now = Date.now()
+  let live = 0, closed = 0
+  for (const p of await browser.pages()) {
+    const id = await tabId(p).catch(() => ''), h = reg[id]
+    if (!h && p.url() === 'about:blank') continue
+    if (h ? (h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)) : now - (reg[`?${id}`] || now) > 600000) { await p.close().catch(() => {}); closed++; continue }
+    live++
+    keep[h ? id : `?${id}`] = h || reg[`?${id}`] || now
+  }
+  saveJson(f, keep)
+  return { live, closed }
+}
+// a free tab slot, atomic: count + open + register under one lock; waits <= waitMs, then fails clearly
+export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT || `pid-${process.pid}`, waitMs = TAB_WAIT_MS } = {}) {
+  const end = Date.now() + waitMs
+  for (;;) {
+    const page = await withLock(`tabs-${keyFile(key)}`, async () => {
+      if ((await sweep(browser, key)).live >= MAX_TABS) return null
+      const p = await browser.newPage(), f = tabsFile(key), reg = readJson(f, {})
+      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }
+      saveJson(f, reg)
+      return p
+    })
+    if (page) return page
+    if (Date.now() > end) throw new Error(`session: all ${MAX_TABS} tabs of ${key} stayed busy for ${Math.round(waitMs / 1000)} s (holders: ${tabsFile(key)}); free one with s.done() or retry later`)
+    await sleep(1000)
+  }
+}
+export async function closeTab(page, key) {
+  const id = await tabId(page).catch(() => '')
+  await page.close().catch(() => {})
+  await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); delete reg[id]; saveJson(f, reg) }).catch(() => {})
+}
+// every shared browser: close orphan tabs (orch.ps1 supervise -AutoFix); a registry without its Chrome is dropped
+export async function sweepAll() {
+  const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
+  let closed = 0
+  for (const f of readdirSync(d).filter((x) => /^tabs-.*\.json$/.test(x))) {
+    const key = f.slice(5, -5).replace(/__/g, '|')
+    const b = ports[key] ? await puppeteer.connect({ browserURL: `http://127.0.0.1:${ports[key]}`, protocolTimeout: PROTO_MS }).catch(() => null) : null
+    if (!b) { try { unlinkSync(join(d, f)) } catch {}; continue }
+    try { closed += (await withLock(`tabs-${keyFile(key)}`, () => sweep(b, key))).closed } finally { b.disconnect() }
+  }
+  return closed
+}
 // expired mid-script (401 / login page): restore the fresh session or log in once (locked), retry
 export async function relogin(s) { await ensureLogin(s.page, s.target, s.tenant, s.as, s.key) }
 export const ensureLoggedIn = (page) => (page.__qa ? ensureLogin(page, page.__qa.t, page.__qa.tenant, page.__qa.as, page.__qa.key) : Promise.resolve())
 
 // Attach to (or start) the user's shared Chrome + your own logged-in tab; `port` ignored (sessionPort owns it).
 export async function session({ target, tenant, as = 'admin' } = {}) {
+  const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean)   // as qa.ps1 api: a run tests only its own env
+  if (pin.length && !pin.includes(target || CFG.default)) throw new Error(`target '${target || CFG.default}' is not this QA run's target (${pin.join(', ')}): a run tests only its own env`)
   if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
   const t = targetOf(target)
   tenant = tenant ?? t.defaultTenant ?? ''
@@ -231,9 +291,8 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
   }
   // undecided notification permission: its toast eats header clicks
   try { await browser.defaultBrowserContext().overridePermissions(t.web, ['notifications', 'geolocation', 'clipboard-read', 'clipboard-write']) } catch {}
-  for (let i = 0; i < 600 && (await browser.pages()).filter((p) => p.url() !== 'about:blank').length >= MAX_TABS; i++) await sleep(500)
-  const page = await browser.newPage()   // own tab: this user's other agents keep theirs
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
+  const page = await openTab(browser, key, { agent: agentId })   // own tab: this user's other agents keep theirs
   await page.evaluateOnNewDocument((a) => { window.__qaAgent = a }, agentId).catch(() => {})
   page.__qa = { t, tenant, as, key, agent: agentId }
   await page.setViewport(VIEW)
@@ -246,7 +305,7 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
     await ensureLogin(page, t, tenant, as, key)
   }
   return { browser, page, net, target: t, tenant, as, key, port,
-    done: async () => { try { await page.close() } catch {}; try { browser.disconnect() } catch {} } }
+    done: async () => { await closeTab(page, key); try { browser.disconnect() } catch {} } }
 }
 
 export async function killSession(port) {
@@ -285,8 +344,7 @@ export async function text(page, selector = 'body') {
   return page.$eval(selector, (el) => el.innerText).catch(() => '')
 }
 
-// Real click on the innermost visible element matching text / title / aria-label (exact, then contains); DOM walk
-// <= 15 s, then puppeteer ::-p-text + boundingBox.
+// real click on the innermost visible text / title / aria-label match (exact, then contains); DOM walk <= 15 s, then ::-p-text
 export async function clickText(page, label, { nth = 0, within = 'body', exact = false, right = false } = {}) {
   let box = await capped(page.evaluate(({ label, nth, within, exact }) => {
     const root = document.querySelector(within) || document.body
