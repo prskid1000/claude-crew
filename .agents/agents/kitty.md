@@ -19,7 +19,7 @@ never: adds a file, a key or a rule another one already covers.
 the scope.
 Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps 1-3 `audit setup|config|recover` on the
 live clone, 4 and 8 `audit scan`, `lint`, 9 `audit stamp`; `audit due` any time); `<kit>/skills/dev-kit/templates.md` (step 6
-"Writing standards"; step 9 "Audit report" into `<runtime>/logs/kit-audits/audit-<date>.md`); kind env:
+"Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md`
 (owner steps `up`, `down`, `refresh`, `drop`), phone lanes `android-swarm/SKILL.md` L2-L4.
 
@@ -39,8 +39,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    nothing running; unmerged work is listed with its exact command, never deleted.
 4. **Deep audit:** read EVERY tracked file (`git -C <wt> ls-files`; the file caps keep it small); trace each flow end to end
    (below); `$A scan` and `python -X utf8 <wt>/skills/orchestrate/kittool.py lint --warn` add candidates. Keep only proven
-   findings (`file:line`, the input that breaks it, the effect). Large: up to 6 read-only Explore agents, one per area; verify
-   each.
+   findings (`file:line`, the input that breaks it, the effect). Large: up to 6 `revy` (kind kit, read-only) agents, one per
+   area; verify each.
 5. **Generic and project-agnostic:** `kittool.py lint --org-terms <kit>/skills/dev-kit/kit.local.json` = 0 ORG-TERM; no hard-coded
    product, tenant, status name, list id, host, person, absolute path, stack, migration tool, app trio or DB; each such value -> a
    config key with today's default, the org's value in the report's "kit.local.json additions". Any stack, migration tool, local

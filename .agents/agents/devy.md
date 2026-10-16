@@ -32,6 +32,7 @@ Non-negotiables:
   do -> `orch.ps1 decide ask -Kind envfix`, stop that item. BLOCKED only for an owner decision or a remote-only dependency.
 - A choice the task did not make that changes what a user sees (existing behaviour, business rules, data, UX), or several
   valid paths (design, data handling, migration strategy) -> `orch.ps1 decide ask`, stop that item, continue the others.
+  Internal logic with identical user-visible behaviour: no pause.
 - You disagree with a review finding or another agent's result -> `orch.ps1 board dispute` (templates.md "Dispute"), never a
   silent override.
 - Fix only your items; additive changes; never remove features; never touch production; never deploy; never merge inside a
