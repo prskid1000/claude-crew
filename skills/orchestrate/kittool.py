@@ -57,6 +57,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 KIT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <kit>/skills/orchestrate/kittool.py -> <kit>
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import kitflow  # noqa: E402  (the kit-flow page: its model and renderer)
 
 # ================================ 1. paths (paths.json: the one map of runtime + durable state) ================================
 with open(os.path.join(KIT_DIR, 'skills', 'dev-kit', 'paths.json'), encoding='utf-8') as _f:
@@ -221,61 +223,6 @@ class Kit:
     router: Optional[str]
     org_rows: str
     index: Dict[str, list]
-
-
-def blocks(text):
-    """The **Load when** / **Not when** / **Hands off to** / **Files** blocks of a SKILL.md body (first lines only)."""
-    out = {}
-    for name in BLOCKS:
-        m = re.search(r'^\*\*' + re.escape(name) + r':?\*\*(.*?)(?=^\*\*[A-Z][^*]*\*\*|^#|^\||\Z)', text, re.S | re.M)
-        if m:
-            body = re.sub(r'^\s*:?\s*(\([^)]*\))?\s*:?\s*', '', m.group(1))   # drop "(all must hold):" style lead-ins
-            if name == 'Files':
-                tm = re.search(r'^\*\*Files:?\*\*[^\n]*\n(?:[ \t]*\n)*((?:\|.*\n?)+)', text, re.M)
-                rows_n = sum(len(re.findall(r'`[^`]+`', r[0])) for r in table_rows(tm.group(1) if tm else '') if r and r[0].lower() != 'file')
-                body = f'{rows_n} files listed, each with the step that reads or runs it'
-            out[name] = re.sub(r'\s+', ' ', body)[:600]
-    return out
-
-
-def agent_blocks(desc):
-    out = {}
-    for name, pat in (('Spawned by', r'Spawned by(.*?)(?=Not for|Precondition|$)'), ('Precondition', r'Precondition:?(.*?)(?=Not for|$)'),
-                      ('Not for', r'Not for:?(.*)$')):
-        m = re.search(pat, desc, re.S)
-        if m:
-            out[name] = m.group(1).strip(' .:;')
-    return out
-
-
-def tables(k):
-    """Markdown tables from the always-loaded files, plus Router/Events-headed tables anywhere, each row linked to its targets."""
-    names = {**{s: f'skills/{s}/SKILL.md' for s in k.skills}, **{'/' + w: p for w, p in k.workflows.items()}, **dict(k.agents)}
-    always = ['CLAUDE.md'] + [f for f in k.files if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))]
-    out = []
-    for f in k.files:
-        if not f.endswith('.md'):
-            continue
-        heading = ''
-        lines = k.texts.get(f, '').splitlines()
-        i = 0
-        while i < len(lines):
-            l = lines[i]
-            if l.startswith('#'):
-                heading = l.strip('# ').strip()
-            if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?$', lines[i + 1]):
-                j = i
-                while j < len(lines) and lines[j].startswith('|'):
-                    j += 1
-                if f in always or re.search(r'router|event', heading, re.I):
-                    head = [c.strip() for c in l.strip().strip('|').split('|')]
-                    rows = table_rows('\n'.join(lines[i:j]))
-                    links = [sorted({p for n, p in names.items() if re.search(r'`' + re.escape(n) + r'[`\s]', ' '.join(r))}) for r in rows]
-                    out.append({'file': f, 'heading': heading, 'head': head, 'rows': rows, 'links': links})
-                i = j
-                continue
-            i += 1
-    return out
 
 
 def load(kit):
@@ -1034,12 +981,6 @@ def update_readme(text, sections):
     return text
 
 
-# kit-flow's issue groups for each lint code (the page lists lint problems under these headings)
-ISSUE_TYPE = {'REACH-NONE': 'unreached', 'REACH-MENTION': 'accidental', 'SKILL-DESC': 'fuzzy trigger', 'SKILL-FUZZY': 'fuzzy trigger',
-              'AGENT-SPAWN': 'fuzzy trigger', 'WF-WHEN': 'fuzzy trigger', 'REF-DANGLING': 'dangling', 'JUNK': 'junk',
-              'RUNTIME-RAW': 'junk', 'RUNTIME-MAP': 'dangling', 'RUNTIME-DURABLE': 'junk'}
-
-
 # ================================ 3. flow: the HTML page and the README graph sections ================================
 def live_root(kit):
     """The main worktree of kit's repo (the live clone): a worktree's commit or lint refreshes the page the owner opens."""
@@ -1065,85 +1006,9 @@ def flow_args(a):
     return kit, os.path.abspath(out or default_out(kit)), '--watch' in a, '--open' in a, '--readme' in a
 
 
-GIT_HOOK_EVENT = {'pre-commit': 'git commit', 'pre-push': 'git push', 'post-merge': 'git pull / merge'}
-
-
-def flow_triggers(k, nodes):
-    """Trigger nodes (Router / org rows, Events rows, harness hooks, git hooks, every session) and their edges to files."""
-    names = {**{s: f'skills/{s}/SKILL.md' for s in k.skills}, **dict(k.agents)}
-    base = defaultdict(list)
-    for f in nodes:
-        base[os.path.basename(f)].append(f)
-
-    def links(text):
-        hit = {p for n, p in names.items() if re.search(r'`' + re.escape(n) + r'[`\s]', text)}
-        hit |= {p for w, p in k.workflows.items() if re.search(r'(?<![\w-])/' + re.escape(w) + r'(?![\w-])', text)}
-        hit |= {base[b][0] for b in re.findall(r'[\w.-]+\.(?:ps1|py|mjs|js|md|json)\b', text) if len(base.get(b, [])) == 1}
-        for gl in re.findall(r'`([^`\s]*\*[^`\s]*)`', text):
-            hit |= {f for f in nodes if fnmatch.fnmatch(f, gl)}
-        return hit
-
-    def short(s, n=34):
-        s = re.sub(r'[`*]', '', s).strip()
-        return s if len(s) <= n else s[:n].rsplit(' ', 1)[0] + ' ...'
-
-    trig, edges = {}, []
-
-    def add(tid, tkind, label, desc, targets, why):
-        trig.setdefault(tid, {'id': tid, 'label': label, 'kind': 'trigger', 'tkind': tkind, 'trigger': desc, 'reach': 'entry'})
-        edges.extend({'s': tid, 't': t, 'type': 'trigger', 'why': why} for t in sorted(targets) if t in nodes)
-
-    for t in tables(k):
-        ev = bool(re.search(r'event', t['heading'], re.I))
-        if t['head'][:1] != ['#'] or not (ev or re.search(r'router', t['heading'], re.I)):
-            continue
-        for r in t['rows']:
-            if len(r) < 3 or not re.match(r'^[A-Z]+\d+$', r[0]) or 'trigger:' + r[0] in trig:
-                continue
-            desc = re.sub(r'[`*]', '', f'{r[1]} -> {r[2]}')
-            add('trigger:' + r[0], 'event' if ev else 'request', f'{r[0]} {short(r[1])}', desc, links(' '.join(r[2:])), f'{r[0]}: {desc}'[:200])
-    try:
-        hooks = (json.loads(k.texts.get('settings.json', '{}') or '{}').get('hooks') or {})
-    except ValueError:
-        hooks = {}
-    for event, bl in hooks.items():
-        for b in bl:
-            ev = event + (f" ({b['matcher']})" if b.get('matcher') else '')
-            for h in b.get('hooks', []):
-                m = re.search(r'\.claude[\\/]([\w./\\-]+\.(?:ps1|py|js|sh))\s*(.*)', ' '.join([h.get('command', '')] + list(h.get('args', []))))
-                if m:
-                    f = m.group(1).replace('\\', '/')
-                    add('trigger:' + ev, 'hook', ev, f'Claude Code runs hooks on {ev}', {f}, f'{ev}: {os.path.basename(f)} {m.group(2)}'.strip())
-    for f in nodes:
-        if f.startswith('.githooks/'):
-            ev = GIT_HOOK_EVENT.get(os.path.basename(f), 'git ' + os.path.basename(f))
-            add('trigger:' + ev, 'git', ev, f'git runs {f} (core.hooksPath)', {f}, f'{ev} runs {f}')
-    add('trigger:session', 'session', 'every session', 'The harness loads CLAUDE.md (and its imports, rules)', {'CLAUDE.md'},
-        'every session loads CLAUDE.md')
-    return list(trig.values()), edges
-
-
-def page_data(k, g, problems):
-    """Page model: trigger + file nodes, trigger -> file and file -> file edges with reasons, kit-lint's problems as issues."""
-    nodes = {f: dict(n) for f, n in g['nodes'].items()}
-    for f, n in nodes.items():
-        text = k.texts.get(f, '')
-        if n['kind'] == 'skill':
-            n['blocks'] = blocks(text)
-        elif n['kind'] == 'agent':
-            n['blocks'] = agent_blocks(frontmatter(text).get('description', ''))
-        elif n['kind'] == 'workflow':
-            m = re.search(r"whenToUse:\s*'((?:[^'\\]|\\.)*)'", text)
-            n['blocks'] = {'When to use': m.group(1)} if m else {}
-    issues = [{'type': ISSUE_TYPE.get(c, 'lint ' + c.lower()), 'code': c, 'id': w if w in nodes else None,
-               'text': (m if w in nodes else f'{w}: {m}')} for c, w, m in problems]
-    edges = g['edges']
-    trig, tedges = flow_triggers(k, nodes)
-    return {'kit': k.dir, 'generated': time.strftime('%Y-%m-%d %H:%M:%S'), 'nodes': trig + list(nodes.values()),
-            'edges': tedges + [{'s': a, 't': b, 'type': t, 'why': g.get('why', {}).get((a, b), t)} for (a, b), t in sorted(edges.items())],
-            'issues': issues,
-            'counts': {'files': len(nodes), 'edges': len(edges), 'triggers': len(trig),
-                       'structural': sum(1 for n in nodes.values() if n['reach'] in ('entry', 'structural')), 'issues': len(issues)}}
+def page_data(k, g, problems, kit=None):
+    """Page model (kitflow.py): the parts inside every file, the edges between them, loops, issues."""
+    return kitflow.model(k, problems, kit_path('kit-flow-cache', kit=live_root(kit or k.dir)))
 
 
 def build(kit):
@@ -1155,13 +1020,12 @@ def build(kit):
 def render(kit, out, quiet=False, data=None):
     data = data or build(kit)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    blob = json.dumps(data, ensure_ascii=False).replace('</', '<\\/')
-    page = TEMPLATE_HTML.replace('__DATA__', blob)
+    page = kitflow.html(data)
     with open(out, 'w', encoding='utf-8') as fh:
         fh.write(page)
     c = data['counts']
     if not quiet:
-        print(f"kit-flow: {out}  ({c['files']} files, {c['edges']} edges, {c['structural']} reached structurally, {c['issues']} issues)")
+        print(f"kit-flow: {out}  ({c['files']} files, {c['nodes']} nodes, {c['edges']} edges, {c['cycles']} loops, {c['issues']} issues)")
     return data
 
 
@@ -1211,153 +1075,6 @@ def cmd_flow(a):
                 except Exception as e:  # keep watching through a half-written file
                     print('kittool flow: render failed, will retry:', e)
     return 0
-
-
-TEMPLATE_HTML = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kit flow</title>
-<style>:root{--bg:#f8fafc;--fg:#0f172a;--mut:#64748b;--ln:#94a3b8;--pn:#ffffffe6;--hi:#d97706;--bad:#dc2626}
-@media (prefers-color-scheme:dark){:root{--bg:#0b1120;--fg:#e2e8f0;--mut:#94a3b8;--ln:#64748b;--pn:#111827e6;--hi:#fbbf24;--bad:#f87171}}
-html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px system-ui,sans-serif}
-#s{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
-.bar{position:fixed;left:8px;right:8px;display:flex;gap:5px;flex-wrap:wrap;align-items:center;pointer-events:none}.bar>*{pointer-events:auto}
-#top{top:8px}#leg{bottom:8px}
-.p{background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:2px 8px;cursor:pointer;user-select:none;display:inline-flex;gap:4px;align-items:center}
-.p.off{opacity:.35}.p.bad{border-color:var(--bad);color:var(--bad)}b.p{cursor:default}
-#q{background:var(--pn);color:var(--fg);border:1px solid var(--ln);border-radius:12px;padding:3px 8px;width:200px}
-#tip{position:fixed;max-width:440px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap}
-.n text{fill:var(--fg);font-size:11px;pointer-events:none}.n{cursor:pointer}.n.bad>:first-child{stroke:var(--bad);stroke-width:2.5}
-.n.m>:first-child,.n.sel>:first-child{stroke:var(--hi);stroke-width:3}
-.e{fill:none;stroke:var(--ln);stroke-width:1.3;opacity:.5}.e.t{opacity:.8}.e.h{stroke:var(--hi);opacity:1;stroke-width:2}
-.dim{opacity:.07!important}.l{font-size:10px;fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none}</style></head><body>
-<svg id="s"><defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" style="fill:var(--ln)"/></marker>
-<marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" style="fill:var(--hi)"/></marker></defs><g id="w"></g></svg>
-<div class="bar" id="top"><b class="p">kit flow</b><span class="p" id="iss"></span><input id="q" placeholder="search (Enter selects)"><span class="p" id="fit">fit</span></div>
-<div class="bar" id="leg"></div><div id="tip"></div>
-<script>
-const D = __DATA__, NS = 'http://www.w3.org/2000/svg', $ = s => document.querySelector(s);
-const mk = (t, a, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e };
-// style per node kind: color, shape, legend name
-const ST = {request: ['#2563eb', 'pill', 'request (Router row)'], event: ['#d97706', 'hex', 'coordinator event'], hook: ['#7c3aed', 'tag', 'harness hook'],
-  git: ['#db2777', 'tag', 'git hook'], session: ['#0891b2', 'tag', 'session start'], rule: ['#64748b', 'dash', 'root / rule / settings'],
-  skill: ['#16a34a', 'rect', 'skill'], workflow: ['#ea580c', 'para', 'workflow'], agent: ['#0d9488', 'oct', 'agent'], script: ['#475569', 'sharp', 'script / file hook'],
-  doc: ['#a8a29e', 'note', 'template / reference / doc']};
-const sk = n => n.kind === 'trigger' ? n.tkind : ({root: 'rule', 'rule-scoped': 'rule', settings: 'rule', hook: 'script'})[n.kind] || (ST[n.kind] ? n.kind : 'doc');
-function shape(s, w, h, p) {
-  const c = 8, P = {hex: [[c, 0], [w - c, 0], [w, h / 2], [w - c, h], [c, h], [0, h / 2]], tag: [[0, 0], [w - c, 0], [w, h / 2], [w - c, h], [0, h]],
-    para: [[c, 0], [w, 0], [w - c, h], [0, h]], oct: [[5, 0], [w - 5, 0], [w, 5], [w, h - 5], [w - 5, h], [5, h], [0, h - 5], [0, 5]], note: [[0, 0], [w - 7, 0], [w, 7], [w, h], [0, h]]}[s];
-  return P ? mk('polygon', {points: P.map(q => q.join(',')).join(' ')}, p) : mk('rect', {width: w, height: h, rx: s === 'pill' ? h / 2 : s === 'sharp' ? 0 : 4, 'stroke-dasharray': s === 'dash' ? '4 2' : ''}, p)
-}
-const N = D.nodes, by = {}, out = {}, inn = {};
-N.forEach(n => { by[n.id] = n; out[n.id] = []; inn[n.id] = [] });
-const E = D.edges.filter(e => by[e.s] && by[e.t]);
-E.forEach(e => { out[e.s].push(e); inn[e.t].push(e) });
-const isT = n => n.kind === 'trigger', bad = new Set(D.issues.map(i => i.id).filter(Boolean));
-// layers: kind bands left to right (triggers -> rules -> workflows -> agents -> skills -> docs -> scripts); the DAG for ordering
-// keeps only band-increasing, non-mention edges (no cycles, mentions never shape the layout)
-const BAND = {rule: 1, workflow: 2, agent: 3, skill: 4, doc: 5, script: 6}, band = n => isT(n) ? 0 : BAND[sk(n)];
-const dag = new Set(E.filter(e => e.type !== 'mention' && band(by[e.t]) > band(by[e.s])));
-const cols = [];
-N.forEach(n => (cols[band(n)] = cols[band(n)] || []).push(n));
-for (let i = cols.length - 1; i >= 0; i--) if (!cols[i]) cols.splice(i, 1); else cols[i].sort((a, b) => sk(a).localeCompare(sk(b)) || a.label.localeCompare(b.label));
-// barycenter ordering: sweep down (by predecessors) and up (by successors)
-const pos = {}, idx = () => cols.forEach(c => c.forEach((n, i) => pos[n.id] = i - (c.length - 1) / 2));
-idx();
-for (let it = 0; it < 8; it++) {
-  const down = it % 2 === 0;
-  for (const c of down ? cols.slice(1) : cols.slice(0, -1).reverse()) {
-    const bc = {};
-    for (const n of c) { const nb = (down ? inn[n.id].map(e => dag.has(e) && e.s) : out[n.id].map(e => dag.has(e) && e.t)).filter(Boolean); bc[n.id] = nb.length ? nb.reduce((s, x) => s + pos[x], 0) / nb.length : pos[n.id] }
-    c.sort((a, b) => bc[a.id] - bc[b.id]); idx()
-  }
-}
-const H = 22, DY = 28, GX = 160, tw = s => s.length > 36 ? s.slice(0, 35) + '…' : s;
-let X = 0, maxR = Math.max(...cols.map(c => c.length));
-for (const c of cols) {
-  const w = Math.max(60, ...c.map(n => Math.min(250, 18 + 6.2 * tw(n.label).length)));
-  c.forEach((n, i) => { n.w = w; n.x = X; n.y = (i + (maxR - c.length) / 2) * DY });
-  X += w + GX
-}
-const TW = X - GX, TH = maxR * DY, W = $('#w'), EG = mk('g', {}, W), LG = mk('g', {}, W), NG = mk('g', {}, W), tip = $('#tip');
-const showTip = (ev, s) => { tip.textContent = s; tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX + 14, innerWidth - 450) + 'px'; tip.style.top = (ev.clientY + 14) + 'px' };
-const hide = () => tip.style.display = 'none';
-for (const e of E) {
-  const a = by[e.s], b = by[e.t], x1 = a.x + a.w, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2, d = Math.max(50, Math.abs(x2 - x1) / 2);
-  e.p = [x1, y1, x1 + d, y1, x2 - d, y2, x2, y2];
-  e.el = mk('path', {d: `M${x1},${y1}C${x1 + d},${y1} ${x2 - d},${y2} ${x2},${y2}`, class: 'e' + (e.type === 'trigger' ? ' t' : ''), 'marker-end': 'url(#a)'}, EG);
-  e.el.onmousemove = ev => showTip(ev, `${a.label} → ${b.label}  [${e.type}]\n${e.why || ''}`); e.el.onmouseleave = hide
-}
-for (const n of N) {
-  const [col, s] = ST[sk(n)], g = mk('g', {class: 'n', transform: `translate(${n.x},${n.y})`}, NG);
-  g.dataset.id = n.id;
-  const sh = shape(s, n.w, H, g); sh.setAttribute('style', `fill:${col}33;stroke:${col};stroke-width:1.4`);
-  mk('text', {x: n.w / 2, y: H / 2 + 4, 'text-anchor': 'middle'}, g).textContent = tw(n.label);
-  if (bad.has(n.id)) g.classList.add('bad');
-  const bl = Object.entries(n.blocks || {}).map(([k, v]) => `${k}: ${v.slice(0, 160)}`).join('\n');
-  g.onmousemove = ev => showTip(ev, `${n.id}  [${n.kind === 'trigger' ? n.tkind : n.kind}]\n${(n.trigger || '').slice(0, 320)}${bl ? '\n' + bl : ''}`); g.onmouseleave = hide;
-  n.el = g
-}
-// edge-type toggles (file -> file calls / loads / mentions hidden by default) + node legend
-const on = new Set(['trigger', 'route', 'import', 'hook', 'spawn', 'scoped', 'index']), cnt = {};
-E.forEach(e => cnt[e.type] = (cnt[e.type] || 0) + 1);
-const leg = $('#leg');
-for (const t of Object.keys(cnt).sort((a, b) => (a !== 'trigger') - (b !== 'trigger') || cnt[b] - cnt[a])) {
-  const b = document.createElement('span'); b.className = 'p' + (on.has(t) ? '' : ' off'); b.textContent = `${t === 'trigger' ? 'trigger → file' : t} ${cnt[t]}`;
-  b.title = 'show / hide these edges'; b.onclick = () => { on.has(t) ? on.delete(t) : on.add(t); b.classList.toggle('off'); update() }; $('#top').appendChild(b)
-}
-for (const k in ST) if (N.some(n => sk(n) === k)) {
-  const b = document.createElement('span'); b.className = 'p'; const sv = mk('svg', {width: 26, height: 14}, b), sh = shape(ST[k][1], 24, 12, sv);
-  sh.setAttribute('style', `fill:${ST[k][0]}33;stroke:${ST[k][0]};stroke-width:1.2`); sh.setAttribute('transform', 'translate(1,1)'); b.append(ST[k][2]); leg.appendChild(b)
-}
-const iss = $('#iss');
-iss.textContent = `${D.counts.issues} issue${D.counts.issues === 1 ? '' : 's'}`; iss.title = D.issues.map(i => `${i.code} ${i.text}`).join('\n') || 'kittool lint: 0 problems';
-if (D.counts.issues) iss.classList.add('bad');
-let sel = null, issMode = false;
-iss.onclick = () => { issMode = !issMode && D.counts.issues > 0; sel = null; update() };
-function update() {
-  const vis = e => on.has(e.type), q = $('#q').value.trim().toLowerCase(), path = new Set();
-  let keep = null;
-  if (sel) {
-    keep = new Set([sel]);
-    for (const [adj, k] of [[inn, 's'], [out, 't']]) {
-      const todo = [sel], seen = new Set(todo);
-      while (todo.length) for (const e of adj[todo.pop()]) if (vis(e)) { path.add(e); keep.add(e[k]); if (!seen.has(e[k])) { seen.add(e[k]); todo.push(e[k]) } }
-    }
-  } else if (issMode) keep = bad;
-  const match = q ? new Set(N.filter(n => (n.id + ' ' + n.label + ' ' + (n.trigger || '')).toLowerCase().includes(q)).map(n => n.id)) : null;
-  if (!keep && match) keep = match;
-  for (const n of N) { n.el.classList.toggle('dim', !!keep && !keep.has(n.id)); n.el.classList.toggle('m', !!match && match.has(n.id)); n.el.classList.toggle('sel', n.id === sel) }
-  LG.innerHTML = '';
-  for (const e of E) {
-    const direct = sel && (e.s === sel || e.t === sel), shown = vis(e) || direct, h = sel ? path.has(e) || direct : false;
-    e.el.style.display = shown ? '' : 'none';
-    e.el.classList.toggle('h', h); e.el.setAttribute('marker-end', h ? 'url(#ah)' : 'url(#a)');
-    e.el.classList.toggle('dim', !!keep && !h && !(keep.has(e.s) && keep.has(e.t) && !sel));
-    if (direct && vis(e)) { const p = e.p, x = (p[0] + 3 * p[2] + 3 * p[4] + p[6]) / 8, y = (p[1] + 3 * p[3] + 3 * p[5] + p[7]) / 8;
-      mk('text', {x, y: y - 3, class: 'l', 'text-anchor': 'middle'}, LG).textContent = tw(e.why || e.type) }
-  }
-}
-// pan / zoom
-const S = $('#s');
-let tx = 0, ty = 0, sc = 1, drag = null;
-const ap = () => W.setAttribute('transform', `translate(${tx},${ty}) scale(${sc})`);
-const fit = () => { sc = Math.min(innerWidth / (TW + 60), (innerHeight - 90) / (TH + 40), 1.5); tx = (innerWidth - TW * sc) / 2; ty = 50 + (innerHeight - 90 - TH * sc) / 2; ap() };
-S.addEventListener('wheel', ev => { ev.preventDefault(); const f = Math.exp(-ev.deltaY * .0015); tx = ev.clientX - (ev.clientX - tx) * f; ty = ev.clientY - (ev.clientY - ty) * f; sc *= f; ap() }, {passive: false});
-S.addEventListener('pointerdown', ev => drag = {x: ev.clientX, y: ev.clientY, tx, ty, moved: false});
-addEventListener('pointermove', ev => { if (!drag) return; const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true; if (drag.moved) { tx = drag.tx + dx; ty = drag.ty + dy; ap() } });
-addEventListener('pointerup', ev => {
-  if (drag && !drag.moved) { const g = ev.target.closest && ev.target.closest('.n'); sel = g && g.dataset.id !== sel ? g.dataset.id : null; issMode = false; update() }
-  drag = null
-});
-$('#fit').onclick = fit; addEventListener('resize', fit);
-$('#q').oninput = () => { sel = null; update() };
-$('#q').onkeydown = ev => {
-  if (ev.key !== 'Enter') return;
-  const q = ev.target.value.trim().toLowerCase(), n = N.find(n => (n.id + ' ' + n.label + ' ' + (n.trigger || '')).toLowerCase().includes(q));
-  if (n) { sel = n.id; tx = innerWidth / 2 - (n.x + n.w / 2) * sc; ty = innerHeight / 2 - (n.y + H / 2) * sc; ap(); update() }
-};
-addEventListener('keydown', ev => { if (ev.key === 'Escape') { sel = null; issMode = false; $('#q').value = ''; update() } });
-fit(); update();
-</script></body></html>
-'''
 
 
 # ================================ 4. lint ================================

@@ -38,6 +38,7 @@
     "android-tmp": "cache/android-tmp/",
     "stopped": "cache/stopped/",
     "kit-flow": "cache/kit-flow.html",
+    "kit-flow-cache": "cache/kit-flow-model.json",
     "supervise-state": "cache/supervise-state.json",
     "last-cleanup": "cache/last-cleanup.txt",
     "guard-log": "logs/guard.log",
