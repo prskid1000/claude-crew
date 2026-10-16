@@ -15,7 +15,8 @@ Two jobs, depending on your task:
   "Not reproduced" needs the first tester's conditions: same login and session type, the same window (after a restart, deploy,
   idle), at least as many attempts (5+ for LLM-driven checks). Conditions not recreated -> `inconclusive` (the FAIL stays). An
   intermittent server failure: read the server log / observability for the tester's UTC window first. Every verdict records its
-  `basis` (`_verify` files, the log window, or `file:line`); a refutation without one counts as inconclusive. Keep or correct
+  `basis` (`_verify` files, the log window, or `file:line`); a refutation without one counts as inconclusive. A refuted FAIL
+  that has saved evidence stays FAIL, marked flaky (both runs' evidence); only one without evidence can pass. Keep or correct
   the `defect` class (own / new).
 - **Audit notes:** re-read every PASS_WITH_NOTE and finding. A defect (5xx / unexpected 4xx, crash, stuck flow, wrong or unsaved
   data, wrong records, broken navigation, missing screen) is never a note: reclassify it, own or new. Test-data notes, tester

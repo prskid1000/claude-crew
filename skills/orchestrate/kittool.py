@@ -125,7 +125,7 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 FILE_CAP = 50
 # token budgets (UTF-8 bytes / 4), CONTRIBUTING "Hard rules"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-           'workflow': 14000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 24000, 'total': 395000}
+           'workflow': 15000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 24000, 'total': 395000}
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/paths.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',

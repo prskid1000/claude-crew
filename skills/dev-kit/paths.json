@@ -58,6 +58,7 @@
     "deploy-log": "deploys.jsonl",
     "outbox": "outbox.jsonl",
     "tracker-none": "tracker-none/",
-    "localenv-env": "localenv/"
+    "localenv-env": "localenv/",
+    "browser-ports": "browser-ports.json"
   }
 }

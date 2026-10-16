@@ -28,7 +28,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env unless a check of the guide asks for it.
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
-   `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and
+   `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
    report. Phones: `swarm.ps1
    acquire|release` (keep the lease through waits < 30 min).
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
@@ -60,14 +60,15 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      record or rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
-     NOT_TESTED gets ONE stronger retry (test-and-close `models.retest`, default opus, effort high, told your blocker); still
-     NOT_TESTED -> the task goes to failedTesting: never use it for "no time". That holds for shared test envs.
-   - **Local env item** (item / run.json `localEnv`): we own it, so no cause is final (local-env "Unblock yourself": data,
-     config, deploy, a phone with the local-env APK, a stub); a coordinator-only fix -> NOT_TESTED with `env_fix`. The workflow
-     raises ENV-FIX (`decide ask -Kind envfix`), retests after the fix (`envFixCycles`, default 2), then holds the results for
-     the coordinator: never failedTesting (finalize keeps it open; `-AcceptNotTested` is the coordinator's call).
+     NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still
+     NOT_TESTED -> the task goes to failedTesting: never use it for "no time" (shared test envs).
+   - **Local env item** (`localEnv`): no cause is final (local-env "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
+     with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting
+     (`finalize -AcceptNotTested` = the coordinator's call).
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
      `attempts` and `window`; a verifier must recreate them to refute.
+   - **Flaky**: a FAIL with saved evidence that a re-test does not reproduce stays FAIL, `flaky: true` (own ->
+     failedTesting, new -> [Bug] tagged flaky); never PASS_WITH_NOTE.
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
@@ -76,7 +77,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose]
    findings);
    `board leave`,
-   release seat / phone / Chrome ports (`killSession()`); return the results.
+   release seat / phone, close your tab (`s.done()`; never `killSession`, never log out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
@@ -87,7 +88,8 @@ defect -> ONE `[Bug] <ask> — new defects (n)` task under the task's original a
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change
 may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`; never
-deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; app lanes: only your serial, never
+deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user (`session()`: own tab,
+`relogin(s)` on a 401, never log out), <= 2 tabs per agent; app lanes: only your serial, never
 `adb kill-server`.
 
 ## Evidence

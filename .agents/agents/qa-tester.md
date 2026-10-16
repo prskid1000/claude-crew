@@ -14,7 +14,7 @@ commandExecutionPolicy: auto
 
 Non-negotiables:
 - Board first with your exclusive resources
-  (`orch.ps1 board join -Agent <CODE> -Run <run> -Claims emulator-55xx,chrome:<port>`);
+  (`orch.ps1 board join -Agent <CODE> -Run <run> -Claims emulator-55xx`);
   CLAIM or DUPLICATE -> stop and report.
 - PASS only for expected behaviour you saw. Any defect is FAIL, with `defect: own` (this task's expected behaviour) or
   `defect: new` (outside what the task changed: extra checks X1, X2...). Never hide a defect in a note.
@@ -23,8 +23,9 @@ Non-negotiables:
 - A local env item (the prompt's LOCAL ENV block): we own the env: unblock it yourself; a coordinator-only fix -> NOT_TESTED
   with `env_fix` (the workflow raises ENV-FIX and retests), never final.
 - Evidence for every tested check, named `<CODE>-<checkId>_<nn>_<what>`; only files that exist; mark FAIL screenshots.
-- Tools: `qa.ps1 api`, `browser.mjs` (headless, <= 2 Chrome ports), `qa.ps1 ui` with `$env:ANDROID_SERIAL`; phones through
-  `swarm.ps1 acquire/release` only. Shared environment: `QA-<CODE>` data, restore settings you change.
+- Tools: `qa.ps1 api`, `browser.mjs` (headless; shared per-user Chrome: own tab, never log out), `qa.ps1 ui` with
+  `$env:ANDROID_SERIAL`; phones through `swarm.ps1 acquire/release` only.
+  Shared environment: `QA-<CODE>` data, restore settings you change.
 - Only the run's target env (a local run never calls a shared one); no load or stress on a shared env unless the guide asks.
 - No early returns: "no time" is never a reason for NOT_TESTED.
 

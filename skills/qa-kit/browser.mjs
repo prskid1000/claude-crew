@@ -3,11 +3,13 @@
 // Usage: Targets (URL, login form, users) come from
 // <workspace>/.claude/skills/qa-kit/targets.local.json — nothing app-specific lives here.
 //
-// FAST PATH: session() keeps ONE logged-in headless Chrome alive per port, so each script reconnects in ~1 s
-// instead of relaunching and logging in again.
+// SHARED SESSION: session() keeps ONE logged-in headless Chrome per target+tenant+user (its own profile and port from a
+// registry, never shared with another user or target). Every run and agent testing as that user attaches to it with its own
+// tab, so one login serves all and nobody signs another agent out. It logs in again only when the session expired (the login
+// page or a 401: relogin(s)), under a lock so two agents never log in at once. Never log out; s.done() closes only your tab.
 //
 //   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession } from 'file:///<workspace>/.claude/skills/qa-kit/browser.mjs'   // the absolute file URL of this file (Windows: file:///C:/...)
-//   const s = await session({ port: 9401, target: 'my-staging', tenant: 'acme', as: 'admin' })  // one port per target+tenant+user
+//   const s = await session({ target: 'my-staging', tenant: 'acme', as: 'admin' })  // the shared browser of that user, your own tab
 //   await go(s.page, '/projects')
 //   console.log((await text(s.page)).slice(0, 2000))
 //   await clickText(s.page, 'Filter')
@@ -16,9 +18,9 @@
 //   await shot(s.page, '<run>/F2/shots/F2-T3_01_filter-applied.jpeg')   // names: <CODE>-<check>_<nn>_<what> (evidence-standard.md)
 //   console.log(JSON.stringify(s.net.failed))     // 4xx/5xx API calls + JS errors seen in THIS script = failure evidence
 //   if (s.net.failed.length) saveNet(s, '<run>/F2/evidence/F2-T3_02_failed-calls.json')
-// A login made on one port is saved (8 h) and reused by other ports/agents for the same target+tenant+user.
-//   await s.done()                                // disconnect; Chrome stays alive for the next script
-//   // completely finished: await killSession(9401)
+//   if (s.net.failed.some((f) => f.status === 401)) await relogin(s)   // session expired mid-script: locked re-login, then retry
+//   await s.done()                                // closes your tab and disconnects; the logged-in Chrome stays for everyone
+//   // the coordinator only, when no agent tests as that user: await killSession(sessionPort(target, tenant, as))
 //
 // Every wait is capped at 20 s, so a wrong selector fails fast instead of hanging.
 // Real mouse clicks are used throughout: Angular/React/ng-zorro/MUI controls often ignore synthetic el.click().
@@ -26,7 +28,7 @@
 // Chromium is found in the usual install folders or on PATH; set CHROME_PATH to pick another one.
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -111,10 +113,7 @@ async function login(page, t, tenant, as) {
   const [user, pass] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
   await page.goto(t.web + L.path, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
-  if (!page.url().includes(L.path)) {   // already logged in as someone else: clear and retry
-    await page.evaluate(() => { sessionStorage.clear(); localStorage.clear() })
-    await page.goto(t.web + L.path, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
-  }
+  if (!page.url().includes(L.path)) return   // already logged in (another agent, same user): never log out
   const sels = Object.keys(L.fields)
   await page.waitForSelector(sels[0], { timeout: 60000 })
   for (const sel of sels) {
@@ -146,8 +145,7 @@ const sessionFile = (t, tenant, as) => `${kitPath('sessions')}/${(t.web + '-' + 
 async function restoreLogin(page, t, tenant, as) {
   const f = sessionFile(t, tenant, as)
   if (!existsSync(f)) return false
-  const s = JSON.parse(readFileSync(f, 'utf8'))
-  if (Date.now() - s.at > 8 * 3600 * 1000) return false
+  const s = JSON.parse(readFileSync(f, 'utf8'))   // age is no reason to drop it: the app's auth guard below decides
   await page.goto(t.web + t.webLogin.path, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {})
   await page.evaluate((s) => {
     for (const [k, v] of Object.entries(s.local || {})) localStorage.setItem(k, v)
@@ -162,12 +160,67 @@ async function restoreLogin(page, t, tenant, as) {
 // a CDP call that never answers (a page busy in a script loop) fails after 60 s instead of puppeteer's 180 s default
 const PROTO_MS = 60000
 
-// Connect to (or start) the long-lived headless Chrome on `port`, logged in as target/tenant/as.
-export async function session({ port, target, tenant, as = 'admin' } = {}) {
-  if (!port) throw new Error('session(): pass a port (one per target+tenant+user)')
+const MAX_TABS = 8   // per shared browser; a caller beyond it waits for a tab to close (<= 5 min)
+// one key per target+tenant+user: its Chrome profile, its port (registry: two keys never share a port) and its login lock
+export const sessionKey = (target, tenant, as) => `${target}|${tenant || ''}|${as}`.replace(/[^\w.|-]/g, '_')
+const keyFile = (key) => key.replace(/\|/g, '__')
+const PORT_BASE = 21000, PORT_SLOTS = 2000
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h }
+// a file lock (create-exclusive) with stale takeover; fn runs only while held
+export async function withLock(name, fn, { staleMs = 180000, waitMs = 240000 } = {}) {
+  const lock = `${kitPath('sessions', { create: true })}/${name}.lock`
+  const end = Date.now() + waitMs
+  for (;;) {
+    try { writeFileSync(lock, String(process.pid), { flag: 'wx' }); break } catch {}
+    try { if (Date.now() - statSync(lock).mtimeMs > staleMs) { unlinkSync(lock); continue } } catch {}
+    if (Date.now() > end) throw new Error(`lock ${name} held for ${Math.round(waitMs / 1000)} s (${lock})`)
+    await sleep(250)
+  }
+  try { return await fn() } finally { try { unlinkSync(lock) } catch {} }
+}
+// the port of a key: a stable hash of it into the reserved range, collision-checked against the durable registry (.state),
+// so every run and agent of that target+tenant+user attaches to the same Chrome and two keys never share a port
+export async function sessionPort(target, tenant, as) {
+  const key = sessionKey(target, tenant, as)
+  return withLock('ports', async () => {
+    const f = kitPath('browser-ports', { create: true })
+    const reg = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : {}
+    if (reg[key]) return reg[key]
+    const used = new Set(Object.values(reg))
+    let port = 0
+    for (let i = 0, h = fnv(key) % PORT_SLOTS; i < PORT_SLOTS && !port; i++) { const p = PORT_BASE + ((h + i) % PORT_SLOTS); if (!used.has(p)) port = p }
+    if (!port) throw new Error(`sessionPort: no free port slot left (${f})`)
+    reg[key] = port
+    writeFileSync(`${f}.tmp`, JSON.stringify(reg, null, 1)); renameSync(`${f}.tmp`, f)
+    return port
+  })
+}
+const loggedIn = async (page, t) => {
+  if (!page.url().startsWith(t.web) || page.url().includes(t.webLogin.path)) return false
+  return !(t.webLogin.tokenKeys || []).length || !!(await token(page, t).catch(() => null))
+}
+// log in only when this browser is not logged in (checked again inside the lock: another agent may just have done it)
+async function ensureLogin(page, t, tenant, as, key) {
+  if (await loggedIn(page, t)) return
+  await withLock(`login-${keyFile(key)}`, async () => {   // others wait (<= 2 min), then restore the fresh session file
+    await page.goto(t.web + '/', { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {})
+    await sleep(1500)   // the app's auth guard redirects when the session is gone
+    if (await loggedIn(page, t)) return
+    if (!(await restoreLogin(page, t, tenant, as).catch(() => false))) await login(page, t, tenant, as)
+  }, { waitMs: 120000 })
+}
+// the session expired mid-script (a 401, the login page): restore the fresh session file or log in once (locked), then retry
+export async function relogin(s) { await ensureLogin(s.page, s.target, s.tenant, s.as, s.key) }
+export const ensureLoggedIn = (page) => (page.__qa ? ensureLogin(page, page.__qa.t, page.__qa.tenant, page.__qa.as, page.__qa.key) : Promise.resolve())
+
+// Attach to (or start) the shared headless Chrome of target/tenant/as and open your own tab, logged in. `port` is ignored:
+// the port belongs to the user (sessionPort), so every run and agent of that user shares one login.
+export async function session({ target, tenant, as = 'admin' } = {}) {
   if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
   const t = targetOf(target)
   tenant = tenant ?? t.defaultTenant ?? ''
+  const key = sessionKey(target, tenant, as)
+  const port = await sessionPort(target, tenant, as)
   BASE = t.web
   const bo = browserOpts(t)
   const VIEW = { width: Number(bo.width), height: Number(bo.height) }
@@ -175,7 +228,7 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
   try {
     browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS })
   } catch {
-    const dir = `${PROFILES}/${port}`
+    const dir = `${PROFILES}/${keyFile(key)}`
     mkdirSync(dir, { recursive: true })
     const child = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' })
     child.unref()
@@ -187,24 +240,22 @@ export async function session({ port, target, tenant, as = 'admin' } = {}) {
   }
   // Undecided notification permission makes many apps show a toast that swallows header clicks: grant it.
   try { await browser.defaultBrowserContext().overridePermissions(t.web, ['notifications', 'geolocation', 'clipboard-read', 'clipboard-write']) } catch {}
-  const pages = (await browser.pages()).filter((p) => !p.url().startsWith('devtools'))
-  const page = pages[0] || (await browser.newPage())
+  for (let i = 0; i < 600 && (await browser.pages()).filter((p) => p.url() !== 'about:blank').length >= MAX_TABS; i++) await sleep(500)
+  const page = await browser.newPage()   // your own tab: other agents of this user keep theirs
+  const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
+  await page.evaluateOnNewDocument((a) => { window.__qaAgent = a }, agentId).catch(() => {})
+  page.__qa = { t, tenant, as, key, agent: agentId }
   await page.setViewport(VIEW)
   if (bo.timezone) await page.emulateTimezone(bo.timezone).catch(() => {})
   page.setDefaultTimeout(20000)
   page.setDefaultNavigationTimeout(90000)
   const net = watch(page, t.apiPattern)
   if (t.webLogin) {
-    const who = await page.evaluate(() => localStorage.getItem('qa-session')).catch(() => null)
-    const tok = await token(page, t).catch(() => null)
-    const needTok = (t.webLogin.tokenKeys || []).length > 0
-    if (!page.url().startsWith(t.web) || page.url().includes(t.webLogin.path) || (needTok && !tok) || who !== `${tenant}/${as}`) {
-      const reused = who === null && (await restoreLogin(page, t, tenant, as).catch(() => false))
-      if (reused) await page.evaluate((m) => localStorage.setItem('qa-session', m), `${tenant}/${as}`)
-      else await login(page, t, tenant, as)
-    }
+    await page.goto(t.web + '/', { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {})
+    await ensureLogin(page, t, tenant, as, key)
   }
-  return { browser, page, net, target: t, done: async () => { try { browser.disconnect() } catch {} } }
+  return { browser, page, net, target: t, tenant, as, key, port,
+    done: async () => { try { await page.close() } catch {}; try { browser.disconnect() } catch {} } }
 }
 
 export async function killSession(port) {
@@ -232,6 +283,11 @@ const capped = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { 
 
 export async function go(page, path) {
   await page.goto(url(path), { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
+  const q = page.__qa
+  if (q && q.t.webLogin && page.url().includes(q.t.webLogin.path) && !String(path).includes(q.t.webLogin.path)) {
+    await ensureLogin(page, q.t, q.tenant, q.as, q.key)   // expired (another agent's login may have rotated it): once, then retry
+    await page.goto(url(path), { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
+  }
   await settle(page)
 }
 

@@ -504,16 +504,38 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
     $bf = Join-Path (Split-Path $k) 'pick-test.mjs'; [IO.File]::WriteAllText($bf, $bjs)
     $res = @(node $bf 2>&1)
     Expect 'browser.mjs pick: clear errors for a bad nth and a hidden element' ((@($res) -contains 'nth:true') -and (@($res) -contains 'box:true'))
+    # shared per-user browser (owner 2026-10-16): one registered port per target+tenant+user, the same on every call; logins are locked
+    $sjs = "import { sessionPort, sessionKey, withLock } from '$bm'`n" +
+      "const a1 = await sessionPort('stg', 'acme', 'admin'), a2 = await sessionPort('stg', 'acme', 'admin'), b = await sessionPort('stg', 'acme', 'viewer'), c = await sessionPort('prod2', 'acme', 'admin')`n" +
+      "console.log('port:' + (a1 === a2 && new Set([a1, b, c]).size === 3))`n" +
+      "const seen = []; const job = (n) => withLock('login-x', async () => { seen.push('in' + n); await new Promise((r) => setTimeout(r, 150)); seen.push('out' + n) })`n" +
+      "await Promise.all([job(1), job(2)]); console.log('lock:' + (seen.join(',') === 'in1,out1,in2,out2' || seen.join(',') === 'in2,out2,in1,out1'))`n" +
+      "console.log('key:' + (sessionKey('stg', 'acme', 'admin') !== sessionKey('stg', 'acme', 'viewer')))"
+    $sf = Join-Path (Split-Path $k) 'session-test.mjs'; [IO.File]::WriteAllText($sf, $sjs)
+    $res = @(node $sf 2>&1)
+    Expect 'browser.mjs: one port per target+tenant+user (stable, never shared), logins serialized by a lock' ((@($res) -contains 'port:true') -and (@($res) -contains 'lock:true') -and (@($res) -contains 'key:true'))
+    # the port is a stable hash of the key (the same after the registry is lost), the registry is durable (.state); go() on an
+    # expired session re-logs in once under the lock and retries; no logout or storage clear; a saved login is never dropped for age
+    $reg = Join-Path $k '.state/browser-ports.json'; $p1 = (Get-Content $reg -Raw | ConvertFrom-Json).'stg|acme|admin'; Remove-Item $reg
+    $gjs = "import { sessionPort, go } from '$bm'`n" +
+      "console.log('stable:' + ((await sessionPort('stg', 'acme', 'admin')) === $p1))`n" +
+      "const t = { web: 'https://app.test', webLogin: { path: '/login' } }; let cur = 'about:blank', n = 0, expired = true`n" +
+      "const page = { __qa: { t, tenant: 'acme', as: 'admin', key: 'stg|acme|admin' }, url: () => cur, on: () => {}, off: () => {}, waitForNetworkIdle: async () => {},`n" +
+      "  goto: async (u) => { n++; if (u.endsWith('/x') && expired) { cur = t.web + '/login'; expired = false } else cur = u } }`n" +
+      "await go(page, 'https://app.test/x'); console.log('relogin:' + (cur === 'https://app.test/x' && n === 3))"
+    $gf = Join-Path (Split-Path $k) 'go-test.mjs'; [IO.File]::WriteAllText($gf, $gjs)
+    $res = @(node $gf 2>&1); $bsrc = Get-Content (Join-Path $src 'skills/qa-kit/browser.mjs') -Raw
+    Expect 'browser.mjs: port stable from the key, registry durable; go() re-logs in once on an expired session; never logs out' ((@($res) -contains 'stable:true') -and (@($res) -contains 'relogin:true') -and (Test-Path $reg) -and $bsrc -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600' -and $bsrc -match 'MAX_TABS = 8' -and $bsrc -match 'browser\.newPage\(\)')
     [IO.Directory]::Delete((Join-Path $k 'skills/qa-kit/node_modules'))   # the junction only, never its target
   } else { 'SKIP browser.mjs pick (no puppeteer-core installed in skills/qa-kit)' }
-  # test-and-close: Chrome ports never collide across instances (45 items, w0 + w1); scoped retries write results-retry.json;
+  # test-and-close: web testers attach to the shared per-user Chrome (no ports, no killSession); scoped retries write results-retry.json;
   # publish passes -ExpectChecks
   $js5 = @'
 const ports = []
 const ck = (id, result) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: 'o', evidence: [], attempts: 1 })
 const mk = () => { const calls = []; return { calls, agent: async (prompt, o) => {
   calls.push({ label: o.label, prompt })
-  const m = /Your Chrome ports: (\d+)-(\d+)/.exec(prompt); if (m && /^test:/.test(o.label)) ports.push(+m[1])
+  if (/^test:/.test(o.label)) ports.push(/SHARED logged-in Chrome/.test(prompt) && /relogin\(s\)/.test(prompt) && !/killSession\(\)/.test(prompt) && !/session\(\{ port/.test(prompt))
   if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
   if (o.label === 'test:W0') return { code: 'W0', checks: [ck('C1', 'NOT_TESTED'), ck('C2', 'PASS'), ck('C3', 'PASS'), ck('C4', 'PASS')], findings: [], setup_changes: [], data_created: [] }
   if (/^(test|retest):/.test(o.label)) return { code: 'x', checks: [ck('C1', 'PASS')], findings: [], setup_changes: [], data_created: [] }
@@ -524,7 +546,7 @@ const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
 const a = mk(), b = mk()
 run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, items }, a.agent, () => {}, () => {}, null)
   .then(() => run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, instance: 'w1', items }, b.agent, () => {}, () => {}, null)).then(() => {
-  console.log(`ports:${ports.length === 90 && new Set(ports).size === 90 && ports.every((p) => p >= 20000 && p < 36000)}`)
+  console.log(`ports:${ports.length === 90 && ports.every(Boolean)}`)   // shared per-user Chrome (owner 2026-10-16): no per-run ports
   const s = a.calls.find((c) => c.label === 'retest-strong:W0'), cl = a.calls.find((c) => c.label === 'close:W0')
   console.log(`retry-file:${!!s && /results-retry\.json/.test(s.prompt) && /-Results results-retry\.json/.test(s.prompt) && /Never write/.test(s.prompt)}`)
   console.log(`expect:${!!cl && /-ExpectChecks 4/.test(cl.prompt) && /exit 4 = still waiting/.test(a.calls.find((c) => c.label === 'test:W0').prompt)}`)
@@ -534,6 +556,33 @@ run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, items }, a.agent, ()
   $res = @(node $jf 2>&1)
   foreach ($x in 'ports', 'retry-file', 'expect') { Expect "test-and-close: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
+  # owner 2026-10-16: a FAIL with saved evidence that one re-test does not reproduce stays FAIL (flaky); without evidence it may pass
+  $js6 = @'
+const calls = []
+const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
+async function agent(prompt, o) {
+  calls.push({ label: o.label, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^test:/.test(o.label)) return { code: 'A1', checks: [ck('C1', 'FAIL', { defect: 'own', evidence: ['A1-C1_01_500.json'] }), ck('C2', 'FAIL', { defect: 'own' }), ck('C3', 'PASS')], findings: [], setup_changes: [], data_created: [] }
+  if (/^verify:/.test(o.label)) return { verdicts: ['C1', 'C2'].map((id) => ({ id, outcome: 'refuted', confirmed: false, attempts: 1, observed: 'fine now', evidence: [`A1-${id}_verify_01_ok.json`], basis: 'saved _verify files' })) }
+  return { ok: true, output: 'published', signals: 0, lessonsChanged: [] }
+}
+const args = { runDir: 'C:/runs/R6', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+run(args, agent, () => {}, () => {}, null).then(() => {
+  const cl = calls.find((c) => c.label === 'close:A1')
+  console.log(`flaky:${!!cl && /"id":"C1"[^}]*"result":"FAIL"[^}]*"verify":"not reproduced \(flaky\)","flaky":true/.test(cl.prompt)}`)
+  console.log(`no-evidence:${!!cl && /"id":"C2"[^}]*"result":"PASS_WITH_NOTE"/.test(cl.prompt)}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'tc-flaky.mjs'; [IO.File]::WriteAllText($jf, $js6.Replace('__BODY__', $wf))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'flaky', 'no-evidence') { Expect "test-and-close verify: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
+  $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
+  $rk = Get-Content "$fk/K1/results.json" -Raw | ConvertFrom-Json; $rk.checks[0] | Add-Member flaky $true; $rk | ConvertTo-Json -Depth 8 | Set-Content "$fk/K1/results.json"
+  $null = Fin $fk 'K1'
+  Expect 'finalize: a flaky new defect goes to the [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PQ' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
   Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
   Remove-TestKit $k
 }

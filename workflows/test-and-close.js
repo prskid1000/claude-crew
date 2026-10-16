@@ -229,7 +229,7 @@ WHY YOU ARE DOING THIS
 ${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
 Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
 
-AGENT BOARD — join first: & ${ORCH} board join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
+AGENT BOARD — join first: & ${ORCH} board join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial (app lanes)>; stop on CLAIM/DUPLICATE; leave when done.
 
 RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED${LOCALENV(it) ? ' only after LOCAL ENV below' : ', which sends the task back to its developer'}; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
@@ -253,10 +253,12 @@ TOOLS (details: SKILL.md step 3)
 const WEB = (ports, it) => `
 BROWSER (web)
 - Your own headless Chrome via ${QA}/browser.mjs (read its header); no chrome-devtools MCP, no emulators/adb. Scripts in <outDir>/scripts:
-  import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, mark, saveNet, settle, token, killSession } from '${BROWSER}'
-  const s = await session({ port, target: '${tgt(it)}', tenant, as }) -> {page, net, done}; one port per tenant+user; end with await s.done().
+  import { session, relogin, go, text, clickText, clickSel, hoverSel, setInput, shot, mark, saveNet, settle, token } from '${BROWSER}'
+  const s = await session({ target: '${tgt(it)}', tenant, as }) -> {page, net, done}: your own tab in the SHARED logged-in Chrome of that
+  target+tenant+user (every run and agent of that user uses it); end with await s.done() (closes only your tab).
   s.net.failed = 4xx/5xx calls + JS errors (failure evidence).
-- Your Chrome ports: ${ports}; at most 2 open at once; killSession() each when you finish.`
+- Never killSession, never log out (another agent may be testing as the same user); a 401 or the login page mid-script:
+  await relogin(s) (locked: one login at a time), then retry the step. At most 2 tabs open at once.`
 
 // Lease id per worker instance: two workers on one lane must not share a lease (both drove the phone); distinct ids queue
 const LEASE = (L) => `qa-${OWNER}-${L.name}`
@@ -364,7 +366,7 @@ ${COMMON(it)}
 ${laneBlock(it, ports, L)}
 Return one verdict per check id, with attempts (how many times you ran it) and outcome:
 - confirmed: the behaviour really differs from Expected (confirmed=true).
-- refuted: not reproduced UNDER the first tester's conditions above (same login/session type, same time window - e.g. right after a
+- refuted: not reproduced UNDER the first tester's conditions above (a FAIL with saved evidence then stays FAIL, marked flaky: save your _verify evidence too) (same login/session type, same time window - e.g. right after a
   restart, deploy or idle period - and at least as many attempts; one clean run never refutes a FAIL) (confirmed=false).
 - inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).
 Every verdict needs basis: the _verify evidence files you saved, the log window you read, or the code path (file:line). A refuted
@@ -527,10 +529,12 @@ async function runItem(it, idx, L) {
         (/\blogs?\b|observability/i.test(basis) && /\b\d{1,2}:\d{2}/.test(basis))) && !/^none\b|\b(no|not|without|never)\b[^.;]{0,30}\b(logs?|code|file)\b/i.test(basis)
       if (outcome === 'refuted' && !verifyEv && !codeBasis) { outcome = 'inconclusive'; x.observed = `${x.observed} (no verify evidence or basis recorded)` }
       if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
+      const firstEv = (c.evidence || []).length > 0   // the first run's own saved evidence (before the verifier's is added)
       c.evidence = [...c.evidence, ...(x.evidence || [])]
       if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
       else if (outcome === 'inconclusive') { c.verify = 'inconclusive'; c.observed = `${c.observed} | Re-test inconclusive (conditions not recreated): ${x.observed}` }
-      else { c.verify = 'not reproduced'; c.result = 'PASS_WITH_NOTE'; c.observed = `First run reported a failure; an independent re-test under the same conditions did not reproduce it. Re-test: ${x.observed}. First run: ${c.observed}` }
+      else if (firstEv) { c.verify = 'not reproduced (flaky)'; c.flaky = true; c.observed = `${c.observed} | FLAKY: an independent re-test under the same conditions did not reproduce it; the first run's evidence stands. Re-test: ${x.observed}` }
+      else { c.verify = 'not reproduced'; c.result = 'PASS_WITH_NOTE'; c.observed = `First run reported a failure with no saved evidence; an independent re-test under the same conditions did not reproduce it. Re-test: ${x.observed}. First run: ${c.observed}` }
     }
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length

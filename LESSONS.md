@@ -273,7 +273,7 @@ Moved by learn (-Fixed / -Trim), verbatim, oldest first. Never read for work; /k
 - (fixed in kit) Reviewers could not tell what a FAIL screenshot was about: `annotate.ps1` (box / arrow / label on any screenshot, one call) and `ui.ps1 shotmark` (screenshot + box on elements by text / #id) now exist. Mark every FAIL screenshot.
 - (fixed in kit) finalize warned on valid files (pdf/csv exports, `_verify_` without nn) and skipped evidence saved outside shots\/evidence\ or given as absolute paths: finalize now collects listed evidence from anywhere under the run dir and drops helper scripts.
 - Small/cheap close agents sometimes refuse to publish; that's why `autoclose.ps1` exists — always start it for a run.
-- Keep web agents to ≤ 2 Chrome ports; killSession() when done — other sessions run Maven/Angular builds.
+- Keep web agents to ≤ 2 tabs in the shared per-user Chrome; s.done() when done, never killSession — other sessions run Maven/Angular builds.
 - A "Enable notifications" toast can cover the header's right side; browser.mjs grants the permission so it doesn't appear.
 - (fixed in kit) api.ps1 crashed on binary responses, and from Git Bash a /api/... path arrived as C:/Program Files/Git/api/... (MSYS conversion). Binary bodies save as <Save>.body.<ext> with a JSON text stub; MSYS-mangled paths are restored.
 - (fixed in kit) A run with args.skipClose still closed its task (read per item only), and finalize closed a task with NOT_TESTED checks. Run-level skipClose applies to every item; finalize keeps NOT_TESTED tasks open and comments why (run.json tracker.closeWithNotTested overrides).
