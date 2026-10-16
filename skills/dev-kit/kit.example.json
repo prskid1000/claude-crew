@@ -51,7 +51,7 @@
         ],
         "tasks": { "seed": { "repo": "backend", "cmd": "<command that loads the baseline fixtures>", "gated": true } },
         "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
-        "db": { "snapshot": "pg_dump -Fc shop > /tmp/{snapshot}.dump", "restore": "pg_restore --clean -d shop /tmp/{snapshot}.dump" },
+        "db": { "engine": "postgres", "name": "shop", "user": "shop", "_readme": "engine presets: postgres mysql mariadb sqlserver sqlite oracle mongodb; any hook set here wins" },
         "sandbox": { "services": ["api"], "max": 2, "portOffset": 100, "env": { "DB_PORT": "{+5432}" },
           "db": { "clone": "<script: a DB server on {+5432} with a copy of the test data>", "drop": "<script: stop it, delete its data>", "sweep": "<script: remove copies not in {keep}>" } }
       }
@@ -75,7 +75,7 @@
       "antigravity": { "fraction": 0.8, "source": "unverified: 0.8 x the model window" },
       "unknown": { "tokens": 160000, "source": "0.8 x 200k" } } },
   "repos": [
-    { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main",
+    { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "migrations": { "check": "<e.g. flyway validate>" },
       "deploys": [ { "target": "staging", "branch": "staging", "job": "deploy-staging" } ] },
     { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
       "deploys": [

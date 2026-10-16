@@ -89,10 +89,10 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   caller; overrides opt-in; key shared formatters by field; a round-trip test; list the callers in the MR and the testing goals.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
   never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.
-- **Migrations** (any tool: Liquibase, Flyway, Alembic, EF, Prisma, Django, none): only your assigned range; never edit a merged
-  migration; a rollback for every schema/data change where the tool has one; append-only changelog conflicts:
-  `python devtools.py keepboth <file>`; before every push `check -Step migrations` = ISSUES 0 (Liquibase; other tools: the
-  repo's own check). Local env DB drift (a leftover table, a missing user): report it, never "fix" the shared DB by hand.
+- **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
+  append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
+  (`repos[].migrations.check`, else Liquibase lbcheck; exit 5 = UNRUN: say so in the MR). Local env DB drift (a leftover
+  table, a missing user): report it, never "fix" the shared DB by hand.
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per
   repo,
   title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own

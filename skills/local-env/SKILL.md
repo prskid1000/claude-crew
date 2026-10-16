@@ -15,7 +15,7 @@ or you are the coordinator running / repairing an env.
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill local-env` |
-| `localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `migrations`, `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh`; `_daemon` / `_exec` are internal |
+| `localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `migrations`, `sql -Query` (read-only), `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh`; `_daemon` / `_exec` are internal |
 | `<kit>/skills/dev-kit/devtools.py` | run by `localenv.ps1` (`devtools.py migrations`) to class a deploy's migrations and plan reverts (`localenv.ps1 migrations` shows it); `migrations selftest` after changing it |
 
 ## Model
@@ -27,7 +27,9 @@ or you are the coordinator running / repairing an env.
   switch-over. Services stop after idle grace, at once under memory pressure; starts wait for RAM + CPU (the gate's floor).
 - **Migrations** (`localEnv.migrations` rules): LIGHT (reversible, small) run on the main env and are reverted exactly when the
   layer leaves; HEAVY (drops data, unbounded, no rollback, unauditable) get a sandbox (own build + DB copy, `sb<k>-<svc>`) or a
-  DB snapshot first. `deploy` / `status` print the class and why; `migrations -Branch <b>` = dry run with the revert plan.
+  DB snapshot first. Any tool (Liquibase, Flyway, Alembic, EF, Prisma, Django, Rails, Sqitch, goose, Knex, up/down SQL);
+  `db.engine` presets fill unset db hooks. `deploy` / `status` print the class and why; `migrations -Branch <b>` = dry
+  run with the revert plan.
 - Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed
   here.
 

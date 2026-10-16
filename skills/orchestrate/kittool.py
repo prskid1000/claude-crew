@@ -1011,7 +1011,7 @@ def update_readme(text, sections):
 # ==== 2b. kit-flow model + page
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
-VER = 8
+VER = 9
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -1166,7 +1166,7 @@ def code_control(p, src, raw, live, ln, lg, fname='', lns=None):
   loops = []
   rx = LOOP_HEAD.get(lg)
   for m in (rx.finditer(live) if rx else []):
-    kw = (m.group(1) if m.groups() and m.group(1) else m.group(0)).strip('(.{ %')
+    kw = (m.group(1) if m.groups() and m.group(1) else m.group(0)).strip('(.{ ')
     if kw in ('while', 'until') and re.search(r'\}\s*$', live[max(0, m.start() - 40):m.start()]):
       continue   # do { } while tail: the do loop carries it
     if lg == 'py':
