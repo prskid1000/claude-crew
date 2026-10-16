@@ -1,79 +1,79 @@
 export const meta = {
-  name: 'test-and-close',
-  description: 'Test-only flow: test deployed tasks against their human testing docs on a test environment (web pool + API pool + Android lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
+  name: 'testy',
+  description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs on a test environment (web pool + API pool + Android lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
   whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
   phases: [
-    { title: 'Prepare', detail: 'args.select only: a lead agent (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
-    { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
-    { title: 'Verify', detail: 'note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
-    { title: 'Close', detail: 'report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
+    { title: 'Prepare', detail: 'args.select only: checky lead (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
+    { title: 'Test', detail: 'one checky (role test) per guide: web/API pool in parallel, app guides one per phone' },
+    { title: 'Verify', detail: 'checky verify: note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
+    { title: 'Close', detail: 'checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
     { title: 'Learn', detail: 'signals + LESSONS.md updates (40-line cap) from this run' },
   ],
 }
 
-/*
-1. Select (Prepare phase, qa-kit L1, builds the run): args = { select: { statuses?: ['promoted', 'inTest'] (logical, default
-   ['inTest']), lists?, tasks?, exclude?, mine? }, target: '<targets.local.json name | kit.local.json qa.targets group>', kitDir, name?, mandate? }
-2. Short form (preferred): args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker for queued items)
-3. The full run.json object (write it to <runDir>/run.json too — qa.ps1 finalize reads it), plus runDir:
+/* args, one of:
+1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (logical, default ['inTest']),
+   lists?, tasks?, exclude?, mine? }, target: '<targets.local.json name | kit.local.json qa.targets group>', kitDir, name?,
+   mandate? }
+2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an EXTRA worker for queued items) }
+3. Full run.json (also written to <runDir>/run.json for qa.ps1 finalize) + runDir:
 {
-  runDir: '<runtime>/work/qa-runs/2026-10-01-epic-x',   // <runtime> = <kitDir>/.runtime (qa-kit SKILL.md L1)
-  kitDir: 'C:/work/.claude',               // absolute path of this kit (default '.claude', relative to the workspace root)
-  title: 'Product X epic',                   // used in doc names and bug titles
-  target: 'my-staging',                      // name in skills/qa-kit/targets.local.json
+  runDir: '<runtime>/work/qa-runs/2026-10-01-epic-x', // <runtime> = <kitDir>/.runtime
+  kitDir: 'C:/work/.claude', // absolute (default '.claude' under workspace root)
+  title: 'Product X epic', // doc names and bug titles
+  target: 'my-staging', // a targets.local.json name
   tester: 'Full Name',
-  mandate: ['<the user request, verbatim>', '...'],   // why the agents are doing this; stops them declining
-  context: 'deployed builds, tenants/accounts to use, existing test data, known changed screens ...',
-  contextFiles: ['C:/.../product-rules.md'],        // optional: files every tester reads first
-  envLines: ['Web: ...', 'API: ...'],                  // shown in the report
-  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // parent = the ask when a task has none
-  outOfScope: ['<channel>'],                 // default kit.local.json qa.outOfScope
+  mandate: ['<the user request, verbatim>', '...'], // stops agents declining
+  context: '<deployed builds, accounts, test data, changed screens>',
+  contextFiles: ['C:/.../product-rules.md'], // optional; testers read them first
+  envLines: ['Web: ...', 'API: ...'], // shown in the report
+  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },
+    // parent: the ask of parentless tasks
+  outOfScope: ['<channel>'], // default kit.local.json qa.outOfScope
   webParallel: 5, apiParallel: 5,
-  verify: true,                              // false = no independent re-test of FAILs (args or run.json)
-  learn: true,                               // 'auto' = learn step only when the run had failures / NOT_TESTED / retries / errors
-  lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
+  verify: true, // false: no re-test of FAILs (args or run.json)
+  learn: true, // 'auto': only after failures / NOT_TESTED / retries / errors
+  lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: '' } ],
   localEnv: '<optional: the run is on this local env (kit.local.json localEnv.envs)>', envFixCycles: 2, envFixWaitMinutes: 300,
-  // local item (it.localEnv || localEnv): NOT_TESTED is never final; still NOT_TESTED after the stronger retry -> ENV-FIX to the
-  // coordinator (orch.ps1 decide ask -Kind envfix), wait, retest; after envFixCycles the results are held (never failedTesting)
-  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional: the env of this item, default run.json target>', localEnv: '<optional>',
-             subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
-             retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
-             model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high',     // optional, the TEST step; default: retests on web/api -> sonnet
-             verifyModel: 'opus' } ],                                           // optional, the VERIFY step (default models.verify)
-  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' },   // '' = session default (retest '' = off)
-  // skipClose: test + verify only, the lead publishes (qa.ps1 finalize -Code); items sharing a task do not need it
-}
-*/
-// kit paths by name: the same names and values as skills/dev-kit/paths.json (kit-lint RUNTIME-MAP keeps them equal)
+  // local items (it.localEnv || localEnv): see ENV-FIX
+  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional; default run.json target>', localEnv: '<optional>',
+    subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
+    retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
+    model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high', // optional, TEST step (see modelFor)
+    verifyModel: 'opus' } ], // optional, VERIFY step (default models.verify)
+  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' }, // '' = session default (retest '' = off)
+  // skipClose: test + verify only; the lead publishes (finalize -Code); items sharing a task need none
+} */
+// kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
-let ARGS0 = args || {}   // recorded for a resume (recordArgs)
+let ARGS0 = args || {}   // for a resume (recordArgs)
 let R = ARGS0
-// PREPARE (args.select, no runDir): one lead agent builds the run (qa-kit L1), then the short form
+// PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
   phase('Prepare')
-  const { select: S, name: N, target: T, ...rest } = R   // T may be a group name, never an env: run.json holds the real target(s)
+  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
   if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
   const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
   const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
   const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
     statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tracking}`, runSettings: rest }
-  const prep = await agent(`You are the QA lead: build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
+  const prep = await agent(`You are checky (role lead): build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
 Follow ${K0}/skills/qa-kit/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
 Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,
     { label: 'prepare', phase: 'Prepare', schema: { type: 'object', properties: { runDir: { type: 'string' }, items: { type: 'number' },
       left: { type: 'array', items: { type: 'object' } },
-      summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] } })
+      summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] }, agentType: 'checky' })
   if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (qa-kit L1), launch with { runDir }')
   for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
   log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
   if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
-  ARGS0 = R = { ...rest, runDir: prep.runDir }   // recorded for a resume: reuses the prepared run instead of preparing again
+  ARGS0 = R = { ...rest, runDir: prep.runDir }   // so a resume reuses the prepared run
 }
 if (R.runDir && !Array.isArray(R.items)) {
-  // a small model once returned run.json truncated: validate, retry once on a stronger model
+  // validate: small models may truncate run.json
   const loadRun = async (model, label) => {
-    const got = await agent(`Read the file ${R.runDir}/run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
-      { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model, effort: 'low' })
+    const got = await agent(`STEP: read the file ${R.runDir}/run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
+      { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, agentType: 'checky', model, effort: 'low' })
     try { const f = JSON.parse((got && got.json) || ''); return Array.isArray(f.items) && f.items.length ? f : null } catch (e) { return null }
   }
   const file = (await loadRun('haiku', 'load-run')) || (await loadRun('sonnet', 'load-run-retry'))
@@ -81,10 +81,10 @@ if (R.runDir && !Array.isArray(R.items)) {
   R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
-// run-level skipClose holds every item (once read per item only, so it was silently ignored)
+// run-level skipClose holds every item
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
 if (!R.mandate || !R.mandate.length) log('WARNING: no mandate (the task owner words) in args or run.json: testers may decline or drift')
-const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
+const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // workspace .claude
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -94,7 +94,7 @@ const SWARM = `${KIT}/skills/android-swarm`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
-// ES module imports need a file:// URL of the absolute path
+// ES module imports need a file:// URL
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
   : `<file:/// URL of the absolute path of ${KIT}/skills/qa-kit/browser.mjs>`
 if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: args.items[], a <runDir>/run.json or args.select (header)')
@@ -103,12 +103,12 @@ const LANES = R.lanes || []
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
 const LEARN = R.learn === undefined ? true : R.learn
-// local env items: we own data, config, services: NOT_TESTED is never final (ENV-FIX cycles, bounded; then the coordinator decides)
+// local items: we own the env, so NOT_TESTED is never final
 const LOCALENV = (it) => (it && it.localEnv) || R.localEnv || ''
 const ENV_FIX_CYCLES = Number.isFinite(R.envFixCycles) ? R.envFixCycles : 2
 const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 9))   // 9 min slices: the tool timeout is 10
 const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run'
-// Memory seat + item claim (qa.ps1 seat): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
+// qa.ps1 seat: parallel counts are caps; free memory sets concurrency
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
   return `
@@ -120,10 +120,10 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
   exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
   Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
-// Model by stage (R.models overrides): verify + audit = sonnet; close, hold, release, follow-ups, learn = haiku.
+// R.models overrides; close, hold, release, follow-ups, learn = haiku
 const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high', ...(R.models || {}) }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-// TEST step: it.model / it.effort win; a web/API retest -> sonnet; first-time guides and app lanes keep the default model
+// it.model/effort win; web/API retest -> sonnet; else the default model
 function modelFor(it) {
   if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
   if (it.retest && it.lane !== 'app') return { model: 'sonnet' }
@@ -188,12 +188,12 @@ const AUDIT_SCHEMA = {
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }, lessonsChanged: { type: 'array', items: { type: 'string' } } }, required: ['signals', 'lessonsChanged'] }
 const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
-// Crash recovery: the FULL args go to the launch record (orch.ps1 launch -Self, FNV-1a checked): a resume needs them byte-exact
+// resumes need the full args byte-exact (orch.ps1 launch -Self)
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 async function recordArgs(wf, run, a, phaseName) {
   const json = JSON.stringify(a)
   const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
-  const prompt = `Record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
+  const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
@@ -201,15 +201,15 @@ ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}
 Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
   for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
-    const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, model, effort: 'low' })
+    const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model, effort: 'low' })
     if (r && r.ok) return true
   }
   log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
   return false
 }
-await recordArgs('test-and-close', R.instance ? `${RUNNAME}-${OWNER}` : RUNNAME, ARGS0, 'Test')
+await recordArgs('testy', R.instance ? `${RUNNAME}-${OWNER}` : RUNNAME, ARGS0, 'Test')
 
-// an item may name its own env (it.target, e.g. one per product); else the run's target
+// an item may name its own env (it.target)
 const tgt = (it) => (it && it.target) || R.target || ''
 function localBlock(it) {
   const e = LOCALENV(it)
@@ -221,15 +221,15 @@ LOCAL ENV "${e}" — we own its data, config, flags, services and migrations: NO
   status|use|logs|events -Env ${e}; not deployed: localenv.ps1 deploy -Env ${e} -Dir <a worktree of the MR branch> (dev.ps1 wt new);
   phone-only: a lane with the local-env APK (android-swarm); a missing integration: wire it locally or point the local service at a
   stub or the test env's service (say so in the lease note and setup_changes).
-- Only what the coordinator alone may do (localenv.ps1 up/down/refresh/drop, shared DB repair): NOT_TESTED with cause and env_fix =
-  the exact fix; the workflow asks the coordinator (ENV-FIX) and retests. Channels in OUT_OF_SCOPE stay OUT_OF_SCOPE.`
+- Only what kitty or the coordinator may do (localenv.ps1 up/down/refresh/drop, shared DB repair): NOT_TESTED with cause and env_fix =
+  the exact fix; the workflow raises ENV-FIX (kitty fixes it) and retests. Channels in OUT_OF_SCOPE stay OUT_OF_SCOPE.`
 }
 const COMMON = (it) => `${PATHS}
 WHY YOU ARE DOING THIS
 ${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
 Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
 
-AGENT BOARD — join first: & ${ORCH} board join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial (app lanes)>; stop on CLAIM/DUPLICATE; leave when done.
+AGENT BOARD — join first: & ${ORCH} board join -Type checky -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial (app lanes)>; stop on CLAIM/DUPLICATE; leave when done.
 
 RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED${LOCALENV(it) ? ' only after LOCAL ENV below' : ', which sends the task back to its developer'}; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
@@ -260,9 +260,9 @@ BROWSER (web)
 - Never killSession, never log out (another agent may be testing as the same user); a 401 or the login page mid-script:
   await relogin(s) (locked: one login at a time), then retry the step. At most 2 tabs open at once.`
 
-// Lease id per worker instance: two workers on one lane must not share a lease (both drove the phone); distinct ids queue
+// one lease id per worker: a shared lease let two workers drive one phone
 const LEASE = (L) => `qa-${OWNER}-${L.name}`
-// Extra workers start on another lane (w2 -> lane 2 ...)
+// extra workers start on another lane (w2 -> lane 2)
 const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) || 1) - 1)
 const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
@@ -290,7 +290,7 @@ function laneBlock(it, ports, L) {
 }
 
 function testPrompt(it, ports, L) {
-  return `You are a QA tester. Test ONE tester guide on the test environment and return a verdict per check.
+  return `You are checky (role test, kind ${it.kind || (it.retest ? 'regression' : 'task')}). Test ONE tester guide on the test environment and return a verdict per check.
 
 GUIDE: ${it.title}
 Guide text (read it fully first): ${it.guideFile}
@@ -321,7 +321,7 @@ returning early with untested checks will be rejected and re-run.`
 function auditPrompt(it, res) {
   const notes = res.checks.filter((c) => c.result === 'PASS_WITH_NOTE').map((c) => `- ${c.id} (${c.screen}): ${c.observed}`).join('\n')
   const finds = (res.findings || []).map((f, i) => `- F${i + 1}: ${f}`).join('\n')
-  return `You are a strict QA note auditor. Testers sometimes hide real defects in notes; catch them. Package ${it.code} (${it.title}).
+  return `You are checky (role verify: the note audit). Testers sometimes hide real defects in notes; catch them. Package ${it.code} (${it.title}).
 - PASS_WITH_NOTE is legitimate ONLY for (a) guide text out of date because later intended work changed the flow and the intent holds,
   or (b) a purely cosmetic difference while behaviour is correct.
 - A DEFECT is: 5xx or unexpected 4xx; crash; stuck/blocking flow; data changed wrongly or not saved; wrong records affected; broken
@@ -345,15 +345,14 @@ Findings:
 ${finds || '(none)'}`
 }
 
-// Attempts a refutation needs: the first tester's own count; when it is missing on an intermittent-looking FAIL (timeout, 50x,
-// cold start, stall, LLM-driven), 5, so one clean warm re-run comes out inconclusive instead of refuting it.
+// the tester's own count, else 5 for flaky-looking FAILs: one warm re-run is inconclusive
 const INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
 function attemptsNeeded(c) {
   return Math.max(c.attempts || 1, INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1)
 }
 
 function verifyPrompt(it, fails, ports, L) {
-  return `Verify these FAILED checks from scratch (your agent definition: be skeptical of the first tester, confirm a real difference from Expected).
+  return `You are checky (role verify). Verify these FAILED checks from scratch (your agent definition: be skeptical of the first tester, confirm a real difference from Expected).
 
 GUIDE: ${it.title}   Guide text: ${it.guideFile}
 Package ${it.code}. Output folder ${outDir(it)}; name new evidence <CODE>-<checkId>_verify_<desc>.jpeg/.json.
@@ -370,11 +369,13 @@ Return one verdict per check id, with attempts (how many times you ran it) and o
   restart, deploy or idle period - and at least as many attempts; one clean run never refutes a FAIL) (confirmed=false).
 - inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).
 Every verdict needs basis: the _verify evidence files you saved, the log window you read, or the code path (file:line). A refuted
-verdict with no _verify evidence and no code basis is counted as inconclusive.`
+verdict with no _verify evidence and no code basis is counted as inconclusive. Read the CURRENT code of the failing path; an
+intermittent server failure: read the server log / observability for the first tester's UTC window before you re-test. Keep or
+correct each FAIL's defect class (own / new).`
 }
 
 function finalPrompt(it, res) {
-  return `Publish the test results of package ${it.code}.${PATHS}
+  return `STEP (checky, role lead): publish the test results of package ${it.code}.${PATHS}
 1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
 2. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames -ExpectChecks ${res.checks.length}   (publishes nothing; renames
@@ -388,24 +389,31 @@ ${JSON.stringify(res)}
 Return ok=true/false and the script's output.`
 }
 
+// NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
+const CAUSE_NEXT = {
+  'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
+  'phone-only': 'take an Android lane (android-swarm acquire) or prove the server side through the API',
+  'undeployed': 'run qa.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
+  'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
+  'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }
+const causeHint = (c) => CAUSE_NEXT[c.cause] || 'find another way in (data, user, path, the API, the lead notes)'
 const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result === 'NOT_TESTED').length / r.checks.length : 1)
 const tag = (L) => (L ? '@' + L.name : '')
 
 async function runItem(it, idx, L) {
-  // pools at 0/100/200/300 (idx), instances 400 slots apart, offset by the run's hash: 1600 slots of 10 ports from 20000.
-  // One run's instances w0-w3 never share a port (the old 40-slot stride collided past ~20 items); two runs rarely (board claims)
+  // port slots: w0-w3 of a run never share ports; two runs rarely (board claims)
   const inst = parseInt(String(R.instance || 'w0').replace(/\D/g, ''), 10) || 0
   const p = 20000 + ((parseInt(fnv(String(R.runDir)), 16) % 1600 + inst * 400 + idx) % 1600) * 10
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
   let retried = false
-  let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
+  let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
   if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
   if (!res || ntShare(res) > 0.25) {
     log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
     const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
-    const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
+    const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
     if (again && !again.skipped && res) {
       for (const c2 of again.checks || []) {
         const i = res.checks.findIndex((c) => c.id === c2.id)
@@ -418,7 +426,7 @@ async function runItem(it, idx, L) {
   }
   if (!res) return { code: it.code, error: 'test agent returned nothing' }
   res.code = it.code
-  // unique check ids before audit and verify (two checks sharing an id would share one verdict): repeats get a b, c, ... suffix
+  // unique ids before audit/verify (a shared id shares one verdict)
   const seenIds = new Set()
   for (const c of res.checks) {
     let id = String(c.id || 'check'), k = 1
@@ -427,14 +435,14 @@ async function runItem(it, idx, L) {
     c.id = id; seenIds.add(id)
   }
 
-  // Note audit: real defects hidden in notes/findings become FAIL (own or new; new X checks) so they get verified and follow the result rule.
+  // Note audit: defects hidden in notes become FAIL (own, or new X checks)
   if (res.checks.some((c) => c.result === 'PASS_WITH_NOTE') || (res.findings || []).length) {
-    const a = await agent(auditPrompt(it, res), { label: `audit:${it.code}`, phase: 'Verify', schema: AUDIT_SCHEMA, agentType: 'qa-verifier', ...pick('audit') })
+    const a = await agent(auditPrompt(it, res), { label: `audit:${it.code}`, phase: 'Verify', schema: AUDIT_SCHEMA, agentType: 'checky', ...pick('audit') })
     for (const d of (a && a.reclassify) || []) {
       const c = res.checks.find((x) => x.id === d.id)
       if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.defect = d.own === false ? 'new' : 'own'; c.observed = `${c.observed} | Note audit: a defect, not a note: ${d.reason}` }
       else if (c && d.notExercised) {
-        // NOT EXERCISED: the untested part of Expected becomes its own check <id>n (NOT_TESTED; FAIL when its screen/endpoint is unreachable)
+        // NOT EXERCISED: untested Expected -> check <id>n (NOT_TESTED; FAIL if unreachable)
         let nid = `${c.id}n`, k = 1
         while (res.checks.some((x) => x.id === nid)) nid = `${c.id}n${++k}`
         res.checks.push({ id: nid, subtask_id: c.subtask_id, screen: c.screen, result: d.unreachable ? 'FAIL' : 'NOT_TESTED', ...(d.unreachable ? { defect: 'own' } : { cause: 'env-data' }),
@@ -443,7 +451,7 @@ async function runItem(it, idx, L) {
         c.observed = `${c.observed} | Note audit: the unexercised part moved to ${nid}`
       }
     }
-    // new audit checks continue after the highest X id already used (the guide's X1..Xn -> X(n+1))
+    // new audit checks continue after the highest X id
     let n = Math.max(0, ...res.checks.map((c) => +((/^X(\d+)$/.exec(c.id) || [])[1] || 0)))
     for (const d of (a && a.newDefects) || []) {
       res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', defect: 'new', what_was_done: d.what_was_done, observed: `${d.observed} (raised by the note audit)`, evidence: d.evidence || [] })
@@ -451,15 +459,14 @@ async function runItem(it, idx, L) {
     if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
   }
 
-  // Stronger retry (owner rule): every check still NOT_TESTED gets ONE more attempt by a qa-tester on models.retest (default the
-  // strongest, effort high), scoped to those checks, told what blocked the first attempt; only then does the result rule apply.
+  // Stronger retry (owner rule): ONE scoped models.retest attempt before the result rule
   const blocked = res.checks.filter((c) => c.result === 'NOT_TESTED')
   if (blocked.length && MODELS.retest) {
     log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
-    const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed}`).join('\n')
+    const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed} -> ${causeHint(c)}`).join('\n')
     const r2 = await agent(testPrompt({ ...it, only: [...new Set(blocked.map((c) => c.guideId || c.id))], scoped: true }, vports, L) +
       `\nSTRONGER RETRY: a first tester could not complete these checks. What blocked it:\n${why}\nWork around each blocker (other data, user, path, the API, the lead notes) and execute the check; NOT_TESTED again only when truly impossible, with the cause.`,
-      { label: `retest-strong:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
+      { label: `retest-strong:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'checky', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
     for (const c2 of (r2 && !r2.skipped && r2.checks) || []) {
       const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
       if (i < 0 || c2.result === 'NOT_TESTED') continue
@@ -467,30 +474,29 @@ async function runItem(it, idx, L) {
     }
     retried = true
   }
-  // ENV-FIX (local items): checks still NOT_TESTED -> the coordinator fixes the env (orch.ps1 decide ask -Kind envfix, orchestrate
-  // E4), the workflow waits, then retests them; at most ENV_FIX_CYCLES, then the results are held for the coordinator (never failedTesting)
+  // ENV-FIX (orchestrate E4): coordinator fixes the env, we retest; after ENV_FIX_CYCLES held, never failedTesting
   let envFix = null
   for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES; cyc++) {
     const open = res.checks.filter((c) => c.result === 'NOT_TESTED')
     if (!open.length) break
     const need = open.map((c) => `${c.id}: ${c.env_fix || c.cause || 'unknown'}: ${c.observed}`).join(' | ').slice(0, 1200).replace(/'/g, "''").replace(/[\r\n]+/g, ' ')
-    const asked = await agent(`Run exactly this in PowerShell and return ok=true with the line it printed, nothing else:${PATHS}
+    const asked = await agent(`STEP: run exactly this in PowerShell and return ok=true with the line it printed, nothing else:${PATHS}
 & ${ORCH} decide ask -Kind envfix -Run '${RUNNAME}' -Agent 'qa-${it.code}' -Item '${it.code}' -Contracts '${R.runDir}/lead-notes.md' -Question 'Local env ${LOCALENV(it)}, item ${it.code}: fix so these checks can run: ${need}'`,
-      { label: `envfix-ask:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+      { label: `envfix-ask:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
     const id = (/\b(e-\d{14}-[\w-]+)/.exec((asked && asked.output) || '') || [])[1]
     if (!id) { envFix = { cycles: cyc, state: 'not raised', output: asked ? asked.output : 'agent returned nothing' }; break }
     log(`${it.code}: ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
     let ans = null
     for (let t = 0; t < ENV_FIX_TRIES && !ans; t++) {
-      const w = await agent(`Run exactly this in PowerShell (tool timeout 600000) and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
-& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, { label: `envfix-wait:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+      const w = await agent(`STEP: run exactly this in PowerShell (tool timeout 600000) and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
+& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, { label: `envfix-wait:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
       if (w && w.ok) ans = w.output
     }
     envFix = { id, cycles: cyc, state: !ans ? 'no answer' : /:\s*cannot\b/i.test(ans) ? 'coordinator cannot' : 'fixed', answer: ans || '' }
     if (envFix.state !== 'fixed') break
     const r3 = await agent(testPrompt({ ...it, only: [...new Set(open.map((c) => c.guideId || c.id))], scoped: true }, vports, L) +
       `\nENV FIX DONE: the coordinator fixed the local env for these checks (${id}): ${ans}\nExecute each check now; NOT_TESTED again only with cause and env_fix.`,
-      { label: `envfix-retest:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...(MODELS.retest ? { model: MODELS.retest, effort: MODELS.retestEffort || 'high' } : {}) })
+      { label: `envfix-retest:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'checky', ...(MODELS.retest ? { model: MODELS.retest, effort: MODELS.retestEffort || 'high' } : {}) })
     for (const c2 of (r3 && !r3.skipped && r3.checks) || []) {
       const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
       if (i < 0 || c2.result === 'NOT_TESTED') continue
@@ -508,7 +514,7 @@ async function runItem(it, idx, L) {
   const fails = res.checks.filter((c) => c.result === 'FAIL')
   if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
   if (fails.length && VERIFY) {
-    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'qa-verifier', ...(it.verifyModel ? { model: it.verifyModel } : pick('verify')), ...(it.effort ? { effort: it.effort } : {}) })
+    const v = await agent(verifyPrompt(it, fails, vports, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'checky', ...(it.verifyModel ? { model: it.verifyModel } : pick('verify')), ...(it.effort ? { effort: it.effort } : {}) })
     const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
     for (const c of fails) {
       const x = byId[c.id]
@@ -516,20 +522,20 @@ async function runItem(it, idx, L) {
       let outcome = x.outcome || (x.confirmed ? 'confirmed' : 'refuted')
       // fewer attempts than the first tester never refutes an intermittent FAIL (LLM-driven / timing checks).
     // (no apostrophes inside nested template literals: kit-lint's string stripper loses track of them)
-      // attempts missing on an intermittent-looking FAIL counts as 5 (attemptsNeeded), so one warm re-run is inconclusive.
+      // see attemptsNeeded
       const need = attemptsNeeded(c)
       if (outcome === 'refuted' && need > 1 && (x.attempts || 1) < need) {
         outcome = 'inconclusive'
         x.observed = `${x.observed} (${x.attempts || 1} attempt(s) against ${c.attempts ? `${need} by the first tester` : `${need} needed for an intermittent failure`})`
       }
-      // a refutation needs something to stand on: its own _verify evidence or a code / log basis (refutations without either were wrong)
+      // a refutation needs own _verify evidence or a code / log basis
       const basis = String(x.basis || '').trim()
       const verifyEv = (x.evidence || []).some((e) => /_verify[_.]/i.test(String(e)))
       const codeBasis = (/[\w-]+\.(java|kt|ts|tsx|js|mjs|py|cs|go|rb|php|sql|xml|html)(:\d+)?\b/i.test(basis) ||
         (/\blogs?\b|observability/i.test(basis) && /\b\d{1,2}:\d{2}/.test(basis))) && !/^none\b|\b(no|not|without|never)\b[^.;]{0,30}\b(logs?|code|file)\b/i.test(basis)
       if (outcome === 'refuted' && !verifyEv && !codeBasis) { outcome = 'inconclusive'; x.observed = `${x.observed} (no verify evidence or basis recorded)` }
       if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
-      const firstEv = (c.evidence || []).length > 0   // the first run's own saved evidence (before the verifier's is added)
+      const firstEv = (c.evidence || []).length > 0   // the first run's own evidence (before the verifier's)
       c.evidence = [...c.evidence, ...(x.evidence || [])]
       if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
       else if (outcome === 'inconclusive') { c.verify = 'inconclusive'; c.observed = `${c.observed} | Re-test inconclusive (conditions not recreated): ${x.observed}` }
@@ -541,9 +547,9 @@ async function runItem(it, idx, L) {
   const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
   const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new')
   if (it.skipClose || holdLocal) {
-    // verdicts stay on disk for the lead (qa.ps1 finalize -Code); held.json = finished for supervise and workers
+    // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
     const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator decides (fix + qa.ps1 retest, or finalize -AcceptNotTested)` : 'publish left to the lead (skipClose)'
-    await agent(`Write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
+    await agent(`STEP (checky, role lead): write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
@@ -553,18 +559,18 @@ Replace <now> with the current UTC time (ISO 8601) when you write it (workflow s
    off-standard evidence files and rewrites results.json to match) and return its output. "a truncated copy" = write file 1 again,
    complete, and re-run. Other exit 1 (evidence missing, a name it could not fix, duplicate check ids): return ok=true anyway with that
    output (the lead fixes them before publishing).`,
-      { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
+      { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; ${holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
     return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
   }
-  let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
-  if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'sonnet' })
+  let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
+  if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
   log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs qa.ps1 finalize for it (qa-kit L3)]'))
   const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(c.observed || '')) || !(fin && fin.ok)
   return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 
-// Simple worker pools: web and API pools run in parallel; app guides run one per phone.
+// web and API pools run in parallel; app guides run one per phone
 async function pool(list, size, offset, laneOf) {
   const out = []
   let next = 0
@@ -573,11 +579,11 @@ async function pool(list, size, offset, laneOf) {
       const k = next++
       out[k] = await runItem(list[k], offset + k, laneOf ? laneOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
     }
-    // App lane has nothing left to test: give its phone lease back now (the phone shuts down unless another agent waits for it)
+    // app lane done: return the lease (phone shuts down unless someone waits)
     const L = laneOf ? laneOf(w) : null
     if (L && L.name) {
-      await agent(`Run exactly this in PowerShell and report its output, nothing else: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)}`,
-        { label: `release:${L.name}`, phase: 'Close', model: 'haiku', effort: 'low' }).catch(() => null)
+      await agent(`STEP: run exactly this in PowerShell and report its output, nothing else: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)}`,
+        { label: `release:${L.name}`, phase: 'Close', agentType: 'checky', model: 'haiku', effort: 'low' }).catch(() => null)
       log(`lane ${L.name} (${L.serial}) released`)
     }
   }
@@ -599,7 +605,7 @@ const parts = await Promise.all([
 ])
 const all = parts.flat().filter(Boolean)
 
-// App follow-ups: PENDING web/api checks get an app item <code>A on the phones now, appended to run.json first (finalize reads it)
+// App follow-ups: PENDING web/api checks -> app item <code>A, in run.json first (finalize reads it)
 for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a phone lane, but args.lanes is empty: the task stays open (add lanes, qa.ps1 retest)`)
 const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
   const it = R.items.find((x) => x.code === r.code)
@@ -609,28 +615,28 @@ const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length
     extra: `${it.extra || ''} The web/API pass (${it.code}) left ${r.pending.join(', ')} PENDING for a device: test exactly those on your phone. Earlier results: ${outDir(it)}/results.json.` }
 }).filter(Boolean) : []
 if (followUps.length) {
-  await agent(`Append these items to the "items" array of ${R.runDir}/run.json without changing anything else, in PowerShell:
+  await agent(`STEP: append these items to the "items" array of ${R.runDir}/run.json without changing anything else, in PowerShell:
 $f = '${R.runDir}/run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
 foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j.items += $n } }
 [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
-Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
   log(`app follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
   all.push(...(await pool(followUps, LANES.length, 300, laneFor)).filter(Boolean))
 }
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
-// LEARN: signals + LESSONS.md; learn 'auto' = only after something eventful (a clean run gets the cleanup)
+// LEARN 'auto': only after something eventful; a clean run gets the cleanup
 phase('Learn')
-// every finished run ends with a kit retro (orchestrate E10)
-const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
+// every finished run ends with a retro (orchestrate E10)
+const retroDue = (results) => { log('RETRO DUE: run /tidy (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/tidy (orchestrate E10)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
-  await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
-& ${ORCH} cleanup -Quiet`, { label: 'cleanup', phase: 'Learn', model: 'haiku', effort: 'low' })
+  await agent(`STEP: run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
+& ${ORCH} cleanup -Quiet`, { label: 'cleanup', phase: 'Learn', agentType: 'kitty', model: 'haiku', effort: 'low' })
   log(`learn: skipped (${LEARN === false ? 'learn: false' : 'auto: clean run'}); cleanup ran`)
   return retroDue(all)
 }
-const learned = await agent(`You maintain the kit's memory. This QA run just finished.${PATHS}
+const learned = await agent(`Kind retro (learn step): you maintain the kit's memory. This /testy run just finished.${PATHS}
 Outcome (JSON):
 ${JSON.stringify(all).slice(0, 60000)}
 
@@ -641,6 +647,6 @@ ${JSON.stringify(all).slice(0, 60000)}
    learn -Skill <skill> -Lesson "(n×) <one actionable line>" (an org-specific one goes to LESSONS.local.md by itself); a recurring one:
    learn -Bump "<words>"; a lesson the kit now handles: learn -Fixed "<words>"; then learn -Skill <skill> -Trim. Don't touch SKILL.md.
 3. & ${ORCH} cleanup -Quiet (only kit-created leftovers), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
-Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, ...pick('learn'), effort: 'low' })
+Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return retroDue(all)
