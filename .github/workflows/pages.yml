@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Lint (0 problems, 0 counted flow issues: the same gate as the pre-commit hook)
+      - name: 'Lint (0 problems, 0 counted flow issues: the same gate as the pre-commit hook)'
         run: python -X utf8 skills/orchestrate/kittool.py lint --no-flow
       - name: Build the page (public files only)
         run: python -X utf8 skills/orchestrate/kittool.py flow --public --out _site/index.html
