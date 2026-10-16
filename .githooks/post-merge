@@ -1,5 +1,5 @@
 #!/bin/sh
-# Kit post-merge hook (enabled by kit.ps1 setup: core.hooksPath .githooks): after git pull / merge, regenerates the live clone's
+# Kit post-merge hook (enabled by orch.ps1 setup: core.hooksPath .githooks): after git pull / merge, regenerates the live clone's
 # kit-flow page (kittool.py flow). Never opens it, never fails the merge.
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do

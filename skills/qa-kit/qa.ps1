@@ -1,27 +1,22 @@
 <#
-qa.ps1: the qa-kit commands in one file (qa-kit SKILL.md tester steps 1-6, lead steps L1-L3). Run from pwsh 7:
-  & <kit>/skills/qa-kit/qa.ps1 <verb> [args]
-Verbs:
-  seat acquire|release ...                        memory seat + item claim (the workflow tells testers how)
-  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json] is it live on a test environment
-  api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-Save <name> -OutDir <abs dir>]   exit 1 = HTTP >= 400 or no answer
-  finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish a package (result rule)
+qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/qa-kit/qa.ps1 <verb> [args]
+  seat acquire|release|status ...                  memory seat + item claim
+  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env?
+  api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-Save <name> -OutDir <abs dir>]
+  finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   ui dump|tap|tapid|tapxy|type|key|swipe|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL = your phone)
-Inputs: targets.local.json (logins), kit.local.json (lib.ps1), the run folder. Outputs: text / JSON (-Json), evidence files.
-Exit codes: 0 ok · 1 problem found (evidence check failed, not deployed, publish refused, api HTTP >= 400) · 2 usage error ·
-  3 seat ALREADY (another worker has the item) · 4 seat still waiting (run the same command again).
+In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
+Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer) · 2 usage ·
+  3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
-# ---------------------------------------------------------------- report builder (finalize)
-# Builds the QA results report: Build-QaReport = styled HTML (tuned for Google Docs import: inline styles only, tables for layout),
-# Build-QaReportMd = the same content as Markdown (reports.type "markdown"; evidence links relative to <code>/report.md).
-# Used by finalize (same file):  $html = Build-QaReport -Title ... -Code ... -Item ... -Res ... -Map ... -Run ...
-# $Map.files[<name>] = { id (Drive file id, gdocs only), link }; $Map.local = evidence stays in the run folder.
-# Task links use Get-TrackerUrl (dev-kit/lib.ps1).
+# ---- report builder: Build-QaReport -Title -Code -Item -Res -Map -Run = HTML for Google Docs import (inline styles, tables
+# for layout); Build-QaReportMd = Markdown (links relative to <code>/report.md). $Map.files[<name>] = { id (gdocs), link };
+# $Map.local = evidence stays in the run folder.
 function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
 
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
@@ -32,16 +27,14 @@ $script:Palette = @{
   FAIL           = @{ fg = '#991b1b'; bg = '#fee2e2'; label = 'FAIL' }
   NOT_TESTED     = @{ fg = '#374151'; bg = '#f3f4f6'; label = 'NOT TESTED' }
   PENDING        = @{ fg = '#1e40af'; bg = '#dbeafe'; label = 'PENDING' }
-  OUT_OF_SCOPE   = @{ fg = '#6b7280'; bg = '#f9fafb'; label = 'OUT OF SCOPE' }   # a channel the org never tests (kit.local.json qa.outOfScope)
+  OUT_OF_SCOPE   = @{ fg = '#6b7280'; bg = '#f9fafb'; label = 'OUT OF SCOPE' }   # never-tested channel (qa.outOfScope)
 }
 $script:Font = "font-family:Arial,Helvetica,sans-serif"
 $script:Cell = "border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;font-size:10pt"
-# check evidence <CODE>-<checkId>[_verify]_<nn>[m]_<what> ("m" / "-marked": an annotated copy) or setup evidence <code>-<nn>-<what>
-# (nn 00 = before the checks, 90+ = cleanup); reference/evidence-standard.md section 2.
-# Keep in sync with web/browser.mjs EVIDENCE_NAME (the same literal there, with /i) and $script:EvidenceExt below;
-# qa.ps1 finalize -FixNames relies on it too.
+# check evidence <CODE>-<checkId>[_verify]_<nn>[m]_<what> (m / -marked = annotated), setup <code>-<nn>-<what>; nn 00 = before,
+# 90+ = cleanup (evidence-standard.md 2). Sync with browser.mjs EVIDENCE_NAME (/i), $script:EvidenceExt, -FixNames.
 $script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$'
-# the evidence types qa.ps1 finalize publishes (matched against the file extension, dot included); anything else listed is reported as unsupported
+# types finalize publishes (extension with dot); others listed = unsupported
 $script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'
 
 # "F2-T4_02_after-edit.jpeg" -> "After edit"; legacy names fall back to the file name
@@ -53,14 +46,14 @@ function Caption($file) {
   }
   return $file
 }
-# an unknown or missing result (a tester typo) renders plain instead of failing the whole publish
+# unknown result (tester typo) renders plain, never fails the publish
 function Pal($r) { $p = $script:Palette[[string]$r]; if ($p) { $p } else { @{ fg = '#111827'; bg = '#ffffff'; label = $(if ($r) { [string]$r } else { '(no result)' }) } } }
 function Chip($k, $n) { $p = $script:Palette[$k]; "<td style='background:$($p.bg);color:$($p.fg);padding:8px 14px;text-align:center;$script:Font;border:1px solid #ffffff'><span style='font-size:18pt;font-weight:bold'>$n</span><br><span style='font-size:8pt;font-weight:bold'>$($p.label)</span></td>" }
 function Img($map, $f, $w) {
   $src = if ($map.files[$f].id) { "https://drive.google.com/uc?export=view&amp;id=$($map.files[$f].id)" } else { $map.files[$f].link }
   "<p style='margin:4px 0 12px 0'><img src='$src' width='$w'><br><span style='font-size:9pt;color:#6b7280'>$(Esc (Caption $f)) · <a href='$($map.files[$f].link)'>$(Esc $f)</a></span></p>"
 }
-# phone screenshots (PNG from qa.ps1 ui, or names with an app/phone word or an L<n> lane check) are narrow
+# phone shots (ui PNG, app/phone word or L<n> check in the name) render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
 
 function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl, $DocNote) {
@@ -167,7 +160,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   $h.ToString()
 }
 
-# Markdown version of the same report (reports.type "markdown"): GitHub/GitLab render it in a comment, and it reads fine as a file
+# Markdown version: renders in GitHub/GitLab comments and as a file
 function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl) {
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
   function Lnk($f) { if ($Map.files[$f]) { "[$f]($(([string]$Map.files[$f].link) -replace ' ', '%20'))" } else { $f } }
@@ -213,22 +206,14 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o -join "`n"
 }
 
-# ---------------------------------------------------------------- seat: memory seat + item claim for a tester
-# QA seats: lets a QA run use as many parallel agents as memory allows, and makes extra workers safe.
-#   - Memory seat: an agent waits (fair FIFO) until free RAM minus the GB the memory gate promised (running + queued builds/phones)
-#     minus its need stays >= the gate's keepFreeGB, then takes a seat; it releases
-#     the seat when done. So the effective number of QA agents grows when memory is free (e.g. phones shut down) and shrinks when it's tight,
-#     whatever the run's webParallel / apiParallel cap says.
-#   - Item claim: the first worker to claim <run>/<code> owns the item; another worker instance (an extra test-and-close launched by the
-#     coordinator for queued items) gets ALREADY and skips it. Claims end when the item's finalize.json exists, when the holder
-#     process is gone, or after 6 h only when the holder is unknown (a live holder waiting on an ENV-FIX keeps its claim).
-#
-#   $S = '<workspace>/.claude/skills/qa-kit/qa.ps1 seat'
-#   & $S acquire -Agent test:GT7 -Kind web [-RunDir <runDir> -Code GT7 -Owner w1]   # exit 0 = go; 4 = still waiting, call again; 3 = ALREADY (skip item)
-#   & $S release -Agent test:GT7
-#   & $S status                                                                        # seats, waiters, claims, free RAM
-# Needs per kind: web 1.5 GB (a Chrome session), api 0.4 GB, verify = same as its kind. keepFreeGB = the memory gate's (-KeepFreeGB,
-# env CLAUDE_GATE_KEEP_FREE_GB, kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB). -WaitMinutes (default 8) keeps one call under the tool timeout: on exit 4 just run the same command again.
+# ---- seat: memory seat + item claim for a tester
+# Memory seat: wait (fair FIFO) until free RAM - gate-promised GB - need >= keepFreeGB, so QA parallelism follows free memory
+# whatever webParallel / apiParallel say. Item claim: the first claimer of <run>/<code> owns it, others get ALREADY; it ends
+# at finalize.json, when the holder is gone, or after 6 h if the holder is unknown.
+#   $S = '<kit>/skills/qa-kit/qa.ps1 seat'
+#   & $S acquire -Agent test:GT7 -Kind web [-RunDir <runDir> -Code GT7 -Owner w1]   # 0 go · 4 waiting, call again · 3 ALREADY
+#   & $S release -Agent test:GT7;  & $S status   # status: seats, waiters, claims, free RAM
+# Need: web 1.5 GB, api 0.4 GB, verify = its kind. -WaitMinutes (default 8) stays under the tool timeout.
 function Invoke-Seat {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
@@ -239,13 +224,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $wait, $claims | Out-Null
-# One memory floor for the machine: the gate's keepFreeGB (same order and default as dev.ps1 gate: env CLAUDE_GATE_KEEP_FREE_GB,
-# kit.local.json gate.keepFreeGB, else 15% of RAM, min 6 GB)
+# floor = gate keepFreeGB: -KeepFreeGB, env CLAUDE_GATE_KEEP_FREE_GB, kit.local.json gate.keepFreeGB, else 15% RAM (min 6 GB)
 if (-not $KeepFreeGB) {
   $KeepFreeGB = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
 }
-# GB the memory gate has already promised: running gated builds/phones (their estimate minus what their process tree uses now,
-# as dev.ps1 gate counts it) plus builds queued in the gate (their full need: a seat must not take the memory they wait for)
+# gate-promised GB: running builds/phones (estimate minus current use) + queued builds (full need)
 $gateLedger = Join-Path (Get-KitTemp) 'claude-build-gate'
 function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
   $run = @(Get-ChildItem $Ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid })
@@ -272,7 +255,7 @@ function Locked([scriptblock]$b) {
 }
 function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
-# a seat whose holder process is gone (crash, session restart) or older than 3 h is released here, never left blocking (setup -Migrate, capacity)
+# a seat whose holder is gone or > 3 h old is released, never left blocking (setup -Migrate, capacity)
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3 -or (Test-KitHolder $o) -eq $false) { Remove-Item $_.FullName -Force } else { $o } }) }
 $holder = Get-KitHolder
 
@@ -301,7 +284,7 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code\held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         if (Test-Path $cf) {
           $c = Get-Content $cf -Raw | ConvertFrom-Json
-          $alive = Test-KitHolder $c   # $true live, $false gone, $null unknown (no holder recorded): only an unknown holder expires after 6 h
+          $alive = Test-KitHolder $c   # $true live, $false gone, $null unknown (only that expires after 6 h)
           if ($c.owner -ne $Owner -and ($alive -eq $true -or ($null -eq $alive -and ((Get-Date) - [datetime]$c.since).TotalHours -lt 6))) { return "ALREADY: $Code is being tested by worker $($c.owner)" }   # a dead holder's claim is free
         }
         ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content $cf
@@ -320,8 +303,7 @@ switch ($Action) {
         $mine | Add-Member -Force beat (Get-Date).ToString('s'); $mine | ConvertTo-Json | Set-Content $wf    # heartbeat: dead waiters must not block the queue
         $ahead = @(Get-ChildItem $wait -Filter *.json | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
             Where-Object { $_.agent -ne $Agent -and [datetime]$_.since -lt [datetime]$mine.since -and ((Get-Date) - [datetime]$(if ($_.beat) { $_.beat } else { $_.since })).TotalMinutes -lt 3 })
-        # seats taken in the last 3 min have not allocated their memory yet: count them as promised
-        # plus what the memory gate has promised to running and queued builds / phones
+        # promised = seats < 3 min old (memory not allocated yet) + gate's running/queued builds and phones
         $promised = [double](@(Seats | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 }) | Measure-Object need -Sum).Sum + 0
         $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
         $left = (FreeGB) - [double]$promised - $need
@@ -342,44 +324,32 @@ switch ($Action) {
 }
 }
 
-# ---------------------------------------------------------------- deployed: is a merged MR live on a test environment (from the CI / host)
-# Is a merged MR live on a test environment? Answers from the CI, not from memory: the MR's merge commit must be on
-# the deploy branch AND on a pipeline on that branch whose deploy job succeeded. "On" = an ancestor, or a squash-merged deploy MR
-# into that branch whose source head held the merge commit, or (squashed "merge main
-# into staging" / cherry-picks) the MR is on its target branch and none of its files differ between that branch and the deploy ref.
-#
+# ---- deployed: is a merged MR live on a test env (asks CI / host)
+# Live = merge commit on the deploy branch AND on a pipeline there with a green deploy job. "On" = ancestor, or a squash-merged
+# deploy MR whose source head held it, or (squash "merge main", cherry-pick) no MR file differs from its target branch.
 #   $D = '<kit>/skills/qa-kit/qa.ps1 deployed'
-#   & $D -Mrs backend!812,web!415                     # compact: one summary line + a line per MR/target NOT live; exit 0 when every MR is live
-#   & $D -Mrs backend!812,web!415 -Detail             # one line per MR per deploy target, live ones too
-#   & $D -Mrs backend!812 -Target staging -Json       # machine-readable
-#
-# Deploy targets come from dev-kit/kit.local.json: repos[].deploys = [{ "target": "staging", "branch": "staging",
-# "job": "deploy-staging" }]. A repo deployed by hand (no CI job) uses { "target": ..., "awsStack": "<CloudFormation stack>", "region": ... }:
-# live when the stack was updated after the merge. A repo without deploys reports NO-TARGET.
-# A repo deployed by hand onto a host: { "target": ..., "ssh": { "host": "user@host", "key": "<key file>", "repoDir": "<repo checkout on
-# the host>", "appDir": "<installed app dir>", "subdir": "<optional: part of repoDir that is installed>", "exclude": ["<optional
-# extra glob per path part>"], "service": "<optional systemd unit, for its start time>" } }: live when the MR's commit is an ancestor
-# of the host checkout's HEAD AND every file git tracks under repoDir/subdir (`git ls-files`) has the same sha256 under appDir (read
-# with `sudo -n`; one ssh call per host+commit, BatchMode). Untracked or ignored runtime files in appDir (logs, node_modules,
-# generated assets) never count, so `exclude` is only needed for tracked files the install leaves out on purpose. Without a way to
-# check, { "target": ..., "manual": true } reports MANUAL (confirm with the owner or an ssh check), never NOT-DEPLOYED.
-# An app repo tested on the emulator lanes: { "target": ..., "laneApk": true } (or the path of an app.json): live when the MR's merge
-# commit is an ancestor of the commit the lane APK was built from (android-swarm apk/app.json, written by swarm.ps1 build).
-# Use it before holding a QA item as "not deployed yet", and orch.ps1 supervise -AutoFix uses it to flag promoted tasks that went live.
+#   & $D -Mrs backend!812,web!415           # summary + a line per MR/target NOT live; exit 0 = all live
+#   & $D -Mrs backend!812,web!415 -Detail   # a line per MR per target
+#   & $D -Mrs backend!812 -Target staging -Json
+# Targets: kit.local.json repos[].deploys [{ target, branch, job }]; none -> NO-TARGET. Hand-deployed:
+#   { awsStack, region }: stack updated after the merge.
+#   { ssh: { host, key, repoDir, appDir, subdir? (installed part), exclude? (globs per path part), service? (start time) } }:
+#     commit is an ancestor of the host HEAD AND every git-tracked file under repoDir/subdir has the same sha256 under appDir.
+#   { manual: true } -> MANUAL (ask the owner), never NOT-DEPLOYED.  { laneApk: true | <app.json> }: lane APK commit holds it.
+# orch.ps1 supervise -AutoFix uses it to flag promoted tasks that went live.
 function Invoke-Deployed {
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets (orch deploy plan: prod)
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
 function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
-# memoised: supervise checks many MRs on the same branches/pipelines each round (unmemoised: 100+ sequential API calls, > 2 min)
+# memoised: supervise asks about many MRs per round
 $memo = @{}
 function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
 function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
-# A squashed "merge main into staging" (or a cherry-pick) carries the MR's content without its commit: ancestry says no.
-# Fallback: the MR is on its target branch (e.g. main) and none of its files differ between that branch and $ref.
+# squash "merge main" / cherry-pick: no ancestry; live if on its target branch and no file differs from $ref
 function ContentOn($p, $mr, $sha, $ref) {
-  # cheap guard first (supervise runs this for many MRs): a ref last committed before the merge cannot hold it
+  # cheap guard: a ref last committed before the merge cannot hold it
   $head = Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))"
   if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
   if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
@@ -389,9 +359,8 @@ function ContentOn($p, $mr, $sha, $ref) {
   if (-not $cmp) { return $false }
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
-# A squash-merged deploy MR (<source> -> <deploy branch>) lands one new commit whose parent is the old deploy head: the MR's commit is
-# no ancestor, and ContentOn fails once a later, undeployed commit on the source touches the same files. Live when a deploy MR into
-# $branch, merged after this MR, had a source head holding the MR's commit and its own landing commit is on $ref.
+# squash-merged deploy MR: no ancestry, ContentOn fails after later source edits; live if a deploy MR into $branch merged
+# after this MR had a source head holding the commit and its landing commit is on $ref
 function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
   if (-not $branch -or -not $mr.merged_at) { return $false }
   $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -401,11 +370,11 @@ function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
   }
   $false
 }
-# not on the branch / no deploy job: NOT-DEPLOYED only when the git host answers for the branch, else UNKNOWN (a failed call is no proof)
+# NOT-DEPLOYED only if the host answers for the branch, else UNKNOWN
 function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "the git host did not answer for $($d.branch): try again" } } else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = $detail } } }
 function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
-# App repos (laneApk): the stamp android-swarm swarm.ps1 build writes next to the lane APK (apk/app.json: branch, commit, appDir, built).
-# laneApk = true -> <swarm.config.json outDir, else Get-KitPath android-swarm>/apk/app.json; a string = the path of that app.json.
+# laneApk stamp (apk/app.json: branch, commit, appDir, built): true -> <swarm.config.json outDir | Get-KitPath
+# android-swarm>/apk/app.json; a string = its path
 function LaneApk($d) {
   $f = if ($d.laneApk -is [string]) { $d.laneApk } else {
     $sc = Join-Path (Split-Path $PSScriptRoot) 'android-swarm/swarm.config.json'
@@ -414,18 +383,15 @@ function LaneApk($d) {
   }
   if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json }
 }
-# Local ancestry in the checkout the APK was built from: $true / $false, $null when that checkout or the APK commit is not there.
-# A sha unknown to the checkout (exit 128) cannot be an ancestor of a commit the checkout holds: $false.
+# $true / $false, $null if checkout or commit missing; unknown sha (exit 128) -> $false
 function LocalAncestor($dir, $sha, $commit) {
   if (-not $dir -or -not (Test-Path $dir)) { return $null }
   git -C $dir cat-file -e "$commit^{commit}" 2>$null; if ($LASTEXITCODE) { return $null }
   git -C $dir merge-base --is-ancestor $sha $commit 2>$null
   $LASTEXITCODE -eq 0
 }
-# Hand-deployed host: one ssh call per (host, dirs, commit), memoised. The script goes over base64 so no quoting or CRLF survives
-# Windows argument passing. Returns @{ head; anc; rc; diff; svc; files } or $null when the host cannot be reached.
-# Compared: only the files git tracks under repoDir/subdir (minus the optional `exclude` globs, matched against each path part),
-# sha256 in the checkout vs the same relative path under appDir (sudo -n). rc 0 = all match, 1 = DIFF lines, 2 = could not compare.
+# one memoised ssh call per (host, dirs, commit), script as base64 (survives Windows quoting/CRLF). Returns @{ head; anc; rc;
+# diff; svc; files } or $null. Tracked files minus `exclude`, sha256 vs appDir (sudo -n): rc 0 match, 1 DIFF lines, 2 failed.
 function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
 function SshState($s, $sha) {
   $sub = ([string]$s.subdir).Trim('/')
@@ -464,7 +430,7 @@ function SshState($s, $sha) {
   $memo[$k] = $r; $r
 }
 
-# `pwsh -File qa.ps1 deployed -Mrs 'a!1','b!2'` hands over the quotes literally; strip them and split on commas/spaces.
+# pwsh -File keeps the quotes of 'a!1','b!2': strip, split on commas/spaces
 $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
@@ -473,13 +439,13 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
   $mr = Api "projects/$p/merge_requests/$iid"
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
-  # fast-forward merges have no merge commit: the MR head (sha) is what landed on the target
+  # fast-forward: the MR head sha landed
   $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
   if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
   $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
-    if ($d.laneApk) {   # app repo, no deploy pipeline: live on the test phones when the lane APK was built from a commit holding the merge
+    if ($d.laneApk) {   # app repo: live if the lane APK commit holds the merge
       $ai = LaneApk $d
       if (-not $ai -or -not $ai.commit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = 'no lane APK stamp (android-swarm apk/app.json): build the APK with swarm.ps1 build' }; continue }
       $apk = "APK $($ai.commit) ($($ai.branch), built $($ai.built))"
@@ -489,7 +455,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
       else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the lane ${apk}: rebuild it (swarm.ps1 build) from a branch holding the merge" } }
       continue
     }
-    if ($d.ssh) {   # deployed by hand onto a host: the host checkout holds the merge AND the installed app matches it
+    if ($d.ssh) {   # host checkout holds the merge AND the installed app matches
       $s = $d.ssh; $st = SshState $s $sha
       if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }
       $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
@@ -501,8 +467,8 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
       continue
     }
     if ($d.manual) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'MANUAL'; detail = 'deployed by hand: confirm with the owner or an ssh check' }; continue }
-    if ($d.awsStack) {   # deployed by hand (no CI job): live only if the CloudFormation stack was updated after the merge
-      $ra = if ($d.region) { @('--region', $d.region) } else { @() }   # no region configured: the AWS CLI profile / AWS_REGION default
+    if ($d.awsStack) {   # no CI job: live if the stack updated after the merge
+      $ra = if ($d.region) { @('--region', $d.region) } else { @() }   # else AWS CLI default region
       $upd = aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
       if (-not $upd) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)" }; continue }
       $at, $st, $created = "$upd" -split '\s+'
@@ -515,7 +481,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
     }
     if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
     $hit = $null
-    # a pipeline created before the merge cannot contain it: skip those without asking for their jobs
+    # a pipeline created before the merge cannot hold it: skip its jobs
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
       $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
       if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
@@ -535,19 +501,12 @@ else {
 exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
 }
 
-# ---------------------------------------------------------------- api: call the API of a target as a test user, -Save evidence
-# Call any HTTP API as any configured test user, and optionally save {request, response} JSON as evidence.
-# Targets (base URLs, auth style, users) come from ..\targets.local.json (copy targets.example.json).
-#
-#   $Q = '<workspace>/.claude/skills/qa-kit'
-#   & $Q api -Path '/api/projects?size=5'                                   # default target, user 'admin'
+# ---- api: call a target's API as a test user; -Save {request, response} evidence. Targets: ..\targets.local.json.
+#   & $Q api -Path '/api/projects?size=5'   # $Q = <kit>/skills/qa-kit; default target, user 'admin'
 #   & $Q api -Target my-staging -As tester2 -Tenant acme -Method POST -Path '/api/projects' -Body '{"x":1}'
 #   & $Q api -Path '/api/projects/42' -Save T3_project_after_edit -OutDir <run>/T3/evidence
-#
-# Prints "HTTP <status>" then the response body. Logs in once per target+tenant+user and caches the token
-# (re-login on 401). Auth types: login (json or form body, token from tokenField), token (static), basic, none.
-# -Save never stores passwords: only method, URL, request body, status, response headers and body; secret-named headers and
-# JSON fields (password, token, secret, api key, cookie, authorization) at any depth become '[redacted]'. -OutDir: absolute path.
+# Prints "HTTP <status>" + body; token cached per target+tenant+user (re-login on 401). Auth: login (json/form, tokenField),
+# token, basic, none. -Save redacts secret headers/JSON fields at any depth. -OutDir: absolute.
 function Invoke-Api {
 param(
   [string]$Method = 'GET',
@@ -562,17 +521,16 @@ param(
   [int]$TimeoutSec = 180
 )
 $ErrorActionPreference = 'Stop'
-# an object bound to -OutDir arrives as its type name ('System.Collections.Hashtable', '@{meta=; ...}': a $o/$O clash in the
-# caller) and became a folder under the current directory: only an absolute path is accepted
+# a hashtable bound to -OutDir arrives as its type name and made a relative folder: absolute only
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
-# Git Bash (MSYS) rewrites a '/api/x' argument to 'C:/Program Files/Git/api/x' before pwsh sees it: undo that
+# Git Bash turns '/api/x' into 'C:/Program Files/Git/api/x': undo
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
 $here = $PSScriptRoot
 $cfgFile = Join-Path $here 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - copy targets.example.json and fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
 if (-not $Target) { $Target = $cfg.default }
-# a QA run pins its targets (test-and-close sets KIT_QA_TARGETS): a local retest once sent load to a shared staging server
+# a QA run pins its targets (KIT_QA_TARGETS): no stray load on shared staging
 $pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
 $t = $cfg.targets.$Target
@@ -623,7 +581,7 @@ function Call($tk) {
   $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = 'application/json' }
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
-  # response headers go into the evidence too (Content-Disposition, Location, caching ...); cookies redacted
+  # response headers into the evidence; cookies redacted
   function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)cookie|authorization|token|key|secret|password') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
   try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
@@ -636,7 +594,7 @@ $res = Call $tok
 if ($res[0] -eq 401 -and $t.auth.type -eq 'login') { $tok = Login; $sw.Restart(); $res = Call $tok }
 $sw.Stop()
 $status, $content, $ctype, $rhead = $res
-# binary responses (image/PDF/file downloads) come back as byte[]: keep the bytes as a file, put a text stub in the evidence/output
+# binary response (byte[]): saved as a file, a stub in the evidence
 if ($content -is [byte[]]) {
   $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
   if ($Save) {
@@ -649,10 +607,10 @@ if ($content -is [byte[]]) {
 
 
 if ($Save) {
-  # Evidence envelope per reference/evidence-standard.md: meta + request (secrets redacted) + response
+  # evidence-standard.md envelope: meta + request (redacted) + response
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
-  # secrets in JSON bodies (a login's password, a response's access_token) are redacted at any depth: evidence is published
+  # JSON secrets redacted at any depth: evidence is published
   function Redact($o) {
     if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $script:secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
     if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $script:secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
@@ -671,45 +629,21 @@ if ($Save) {
 }
 "HTTP $status"
 $content
-if (-not $status -or [int]$status -ge 400) { exit 1 }   # callers checking the exit code saw success on a 500
+if (-not $status -or [int]$status -ge 400) { exit 1 }   # else a 500 looked like success
 }
 
-# ---------------------------------------------------------------- finalize: publish one tested package (report, tracker comment, result rule)
-# Publishes one tested package of a QA run: the report, one comment per tracker subtask with the report and its failed / untested
-# checks, then the result rule: all pass -> closed; an own check FAILED or checks not tested -> failedTesting (back to the dev flow,
-# no new task); a new / unexpected defect -> one "[Bug] <ask> — new defects (n)" task per original ask. Safe to re-run: never
-# comments, files or closes a subtask twice.
-#
-# Report output (kit.local.json "reports": { "type": ... }, or -Report):
-#   gdocs     Drive folder with all evidence + a Google Doc report (anyone with the link can view), via the gws CLI;
-#             reuses the folder and uploads only new files on a re-run. Default when gws is installed.
-#   markdown  <code>/report.md (+ report.html) next to the evidence in the run folder; the tracker comment carries the
-#             report (GitHub/GitLab: its text; ClickUp/Jira: the file attached; none: logged). Default without gws.
-# Tracker: skills/dev-kit/dev.ps1 tracker (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
-#
-#   & <workspace>/.claude/skills/qa-kit/qa.ps1 finalize -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing] [-AcceptNotTested]
-#   & <workspace>/.claude/skills/qa-kit/qa.ps1 finalize -RunDir <run dir> -Code <package code> -Check [-FixNames]
-#
-# Evidence check (runs first, before any upload or tracker call; reference/evidence-standard.md): every file listed in results.json
-# must exist (in shots\, evidence\ or findable in the run dir), else it throws and nothing is published. -AllowMissing publishes
-# anyway, dropping the missing names and noting them in the check's "observed". On publish, off-standard names are only a warning.
-# -Check runs only this check (no copies, uploads or tracker calls) and exits 1 with the list when evidence is missing, a file in
-# shots\/evidence\ has an off-standard name (a suggested standard name is printed for each), a listed file has a type that is
-# never published ("listed but unsupported type"), a cited file is empty (0 bytes; -FixNames never renames it) or a check id appears twice in results.json; else exit 0. -Check -FixNames first renames each off-standard file to its suggested name and rewrites the
-# references in results.json (each rename is printed); duplicate check ids are never fixed automatically.
-#
-# Run dir layout (see the qa-kit SKILL.md):
-#   run.json                       { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus}, driveParent, items[] }
-#   <code>/results.json            { code, checks[], findings[], setup_changes[], data_created[] }
-#   <code>/shots/*.jpeg|png  <code>/evidence/*.json|jsonl|ndjson|log (types: $script:EvidenceExt above)
-# Writes <code>/report.html (+ report.md for markdown) and <code>/finalize.json. tracker.closeStatus may be a logical status (closed).
-# Subtasks that still have PENDING checks (tested later in another lane) get a comment but stay open. A FAIL is the task's own
-# (results.json check "defect": "own", the default for guide checks) or new ("defect": "new", the default for X checks): new
-# defects go to <run>/bugs.json + the ask's [Bug] task, appended to an open one the ask already has (never a task this run tests).
-# failedTesting falls back to inProgress + a comment when the board has no such status. OUT_OF_SCOPE checks never count.
-# Local env items (item or run.json localEnv): NOT_TESTED alone keeps the task open (ENV-FIX: we own the env, orchestrate E4);
-# -AcceptNotTested (the coordinator's call after the ENV-FIX cycles) applies failedTesting as on a shared test env.
-# The summary line says what happened per subtask (closed / failed testing / open: why).
+# ---- finalize: publish one tested package: report, a comment per tracker subtask, result rule (step 4). Re-run safe.
+# Report (reports.type or -Report): gdocs = Drive folder + Google Doc via gws (re-run uploads only new files; default with
+# gws) · markdown = <code>/report.md (+ .html), carried by the tracker comment (text or attachment; default).
+#   & qa.ps1 finalize -RunDir <run> -Code <code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing] [-AcceptNotTested]
+#   & qa.ps1 finalize -RunDir <run> -Code <code> -Check [-FixNames]
+# Evidence check first: a results.json file found nowhere throws (nothing published) unless -AllowMissing (noted in
+# "observed"). -Check only checks: exit 1 on missing, off-standard (suggested name), unsupported, 0-byte or duplicate-id
+# entries. -FixNames renames off-standard files and their references; duplicate ids stay manual.
+# Run dir: run.json { title, target, tester, envLines[], tracker{list,parent,owner,closeStatus}, driveParent, items[] },
+#   <code>/results.json { code, checks[], findings[], setup_changes[], data_created[] }, <code>/shots, <code>/evidence.
+# Writes report.html (+ .md), finalize.json. FAIL defect "own" (guide default) / "new" (X default); new -> bugs.json + [Bug]
+# task. Local env: NOT_TESTED alone keeps the task open (ENV-FIX, E4) unless -AcceptNotTested.
 function Invoke-Finalize {
 param(
   [Parameter(Mandatory)][string]$RunDir,
@@ -720,8 +654,8 @@ param(
   [switch]$FixNames,
   [switch]$AllowMissing,
   [switch]$AcceptNotTested,
-  [int]$ExpectChecks = -1,              # the workflow's check count: a truncated copy of results.json is refused
-  [string]$Results = 'results.json',    # -Check only: a scoped retry's results-retry.json (renames only the files it cites)
+  [int]$ExpectChecks = -1,              # a truncated results.json is refused
+  [string]$Results = 'results.json',    # -Check: a retry's file (renames only its own)
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
   [string]$Date = (Get-Date -Format 'd MMM yyyy')
 )
@@ -740,8 +674,7 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   $m = "$Code`: $Results has $(@($res.checks).Count) check(s), the workflow sent $ExpectChecks - a truncated copy; nothing published. Write the JSON again, complete."
   if ($Check) { $m; exit 1 } else { throw $m }
 }
-# Evidence entries may be absolute paths or files saved outside shots\/evidence\ (verify dirs, the item root): copy them into evidence\
-# so they upload; helper scripts, source files and code notes testers list (.mjs/.ts/.tsx/.java, or text with spaces) are not evidence and are dropped.
+# copy evidence outside shots\/evidence\ (absolute paths, verify dirs) into evidence\ to upload; scripts/source dropped
 if (-not $Check) { New-Item -ItemType Directory -Force "$D\evidence" | Out-Null }
 $lost = [Collections.Generic.List[object]]::new()   # evidence listed in results.json that exists nowhere
 foreach ($c in @($res.checks)) {
@@ -755,17 +688,17 @@ foreach ($c in @($res.checks)) {
       $leaf } | Select-Object -Unique)
 }
 
-# 0. Evidence check before anything is uploaded or posted (reference/evidence-standard.md)
+# 0. Evidence check before any upload or post
 $files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match $script:EvidenceExt })
 $badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
 if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
-# listed evidence of a type that is never published (it would silently stay on disk): convert it or list a supported file instead
+# a never-published listed type would silently stay on disk: convert or list a supported file
 $badTypes = @(@(foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and [IO.Path]::GetExtension([string]$e) -notmatch $script:EvidenceExt) { "$($c.id): $e" } } }) | Select-Object -Unique)
 if ($badTypes.Count -and -not $Check) { Write-Warning "evidence listed but of an unsupported type (not published): $($badTypes -join '; ')" }
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 if ($Check) {
-  # A standard name for an off-standard file: <CODE>-<check>[_verify]_<nn>_<what>.<ext> when a check id is in the name or a check
-  # lists the file, else the setup form <CODE>-<nn>-<what>.<ext>; nn from the name (a free one when absent or taken).
+  # standard name <CODE>-<check>[_verify]_<nn>_<what>.<ext> (check id in the name or a check lists it), else
+  # <CODE>-<nn>-<what>.<ext>; nn from the name, else a free one
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
   $refBy = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and -not $refBy.ContainsKey([string]$e)) { $refBy[[string]$e] = [string]$c.id } } }
   $taken = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -789,7 +722,7 @@ if ($Check) {
       if ($c1 -and $c1 -match $script:EvidenceName) { return $c1 }
       '{0}-{1:D2}-{2}{3}' -f $Code, $n, $what, $ext   # setup form: no check id, or one that does not fit the pattern
     }
-    if ($nn -lt 0) {   # no number in the name: the next one after this check's (or the setup files') highest
+    if ($nn -lt 0) {   # no number: next free one
       $pre = if ($id) { "$Code-$id$(if ($verify) { '_verify' })_" } else { "$Code-" }
       $used = @($taken | Where-Object { $_.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { if ($_.Substring($pre.Length) -match '^(\d{2})m?[_-]') { [int]$Matches[1] } })
       $nn = if ($used.Count) { ($used | Measure-Object -Maximum).Maximum + 1 } elseif ($id) { 1 } else { 0 }
@@ -800,7 +733,7 @@ if ($Check) {
     if ($cand -notmatch $script:EvidenceName -or $taken.Contains($cand)) { return $null }
     $null = $taken.Add($cand); $cand
   }
-  # a cited file of 0 bytes is a failed capture, not evidence: reported below and never renamed (a standard name would make it look valid)
+  # 0-byte cited file = failed capture: reported, never renamed (it would look valid)
   $cited = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e) { $cited[[string]$e] = [string]$c.id } } }
   $emptyFiles = @($files | Where-Object { $_.Length -eq 0 -and $cited.ContainsKey($_.Name) })
   $emptyNames = @($emptyFiles | ForEach-Object Name)
@@ -862,7 +795,7 @@ function TaskUrl($id) { Get-TrackerUrl $id }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }
 $P = '{"fields":"id,webViewLink","supportsAllDrives":true}'
 
-# 1. Evidence: Drive folder + uploads (gdocs) or the run folder itself (markdown; links are relative to <code>/report.md)
+# 1. Evidence: Drive folder + uploads (gdocs) or the run folder (markdown)
 $map = [ordered]@{ folderId = $null; folderLink = $null; files = [ordered]@{}; local = ($rtype -ne 'gdocs') }
 if ($map.local) {
   $map.folderLink = $D
@@ -886,7 +819,7 @@ foreach ($x in $files) {
   if ($r.id) { $map.files[$x.Name] = @{ id = $r.id; link = $r.webViewLink } }
 }
 
-# 2. Styled report (the report builder at the top of this file)
+# 2. Styled report
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId) { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
@@ -894,7 +827,7 @@ $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object {
 if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
 Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D\report.html" -Encoding utf8
 
-# 3. The report: Google Doc (gdocs) or report.md in the run folder (markdown)
+# 3. Report: Google Doc (gdocs) or report.md (markdown)
 $null = Test-KitProse -Kind result-note -Path "$D\results.json"
 $null = Test-KitProse -Kind qa-report -Text (Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-String)
 $reportFile = $null
@@ -910,29 +843,24 @@ if ($map.local) {
   else { throw "Google Doc create failed and there is no previous report - fix gws auth and re-run (nothing was posted to the tracker)" }
 }
 
-# 4. Tracker, per subtask. Result rule (qa-kit SKILL.md step 5, reference/human-testing-doc.md):
-#   all checks pass (PASS / PASS_WITH_NOTE / OUT_OF_SCOPE)      -> closed
-#   a FAIL of the task's own expected behaviour (defect 'own')   -> failedTesting: the task goes back to the dev flow, no new task
-#   checks not tested completely (NOT_TESTED)                    -> failedTesting too, the untested checks and why in the comment
-#   a new / unexpected defect (defect 'new': regression, found on the way, X checks) -> ONE [Bug] task per original ask (the tested
-#     task's tracker parent, else run.json tracker.parent), appended to an open one this ask already has; the task itself closes
-#     when its own checks pass
-#   PENDING (tested next in another lane) or a sibling item not finalized yet -> stays open for now
+# 4. Tracker per subtask, result rule (SKILL.md step 5): all PASS / PASS_WITH_NOTE / OUT_OF_SCOPE -> closed · own FAIL or
+# NOT_TESTED -> failedTesting (no new task) · new defect -> ONE [Bug] per original ask (open one appended) · PENDING /
+# sibling not finalized -> open
 $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @() }
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name, mapped by tracker.statuses
 $isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # a local env item (ENV-FIX rule)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # github/gitlab use tracker.repo; clickup/jira need a list/project
-# own vs new: the tester's 'defect' field wins; without it an X check (off-script) is new, a guide check is the task's own
+# own vs new: tester's 'defect' wins; else X check = new, guide check = own
 function Test-NewDefect($c) { if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [string]$c.id -match '^X\d' }
-# the markdown both the bug task and the failedTesting comment use: orch.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
+# orch.ps1 bugbrief parses this: "### <id> — <screen>" + "**Saw:**"
 function Format-Checks($list, [string]$heading) {
   if (-not @($list).Count) { return '' }
   "## $heading`n`n" + ((@($list) | ForEach-Object {
         $ev = (@($_.evidence) | Where-Object { $_ } | ForEach-Object { if ($map.files[$_]) { "[$_]($($map.files[$_].link))" } else { $_ } }) -join ', '
         "### $($_.id) — $($_.screen)$(if ($_.flaky) { ' (flaky)' })`n**Steps:** $($_.what_was_done)`n`n**Saw:** $($_.observed)$(if ($_.cause) { " (cause: $($_.cause))" })`n`n**Independent re-test:** $(if ($_.verify) { $_.verify } else { 'not re-tested' })`n`n**Evidence:** $(if ($ev) { $ev } else { 'none' })`n" }) -join "`n") + "`n"
 }
-# the last item on a shared task decides: sibling items' failed / untested checks count too
+# last item on a shared task decides: siblings' checks count too
 function SiblingHold($id) {
   $own = 0; $nt = 0; $err = $null; $pend = 0
   foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
@@ -942,7 +870,7 @@ function SiblingHold($id) {
   }
   [pscustomobject]@{ fail = $own; notTested = $nt; bugError = $err; pending = $pend }
 }
-# the original ask of a tested task = its tracker parent; else run.json tracker.parent; else none (top level)
+# original ask = tracker parent, else run.json tracker.parent, else top level
 $script:askCache = @{}
 function Get-Ask($st) {
   if ($script:askCache.ContainsKey($st.id)) { return $script:askCache[$st.id] }
@@ -952,9 +880,8 @@ function Get-Ask($st) {
   $script:askCache[$st.id] = [pscustomobject]@{ id = $pid_; name = $pname }
   $script:askCache[$st.id]
 }
-# one [Bug] task per original ask: <run>/bugs.json holds one group per ask (task id + its items' new defects); an open
-# "[Bug] ..." subtask the ask already has (an earlier run; never a task this run tests) is appended to; a mutex keeps parallel
-# finalize runs to one task per ask
+# one [Bug] per ask: <run>/bugs.json groups, appended to the ask's open [Bug] subtask (never one under test); a mutex
+# serialises parallel runs
 function Add-NewDefects($st, [object[]]$defects) {
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
   $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
@@ -992,7 +919,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     [pscustomobject]@{ id = $s.id; url = $s.url }
   } finally { if ($own) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
-# failedTesting: the logical status (tracker.statuses); a board without it -> inProgress + the comment says "failed testing"
+# no failedTesting status on the board -> inProgress + "failed testing" in the comment
 function Set-FailedTesting($rec, $st) {
   $ok = TrySay { Set-TrackerStatus $st.id 'failedTesting'; $true } "set $($st.id) failedTesting"
   if ($null -eq $ok) {
@@ -1008,14 +935,13 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
   if ($sib.pending) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
-  # local env: untested checks alone are an env fix to make (ENV-FIX), not a failed test, unless the coordinator accepts them
+  # local env: untested alone = ENV-FIX, unless the coordinator accepts it
   if ($isLocal -and -not $AcceptNotTested -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + retest, or finalize -AcceptNotTested"; return }
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested) { Set-FailedTesting $rec $st; return }
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is tracked nowhere
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
-# one item's tracker step at a time per run: two siblings of a shared task finalizing together both saw the other unfinished
-# (waitingFor) and nobody resolved it; the record is saved after each subtask (a crash never re-posts a comment)
+# one tracker step per run at a time (siblings deadlocked waiting on each other); record saved per subtask
 $fh = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
 $fmx = [Threading.Mutex]::new($false, "Global\kit-finalize-$fh")
 $fOwn = $true; try { $fOwn = $fmx.WaitOne(600000) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
@@ -1034,13 +960,13 @@ foreach ($st in @($item.subtasks)) {
   $rec = [ordered]@{ id = $st.id; pass = $pass; total = $mine.Count; fail = $ownFails.Count; newDefects = $newDefects.Count; notTested = $nt; outOfScope = $oos; pending = $pend; bug = $null; closed = $false; failedTesting = $false }
   $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
   if ($NoTracker) {
-    # a dry run must not overwrite a posted record (the next real run would post again); its own records are marked
+    # a dry run never overwrites a posted record (else the real run re-posts)
     if ($prevRec -and -not $prevRec.noTracker) { $out.subtasks += $prevRec; continue }
     $rec.noTracker = $true
   } else {
     if ($prevRec.noTracker -or $prevRec.commentFailed) { $prevRec = $null }   # a results comment that failed is posted again
     if ($prevRec.closed -or $prevRec.failedTesting) { $out.subtasks += $prevRec; continue }   # keep the first run's record
-    # re-run of a task waiting for a sibling item / a lane: never a second bug task or results comment, only re-resolve
+    # re-run waiting on a sibling / lane: only re-resolve, never a 2nd bug task or comment
     if ($prevRec) {
       $rec.bug = $prevRec.bug
       $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($newDefects.Count -and -not $rec.bug) { 'new defects have no [Bug] task' }
@@ -1059,13 +985,13 @@ foreach ($st in @($item.subtasks)) {
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
     $msg += ". Full report with screenshots and API evidence: $docUrl"
-    # own failures and untested checks stay on this task (failedTesting): the comment carries them in the bug-brief format
+    # own failures + untested stay here (failedTesting), comment in bug-brief format
     $detail = (Format-Checks $ownFails 'Failed checks') + (Format-Checks $ntChecks 'Untested checks')
     $text = if ($detail) { "$msg`n`n$detail" } else { $msg }
     $posted = if ($reportFile) { TrySay { $null = Add-TrackerAttachment $st.id $reportFile $text; $true } "post the report on $($st.id)" }
     else { TrySay { $null = Add-TrackerComment $st.id $text; $true } "comment on $($st.id)" }
     $out.subtasks += $rec
-    # no results comment = nobody can see why: keep the task as it is and post again on the next run
+    # no results comment = nobody sees why: leave the task, post next run
     if (-not $posted) { $rec.commentFailed = $true; $rec.keptOpen = 'the results comment was not posted (see warning): re-run finalize'; Save-Fin; continue }
     Save-Fin; Resolve-Outcome $rec $st $pend; Save-Fin; continue
   }
@@ -1078,18 +1004,12 @@ if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
 $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
 }
 
-# ---------------------------------------------------------------- annotate: mark a FAIL screenshot (box / arrow / label)
-# Marks up a screenshot in one call: rectangles, arrows and text labels, so a reviewer sees at once what the evidence is about.
-# Works on PNG/JPEG from any source (web, Android, desktop). Pure PowerShell + System.Drawing, no installs.
-# Windows only: .NET supports System.Drawing only there. On Linux/macOS mark the element before the shot instead
-# (browser.mjs mark() before shot(); Android shots stay unmarked - name the element in the check note).
-#
-#   $A = '<workspace>/.claude/skills/qa-kit/qa.ps1 annotate'
-#   & $A -In shots/GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing' -Text '40,40,Expected: wraps inside A4'
-#   -Rect 'x,y,w,h[,label]'      -Arrow 'x1,y1,x2,y2[,label]' (tip at x2,y2)      -Text 'x,y,text'      (each repeatable: a PowerShell list or items joined with ';')
-#   -Out <file>  default: overwrites -In (keep the evidence name); -Copy writes <base>-marked.<ext> next to -In instead
-#   (the original stays; list both in results.json); -Color red|orange|green|blue (default red); -Scale for very large shots.
-# Coordinates are image pixels (Android: uiautomator bounds are already pixels; web: CSS px x devicePixelRatio).
+# ---- annotate: box / arrow / label on a PNG/JPEG (System.Drawing: Windows only; else browser.mjs mark() before the shot)
+#   & $A -In shots/GT4-X1_02_manifest.png -Rect '55,780,543,40,cut off here' -Arrow '400,600,540,790,last word missing'
+#     -Text '40,40,Expected: wraps inside A4'   # $A = <kit>/skills/qa-kit/qa.ps1 annotate
+#   -Rect 'x,y,w,h[,label]' -Arrow 'x1,y1,x2,y2[,label]' (tip x2,y2) -Text 'x,y,text' (repeatable, list or ';'-joined)
+#   -Out <file> (default -In) | -Copy (<base>-marked.<ext>, list both); -Color red|orange|green|blue; -Scale for huge shots.
+# Coordinates: image px (Android bounds as-is; web: CSS px x devicePixelRatio).
 function Invoke-Annotate {
 param(
   [Parameter(Mandatory)][string]$In, [string]$Out,
@@ -1099,13 +1019,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'qa.ps1 annotate needs Windows (System.Drawing). On Linux/macOS use browser.mjs mark() before shot(); for Android name the element in the check note.' }
-# one literal string from pwsh -File ("'1,2,3,4,a','5,6,7,8'") or ';'-joined items: one item each (an item's own commas stay)
+# pwsh -File gives one string or ';'-joined items: one item each, its commas stay
 $Rect = @(Split-KitList $Rect ';'); $Arrow = @(Split-KitList $Arrow ';'); $Text = @(Split-KitList $Text ';')
 Add-Type -AssemblyName System.Drawing
 $src = (Resolve-Path $In).Path
 if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
 if (-not $Out) { $Out = $src }
-$bytes = [IO.File]::ReadAllBytes($src)                     # read fully so we can overwrite the same file
+$bytes = [IO.File]::ReadAllBytes($src)                     # read fully to overwrite it
 $ms = New-Object IO.MemoryStream(, $bytes)
 $img0 = [Drawing.Image]::FromStream($ms)
 $bmp = New-Object Drawing.Bitmap $img0.Width, $img0.Height
@@ -1145,28 +1065,23 @@ $bmp.Save($Out, $fmt); $bmp.Dispose()
 "annotated $Out ($(@($Rect).Count) rect, $(@($Arrow).Count) arrow, $(@($Text).Count) text)"
 }
 
-# ---------------------------------------------------------------- retest: add a retest item for a fixed task to a run
-# Adds a RETEST item for a fixed task (a [Bug] task, or a task back from failedTesting) whose fix went live to an existing QA run,
-# so the retest is one command + one /test-and-close launch instead of hand-editing run.json.
-#
-#   & <kit>/skills/qa-kit/qa.ps1 retest -RunDir <run> -Task <bug task id> -Code H2R -Title "RETEST ..." -Mrs "frontend!123" [-Only X1,X2] [-Lane web|api|app]
-#   then: Workflow test-and-close { runDir: <run>, only: ['H2R'], instance: 'w<next>' }
-#
-# The guide is the task itself (description / its latest QA comment = the failed checks with steps + evidence, comments = the fix and
-# its testing doc), written to <run>/tasks/<task>.md. -Only defaults to the "### <id> — <screen>" check ids found there.
-# Re-running with the same -Code replaces that item.
+# ---- retest: add a RETEST item for a fixed task whose fix went live
+#   & qa.ps1 retest -RunDir <run> -Task <bug task id> -Code H2R -Title "RETEST ..." -Mrs "frontend!123" [-Only X1,X2]
+#     [-Lane web|api|app]; then Workflow testy { runDir: <run>, only: ['H2R'], instance: 'w<next>' }
+# Guide = the task (description, QA comment, fix comments) -> <run>/tasks/<task>.md; -Only defaults to its ### ids.
+# The same -Code replaces that item.
 function Invoke-Retest {
 param(
   [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Code,
   [string]$Title, [string]$Mrs = '', [string[]]$Only, [ValidateSet('web', 'api', 'app')][string]$Lane = 'web'
 )
 $ErrorActionPreference = 'Stop'
-# `pwsh -File qa.ps1 retest -Only 'T1','T2'` hands the list over as one string: Split-KitList (lib.ps1) splits and trims it
+# pwsh -File passes -Only as one string: Split-KitList splits it
 $Only = @(Split-KitList $Only)
 $t = Get-TrackerTask $Task
 if (-not $t.name) { throw "cannot read task $Task (tracker $($KitConf.TrackerType): CLI auth / config?)" }
 $c = @(try { Get-TrackerComments $Task } catch { @() })
-# the checks to rerun: "### <id> — <screen>" headings of the description, else of the newest comment that has them (the QA result)
+# rerun ids: ### headings in the description, else in the newest comment with them
 if (-not $Only) {
   foreach ($txt in @([string]$t.description) + @($c | Sort-Object date -Descending | ForEach-Object { [string]$_.text })) {
     $ids = @([regex]::Matches($txt, '(?m)^###\s+(\S+)\s+[—-]\s+') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
@@ -1181,7 +1096,7 @@ foreach ($x in $c) { $md += "`n---`n**$($x.user)** $($x.date)`n`n$($x.text)`n" }
 New-Item -ItemType Directory -Force "$RunDir\tasks" | Out-Null
 $gf = "$RunDir\tasks\$Task.md"; Set-Content $gf $md -Encoding utf8
 $old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir\$Code" $_ } | Where-Object { Test-Path $_ })
-if ($old.Count) {   # a reused code: archive the earlier round (its finalize.json made the retest ALREADY and kept the old verdict)
+if ($old.Count) {   # reused code: archive the earlier round (its finalize.json blocked the retest)
   $arc = Join-Path "$RunDir\$Code" "archive-$(Get-Date -Format yyyyMMdd-HHmmss)"; New-Item -ItemType Directory -Force $arc | Out-Null
   foreach ($f in $old) { Move-Item -LiteralPath $f -Destination $arc }
   "archived the earlier round of $Code ($(($old | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')) to $arc"
@@ -1191,25 +1106,17 @@ $items = @($r.items | Where-Object { $_.code -ne $Code })
 $items += [pscustomobject]@{ code = $Code; lane = $Lane; title = $Title; guideFile = $gf; retest = $true; only = @($Only); subtasks = @([pscustomobject]@{ id = $Task; name = $t.name; mrs = $Mrs }) }
 $r.items = $items
 $r | ConvertTo-Json -Depth 8 | Set-Content "$RunDir\run.json" -Encoding utf8
-"added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir\run.json - launch: Workflow test-and-close { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
+"added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir\run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 
-# ---------------------------------------------------------------- ui: drive the app on your leased phone (adb)
-# Android UI helper for any app on an emulator or device (via uiautomator + adb input).
-#
-#   $env:ANDROID_SERIAL = 'emulator-5556'      # ALWAYS set your own phone first when several devices are attached
-#   & <workspace>/.claude/skills/qa-kit/qa.ps1 ui dump                 # visible texts with @(x,y) centre, [edit], #resource-id
-#   & ... qa.ps1 ui tap "Start shift"           # tap by text (exact, then contains)
-#   & ... qa.ps1 ui tapid "login_button"        # tap by resource-id (suffix match)
-#   & ... qa.ps1 ui tapxy 640 1400
-#   & ... qa.ps1 ui type "hello world"          # into the focused field
-#   & ... qa.ps1 ui key 4                       # keyevent (4 = BACK, 66 = ENTER)
-#   & ... qa.ps1 ui swipe 640 2000 640 800      # scroll
-#   & ... qa.ps1 ui shot T3_after_save [<dir>]  # PNG screenshot (default dir: <runtime>/work/shots/<serial>)
-#   & ... qa.ps1 ui shotmark T3_total "Total|#save_btn" ["wrong total"] [<dir>]   # screenshot + red box/label on those elements, one go
-#   & ... qa.ps1 ui wait "Welcome" 30           # wait up to N s for a text
-#   & ... qa.ps1 ui log ReactNativeJS           # recent logcat lines for a tag (clear with: adb logcat -c)
-#   & ... qa.ps1 ui photo [shutterId] [okText]  # after tapping the app's camera icon: press the shutter, accept the photo
+# ---- ui: drive any app on your leased phone (uiautomator + adb). Set $env:ANDROID_SERIAL to your phone first.
+#   ui dump                       visible texts, @(x,y) centre, [edit], #resource-id
+#   ui tap "Start shift"          by text (exact, then contains) · tapid login_button (id suffix) · tapxy 640 1400
+#   ui type "hello world"         focused field · key 4 (4 BACK, 66 ENTER) · swipe 640 2000 640 800 (scroll)
+#   ui shot T3_after_save [<dir>] PNG (default <runtime>/work/shots/<serial>)
+#   ui shotmark T3_total "Total|#save_btn" ["wrong total"] [<dir>]   shot + red box/label on those elements
+#   ui wait "Welcome" 30          wait N s for a text · log ReactNativeJS (logcat for a tag; clear: adb logcat -c)
+#   ui photo [shutterId] [okText] after tapping the camera icon: shutter, then accept
 function Invoke-Ui {
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
@@ -1218,7 +1125,7 @@ $tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $tmp = Get-KitPath android-tmp -Create
 $xmlLocal = Join-Path $tmp "ui_$tag.xml"
 function Get-Nodes {
-  # remove both copies first: a failed dump must not hand back the previous screen
+  # delete both first: a failed dump must not return the old screen
   & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
   & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
   & $adb pull /sdcard/ui.xml $xmlLocal 2>$null | Out-Null
@@ -1256,8 +1163,7 @@ switch ($Action) {
     "saved $f"
   }
   'shotmark' {
-    # one go: screenshot + red box (and label) around the element found by text or #resource-id. Arg = name, Arg2 = text or #id,
-    # Arg3 = label (default: the element text), Arg4 = dir. Several elements: separate with ' | ' in Arg2.
+    # Arg name, Arg2 text or #id (several: ' | '), Arg3 label (default: element text), Arg4 dir
     $dir = if ($Arg4) { $Arg4 } else { Join-Path (Get-KitPath shots) $tag }
     New-Item -ItemType Directory -Force $dir | Out-Null
     $f = Join-Path $dir "$Arg.png"
@@ -1274,14 +1180,13 @@ switch ($Action) {
   }
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))
-    # not `if (try ...)`: inside ( ) `try` parses as a command name, so that test always failed and every wait timed out
+    # not `if (try ...)`: in ( ) `try` is a command name, so waits always timed out
     while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Start-Sleep 2 }
     "TIMEOUT waiting for '$Arg'"
   }
   'photo' {
-    # In-app camera: call after tapping the app's camera icon. Finds the shutter (resource-id suffix -Arg, else common ids/labels),
-    # takes the picture, then accepts it if the app shows a confirm step. The emulator's back camera is a virtual scene, so any
-    # photo works for upload/POD/inspection checks. Optional Arg2 = text of the confirm button (default: OK/Done/Use photo/Save/✓).
+    # shutter: -Arg resource-id suffix, else common ids/labels; Arg2 = confirm text (default OK/Done/Use photo/Save/✓).
+    # The emulator camera is a virtual scene: any photo works.
     Start-Sleep 3
     $all = Get-Nodes
     $ids = if ($Arg) { @($Arg) } else { @('take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture') }
@@ -1293,7 +1198,7 @@ switch ($Action) {
     if ($ok) { & $adb shell input tap $ok.x $ok.y; Start-Sleep 2; "photo taken and accepted ('$($ok.text)')" } else { "photo taken (no confirm step seen)" }
   }
   'log' { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) }
-  default { "unknown action $Action (qa.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|shot|shotmark|wait|log|photo)"; exit 2 }   # was exit 0
+  default { "unknown action $Action (qa.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|shot|shotmark|wait|log|photo)"; exit 2 }
 }
 }
 
@@ -1306,6 +1211,6 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' { Invoke-KitVerb Invoke-Ui $__rest }
-    default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }   # the header only (was 16 fixed lines)
+    default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }   # the header only
   }
 }

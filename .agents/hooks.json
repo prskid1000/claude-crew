@@ -19,7 +19,7 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/kit.ps1 health",
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/orch.ps1 health",
         "timeout": 15
       },
       {

@@ -1,31 +1,24 @@
-// browser.mjs: headless-browser helper for testing any web app (a library: import it; usage below). Exit codes: none (a library;
-// a script using it exits with its own code).
-// Usage: Targets (URL, login form, users) come from
-// <workspace>/.claude/skills/qa-kit/targets.local.json — nothing app-specific lives here.
-//
-// SHARED SESSION: session() keeps ONE logged-in headless Chrome per target+tenant+user (its own profile and port from a
-// registry, never shared with another user or target). Every run and agent testing as that user attaches to it with its own
-// tab, so one login serves all and nobody signs another agent out. It logs in again only when the session expired (the login
-// page or a 401: relogin(s)), under a lock so two agents never log in at once. Never log out; s.done() closes only your tab.
-//
-//   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession } from 'file:///<workspace>/.claude/skills/qa-kit/browser.mjs'   // the absolute file URL of this file (Windows: file:///C:/...)
-//   const s = await session({ target: 'my-staging', tenant: 'acme', as: 'admin' })  // the shared browser of that user, your own tab
+// browser.mjs: headless-browser library for testing any web app (import it; usage below).
+// Exit codes: none (a library; a script using it exits with its own code).
+// Targets (URL, login form, users): skills/qa-kit/targets.local.json; nothing app-specific here.
+// SHARED SESSION: one logged-in headless Chrome per target+tenant+user (own profile + port); runs / agents attach own
+// tabs: one login for all. Re-login only on expiry (login page / 401: relogin(s)), locked. Never log out.
+//   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, token, killSession }
+//     from 'file:///<workspace>/.claude/skills/qa-kit/browser.mjs'   // absolute file URL (Windows: file:///C:/...)
+//   const s = await session({ target: 'my-staging', tenant: 'acme', as: 'admin' })   // shared browser, own tab
 //   await go(s.page, '/projects')
 //   console.log((await text(s.page)).slice(0, 2000))
 //   await clickText(s.page, 'Filter')
-//   await setInput(s.page, 'input[placeholder="Select date"]', '29/09/2026 13:45')   // inputs & date pickers: type + Enter
-//   await mark(s.page, '.ant-table-row:first-child')                  // red outline on what matters (removed after the shot)
-//   await shot(s.page, '<run>/F2/shots/F2-T3_01_filter-applied.jpeg')   // names: <CODE>-<check>_<nn>_<what> (evidence-standard.md)
-//   console.log(JSON.stringify(s.net.failed))     // 4xx/5xx API calls + JS errors seen in THIS script = failure evidence
+//   await setInput(s.page, 'input[placeholder="Select date"]', '29/09/2026 13:45')   // type + Enter (date pickers too)
+//   await mark(s.page, '.ant-table-row:first-child')   // red outline until the shot
+//   await shot(s.page, '<run>/F2/shots/F2-T3_01_filter-applied.jpeg')   // names: below
+//   console.log(JSON.stringify(s.net.failed))   // this script's 4xx/5xx + JS errors = failure evidence
 //   if (s.net.failed.length) saveNet(s, '<run>/F2/evidence/F2-T3_02_failed-calls.json')
-//   if (s.net.failed.some((f) => f.status === 401)) await relogin(s)   // session expired mid-script: locked re-login, then retry
-//   await s.done()                                // closes your tab and disconnects; the logged-in Chrome stays for everyone
-//   // the coordinator only, when no agent tests as that user: await killSession(sessionPort(target, tenant, as))
-//
-// Every wait is capped at 20 s, so a wrong selector fails fast instead of hanging.
-// Real mouse clicks are used throughout: Angular/React/ng-zorro/MUI controls often ignore synthetic el.click().
-// Run scripts with: node <file>.mjs (on Windows from PowerShell: node is on its PATH, not git-bash's). Linux/macOS: Chrome, Edge or
-// Chromium is found in the usual install folders or on PATH; set CHROME_PATH to pick another one.
+//   if (s.net.failed.some((f) => f.status === 401)) await relogin(s)   // expired: locked re-login, retry
+//   await s.done()   // closes only your tab
+//   // coordinator, no agent on that user: await killSession(sessionPort(target, tenant, as))
+// Waits cap at 20 s (bad selectors fail fast). Real mouse clicks (UI kits ignore synthetic el.click()). Windows: node
+// from PowerShell, not git-bash. Linux/macOS: Chrome/Edge/Chromium in usual folders / PATH; CHROME_PATH overrides.
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -34,24 +27,24 @@ import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
 const CFG = JSON.parse(readFileSync(new globalThis.URL('./targets.local.json', import.meta.url), 'utf8'))
-// ---------------------------------------------------------------- kit paths (the one map: skills/dev-kit/paths.json)
-// kitPath('chrome-profiles') -> <runtime>/cache/chrome-profiles; <runtime> = $CLAUDE_RUNTIME, else <kit>/.runtime; durable under <kit>/.state
+// --- kit paths (kit.example.json _paths): <runtime> = $CLAUDE_RUNTIME | <kit>/.runtime; durable: <kit>/.state
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
-const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'dev-kit', 'paths.json'), 'utf8'))
+const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'dev-kit', 'kit.example.json'), 'utf8'))._paths
 export const runtimeDir = () => process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir)
 export function kitPath(name, { create = false } = {}) {
   let rel, base
   if (name === 'runtime') { rel = '/'; base = runtimeDir() }
   else if (name in MAP.runtime) { rel = MAP.runtime[name]; base = runtimeDir() }
   else if (name in MAP.durable) { rel = MAP.durable[name]; base = join(KIT, MAP.stateDir) }
-  else throw new Error(`kitPath: unknown name '${name}' (see skills/dev-kit/paths.json)`)
+  else throw new Error(`kitPath: unknown name '${name}' (see skills/dev-kit/kit.example.json _paths)`)
   const p = rel === '/' ? base : join(base, rel.replace(/\/$/, ''))
   if (create) mkdirSync(rel.endsWith('/') ? p : dirname(p), { recursive: true })
   return p
-}// runtime paths come from the kit's one map (paths.json / paths.json): cache/chrome-profiles, cache/sessions
+}
+// kit path map: cache/chrome-profiles, cache/sessions
 const PROFILES = kitPath('chrome-profiles')
-// Chrome/Edge/Chromium: $CHROME_PATH first, then the usual install folders per OS, then the PATH (Linux package names)
+// $CHROME_PATH, usual folders per OS, then PATH (Linux package names)
 const onPath = (names) => (process.env.PATH || '').split(delimiter).filter(Boolean).flatMap((d) => names.map((n) => join(d, n)))
 const BROWSERS = [
   process.env.CHROME_PATH,
@@ -73,8 +66,8 @@ const BROWSERS = [
   ]),
 ].filter(Boolean)
 const CHROME = BROWSERS.find((p) => existsSync(p))
-// Browser look per target (or top-level "browser" in targets.local.json): { lang, timezone, width, height }.
-// Defaults: en-GB, the machine's time zone, 1600x1000. lang = Accept-Language / navigator.language (date and number formats).
+// Per-target (or top-level) "browser": { lang, timezone, width, height }, default en-GB, local zone, 1600x1000;
+// lang = Accept-Language / navigator.language (date, number formats).
 const browserOpts = (t) => ({ lang: 'en-GB', timezone: '', width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -83,7 +76,7 @@ export function targetOf(name) {
   if (!t) throw new Error(`unknown target "${name}" (known: ${Object.keys(CFG.targets).join(', ')})`)
   return t
 }
-let BASE = ''   // web base URL of the last session(); go() paths are relative to it
+let BASE = ''   // last session()'s web base, for go()'s relative paths
 export const url = (p) => (/^https?:/.test(p) ? p : BASE + p)
 
 function watch(page, apiPattern) {
@@ -99,7 +92,7 @@ function watch(page, apiPattern) {
       net.failed.push(e)
     }
   })
-  // capped: a page in an error loop raised thousands of JS errors and grew this buffer without bound
+  // capped: error-looping pages grew it unbounded
   net.jsErrors = 0
   page.on('pageerror', (err) => { if (++net.jsErrors <= 50) net.failed.push({ status: 'JS', url: page.url(), body: String(err).slice(0, 400) }) })
   page.on('dialog', (d) => d.accept().catch(() => {}))
@@ -113,7 +106,7 @@ async function login(page, t, tenant, as) {
   const [user, pass] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
   await page.goto(t.web + L.path, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
-  if (!page.url().includes(L.path)) return   // already logged in (another agent, same user): never log out
+  if (!page.url().includes(L.path)) return   // logged in already (same user): never log out
   const sels = Object.keys(L.fields)
   await page.waitForSelector(sels[0], { timeout: 60000 })
   for (const sel of sels) {
@@ -131,7 +124,7 @@ async function login(page, t, tenant, as) {
   await settle(page)
   if (page.url().includes(L.path)) throw new Error('login failed: ' + (await text(page)).slice(0, 300))
   await page.evaluate((m) => localStorage.setItem('qa-session', m), `${tenant}/${as}`)
-  // share this login with every other port/agent: save the web storage (token lives there) for 8 h
+  // share the login: web storage (holds the token) saved 8 h
   try {
     const st = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))
     kitPath('sessions', { create: true })
@@ -141,32 +134,32 @@ async function login(page, t, tenant, as) {
 
 const sessionFile = (t, tenant, as) => `${kitPath('sessions')}/${(t.web + '-' + tenant + '-' + as).replace(/[^\w.-]/g, '_')}.json`
 
-// Reuse a login saved by another port (≈1 s instead of a full login). Returns true when the app accepted it.
+// Reuse another port's saved login (~1 s); true if the app accepts it.
 async function restoreLogin(page, t, tenant, as) {
   const f = sessionFile(t, tenant, as)
   if (!existsSync(f)) return false
-  const s = JSON.parse(readFileSync(f, 'utf8'))   // age is no reason to drop it: the app's auth guard below decides
+  const s = JSON.parse(readFileSync(f, 'utf8'))   // age is no reason to drop it: the auth guard decides
   await page.goto(t.web + t.webLogin.path, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {})
   await page.evaluate((s) => {
     for (const [k, v] of Object.entries(s.local || {})) localStorage.setItem(k, v)
     for (const [k, v] of Object.entries(s.session || {})) sessionStorage.setItem(k, v)
   }, s)
   await page.goto(t.web + '/', { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {})
-  await sleep(1500)   // let the app's auth guard redirect if the token is no longer valid
+  await sleep(1500)   // the auth guard redirects if the token is invalid
   const tok = (t.webLogin.tokenKeys || []).length ? await token(page, t) : 'n/a'
   return !!tok && !page.url().includes(t.webLogin.path)
 }
 
-// a CDP call that never answers (a page busy in a script loop) fails after 60 s instead of puppeteer's 180 s default
+// a hung CDP call fails in 60 s, not puppeteer's 180 s
 const PROTO_MS = 60000
 
-const MAX_TABS = 8   // per shared browser; a caller beyond it waits for a tab to close (<= 5 min)
-// one key per target+tenant+user: its Chrome profile, its port (registry: two keys never share a port) and its login lock
+const MAX_TABS = 8   // per shared browser; then callers wait (<= 5 min) for a tab
+// per target+tenant+user: Chrome profile, unique registry port, login lock
 export const sessionKey = (target, tenant, as) => `${target}|${tenant || ''}|${as}`.replace(/[^\w.|-]/g, '_')
 const keyFile = (key) => key.replace(/\|/g, '__')
 const PORT_BASE = 21000, PORT_SLOTS = 2000
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h }
-// a file lock (create-exclusive) with stale takeover; fn runs only while held
+// create-exclusive lock file, stale takeover; fn runs only while held
 export async function withLock(name, fn, { staleMs = 180000, waitMs = 240000 } = {}) {
   const lock = `${kitPath('sessions', { create: true })}/${name}.lock`
   const end = Date.now() + waitMs
@@ -178,8 +171,7 @@ export async function withLock(name, fn, { staleMs = 180000, waitMs = 240000 } =
   }
   try { return await fn() } finally { try { unlinkSync(lock) } catch {} }
 }
-// the port of a key: a stable hash of it into the reserved range, collision-checked against the durable registry (.state),
-// so every run and agent of that target+tenant+user attaches to the same Chrome and two keys never share a port
+// key's port: stable hash in the reserved range, collision-checked in the durable registry
 export async function sessionPort(target, tenant, as) {
   const key = sessionKey(target, tenant, as)
   return withLock('ports', async () => {
@@ -199,7 +191,7 @@ const loggedIn = async (page, t) => {
   if (!page.url().startsWith(t.web) || page.url().includes(t.webLogin.path)) return false
   return !(t.webLogin.tokenKeys || []).length || !!(await token(page, t).catch(() => null))
 }
-// log in only when this browser is not logged in (checked again inside the lock: another agent may just have done it)
+// log in only if needed (rechecked in the lock: another agent may have)
 async function ensureLogin(page, t, tenant, as, key) {
   if (await loggedIn(page, t)) return
   await withLock(`login-${keyFile(key)}`, async () => {   // others wait (<= 2 min), then restore the fresh session file
@@ -209,12 +201,11 @@ async function ensureLogin(page, t, tenant, as, key) {
     if (!(await restoreLogin(page, t, tenant, as).catch(() => false))) await login(page, t, tenant, as)
   }, { waitMs: 120000 })
 }
-// the session expired mid-script (a 401, the login page): restore the fresh session file or log in once (locked), then retry
+// expired mid-script (401 / login page): restore the fresh session or log in once (locked), retry
 export async function relogin(s) { await ensureLogin(s.page, s.target, s.tenant, s.as, s.key) }
 export const ensureLoggedIn = (page) => (page.__qa ? ensureLogin(page, page.__qa.t, page.__qa.tenant, page.__qa.as, page.__qa.key) : Promise.resolve())
 
-// Attach to (or start) the shared headless Chrome of target/tenant/as and open your own tab, logged in. `port` is ignored:
-// the port belongs to the user (sessionPort), so every run and agent of that user shares one login.
+// Attach to (or start) the user's shared Chrome + your own logged-in tab; `port` ignored (sessionPort owns it).
 export async function session({ target, tenant, as = 'admin' } = {}) {
   if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
   const t = targetOf(target)
@@ -238,10 +229,10 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
     }
     if (!browser) throw new Error(`could not start Chrome on port ${port}`)
   }
-  // Undecided notification permission makes many apps show a toast that swallows header clicks: grant it.
+  // undecided notification permission: its toast eats header clicks
   try { await browser.defaultBrowserContext().overridePermissions(t.web, ['notifications', 'geolocation', 'clipboard-read', 'clipboard-write']) } catch {}
   for (let i = 0; i < 600 && (await browser.pages()).filter((p) => p.url() !== 'about:blank').length >= MAX_TABS; i++) await sleep(500)
-  const page = await browser.newPage()   // your own tab: other agents of this user keep theirs
+  const page = await browser.newPage()   // own tab: this user's other agents keep theirs
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
   await page.evaluateOnNewDocument((a) => { window.__qaAgent = a }, agentId).catch(() => {})
   page.__qa = { t, tenant, as, key, agent: agentId }
@@ -262,9 +253,7 @@ export async function killSession(port) {
   try { const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }); await b.close() } catch {}
 }
 
-// wait for XHR to go quiet
-// Capped at 8 s (a page that polls never goes idle), and stopped early when the page floods JS errors (> 100 while waiting):
-// waiting on a broken page only burned the tester's time (a 20 s wait per action, hundreds of errors a second).
+// wait for quiet XHR: <= 8 s (polling pages never idle); stop early on > 100 JS errors
 export async function settle(page, ms = 1200) {
   let errs = 0
   const onErr = () => { errs++ }
@@ -285,20 +274,19 @@ export async function go(page, path) {
   await page.goto(url(path), { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
   const q = page.__qa
   if (q && q.t.webLogin && page.url().includes(q.t.webLogin.path) && !String(path).includes(q.t.webLogin.path)) {
-    await ensureLogin(page, q.t, q.tenant, q.as, q.key)   // expired (another agent's login may have rotated it): once, then retry
+    await ensureLogin(page, q.t, q.tenant, q.as, q.key)   // expired (another login may rotate it): once, then retry
     await page.goto(url(path), { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
   }
   await settle(page)
 }
 
-// visible text of the page (or of a selector)
+// visible text of the page or a selector
 export async function text(page, selector = 'body') {
   return page.$eval(selector, (el) => el.innerText).catch(() => '')
 }
 
-// Real mouse click on the innermost visible element whose text / title / aria-label matches (exact first, then contains).
-// The DOM walk is capped at 15 s (it once hung a tester on a huge, error-looping page); then puppeteer's own text query
-// (::-p-text, innermost matches) and the element's boundingBox are used instead.
+// Real click on the innermost visible element matching text / title / aria-label (exact, then contains); DOM walk
+// <= 15 s, then puppeteer ::-p-text + boundingBox.
 export async function clickText(page, label, { nth = 0, within = 'body', exact = false, right = false } = {}) {
   let box = await capped(page.evaluate(({ label, nth, within, exact }) => {
     const root = document.querySelector(within) || document.body
@@ -332,7 +320,7 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
   return box
 }
 
-// the nth match, scrolled into view, with its box: a clear error instead of a TypeError on a bad nth or a hidden element
+// nth match, scrolled in, with its box: clear error on bad nth / hidden element
 export async function pick(page, selector, nth = 0, what = 'element') {
   await page.waitForSelector(selector, { visible: true, timeout: 20000 })
   const all = await page.$$(selector)
@@ -350,7 +338,7 @@ export async function clickSel(page, selector, { right = false, nth = 0 } = {}) 
   await settle(page, 700)
 }
 
-// Hover-triggered menus: move the pointer in from outside, in steps, so mouseenter fires.
+// Hover menus: pointer in from outside, in steps, so mouseenter fires.
 export async function hoverSel(page, selector, { nth = 0 } = {}) {
   const { b } = await pick(page, selector, nth, 'hoverSel')
   await page.mouse.move(b.x - 40, b.y - 40)
@@ -362,7 +350,7 @@ export async function hoverSel(page, selector, { nth = 0 } = {}) {
 export async function setInput(page, selector, value, { nth = 0, enter = true } = {}) {
   const { el } = await pick(page, selector, nth, 'setInput')
   await el.click({ clickCount: 3 })
-  const mod = process.platform === 'darwin' ? 'Meta' : 'Control'   // select-all is Cmd+A on macOS
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control'   // Cmd+A on macOS
   await page.keyboard.down(mod); await page.keyboard.press('KeyA'); await page.keyboard.up(mod)
   await page.keyboard.press('Backspace')
   await el.type(String(value), { delay: 20 })
@@ -371,15 +359,14 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// Evidence names: <CODE>-<checkId>[_verify]_<nn>[m]_<what>.<ext> or setup <code>-<nn>-<what>.<ext>  (qa-kit\reference\evidence-standard.md)
-// keep in sync with lib/report.ps1 $script:EvidenceName: the same literal, character for character (PowerShell -match is
-// case-insensitive, hence /i)
+// Evidence names: <CODE>-<checkId>[_verify]_<nn>[m]_<what>.<ext>, setup <code>-<nn>-<what>.<ext> (evidence-standard.md);
+// same literal as lib/report.ps1 $script:EvidenceName (/i: PowerShell -match ignores case)
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" does not follow <CODE>-<check>_<nn>_<what>.<ext> (e.g. F2-T4_01_order-saved.jpeg)`)
 }
 
-// Red outline around the element(s) that matter, for the next screenshot. Removed by unmark() or shot().
+// Red outline for the next shot; unmark() or shot() removes it.
 export async function mark(page, selector, { nth = null } = {}) {
   await page.evaluate(({ selector, nth }) => {
     const els = [...document.querySelectorAll(selector)]
@@ -394,7 +381,7 @@ export async function unmark(page) {
   await page.evaluate(() => document.querySelectorAll('[data-qa-mark]').forEach((el) => { el.style.outline = el.dataset.qaMark.trim(); el.style.outlineOffset = ''; delete el.dataset.qaMark })).catch(() => {})
 }
 
-// Save network evidence (default: the failed calls seen in this script) in the standard envelope.
+// Save network evidence (default: this script's failed calls), standard envelope.
 export function saveNet(s, file, { calls = null, meta = {} } = {}) {
   checkName(file)
   const m = basename(file).match(/^([A-Za-z0-9]+)-([A-Za-z]*\d+)/) || []
@@ -419,7 +406,7 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
   return file
 }
 
-// Bearer token of the logged-in UI session (to call the API as the same user). Looks in the target's tokenKeys.
+// UI session Bearer token (call the API as that user), via the target's tokenKeys
 export async function token(page, t = null) {
   const keys = ((t || {}).webLogin || {}).tokenKeys || Object.values(CFG.targets).flatMap((x) => (x.webLogin || {}).tokenKeys || [])
   return page.evaluate((keys) => { for (const k of keys) { const v = sessionStorage.getItem(k) || localStorage.getItem(k); if (v) return v } return null }, keys)

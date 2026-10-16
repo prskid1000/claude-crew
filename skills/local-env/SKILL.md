@@ -1,6 +1,6 @@
 ---
 name: local-env
-description: "Load when: you reproduce, debug or test a change on the local env (dev flow steps 2 and 5), or you start, stop, refresh or inspect a local env (kit.local.json localEnv). Not when: no localEnv is configured -> dev-kit automated tests only; testing deployed work on a test env -> qa-kit; phone lanes themselves -> android-swarm."
+description: "Load when: you reproduce, debug or test a change on the local env (dev flow steps 2 and 5), or start, stop, refresh or inspect one (kit.local.json localEnv). Not when: no localEnv -> dev-kit automated tests only; deployed work on a test env -> qa-kit; phone lanes -> android-swarm."
 ---
 
 **Load when** (all must hold): `kit.local.json` has `localEnv.envs`; you reproduce or test a change locally (dev-kit steps 2,
@@ -16,7 +16,7 @@ or you are the coordinator running / repairing an env.
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill local-env` |
 | `localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `migrations`, `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh`; `_daemon` / `_exec` are internal |
-| `migrations.py` | run by `localenv.ps1` to class a deploy's migrations and plan reverts (`localenv.ps1 migrations` shows it); `selftest` after changing it |
+| `<kit>/skills/dev-kit/devtools.py` | run by `localenv.ps1` (`devtools.py migrations`) to class a deploy's migrations and plan reverts (`localenv.ps1 migrations` shows it); `migrations selftest` after changing it |
 
 ## Model
 - Env = ONE shared running instance of its services (`localEnv.envs.<env>`: any stack, any shape: a service is a start command

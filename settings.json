@@ -53,7 +53,7 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "health"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "health"],
             "timeout": 15
           },
           {
@@ -66,7 +66,7 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "health", "-Flow", "-Fetch"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "health", "-Flow", "-Fetch"],
             "timeout": 120,
             "async": true
           }
@@ -91,7 +91,7 @@
           {
             "type": "command",
             "command": "pwsh",
-            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/kit.ps1", "guard-sendmessage"],
+            "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "guard-sendmessage"],
             "timeout": 10
           }
         ]

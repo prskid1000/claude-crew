@@ -1,19 +1,14 @@
 #!/usr/bin/env node
-// Runs *.spec.ts / *.test.ts files under plain node when the web project has no unit-test target (no Karma/Vitest/Jest, no
-// `test` script). dev.ps1 stack gives it as the test command of such a stack and dev.ps1 check -Step test falls back to it, so it runs
-// through the memory gate:
+// Runs *.spec.ts / *.test.ts under plain node for web projects with no unit-test target (no Karma/Vitest/Jest/`test` script);
+// dev.ps1 stack lists it as their test command, dev.ps1 check -Step test falls back to it (memory gate):
 //   & <kit>/skills/dev-kit/dev.ps1 check -Dir <web module> -Step test -Tests "src/app/x.service.spec.ts"
 //   node <kit>/skills/dev-kit/spec.mjs [--dir <project>] [--tsconfig <file>] [--real-angular] [<spec> ...]
-// Each spec is bundled with the project's own esbuild (resolved from its node_modules; none -> "no esbuild", exit 2), with the
-// project's tsconfig (paths/baseUrl aliases, experimentalDecorators), then run with the jasmine/jest-style globals of
-// the spec shim below (describe/it/expect/beforeEach/spyOn ...). '@angular/core' is replaced by a small stub (decorators are no-ops,
-// EventEmitter/signal/computed work, inject() throws) unless --real-angular. A spec that uses TestBed, @angular/core/testing,
-// fakeAsync or waitForAsync is reported NOT RUN (exit 1), never passed. A DOM spec (document./window.) runs under the project's
-// own jsdom when it resolves from its node_modules (no layout: sizes are 0); without jsdom it is NOT RUN too.
-// <spec> = a path (relative to --dir, default the current folder), several separated by spaces or commas, or a part of a spec's
-// path ("price-calc" finds src/app/x/price-calc.spec.ts). No spec given = every spec under --dir (slow on a big app).
-// Exit: 0 all passed, 1 a failure / bundle error / NOT RUN spec, 2 no esbuild or no spec found.
-// Exit codes: 0 all specs pass · 1 a spec failed · 2 usage error / nothing to run.
+// Bundled by the project's own esbuild + tsconfig (paths/baseUrl, experimentalDecorators). '@angular/core' -> stub
+// (no-op decorators; EventEmitter/signal/computed work; inject() throws) unless --real-angular. TestBed,
+// @angular/core/testing, fakeAsync, waitForAsync -> NOT RUN, never passed. DOM specs (document./window.) use the
+// project's jsdom (no layout: sizes 0); no jsdom -> NOT RUN.
+// <spec>: paths (relative to --dir, default cwd; space/comma-separated) or a path part ("price-calc"); none = all (slow).
+// Exit codes: 0 all passed · 1 a failure / bundle error / NOT RUN spec · 2 no esbuild, no spec found or usage error.
 import Module, { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve, relative } from 'node:path'
@@ -21,30 +16,27 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-// ---------------------------------------------------------------- kit paths (the one map: skills/dev-kit/paths.json)
-// kitPath('chrome-profiles') -> <runtime>/cache/chrome-profiles; <runtime> = $CLAUDE_RUNTIME, else <kit>/.runtime; durable under <kit>/.state
+// --- kit paths (kit.example.json _paths): <runtime> = $CLAUDE_RUNTIME else <kit>/.runtime; durable under <kit>/.state
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
-const MAP = JSON.parse(readFileSync(join(__HERE, 'paths.json'), 'utf8'))
+const MAP = JSON.parse(readFileSync(join(__HERE, 'kit.example.json'), 'utf8'))._paths
 export const runtimeDir = () => process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir)
 export function kitPath(name, { create = false } = {}) {
   let rel, base
   if (name === 'runtime') { rel = '/'; base = runtimeDir() }
   else if (name in MAP.runtime) { rel = MAP.runtime[name]; base = runtimeDir() }
   else if (name in MAP.durable) { rel = MAP.durable[name]; base = join(KIT, MAP.stateDir) }
-  else throw new Error(`kitPath: unknown name '${name}' (see skills/dev-kit/paths.json)`)
+  else throw new Error(`kitPath: unknown name '${name}' (see skills/dev-kit/kit.example.json _paths)`)
   const p = rel === '/' ? base : join(base, rel.replace(/\/$/, ''))
   if (create) mkdirSync(rel.endsWith('/') ? p : dirname(p), { recursive: true })
   return p
 }
-// ---------------------------------------------------------------- spec shim (jasmine/jest-style describe / it / expect / spyOn)
-// Minimal jasmine/jest-style test globals for spec.mjs (library; never run by hand).
-// install() puts describe/it/expect/beforeEach/spyOn/jasmine/jest on globalThis; run() executes what the spec files registered.
-// Covers pure-logic specs only: no TestBed, no DOM, no fakeAsync. Matchers: toBe, toEqual/toStrictEqual, toBeTruthy/Falsy,
-// toBeNull/Undefined/Defined, toContain, toThrow/toThrowError, toHaveLength, toBeGreaterThan(OrEqual)/LessThan(OrEqual),
-// toBeCloseTo, toMatch, toBeInstanceOf, toHaveProperty, toHaveBeenCalled/CalledTimes/CalledWith, all with .not; asymmetric
-// jasmine.any/anything/objectContaining (also expect.any ...). Spies: spyOn(obj, m) with .and.returnValue/callFake/callThrough/
-// throwError and jest .mockReturnValue/.mockImplementation; jasmine.createSpy, jasmine.createSpyObj, jest.fn.
+// --- spec shim: jasmine/jest-style globals (library). install() puts them on globalThis; run() runs the registered specs.
+// Pure logic only (no TestBed, DOM, fakeAsync). Matchers (all with .not): toBe, toEqual/StrictEqual, toBeTruthy/Falsy/
+// Null/Undefined/Defined/CloseTo/InstanceOf, toContain, toThrow(Error), toMatch, toHaveLength/Property,
+// toBeGreaterThan/LessThan(OrEqual), toHaveBeenCalled(Times/With); jasmine/expect .any/anything/objectContaining.
+// Spies: spyOn(obj, m).and.returnValue/callFake/callThrough/throwError, jest .mockReturnValue/.mockImplementation,
+// jasmine.createSpy(Obj), jest.fn.
 
 const ASYM = Symbol('asymmetric')
 const asym = (desc, test) => ({ [ASYM]: true, test, toString: () => desc, [inspect.custom]: () => desc })
@@ -54,7 +46,7 @@ const objectContaining = (o) => asym(`objectContaining(${inspect(o)})`, (v) => v
 const arrayContaining = (a) => asym(`arrayContaining(${inspect(a)})`, (v) => Array.isArray(v) && a.every((x) => v.some((y) => equals(y, x))))
 const stringMatching = (r) => asym(`stringMatching(${r})`, (v) => typeof v === 'string' && new RegExp(r).test(v))
 
-// jest/jasmine-like deep equality: ignores undefined-valued keys and class identity, compares Dates/RegExps/Maps/Sets by value
+// deep equality: ignores undefined keys and class identity; Dates/RegExps/Maps/Sets by value
 export function equals(a, b, seen = new WeakMap()) {
   if (b && b[ASYM]) return b.test(a)
   if (a && a[ASYM]) return a.test(b)
@@ -116,7 +108,7 @@ function spyOn(obj, method) {
   const orig = obj[method]
   if (typeof orig !== 'function') throw new Error(`spyOn: ${method}() is not a function`)
   const s = makeSpy(method, orig.bind ? function (...a) { return orig.apply(this, a) } : orig)
-  s.and.stub()   // jasmine: a spy does nothing until told; jest users call .mockImplementation / callThrough
+  s.and.stub()   // jasmine: a spy does nothing until told (jest: .mockImplementation / callThrough)
   obj[method] = s
   restorers.push(() => { obj[method] = orig })
   s.mockRestore = () => { obj[method] = orig; return s }
@@ -209,7 +201,7 @@ async function call(fn, timeout = 5000) {
   finally { clearTimeout(timer) }
 }
 
-// Runs and resets the registry. Returns { passed, failed, skipped, failures: [{ name, error }] }.
+// runs + resets the registry -> { passed, failed, skipped, failures: [{ name, error }] }
 export async function run({ log = console.log } = {}) {
   const r = { passed: 0, failed: 0, skipped: 0, failures: [] }
   const chain = (s) => { const a = []; for (let x = s; x; x = x.parent) a.unshift(x); return a }
@@ -240,7 +232,7 @@ export async function run({ log = console.log } = {}) {
   return r
 }
 
-// ---------------------------------------------------------------- runner
+// --- runner
 const args = process.argv.slice(2)
 let dir = process.cwd(), tsconfig = null, realAngular = false
 const wanted = []
@@ -254,7 +246,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const say = (m) => console.log(`[node-spec] ${m}`)
 
-// esbuild: only the project's own (its node_modules or a parent's); never installed by this script
+// esbuild: the project's own (its or a parent's node_modules), never installed
 let esbuild
 try { esbuild = createRequire(join(dir, 'package.json'))('esbuild') }
 catch {
@@ -340,7 +332,7 @@ mkdirSync(outRoot, { recursive: true })
 say(`no unit-test target: running ${uniq.length} spec file(s) under node (esbuild ${esbuild.version}${tsconfig ? ', ' + relative(dir, tsconfig) : ''}${realAngular ? '' : ', @angular/core stubbed'})`)
 install()
 const req = createRequire(join(dir, 'package.json'))
-// jsdom: only the project's own (never installed); resolved once, on the first DOM spec
+// jsdom: the project's own (never installed), resolved on the first DOM spec
 let jsdomMod, jsdomWhy = ''
 function getJsdom() {
   if (jsdomMod !== undefined) return jsdomMod
@@ -348,8 +340,7 @@ function getJsdom() {
   let path
   try { path = req.resolve('jsdom') } catch { jsdomWhy = `jsdom is not resolvable from ${dir}'s node_modules`; return null }
   try { jsdomMod = req(path) } catch {
-    // jsdom loads the optional `canvas` package whenever it resolves; a canvas without its native build breaks jsdom itself:
-    // load jsdom again with canvas hidden (jsdom then runs without canvas support)
+    // a resolvable `canvas` without its native build breaks jsdom: reload jsdom with canvas hidden
     const orig = Module._resolveFilename
     Module._resolveFilename = function (r, ...rest) {
       if (r === 'canvas') { const e = new Error("Cannot find module 'canvas'"); e.code = 'MODULE_NOT_FOUND'; throw e }
@@ -363,7 +354,7 @@ function getJsdom() {
   }
   return jsdomMod
 }
-// puts a fresh jsdom window's globals on globalThis (window, document, navigator, HTMLElement, Event, ...); returns the undo
+// fresh jsdom window globals -> globalThis; returns the undo
 function domOn({ JSDOM }) {
   const win = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'http://localhost/', pretendToBeVisual: true }).window
   const saved = []
@@ -407,10 +398,10 @@ for (const spec of uniq) {
   } catch (e) {
     total.errors++
     say(`BUNDLE ERROR ${rel}`)
-    const errs = e.errors ?? [e]   // capped: a stubbed core can raise hundreds of "No matching export" lines that bury the summary
+    const errs = e.errors ?? [e]   // capped: hundreds of stub "No matching export" lines bury the summary
     for (const m of errs.slice(0, 15)) console.log(`  ${m.location ? `${m.location.file}:${m.location.line}:${m.location.column} ` : ''}${m.text ?? m.message ?? m}`)
     if (errs.length > 15) console.log(`  ... +${errs.length - 15} more errors`)
-    // the @angular/core stub lacks an export the spec's imports need (Injector, forms internals ...)
+    // the core stub lacks an export the spec needs (Injector, forms ...)
     const missing = [...new Set((e.errors ?? []).map((m) => /No matching export in "ng-stub:@angular\/core" for import "([^"]+)"/.exec(m.text ?? '')?.[1]).filter(Boolean))]
     if (missing.length && !realAngular) say(`hint: the @angular/core stub has no ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}: re-run with dev.ps1 check -Step test -RealAngular (node-spec --real-angular); if that fails with a JIT/linker error, move the logic into a pure helper and spec that`)
     continue

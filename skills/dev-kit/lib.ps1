@@ -1,28 +1,25 @@
-<#
-Kit library: config, paths, OS helpers, the tracker adapter and the git-host adapter. Every kit script dot-sources it once:
+﻿<#
+Kit library: config, paths, OS, tracker + git-host adapters; every kit script dot-sources it once:
   . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
-Usage:   functions only (no output when dot-sourced). Inputs: skills/dev-kit/kit.local.json, paths.json, env KIT_* / CLAUDE_*.
-Outputs: $KitConf, $KitCmd (paths of the kit entry scripts), Get-KitPath, Get-KitSetting, tracker verbs (Get-TrackerTask,
-         Set-TrackerStatus, ...), Invoke-HostApi, OS helpers (Get-SysMem, Get-SysProcs, New-DirLink, ...).
-Exit codes: none (a library; callers decide).
+Functions only, silent. In: dev-kit/kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
+Out: $KitConf, $KitCmd (entry script paths), Get-KitPath, Get-KitSetting, tracker verbs (Get-TrackerTask, ...), Invoke-HostApi,
+  OS helpers (Get-SysMem, Get-SysProcs, New-DirLink, ...).
 Sections: 1 paths  2 config  3 OS  4 tracker  5 git host  6 entry scripts.
 #>
-# ================================ 1. paths (paths.json) ================================
+# ===== 1. paths (kit.example.json _paths) =====
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)   # <kit>/skills/dev-kit -> <kit>
-$script:KitPathMap = Get-Content (Join-Path $PSScriptRoot 'paths.json') -Raw | ConvertFrom-Json
+$script:KitPathMap = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths
 function Get-KitRuntime { if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir } }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }
   elseif ($m.runtime.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.runtime.$Name; $p = Join-Path (Get-KitRuntime) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
   elseif ($m.durable.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.durable.$Name; $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
-  else { throw "Get-KitPath: unknown name '$Name' (see skills/dev-kit/paths.json)" }
+  else { throw "Get-KitPath: unknown name '$Name' (see skills/dev-kit/kit.example.json _paths)" }
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
-# Cross-process lock for a durable file (.state/tracking.json is written by orch.ps1 track and devtools.py): a <file>.lock created
-# exclusively; a lock older than 2 minutes is stale (its writer died) and is taken over. Not got within ~130 s -> throws (never
-# runs the body unlocked: two writers would each drop the other's change).
+# cross-process lock: exclusive <file>.lock, stale after 2 min; ~130 s wait -> throw (never unlocked)
 function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][scriptblock]$Body) {
   $lock = "$File.lock"; $fs = $null
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
@@ -32,13 +29,13 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
       else { Start-Sleep -Milliseconds 100 }
     }
   }
-  # Write-Warning + return too: under $ErrorActionPreference = 'SilentlyContinue' (most kit scripts) a throw does not stop the function
+  # also warn + return: SilentlyContinue (most scripts) ignores a throw
   if (-not $fs) { $m = "Invoke-KitLocked: $lock still held after 130 s - not writing $File"; Write-Warning $m; throw $m; return }
   try { & $Body } finally { $fs.Dispose(); Remove-Item $lock -Force -ErrorAction SilentlyContinue }
 }
-# Durable task tracking (<kit>/tracking.local.json): { tasks: { <task>: {task, mrs, onMerged, done, ...} }, automerge: { <ref>: <time> } }.
-# Writers: orch.ps1 track (tasks + automerge re-arm), devtools.py merge (automerge), orch.ps1 supervise (live/QA fields). Needs pwsh 7.
-# -Strict (writers): invalid JSON is backed up to <file>.bad-<time> and throws, so a write never replaces every task with {}.
+# <kit>/tracking.local.json: { tasks: { <task>: {task, mrs, onMerged, done, ...} }, automerge: { <ref>: <time> } }
+# writers: track (tasks, automerge re-arm), devtools.py merge, supervise (live/QA); pwsh 7
+# -Strict: bad JSON -> <file>.bad-<time> + throw (no {} over all tasks)
 function Read-KitTracking([switch]$Strict) {
   $f = Get-KitPath tracking; $t = $null
   if (Test-Path $f) {
@@ -53,30 +50,30 @@ function Read-KitTracking([switch]$Strict) {
   if ($t.automerge -isnot [hashtable]) { $t.automerge = @{} }
   $t
 }
-# Locked read-modify-write: & $Change $tracking; the result is written atomically (temp file + move).
+# locked read-modify-write; atomic temp + move
 function Update-KitTracking([Parameter(Mandatory)][scriptblock]$Change) {
   $f = Get-KitPath tracking -Create
   Invoke-KitLocked $f {
     $t = Read-KitTracking -Strict
-    if ($t -isnot [hashtable]) { return }   # invalid file (Read-KitTracking warned/threw): never write {} over it
+    if ($t -isnot [hashtable]) { return }   # invalid file: never write {} over it
     & $Change $t
     $t.version = 1
     $t | ConvertTo-Json -Depth 8 | Set-Content "$f.tmp" -Encoding utf8
     Move-Item "$f.tmp" $f -Force
   }
 }
-# Set some fields of one tracked task without touching the rest (another process may have changed it since you read it).
+# set fields of one task, keep the rest
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
 }
 
-# ================================ 2. config (kit.local.json) ================================
+# ===== 2. config (kit.local.json) =====
 $__devkit = $PSScriptRoot
 $__kit = Split-Path (Split-Path $__devkit)
 $__ws = Split-Path $__kit
 $__cfg = $null
 $__cfgFile = Join-Path $__devkit 'kit.local.json'
-# a linked kit worktree has no kit.local.json (local-only): read the main clone's, else every script there ran unconfigured
+# kit worktree: no kit.local.json, use the main clone's
 if (-not (Test-Path $__cfgFile)) {
   $__cd = "$(git -C $__devkit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
   if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/dev-kit/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
@@ -96,36 +93,35 @@ function Get-KitSetting([string]$Path, $Default) {
   if ($null -eq $cur -or "$cur" -eq '') { return $Default }
   $cur
 }
-# reports: "gdocs" (Google Docs via the gws CLI) or "markdown" (files in the run folder); default gdocs only when gws is installed
+# gdocs (gws) | markdown (run folder); default gdocs if gws exists
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
-# tag that ties branches/MR titles to a task (fix/<tag><id>-slug); orch.ps1 track -Discover searches MRs for <tag><id>
+# task tag: fix/<tag><id>-slug, MR titles; track -Discover searches it
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
   Kit               = $__kit
   Workspace         = $__ws
-  Runtime           = (Get-KitRuntime)                            # use Get-KitPath <name> for anything inside it
+  Runtime           = (Get-KitRuntime)                            # Get-KitPath <name> inside it
   ConfigFile        = $__cfgFile
-  ReposRoot         = $__repos                                    # where the main checkouts live (<ReposRoot>/<repo>)
-  WorktreeRoots     = $__wtRoots                                  # where dev.ps1 wt puts worktrees (default <ReposRoot>-wt)
+  ReposRoot         = $__repos                                    # main checkouts: <ReposRoot>/<repo>
+  WorktreeRoots     = $__wtRoots                                  # dev.ps1 wt root (default <ReposRoot>-wt)
   GitHost           = [string](Get-KitValue 'gitHost' 'gitlab.com')   # GitLab host (self-hosted: gitlab.example.com)
   GitlabGroup       = [string](Get-KitValue 'gitlabGroup' '')     # group for short MR refs <repo>!<iid>
-  TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos orch.ps1 track -Discover searches for <TrackerTag><task> MRs
+  TrackerRepos      = @(Get-KitValue 'trackerRepos' @())          # repos track -Discover searches
   RepoAliases       = (Get-KitValue 'repoAliases' $null)          # e.g. { "api": "backend", "web": "frontend" }
-  ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # extra shared branches besides main/master/develop/release/*
-  TrackerType       = $__trType                                   # clickup | github | gitlab | jira | none (skills/dev-kit/dev.ps1 tracker)
-  TrackerTag        = $__trTag                                    # branch/MR tag before the task id: CU- (clickup), GH-, GL-, '' (jira keys, none)
-  ReportType        = $__reportType.ToLower()                     # gdocs | markdown (qa-kit qa.ps1 finalize, devtools.py doc)
-  MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # orch.ps1 cleanup keeps this many QA browser profiles when no QA seat is active
-  # Claude Code keeps this workspace's sessions (workflow journals) in ~/.claude/projects/<workspace path with non-alphanumerics as '-'>
+  ProtectedBranches = @(Get-KitValue 'protectedBranches' @())     # shared branches besides main/master/develop/release/*
+  TrackerType       = $__trType                                   # clickup | github | gitlab | jira | none
+  TrackerTag        = $__trTag                                    # CU- (clickup), GH-, GL-, '' (jira, none)
+  ReportType        = $__reportType.ToLower()                     # gdocs | markdown
+  MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)   # QA browser profiles kept with no QA seat
+  # session journals: ~/.claude/projects/<workspace path, non-alnum -> '-'>
   ClaudeProjectDir  = (Join-Path (Join-Path $HOME '.claude/projects') ($__ws -replace '[^A-Za-z0-9]', '-'))
 }
 
-# List arguments: `pwsh -File x.ps1 -Only 'T1','T2'` hands the list over as ONE literal string ("'T1','T2'"), and agents also pass
-# "T1, T2" or "T1 T2". Split-KitList turns any of these into clean items: quoted items are taken as they are (they may hold
-# commas, e.g. annotate's 'x,y,w,h,label'), the rest is split on -Sep and trimmed of quotes and spaces.
+# Split-KitList: `'T1','T2'` via pwsh -File = ONE string; also "T1, T2" / "T1 T2". Quoted items stay whole (commas, e.g.
+# annotate's 'x,y,w,h,label'), the rest splits on -Sep, trimmed of quotes/spaces.
 function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
   @(foreach ($v in @($Values)) {
       $v = "$v"
@@ -135,25 +131,25 @@ function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
     }) | Where-Object { $_ }
 }
 
-# ---------- git: no prompts, no hangs (a stale worktree's fetch once held a sweep for 20 min) ----------
+# ----- git: no prompts, no hangs
 if (-not $env:GIT_TERMINAL_PROMPT) { $env:GIT_TERMINAL_PROMPT = '0' }
 if (-not $env:GIT_HTTP_LOW_SPEED_LIMIT) { $env:GIT_HTTP_LOW_SPEED_LIMIT = '1000'; $env:GIT_HTTP_LOW_SPEED_TIME = '30' }   # < 1 KB/s for 30 s = abort
 if (-not $env:GIT_SSH_COMMAND) { $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o ConnectTimeout=15' }
 $global:KitFetched = if ($global:KitFetched) { $global:KitFetched } else { @{} }
-# fetch a repo at most once per process per 10 min (worktrees of one repo share it) under a wall clock; $false = failed / timed out
+# fetch a repo once per process per 10 min (worktrees share it), wall-clocked; $false = failed/timed out
 function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = @()) {
   $common = "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $common) { return $false }
   $key = "$common|$($Refs -join ',')"
   if ($global:KitFetched.ContainsKey($key) -and ((Get-Date) - $global:KitFetched[$key].at).TotalMinutes -lt 10) { return $global:KitFetched[$key].ok }
   $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
-  # Invoke-KitExe passes each argument as one (a -Dir with spaces broke Start-Process -ArgumentList) and keeps stderr
+  # Invoke-KitExe: one argv entry per argument (spaces broke Start-Process), keeps stderr
   $r = Invoke-KitExe git $a $TimeoutSec
   if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
   elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
   $ok = -not $r.timedOut -and $r.code -eq 0
   $global:KitFetched[$key] = @{ at = Get-Date; ok = $ok }; $ok
 }
-# ================================ 3. OS helpers (Windows, Linux, macOS) ================================
+# ===== 3. OS helpers (Windows, Linux, macOS) =====
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $KitIsMac = (-not $KitIsWindows) -and ($PSVersionTable.OS -match 'Darwin' -or ((Test-Path variable:IsMacOS) -and $IsMacOS))
 
@@ -184,11 +180,10 @@ function Get-SysMem {
   [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) }
 }
 
-# Free RAM for "may I start another phone / browser seat" decisions: Windows free physical memory (as before), and on Linux/macOS
-# the available figure (their page cache keeps MemFree near zero on a healthy machine, so "free" alone would block everything)
+# free RAM: Windows free physical; Linux/macOS available (page cache keeps MemFree ~0)
 function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
 
-# Busy CPU in percent of all cores (0-100): Windows processor load, Linux /proc/stat over 0.5 s, macOS ps %cpu / cores
+# busy CPU % (all cores): Windows load, Linux /proc/stat 0.5 s, macOS ps %cpu / cores
 function Get-SysCpu {
   if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
   if (Test-Path /proc/stat) {
@@ -210,7 +205,7 @@ function ConvertFrom-PsElapsed([string]$e) {
   (Get-Date).AddSeconds(-$sec)
 }
 
-function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows (CommandLine/Created left empty)
+function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows (no CommandLine/Created)
   $all = if ($KitIsWindows) {
     $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'WorkingSetSize', 'CreationDate' }
     foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {
@@ -218,8 +213,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
     }
   }
   else {
-    # comm is listed separately (last column, may contain spaces on macOS); on Linux it is cut to 15 chars, so prefer the
-    # executable from the command line when it starts with comm
+    # comm: last column, spaces on macOS, 15 chars on Linux: prefer the cmdline exe starting with comm
     $names = @{}
     foreach ($l in (ps -A -o pid= -o comm= 2>$null)) { if ($l -match '^\s*(\d+)\s+(.*)$') { $names[[int]$Matches[1]] = Split-Path $Matches[2].Trim() -Leaf } }
     foreach ($l in (ps -A -o pid= -o ppid= -o rss= -o etime= -o args= 2>$null)) {
@@ -235,8 +229,8 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
 
-# Holder of a seat / claim / board entry: the first ancestor of this process that is not a shell (the agent harness), plus its start
-# time (a reused pid is not the holder). Recorded as holderPid / holderStart; Test-KitHolder: $true alive, $false gone, $null unknown.
+# holderPid/holderStart: first non-shell ancestor (agent harness) + start time (pid reuse).
+# Test-KitHolder: $true alive, $false gone, $null unknown.
 $script:KitShells = '^(pwsh|powershell|bash|sh|zsh|dash|fish|cmd|conhost|env|timeout|sudo|python\d*(\.\d+)?|py)$'
 function Get-KitHolder {
   $p = Get-Process -Id $PID -ErrorAction SilentlyContinue
@@ -255,8 +249,7 @@ function Test-KitHolder($o) {
   $true
 }
 
-# A native CLI under a wall clock (a lost network once hung a git-host call for minutes): { code, out, err, timedOut }.
-# A CLI defined as a function (the tests mock glab / gh / clickup that way) is called directly.
+# wall-clocked CLI -> { code, out, err, timedOut }; CLI functions (test mocks) run directly
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $cmd) { return [pscustomobject]@{ code = 127; out = ''; err = "$Exe is not on PATH"; timedOut = $false } }
@@ -274,12 +267,11 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
   $p.WaitForExit()
   [pscustomobject]@{ code = $p.ExitCode; out = $so.Result.TrimEnd(); err = $se.Result.TrimEnd(); timedOut = $false }
 }
-# Network loss: a call that failed on a transient error is retried with backoff (2 s, 6 s). -Connect: only errors that prove the
-# request never left (writes that are not idempotent, e.g. a comment, must not be sent twice).
+# transient errors retry (2 s, 6 s); -Connect: only errors proving nothing was sent
 $script:KitTransient = '(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests'
 $script:KitNoConnect = '(?i)could not resolve|no such host|connection refused|unreachable|dial tcp'
 function Test-KitTransient([string]$Text, [switch]$Connect) { $Text -match $(if ($Connect) { $script:KitNoConnect } else { $script:KitTransient }) }
-# per-call wall clock and tries: kit.local.json net.timeoutSec (60) / 3 tries; env KIT_NET_TIMEOUT_SEC / KIT_NET_TRIES win (supervise lowers both)
+# net.timeoutSec (60) / 3 tries; KIT_NET_TIMEOUT_SEC / KIT_NET_TRIES win (supervise lowers)
 function Get-KitNetTimeout { if ($env:KIT_NET_TIMEOUT_SEC) { [int]$env:KIT_NET_TIMEOUT_SEC } else { [int](Get-KitSetting 'net.timeoutSec' 60) } }
 function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
   $delay = 2
@@ -297,15 +289,12 @@ function New-DirLink([string]$Path, [string]$Target) {
 
 function Remove-DirLink([string]$Path) {
   if ($KitIsWindows) { cmd /c rmdir "$Path" | Out-Null }   # rmdir on a junction removes only the link
-  else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }             # rm on a symlink (no trailing slash, no -r) removes only the link
+  else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }             # rm on a symlink (no slash, no -r) removes only the link
 }
 
-# node_modules for a worktree, linked from an installed checkout ($From = <checkout>/<rel>/node_modules), never installed.
-# A monorepo's node_modules holds its workspace packages as links back INTO the checkout (@scope/pkg -> <checkout>/common/pkg):
-# one junction to that folder would make a worktree build the checkout's copy of the shared code (wrong branch), and bundlers
-# such as Metro reject files outside the project. Then $To becomes a "farm": a real folder whose entries link to the installed
-# packages, with workspace links re-pointed into the worktree ($WtRoot). Without workspace links: one junction, as before.
-# Idempotent (a marker records the source); returns $true when it changed something.
+# Link a worktree's node_modules from an installed checkout ($From), never install. Monorepo workspace links point INTO the
+# checkout (wrong branch; Metro rejects outside files), so $To is a farm of package links, workspace ones re-pointed to
+# $WtRoot; else one junction. Idempotent (marker = source); $true when changed.
 function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
   $norm = { param($x) [IO.Path]::GetFullPath($x).TrimEnd('\', '/') }   # "a\.\node_modules" and "a\node_modules" are one path
   $To = & $norm $To; $From = & $norm $From; $SrcRoot = & $norm $SrcRoot; $WtRoot = & $norm $WtRoot
@@ -342,14 +331,14 @@ function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$
   Set-Content -LiteralPath $marker $want
   $true
 }
-# Removes a node_modules link or farm without ever touching the installed packages it links to
+# remove a node_modules link/farm, never its packages
 function Remove-NodeModules([string]$Path) {
   $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
   if (-not $item) { return }
   if ($item.LinkType) { Remove-DirLink $Path; return }
-  # Directory.Delete on a junction/symlink removes only the link (fast: no cmd.exe per entry for thousands of packages)
+  # Directory.Delete on a link removes only the link (fast)
   $unlink = { param($x) if ($KitIsWindows) { [IO.Directory]::Delete($x) } else { Remove-DirLink $x } }
-  # scan first: a farm holds only links, files and @scope folders of links; anything else -> refuse before deleting anything
+  # farm = only links, files, @scope folders of links; else refuse before deleting
   foreach ($c in Get-ChildItem -LiteralPath $Path -Force) {
     if ($c.PSIsContainer -and -not $c.LinkType) {
       if (-not $c.Name.StartsWith('@')) { throw "Remove-NodeModules: $($c.FullName) is a real folder - $Path is not a link farm, nothing deleted" }
@@ -374,11 +363,10 @@ function Resolve-Tool {
   $null
 }
 
-# Python 3 launcher: 'python' on Windows (python3 there is often the Store stub), python3 first elsewhere
+# Windows: 'python' (python3 may be the Store stub); else python3 first
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
-# templates.md "Writing standards": findings of `kittool.py prose` for a text about to be published or handed on (printed as
-# warnings, returned as strings; the text is never cut). -Path a file, or -Text (written to a temp file first).
+# `kittool.py prose` findings (templates.md "Writing standards") as warnings + strings; never cuts; -Path or -Text
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $tool = $KitCmd.kittool; if (-not $tool -or -not (Test-Path $tool)) { return @() }
   $tmp = $null
@@ -388,8 +376,7 @@ function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
   $found
 }
-# Starts a program that outlives this shell (and a tool timeout): hidden window on Windows; on Linux/macOS through
-# `setsid nohup` (plain nohup where setsid is missing, e.g. macOS) with output to -Log (default: a kit-bg-*.log in the OS temp)
+# detached from shell / tool timeouts: hidden (Windows), else `setsid nohup` (or nohup) to -Log (default OS temp)
 function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {
   if ($KitIsWindows) { $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden; return }
   if (-not $Log) { $Log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log" }
@@ -399,7 +386,7 @@ function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [strin
   ([Diagnostics.Process]::Start($psi)).WaitForExit()
 }
 
-# Process ids listening on a local TCP port (Get-NetTCPConnection on Windows, lsof or fuser elsewhere)
+# pids listening on a local TCP port (Get-NetTCPConnection, lsof / fuser)
 function Get-PortPids([int]$Port) {
   if ($KitIsWindows) { return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique) }
   if (Resolve-Tool lsof) { return @(lsof -t -nP -iTCP:$Port -sTCP:LISTEN 2>$null | ForEach-Object { [int]$_ } | Select-Object -Unique) }
@@ -421,9 +408,9 @@ function Get-AndroidSdk {
   else { Join-Path $HOME 'Android/Sdk' }
 }
 
-# ================================ 4. tracker adapter (clickup | github | gitlab | jira | none) ================================
+# ===== 4. tracker adapter (clickup | github | gitlab | jira | none) =====
 
-# ---------- options: Initialize-KitTracker [-Type <backend>] [-DryRun] (env KIT_TRACKER_TYPE / KIT_TRACKER_DRYRUN, else kit.local.json) ----------
+# ----- options: Initialize-KitTracker [-Type <backend>] [-DryRun] (env KIT_TRACKER_TYPE / KIT_TRACKER_DRYRUN, else config)
 function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
   $script:__trType = ([string]$(if ($Type) { $Type } elseif ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { $KitConf.TrackerType })).ToLower()
   $script:__trDry = [bool]($DryRun -or $env:KIT_TRACKER_DRYRUN -eq '1')
@@ -432,7 +419,7 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
 }
 Initialize-KitTracker
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
-$__trNoneDir = Get-KitPath tracker-none   # durable store of the 'none' tracker (paths.json)
+$__trNoneDir = Get-KitPath tracker-none   # 'none' tracker store (_paths)
 
 $__trStatus = [ordered]@{
   open = @('open', 'to do'); inProgress = @('in progress'); review = @('for review', 'in review'); promoted = @('promoted')
@@ -441,14 +428,14 @@ $__trStatus = [ordered]@{
 $__trCfgSt = Get-KitSetting 'tracker.statuses' $null
 if ($__trCfgSt) { foreach ($__p in $__trCfgSt.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | ForEach-Object { [string]$_ }) } }
 
-# ---------- helpers ----------
+# ----- helpers
 function Resolve-TrackerStatus([string]$Status) {
-  # a logical name (review, inTest, ...) -> the tracker's status name; anything else passes through
+  # logical (review, inTest, ...) -> tracker status; else as is
   foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return @($__trStatus[$k])[0] } }
   $Status
 }
 function Test-TrackerStatus([string]$Status, [string[]]$Logical) {
-  # true when $Status (as read from the tracker) is one of the names of the given logical statuses
+  # $true when $Status names one of the given logical statuses
   foreach ($l in $Logical) { foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $l -and (@($__trStatus[$k]) | Where-Object { $_ -ieq "$Status".Trim() })) { return $true } } }
   $false
 }
@@ -461,14 +448,13 @@ function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -
 function __TrCli([string]$Exe, [string[]]$A) {
   if ($__trDry) { Write-Host "DRYRUN: $Exe $(__TrShort (__TrQuote $A))"; return $null }
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
-  # CLIs print UTF-8 (read as UTF-8: the console code page turned '—' into mojibake). Reads and status sets retry any transient
-  # error; other writes (comment, create, edit) only errors that prove nothing was sent.
+  # read CLI output as UTF-8 (not the code page); reads + status sets retry transient errors, other writes only unsent
   $write = ("$($A[0..1] -join ' ')" -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and "$($A[0..1] -join ' ')" -notmatch '(?i)status') -or
     ("$($A -join ' ')" -match '(?i)(^|\s)(-X|--method)\s+(POST|PUT|PATCH|DELETE)\b' -and "$($A -join ' ')" -notmatch '(?i)status')
   $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
   try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $A (Get-KitNetTimeout) } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
   $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
-  # a failing CLI (expired auth, unknown task) must not look like success; status set's alias loop reads 'no matching status'
+  # a failing CLI (auth, unknown task) is no success; alias loop needs 'no matching status'
   if ($r.code -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $($A[0..1] -join ' ') failed (exit $($r.code)): $(__TrShort $out)" }
   $out
 }
@@ -546,7 +532,7 @@ function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
   $o
 }
 
-# ---------- verbs ----------
+# ----- verbs
 function Get-TrackerUrl([string]$Id) {
   switch ($__trType) {
     'clickup' { "https://app.clickup.com/t/$Id" }
@@ -557,7 +543,7 @@ function Get-TrackerUrl([string]$Id) {
   }
 }
 
-# reads memoised per process for 90 s (a sweep reads the same tasks several times); writes to a task drop its entry
+# reads memoised 90 s per process; writes drop the task's entry
 $global:KitTrackerMemo = if ($global:KitTrackerMemo) { $global:KitTrackerMemo } else { @{} }
 function Get-TrackerTask([string]$Id) {
   $mk = "$($__trType)|$Id"
@@ -620,8 +606,7 @@ function __Get-TrackerTask([string]$Id) {
   }
 }
 
-# Tracker writes lost to the network go to the outbox (.state/outbox.jsonl), replayed in order by orch.ps1 supervise (Invoke-KitOutbox);
-# the caller gets "QUEUED ..." instead of a throw. Any other error still throws. KIT_NO_OUTBOX=1 turns it off.
+# network-lost writes -> .state/outbox.jsonl ("QUEUED ..."), replayed by supervise (Invoke-KitOutbox); KIT_NO_OUTBOX=1: off
 function Add-KitOutbox([string]$Op, [string]$Id, [string]$Arg, [string]$Why) {
   $f = Get-KitPath outbox -Create
   $line = [ordered]@{ at = (Get-Date).ToString('o'); op = $Op; id = $Id; arg = $Arg; tracker = $__trType; tries = 0; why = $Why } | ConvertTo-Json -Compress
@@ -637,8 +622,7 @@ function Invoke-TrackerWrite([string]$Op, [string]$Id, [string]$Arg, [scriptbloc
     Add-KitOutbox $Op $Id $Arg (__TrShort $m)
   }
 }
-# Replay the outbox: oldest first; a write still failing on the network stays (tries + 1); a status older than 24 h, or any write
-# that failed 20 times or with a real error, is dropped and returned as GAVE UP (the coordinator does it by hand). -DryRun lists.
+# oldest first; network failures stay (tries + 1); GAVE UP (by hand): status > 24 h, 20 fails or real error; -DryRun lists
 function Invoke-KitOutbox([switch]$DryRun) {
   $f = Get-KitPath outbox; if (-not (Test-Path $f)) { return }
   Invoke-KitLocked $f {
@@ -666,10 +650,10 @@ function __Set-TrackerStatus([string]$Id, [string]$Status) {
   $name = Resolve-TrackerStatus $Status
   switch ($__trType) {
     'clickup' {
-      # lists name the same status differently ("for review" / "in review"): try each alias until one exists on the task's list
+      # per-list status names ("for review" / "in review"): try each alias
       $names = @($name); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { $names = @($__trStatus[$k]) } }
       foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $Id); if ("$out" -notmatch 'no matching status') { return $out } }
-      # no alias exists on the task's list: callers (orch.ps1 track, mark-in-test, finalize) used to read this as done
+      # no alias on the list: fail (callers read success as done)
       if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $Id (set tracker.statuses.$Status in kit.local.json)" }
       $out
     }
@@ -731,8 +715,7 @@ function Get-TrackerComments([string]$Id) {
   @($c | Sort-Object date)
 }
 
-# The person running the kit, as the tracker's assignee value: kit.local.json tracker.owner (optional override), else the
-# OS user's full name matched against the tracker's members (ClickUp/Jira -> id), else the CLI's logged-in user (GitHub/GitLab).
+# assignee = tracker.owner, else OS user's full name among members (ClickUp/Jira id), else the CLI user (GitHub/GitLab)
 function __TrOsFullName {
   $n = ''
   if ($IsWindows -or $env:OS -eq 'Windows_NT') {
@@ -742,8 +725,8 @@ function __TrOsFullName {
   if (-not $n) { try { $n = git config --global user.name } catch {} }
   ([string]$n).Trim()
 }
-# ClickUp member id for a name (username, case-insensitive) or email, from `clickup member list --json`; $null when nobody matches,
-# throws when the CLI fails. Read-only, so it runs under -DryRun too (the $__trDry below shadows the script's for __TrCli).
+# ClickUp member id by username (any case) or email; $null = none, throws on CLI failure; runs under -DryRun (read-only;
+# $__trDry shadows the script's for __TrCli)
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }
   $__trDry = $false
@@ -771,12 +754,12 @@ function Get-TrackerOwner {
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority) {
   $Description = __TrText $Description
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
-  if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # new tasks go to the person running the kit unless '-' (nobody) is passed
+  if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
   switch ($__trType) {
     'clickup' {
       $a = @('task', 'create', '--list-id', $List, '--name', $Name, '--markdown-description', $Description, '--json')
       if ($Priority) { $a += @('--priority', $Priority) }
-      # ClickUp wants a member id: a name or email is looked up among the workspace members; unresolved -> warn, create unassigned
+      # ClickUp needs a member id: name/email lookup; unresolved -> warn, unassigned
       if ($Assignee -and $Assignee -ne '-' -and $Assignee -notmatch '^\d+$') {
         $id = try { __TrClickupMemberId $Assignee } catch { Write-Warning "tracker: member lookup failed ($($_.Exception.Message))"; $null }
         if ($id) { $Assignee = $id } else { [Console]::Error.WriteLine("WARNING: tracker: no ClickUp member '$Assignee' (clickup member list): creating the task unassigned (assigned=false)"); $Assignee = '' }
@@ -786,7 +769,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       $t = if ($Parent -and $Parent -ne '-' -and -not $__trDry) { try { __TrJson (__TrCli 'clickup' ($a + @('--parent', $Parent))) } catch { $null } } else { $null }
       if ($__trDry) { $null = __TrCli 'clickup' ($a + @(if ($Parent -and $Parent -ne '-') { '--parent', $Parent })); return [pscustomobject]@{ id = '<new>'; url = ''; assigned = $assigned } }
       $dropped = $false
-      # ClickUp refuses a subtask whose parent lives in another list: create it in the list and link it with a comment
+      # ClickUp rejects cross-list parents: create in the list, link by comment
       if (-not $t.id) { $dropped = [bool]($Parent -and $Parent -ne '-'); $t = __TrJson (__TrCli 'clickup' $a) }
       if (-not $t.id) { return $null }
       if ($dropped) { $null = Add-TrackerComment $t.id "Related: $(Get-TrackerUrl $Parent) (could not be created as its subtask: it is in another list)." }
@@ -801,7 +784,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       if ($__trDry) { $null = __TrCli 'gh' ($a + @('--body', $body)); $out = $null }
       else { $f = __TrTemp $body; try { $out = __TrCli 'gh' ($a + @('--body-file', $f)) } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
       $num = if ("$out" -match '/issues/(\d+)') { $Matches[1] } elseif ($__trDry) { '<new>' } else { return $null }
-      if ($Parent -and $Parent -ne '-') {   # task list line in the parent, so view <parent> lists it as a subtask
+      if ($Parent -and $Parent -ne '-') {   # task-list line: view <parent> shows it as subtask
         $pn = $Parent -replace '^.*#', ''
         $pb = [string](__TrJson (__TrCli 'gh' @('issue', 'view', $pn, '-R', $r, '--json', 'body'))).body
         $nb = $pb.TrimEnd() + "`n- [ ] #$num"
@@ -873,7 +856,7 @@ function Set-TrackerName([string]$Id, [string]$Name) {
 }
 
 function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
-  # A report or guide file: GitHub/GitLab get its text as a comment (they have no task attachments); ClickUp/Jira attach the file
+  # GitHub/GitLab: text as comment (no attachments); ClickUp/Jira: attach file
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
   $leaf = Split-Path $File -Leaf
   switch ($__trType) {
@@ -889,8 +872,8 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 }
 
 function Get-TrackerTasks([string]$List, [string]$Status) {
-  # tasks of one list in one logical status: [{ id, name, status, assignees[{id,username}] }]. <List> = the backend's container:
-  # ClickUp list id, GitHub owner/name, GitLab group/project, Jira project key; none = any (or its list); '' = tracker.list / tracker.repo
+  # [{ id, name, status, assignees[{id,username}] }] in a logical status. <List>: ClickUp list id, GitHub owner/name, GitLab
+  # group/project, Jira key; none = any (or its list); '' = tracker.list / tracker.repo
   $st = Resolve-TrackerStatus $Status
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
   $who = { param($id, $u) [pscustomobject]@{ id = "$id"; username = "$u" } }
@@ -927,7 +910,7 @@ function Get-TrackerTasks([string]$List, [string]$Status) {
   }
 }
 
-# ================================ 5. git-host adapter (GitLab / GitHub) ================================
+# ===== 5. git-host adapter (GitLab / GitHub) =====
 $script:HostType = [string](Get-KitValue 'gitHostType' $(if ($KitConf.GitHost -match 'github') { 'github' } else { 'gitlab' }))
 if ($script:HostType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (Get-KitValue 'githubHost' 'github.com') -ne 'github.com') { $env:GH_HOST = [string](Get-KitValue 'githubHost' 'github.com') }
@@ -962,9 +945,9 @@ function __GhMr($pr, [string]$Repo, [switch]$NoChecks) {
 }
 function __Files($files) { @($files | ForEach-Object { [pscustomobject]@{ new_path = $_.filename; old_path = $(if ($_.previous_filename) { $_.previous_filename } else { $_.filename }) } }) }
 
-# GET answers are memoised per process for 90 s (a supervise sweep asks the same MRs / pipelines many times); any write clears it
+# GETs memoised 90 s per process; writes clear it
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
-# -NoMemo: a poll loop (dev.ps1 pipes, every 30 s) must see fresh states, not a 90 s old answer
+# -NoMemo: poll loops need fresh states
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {
   $mk = "$($script:HostType)|$Path"
   if ($Method -ne 'GET') { $global:KitHostMemo.Clear() }
@@ -978,7 +961,7 @@ function __Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fi
     $a = @('api'); if ($Method -ne 'GET') { $a += @('-X', $Method) }; $a += $Path
     foreach ($k in $Fields.Keys) { $a += @('-f', "$k=$($Fields[$k])") }
     if (-not (Get-Command glab -ErrorAction SilentlyContinue)) { return $null }
-    # network loss: GETs retry any transient error, writes only when nothing was sent; a hung call ends at net.timeoutSec
+    # GETs retry transient errors, writes only unsent; hung calls end at net.timeoutSec
     $r = Invoke-KitRetry { Invoke-KitExe glab $a (Get-KitNetTimeout) } -Connect:($Method -ne 'GET')
     if ($r.code) { if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: glab api $Path failed on the network: $($r.err)" }; return $null }
     $o = @($r.out -split "`n")
@@ -1032,13 +1015,11 @@ function __Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fi
   }
 }
 
-# Call a verb's function with the command-line tokens bound by its own parameters: `pwsh -File x.ps1 -List 'a b','c d'` arrives as
-# separate tokens and `-List a,b` as one, so the values after a -Name are collected (an array parameter gets them all, a scalar one
-# a comma list) and switches take no value. A function without a param block gets the tokens as they are.
+# bind tokens to the function's params (`-List 'a b','c d'` arrives split, `-List a,b` whole), values after -Name
+# (array: all, scalar: comma list); switches take none; no param block: tokens as is
 function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
-  # --help / -h / -? (not as a parameter's value) print the entry script's header and end it with 0: -h used to prefix-match a
-  # real parameter; any other --flag in a parameter slot is an unknown option, never a positional value
+  # --help / -h / -? (not a value): header, exit 0; other --flags in a param slot: unknown option, not positional
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
   $meta = (Get-Command $Fn).Parameters
@@ -1054,7 +1035,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $p = @($own | Where-Object { $_ -ieq $n }); if (-not $p.Count) { $p = @($own | Where-Object { @($meta[$_].Aliases) -contains $n }) }; if (-not $p.Count) { $p = @($own | Where-Object { $_ -like "$n*" }) }
       if ($p.Count -ne 1) { throw "$($Fn -replace '^Invoke-', ''): unknown or ambiguous parameter -$n" }
       $pm = $meta[$p[0]]; $i++
-      # a hashtable splatted into a script (& x.ps1 @{ Mode = 'None' }) arrives as '-Mode:' + 'None' (two tokens): the value follows
+      # splatted hashtable (& x.ps1 @{ Mode = 'None' }) arrives as '-Mode:', 'None' (value next)
       if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }
       if ($pm.SwitchParameter) { $named[$p[0]] = if ($null -ne $inline) { $inline -notmatch '^(\$?false|0)$' } else { $true }; continue }
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }
@@ -1064,7 +1045,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   }
   $pa = $pos.ToArray(); & $Fn @pa @named
 }
-# ================================ 6. entry scripts (one per area) ================================
+# ===== 6. entry scripts (one per area) =====
 $KitCmd = [pscustomobject]@{
   dev      = Join-Path $KitConf.Kit 'skills/dev-kit/dev.ps1'            # wt, check, stack, gate, tracker, pipes, guard
   devtools = Join-Path $KitConf.Kit 'skills/dev-kit/devtools.py'        # mr, merge, doc, task helpers, keepboth, lbcheck
@@ -1073,8 +1054,6 @@ $KitCmd = [pscustomobject]@{
   browser  = Join-Path $KitConf.Kit 'skills/qa-kit/browser.mjs'
   swarm    = Join-Path $KitConf.Kit 'skills/android-swarm/swarm.ps1'    # acquire, ensure, release, status, build, install, launch, avd, up, down
   local    = Join-Path $KitConf.Kit 'skills/local-env/localenv.ps1'
-  migrations = Join-Path $KitConf.Kit 'skills/local-env/migrations.py'
-  orch     = Join-Path $KitConf.Kit 'skills/orchestrate/orch.ps1'       # board, learn, launch, track, supervise, report, bugbrief, cleanup, deploy, decide
-  kit      = Join-Path $KitConf.Kit 'skills/orchestrate/kit.ps1'        # health, nudge, setup, prepush, precommit, guard-sendmessage
+  orch     = Join-Path $KitConf.Kit 'skills/orchestrate/orch.ps1'       # board, learn, launch, track, supervise, report, bugbrief, cleanup, deploy, decide, health, setup, hooks
   kittool  = Join-Path $KitConf.Kit 'skills/orchestrate/kittool.py'     # lint, flow, port, audit, cost
 }
