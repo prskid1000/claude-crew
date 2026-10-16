@@ -531,42 +531,26 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
   $ao = pwsh -NoProfile -File $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
   $null = pwsh -NoProfile -File $Q ui bogus 2>&1; $uc = $LASTEXITCODE
   Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2)
-  # browser.mjs pick(): clear errors for an out-of-range nth or a boxless element
-  $nm = Join-Path $src 'skills/qa-kit/node_modules'
-  if (Test-Path (Join-Path $nm 'puppeteer-core')) {
-    Copy-Item (Join-Path $src 'skills/qa-kit/browser.mjs') (Join-Path $k 'skills/qa-kit/')
-    if (-not (Test-Path (Join-Path $k 'skills/qa-kit/node_modules'))) { New-Item -ItemType Junction -Path (Join-Path $k 'skills/qa-kit/node_modules') -Target (Resolve-Path $nm).Path | Out-Null }
-    $bm = 'file:///' + ((Join-Path $k 'skills/qa-kit/browser.mjs') -replace '\\', '/')
-    $bjs = "import { pick } from '$bm'`nconst page = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els })`n" +
-      "const e1 = await pick(page([]), '.x', 0, 'clickSel').catch((e) => e.message)`n" +
-      "const e2 = await pick(page([{ scrollIntoView: async () => {}, boundingBox: async () => null }]), '.y', 0, 'hoverSel').catch((e) => e.message)`n" +
-      "console.log('nth:' + /has 0 match\(es\), no index 0/.test(e1)); console.log('box:' + /has no box/.test(e2))"
-    $bf = Join-Path (Split-Path $k) 'pick-test.mjs'; [IO.File]::WriteAllText($bf, $bjs)
-    $res = @(node $bf 2>&1)
-    Expect 'browser.mjs pick: clear errors for a bad nth and a hidden element' ((@($res) -contains 'nth:true') -and (@($res) -contains 'box:true'))
-    # shared browser: one stable port per target+tenant+user; logins locked
-    $sjs = "import { sessionPort, sessionKey, withLock } from '$bm'`n" +
-      "const a1 = await sessionPort('stg', 'acme', 'admin'), a2 = await sessionPort('stg', 'acme', 'admin'), b = await sessionPort('stg', 'acme', 'viewer'), c = await sessionPort('prod2', 'acme', 'admin')`n" +
-      "console.log('port:' + (a1 === a2 && new Set([a1, b, c]).size === 3))`n" +
-      "const seen = []; const job = (n) => withLock('login-x', async () => { seen.push('in' + n); await new Promise((r) => setTimeout(r, 150)); seen.push('out' + n) })`n" +
-      "await Promise.all([job(1), job(2)]); console.log('lock:' + (seen.join(',') === 'in1,out1,in2,out2' || seen.join(',') === 'in2,out2,in1,out1'))`n" +
-      "console.log('key:' + (sessionKey('stg', 'acme', 'admin') !== sessionKey('stg', 'acme', 'viewer')))"
-    $sf = Join-Path (Split-Path $k) 'session-test.mjs'; [IO.File]::WriteAllText($sf, $sjs)
-    $res = @(node $sf 2>&1)
-    Expect 'browser.mjs: one port per target+tenant+user (stable, never shared), logins serialized by a lock' ((@($res) -contains 'port:true') -and (@($res) -contains 'lock:true') -and (@($res) -contains 'key:true'))
-    # port = key hash (survives a lost registry); an expired session re-logs once under the lock;
-    # no logout or storage clear; saved logins never expire by age
-    $reg = Join-Path $k '.state/browser-ports.json'; $p1 = (Get-Content $reg -Raw | ConvertFrom-Json).'stg|acme|admin'; Remove-Item $reg
-    $gjs = "import { sessionPort, go } from '$bm'`n" +
-      "console.log('stable:' + ((await sessionPort('stg', 'acme', 'admin')) === $p1))`n" +
-      "const t = { web: 'https://app.test', webLogin: { path: '/login' } }; let cur = 'about:blank', n = 0, expired = true`n" +
-      "const page = { __qa: { t, tenant: 'acme', as: 'admin', key: 'stg|acme|admin' }, url: () => cur, on: () => {}, off: () => {}, waitForNetworkIdle: async () => {},`n" +
-      "  goto: async (u) => { n++; if (u.endsWith('/x') && expired) { cur = t.web + '/login'; expired = false } else cur = u } }`n" +
-      "await go(page, 'https://app.test/x'); console.log('relogin:' + (cur === 'https://app.test/x' && n === 3))"
+  # browser.mjs: mocks, then fixture servers (no network)
+  $nm = Join-Path $src 'skills/qa-kit/node_modules'; $qk = Join-Path $k 'skills/qa-kit'
+  if (Test-Path "$nm/puppeteer-core") {
+    Copy-Item "$src/skills/qa-kit/browser.mjs" $qk
+    if (-not (Test-Path "$qk/node_modules")) { New-Item -ItemType Junction -Path "$qk/node_modules" -Target (Resolve-Path $nm).Path | Out-Null }
+    function NodeT($n, $js) { $f = Join-Path (Split-Path $k) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = 'file:///$("$qk/browser.mjs" -replace '\\', '/')', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
+    $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
+      "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
+    Expect 'browser.mjs pick: clear errors (bad nth, hidden element)' ("$res" -eq 'true true')
+    $res = NodeT ports @'
+import { rmSync, existsSync } from 'node:fs'
+const P = m.sessionPort, a = await P('stg', 'acme', 'admin'), seen = [], job = (n) => m.withLock('l', async () => { seen.push('in' + n); await new Promise((r) => setTimeout(r, 150)); seen.push('out' + n) })
+await Promise.all([job(1), job(2)]); const uniq = new Set([a, await P('stg', 'acme', 'viewer'), await P('prod2', 'acme', 'admin')]).size === 3
+rmSync(m.kitPath('browser-ports')); console.log(a === await P('stg', 'acme', 'admin') && uniq, /^in(\d),out\1,/.test(seen.join(',')), existsSync(m.kitPath('browser-ports')) && m.sessionKey('s', 'a', 'x') !== m.sessionKey('s', 'a', 'y'))
+'@
+    Expect 'browser.mjs: a stable port per target+tenant+user, locked logins' ("$res" -eq 'true true true')
     # tab cap: 9 concurrent openers -> 8 tabs, the 9th waits; a full browser fails clearly; dead / left holders are swept
-    $tjs = @'
-import { openTab, closeTab, kitPath, sweepAll } from '__BM__'
+    $res = NodeT tabs @'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+const { openTab, closeTab, kitPath, sweepAll } = m
 let n = 0, max = 0; const tabs = [], K = 'k|t|a'
 const mk = () => { const id = 'T' + (++n), p = { url: () => 'https://app/x', close: async () => { tabs.splice(tabs.indexOf(p), 1) },
   createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: id } }), detach: async () => {} }) }; return p }
@@ -587,16 +571,40 @@ const S = kitPath('sessions'); writeFileSync(kitPath('browser-ports'), JSON.stri
 writeFileSync(`${S}/tabs-u____v__t__a.json`, JSON.stringify({ _key: 'u__v|t|a' })); writeFileSync(`${S}/tabs-gone.json`, JSON.stringify({ _key: 'gone' }))
 await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs-u____v__t__a.json`) && !existsSync(`${S}/tabs-gone.json`)))
 '@
-    $tf = Join-Path (Split-Path $k) 'tabs-test.mjs'; [IO.File]::WriteAllText($tf, $tjs.Replace('__BM__', $bm))
-    $res = @(node $tf 2>&1)
-    foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x (sweep: a failed connect keeps the registry, the key lives in the file)" (@($res) -contains "${x}:true") }
-    $pin = @(& { $env:KIT_QA_TARGETS = 'stg'; node --input-type=module -e "import('$bm').then((m) => m.session({ target: 'prod' })).catch((e) => console.log(e.message))" 2>&1; Remove-Item Env:KIT_QA_TARGETS })
-    Expect 'browser.mjs session(): a pinned run refuses another target (KIT_QA_TARGETS)' ("$pin" -match "not this QA run's target")
-    $gf = Join-Path (Split-Path $k) 'go-test.mjs'; [IO.File]::WriteAllText($gf, $gjs)
-    $res = @(node $gf 2>&1); $bsrc = Get-Content (Join-Path $src 'skills/qa-kit/browser.mjs') -Raw
-    Expect 'browser.mjs: port stable from the key, registry durable; go() re-logs in once on an expired session; never logs out' ((@($res) -contains 'stable:true') -and (@($res) -contains 'relogin:true') -and (Test-Path $reg) -and $bsrc -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600' -and $bsrc -match 'MAX_TABS = 8' -and $bsrc -match 'browser\.newPage\(\)')
-    [IO.Directory]::Delete((Join-Path $k 'skills/qa-kit/node_modules'))   # the junction only, never its target
-  } else { 'SKIP browser.mjs pick (no puppeteer-core installed in skills/qa-kit)' }
+    foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x" (@($res) -contains "${x}:true") }
+    $bsrc = Get-Content "$src/skills/qa-kit/browser.mjs" -Raw
+    Expect 'browser.mjs: never logs out; 8 tabs per browser' ($bsrc -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600' -and $bsrc -match 'MAX_TABS = 8' -and $bsrc -match 'browser\.newPage\(\)')
+    # fixture app + IdP host: pin, form + TOTP, one relogin (Chrome); sso-steps, shared httpOnly cookie (Playwright)
+    $pwm = if ($env:KIT_PLAYWRIGHT) { $env:KIT_PLAYWRIGHT } else { "$(& $py -c 'import os, playwright; print(os.path.dirname(playwright.__file__))' 2>$null)/driver/package" }
+    $res = NodeT auth @'
+import http from 'node:http'
+import { writeFileSync } from 'node:fs'
+const [TF, PW] = process.argv.slice(2), U = { qa: ['qa', '', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'] }
+let posts = 0, gen = 1
+const form = (to) => `<html><form method="post" action="${to}"><input id="u" name="u"><input id="c" name="c"><button id="go">Go</button></form>`
+const app = http.createServer((q, s) => {
+  const go = (l, c) => { s.writeHead(302, { location: l, ...(c && { 'set-cookie': `sid=${gen}; HttpOnly` }) }); s.end() }
+  if (q.method === 'POST') { posts++; let d = ''; q.on('data', (x) => (d += x)); return q.on('end', () => (/u=qa&c=\d{6}/.test(d) ? go(web + '/', 1) : go(q.url))) }
+  if (q.url === '/login' || q.url === '/idp') return s.end(form(q.url === '/idp' ? web + '/sso' : '/login'))
+  if (q.headers.cookie === `sid=${gen}`) return s.end('<html>home')
+  go(q.url === '/sso-app' ? web.replace('127.0.0.1', 'localhost') + '/idp' : '/login')
+})
+await new Promise((r) => app.listen(0, r))
+const web = `http://127.0.0.1:${app.address().port}`, L = { path: '/login' }, steps = [{ goto: '/sso-app' }, { fill: { '#u': '{user}', '#c': '{totp}' } }, { click: 'button', waitUrl: '/$' }]
+writeFileSync(TF, JSON.stringify({ targets: { form: { web, webLogin: { ...L, fields: { '#u': '{user}', '#c': '{totp}' }, submit: '#go' }, users: U },
+  sso: { web, browser: { engine: 'chromium' }, webLogin: { ...L, type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: L, users: U } } }))
+const b = await import(BM + '?a'), home = async (s) => (await b.text(s.page)).includes('home'), out = async (k, f) => console.log(k + ':' + await f().catch((e) => 'false ' + e.message))
+console.log('totp:' + (b.totp(U.qa[2], 59000) === '287082'))
+process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /not this QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
+await out('chrome', async () => { const s = await b.session({ target: 'form', tenant: 'a', as: 'qa' }), r = await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
+PW && (process.env.KIT_PLAYWRIGHT = PW)
+for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.session({ target: 'sso', tenant: 'b', as: 'qa' }), r = s.engine === 'chromium' && await home(s) && posts === 3; await s.done(); return r })
+await out('hint', () => b.session({ target: 'ff', as: 'qa' }).then(() => false, (e) => /npx playwright install firefox/.test(e.message)))
+process.exit(0)
+'@ "$qk/targets.local.json" $(if (Test-Path "$pwm/index.mjs") { $pwm })
+    foreach ($x in 'totp', 'pin', 'chrome', 'sso', 'shared', 'hint') { Expect "browser.mjs login: $x" ((@($res) -contains "${x}:true") -or ($x -in 'sso', 'shared', 'hint' -and -not (Test-Path "$pwm/index.mjs"))) }
+    [IO.Directory]::Delete("$qk/node_modules")   # the junction only, never its target
+  } else { 'SKIP browser.mjs (no puppeteer-core installed in skills/qa-kit)' }
   # testy: web testers share the per-user Chrome; scoped retries -> results-retry.json; publish -ExpectChecks
   $js5 = @'
 const ports = []

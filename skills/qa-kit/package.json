@@ -2,7 +2,7 @@
   "name": "claude-qa-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Headless browser helper for QA agents and the local test loop (browser.mjs). Install: npm install (in this folder).",
+  "description": "browser.mjs deps: npm install here (Playwright engines: npm i playwright-core).",
   "type": "module",
   "dependencies": {
     "puppeteer-core": "24.43.1"
