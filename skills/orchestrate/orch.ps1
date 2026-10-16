@@ -916,8 +916,9 @@ foreach ($k in $hist.Keys) { $last = @($hist[$k] | Select-Object -Last 3); if ($
 $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }; if (-not $state.idleSince) { $state.idleSince = @{} }
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))
-if (Test-Path $adb) {
-  $serials = @(& $adb devices 2>$null | Where-Object { $_ -match '^(emulator-\d+)\s+device' } | ForEach-Object { $Matches[1] })
+$devT = Get-KitSetting 'devices.type' 'android'
+if ($devT -ne 'none' -and ($devT -eq 'ios' -or (Test-Path $adb))) {
+  $serials = @(if ($devT -eq 'android') { & $adb devices 2>$null | Where-Object { $_ -match '^(emulator-\d+)\s+device' } | ForEach-Object { $Matches[1] } })
   $swarmCfg = try { Get-Content (Join-Path $swarm 'swarm.config.json') -Raw | ConvertFrom-Json } catch { $null }
   # safety net for leases whose holder is gone
   $P = ({ & $KitCmd.swarm @args })
@@ -957,12 +958,12 @@ if (Test-Path $adb) {
     if (-not $state.idleSince.ContainsKey($sr)) { $state.idleSince[$sr] = $now.ToString('o') }
     $idleFor = [int]($now - [datetime]$state.idleSince[$sr]).TotalMinutes
     if (-not $lane) {
-      if ($idleFor -ge 10) { Flag 'WATCH' "emulator $sr is not in swarm.config.json and our app has been closed on it for $idleFor min" "If nobody uses it: & $adb -s $sr emu kill" }
+      if ($idleFor -ge 10) { Flag 'WATCH' "emulator $sr is not in swarm.config.json and our app is closed on it for $idleFor min" "If nobody uses it: & $adb -s $sr emu kill" }
     } elseif ($AutoFix -and $idleFor -ge 10) {
       & $KitCmd.swarm down -Lanes $lane -KeepBrowsers | Out-Null
       $state.idleSince.Remove($sr) | Out-Null
       Flag 'INFO' "auto-fixed: shut down unleased emulator $sr ($lane): app closed for $idleFor min" 'Agents get phones with swarm.ps1 acquire.'
-    } else { Flag $(if ($idleFor -ge 10) { 'ACT' } else { 'WATCH' }) "unleased emulator $sr ($lane): app closed for $idleFor min" "& $($KitCmd.swarm) down -Lanes $lane -KeepBrowsers (or run supervise with -AutoFix)." }
+    } else { Flag $(if ($idleFor -ge 10) { 'ACT' } else { 'WATCH' }) "unleased emulator $sr ($lane): app closed for $idleFor min" "& $($KitCmd.swarm) down -Lanes $lane -KeepBrowsers (or supervise -AutoFix)" }
   }
   # 3c. crashed / hung emulators
   if ($swarmCfg) {
@@ -976,18 +977,18 @@ if (Test-Path $adb) {
       $youngest = [int](($mine | ForEach-Object { ($now - $_.Created).TotalMinutes } | Measure-Object -Minimum).Minimum)
       $qemu = @($mine | Where-Object Name -like 'qemu-system*')
       $whyOf = { if ($adbState[$sr] -ne 'device' -and $youngest -ge 8) { "adb shows it '$(if ($adbState[$sr]) { $adbState[$sr] } else { 'absent' })' $youngest min after start (crashed or hung)" }
-                 elseif (-not $qemu.Count -and $youngest -ge 2) { "the emulator process is up but its qemu process is gone (crashed)" } }
+                 elseif (-not $qemu.Count -and $youngest -ge 2) { "its qemu process is gone (crashed)" } }
       $why = & $whyOf
       # adb may have just restarted
       if ($why -and $adbState[$sr] -ne 'device' -and -not $rechecked) { Start-Sleep -Seconds 10; $adbState = & $adbStates; $rechecked = $true; $why = & $whyOf }
       if (-not $why) { continue }
       if (Test-Path (Join-Path $leaseDir "$($ln.name).json")) {  # leased: never killed
-        Flag 'WATCH' "leased emulator $sr ($($ln.name)) looks dead: $why" "Its lease holder re-boots it with swarm.ps1 ensure (or its next acquire); if the holder is gone, the lease is released after 60 min."; continue
+        Flag 'WATCH' "leased emulator $sr ($($ln.name)) looks dead: $why" "Its holder re-boots it (swarm.ps1 ensure or its next acquire); a gone holder's lease is released after 60 min."; continue
       }
       if ($AutoFix) {
         $mine | ForEach-Object { Stop-SysProcess $_.Id }
         Flag 'INFO' "auto-fixed: killed dead emulator $sr ($($ln.name)): $why" 'Nothing to do.'
-      } else { Flag 'ACT' "dead emulator $sr ($($ln.name)): $why" "Kill it: & $($KitCmd.swarm) down -Lanes $($ln.name) -KeepBrowsers (or run supervise with -AutoFix)." }
+      } else { Flag 'ACT' "dead emulator $sr ($($ln.name)): $why" "& $($KitCmd.swarm) down -Lanes $($ln.name) -KeepBrowsers (or supervise -AutoFix)" }
     }
   }
 }

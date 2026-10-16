@@ -1,5 +1,6 @@
 <#
-swarm.ps1: Android emulator lanes + the app under test (android-swarm SKILL.md).
+swarm.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.type: android (emulators, default) |
+ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
   pwsh 7: & <kit>/skills/android-swarm/swarm.ps1 <verb> [args]
   acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone
   ensure -Agent <id> · release -Agent <id> [-Keep] · status
@@ -7,68 +8,70 @@ swarm.ps1: Android emulator lanes + the app under test (android-swarm SKILL.md).
   install [-Apk <path>] [-Serials <s>,..] [-Launch] · launch -Serial <s> [-Clear] [-Stop]
   avd list|create|reset [-Lanes <names>] [-Level cold|snapshots|wipe|recreate]
   up [-Lanes ..] · down [-Lanes ..] · slim -Serial <s> · arrange
-In: swarm.config.json (lanes, app), kit.local.json (gate floor).
+In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
-# ---- config: swarm.config.json (its section of dev-kit/kit.example.json)
+# ---- config: swarm.config.json
 function Get-SwarmConfig {
   if ($script:SwarmCfg) { return $script:SwarmCfg }
   $here = $PSScriptRoot
   $f = Join-Path $here 'swarm.config.json'
-  if (-not (Test-Path $f)) { throw "Missing $f - run orch.ps1 setup (writes it from the swarm.config.json section of dev-kit/kit.example.json) and set 'app'" }
+  if (-not (Test-Path $f)) { throw "Missing $f - orch.ps1 setup -WriteLocal writes it; then set 'app'" }
   $c = Get-Content $f -Raw | ConvertFrom-Json
-  if (-not $c.avdDir) { $c | Add-Member -Force avdDir $(if ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { (Join-Path $HOME '.android/avd') }) }
-  if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'react-native' }
-  if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -eq 'native') { 'assembleDebug' } else { 'assembleRelease' }) }
-  if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "app/build/outputs/apk/$v/*.apk" }
-  if (-not $c.app.permissions) { $c.app | Add-Member -Force permissions @() }
-  if (-not $c.app.localManifests) { $c.app | Add-Member -Force localManifests @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }
-  if ($null -eq $c.app.localReverse) { $c.app | Add-Member -Force localReverse @() }
-  $sdk = Get-AndroidSdk   # env, else the OS default
+  if (-not $c.avdDir) { $c | Add-Member -Force avdDir $(if ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { "$HOME/.android/avd" }) }
+  $c | Add-Member -Force kind ([string](Get-KitSetting 'devices.type' 'android'))
+  if (-not $c.app.kind) { $c.app | Add-Member -Force kind $(if ($c.kind -eq 'ios') { 'ios' } else { 'react-native' }) }
+  if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
+  if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
+  # non-Gradle kinds: 'command|artifact glob' (app.buildCmd / app.artifact override)
+  $pre = @{ flutter = 'flutter build apk --release|build/app/outputs/flutter-apk/app-release.apk'; maui = 'dotnet publish -f net9.0-android -c Release|bin/Release/*/publish/*-Signed.apk'
+    capacitor = 'npx cap sync android && cd android && {gw} assembleRelease|android/app/build/outputs/apk/release/*.apk'; ios = 'xcodebuild -scheme {scheme} -sdk iphonesimulator -derivedDataPath build/kit build|build/kit/Build/Products/*-iphonesimulator/*.app' }
+  $bc, $ar = "$($pre[$c.app.kind])" -split '\|'
+  foreach ($k in @{ buildCmd = $bc; artifact = $ar; permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not $c.app.($k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
+  $sdk = Get-AndroidSdk
   $c | Add-Member -Force adb (Join-Path $sdk (Join-Path 'platform-tools' (Get-ExeName 'adb')))
   $c | Add-Member -Force emulator (Join-Path $sdk (Join-Path 'emulator' (Get-ExeName 'emulator')))
   $c | Add-Member -Force dir $here
-  $out = if ($c.outDir) { [string]$c.outDir } else { Get-KitPath android-swarm }   # APKs, build/emulator logs, swarm.json
+  $out = if ($c.outDir) { [string]$c.outDir } else { Get-KitPath android-swarm }
   $apkDir = Join-Path $out 'apk'
   New-Item -ItemType Directory -Force $apkDir | Out-Null
   $c | Add-Member -Force out $out
   $c | Add-Member -Force apkDir $apkDir
+  $c | Add-Member -Force appFile (Join-Path $apkDir "app.$(if ($c.kind -eq 'ios') { 'app' } else { 'apk' })")
+  $av = @{ abi = 'x86_64'; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore' }   # arm64-v8a on Apple silicon
+  if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { $av[$p.Name] = $p.Value } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
 }
-# lane AVD hardware; x86_64: edit for Apple silicon
+# device kind seam: serial and up-state per devices.type
+function EmuProcs($port) { Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$port\b" } }
+function LaneSerial($l) { if ($l.udid) { [string]$l.udid } else { "emulator-$($l.port)" } }
+function Test-LaneUp($l) { $c = Get-SwarmConfig; if ($c.kind -eq 'ios') { [bool]("$(xcrun simctl list devices booted 2>$null)" -match [regex]::Escape([string]$l.udid)) } else { [bool]((& $c.adb devices) -match "^emulator-$($l.port)\s+device") } }
+# lane AVD hardware; {{X}} = swarm.config.json avd (abi, api, device, tag)
 $script:AvdTemplate = @"
 AvdId={{NAME}}
-PlayStore.enabled=true
-abi.type=x86_64
-avd.ini.displayname={{NAME}}
+PlayStore.enabled={{PLAY}}
+abi.type={{ABI}}
 avd.ini.encoding=UTF-8
 disk.dataPartition.size=16G
-fastboot.chosenSnapshotFile=
-fastboot.forceChosenSnapshotBoot=no
-fastboot.forceColdBoot=no
 fastboot.forceFastBoot=yes
 hw.accelerometer=yes
-hw.arc=false
 hw.audioInput=no
 hw.battery=yes
 hw.camera.back=virtualscene
 hw.camera.front=emulated
-hw.cpu.arch=x86_64
+hw.cpu.arch={{ARCH}}
 hw.cpu.ncore=4
 hw.dPad=no
-hw.device.hash2=MD5:676817bd81d1edf12e463dad09a74a05
-hw.device.manufacturer=Google
-hw.device.name=pixel_10_pro
+hw.device.name={{DEVICE}}
 hw.gps=yes
 hw.gpu.enabled=yes
 hw.gpu.mode=host
 hw.gyroscope=yes
-hw.initialOrientation=portrait
 hw.keyboard=yes
 hw.lcd.density=480
 hw.lcd.height=2856
@@ -82,18 +85,12 @@ hw.sensors.orientation=yes
 hw.sensors.pressure=yes
 hw.sensors.proximity=yes
 hw.trackBall=no
-image.sysdir.1=system-images\android-36.1\google_apis_playstore\x86_64\
-runtime.network.latency=none
-runtime.network.speed=full
-showDeviceFrame=yes
-skin.dynamic=yes
-skin.name=pixel_10_pro
-skin.path={{SDK}}\skins\pixel_10_pro
-tag.display=Google Play
-tag.displaynames=Google Play
-tag.id=google_apis_playstore
-tag.ids=google_apis_playstore
-target=android-36.1
+image.sysdir.1=system-images\{{API}}\{{TAG}}\{{ABI}}\
+skin.name={{DEVICE}}
+skin.path={{SDK}}\skins\{{DEVICE}}
+tag.id={{TAG}}
+tag.ids={{TAG}}
+target={{API}}
 vm.heapSize=2048
 hw.audioOutput=no
 "@
@@ -103,7 +100,7 @@ function Invoke-Phone {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
   [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall, [string]$Holder,
-  [string]$Apk,        # 'local' = apk/app-local.apk
+  [string]$Apk, # 'local' = apk/app-local.apk
   [string[]]$Reverse   # adb reverse these ports
 )
 $ErrorActionPreference = 'Stop'
@@ -114,7 +111,6 @@ $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
 New-Item -ItemType Directory -Force $dir, $waitDir | Out-Null
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-phone-leases')
 function Locked([scriptblock]$b) {
-  # $held, not $got: a local $got would shadow the lease
   $held = $false
   try { $held = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $held = $true }   # a killed holder hands the mutex over
   try { & $b } finally { if ($held) { $mutex.ReleaseMutex() } }
@@ -123,26 +119,27 @@ function Locked([scriptblock]$b) {
 function Waiters { Get-ChildItem $waitDir -Filter '*.json' | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
 function Lease($name) { $f = Join-Path $dir "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
 function Save-Json($o, [string]$f) { $t = "$f.$PID.tmp"; $o | ConvertTo-Json -Depth 5 | Set-Content $t -Encoding utf8; Move-Item $t $f -Force }
-function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
-function ApkStamp { $a = Get-Item (Join-Path $c.apkDir 'app.apk') -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
+function Running($l) { Test-LaneUp $l }
+$ios = $c.kind -eq 'ios'   # Simulators share the host network: no reverses
+function Stamp($s, $set) { if ($ios) { $f = Join-Path $dir "$s.stamp"; if ($set) { $set | Set-Content $f } elseif (Test-Path $f) { (Get-Content $f -Raw).Trim() } } elseif ($set) { & $adb -s $s shell "echo $set > /sdcard/.qa-apk-stamp" } else { ((& $adb -s $s shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim() } }
+function ApkStamp { $a = Get-Item $c.appFile -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
 # what the lanes run (local ref, no fetch)
 function ApkInfo {
   $f = Join-Path $c.apkDir 'app.json'; if (-not (Test-Path $f)) { return $null }
   $i = Get-Content $f -Raw | ConvertFrom-Json
   $head = try { (git -C $i.appDir rev-parse --short "origin/$($i.branch)" 2>$null) } catch { $null }
-  $warn = if ($head -and $head.Trim() -ne $i.commit) { "the APK is $($i.commit) but origin/$($i.branch) is at $($head.Trim()): ask the lead to rebuild (swarm.ps1 build)" }
+  $warn = if ($head -and $head.Trim() -ne $i.commit) { "APK $($i.commit) is behind origin/$($i.branch) ($($head.Trim())): the lead rebuilds it (swarm.ps1 build)" }
   [ordered]@{ branch = $i.branch; commit = $i.commit; built = $i.built; warning = $warn }
 }
-# memory: only the gate admits (keepFreeGB)
 function GateKeepFreeGB { if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) } }
-# boot via swarm-up (gate inside); $true = no memory turn
+# boot via up (gate inside); $true = no memory turn
 function Boot($l, [switch]$Cold, [datetime]$Until = (Get-Date)) {
   $a = @{ Lanes = $l.name; Mode = 'None' }; if ($Cold) { $a.ColdBoot = $true }
   do {
     $boot = @(& $KitCmd.swarm up @a 3>&1)   # 3>&1: catch the gate's warning
     $boot | Select-Object -Last 2 | Out-Host
     $queued = [bool]($boot | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -match 'no memory turn' })
-    if ($queued -and (Get-Date) -lt $Until) { "$($l.name): still no memory turn in the gate; queuing the boot again (until $($Until.ToString('HH:mm')))" | Out-Host }
+    if ($queued -and (Get-Date) -lt $Until) { "$($l.name): no memory turn yet; boot queued again (until $($Until.ToString('HH:mm')))" | Out-Host }
   } while ($queued -and -not (Running $l) -and (Get-Date) -lt $Until)
   $queued
 }
@@ -153,9 +150,9 @@ switch ($Action) {
       $ls = Lease $l.name
       $up = Running $l
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
-      '{0,-8} {1,-14} {2}' -f $l.name, "emulator-$($l.port)", $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (offline: its agent runs swarm.ps1 ensure)" } else { "down     $who" })
+      '{0,-8} {1,-14} {2}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" })
     }
-    "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (keeps $(GateKeepFreeGB) GB free, a phone needs ~4.5 GB)"
+    "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (keeps $(GateKeepFreeGB) GB free, ~4.5 GB a phone)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
   }
 
@@ -181,10 +178,9 @@ switch ($Action) {
         if (-not $free) { return $null }
         $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
         if ($ahead.Count -ge $free.Count) { return $null }
-        # a free running phone first, else a free lane
         $up = @($free | Where-Object { Running $_ })
         $pick = if ($up) { $up[0] } else { $free[0] }
-        $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') } + (Get-KitHolder); if ($Holder) { $new.holder = $Holder }   # holderPid: supervise frees a crashed session's lease
+        $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = (LaneSerial $pick); since = (Get-Date).ToString('s') } + (Get-KitHolder); if ($Holder) { $new.holder = $Holder }   # holderPid: supervise frees a crashed session's lease
         Save-Json $new (Join-Path $dir "$($pick.name).json")
         $pick
       }
@@ -195,12 +191,11 @@ switch ($Action) {
       }
     }
     Remove-Item $wf -Force -ErrorAction SilentlyContinue
-    $serial = "emulator-$($got.port)"
+    $serial = LaneSerial $got
     $memQueued = $false
     try {
       if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
       if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
-        # first boot failed: one cold retry
         "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
         $memQueued = Boot $got -Cold -Until $deadline
       }
@@ -210,31 +205,28 @@ switch ($Action) {
     }
     if (-not (Running $got)) {
       if ($script:had) {   # held lane offline: keep the lease
-        throw "$($got.name) is offline and did not boot$(if ($memQueued) { " (no memory turn in the gate within -WaitMinutes $WaitMinutes)" }); lease kept: run swarm.ps1 ensure -Agent $Agent again, or release it"
+        throw "$($got.name) is offline and did not boot$(if ($memQueued) { " (no memory turn within -WaitMinutes)" }); lease kept: run swarm.ps1 ensure -Agent $Agent again, or release it"
       }
       Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue }
-      if ($memQueued) { throw "$($got.name) queued behind memory: the gate gave no memory turn within -WaitMinutes $WaitMinutes; lease released (acquire again later)" }
+      if ($memQueued) { throw "$($got.name): no memory turn within -WaitMinutes; lease released (acquire later)" }
       throw "$($got.name) did not boot (emulator problem); lease released"
     }
     $installed = 'kept'
     if ($Apk) {   # side APK: stamp removed
-      $ap = if ($Apk -eq 'local') { Join-Path $c.apkDir 'app-local.apk' } else { $Apk }
-      if (-not (Test-Path $ap)) { throw "no APK at $ap (local-env APK: swarm.ps1 build -Local)" }
-      $r = & $adb -s $serial install -r -g $ap 2>&1 | Select-Object -Last 1
-      if ($r -notmatch 'Success') { throw "$serial : install of $ap failed ($r)" }
-      & $adb -s $serial shell rm -f /sdcard/.qa-apk-stamp
-      foreach ($p in $c.app.permissions) { & $adb -s $serial shell pm grant $c.app.package "android.permission.$p" 2>$null }
+      $ap = if ($Apk -eq 'local') { Join-Path $c.apkDir "app-local$([IO.Path]::GetExtension($c.appFile))" } else { $Apk }
+      if (-not (Test-Path $ap)) { throw "no app at $ap (local-env build: swarm.ps1 build -Local)" }
+      & $KitCmd.swarm install -Apk $ap -Serials $serial | Out-Host   # throws when it fails
+      if ($ios) { Remove-Item (Join-Path $dir "$serial.stamp") -ErrorAction SilentlyContinue } else { & $adb -s $serial shell rm -f /sdcard/.qa-apk-stamp }
       $installed = "side APK $ap (log in again; the next acquire without -Apk restores app.apk)"
     }
-    $rev = @(if ($PSBoundParameters.ContainsKey('Reverse')) { $Reverse } elseif ($Apk -eq 'local') { @($c.app.localReverse) })
+    $rev = @(if ($ios) { } elseif ($PSBoundParameters.ContainsKey('Reverse')) { $Reverse } elseif ($Apk -eq 'local') { @($c.app.localReverse) })
     foreach ($port in $rev) { & $adb -s $serial reverse "tcp:$port" "tcp:$port" | Out-Null }
     if ($rev.Count) { Locked { $lf = Join-Path $dir "$($got.name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; $o | Add-Member -Force reverse @($rev); Save-Json $o $lf } }
     if (-not $Apk -and -not $NoInstall -and $c.app.kind -and (ApkStamp)) {
-      $onPhone = ((& $adb -s $serial shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim()
-      if ($onPhone -ne (ApkStamp)) {
+      if ((Stamp $serial) -ne (ApkStamp)) {
         try {
-          & $KitCmd.swarm install -Mode Release -Serials $serial | Out-Host
-          & $adb -s $serial shell "echo $(ApkStamp) > /sdcard/.qa-apk-stamp"
+          & $KitCmd.swarm install -Serials $serial | Out-Host
+          Stamp $serial (ApkStamp)
           $installed = 'updated (the app may need a fresh login)'
         } catch { Write-Warning "$serial : $_"; $installed = "install FAILED (the phone runs an older app): $_" }   # no stamp: next acquire retries
       }
@@ -247,10 +239,10 @@ switch ($Action) {
     if (-not $Agent) { throw 'ensure needs -Agent' }
     $got = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
     if (-not $got) { throw "no phone leased by ${Agent}: use swarm.ps1 acquire -Agent $Agent -Lane <name>" }
-    $got = $got[0]; $serial = "emulator-$($got.port)"; $state = 'up'
+    $got = $got[0]; $serial = LaneSerial $got; $state = 'up'
     if (-not (Running $got)) {
       $memQueued = Boot $got -Cold -Until (Get-Date).AddMinutes($WaitMinutes)
-      if (-not (Running $got)) { throw "$($got.name) did not come back$(if ($memQueued) { " (no memory turn in the gate within -WaitMinutes $WaitMinutes)" }); lease kept: run ensure again later, or release it" }
+      if (-not (Running $got)) { throw "$($got.name) did not come back$(if ($memQueued) { " (no memory turn within -WaitMinutes)" }); lease kept: run ensure again later, or release it" }
       $state = 'cold-booted (relaunch the app; it may need a fresh login)'
       foreach ($port in @((Lease $got.name).reverse)) { & $adb -s $serial reverse "tcp:$port" "tcp:$port" | Out-Null }   # reverses are lost on reboot
     }
@@ -263,8 +255,8 @@ switch ($Action) {
     $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent })
     if (-not $mine) { "no phone leased by $Agent"; return }
     foreach ($l in $mine) {
-      $serial = "emulator-$($l.port)"
-      if (Running $l) { & $adb -s $serial shell am force-stop $pkg 2>$null; & $adb -s $serial reverse --remove-all 2>$null }
+      $serial = LaneSerial $l
+      if (-not (Running $l)) { } elseif ($ios) { xcrun simctl terminate $serial $pkg 2>$null } else { & $adb -s $serial shell am force-stop $pkg 2>$null; & $adb -s $serial reverse --remove-all 2>$null }
       $lf = Join-Path $dir "$($l.name).json"
       $waiting = Locked {
         $n = @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
@@ -287,14 +279,14 @@ switch ($Action) {
 function Invoke-Build {
 param(
   [string]$AppDir,
-  [string]$Task,                   # default app.buildTask
-  [string]$BuildArgs,              # default app.buildArgs
+  [string]$Task,
+  [string]$BuildArgs,
   [switch]$Clean,
-  [string]$JavaHome,               # default: JDK 17/21 (24+ breaks native steps)
-  [switch]$NoUpdate,               # default: fast-forward to upstream first
-  [switch]$Local,                  # -> apk/app-local.apk (never app.apk)
-  [switch]$Shared,                 # -AppDir side checkout: publish as apk/app.apk
-  [switch]$AnyBranch               # publish from another branch (normally refused)
+  [string]$JavaHome, # default: JDK 17/21 (24+ breaks native steps)
+  [switch]$NoUpdate, # default: fast-forward to upstream first
+  [switch]$Local, # -> apk/app-local.apk (never app.apk)
+  [switch]$Shared, # -AppDir side checkout: publish as apk/app.apk
+  [switch]$AnyBranch # publish from another branch (normally refused)
 )
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
@@ -303,15 +295,16 @@ if (-not $Task) { $Task = $c.app.buildTask }
 if (-not $PSBoundParameters.ContainsKey('BuildArgs')) { $BuildArgs = [string]$c.app.buildArgs }
 $gate = ({ & $KitCmd.dev gate @args })
 $gw = if ($KitIsWindows) { 'gradlew.bat' } else { 'gradlew' }   # the gate runs .\gradlew.bat or ./gradlew
+$cmd = [string]$c.app.buildCmd   # a non-Gradle kind (Get-SwarmConfig presets) or a custom command: no Gradle / Java steps
 # Expo CNG: prebuild when android/ is missing
-if (-not (Test-Path (Join-Path $AppDir "android/$gw")) -and -not (Test-Path (Join-Path $AppDir $gw)) -and (Test-Path (Join-Path $AppDir 'package.json')) -and
+if ($cmd) { } elseif (-not (Test-Path (Join-Path $AppDir "android/$gw")) -and -not (Test-Path (Join-Path $AppDir $gw)) -and (Test-Path (Join-Path $AppDir 'package.json')) -and
     ((Get-Content (Join-Path $AppDir 'package.json') -Raw) -match '"expo"\s*:')) {
   "no android/ in $AppDir (Expo app): npx expo prebuild --platform android --no-install"
   Push-Location $AppDir
   $ci = $env:CI
   try { $env:CI = '1'; & npx expo prebuild --platform android --no-install 2>&1 | Select-Object -Last 5; if ($LASTEXITCODE) { throw "expo prebuild failed (exit $LASTEXITCODE)" } } finally { $env:CI = $ci; Pop-Location }
 }
-$android = if (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android')" }
+$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android')" }
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()
 $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
@@ -319,7 +312,7 @@ $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
 $publishes = -not $Local -and ((-not $PSBoundParameters.ContainsKey('AppDir')) -or $Shared)
 if ($publishes -and -not $AnyBranch -and $branch -ne 'HEAD') {
   $track = "$(git -C $AppDir for-each-ref --format='%(upstream:track)' "refs/heads/$branch" 2>$null)".Trim()
-  if ($track -eq '[gone]') { throw "the checkout $AppDir is on '$branch', whose remote branch is gone (merged and deleted): the lane APK would miss newer merges. Switch it to the branch under test, or build a worktree of it with -AppDir <worktree> -Shared (-AnyBranch to override)." }
+  if ($track -eq '[gone]') { throw "$AppDir is on '$branch', gone from origin (merged): the lane app would miss newer merges. Switch it, or build a worktree with -AppDir <wt> -Shared (-AnyBranch overrides)" }
 }
 # test the branch as merged
 if (-not $NoUpdate -and $branch -ne 'HEAD') {
@@ -335,28 +328,32 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
       if ($lockChanged -and $c.app.kind -eq 'react-native') {
         $pkgDir = (Get-Item $AppDir).FullName; while ($pkgDir -and -not (Test-Path (Join-Path $pkgDir 'package.json'))) { $pkgDir = Split-Path $pkgDir }
         "dependencies changed ($($lockChanged -join ', ')): installing in $pkgDir"
-        # frozen install (yarn 1 / yarn 2+)
-        Push-Location $pkgDir; try {
-          if (Test-Path 'pnpm-lock.yaml') { pnpm install --frozen-lockfile 2>&1 | Select-Object -Last 2 }
-          elseif (Test-Path 'yarn.lock') { if (Test-Path '.yarnrc.yml') { yarn install --immutable 2>&1 | Select-Object -Last 2 } else { yarn install --frozen-lockfile 2>&1 | Select-Object -Last 2 } }
-          elseif ((Test-Path 'bun.lockb') -or (Test-Path 'bun.lock')) { bun install --frozen-lockfile 2>&1 | Select-Object -Last 2 }
-          else { npm ci 2>&1 | Select-Object -Last 2 }
+        Push-Location $pkgDir; try {   # frozen install (pnpm, yarn 1 / 2+, bun, npm)
+          $ic = if (Test-Path 'pnpm-lock.yaml') { 'pnpm install --frozen-lockfile' } elseif (Test-Path 'yarn.lock') { if (Test-Path '.yarnrc.yml') { 'yarn install --immutable' } else { 'yarn install --frozen-lockfile' } } elseif ((Test-Path 'bun.lockb') -or (Test-Path 'bun.lock')) { 'bun install --frozen-lockfile' } else { 'npm ci' }
+          Invoke-Expression "$ic 2>&1" | Select-Object -Last 2
         } finally { Pop-Location }
       }
     }
   }
 }
-# must contain every commit of origin/<app.branch>
 if ($publishes -and -not $AnyBranch) {
   if ($c.app.branch) {
     git -C $AppDir fetch -q origin $c.app.branch 2>$null
     git -C $AppDir merge-base --is-ancestor "origin/$($c.app.branch)" HEAD 2>$null
-    if ($LASTEXITCODE) { throw "the checkout $AppDir ('$branch') does not contain origin/$($c.app.branch) (app.branch): the lane APK would miss merged fixes. Switch it, or build a worktree of $($c.app.branch) with -AppDir <worktree> -Shared (-AnyBranch to override)." }
+    if ($LASTEXITCODE) { throw "$AppDir ('$branch') lacks origin/$($c.app.branch) (app.branch): the lane app would miss merged fixes. Switch it, or build a worktree with -AppDir <wt> -Shared (-AnyBranch overrides)" }
   }
 }
 $commit = (git -C $AppDir rev-parse --short HEAD).Trim()
-"Building $Task from $branch @ $commit$(if ($dirty) { " (+$dirty uncommitted changes)" }) ..."
+"Building $(if ($cmd) { $c.app.kind } else { $Task }) from $branch @ $commit$(if ($dirty) { " (+$dirty uncommitted changes)" }) ..."
 
+$log = Join-Path $c.out 'build.log'
+$t0 = Get-Date
+if ($cmd) {
+  & $gate -Dir $AppDir -Cmd "$($cmd.Replace('{gw}', $(if ($KitIsWindows) { $gw } else { "./$gw" })).Replace('{scheme}', [string]$c.app.scheme)) $BuildArgs > `"$log`" 2>&1" -WaitMinutes 120
+  if ($LASTEXITCODE) { Get-Content $log -Tail 15; throw "build failed (exit $LASTEXITCODE) - see $log" }
+  $apk = Get-Item (Join-Path $AppDir $c.app.artifact) -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
+  if (-not $apk) { throw "this build left no app.artifact $($c.app.artifact) under $AppDir" }
+} else {
 # JAVA_HOME 24+ ignored (breaks CMake/prefab)
 $javaExe = Join-Path 'bin' (Get-ExeName 'java')
 $javaOk = @(if ($c.app.javaVersions) { @($c.app.javaVersions) | ForEach-Object { [int]$_ } } else { 17, 21 })
@@ -364,21 +361,15 @@ if (-not $JavaHome -and $c.app.javaHome) { $JavaHome = [string]$c.app.javaHome }
 function JavaMajor($h) { if ($h -and (Test-Path (Join-Path $h $javaExe))) { $v = (& (Join-Path $h $javaExe) -version 2>&1 | Select-Object -First 1); if ($v -match 'version "(1\.)?(\d+)') { [int]$Matches[2] } } }
 if (-not $JavaHome -and (JavaMajor $env:JAVA_HOME) -in $javaOk) { $JavaHome = $env:JAVA_HOME }
 if (-not $JavaHome) {
-  # JDK folders per OS
-  $roots = @((Join-Path $HOME '.gradle/jdks'), (Join-Path $HOME '.jdks'))
-  $roots += if ($KitIsWindows) { @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Android'; Join-Path $_ 'Java'; Join-Path $_ 'Eclipse Adoptium'; Join-Path $_ 'Microsoft'; Join-Path $_ 'Amazon Corretto'; Join-Path $_ 'Zulu' } }
-            elseif ($KitIsMac) { '/Library/Java/JavaVirtualMachines', '/Applications' }
-            else { '/usr/lib/jvm', '/opt', (Join-Path $HOME 'android-studio') }
-  $JavaHome = @(Get-ChildItem $roots -Directory -ErrorAction SilentlyContinue |
-    ForEach-Object { if ($_.Name -match '^Android Studio') { if ($KitIsMac) { Join-Path $_.FullName 'Contents/jbr/Contents/Home' } else { Join-Path $_.FullName 'jbr' } } elseif ($_.Name -eq 'android-studio') { Join-Path $_.FullName 'jbr' } elseif (Test-Path (Join-Path $_.FullName 'Contents/Home')) { Join-Path $_.FullName 'Contents/Home' } else { $_.FullName } } |
-    Where-Object { Test-Path (Join-Path $_ $javaExe) } | Where-Object { (JavaMajor $_) -in $javaOk })[0]
+  # JDK folders per OS (Gradle / IDE downloads, vendors, Android Studio's jbr)
+  $roots = @("$HOME/.gradle/jdks", "$HOME/.jdks") + $(if ($KitIsWindows) { foreach ($p in @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }) { foreach ($v in 'Android', 'Java', 'Eclipse Adoptium', 'Microsoft', 'Amazon Corretto', 'Zulu') { Join-Path $p $v } } }
+    elseif ($KitIsMac) { '/Library/Java/JavaVirtualMachines', '/Applications' } else { '/usr/lib/jvm', '/opt', "$HOME/android-studio" })
+  $JavaHome = @(Get-ChildItem $roots -Directory -ErrorAction SilentlyContinue | ForEach-Object { $d = $_.FullName; "$d/Contents/jbr/Contents/Home", "$d/jbr", "$d/Contents/Home", $d } | Where-Object { (JavaMajor $_) -in $javaOk })[0]
 }
 if ($JavaHome) { $env:JAVA_HOME = $JavaHome }
 "Using Java: $env:JAVA_HOME"
 $env:SENTRY_DISABLE_AUTO_UPLOAD = 'true'
 if ($c.app.kind -eq 'react-native') { $env:NODE_ENV = 'production' }
-$log = Join-Path $c.out 'build.log'
-$t0 = Get-Date
 if ($Local) {   # JS-bundled, non-debuggable
   $init = Join-Path $c.out 'local-cleartext.init.gradle'
   @'
@@ -406,112 +397,110 @@ if (-not (([string]$c.app.apkGlob) -match '/build/outputs/')) { $apkRoot = Join-
 $apk = Get-ChildItem $apkRoot -Recurse -Filter *.apk -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 } | Sort-Object LastWriteTime | Select-Object -Last 1
 # UP-TO-DATE builds keep the old file
 if (-not $apk -and $Task -eq $c.app.buildTask -and $c.app.apkGlob) { $apk = Get-ChildItem (Join-Path $android $c.app.apkGlob) -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1 }
-if (-not $apk) { throw "no APK built by this run under $apkRoot (set swarm.config.json app.apkGlob to <module>/build/outputs/apk/... if the app module is not 'app')" }
-$apkDir = $c.apkDir
+if (-not $apk) { throw "no APK built under $apkRoot (app module not 'app'? set app.apkGlob)" }
+}
+$apkDir = $c.apkDir; $x = [IO.Path]::GetExtension($c.appFile); $meta = [ordered]@{ branch = $branch; commit = $commit; appDir = $AppDir; built = (Get-Date).ToString('s') }; $took = "Done in $([int]((Get-Date) - $t0).TotalMinutes) min:"
+function Put($to) { Remove-Item (Join-Path $apkDir $to) -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item $apk.FullName (Join-Path $apkDir $to) -Recurse -Force }   # .app is a folder
 if ($Local) {   # never the shared APK
-  Copy-Item $apk.FullName (Join-Path $apkDir 'app-local.apk') -Force
-  Copy-Item $apk.FullName (Join-Path $apkDir "app-local-$(($branch -replace '[^\w.-]', '_'))-$commit.apk") -Force
-  [ordered]@{ branch = $branch; commit = $commit; appDir = $AppDir; built = (Get-Date).ToString('s'); local = $true } | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app-local.json') -Encoding utf8
-  "Done in $([int]((Get-Date) - $t0).TotalMinutes) min: $(Join-Path $apkDir 'app-local.apk') ($branch @ $commit). Use it: swarm.ps1 acquire -Agent <id> -Apk local (reverses app.localReverse)"
+  Put "app-local$x"; Put "app-local-$(($branch -replace '[^\w.-]', '_'))-$commit$x"
+  $meta + @{ local = $true } | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app-local.json') -Encoding utf8
+  "$took $(Join-Path $apkDir "app-local$x") ($branch @ $commit); use it: acquire -Apk local"
   return
 }
 $name = if ($Task -eq $c.app.buildTask) { 'app' } else { 'app-' + ($Task -replace '^assemble', '').ToLower() }
 # only the configured checkout replaces app.apk
 $sideBuild = (Resolve-Path $AppDir).Path.TrimEnd('\', '/') -ne (Resolve-Path $c.app.appDir).Path.TrimEnd('\', '/')
 if ($sideBuild -and -not $Shared) {
-  $own = "$name-$(($branch -replace '[^\w.-]', '_'))-$commit.apk"
-  Copy-Item $apk.FullName (Join-Path $apkDir $own) -Force
-  "Done in $([int]((Get-Date) - $t0).TotalMinutes) min: apk\$own ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
-  "Side-checkout build: NOT published as apk\$name.apk (the lanes keep their build). Install it on YOUR leased phone only: adb -s <serial> install -r `"$(Join-Path $apkDir $own)`"  (-Shared to publish it to every lane)"
+  $own = "$name-$(($branch -replace '[^\w.-]', '_'))-$commit$x"; Put $own
+  "$took apk\$own ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
+  "Side build, NOT published: install it on YOUR phone only (swarm.ps1 install -Apk <it> -Serials <serial>; -Shared publishes)"
   return
 }
-Copy-Item $apk.FullName (Join-Path $apkDir "$name.apk") -Force
-Copy-Item $apk.FullName (Join-Path $apkDir "$name-$commit.apk") -Force
+Put "$name$x"; Put "$name-$commit$x"
 if ($name -eq 'app') {   # stamp: what the lanes run
-  [ordered]@{ branch = $branch; commit = $commit; appDir = $AppDir; built = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app.json') -Encoding utf8
+  $meta | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app.json') -Encoding utf8
 }
-"Done in $([int]((Get-Date) - $t0).TotalMinutes) min: $(Join-Path $apkDir "$name.apk") ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
+"$took $(Join-Path $apkDir "$name$x") ($([math]::Round($apk.Length / 1MB)) MB, $branch @ $commit)"
 }
 
 # ---- install: APK onto phones (one signing key keeps app data)
 function Invoke-Install {
 param(
-  [string]$Apk,                    # default <out>/apk/app.apk
+  [string]$Apk, # default <out>/apk/app.apk
   [string[]]$Serials,              # default: every lane in swarm.json
   [switch]$Launch
 )
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
-$adb = $c.adb; $pkg = $c.app.package; $Mode = 'Release'
+$adb = $c.adb; $pkg = $c.app.package
 $Serials = @(Split-KitList $Serials)
 if (-not $Serials) { $Serials = (Get-Content $c.state -Raw | ConvertFrom-Json).serial }
-$apk = if ($Apk) { $Apk } else { Join-Path $c.apkDir 'app.apk' }
+$apk = if ($Apk) { $Apk } else { $c.appFile }
 if (-not (Test-Path $apk)) { throw "$apk missing - run swarm.ps1 build" }
 $failed = @()
 foreach ($s in $Serials) {
-  $r = & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1
-  if ($r -notmatch 'Success') { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
-  if ($r -notmatch 'Success') { Write-Warning "$s : $Mode install failed ($r)"; $failed += $s; continue }
-  foreach ($p in $c.app.permissions) { & $adb -s $s shell pm grant $pkg "android.permission.$p" 2>$null }
-  & $adb -s $s shell "echo $Mode > /sdcard/.qa-app-mode"
-  "$s : $Mode app installed ($r)"
+  $ios = $c.kind -eq 'ios'
+  $r = if ($ios) { $o = xcrun simctl install $s $apk 2>&1; if ($LASTEXITCODE) { "$o" } else { 'Success' } } else { & $adb -s $s install -r -g $apk 2>&1 | Select-Object -Last 1 }
+  if ($r -notmatch 'Success' -and -not $ios) { & $adb -s $s uninstall $pkg | Out-Null; $r = & $adb -s $s install -g $apk 2>&1 | Select-Object -Last 1 }
+  if ($r -notmatch 'Success') { Write-Warning "$s : install failed ($r)"; $failed += $s; continue }
+  foreach ($p in @($c.app.permissions | Where-Object { -not $ios })) { & $adb -s $s shell pm grant $pkg "android.permission.$p" 2>$null }
+  "$s : app installed ($r)"
   if ($Launch) { & $KitCmd.swarm launch -Serial $s }
 }
 if ($failed) { throw "app install failed on $($failed -join ', ')" }
 }
 
-# ---- launch: (re)start or clear the app on one phone (mode from /sdcard/.qa-app-mode)
+# ---- launch: (re)start or clear the app on one phone
 function Invoke-Launch {
 param([Parameter(Mandatory)][string]$Serial, [switch]$NoForceStop, [switch]$Clear, [switch]$Stop)   # -Stop: close the app
 $c = Get-SwarmConfig
 $adb = $c.adb; $pkg = $c.app.package
-if ($Stop) { & $adb -s $Serial shell am force-stop $pkg; "$Serial : app closed"; return }
-$mode = ((& $adb -s $Serial shell 'cat /sdcard/.qa-app-mode 2>/dev/null') -join '').Trim()
-if (-not $mode) { $mode = 'Release' }
+$ios = $c.kind -eq 'ios'
+if ($Stop) { if ($ios) { xcrun simctl terminate $Serial $pkg } else { & $adb -s $Serial shell am force-stop $pkg }; "$Serial : app closed"; return }
+if ($ios) { if ($Clear) { xcrun simctl uninstall $Serial $pkg; xcrun simctl install $Serial $c.appFile }; xcrun simctl launch --terminate-running-process $Serial $pkg | Out-Null; "$Serial : app launched"; return }
 if ($Clear) { & $adb -s $Serial shell pm clear $pkg | Out-Null; foreach ($p in $c.app.permissions) { & $adb -s $Serial shell pm grant $pkg "android.permission.$p" 2>$null } }
 if (-not $NoForceStop) { & $adb -s $Serial shell am force-stop $pkg }
 & $adb -s $Serial shell monkey -p $pkg -c android.intent.category.LAUNCHER 1 | Out-Null
-"$Serial : app launched ($mode mode)"
+"$Serial : app launched"
 }
 
-# ---- avd list | create | reset: lane emulators from the template (keep the resolution: qa.ps1 ui assumes it)
+# ---- avd list | create | reset: lane emulators from the template (qa.ps1 ui assumes its resolution)
 function Invoke-Avd {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('list', 'create', 'reset')][string]$Action,
   [string[]]$Lanes,
   [ValidateSet('cold', 'snapshots', 'wipe', 'recreate')][string]$Level = 'cold',
-  [switch]$NoBoot,                  # create/reset: don't boot afterwards
-  [switch]$Force                    # even if leased
+  [switch]$NoBoot, # create/reset: don't boot afterwards
+  [switch]$Force # even if leased
 )
 $ErrorActionPreference = 'Stop'
 $Lanes = @(Split-KitList $Lanes)
 $c = Get-SwarmConfig
-$adb = $c.adb
-$sdk = Split-Path (Split-Path $c.adb)
-$avdHome = if ($c.avdDir) { $c.avdDir } elseif ($env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME } else { (Join-Path $HOME '.android/avd') }
+if ($c.kind -eq 'ios') { throw 'ios lanes: xcrun simctl create <name> <device type> <runtime>, its udid into lanes[]' }
+$sdk = Split-Path (Split-Path $c.adb); $avdHome = $c.avdDir   # Get-SwarmConfig defaults it
 $leases = Get-KitPath phones
 $all = @($c.lanes | Where-Object { -not $Lanes -or $Lanes -contains $_.name })
 if ($Lanes) { $bad = @($Lanes | Where-Object { $c.lanes.name -notcontains $_ }); if ($bad) { throw "unknown lane(s) $($bad -join ', ') (lanes: $($c.lanes.name -join ', '))" } }
-function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
+function Running($l) { Test-LaneUp $l }
 function Holder($l) { $f = Join-Path $leases "$($l.name).json"; if (Test-Path $f) { (Get-Content $f -Raw | ConvertFrom-Json).agent } }
 
 function New-Avd($name) {
-  $tpl = $script:AvdTemplate
-  $sys = if ($tpl -match 'image\.sysdir\.1=(.+)') { Join-Path $sdk $Matches[1].Trim() } else { throw 'template has no image.sysdir.1' }
-  if (-not (Test-Path $sys)) { throw "system image missing: $sys - install it in Android Studio (SDK Manager > SDK Platforms > Android 36.1 > Google Play x86_64)" }
+  $v = $c.avd
+  $tpl = $script:AvdTemplate.Replace('{{ABI}}', $v.abi).Replace('{{ARCH}}', ($v.abi -replace '-v8a$')).Replace('{{API}}', $v.api).Replace('{{TAG}}', $v.tag).Replace('{{DEVICE}}', $v.device).Replace('{{PLAY}}', "$($v.tag -match 'playstore')".ToLower())
+  $sys = Join-Path $sdk "system-images/$($v.api)/$($v.tag)/$($v.abi)"
+  if (-not (Test-Path $sys)) { throw "system image missing: $sys - install it: sdkmanager `"system-images;$($v.api);$($v.tag);$($v.abi)`" (or set swarm.config.json avd)" }
   $d = Join-Path $avdHome "$name.avd"
   New-Item -ItemType Directory -Force $d | Out-Null
   $cfg = $tpl.Replace('{{NAME}}', $name).Replace('{{SDK}}', $sdk)
   if (-not $KitIsWindows) { $cfg = $cfg.Replace('\', '/') }   # template uses Windows separators
   $cfg | Set-Content (Join-Path $d 'config.ini') -Encoding ascii -NoNewline
-  $target = if ($tpl -match '(?m)^target=(.+)$') { $Matches[1].Trim() } else { 'android-36.1' }
-  @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd$([IO.Path]::DirectorySeparatorChar)$name.avd", "target=$target") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
-  "$name created in $avdHome (first boot builds its disks: a few minutes)"
+  @('avd.ini.encoding=UTF-8', "path=$d", "path.rel=avd$([IO.Path]::DirectorySeparatorChar)$name.avd", "target=$($v.api)") | Set-Content (Join-Path $avdHome "$name.ini") -Encoding ascii
+  "$name created in $avdHome (first boot takes minutes)"
 }
 function Stop-Lane($l) {
   if (Running $l) { & $KitCmd.swarm down -Lanes $l.name -KeepBrowsers | Select-Object -First 1 }
   # a hung emulator holds the AVD files: kill by port
-  $left = @(Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" })
+  $left = @(EmuProcs $l.port)
   if ($left.Count) { $left | ForEach-Object { Stop-SysProcess $_.Id }; Start-Sleep 2 }
 }
 
@@ -525,13 +514,13 @@ switch ($Action) {
   'create' {
     $made = @()
     foreach ($l in $all) {
-      if (Test-Path (Join-Path $avdHome "$($l.name).avd\config.ini")) { "$($l.name) exists - kept (use reset -Level recreate to rebuild it)"; continue }
+      if (Test-Path (Join-Path $avdHome "$($l.name).avd\config.ini")) { "$($l.name) exists - kept (reset -Level recreate rebuilds it)"; continue }
       New-Avd $l.name; $made += $l.name
     }
     if ($made -and -not $NoBoot) { & $KitCmd.swarm up -Lanes $made -Mode None -ColdBoot | Select-Object -Last 3 }
   }
   'reset' {
-    if (-not $Lanes) { throw 'reset needs -Lanes (it never resets every phone by accident)' }
+    if (-not $Lanes) { throw 'reset needs -Lanes (never every phone)' }
     foreach ($l in $all) {
       $h = Holder $l
       if ($h -and $h -ne 'manual' -and -not $Force) { Write-Warning "$($l.name) is leased by agent $h - skipped (wait for it, or -Force)"; continue }
@@ -544,7 +533,7 @@ switch ($Action) {
         }
         'wipe' {
           # factory reset: rebuilt from the system image
-          $left = @(foreach ($f in 'userdata-qemu.img', 'userdata-qemu.img.qcow2', 'cache.img', 'cache.img.qcow2', 'encryptionkey.img', 'encryptionkey.img.qcow2', 'snapshots', 'multiinstance.lock', 'hardware-qemu.ini.lock') {
+          $left = @(foreach ($f in @('userdata-qemu', 'cache', 'encryptionkey' | ForEach-Object { "$_.img"; "$_.img.qcow2" }) + 'snapshots', 'multiinstance.lock', 'hardware-qemu.ini.lock') {
             Remove-Item (Join-Path $d $f) -Recurse -Force -ErrorAction SilentlyContinue
             if (Test-Path (Join-Path $d $f)) { $f }
           })
@@ -565,12 +554,12 @@ switch ($Action) {
 # ---- up: boot lanes (run by acquire): boot, slim once, permissions, install, swarm.json
 function Invoke-Up {
 param(
-  [int]$Count = 0,                 # 0 = all lanes
-  [string[]]$Lanes,                # or name them
-  [switch]$ColdBoot,               # ignore the snapshot
+  [int]$Count = 0, # 0 = all lanes
+  [string[]]$Lanes, # or name them
+  [switch]$ColdBoot, # ignore the snapshot
   [ValidateSet('Release', 'None')][string]$Mode = 'Release',
-  [switch]$Headless,               # no windows (see above)
-  [switch]$ShowAll                 # show windows (owner asked)
+  [switch]$Headless, # no windows
+  [switch]$ShowAll # show windows (owner asked)
 )
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
@@ -581,24 +570,27 @@ if (-not $Lanes) { $Lanes = @($all | Select-Object -First $(if ($Count -gt 0) { 
 $gate = ({ & $KitCmd.dev gate @args })
 $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'; New-Item -ItemType Directory -Force $ledger | Out-Null
 function FreeGB { Get-FreeGB }
+function Turn($what, $gb) { & $gate -Dir $c.dir -Cmd "exit 0 #$what $name" -NeedGB $gb -WaitMinutes 30 | Select-Object -Last 1 | Out-Host; if ($LASTEXITCODE) { Write-Warning "$name not started: no memory turn within 30 min" }; -not $LASTEXITCODE }   # fair turn + memory
 
 $out = @()
 foreach ($name in $Lanes) {
   $l = $all | Where-Object name -eq $name | Select-Object -First 1
   if (-not $l) { throw "unknown lane $name (swarm.config.json lanes: $($all.name -join ', '))" }
+  if ($c.kind -eq 'ios') {   # Simulator: memory turn, boot, bootstatus waits
+    if (-not (Test-LaneUp $l)) { if (-not (Turn 'simulator' 3)) { continue }; xcrun simctl boot $l.udid 2>&1 | Out-Null; xcrun simctl bootstatus $l.udid -b 2>&1 | Select-Object -Last 1 }
+    $out += [pscustomobject]@{ lane = $name; serial = $l.udid; ios = $true }; continue
+  }
   $serial = "emulator-$($l.port)"
   # leftover not 'device': < 8 min booting, older hung
-  $left = @(Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" })
-  if ($left.Count -and -not ((& $adb devices) -match "^$serial\s+device")) {
+  $left = @(EmuProcs $l.port)
+  if ($left.Count -and -not (Test-LaneUp $l)) {
     $age = [int](($left | ForEach-Object { ((Get-Date) - $_.Created).TotalMinutes } | Measure-Object -Minimum).Minimum)
     if ($age -lt 8 -and @($left | Where-Object Name -like 'qemu-system*').Count) { "$name is already booting ($age min) ..."; $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }; continue }
     Write-Warning "$name`: killing a dead/hung emulator on port $($l.port) (adb not 'device' after $age min)"
     $left | ForEach-Object { Stop-SysProcess $_.Id }; Start-Sleep 2
   }
-  if (-not ((& $adb devices) -match "^$serial\s+device")) {
-    # fair turn + memory via the gate
-    & $gate -Dir $c.dir -Cmd "exit 0 #emulator $name" -NeedGB 4.5 -WaitMinutes 30 | Select-Object -Last 1
-    if ($LASTEXITCODE -ne 0) { Write-Warning "$name not started: no memory turn within 30 min"; continue }
+  if (-not (Test-LaneUp $l)) {
+    if (-not (Turn 'emulator' 4.5)) { continue }
     $ini = Join-Path $c.avdDir "$name.avd\emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
@@ -610,26 +602,26 @@ foreach ($name in $Lanes) {
       $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('"' + $c.emulator + '" ' + ($a -join ' ')); CurrentDirectory = (Split-Path $c.emulator); ProcessStartupInformation = $si }
       if ($r.ReturnValue -ne 0) { throw "could not start $name ($($r.ReturnValue))" }
     } else {
-      # Linux/macOS: setsid/nohup to outlive this shell
       if (-not (Test-Path $c.emulator)) { throw "no emulator at $($c.emulator) - set ANDROID_HOME (or ANDROID_SDK_ROOT)" }
       Start-Detached -FilePath $c.emulator -ArgumentList ($a | ForEach-Object { [string]$_ }) -WorkingDirectory (Split-Path $c.emulator) -Log (Join-Path $c.out "emulator-$name.log")
     }
     "$name booting on $serial ..."
     # gate ledger entry: the booting emulator's memory
     Start-Sleep 3
-    $qemu = Get-SysProcs -Name '^(qemu-system|emulator)' | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" } | Sort-Object Created -Descending | Select-Object -First 1
+    $qemu = EmuProcs $l.port | Sort-Object Created -Descending | Select-Object -First 1
     if ($qemu) { @{ pid = $qemu.Id; need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }
 }
 $ready = @()
 foreach ($o in $out) {
+  if ($o.ios) { $ready += $o; "$($o.lane) ready: $($o.serial)"; continue }   # bootstatus -b waited
   # bounded wait: wait-for-device hangs if it dies
   $booted = $false
   for ($i = 0; $i -lt 120; $i++) { if ((& $adb -s $o.serial shell getprop sys.boot_completed 2>$null) -match '1') { $booted = $true; break }; Start-Sleep 3 }
   if (-not $booted) {
-    Write-Warning "$($o.lane) did not finish booting in 6 min: killing it (a hidden emulator would otherwise keep its RAM)"
-    Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$($o.port)\b" } | ForEach-Object { Stop-SysProcess $_.Id }
+    Write-Warning "$($o.lane) did not finish booting in 6 min: killed (a hidden emulator keeps its RAM)"
+    EmuProcs $o.port | ForEach-Object { Stop-SysProcess $_.Id }
     continue
   }
   $ready += $o
@@ -656,16 +648,18 @@ $Lanes = @(Split-KitList $Lanes)
 $c = Get-SwarmConfig
 $adb = $c.adb
 foreach ($l in @($c.lanes) | Where-Object { -not $Lanes -or $Lanes -contains $_.name }) {
-  $serial = "emulator-$($l.port)"
-  if ((& $adb devices) -match "^$serial\s+device") {
+  $serial = LaneSerial $l
+  if ($c.kind -eq 'ios') { xcrun simctl shutdown $serial 2>&1 | Out-Null; "$($l.name) ($serial) stopped" }
+  elseif ((& $adb devices) -match "^$serial\s+device") {
     & $adb -s $serial reverse --remove-all 2>$null
     & $adb -s $serial emu kill | Out-Null
     # `emu kill` may be ignored: verify, then force-stop
-    for ($i = 0; $i -lt 45 -and ((& $adb devices) -match "^$serial\s"); $i++) { Start-Sleep 2 }
-    if ((& $adb devices) -match "^$serial\s") {
-      Get-SysProcs -Name '^(qemu-system|emulator)' | Where-Object { $_.CommandLine -match "-port\s+$($l.port)\b" } | ForEach-Object { Stop-SysProcess $_.Id }
+    $listed = { (& $adb devices) -match "^$serial\s" }
+    for ($i = 0; $i -lt 45 -and (& $listed); $i++) { Start-Sleep 2 }
+    if (& $listed) {
+      EmuProcs $l.port | ForEach-Object { Stop-SysProcess $_.Id }
       Start-Sleep 3
-      "$($l.name) ($serial) did not stop on request: process killed$(if ((& $adb devices) -match "^$serial\s") { ' - STILL LISTED, check by hand' })"
+      "$($l.name) ($serial) did not stop on request: process killed$(if (& $listed) { ' - STILL LISTED, check by hand' })"
     } else { "$($l.name) ($serial) stopped" }
   } else { "$($l.name) not running" }
 }
@@ -685,32 +679,9 @@ $adb = (Get-SwarmConfig).adb
 function A { & $adb -s $Serial shell @args 2>&1 }
 
 # KEEP: gms, gsf, maps, phone, messaging, documentsui, Gboard, camera, chrome, the app, SystemUI, Settings
-$disable = @(
-  'com.google.android.googlequicksearchbox',   # Google app / Assistant
-  'com.google.android.as',                     # Android System Intelligence
-  'com.google.android.as.oss',                 # Private Compute Services
-  'com.android.vending',                       # Play Store
-  'com.google.android.youtube',
-  'com.google.android.apps.youtube.music',
-  'com.google.android.apps.youtube.kids',
-  'com.google.android.gm',                     # Gmail
-  'com.google.android.apps.photos',
-  'com.google.android.apps.docs',              # Drive
-  'com.google.android.apps.tachyon',           # Meet
-  'com.google.android.calendar',
-  'com.google.android.apps.subscriptions.red', # Google One
-  'com.google.android.apps.wellbeing',
-  'com.google.android.apps.turbo',             # Device Health Services
-  'com.google.android.projection.gearhead',    # Android Auto
-  'com.google.android.apps.safetyhub',         # Personal Safety
-  'com.google.android.feedback',
-  'com.google.android.printservice.recommendation',
-  'com.google.android.apps.wallpaper',
-  'com.google.android.apps.nbu.files',         # Files by Google
-  'com.google.android.videos',
-  'com.google.android.apps.restore',
-  'com.google.android.apps.pixelmigrate'
-)
+$disable = @('com.android.vending') + @('googlequicksearchbox', 'as', 'as.oss', 'youtube', 'apps.youtube.music', 'apps.youtube.kids', 'gm', 'apps.photos', 'apps.docs', 'apps.tachyon', 'calendar',
+  'apps.subscriptions.red', 'apps.wellbeing', 'apps.turbo', 'projection.gearhead', 'apps.safetyhub', 'feedback', 'printservice.recommendation', 'apps.wallpaper',
+  'apps.nbu.files', 'videos', 'apps.restore', 'apps.pixelmigrate' | ForEach-Object { "com.google.android.$_" })
 $installed = (A pm list packages) -replace '^package:', ''
 $done = @()
 foreach ($p in $disable) {
@@ -718,18 +689,10 @@ foreach ($p in $disable) {
 }
 
 # automation: no animations, screen on, no lock
-A settings put global window_animation_scale 0 | Out-Null
-A settings put global transition_animation_scale 0 | Out-Null
-A settings put global animator_duration_scale 0 | Out-Null
-A settings put global stay_on_while_plugged_in 7 | Out-Null
-A settings put system screen_off_timeout 1800000 | Out-Null
-A locksettings set-disabled true | Out-Null
-A settings put global bluetooth_on 0 | Out-Null
-A svc bluetooth disable | Out-Null
-A settings put global wifi_scan_always_enabled 0 | Out-Null
-A settings put global ble_scan_always_enabled 0 | Out-Null
+foreach ($k in 'window_animation_scale 0', 'transition_animation_scale 0', 'animator_duration_scale 0', 'stay_on_while_plugged_in 7', 'bluetooth_on 0', 'wifi_scan_always_enabled 0',
+  'ble_scan_always_enabled 0', 'package_verifier_enable 0') { A settings put global $k | Out-Null }
+A settings put system screen_off_timeout 1800000 | Out-Null; A locksettings set-disabled true | Out-Null; A svc bluetooth disable | Out-Null
 A settings put secure location_mode 3 | Out-Null          # high accuracy (GPS + network)
-A settings put global package_verifier_enable 0 | Out-Null
 A 'echo slimmed > /sdcard/.qa-slimmed' | Out-Null
 
 "$Serial slimmed: disabled $($done.Count) packages ($($done -join ', '))"
@@ -738,53 +701,42 @@ A 'echo slimmed > /sdcard/.qa-slimmed' | Out-Null
 # ---- arrange: place emulator windows (Windows; run by up)
 function Invoke-Arrange {
 param([int]$Gap = 16, [double]$HeightShare = 0.78)   # share of the monitor's height
-# lane-order row centred on the main monitor (physical px); Windows only
+# lane-order row of equal windows centred on the main monitor (physical px); Windows only
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { 'window arranging is Windows-only (Win32 APIs): skipped - place emulator windows by hand or use swarm.ps1 up -Headless'; return }
 Add-Type @'
 using System; using System.Runtime.InteropServices;
 public class SwarmWin {
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
-  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
-  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cb; public RECT rc; public RECT work; public uint flags; }
-  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
-  [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr h, ref MONITORINFO mi);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  public struct RECT { public int L, T, R, B; }
+  public struct MONITORINFO { public int cb; public RECT rc; public RECT work; public uint flags; }
+  const string U = "user32.dll";
+  [DllImport(U)] public static extern bool SetProcessDPIAware();
+  [DllImport(U)] public static extern IntPtr MonitorFromPoint(long pt, uint flags);
+  [DllImport(U)] public static extern bool GetMonitorInfo(IntPtr h, ref MONITORINFO mi);
+  [DllImport(U)] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport(U)] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport(U)] public static extern bool ShowWindow(IntPtr h, int cmd);
 }
 '@ -ErrorAction SilentlyContinue
 [SwarmWin]::SetProcessDPIAware() | Out-Null
 $mi = New-Object SwarmWin+MONITORINFO; $mi.cb = [Runtime.InteropServices.Marshal]::SizeOf($mi)
-[SwarmWin]::GetMonitorInfo([SwarmWin]::MonitorFromPoint((New-Object SwarmWin+POINT), 1), [ref]$mi) | Out-Null   # 1 = primary
-$work = $mi.work
-
+[SwarmWin]::GetMonitorInfo([SwarmWin]::MonitorFromPoint(0, 1), [ref]$mi) | Out-Null   # point 0,0; 1 = primary
+$work = $mi.work; $mw = $work.R - $work.L; $mh = $work.B - $work.T
 $order = @((Get-SwarmConfig).lanes.name)
-$wins = Get-Process | Where-Object { $_.MainWindowTitle -match 'Android Emulator - (\w+):' -and $_.MainWindowHandle -ne 0 } |
-  ForEach-Object { $null = $_.MainWindowTitle -match 'Android Emulator - (\w+):'; [pscustomobject]@{ Lane = $Matches[1]; H = $_.MainWindowHandle } } |
-  Sort-Object { [array]::IndexOf($order, $_.Lane) }
+$wins = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'Android Emulator - (\w+):' } |
+  ForEach-Object { $null = $_.MainWindowTitle -match 'Android Emulator - (\w+):'; [pscustomobject]@{ Lane = $Matches[1]; H = $_.MainWindowHandle } } | Sort-Object { [array]::IndexOf($order, $_.Lane) })
 if (-not $wins) { 'no emulator windows found'; return }
-
-# centre the row on the main monitor
-$sizes = foreach ($w in $wins) { [SwarmWin]::ShowWindow($w.H, 9) | Out-Null; $r = New-Object SwarmWin+RECT; [SwarmWin]::GetWindowRect($w.H, [ref]$r) | Out-Null; [pscustomobject]@{ W = $w; Width = $r.R - $r.L; Height = $r.B - $r.T } }
-# width from the first phone's aspect
-$ref = $sizes[0]; $h = [int]((($work.B - $work.T) * $HeightShare)); $w = [int]($ref.Width * $h / $ref.Height)
-foreach ($s in $sizes) { $s.Width = $w; $s.Height = $h }
-$total = ($sizes | Measure-Object Width -Sum).Sum + $Gap * ($sizes.Count - 1)
-$tallest = ($sizes | Measure-Object Height -Maximum).Maximum
-$x = $work.L + [math]::Max(0, [int](($work.R - $work.L - $total) / 2))
-$y = $work.T + [math]::Max(0, [int](($work.B - $work.T - $tallest) / 2))
-$placed = @()
-foreach ($s in $sizes) {
-  [SwarmWin]::SetWindowPos($s.W.H, [IntPtr]::Zero, $x, $y, $s.Width, $s.Height, 0x0004) | Out-Null   # NOZORDER, explicit equal size
-  $placed += "$($s.W.Lane) at x=$x"
-  $x += $s.Width + $Gap
+foreach ($w in $wins) { [SwarmWin]::ShowWindow($w.H, 9) | Out-Null }
+# size from the first phone's aspect
+$r = New-Object SwarmWin+RECT; [SwarmWin]::GetWindowRect($wins[0].H, [ref]$r) | Out-Null
+$h = [int]($mh * $HeightShare); $w = [int](($r.R - $r.L) * $h / ($r.B - $r.T)); $total = $wins.Count * ($w + $Gap) - $Gap
+$x = $work.L + [math]::Max(0, [int](($mw - $total) / 2)); $y = $work.T + [math]::Max(0, [int](($mh - $h) / 2))
+$placed = foreach ($v in $wins) { [SwarmWin]::SetWindowPos($v.H, [IntPtr]::Zero, $x, $y, $w, $h, 0x0004) | Out-Null; "$($v.Lane) at x=$x"; $x += $w + $Gap }   # NOZORDER
+if ($total -gt $mw) { Write-Warning 'windows are wider than the main monitor - they overlap' }
+"main monitor ${mw}x${mh}: $($placed -join ', ') (y=$y)"
 }
-if ($total -gt ($work.R - $work.L)) { Write-Warning 'windows are wider than the main monitor - they overlap' }
-"main monitor $($work.R - $work.L)x$($work.B - $work.T): " + ($placed -join ', ') + " (y=$y)"
-}
-
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
+  $dt = Get-KitSetting 'devices.type' 'android'
+  if ($__verb -notmatch '^(-|help$)' -and ($dt -eq 'none' -or ($dt -eq 'ios' -and -not $KitIsMac))) { "no device lanes: devices.type $dt$(if ($dt -eq 'ios') { ' needs a macOS host (xcrun simctl)' }); app checks are NOT_TESTED"; exit 1 }
   switch ($__verb) {
     { $_ -in 'acquire', 'ensure', 'release', 'status' } { Invoke-KitVerb Invoke-Phone (@($__verb) + $__rest) }
     'build' { Invoke-KitVerb Invoke-Build $__rest }
@@ -795,7 +747,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'down' { Invoke-KitVerb Invoke-Down $__rest }
     'slim' { Invoke-KitVerb Invoke-Slim $__rest }
     'arrange' { Invoke-KitVerb Invoke-Arrange $__rest }
-    { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 14 | Select-Object -Skip 1; exit 0 }
-    default { Get-Content $PSCommandPath -TotalCount 14 | Select-Object -Skip 1; exit 2 }
+    { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 0 }
+    default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
   }
 }

@@ -1,6 +1,6 @@
 export const meta = {
   name: 'testy',
-  description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs on a test environment (web pool + API pool + Android lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
+  description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs (web + API pools, device lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
   whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
   phases: [
     { title: 'Prepare', detail: 'args.select only: checky lead (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
@@ -20,7 +20,7 @@ export const meta = {
   tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
   envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
   outOfScope: ['<channel>'] (default qa.outOfScope), webParallel: 5, apiParallel: 5, verify: true (false: no FAIL re-test),
-  learn: true | 'auto', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: '' }],
+  learn: true | 'auto', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: '' }], devices: 'android' | 'ios' | 'none',
   localEnv: '<local env of the run>', envFixCycles: 2, envFixWaitMinutes: 300,
   items: [{ code: 'F2', title, guideFile, lane: 'web'|'api'|'app', target?, localEnv?, subtasks: [{ id, name, mrs: '!12, !34' }],
     retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
@@ -103,6 +103,7 @@ const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/browser.mjs`.replace(/\
 if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: args.items[], a <runDir>/run.json or args.select (header)')
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
+const IOS = R.devices === 'ios', NODEV = R.devices === 'none'
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
 const LEARN = R.learn === undefined ? true : R.learn
@@ -236,12 +237,12 @@ const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) 
 const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
   return `
-ANDROID APP — YOUR PHONE: lane ${L.n} "${L.name}", adb serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-Your phone is leased (rules: ${SWARM}/SKILL.md steps A1-A4):
-- FIRST: & ${SWARM}/swarm.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}   (waits its turn, boots, installs the current APK; "installed: updated" = log in again)
-- START EVERY PowerShell command with  $env:ANDROID_SERIAL='${L.serial}';  — never other serials, swarm-up/down/app-mode, adb kill-server,
-  or killing emulators/processes you didn't start.
-- UI: & ${Q} ui (dump | tap | tapid | tapxy | type | key | swipe | shot | shotmark | wait | log); shots into <outDir>/shots with the
+${IOS ? 'iOS SIMULATOR' : 'ANDROID PHONE'}: lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
+Your device is leased (${SWARM}/SKILL.md A1-A4):
+- FIRST: & ${SWARM}/swarm.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}   (waits its turn, boots, installs the app; "installed: updated" = log in again)
+- START EVERY PowerShell command with  $env:${IOS ? 'KIT_DEVICE' : 'ANDROID_SERIAL'}='${L.serial}';  — never other serials, swarm up/down, adb kill-server or killing
+  processes you didn't start.
+- UI: & ${Q} ui (${IOS ? 'shot | openurl | log; no taps: the rest via the API' : 'dump | tap | tapid | tapxy | type | key | swipe | openurl | shot | shotmark | wait | log'}); shots into <outDir>/shots with the
   <CODE>-<checkId>_ prefix. Relaunch/clear: & ${SWARM}/swarm.ps1 launch -Serial ${L.serial} [-Clear]
 - Before > 10 min of non-phone work: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)}; acquire again when needed (app stays installed).
   The workflow releases it after the lane's last item.
@@ -357,7 +358,7 @@ Return ok=true/false and the script's output.`
 // NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
 const CAUSE_NEXT = {
   'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
-  'phone-only': 'take an Android lane (android-swarm acquire) or prove the server side through the API',
+  'phone-only': 'take a device lane (swarm.ps1 acquire) or prove the server side through the API',
   'undeployed': 'run qa.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
   'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
   'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }
@@ -588,19 +589,20 @@ async function gate(phaseName) {   // before a new item; measures only near the 
 const web = R.items.filter((it) => (it.lane || 'web') === 'web')
 const api = R.items.filter((it) => it.lane === 'api')
 const app = R.items.filter((it) => it.lane === 'app')
-if (app.length && !LANES.length) throw new Error('app items need args.lanes (one per phone lane + its login); phones need not be running: agents lease and boot them (swarm.ps1 acquire)')
+if (app.length && !LANES.length && !NODEV) throw new Error('app items need args.lanes (one per lane + its login; agents lease and boot them) or devices: none')
 log(`verify ${VERIFY ? 'on' : 'off'}, learn ${LEARN}`)
 log(`run ${R.runDir}: web ${web.length} (x${R.webParallel || 5}), api ${api.length} (x${R.apiParallel || 5}), app ${app.length} (${LANES.length} phones)`)
 
 const parts = await Promise.all([
   web.length ? pool(web, R.webParallel || 5, 0) : [],
   api.length ? pool(api, R.apiParallel || 5, 100) : [],
-  app.length ? pool(app, LANES.length, 200, laneFor) : [],
+  app.length && !NODEV ? pool(app, LANES.length, 200, laneFor) : [],
 ])
 const all = parts.flat().filter(Boolean)
+if (NODEV && app.length) log(`NOT_TESTED (devices none; tasks stay open): ${app.map((it) => it.code).join(', ')}`)
 
 // App follow-ups: PENDING web/api checks -> app item <code>A, in run.json first (finalize reads it)
-for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a phone lane, but args.lanes is empty: the task stays open (add lanes, qa.ps1 retest)`)
+for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a device lane, args.lanes is empty: the task stays open (add lanes, qa.ps1 retest)`)
 const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
   const it = R.items.find((x) => x.code === r.code)
   if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null

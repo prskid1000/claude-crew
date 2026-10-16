@@ -6,7 +6,7 @@ qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
-  ui dump|tap|tapid|tapxy|type|key|swipe|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL = your phone)
+  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL | KIT_DEVICE)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer) · 2 usage ·
   3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
@@ -221,8 +221,8 @@ if (-not $KeepFreeGB) {
 # gate-promised GB: running builds/phones + queued builds
 $gateLedger = Join-Path (Get-KitTemp) 'claude-build-gate'
 function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
-  $run = @(Get-ChildItem $Ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid })
-  $queued = @(Get-ChildItem (Join-Path $Ledger 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid })
+  $rd = { param($d) @(Get-ChildItem $d -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid }) }
+  $run = & $rd $Ledger; $queued = & $rd (Join-Path $Ledger 'queue')
   if (-not ($run.Count + $queued.Count)) { return 0 }
   $ws = @{}; $kids = @{}
   foreach ($p in Get-SysProcs -NoCommandLine) { $ws[$p.Id] = $p.WorkingSet; if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.ArrayList]::new() }; [void]$kids[$p.ParentId].Add($p.Id) }
@@ -285,7 +285,8 @@ switch ($Action) {
     # 2. memory seat (fair FIFO)
     $me = Safe $Agent; $wf = Join-Path $wait "$me.json"
     if (Test-Path (Join-Path $seats "$me.json")) { "seat already held: $Agent"; exit 0 }
-    if (-not (Test-Path $wf)) { ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content $wf }
+    $rec = { ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json }
+    if (-not (Test-Path $wf)) { & $rec | Set-Content $wf }
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $told = $false
     while ($true) {
       $ok = Locked {
@@ -298,7 +299,7 @@ switch ($Action) {
         $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
         $left = (FreeGB) - [double]$promised - $need
         if ($ahead.Count -eq 0 -and $left -ge $KeepFreeGB) {
-          ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content (Join-Path $seats "$me.json")
+          & $rec | Set-Content (Join-Path $seats "$me.json")
           Remove-Item $wf -Force
           return "seat taken: $Agent ($Kind, ~$need GB); free RAM after it ~$([math]::Round($left, 1)) GB"
         }
@@ -1058,9 +1059,12 @@ function Invoke-Ui {
 param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1)][string]$Arg = '', [Parameter(Position = 2)][string]$Arg2 = '',
       [Parameter(Position = 3)][string]$Arg3 = '', [Parameter(Position = 4)][string]$Arg4 = '')
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))   # ANDROID_HOME / ANDROID_SDK_ROOT / OS default
-$tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
-$tmp = Get-KitPath android-tmp -Create
-$xmlLocal = Join-Path $tmp "ui_$tag.xml"
+$dt = Get-KitSetting 'devices.type' 'android'
+if ($dt -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
+$ios = $dt -eq 'ios'   # Simulator: $env:KIT_DEVICE = udid
+$tag = if ($ios) { if ($env:KIT_DEVICE) { $env:KIT_DEVICE } else { 'booted' } } elseif ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
+if ($ios -and $Action -notin 'shot', 'openurl', 'log') { "ios: no ui $Action (simctl has no UI driver): use shot | openurl | log, prove the rest via the API"; exit 2 }
+$xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"
 function Get-Nodes {
   # a failed dump must not return the old screen
   & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
@@ -1071,46 +1075,37 @@ function Get-Nodes {
   $x.SelectNodes('//node') | ForEach-Object {
     $t = if ($_.text) { $_.text } elseif ($_.'content-desc') { $_.'content-desc' } else { '' }
     if ($_.bounds -match '\[(\d+),(\d+)\]\[(\d+),(\d+)\]') {
-      [pscustomobject]@{ text = $t; rid = $_.'resource-id'; cls = $_.class; x = [int](([int]$Matches[1] + [int]$Matches[3]) / 2); y = [int](([int]$Matches[2] + [int]$Matches[4]) / 2)
-        l = [int]$Matches[1]; t = [int]$Matches[2]; w = [int]$Matches[3] - [int]$Matches[1]; h = [int]$Matches[4] - [int]$Matches[2] }
+      $l, $u, $r, $b = 1..4 | ForEach-Object { [int]$Matches[$_] }
+      [pscustomobject]@{ text = $t; rid = $_.'resource-id'; cls = $_.class; x = [int](($l + $r) / 2); y = [int](($u + $b) / 2); l = $l; t = $u; w = $r - $l; h = $b - $u }
     }
   }
 }
+# text (exact, then contains) or #<resource-id suffix>
+function Find($all, $w) { if ($w -like '#*') { $all | Where-Object { $_.rid -like "*$($w.TrimStart('#'))" } | Select-Object -First 1 } else { ($all | Where-Object { $_.text -eq $w } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$w*" } | Select-Object -First 1) } }
+function Tap($n, $w) { if ($n) { & $adb shell input tap $n.x $n.y; "tapped $(if ($w -like '#*') { "#$($n.rid)" } else { "'$($n.text)'" }) at $($n.x),$($n.y)" } else { "NOT FOUND: $w" } }
+function Shot($name, $dir) {
+  if (-not $dir) { $dir = Join-Path (Get-KitPath shots) $tag }; New-Item -ItemType Directory -Force $dir | Out-Null; $f = Join-Path $dir "$name.png"; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+  if ($ios) { xcrun simctl io $tag screenshot $f | Out-Null } else { & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null }
+  if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }; $f
+}
 switch ($Action) {
   'dump' { Get-Nodes | Where-Object { $_.text -or $_.rid -or $_.cls -match 'EditText' } | ForEach-Object { '{0} @({1},{2}){3}{4}' -f $_.text, $_.x, $_.y, $(if ($_.cls -match 'EditText') { ' [edit]' }), $(if ($_.rid) { " #$($_.rid)" }) } }
-  'tap' {
-    $all = Get-Nodes
-    $n = $all | Where-Object { $_.text -eq $Arg } | Select-Object -First 1
-    if (-not $n) { $n = $all | Where-Object { $_.text -like "*$Arg*" } | Select-Object -First 1 }
-    if ($n) { & $adb shell input tap $n.x $n.y; "tapped '$($n.text)' at $($n.x),$($n.y)" } else { "NOT FOUND: $Arg" }
-  }
-  'tapid' {
-    $n = Get-Nodes | Where-Object { $_.rid -like "*$Arg" } | Select-Object -First 1
-    if ($n) { & $adb shell input tap $n.x $n.y; "tapped #$($n.rid) at $($n.x),$($n.y)" } else { "NOT FOUND: #$Arg" }
-  }
+  'tap' { Tap (Find (Get-Nodes) $Arg) $Arg }
+  'tapid' { Tap (Find (Get-Nodes) "#$Arg") "#$Arg" }
   'tapxy' { & $adb shell input tap $Arg $Arg2; "tapped $Arg,$Arg2" }
   'type' { & $adb shell input text ($Arg -replace ' ', '%s' -replace '([#&;()<>|$''"])', '\$1'); 'typed' }
   'key' { & $adb shell input keyevent $Arg; "key $Arg" }
   'swipe' { & $adb shell input swipe $Arg $Arg2 $Arg3 $Arg4 400; 'swiped' }
-  'shot' {
-    $dir = if ($Arg2) { $Arg2 } else { Join-Path (Get-KitPath shots) $tag }
-    New-Item -ItemType Directory -Force $dir | Out-Null
-    $f = Join-Path $dir "$Arg.png"
-    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null; if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }
-    "saved $f"
-  }
+  'openurl' { if ($ios) { xcrun simctl openurl $tag $Arg } else { & $adb shell am start -a android.intent.action.VIEW -d $Arg | Out-Null }; "opened $Arg" }
+  'shot' { "saved $(Shot $Arg $Arg2)" }
   'shotmark' {
-    # Arg name, Arg2 text or #id, Arg3 label, Arg4 dir
-    $dir = if ($Arg4) { $Arg4 } else { Join-Path (Get-KitPath shots) $tag }
-    New-Item -ItemType Directory -Force $dir | Out-Null
-    $f = Join-Path $dir "$Arg.png"
+    # Arg name, Arg2 text or #id ('|' between), Arg3 label, Arg4 dir
     $all = Get-Nodes
     $rects = foreach ($want in ($Arg2 -split '\s*\|\s*')) {
-      $n = if ($want -like '#*') { $all | Where-Object { $_.rid -like "*$($want.TrimStart('#'))" } | Select-Object -First 1 }
-           else { ($all | Where-Object { $_.text -eq $want } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$want*" } | Select-Object -First 1) }
+      $n = Find $all $want
       if ($n) { "$($n.l - 6),$($n.t - 6),$($n.w + 12),$($n.h + 12),$(if ($Arg3) { $Arg3 } else { $n.text })" } else { Write-Warning "NOT FOUND: $want (screenshot taken without a mark for it)" }
     }
-    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null; if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }
+    $f = Shot $Arg $Arg4
     if ($rects -and -not $KitIsWindows) { Write-Warning 'marks need qa.ps1 annotate (Windows only): screenshot saved unmarked - name the element in the check note'; $rects = $null }
     if ($rects) { & $KitCmd.qa annotate -In $f -Rect @($rects) | Out-Null }
     "saved $f$(if ($rects) { " with $(@($rects).Count) mark(s)" })"
@@ -1125,19 +1120,16 @@ switch ($Action) {
     # shutter: -Arg id suffix, else common ids; Arg2 = confirm text
     Start-Sleep 3
     $all = Get-Nodes
-    $ids = if ($Arg) { @($Arg) } else { @('take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture') }
-    $n = $null; foreach ($i in $ids) { $n = $all | Where-Object { $_.rid -like "*$i" } | Select-Object -First 1; if ($n) { break } }
-    if (-not $n) { $n = $all | Where-Object { $_.text -match '^(Take photo|Capture|Shutter|Take picture)$' } | Select-Object -First 1 }
+    $n = @(@($(if ($Arg) { $Arg } else { 'take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture' }) | ForEach-Object { Find $all "#$_" }) + @($all | Where-Object { $_.text -match '^(Take photo|Capture|Shutter|Take picture)$' }))[0]
     if (-not $n) { "NOT FOUND: no shutter (pass its resource-id: qa.ps1 ui photo <id>; qa.ps1 ui dump shows ids)"; return }
     & $adb shell input tap $n.x $n.y; Start-Sleep 4
     $ok = Get-Nodes | Where-Object { $_.text -match $(if ($Arg2) { "^$([regex]::Escape($Arg2))$" } else { '^(OK|Done|Use photo|Save|Confirm|✓|Use)$' }) } | Select-Object -First 1
     if ($ok) { & $adb shell input tap $ok.x $ok.y; Start-Sleep 2; "photo taken and accepted ('$($ok.text)')" } else { "photo taken (no confirm step seen)" }
   }
-  'log' { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) }
-  default { "unknown action $Action (qa.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|shot|shotmark|wait|log|photo)"; exit 2 }
+  'log' { if ($ios) { xcrun simctl spawn $tag log show --last 5m --style compact --predicate $(if ($Arg) { "process == '$Arg'" } else { 'messageType == error' }) } else { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) } }
+  default { "unknown action $Action (qa.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo)"; exit 2 }
 }
 }
-
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
   switch ($__verb) {
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }

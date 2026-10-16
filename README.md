@@ -72,7 +72,7 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 | `qa.targets` | `{}` | target groups for `/testy` `select` runs: `<group>: [{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]` (first match = the item's env) |
 | `gate.keepFreeGB`, `gate.startHeapGB`, `gate.heapMinGB` | 15% of RAM (min 6), per tool, 4 | the memory gate |
 | `supervise.ramActPct`, `supervise.minDiskFreeGB` | 90, 30 | heartbeat thresholds |
-| `kitAudit.everyDays`, `cleanup.maxBrowserProfiles`, `memory.keepDefault`, `build.mavenOffline` | 7, 4, false, true | audit nudge, browser profiles kept, auto-memory location, Maven -o |
+| `kitAudit.everyDays`, `cleanup.maxBrowserProfiles`, `memory.keepDefault`, `build.mavenOffline`, `devices.type` | 7, 4, false, true, android | audit nudge, browser profiles kept, auto-memory location, Maven -o, device lanes (or ios, none) |
 | `bugfixMandate`, `localOnly`, `orgTerms` | none | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
 | `localFiles` (example only) | — | `orch.ps1 setup -WriteLocal` writes `targets.local.json` and `swarm.config.json` from it |
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,

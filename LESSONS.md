@@ -75,8 +75,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 
 ## android-swarm
 - Lanes drop offline at ~2-14 GB free RAM: no heavy web lanes beside 3 emulators; `swarm.ps1 status` before each check, `swarm.ps1 ensure -Agent <id>` at once. (3×)
-- A release APK cannot reach a local http API: the local-env APK (`swarm.ps1 build -Local`, `acquire -Apk local`); debug builds need Metro.
-- A restored snapshot can leave a lane "offline" in adb -> `swarm.ps1 avd reset -Lanes <name> -Level cold`; set `$env:ANDROID_SERIAL` on every command.
+- A restored snapshot can leave a lane "offline" in adb -> `swarm.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
 - Edit scripts: never short helper names (`r`, `rd`, `h`, `del`, `diff` are aliases; `rd` deleted live files once); absolute paths (`[IO.File]` resolves against the process dir, often the live clone); check `git -C <live kit> status` after.

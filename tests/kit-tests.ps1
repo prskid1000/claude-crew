@@ -77,7 +77,7 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
 '@
   $f = Join-Path (Split-Path $k) 'githost-test.ps1'; Set-Content $f $gh
   $res = @(pwsh -NoProfile -File $f (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
-  foreach ($x in 'gl-get', 'gl-put', 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'memo', 'gh-auto') { Expect "git host: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'gl-get', 'gl-put', 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'memo', 'gh-auto') { Expect "git host: $x" ($res -contains "${x}:True") }
   # tracker verbs: each backend's call (-DryRun); 'none' store for real
   foreach ($case in @(@('clickup', @('status', '12', 'failedTesting'), 'clickup status set'), @('github', @('list', 'o/r', 'promoted', '-Type', 'github'), 'gh issue list -R o/r'),
       @('gitlab', @('list', 'g/p', 'inTest'), 'labels=status%3Ain'), @('jira', @('list', 'PROJ', 'failedTesting'), 'search/jql'))) {
@@ -128,7 +128,7 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 '@
   $f = Join-Path (Split-Path $k) 'pipes-test.ps1'; Set-Content $f $pt
   $res = @(pwsh -NoProfile -File $f (Join-Path $k 'skills/dev-kit/lib.ps1') $D 2>&1)
-  foreach ($x in 'no-ci', 'no-pipeline', 'unknown') { Expect "pipes: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'no-ci', 'no-pipeline', 'unknown') { Expect "pipes: $x" ($res -contains "${x}:True") }
   # check: an UNRUN typecheck (> 200 baseline errors) exits 5, not 0
   $ud = Join-Path (Split-Path $k) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
   '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
@@ -192,7 +192,7 @@ run(args, a.agent, () => {}, () => {}, pipeline).then((oa) => run(args, b.agent,
 '@
   $jf = Join-Path (Split-Path $k) 'dw-local.mjs'; [IO.File]::WriteAllText($jf, $jsd.Replace('__BODY__', $wfd))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text') { Expect "buildy local loop: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text') { Expect "buildy local loop: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 4)) { $res | Select-Object -First 5 }
   # buildy: blocking finding -> fix round -> ONE re-review; deferred item: promotion held;
   # run name = brief name + 4 path-hash hex
@@ -225,7 +225,7 @@ run(args, agent, () => {}, () => {}, pipeline).then(() => {
   $jf = Join-Path (Split-Path $k) 'dw-review.mjs'; [IO.File]::WriteAllText($jf, $jsr.Replace('__BODY__', $wfd))
   $res = @(node $jf 2>&1)
   $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
-  foreach ($x in 're-review', 'hold') { Expect "buildy: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 're-review', 'hold') { Expect "buildy: $x" ($res -contains "${x}:true") }
   Expect 'buildy: the default run name matches orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
   if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 2) { $res | Select-Object -First 5 }
   # buildy duel: 2 POCs, revy compares, bounded debate, owner judges; winner ships
@@ -263,7 +263,7 @@ run(args, agent, () => {}, () => {}, pipeline, parallel).then((o) => {
   $wfd2 = [IO.File]::ReadAllText((Join-Path $src 'workflows/buildy.js')) -replace '^export const meta', 'const meta'
   $jf = Join-Path (Split-Path $k) 'dw-duel.mjs'; [IO.File]::WriteAllText($jf, $jsu.Replace('__BODY__', $wfd2))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only') { Expect "buildy duel: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only') { Expect "buildy duel: $x" ($res -contains "${x}:true") }
   if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 5) { $res | Select-Object -First 5 }
   Remove-TestKit $k
 }
@@ -394,7 +394,7 @@ run(args, a.agent, () => {}, () => {}, null).then(() => run(args, b.agent, () =>
 '@
   $jf = Join-Path (Split-Path $k) 'tc-envfix.mjs'; [IO.File]::WriteAllText($jf, $js3.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "testy local: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "testy local: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
   # testy retries per check: fewer checks keep the first FAIL; a duplicate (C5b) retries as C5
   $js4 = @'
@@ -419,7 +419,7 @@ run(args, agent, () => {}, () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-merge.mjs'; [IO.File]::WriteAllText($jf, $js4.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'keeps-fail', 'guide-id') { Expect "testy retries: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'keeps-fail', 'guide-id') { Expect "testy retries: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
   # testy select: Prepare builds the run; resume keeps runDir; item target pins testers
   $js2 = @'
@@ -447,7 +447,7 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-select.mjs'; [IO.File]::WriteAllText($jf, $js2.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'prepare', 'record', 'item-target') { Expect "testy select: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'prepare', 'record', 'item-target') { Expect "testy select: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
   # ---- review batch 2: qa.ps1, testy, browser.mjs
   # seat: live holders keep claims past 6 h; unknown holders' old claims are free; waiting = exit 4
@@ -622,7 +622,7 @@ run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, items }, a.agent, ()
 '@
   $jf = Join-Path (Split-Path $k) 'tc-ports.mjs'; [IO.File]::WriteAllText($jf, $js5.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'ports', 'retry-file', 'expect') { Expect "testy: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'ports', 'retry-file', 'expect') { Expect "testy: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
   # a FAIL with evidence one re-test misses stays FAIL; without evidence it may pass
   $js6 = @'
@@ -645,7 +645,7 @@ run(args, agent, () => {}, () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-flaky.mjs'; [IO.File]::WriteAllText($jf, $js6.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'flaky', 'no-evidence') { Expect "testy verify: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'flaky', 'no-evidence') { Expect "testy verify: $x" ($res -contains "${x}:true") }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
   $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
   $rk = Get-Content "$fk/K1/results.json" -Raw | ConvertFrom-Json; $rk.checks[0] | Add-Member flaky $true; $rk | ConvertTo-Json -Depth 8 | Set-Content "$fk/K1/results.json"
@@ -785,7 +785,7 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
 '@
   $ttf = Join-Path (Split-Path $k) 'track-test.ps1'; Set-Content $ttf $tt
   $res = @(pwsh -NoProfile -File $ttf $O 2>&1)
-  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt)" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt)" ($res -contains "${x}:True") }
   if (@($res | Where-Object { "$_" -match ':True$' }).Count -ne 4) { $res | Select-Object -Last 8 }
   $lkf = Join-Path (& { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath cache -Create }) 'supervise.lock'
   @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 } | ConvertTo-Json | Set-Content $lkf
@@ -817,7 +817,7 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
 '@
   $nf = Join-Path (Split-Path $k) 'outbox-test.ps1'; Set-Content $nf $nt
   $res = @(pwsh -NoProfile -File $nf (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
-  foreach ($x in 'queued', 'sent', 'real') { Expect "outbox: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'queued', 'sent', 'real') { Expect "outbox: $x" ($res -contains "${x}:True") }
   # a dead session's seat / claim never blocks
   $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath qa-seats }; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
   @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
@@ -890,7 +890,7 @@ print(f'kittool-misc:{ok_main and ok_prose}')
 '@
   $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
   $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
-  foreach ($x in 'kittool-ports', 'kittool-deploy', 'kittool-misc') { Expect "kittool: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'kittool-ports', 'kittool-deploy', 'kittool-misc') { Expect "kittool: $x" ($res -contains "${x}:True") }
   # crew board: join -Type, msg / inbox; a dispute split after 2 rounds becomes a decision
   $j1 = pwsh -NoProfile -File $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
   $j2 = pwsh -NoProfile -File $O board join -Type revy -Agent R7 -Run w7 | Out-String
@@ -1061,7 +1061,7 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
 '@
   $f = Join-Path (Split-Path $k) 'revert-test.ps1'; Set-Content $f $t
   $res = @(pwsh -NoProfile -File $f $L (Join-Path (Split-Path $k) 'le') 2>&1)
-  foreach ($x in 'light', 'heavy', 'plan', 'revert', 'applied', 'nohook', 'missing-sha') { Expect "local env: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  foreach ($x in 'light', 'heavy', 'plan', 'revert', 'applied', 'nohook', 'missing-sha') { Expect "local env: $x" ($res -contains "${x}:True") }
   $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') migrations selftest 2>&1 | Out-String
   Expect 'devtools.py migrations selftest' ($LASTEXITCODE -eq 0)
   # localenv usage errors exit 2; a start-lock timeout throws, never runs unlocked
@@ -1074,33 +1074,34 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
   Expect "localenv: a lease ends with its holder process ($pr)" ($pr -eq 'live')
   Expect 'localenv: usage errors exit 2; a start-lock timeout throws' ($c1 -eq 2 -and $c2 -eq 2 -and $c3 -eq 2 -and (Get-Content $L2 -Raw) -match 'if \(-not \$got\) \{ \$mx\.Dispose\(\); throw')
   Remove-TestKit $k2
-  # swarm: "-Reverse 8080,8081" = two ports; whole lease files; release holds the lane ('__stopping__') until down ends
+  # swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; ios serial = udid; avd; build command
   $swt = @'
 $ErrorActionPreference = 'Stop'
-$tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null
-Set-Item Env:CLAUDE_RUNTIME (Join-Path $tmp 'rt')   # its own runtime (set, never read here)
-. $args[0]
-$adb = Join-Path $tmp 'adb.cmd'
-Set-Content $adb "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device)`r`nexit /b 0" -Encoding ascii
-$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L1'; port = 5560 }); adb = $adb; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }
-  state = (Join-Path $tmp 'swarm.json'); apkDir = $tmp; out = $tmp }
-$phones = Get-KitPath phones -Create
-# acquire of an already-held lane with "-Reverse 8080,8081" as -File passes it (one token): two ports, lease written whole
-[ordered]@{ agent = 'A'; lane = 'L1'; serial = 'emulator-5560'; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $phones 'L1.json')
+$tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]
+$adb = "$tmp/adb.cmd"; Set-Content $adb "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device)`r`nexit /b 0" -Encoding ascii
+$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L1'; port = 5560 }); adb = $adb; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }
+$P = Get-KitPath phones -Create; $lf = "$P/L1.json"
+@{ agent = 'A'; lane = 'L1'; serial = 'emulator-5560'; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $lf
 $j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Reverse', '8080,8081') | Select-Object -Last 1 | ConvertFrom-Json
-$lease = Get-Content (Join-Path $phones 'L1.json') -Raw | ConvertFrom-Json
-"reverse:$((@($j.reverse) -join ',') -eq '8080,8081' -and (@($lease.reverse) -join ',') -eq '8080,8081' -and -not @(Get-ChildItem $phones -Filter '*.tmp').Count)"
-# release: the lane stays leased ('__stopping__') while swarm down runs, then is free
-$down = Join-Path $tmp 'down.ps1'
-Set-Content $down "`$l = Get-Content '$(Join-Path $phones 'L1.json')' -Raw | ConvertFrom-Json; Set-Content '$(Join-Path $tmp 'during.txt')' `$l.agent"
-$KitCmd.swarm = $down
+"reverse:$((@($j.reverse) -join ',') -eq '8080,8081' -and (@((Get-Content $lf -Raw | ConvertFrom-Json).reverse) -join ',') -eq '8080,8081' -and -not @(Get-ChildItem $P -Filter '*.tmp').Count)"
+Set-Content "$tmp/d.ps1" "(Get-Content '$lf' -Raw | ConvertFrom-Json).agent > '$tmp/during.txt'"; $KitCmd.swarm = "$tmp/d.ps1"
 $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A')
-"release:$((Get-Content (Join-Path $tmp 'during.txt') -Raw).Trim() -eq '__stopping__' -and -not (Test-Path (Join-Path $phones 'L1.json')))"
+"release:$((Get-Content "$tmp/during.txt" -Raw).Trim() -eq '__stopping__' -and -not (Test-Path $lf))"
+Set-Content "$tmp/xcrun.cmd" "@echo off`r`necho iPhone (U1) (Booted)" -Encoding ascii; $env:PATH = "$tmp;$env:PATH"
+$script:SwarmCfg = [pscustomobject]@{ kind = 'ios'; lanes = @([pscustomobject]@{ name = 'I1'; udid = 'U1' }); apkDir = $tmp; app = [pscustomobject]@{ package = 'x' } }
+$j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'B', '-Reverse', '8080') | Select-Object -Last 1 | ConvertFrom-Json
+$s = "$tmp/sdk"; New-Item -ItemType Directory -Force "$s/platform-tools", "$s/system-images/a35/g/arm64-v8a", "$tmp/a" | Out-Null; Copy-Item $adb "$s/platform-tools"
+$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; port = 5570 }); adb = "$s/platform-tools/adb.cmd"; avdDir = "$tmp/avd"; apkDir = $tmp; out = $tmp; appFile = "$tmp/app.apk"
+  avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb'; artifact = 'o/*.apk' } }
+$null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw
+Set-Content "$tmp/gate.ps1" 'param($v, $Dir, $Cmd, $WaitMinutes) New-Item -ItemType Directory -Force "$Dir/o" | Out-Null; Set-Content "$Dir/o/x.apk" $Cmd'; $KitCmd.dev = "$tmp/gate.ps1"
+git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate')
+"kinds:$($j.serial -eq 'U1' -and -not @($j.reverse).Count) $($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb')"
 '@
-  $sf = Join-Path ([IO.Path]::GetTempPath()) "swarm-test-$PID.ps1"; Set-Content $sf $swt
-  $res = @(pwsh -NoProfile -File $sf (Join-Path $src 'skills/android-swarm/swarm.ps1') (Join-Path ([IO.Path]::GetTempPath()) "swarm-test-$PID") 2>&1)
-  foreach ($x in 'reverse', 'release') { Expect "swarm: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  Remove-Item $sf, (Join-Path ([IO.Path]::GetTempPath()) "swarm-test-$PID") -Recurse -Force -ErrorAction SilentlyContinue
+  $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
+  $res = @(pwsh -NoProfile -File "$sf.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $sf 2>&1)
+  foreach ($x in 'reverse:True', 'release:True', 'kinds:True True True') { Expect "swarm: $x" ($res -contains $x) }
+  Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
   # migrations selftest (run above): order, IF NOT EXISTS, ALTER DROP, upserts, trivial WHERE, non-ASCII
   Remove-TestKit $k
 }

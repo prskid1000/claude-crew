@@ -60,6 +60,7 @@
   "protectedBranches": ["staging"],
   "cleanup": { "maxBrowserProfiles": 4 },
   "memory": { "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored); true = keep the user's own setting.", "keepDefault": false },
+  "devices": { "type": "android" },
   "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
   "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
   "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor.", "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } },
@@ -108,13 +109,13 @@
       }
     },
     "skills/android-swarm/swarm.config.json": {
-      "_readme": "Lanes = AVD names (swarm.ps1 avd create). Each lane has its own test login ('user', a key in targets.local.json) and 'notes'. localManifests: the app's own manifests that allow cleartext (debug variants), merged into the release build by swarm.ps1 build -Local; localReverse: ports acquire -Apk local reverses to this machine (the local API).",
+      "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its own test login ('user': targets.local.json) and 'notes'. avd {abi, api, device, tag}: lane image. app.kind: react-native | native | kmp | flutter | maui | capacitor | ios. localManifests: the app's cleartext manifests (debug variants) merged into the release build by build -Local; localReverse: ports acquire -Apk local reverses to this machine (local API).",
       "avdDir": "",
       "outDir": "",
       "headless": false,
       "lanes": [
-        { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "test account 1, data prefix QA-L1-" },
-        { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "test account 2, data prefix QA-L2-" }
+        { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
+        { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }
       ],
       "app": {
         "kind": "react-native", "package": "com.example.app", "appDir": "/path/to/example-app/app", "branch": "main",
