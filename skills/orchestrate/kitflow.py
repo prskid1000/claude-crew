@@ -11,7 +11,7 @@ Parsing is cached per file content hash. Refs that point nowhere, outcomes nothi
 import hashlib, json, os, re, time
 from collections import defaultdict, deque
 
-VER = 7
+VER = 8
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -359,7 +359,7 @@ def parse_code(p, f, text):
             if m.group(2):
                 p.ref('impl', cid, m.group(2), i + 1)
                 impl.setdefault(m.group(2), (f, base))
-        m = re.search(r'else\s*\{\s*Invoke-KitVerb\s+([\w-]+)', l)
+        m = re.search(r'Invoke-KitVerb\s+([\w-]+)\s+@\(\$args\)', l)   # every arg passed on: the function's own verbs are the script's
         if m:
             impl[m.group(1)] = (f, base)
     for a, b, name in sp:
