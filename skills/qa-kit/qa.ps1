@@ -12,10 +12,11 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
-$__rest = @($args | Select-Object -Skip 1)
+$__rest = @($args | select -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
+function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # ---- report builder: HTML for Google Docs import (inline styles, tables for layout); Build-QaReportMd = Markdown
-function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
+function TaskLink($id) { if (Get-Command Get-TrackerUrl -ea 0) { Get-TrackerUrl $id } else { "$id" } }
 
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 
@@ -221,7 +222,7 @@ if (-not $KeepFreeGB) {
 # gate-promised GB: running builds/phones + queued builds
 $gateLedger = Join-Path (Get-KitTemp) 'claude-build-gate'
 function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
-  $rd = { param($d) @(Get-ChildItem $d -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid }) }
+  $rd = { param($d) @(Get-ChildItem $d -Filter '*.json' -ea 0 | ? Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | ? { $_.pid }) }
   $run = & $rd $Ledger; $queued = & $rd (Join-Path $Ledger 'queue')
   if (-not ($run.Count + $queued.Count)) { return 0 }
   $ws = @{}; $kids = @{}
@@ -259,7 +260,7 @@ switch ($Action) {
 
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
-    Remove-Item (Join-Path $seats "$(Safe $Agent).json"), (Join-Path $wait "$(Safe $Agent).json") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $seats "$(Safe $Agent).json"), (Join-Path $wait "$(Safe $Agent).json") -Force -ea 0
     "seat released: $Agent"
   }
 
@@ -270,8 +271,8 @@ switch ($Action) {
       $run = Split-Path $RunDir -Leaf
       $cf = Join-Path $claims "$(Safe $run)__$(Safe $Code).json"
       $verdict = Locked {
-        if (Test-Path (Join-Path $RunDir "$Code\finalize.json")) { return "ALREADY: $Code was finished and published" }
-        if (Test-Path (Join-Path $RunDir "$Code\held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
+        if (Test-Path (Join-Path $RunDir "$Code/finalize.json")) { return "ALREADY: $Code was finished and published" }
+        if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         if (Test-Path $cf) {
           $c = Get-Content $cf -Raw | ConvertFrom-Json
           $alive = Test-KitHolder $c   # $null unknown: only that expires after 6 h
@@ -293,9 +294,9 @@ switch ($Action) {
         $mine = Get-Content $wf -Raw | ConvertFrom-Json
         $mine | Add-Member -Force beat (Get-Date).ToString('s'); $mine | ConvertTo-Json | Set-Content $wf    # heartbeat: dead waiters never block
         $ahead = @(Get-ChildItem $wait -Filter *.json | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
-            Where-Object { $_.agent -ne $Agent -and [datetime]$_.since -lt [datetime]$mine.since -and ((Get-Date) - [datetime]$(if ($_.beat) { $_.beat } else { $_.since })).TotalMinutes -lt 3 })
+            ? { $_.agent -ne $Agent -and [datetime]$_.since -lt [datetime]$mine.since -and ((Get-Date) - [datetime]$(if ($_.beat) { $_.beat } else { $_.since })).TotalMinutes -lt 3 })
         # promised = seats < 3 min old + gate's builds and phones
-        $promised = [double](@(Seats | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 }) | Measure-Object need -Sum).Sum + 0
+        $promised = [double](@(Seats | ? { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 }) | Measure-Object need -Sum).Sum + 0
         $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
         $left = (FreeGB) - [double]$promised - $need
         if ($ahead.Count -eq 0 -and $left -ge $KeepFreeGB) {
@@ -321,7 +322,8 @@ param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [swi
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
-function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
+function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x } }
+function Repo($name) { $repos | ? { $_.name -eq $name -or @($_.aliases) -contains $name } | select -First 1 }
 # memoised: supervise asks per round
 $memo = @{}
 function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
@@ -336,20 +338,20 @@ function ContentOn($p, $mr, $sha, $ref) {
   if (-not $files.Count) { return $false }
   $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
   if (-not $cmp) { return $false }
-  -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
+  -not @($cmp.diffs | ? { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
 # squash-merged deploy MR: live if one merged into $branch after a source head held the commit
 function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
   if (-not $branch -or -not $mr.merged_at) { return $false }
   $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
-    $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1
+  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | ? { $_ -and $_.iid -ne $mr.iid }) {
+    $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | ? { $_ } | select -First 1
     if ($land -and $dm.sha -and (IsAncestor $p $sha $dm.sha) -and (IsAncestor $p $land $ref)) { return $true }
   }
   $false
 }
 # NOT-DEPLOYED only if the host answers, else UNKNOWN
-function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "the git host did not answer for $($d.branch): try again" } } else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = $detail } } }
+function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
 function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
 # laneApk: true -> <outDir>/apk/app.json; a string = its path
 function LaneApk($d) {
@@ -367,29 +369,37 @@ function LocalAncestor($dir, $sha, $commit) {
   git -C $dir merge-base --is-ancestor $sha $commit 2>$null
   $LASTEXITCODE -eq 0
 }
+# probeField: JSON path in the answer
+function Probe($d, $r) {
+  if ($d.tag) { git -C $r.checkout fetch -q --tags 2>$null; return @(git -C $r.checkout tag --sort=-creatordate 2>$null | ? { $_ -match $d.tag })[0] }
+  $o = if ($d.probe -match '^https?://') { try { (Invoke-WebRequest $d.probe -TimeoutSec 30).Content } catch { '' } } else { (Invoke-Sh $d.probe) -join "`n" }
+  if ($d.probeField) { try { $j = $o | ConvertFrom-Json; foreach ($k in $d.probeField.Split('.')) { $j = $j.$k }; $o = "$j" } catch { $o = '' } }
+  [regex]::Match("$o", '\b[0-9a-f]{7,40}\b').Value
+}
 # one memoised ssh call (script as base64); rc 0 match, 1 DIFF, 2 failed
 function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
 function SshState($s, $sha) {
   $sub = ([string]$s.subdir).Trim('/')
   $k = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$sha"
   if ($memo.ContainsKey($k)) { return $memo[$k] }
-  $xs = (@($s.exclude | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '
+  $xs = (@($s.exclude | ? { $_ }) | ForEach-Object { Sq $_ }) -join ' '
   $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
   $sh = @(
     '{'
-    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs)"
+    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs); SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
+    'H=sha256sum; command -v sha256sum >/dev/null || H="shasum -a 256"'
     'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
     "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
     $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
     'skip() { local c pat cs; IFS=/ read -ra cs <<< "$1"; for c in "${cs[@]}"; do for pat in "${X[@]}"; do [[ $c == $pat ]] && return 0; done; done; return 1; }'
     'cd "$R" 2>/dev/null || { echo RC=2; echo "DIFF=cannot cd to $R"; exit 0; }'
-    'sudo -n test -d "$A" 2>/dev/null || { echo RC=2; echo "DIFF=sudo -n test -d $A failed (no passwordless sudo, or no app dir)"; exit 0; }'
+    '$SU test -d "$A" 2>/dev/null || { echo RC=2; echo "DIFF=$SU test -d $A failed (no app dir / passwordless sudo: ssh.sudo false)"; exit 0; }'
     'L=$(mktemp) || { echo RC=2; echo "DIFF=mktemp failed"; exit 0; }; trap ''rm -f "$L"'' EXIT'
     'git ls-files -z -- ${SUB:+"$SUB"} | while IFS= read -r -d "" f; do r="${f#"$SUB"/}"; skip "$r" || printf "%s\0" "$r"; done > "$L"'
     'N=$(tr -cd "\0" < "$L" | wc -c); echo "FILES=$N"'
     '[ "$N" -gt 0 ] || { echo RC=2; echo "DIFF=git ls-files lists no tracked files under ${SUB:-the repo}"; exit 0; }'
-    'src=$(cd "$R/$SUB" && xargs -0 sha256sum -- < "$L" 2>/dev/null)'
-    'app=$(sudo -n sh -c ''cd "$1" && xargs -0 sha256sum -- 2>/dev/null'' _ "$A" < "$L")'
+    'src=$(cd "$R/$SUB" && xargs -0 $H -- < "$L" 2>/dev/null)'
+    'app=$($SU sh -c ''cd "$1" && shift && xargs -0 "$@" -- 2>/dev/null'' _ "$A" $H < "$L")'
     "out=`$(awk $(Sq $awk) <(printf '%s\n' `"`$app`") <(printf '%s\n' `"`$src`"))"
     'if [ -n "$out" ]; then echo RC=1; printf "%s\n" "$out" | sed "s/^/DIFF=/"; else echo RC=0; fi'
     '}'
@@ -398,10 +408,10 @@ function SshState($s, $sha) {
   $key = [string]$s.key -replace '^~', $HOME
   $lines = @(ssh -i $key -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $s.host "echo $b64 | base64 -d | bash" 2>$null)
   $r = if (-not ($lines -match '^RC=')) { $null } else {
-    @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
-       anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
-       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1)
-       files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1) }
+    @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | select -First 1).Trim()
+       anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | select -First 1)
+       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | select -First 1)
+       files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | select -First 1) }
   }
   $memo[$k] = $r; $r
 }
@@ -416,53 +426,60 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {
   if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
   if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
   # fast-forward: the MR head sha landed
-  $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
+  $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | ? { $_ } | select -First 1
   if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
-  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
+  $s8 = $sha.Substring(0, [math]::Min(8, $sha.Length))
+  $deps = @($r.deploys | ? { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
     if ($d.laneApk) {   # app repo: lane APK commit
       $ai = LaneApk $d
-      if (-not $ai -or -not $ai.commit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = 'no lane APK stamp (android-swarm apk/app.json): build the APK with swarm.ps1 build' }; continue }
+      if (-not $ai -or -not $ai.commit) { Row $d 'UNKNOWN' 'no lane APK stamp (android-swarm apk/app.json): build the APK with swarm.ps1 build'; continue }
       $apk = "APK $($ai.commit) ($($ai.branch), built $($ai.built))"
       $on = LocalAncestor $ai.appDir $sha $ai.commit
       if (-not $on) { $on = OnRef $p $mr $sha $ai.commit $ai.branch }   # else ask the git host
-      if ($on) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the lane $apk (phones get it on their next swarm.ps1 acquire)" } }
-      else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the lane ${apk}: rebuild it (swarm.ps1 build) from a branch holding the merge" } }
+      if ($on) { Row $d 'DEPLOYED' "in the lane $apk (phones get it on their next swarm.ps1 acquire)" }
+      else { Row $d 'NOT-DEPLOYED' "$s8 is not in the lane ${apk}: rebuild it (swarm.ps1 build) from a branch holding the merge" }
       continue
     }
     if ($d.ssh) {   # host HEAD holds the merge AND files match
       $s = $d.ssh; $st = SshState $s $sha
-      if (-not $st) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot reach $($s.host) over ssh (key $($s.key)); confirm with the owner" }; continue }
+      if (-not $st) { Row $d 'UNKNOWN' "no answer from $($s.host) over ssh (key $($s.key); the host needs bash, git, base64)"; continue }
       $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
-      if ($st.rc -gt 1 -and -not $st.head) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')" }; continue }   # a wrong repoDir is not 'not deployed'
-      if (-not $st.anc) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "$($sha.Substring(0, [math]::Min(8, $sha.Length))) is not in the host checkout ($where)" }; continue }
-      if ($st.rc -gt 1) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "in the host checkout, but the compare failed: $(($st.diff | Select-Object -First 2) -join '; ')" }; continue }
-      if ($st.diff.Count) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "in the host checkout ($where), but $($st.diff.Count) of $($st.files) tracked file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')" }; continue }
-      [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "in the host checkout and installed ($($st.files) tracked files match, $where)" }
+      if ($st.rc -gt 1 -and -not $st.head) { Row $d 'UNKNOWN' "host checkout unreadable: $(($st.diff | select -First 2) -join '; ')"; continue }   # a wrong repoDir is not 'not deployed'
+      if (-not $st.anc) { Row $d 'NOT-DEPLOYED' "$s8 is not in the host checkout ($where)"; continue }
+      if ($st.rc -gt 1) { Row $d 'UNKNOWN' "in the host checkout, but the compare failed: $(($st.diff | select -First 2) -join '; ')"; continue }
+      if ($st.diff.Count) { Row $d 'NOT-DEPLOYED' "in the host checkout ($where), but $($st.diff.Count) of $($st.files) tracked file(s) differ from the installed app: $(($st.diff | select -First 3) -join '; ')"; continue }
+      Row $d 'DEPLOYED' "in the host checkout and installed ($($st.files) tracked files match, $where)"
       continue
     }
-    if ($d.manual) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'MANUAL'; detail = 'deployed by hand: confirm with the owner or an ssh check' }; continue }
+    if ($d.probe -or $d.tag) {   # live commit: probe (URL / command) or newest matching tag
+      $c = Probe $d $r; $w = if ($d.tag) { "tag $c" } else { "probe commit $c" }
+      if (-not $c) { Row $d 'UNKNOWN' "no commit from $(if ($d.tag) { "tags matching $($d.tag)" } else { "probe $($d.probe)" })"; continue }
+      $on = LocalAncestor $r.checkout $sha $c; if ($null -eq $on) { $on = OnRef $p $mr $sha $c }
+      Row $d $(if ($on) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }) "$w $(if ($on) { 'holds' } else { 'lacks' }) $s8"; continue
+    }
+    if ($d.manual) { Row $d 'MANUAL' 'deployed by hand: confirm with the owner or an ssh check'; continue }
     if ($d.awsStack) {   # no CI job: stack updated after the merge
       $ra = if ($d.region) { @('--region', $d.region) } else { @() }   # else AWS CLI default region
       $upd = aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
-      if (-not $upd) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)" }; continue }
+      if (-not $upd) { Row $d 'UNKNOWN' "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)"; continue }
       $at, $st, $created = "$upd" -split '\s+'
       if ($at -eq 'None') { $at = $created }   # a stack never updated since creation
       try {
-        if ([datetimeoffset]$at -gt [datetimeoffset]$mr.merged_at -and $st -match 'COMPLETE$' -and $st -notmatch 'ROLLBACK') { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "stack $($d.awsStack) updated $at after the merge (by hand: confirm the build was from the merged branch)" } }
-        else { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'NOT-DEPLOYED'; detail = "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" } }
-      } catch { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'UNKNOWN'; detail = "stack $($d.awsStack): cannot read its update time ($upd)" } }
+        if ([datetimeoffset]$at -gt [datetimeoffset]$mr.merged_at -and $st -match 'COMPLETE$' -and $st -notmatch 'ROLLBACK') { Row $d 'DEPLOYED' "stack $($d.awsStack) updated $at after the merge (by hand: confirm the build was from the merged branch)" }
+        else { Row $d 'NOT-DEPLOYED' "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" }
+      } catch { Row $d 'UNKNOWN' "stack $($d.awsStack): cannot read its update time ($upd)" }
       continue
     }
     if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
     $hit = $null
     # a pipeline older than the merge cannot hold it
-    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
-      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -eq $d.job } | Select-Object -First 1
+    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | ? { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
+      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | ? { $_.name -eq $d.job } | select -First 1
       if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
     }
-    if ($hit) { [pscustomobject]@{ mr = $ref; target = $d.target; state = 'DEPLOYED'; detail = "$($d.job) finished $($hit.finished_at)" } }
+    if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
     else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
   }
 }
@@ -470,11 +487,11 @@ $row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail 
 if ($Json) { $out | ConvertTo-Json -Depth 3 }
 elseif ($Detail) { $out | ForEach-Object $row }
 else {
-  $live = @($out | Where-Object state -eq 'DEPLOYED')
+  $live = @($out | ? state -eq 'DEPLOYED')
   "deployed: $($live.Count)/$(@($out).Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
-  $out | Where-Object state -ne 'DEPLOYED' | ForEach-Object $row
+  $out | ? state -ne 'DEPLOYED' | ForEach-Object $row
 }
-exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
+exit $(if (@($out | ? { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
 }
 
 # ---- api: call a target's API as a test user (targets.local.json); -Save = redacted request/response evidence
@@ -502,54 +519,56 @@ if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - run orch.ps1 setup -W
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
 if (-not $Target) { $Target = $cfg.default }
 # a QA run pins its targets (KIT_QA_TARGETS)
-$pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
+$pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | ? { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
 $t = $cfg.targets.$Target
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
 $u = @($t.users.$As)
 if (-not $t.users.$As -and $t.auth.type -ne 'none') { throw "No user '$As' in target $Target. Known: $($t.users.PSObject.Properties.Name -join ', ')" }   # not @(...).Count: @($null).Count is 1
-$base = $t.api.TrimEnd('/')
+$base = $t.api.Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
+$a = $t.auth
+if ($a.type -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
+$tls = if ($a.cert) { @{ Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([string]$a.cert, [string]$a.certPass) } } else { @{} }
 
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
 function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k }; $o }
 
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
-function Login {
-  $a = $t.auth
+# cache: token (cookie type: Cookie header) + refresh token
+function Login([switch]$Refresh) {
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
-  $loginUri = if ($a.path -match '^https?://') { $a.path } else { $base + $a.path }
-  $r = if ($a.contentType -eq 'form') { Invoke-RestMethod -Method Post $loginUri -ContentType 'application/x-www-form-urlencoded' -Body $b -TimeoutSec 60 }
-       else { Invoke-RestMethod -Method Post $loginUri -ContentType 'application/json' -Body ($b | ConvertTo-Json -Depth 5) -TimeoutSec 60 }
-  $tok = Get-Field $r $(if ($a.tokenField) { $a.tokenField } else { 'access_token' })
+  if ($Refresh) { $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt } + $(if ($b.client_id) { @{ client_id = $b.client_id } } else { @{} }) }
+  $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
+  $form = $a.contentType -eq 'form' -or $Refresh
+  $r = Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -TimeoutSec 60 -SessionVariable ws @tls
+  if ($a.type -eq 'cookie') { $tok = (@($ws.Cookies.GetAllCookies()) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' }
+  else { $j = $r.Content | ConvertFrom-Json; $tok = Get-Field $j $(if ($a.tokenField) { $a.tokenField } else { 'access_token' }); if ($a.refreshField) { $script:rt = Get-Field $j $a.refreshField } }
   if (-not $tok) { throw "login to $Target as $As returned no token" }
-  $tok | Set-Content $cache -NoNewline
+  "$tok`n$script:rt" | Set-Content $cache -NoNewline
   $tok
 }
 function AuthHeaders($tok) {
   $h = @{}
-  switch ($t.auth.type) {
+  switch ($a.type) {
     'basic' { $h.Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($u[0]):$($u[1])")) }
-    'none' { }
-    default {
-      $tpl = if ($t.auth.header) { $t.auth.header } else { 'Authorization: Bearer {token}' }
-      $n, $v = $tpl.Split(':', 2); $h[$n.Trim()] = $v.Trim().Replace('{token}', $tok)
-    }
+    { $_ -in 'none', 'query' } { }
+    'cookie' { $h.Cookie = $tok; if ($a.csrfCookie -and $tok -match "(?:^|; )$([regex]::Escape($a.csrfCookie))=([^;]+)") { $h[$(if ($a.csrfHeader) { $a.csrfHeader } else { 'X-XSRF-TOKEN' })] = [uri]::UnescapeDataString($Matches[1]) } }
+    'command' { $env:KIT_API_BODY = $Body; foreach ($l in @(Invoke-Sh ((Fill $a.cmd).Replace('{method}', $Method.ToUpper()).Replace('{url}', $uri)))) { if ($l -match '^\s*([\w-]+)\s*:\s*(.*)$') { $h[$Matches[1]] = $Matches[2] } } }   # HMAC / SigV4 signer
+    default { $n, $v = "$(if ($a.header) { $a.header } else { 'Authorization: Bearer {token}' })".Split(':', 2); $h[$n.Trim()] = $v.Trim().Replace('{token}', $tok) }
   }
   $h
 }
-$tok = $null
-switch ($t.auth.type) {
-  'login' { $tok = if (Test-Path $cache) { ([string](Get-Content $cache -Raw)).Trim() }; if (-not $tok) { $tok = Login } }   # empty cache file: log in again
-  'token' { $tok = if ($t.auth.token) { $t.auth.token } else { [string]$u[1] } }
-}
+$tok = $null; $login = $a.type -in 'login', 'cookie'
+if ($login) { $tok, $script:rt = if (Test-Path $cache) { @(Get-Content $cache) + '' }; if (-not "$tok".Trim()) { $tok = Login } }   # empty cache file: log in again
+elseif ($a.type -eq 'token') { $tok = if ($a.token) { $a.token } else { [string]$u[1] } }
 
 function Call($tk) {
   $h = AuthHeaders $tk; foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
   if ($Tenant -and $t.tenantHeader) { $h[$t.tenantHeader] = $Tenant }
-  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = 'application/json' }
+  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = 'application/json' } + $tls
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
   # cookies redacted
@@ -562,7 +581,7 @@ function Call($tk) {
 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $res = Call $tok
-if ($res[0] -eq 401 -and $t.auth.type -eq 'login') { $tok = Login; $sw.Restart(); $res = Call $tok }
+if ($res[0] -eq 401 -and $login) { $tok = if ($script:rt) { try { Login -Refresh } catch { Login } } else { Login }; $sw.Restart(); $res = Call $tok }
 $sw.Stop()
 $status, $content, $ctype, $rhead = $res
 # binary response: saved as a file
@@ -593,7 +612,7 @@ if ($Save) {
   $code, $check = if ($Save -match '^([A-Za-z0-9]+)-([A-Za-z]*\d+)') { $Matches[1], $Matches[2] } else { '', '' }
   [ordered]@{
     meta     = [ordered]@{ code = $code; check = $check; target = $Target; tenant = $Tenant; user = [string]$u[0]; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); durationMs = $sw.ElapsedMilliseconds; tool = 'qa.ps1 api' }
-    request  = [ordered]@{ method = $Method.ToUpper(); url = $uri; headers = $red; body = (Parse $Body) }
+    request  = [ordered]@{ method = $Method.ToUpper(); url = ($uri -replace '(?i)([?&][^=&]*(key|token|secret|sig|pass)[^=&]*=)[^&]*', '$1[redacted]'); headers = $red; body = (Parse $Body) }
     response = [ordered]@{ status = $status; headers = $(if ($rhead) { $rhead } else { [ordered]@{ 'content-type' = [string]$ctype } }); body = (Parse $content) }
   } | ConvertTo-Json -Depth 30 | Out-File (Join-Path $OutDir "$Save.json") -Encoding utf8
 }
@@ -615,17 +634,17 @@ param(
   [int]$ExpectChecks = -1,              # truncated results.json refused
   [string]$Results = 'results.json',    # -Check: a retry renames only its own
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
-  [string]$Date = (Get-Date -Format 'd MMM yyyy')
+  [string]$Date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 )
 $ErrorActionPreference = 'Stop'
 if ($FixNames -and -not $Check) { throw '-FixNames works only together with -Check' }
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
-if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ErrorAction SilentlyContinue)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
+if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ea 0)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
 $RunDir = (Resolve-Path $RunDir).Path
-$run = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
+$run = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
-if (-not $item) { throw "no item $Code in $RunDir\run.json" }
-$D = "$RunDir\$Code"
+if (-not $item) { throw "no item $Code in $RunDir/run.json" }
+$D = "$RunDir/$Code"
 if ($Results -ne 'results.json' -and -not $Check) { throw '-Results works only with -Check (publishing reads results.json)' }
 $res = Get-Content (Join-Path $D $Results) -Raw | ConvertFrom-Json
 if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
@@ -633,21 +652,21 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   if ($Check) { $m; exit 1 } else { throw $m }
 }
 # copy evidence outside shots/evidence into evidence to upload
-if (-not $Check) { New-Item -ItemType Directory -Force "$D\evidence" | Out-Null }
+if (-not $Check) { New-Item -ItemType Directory -Force "$D/evidence" | Out-Null }
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
 foreach ($c in @($res.checks)) {
   $c.evidence = @(@($c.evidence) | Where-Object { $_ -and [string]$_ -notmatch '\.(mjs|cjs|js|jsx|ts|tsx|java|kt|ps1|py|sh)$|\s' } | ForEach-Object {
       $e = [string]$_; $leaf = Split-Path $e -Leaf
-      if (-not (Test-Path "$D\shots\$leaf") -and -not (Test-Path "$D\evidence\$leaf")) {
-        $src = if ([IO.Path]::IsPathRooted($e) -and (Test-Path $e)) { $e } elseif (Test-Path (Join-Path $D $e)) { Join-Path $D $e } else { (Get-ChildItem $RunDir -Recurse -File -Filter $leaf -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
+      if (-not (Test-Path "$D/shots\$leaf") -and -not (Test-Path "$D/evidence\$leaf")) {
+        $src = if ([IO.Path]::IsPathRooted($e) -and (Test-Path $e)) { $e } elseif (Test-Path (Join-Path $D $e)) { Join-Path $D $e } else { (Get-ChildItem $RunDir -Recurse -File -Filter $leaf -ea 0 | Select-Object -First 1).FullName }
         if (-not $src) { $lost.Add([pscustomobject]@{ check = $c; name = $leaf }) }
-        elseif (-not $Check) { Copy-Item $src "$D\evidence\$leaf" -Force }
+        elseif (-not $Check) { Copy-Item $src "$D/evidence\$leaf" -Force }
       }
       $leaf } | Select-Object -Unique)
 }
 
 # 0. Evidence check first
-$files = @(Get-ChildItem "$D\shots", "$D\evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match $script:EvidenceExt })
+$files = @(Get-ChildItem "$D/shots", "$D/evidence" -File -ea 0 | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match $script:EvidenceExt })
 $badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
 if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
 # a listed unsupported type would stay on disk
@@ -705,7 +724,7 @@ if ($Check) {
       Rename-Item -LiteralPath $f.FullName -NewName $new
       # references end in the file name
       $raw = [regex]::Replace($raw, '(?<=["/\\])' + [regex]::Escape($b) + '(?=")', $new.Replace('$', '$$'))
-      "  renamed $($f.Directory.Name)\$b -> $new"
+      "  renamed $($f.Directory.Name)/$b -> $new"
       $suggest.Remove($b)
     }
     [IO.File]::WriteAllText($resFile, $raw)
@@ -720,7 +739,7 @@ if ($Check) {
   }
   if ($emptyFiles.Count) {
     $fail = $true; "$Code evidence check: $($emptyFiles.Count) empty file(s) cited (0 bytes: the capture failed; re-capture or drop them from results.json; -FixNames leaves them):"
-    $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)\$($_.Name)" }
+    $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)/$($_.Name)" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
   if ($badTypes.Count) {
@@ -739,7 +758,7 @@ foreach ($g in @($lost | Group-Object { $_.check.id })) {   # -AllowMissing: dro
   $c | Add-Member -NotePropertyName observed -NotePropertyValue "$($c.observed) [Evidence missing at publish: $($gone -join ', ')]".Trim() -Force
 }
 if ($lostList.Count) { Write-Warning "published without missing evidence (-AllowMissing): $($lostList -join '; ')" }
-$fin = "$D\finalize.json"
+$fin = "$D/finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
 $tester = if ($run.tester) { $run.tester } else { [Environment]::UserName }
@@ -782,14 +801,14 @@ function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId) { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
-Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D\report.html" -Encoding utf8
+Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8
 
 # 3. Report
-$null = Test-KitProse -Kind result-note -Path "$D\results.json"
+$null = Test-KitProse -Kind result-note -Path "$D/results.json"
 $null = Test-KitProse -Kind qa-report -Text (Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-String)
 $reportFile = $null
 if ($map.local) {
-  $reportFile = "$D\report.md"
+  $reportFile = "$D/report.md"
   Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File $reportFile -Encoding utf8
   $docUrl = $reportFile
 } elseif ($prev.doc -and $prev.doc -notmatch '/d//') { $docUrl = $prev.doc   # a re-run keeps the posted report
@@ -819,7 +838,7 @@ function Format-Checks($list, [string]$heading) {
 function SiblingHold($id) {
   $own = 0; $nt = 0; $err = $null; $pend = 0
   foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
-    $f = "$RunDir\$c\finalize.json"; if (-not (Test-Path $f)) { continue }
+    $f = "$RunDir/$c/finalize.json"; if (-not (Test-Path $f)) { continue }
     $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
     if ($r) { $own += [int]$r.fail; $nt += [int]$r.notTested; $pend += [int]$r.pending; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
   }
@@ -843,7 +862,7 @@ function Add-NewDefects($st, [object[]]$defects) {
   $own = $true; try { $own = $mx.WaitOne(120000) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
   if (-not $own) { $mx.Dispose(); throw "bugs.json of $RunDir is locked by another finalize for 2 min: re-run finalize -Code $Code" }
   try {
-    $f = "$RunDir\bugs.json"
+    $f = "$RunDir/bugs.json"
     $all = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
     $groups = [ordered]@{}; if ($all.groups) { foreach ($p in $all.groups.PSObject.Properties) { $groups[$p.Name] = $p.Value } }
     $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; base = ''; baseCount = 0; entries = @() } }
@@ -859,7 +878,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
     $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects found while testing $($st.name) ($(TaskUrl $st.id)), package $Code") }
     $n = [int]$s.baseCount + [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
-    $name = "[Bug] $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
+    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
     $body = "QA run **$title** on $(if ($item.target) { $item.target } else { $run.target }) ($Date) found these defects outside what the tested tasks changed. Results report: $docUrl`n$(if ($guideUrl) { "Tester guide (check ids refer to it): $guideUrl`n" })`n" + (($entries | ForEach-Object md) -join "`n")
     if ($s.base) { $body = "$($s.base.TrimEnd())`n`n$body" }
     if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
@@ -883,7 +902,7 @@ function Set-FailedTesting($rec, $st) {
   if ($null -ne $ok) { $rec.failedTesting = $true } else { $rec.keptOpen = 'the tracker refused the failedTesting status (see warning)' }
 }
 function Resolve-Outcome($rec, $st, [int]$pend) {
-  $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir\$($_.code)\finalize.json") } | ForEach-Object code)
+  $others = @(@($run.items) | Where-Object { $_.code -ne $Code -and @($_.subtasks | Where-Object { $_.id -eq $st.id }).Count -and -not (Test-Path "$RunDir/$($_.code)/finalize.json") } | ForEach-Object code)
   if ($others.Count) { $rec.waitingFor = $others; return }
   if ($pend) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
@@ -967,7 +986,7 @@ param(
   [switch]$Copy
 )
 $ErrorActionPreference = 'Stop'
-if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'qa.ps1 annotate needs Windows (System.Drawing). On Linux/macOS use browser.mjs mark() before shot(); for Android name the element in the check note.' }
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate needs Windows (System.Drawing): elsewhere mark() before shot(), or name the element in the check note' }
 # one item each, its commas stay
 $Rect = @(Split-KitList $Rect ';'); $Arrow = @(Split-KitList $Arrow ';'); $Text = @(Split-KitList $Text ';')
 Add-Type -AssemblyName System.Drawing
@@ -984,7 +1003,7 @@ $g.DrawImage($img0, 0, 0, $img0.Width, $img0.Height)
 $k = if ($Scale) { $Scale } else { [math]::Max(1, $img0.Width / 1300) }  # sizes grow with the image
 $col = @{ red = [Drawing.Color]::FromArgb(230, 220, 38, 38); orange = [Drawing.Color]::FromArgb(230, 245, 140, 0); green = [Drawing.Color]::FromArgb(230, 22, 163, 74); blue = [Drawing.Color]::FromArgb(230, 37, 99, 235) }[$Color]
 $pen = New-Object Drawing.Pen $col, (4 * $k)
-$font = New-Object Drawing.Font 'Segoe UI', ([float](15 * $k)), ([Drawing.FontStyle]::Bold)
+$font = New-Object Drawing.Font ([Drawing.FontFamily]::GenericSansSerif), ([float](15 * $k)), ([Drawing.FontStyle]::Bold)
 $bg = New-Object Drawing.SolidBrush $col
 $fg = [Drawing.Brushes]::White
 function Label([string]$t, [float]$x, [float]$y) {
@@ -1029,7 +1048,7 @@ $c = @(try { Get-TrackerComments $Task } catch { @() })
 # rerun ids: ### headings
 if (-not $Only) {
   foreach ($txt in @([string]$t.description) + @($c | Sort-Object date -Descending | ForEach-Object { [string]$_.text })) {
-    $ids = @([regex]::Matches($txt, '(?m)^###\s+(\S+)\s+[—-]\s+') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    $ids = @([regex]::Matches($txt, '(?m)^###\s+(\S+)\s+[—-]\s+') | ForEach-Object { $_.Groups[1].Value } | select -Unique)
     if ($ids.Count) { $Only = $ids; break }
   }
 }
@@ -1038,20 +1057,20 @@ $md = "# $($t.name)`n`nTask: $($t.url)  Status: $($t.status)`n`n" +
   "RETEST of the fix: run the failed checks ($($Only -join ', ')) again on the deployed build, same steps and data where possible. " +
   "Check the fix is deployed first (qa.ps1 deployed -Mrs $Mrs); not deployed = NOT_TESTED.`n`n## Description`n`n$($t.description)`n`n## Comments (oldest first)`n"
 foreach ($x in $c) { $md += "`n---`n**$($x.user)** $($x.date)`n`n$($x.text)`n" }
-New-Item -ItemType Directory -Force "$RunDir\tasks" | Out-Null
-$gf = "$RunDir\tasks\$Task.md"; Set-Content $gf $md -Encoding utf8
-$old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir\$Code" $_ } | Where-Object { Test-Path $_ })
+New-Item -ItemType Directory -Force "$RunDir/tasks" | Out-Null
+$gf = "$RunDir/tasks\$Task.md"; Set-Content $gf $md -Encoding utf8
+$old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir/$Code" $_ } | ? { Test-Path $_ })
 if ($old.Count) {   # reused code: archive the earlier round
-  $arc = Join-Path "$RunDir\$Code" "archive-$(Get-Date -Format yyyyMMdd-HHmmss)"; New-Item -ItemType Directory -Force $arc | Out-Null
+  $arc = Join-Path "$RunDir/$Code" "archive-$(Get-Date -Format yyyyMMdd-HHmmss)"; New-Item -ItemType Directory -Force $arc | Out-Null
   foreach ($f in $old) { Move-Item -LiteralPath $f -Destination $arc }
   "archived the earlier round of $Code ($(($old | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')) to $arc"
 }
-$r = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
-$items = @($r.items | Where-Object { $_.code -ne $Code })
+$r = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
+$items = @($r.items | ? { $_.code -ne $Code })
 $items += [pscustomobject]@{ code = $Code; lane = $Lane; title = $Title; guideFile = $gf; retest = $true; only = @($Only); subtasks = @([pscustomobject]@{ id = $Task; name = $t.name; mrs = $Mrs }) }
 $r.items = $items
-$r | ConvertTo-Json -Depth 8 | Set-Content "$RunDir\run.json" -Encoding utf8
-"added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir\run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
+$r | ConvertTo-Json -Depth 8 | Set-Content "$RunDir/run.json" -Encoding utf8
+"added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 
 # ---- ui: drive the app on your leased phone (uiautomator + adb; $env:ANDROID_SERIAL)
@@ -1067,7 +1086,7 @@ if ($ios -and $Action -notin 'shot', 'openurl', 'log') { "ios: no ui $Action (si
 $xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"
 function Get-Nodes {
   # a failed dump must not return the old screen
-  & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ErrorAction SilentlyContinue
+  & $adb shell rm -f /sdcard/ui.xml | Out-Null; Remove-Item $xmlLocal -Force -ea 0
   & $adb shell uiautomator dump /sdcard/ui.xml | Out-Null
   & $adb pull /sdcard/ui.xml $xmlLocal 2>$null | Out-Null
   if (-not (Test-Path $xmlLocal)) { throw 'uiautomator dump failed (no fresh ui.xml): screen busy or device offline - retry' }
@@ -1081,15 +1100,15 @@ function Get-Nodes {
   }
 }
 # text (exact, then contains) or #<resource-id suffix>
-function Find($all, $w) { if ($w -like '#*') { $all | Where-Object { $_.rid -like "*$($w.TrimStart('#'))" } | Select-Object -First 1 } else { ($all | Where-Object { $_.text -eq $w } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$w*" } | Select-Object -First 1) } }
+function Find($all, $w) { if ($w -like '#*') { $all | ? { $_.rid -like "*$($w.TrimStart('#'))" } | select -First 1 } else { ($all | ? { $_.text -eq $w } | select -First 1) ?? ($all | ? { $_.text -like "*$w*" } | select -First 1) } }
 function Tap($n, $w) { if ($n) { & $adb shell input tap $n.x $n.y; "tapped $(if ($w -like '#*') { "#$($n.rid)" } else { "'$($n.text)'" }) at $($n.x),$($n.y)" } else { "NOT FOUND: $w" } }
 function Shot($name, $dir) {
-  if (-not $dir) { $dir = Join-Path (Get-KitPath shots) $tag }; New-Item -ItemType Directory -Force $dir | Out-Null; $f = Join-Path $dir "$name.png"; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+  if (-not $dir) { $dir = Join-Path (Get-KitPath shots) $tag }; New-Item -ItemType Directory -Force $dir | Out-Null; $f = Join-Path $dir "$name.png"; Remove-Item -LiteralPath $f -Force -ea 0
   if ($ios) { xcrun simctl io $tag screenshot $f | Out-Null } else { & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null }
   if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }; $f
 }
 switch ($Action) {
-  'dump' { Get-Nodes | Where-Object { $_.text -or $_.rid -or $_.cls -match 'EditText' } | ForEach-Object { '{0} @({1},{2}){3}{4}' -f $_.text, $_.x, $_.y, $(if ($_.cls -match 'EditText') { ' [edit]' }), $(if ($_.rid) { " #$($_.rid)" }) } }
+  'dump' { Get-Nodes | ? { $_.text -or $_.rid -or $_.cls -match 'EditText' } | ForEach-Object { '{0} @({1},{2}){3}{4}' -f $_.text, $_.x, $_.y, $(if ($_.cls -match 'EditText') { ' [edit]' }), $(if ($_.rid) { " #$($_.rid)" }) } }
   'tap' { Tap (Find (Get-Nodes) $Arg) $Arg }
   'tapid' { Tap (Find (Get-Nodes) "#$Arg") "#$Arg" }
   'tapxy' { & $adb shell input tap $Arg $Arg2; "tapped $Arg,$Arg2" }
@@ -1113,17 +1132,17 @@ switch ($Action) {
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))
     # not `if (try ...)`: in ( ) `try` is a command
-    while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Start-Sleep 2 }
+    while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | ? { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Start-Sleep 2 }
     "TIMEOUT waiting for '$Arg'"
   }
   'photo' {
     # shutter: -Arg id suffix, else common ids; Arg2 = confirm text
     Start-Sleep 3
     $all = Get-Nodes
-    $n = @(@($(if ($Arg) { $Arg } else { 'take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture' }) | ForEach-Object { Find $all "#$_" }) + @($all | Where-Object { $_.text -match '^(Take photo|Capture|Shutter|Take picture)$' }))[0]
+    $n = @(@($(if ($Arg) { $Arg } else { 'take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture' }) | ForEach-Object { Find $all "#$_" }) + @($all | ? { $_.text -match (Get-KitSetting 'qa.shutterText' '^(Take photo|Capture|Shutter|Take picture)$') }))[0]
     if (-not $n) { "NOT FOUND: no shutter (pass its resource-id: qa.ps1 ui photo <id>; qa.ps1 ui dump shows ids)"; return }
     & $adb shell input tap $n.x $n.y; Start-Sleep 4
-    $ok = Get-Nodes | Where-Object { $_.text -match $(if ($Arg2) { "^$([regex]::Escape($Arg2))$" } else { '^(OK|Done|Use photo|Save|Confirm|✓|Use)$' }) } | Select-Object -First 1
+    $ok = Get-Nodes | ? { $_.text -match $(if ($Arg2) { "^$([regex]::Escape($Arg2))$" } else { (Get-KitSetting 'qa.confirmText' '^(OK|Done|Use photo|Save|Confirm|✓|Use)$') }) } | select -First 1
     if ($ok) { & $adb shell input tap $ok.x $ok.y; Start-Sleep 2; "photo taken and accepted ('$($ok.text)')" } else { "photo taken (no confirm step seen)" }
   }
   'log' { if ($ios) { xcrun simctl spawn $tag log show --last 5m --style compact --predicate $(if ($Arg) { "process == '$Arg'" } else { 'messageType == error' }) } else { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) } }

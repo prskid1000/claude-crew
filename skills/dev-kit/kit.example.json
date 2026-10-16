@@ -30,7 +30,7 @@
   },
   "reports": { "_readme": "type: gdocs (Google Docs + Drive via gws; default when gws is installed) | markdown (files in the run folder, carried by the tracker comment)", "type": "markdown" },
   "driveParent": "<Google Drive folder or shared-drive id for testing docs and reports (reports.type gdocs)>",
-  "qa": { "_readme": "outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
+  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
     "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
   "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
   "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
@@ -80,7 +80,9 @@
     { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
       "deploys": [
         { "target": "staging", "branch": "staging", "job": "deploy-staging" },
-        { "target": "<env deployed by hand onto a host>", "ssh": { "host": "<user>@<host>", "key": "<path to the ssh key file>", "repoDir": "<repo checkout on the host>", "appDir": "<installed app dir>", "exclude": ["data"] } },
+        { "target": "<env deployed by hand onto a host>", "ssh": { "host": "<user>@<host>", "key": "<path to the ssh key file>", "repoDir": "<repo checkout on the host>", "appDir": "<installed app dir>", "exclude": ["data"], "sudo": true } },
+        { "target": "<env>", "probe": "<URL or command (kubectl, helm, PaaS CLI, GitOps repo) printing the live sha>", "probeField": "<JSON path>" },
+        { "target": "<env deployed by a tag>", "tag": "^v\\d+" },
         { "target": "<env deployed by hand, no way to check>", "manual": true },
         { "target": "<test phones of an app repo>", "laneApk": true }
       ],
@@ -92,7 +94,7 @@
   "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
   "localFiles": {
     "skills/qa-kit/targets.local.json": {
-      "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password].",
+      "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | cookie (csrfCookie, csrfHeader) | token | basic | query (param) | command (cmd {method} {url} prints Name: value headers) | none; cert + certPass: mTLS; api may hold {tenant}.",
       "default": "my-staging",
       "keepFreeGB": 8,
       "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000 },
