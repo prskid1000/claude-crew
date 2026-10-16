@@ -102,6 +102,39 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
   Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
   $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
   Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
+  # dev-wave local loop (mocked agents): BLOCKED without blockedKind = FAIL; still FAIL after the rounds -> ONE stronger fix round
+  # (models.retest); an ENV-FIX item waits for the coordinator's answer, then resumes
+  $wfd = [IO.File]::ReadAllText((Join-Path $src 'workflows/dev-wave.js')) -replace '^export const meta', 'const meta'
+  $jsd = @'
+const lt = (status, extra = {}) => ({ status, env: 'shop r1', rounds: 3, failing: status === 'PASS' ? [] : ['G1 still 500'], goalsDoc: 'g.md', ...extra })
+const rep = (status, extra = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest: lt(status), needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...extra })
+const mk = (envfix) => { const calls = []; return { calls, agent: async (prompt, o) => {
+  calls.push({ label: o.label, model: o.model, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^build:/.test(o.label)) return envfix ? rep('FAIL', { done: [], needsEnvFix: [{ item: 'A1', envFixId: 'e-20260101000000-x1', need: 'refresh the release' }] }) : rep('BLOCKED', { localTest: lt('BLOCKED', { blockedReason: 'local DB missing a table' }) })
+  if (/^local:/.test(o.label)) return rep('FAIL')
+  if (/^envfix:/.test(o.label)) return { ok: true, output: 'ANSWERED e-20260101000000-x1: done: refreshed r2' }
+  if (/^(local-strong|envfix-resume):/.test(o.label)) return rep('PASS')
+  if (/^review:/.test(o.label)) return { findings: [] }
+  if (/^ci:/.test(o.label)) return { done: true, mrs: [{ mr: '1', status: 'success' }] }
+  if (/^ship:/.test(o.label)) return rep('PASS', { mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: true, mergeState: 'MERGED' }] })
+  return { ok: true, output: '[]', signals: 0, lessonsChanged: [] } } } }
+const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
+const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+const a = mk(false), b = mk(true)
+run(args, a.agent, () => {}, () => {}, pipeline).then((oa) => run(args, b.agent, () => {}, () => {}, pipeline).then((ob) => {
+  const s = a.calls.find((c) => c.label === 'local-strong:X1')
+  console.log(`blocked-is-fail:${a.calls.some((c) => c.label === 'local:X1') && !oa.blocked.length}`)
+  console.log(`strong-round:${!!s && s.model === 'opus' && /STRONGER FIX ROUND/.test(s.prompt) && a.calls.some((c) => c.label === 'ship:X1')}`)
+  console.log(`envfix:${b.calls.some((c) => c.label === 'envfix:X1' && /decide wait -Id e-20260101000000-x1/.test(c.prompt)) && b.calls.some((c) => c.label === 'envfix-resume:X1' && /done: refreshed r2/.test(c.prompt)) && ob.envFixes.length === 1 && b.calls.some((c) => c.label === 'ship:X1')}`)
+  console.log(`flow-text:${/decide ask -Kind envfix/.test(a.calls.find((c) => c.label === 'build:X1').prompt)}`)
+})).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'dw-local.mjs'; [IO.File]::WriteAllText($jf, $jsd.Replace('__BODY__', $wfd))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text') { Expect "dev-wave local loop: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 4)) { $res | Select-Object -First 5 }
   Remove-TestKit $k
 }
 
@@ -132,6 +165,13 @@ if ($Area -in 'qa', 'all') {
   Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
   Expect 'the comment lists the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '## Untested checks' -and $_.text -match '### C2' }).Count -eq 1)
   Expect 'no task created for untested checks' (-not @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count)
+  # local env item: NOT_TESTED alone keeps the task open (ENV-FIX); -AcceptNotTested (the coordinator's call) -> failedTesting
+  $lo = New-Run 'LO' @(@{ code = 'L1'; task = 'TL'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
+  $rj = Get-Content "$lo/run.json" -Raw | ConvertFrom-Json; $rj | Add-Member localEnv 'shop'; $rj | ConvertTo-Json -Depth 8 | Set-Content "$lo/run.json"
+  $null = Fin $lo 'L1'; $rl = Rec $lo 'L1'
+  Expect 'local env: NOT_TESTED keeps the task open, not failedTesting' (-not $rl.failedTesting -and -not $rl.closed -and $rl.keptOpen -match 'ENV-FIX' -and (Task 'TL').status -ne 'failed testing')
+  $null = pwsh -NoProfile -File $Q finalize -RunDir $lo -Code L1 -AcceptNotTested 2>&1
+  Expect 'local env: -AcceptNotTested applies failedTesting' ((Rec $lo 'L1').failedTesting -and (Task 'TL').status -eq 'failed testing')
   $b = New-Run 'B' @(@{ code = 'B1'; task = 'T2'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
   $null = Fin $b 'B1'
   Expect 'own FAIL -> failedTesting, no [Bug]' ((Rec $b 'B1').failedTesting -and (Rec $b 'B1').fail -eq 1 -and -not (Bugs).Count)
@@ -203,6 +243,32 @@ run(args, agent, () => {}, () => {}, null).then(() => {
   $res = @(node $jf 2>&1)
   Expect 'test-and-close: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
   Expect 'test-and-close: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
+  # test-and-close local item: NOT_TESTED after the stronger retry -> ENV-FIX (decide ask -Kind envfix), wait, retest; never
+  # failedTesting: fixed -> published with the PASS; still NOT_TESTED after 2 cycles -> held for the coordinator, not published
+  $js3 = @'
+const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
+const mk = (fixWorks) => { const calls = []; return { calls, agent: async (prompt, o) => {
+  calls.push({ label: o.label, model: o.model, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^(test|retest|retest-strong):/.test(o.label)) return { code: 'A1', checks: [ck('C1', 'NOT_TESTED', { cause: 'undeployed', env_fix: 'refresh the release' }), ...(/^retest-strong/.test(o.label) ? [] : [ck('C2', 'PASS'), ck('C3', 'PASS'), ck('C4', 'PASS')])], findings: [], setup_changes: [], data_created: [] }
+  if (/^envfix-ask:/.test(o.label)) return { ok: true, output: `ENV-FIX e-20260101000000-qa-a1 pending` }
+  if (/^envfix-wait:/.test(o.label)) return { ok: true, output: 'ANSWERED e-20260101000000-qa-a1: done: refreshed' }
+  if (/^envfix-retest:/.test(o.label)) return { code: 'A1', checks: [ck('C1', fixWorks ? 'PASS' : 'NOT_TESTED', { cause: 'env-data' })], findings: [], setup_changes: [], data_created: [] }
+  return { ok: true, output: '', signals: 0, lessonsChanged: [] } } } }
+const args = { runDir: 'C:/runs/R1', kitDir: 'C:/kit', learn: false, localEnv: 'shop', items: [{ code: 'A1', title: 'A one', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+const a = mk(true), b = mk(false)
+run(args, a.agent, () => {}, () => {}, null).then(() => run(args, b.agent, () => {}, () => {}, null)).then((out) => {
+  const ask = a.calls.find((c) => c.label === 'envfix-ask:A1'), cl = a.calls.find((c) => c.label === 'close:A1')
+  console.log(`envfix-ask:${!!ask && /decide ask -Kind envfix/.test(ask.prompt) && /refresh the release/.test(ask.prompt)}`)
+  console.log(`envfix-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt) && /LOCAL ENV "shop"/.test(a.calls.find((c) => c.label === 'test:A1').prompt)}`)
+  console.log(`envfix-held:${b.calls.filter((c) => c.label === 'envfix-ask:A1').length === 2 && !b.calls.some((c) => /^close/.test(c.label)) && b.calls.some((c) => c.label === 'hold:A1' && /ENV-FIX/.test(c.prompt)) && out.envFixOpen.includes('A1')}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'tc-envfix.mjs'; [IO.File]::WriteAllText($jf, $js3.Replace('__BODY__', $wf))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "test-and-close local: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
   # test-and-close select: Prepare builds the run (qa-kit L1), the resume record holds the runDir, an item's own target pins its testers
   $js2 = @'
 const calls = []
@@ -255,6 +321,13 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O decide answer -Id $id -Answer 'A, keep it'
   $w = pwsh -NoProfile -File $O decide wait -Id $id -MaxMinutes 1 | Out-String
   Expect 'decide: answer -> wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ }).Count)
+  # ENV-FIX: decide ask -Kind envfix -> pending e-<id> for the coordinator (contracts note), answered "done: ..." -> wait returns it
+  $out = pwsh -NoProfile -File $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
+  $eid = if ($out -match 'ENV-FIX (e-\S+) pending') { $Matches[1] }
+  $pend = @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ })
+  $null = pwsh -NoProfile -File $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
+  $w = pwsh -NoProfile -File $O decide wait -Id $eid -MaxMinutes 1 | Out-String
+  Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
   # deploy batching (offline fixture): one batch per env from every tracked task; the window holds a second deploy
   $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'
   @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content $cfgF

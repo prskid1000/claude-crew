@@ -37,7 +37,8 @@ $D = '<kit>/skills/dev-kit/dev.ps1'; $O = '<kit>/skills/orchestrate/orch.ps1'; $
 & $D check -Dir <wt>/<module> -Step migrations                                 #    if you touched migrations: ISSUES 0
 & $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks run
 #   5. LOCAL TEST LOOP (local-env SKILL.md "Local testing"): deploy, lease, run every goal; failed -> back to 3 (max 3 rounds,
-#      then report BLOCKED with the failing goals); 0 errors + every goal reached -> 6
+#      then report FAIL with the failing goals: a stronger round follows, then the coordinator); never BLOCKED for an env
+#      reason (local-env "Unblock yourself", D2); 0 errors + every goal reached -> 6
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
 python <kit>/skills/dev-kit/devtools.py mr <wt> "<title>" body.md              # 6. MR (templates.md "MR body")
 python <kit>/skills/dev-kit/devtools.py doc "<title>" testing.md               #    human testing doc -> link it on the task and in the MR
@@ -52,6 +53,9 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options
   "A: ..","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md`, stop THAT item (report it as `needsDecision`), continue the
   others. The answer comes back in the contracts file (`decide wait -Id <id>`); then finish the item from it.
+- D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
+  -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
+  `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
 - No `localEnv` configured for your repo: step 5 = the automated tests only; say "local env: none" in the MR and the report.
 
 **Rules**

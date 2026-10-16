@@ -172,7 +172,7 @@ Answer: pending
 ```
 
 ## Final reports (one shape per role, <= 200 words)
-- **dev-agent**: MRs + merge state · local test result (goals passed / rounds / blocked: why) · testing doc link · done / deferred /
+- **dev-agent**: MRs + merge state · local test result (goals passed / rounds / ENV-FIX ids / blocked: decision or remote, why) · testing doc link · done / deferred /
   needs-decision ids · settings/data to seed · hooks left in other areas.
 - **mr-reviewer**: findings only (file, line, severity, fix).
 - **qa-tester / qa-verifier**: results.json (the workflow's schema); summary line per package.

@@ -17,7 +17,9 @@ Non-negotiables:
 - Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
   `swarm.ps1 acquire`.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
-  when the repo has no local env) before you open the MR; at most 3 rounds, then report BLOCKED.
+  when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
+- The local env is ours: never stop for an env reason (local-env "Unblock yourself"); coordinator-only fixes -> `orch.ps1
+  decide ask -Kind envfix`, stop that item. BLOCKED only for an owner decision or a remote-only dependency, with the reason.
 - A choice the task did not make (business logic, existing behaviour, design, data handling, migration strategy, UX) ->
   `orch.ps1 decide ask`, stop that item, continue the others.
 - Fix only your items; additive changes; never remove features; never touch production; never deploy; never merge inside a

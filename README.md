@@ -128,7 +128,10 @@ flowchart LR
   R -->|no| L
   RP --> L[local test loop: deploy branch, lease, run every goal]
   L -->|goal fails, < 3 rounds| C
-  L -->|3 rounds failed| B[[BLOCKED: report]]
+  L -->|3 rounds failed| SR[one stronger fix round]
+  SR -->|still failing| B[[held: the coordinator decides]]
+  L -.->|coordinator-only env fix| EF[[ENV-FIX: the coordinator fixes, the item waits]]
+  EF -.->|done| L
   C -.->|behaviour not asked for / several paths| D[[decision request: the item waits]]
   D -.->|owner answers| C
   L -->|every goal passes| V[review + CI]
@@ -147,10 +150,12 @@ flowchart LR
 flowchart LR
   Q([deployed tasks + testing docs]) --> TE[qa-tester per doc: web, API, phone lanes]
   TE --> AU[note audit]
-  AU --> VE[qa-verifier re-tests every FAIL]
+  AU --> SR[stronger retry of NOT_TESTED]
+  SR -->|local env, still NOT_TESTED| EF[[ENV-FIX: coordinator fixes, retest; then held]]
+  SR --> VE[qa-verifier re-tests every FAIL]
   VE --> FI{result rule}
   FI -->|all pass| CL[closed]
-  FI -->|own check failed / incomplete| FT[failedTesting: back to dev, no new task]
+  FI -->|own check failed / incomplete on a shared env| FT[failedTesting: back to dev, no new task]
   FI -->|new defect| BG[one Bug task under the ask]
   FT --> BW[bugfix wave: reproduce locally first]
   BG --> BW

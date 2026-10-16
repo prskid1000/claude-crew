@@ -59,7 +59,11 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
      NOT_TESTED gets ONE stronger retry (test-and-close `models.retest`, default opus, effort high, told your blocker); still
-     NOT_TESTED -> the task goes to failedTesting: never use it for "no time".
+     NOT_TESTED -> the task goes to failedTesting: never use it for "no time". That holds for shared test envs.
+   - **Local env item** (item / run.json `localEnv`): we own it, so no cause is final (local-env "Unblock yourself": data,
+     config, deploy, a phone with the local-env APK, a stub); a coordinator-only fix -> NOT_TESTED with `env_fix`. The workflow
+     raises ENV-FIX (`decide ask -Kind envfix`), retests after the fix (`envFixCycles`, default 2), then holds the results for
+     the coordinator: never failedTesting (finalize keeps it open; `-AcceptNotTested` is the coordinator's call).
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
      `attempts` and `window`; a verifier must recreate them to refute.
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
@@ -72,7 +76,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    release seat / phone / Chrome ports (`killSession()`); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
-all checks pass -> **closed** · an own check FAILED or checks not tested completely -> **failedTesting** (logical status;
+all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
+(logical status;
 fallback `inProgress` + comment), the comment lists the failed / untested checks and why, NO new task · a new / unexpected
 defect -> ONE `[Bug] <ask> — new defects (n)` task under the task's original ask (appended to an open one) · PENDING -> open.
 
@@ -121,7 +126,8 @@ deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; 
      tag + id in `trackerRepos`); the testing doc (link on top of the description or in the comments) -> `<run>/guides/<code>.md`.
      None of either -> left out. Tasks sharing a doc = one item.
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
-     `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target`; none -> left out.
+     `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
+     -> left out.
   4. Live: test env -> `qa.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved) -> in; local env (`localEnv`)
      -> `localenv.ps1 status -Env <env>`, every MR commit in the running release -> in. Else left out with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +

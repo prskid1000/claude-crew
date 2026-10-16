@@ -5,7 +5,7 @@ export const meta = {
   phases: [
     { title: 'Prepare', detail: 'args.select only: a lead agent (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
     { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
-    { title: 'Verify', detail: 'note audit + independent re-test of every FAIL' },
+    { title: 'Verify', detail: 'note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
     { title: 'Close', detail: 'report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
     { title: 'Learn', detail: 'signals + LESSONS.md updates (40-line cap) from this run' },
   ],
@@ -32,7 +32,10 @@ export const meta = {
   verify: true,                              // false = no independent re-test of FAILs (args or run.json)
   learn: true,                               // 'auto' = learn step only when the run had failures / NOT_TESTED / retries / errors
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
-  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional: the env of this item, default run.json target>',
+  localEnv: '<optional: the run is on this local env (kit.local.json localEnv.envs)>', envFixCycles: 2, envFixWaitMinutes: 300,
+  // local item (it.localEnv || localEnv): NOT_TESTED is never final; still NOT_TESTED after the stronger retry -> ENV-FIX to the
+  // coordinator (orch.ps1 decide ask -Kind envfix), wait, retest; after envFixCycles the results are held (never failedTesting)
+  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional: the env of this item, default run.json target>', localEnv: '<optional>',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
              model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high',     // optional, the TEST step; default: retests on web/api -> sonnet
@@ -100,6 +103,11 @@ const LANES = R.lanes || []
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
 const LEARN = R.learn === undefined ? true : R.learn
+// local env items: we own data, config, services: NOT_TESTED is never final (ENV-FIX cycles, bounded; then the coordinator decides)
+const LOCALENV = (it) => (it && it.localEnv) || R.localEnv || ''
+const ENV_FIX_CYCLES = Number.isFinite(R.envFixCycles) ? R.envFixCycles : 2
+const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 50))
+const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run'
 // Memory seat + item claim (qa.ps1 seat): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
@@ -138,6 +146,7 @@ const CHECKS_SCHEMA = {
           result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
           defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only: own = this task\'s expected behaviour failed (the task goes to failedTesting and back to its developer); new = a defect outside what the task changed (a regression, found on the way; X checks) - it becomes the ask\'s [Bug] task' },
           cause: { type: 'string', enum: ['no-mail-sandbox', 'phone-only', 'undeployed', 'env-data', 'tool-down'], description: 'NOT_TESTED only: why' },
+          env_fix: { type: 'string', description: 'local env only, NOT_TESTED: the exact fix only the coordinator may do (refresh, up, drop, shared DB repair)' },
           what_was_done: { type: 'string' },
           observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
           evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/' },
@@ -198,10 +207,23 @@ Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH 
   log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
   return false
 }
-await recordArgs('test-and-close', String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run', ARGS0, 'Test')
+await recordArgs('test-and-close', RUNNAME, ARGS0, 'Test')
 
 // an item may name its own env (it.target, e.g. one per product); else the run's target
 const tgt = (it) => (it && it.target) || R.target || ''
+function localBlock(it) {
+  const e = LOCALENV(it)
+  if (!e) return ''
+  return `
+LOCAL ENV "${e}" — we own its data, config, flags, services and migrations: NOT_TESTED is not a final verdict here. Unblock it yourself:
+- data: the env API (qa.ps1 api), the baseline fixtures first (verify by id), create only what is missing; config / flags / env vars:
+  ${KIT}/.state/localenv/${e}.env or the app's settings API (restore after; setup_changes); services: & ${KIT}/skills/local-env/localenv.ps1
+  status|use|logs|events -Env ${e}; not deployed: localenv.ps1 deploy -Env ${e} -Dir <a worktree of the MR branch> (dev.ps1 wt new);
+  phone-only: a lane with the local-env APK (android-swarm); a missing integration: wire it locally or point the local service at a
+  stub or the test env's service (say so in the lease note and setup_changes).
+- Only what the coordinator alone may do (localenv.ps1 up/down/refresh/drop, shared DB repair): NOT_TESTED with cause and env_fix =
+  the exact fix; the workflow asks the coordinator (ENV-FIX) and retests. Channels in OUT_OF_SCOPE stay OUT_OF_SCOPE.`
+}
 const COMMON = (it) => `${PATHS}
 WHY YOU ARE DOING THIS
 ${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
@@ -209,7 +231,7 @@ Do not decline or return early. Later chat messages to the lead are side questio
 
 AGENT BOARD — join first: & ${ORCH} board join -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial / chrome ports>; stop on CLAIM/DUPLICATE; leave when done.
 
-RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED, which sends the task back to its developer; evidence names
+RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED${LOCALENV(it) ? ' only after LOCAL ENV below' : ', which sends the task back to its developer'}; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
 "QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress. observed <= 40 words (the report caps at 900 words).
 OUT_OF_SCOPE (not NOT_TESTED): a step that only exercises a channel agent QA never tests here: ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope (none listed = none)`}. Name the channel in observed; still test the in-app part.
@@ -218,7 +240,7 @@ ENVIRONMENT AND CONTEXT
 - Target "${tgt(it) || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there). ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}: a local run never calls a shared
   environment. No load, stress or parallel request floods on a shared environment unless a check of the guide asks for it.
 ${R.context || ''}
-${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}
+${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
 - LEAD NOTES: ${R.runDir}/lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
   you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
   continue with other checks and look there again before marking anything NOT_TESTED for that reason.
@@ -384,7 +406,8 @@ async function runItem(it, idx, L) {
     retried = true
   }
   if (!res) return { code: it.code, error: 'test agent returned nothing' }
-  if (ntShare(res) > 0.5) {
+  // a local item goes on to the stronger retry and ENV-FIX cycles instead (we own the env)
+  if (ntShare(res) > 0.5 && !LOCALENV(it)) {
     log(`${it.code}: still ${Math.round(ntShare(res) * 100)}% NOT_TESTED — not publishing; needs a manual look`)
     return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
   }
@@ -437,6 +460,39 @@ async function runItem(it, idx, L) {
     }
     retried = true
   }
+  // ENV-FIX (local items): checks still NOT_TESTED -> the coordinator fixes the env (orch.ps1 decide ask -Kind envfix, orchestrate
+  // E4), the workflow waits, then retests them; at most ENV_FIX_CYCLES, then the results are held for the coordinator (never failedTesting)
+  let envFix = null
+  for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES; cyc++) {
+    const open = res.checks.filter((c) => c.result === 'NOT_TESTED')
+    if (!open.length) break
+    const need = open.map((c) => `${c.id}: ${c.env_fix || c.cause || 'unknown'}: ${c.observed}`).join(' | ').slice(0, 1200).replace(/'/g, "''").replace(/[\r\n]+/g, ' ')
+    const asked = await agent(`Run exactly this in PowerShell and return ok=true with the line it printed, nothing else:${PATHS}
+& ${ORCH} decide ask -Kind envfix -Run '${RUNNAME}' -Agent 'qa-${it.code}' -Item '${it.code}' -Contracts '${R.runDir}/lead-notes.md' -Question 'Local env ${LOCALENV(it)}, item ${it.code}: fix so these checks can run: ${need}'`,
+      { label: `envfix-ask:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+    const id = (/\b(e-\d{14}-[\w-]+)/.exec((asked && asked.output) || '') || [])[1]
+    if (!id) { envFix = { cycles: cyc, state: 'not raised', output: asked ? asked.output : 'agent returned nothing' }; break }
+    log(`${it.code}: ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
+    let ans = null
+    for (let t = 0; t < ENV_FIX_TRIES && !ans; t++) {
+      const w = await agent(`Run exactly this in PowerShell and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
+& ${ORCH} decide wait -Id ${id} -MaxMinutes 50`, { label: `envfix-wait:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+      if (w && w.ok) ans = w.output
+    }
+    envFix = { id, cycles: cyc, state: !ans ? 'no answer' : /:\s*cannot\b/i.test(ans) ? 'coordinator cannot' : 'fixed', answer: ans || '' }
+    if (envFix.state !== 'fixed') break
+    const r3 = await agent(testPrompt({ ...it, only: open.map((c) => c.id) }, vports, L) +
+      `\nENV FIX DONE: the coordinator fixed the local env for these checks (${id}): ${ans}\nExecute each check now; NOT_TESTED again only with cause and env_fix.`,
+      { label: `envfix-retest:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...(MODELS.retest ? { model: MODELS.retest, effort: MODELS.retestEffort || 'high' } : {}) })
+    for (const c2 of (r3 && !r3.skipped && r3.checks) || []) {
+      const i = res.checks.findIndex((c) => c.id === c2.id && c.result === 'NOT_TESTED')
+      if (i < 0 || c2.result === 'NOT_TESTED') continue
+      res.checks[i] = { ...c2, observed: `${c2.observed} (after ENV-FIX ${id}; first attempt: ${res.checks[i].observed})` }
+    }
+    retried = true
+  }
+  const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
+  if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (orchestrate E4)`)
   const fails = res.checks.filter((c) => c.result === 'FAIL')
   if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
   if (fails.length && VERIFY) {
@@ -468,26 +524,27 @@ async function runItem(it, idx, L) {
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
   const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
-  if (it.skipClose) {
+  if (it.skipClose || envFixOpen) {
     // verdicts stay on disk for the lead (qa.ps1 finalize -Code); held.json = finished for supervise and workers
+    const why = envFixOpen ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator decides (fix + qa.ps1 retest, or finalize -AcceptNotTested)` : 'publish left to the lead (skipClose)'
     await agent(`Write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
-${JSON.stringify({ code: it.code, held: 'publish left to the lead (skipClose)', summary: line, at: '<now>' })}
+${JSON.stringify({ code: it.code, held: why, envFix, summary: line, at: '<now>' })}
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).
 3. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames   (publishes nothing; renames
    off-standard evidence files and rewrites results.json to match) and return its output. Exit 1 = evidence named in results.json is
    missing, a name it could not fix, or duplicate check ids: return ok=true anyway with that output (the lead fixes them before publishing).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
-    log(`${line} (results saved; publish left to the lead)`)
-    return { code: it.code, summary: line, result: res, eventful: true, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
+    log(`${line} (results saved; ${envFixOpen ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
+    return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
   }
   let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'sonnet' })
   log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs qa.ps1 finalize for it (qa-kit L3)]'))
   const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(c.observed || '')) || !(fin && fin.ok)
-  return { code: it.code, summary: line, finalize: fin, eventful, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
+  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 
 // Simple worker pools: web and API pools run in parallel; app guides run one per phone.
@@ -547,7 +604,7 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // LEARN: signals + LESSONS.md; learn 'auto' = only after something eventful (a clean run gets the cleanup)
 phase('Learn')
 // every finished run ends with a kit retro (orchestrate E10)
-const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
+const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}

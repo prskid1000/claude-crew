@@ -123,7 +123,7 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 FILE_CAP = 50
 # token budgets (UTF-8 bytes / 4), CONTRIBUTING "Hard rules"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-           'workflow': 12000, 'ps1': 45000, 'py': 40000, 'mjs': 8000, 'json': 3000, 'tests': 10000, 'total': 360000}
+           'workflow': 14000, 'ps1': 48000, 'py': 40000, 'mjs': 8000, 'json': 3000, 'tests': 16000, 'total': 360000}
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/paths.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -932,7 +932,10 @@ FLOW_VIEWS = {
             '  R -->|no| L',
             '  RP --> L[local test loop: deploy branch, lease, run every goal]',
             '  L -->|goal fails, < 3 rounds| C',
-            '  L -->|3 rounds failed| B[[BLOCKED: report]]',
+            '  L -->|3 rounds failed| SR[one stronger fix round]',
+            '  SR -->|still failing| B[[held: the coordinator decides]]',
+            '  L -.->|coordinator-only env fix| EF[[ENV-FIX: the coordinator fixes, the item waits]]',
+            '  EF -.->|done| L',
             '  C -.->|behaviour not asked for / several paths| D[[decision request: the item waits]]',
             '  D -.->|owner answers| C',
             '  L -->|every goal passes| V[review + CI]',
@@ -946,10 +949,12 @@ FLOW_VIEWS = {
     'test-only': ['flowchart LR',
                   '  Q([deployed tasks + testing docs]) --> TE[qa-tester per doc: web, API, phone lanes]',
                   '  TE --> AU[note audit]',
-                  '  AU --> VE[qa-verifier re-tests every FAIL]',
+                  '  AU --> SR[stronger retry of NOT_TESTED]',
+                  '  SR -->|local env, still NOT_TESTED| EF[[ENV-FIX: coordinator fixes, retest; then held]]',
+                  '  SR --> VE[qa-verifier re-tests every FAIL]',
                   '  VE --> FI{result rule}',
                   '  FI -->|all pass| CL[closed]',
-                  '  FI -->|own check failed / incomplete| FT[failedTesting: back to dev, no new task]',
+                  '  FI -->|own check failed / incomplete on a shared env| FT[failedTesting: back to dev, no new task]',
                   '  FI -->|new defect| BG[one Bug task under the ask]',
                   '  FT --> BW[bugfix wave: reproduce locally first]',
                   '  BG --> BW'],

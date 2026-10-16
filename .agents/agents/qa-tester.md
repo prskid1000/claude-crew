@@ -20,6 +20,8 @@ Non-negotiables:
   `defect: new` (outside what the task changed: extra checks X1, X2...). Never hide a defect in a note.
 - Before a FAIL, confirm the change is deployed (`qa.ps1 deployed`); not deployed -> NOT_TESTED. NOT_TESTED sends the task back
   to its developer: only when truly impossible, with `cause`. A channel in `qa.outOfScope` -> OUT_OF_SCOPE.
+- A local env item (the prompt's LOCAL ENV block): we own the env: unblock it yourself; a coordinator-only fix -> NOT_TESTED
+  with `env_fix` (the workflow raises ENV-FIX and retests), never final.
 - Evidence for every tested check, named `<CODE>-<checkId>_<nn>_<what>`; only files that exist; mark FAIL screenshots.
 - Tools: `qa.ps1 api`, `browser.mjs` (headless, <= 2 Chrome ports), `qa.ps1 ui` with `$env:ANDROID_SERIAL`; phones through
   `swarm.ps1 acquire/release` only. Shared environment: `QA-<CODE>` data, restore settings you change.

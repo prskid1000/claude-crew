@@ -681,7 +681,7 @@ $content
 #             report (GitHub/GitLab: its text; ClickUp/Jira: the file attached; none: logged). Default without gws.
 # Tracker: skills/dev-kit/dev.ps1 tracker (kit.local.json "tracker": { "type": clickup|github|gitlab|jira|none }).
 #
-#   & <workspace>/.claude/skills/qa-kit/qa.ps1 finalize -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing]
+#   & <workspace>/.claude/skills/qa-kit/qa.ps1 finalize -RunDir <run dir> -Code <package code> [-NoTracker] [-Force] [-Report gdocs|markdown] [-AllowMissing] [-AcceptNotTested]
 #   & <workspace>/.claude/skills/qa-kit/qa.ps1 finalize -RunDir <run dir> -Code <package code> -Check [-FixNames]
 #
 # Evidence check (runs first, before any upload or tracker call; reference/evidence-standard.md): every file listed in results.json
@@ -701,6 +701,8 @@ $content
 # (results.json check "defect": "own", the default for guide checks) or new ("defect": "new", the default for X checks): new
 # defects go to <run>/bugs.json + the ask's [Bug] task, appended to an open one the ask already has (never a task this run tests).
 # failedTesting falls back to inProgress + a comment when the board has no such status. OUT_OF_SCOPE checks never count.
+# Local env items (item or run.json localEnv): NOT_TESTED alone keeps the task open (ENV-FIX: we own the env, orchestrate E4);
+# -AcceptNotTested (the coordinator's call after the ENV-FIX cycles) applies failedTesting as on a shared test env.
 # The summary line says what happened per subtask (closed / failed testing / open: why).
 function Invoke-Finalize {
 param(
@@ -711,6 +713,7 @@ param(
   [switch]$Check,
   [switch]$FixNames,
   [switch]$AllowMissing,
+  [switch]$AcceptNotTested,
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
   [string]$Date = (Get-Date -Format 'd MMM yyyy')
 )
@@ -901,6 +904,7 @@ if ($map.local) {
 #   PENDING (tested next in another lane) or a sibling item not finalized yet -> stays open for now
 $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @() }
 $closeStatus = if ($tr.closeStatus) { $tr.closeStatus } else { 'closed' }   # logical name, mapped by tracker.statuses
+$isLocal = [string]$(if ($item.localEnv) { $item.localEnv } else { $run.localEnv })   # a local env item (ENV-FIX rule)
 $bugList = if ($tr.list) { $tr.list } else { [string](Get-KitSetting 'tracker.list' '') }
 $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'none'   # github/gitlab use tracker.repo; clickup/jira need a list/project
 # own vs new: the tester's 'defect' field wins; without it an X check (off-script) is new, a guide check is the task's own
@@ -986,6 +990,8 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($pend) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
+  # local env: untested checks alone are an env fix to make (ENV-FIX), not a failed test, unless the coordinator accepts them
+  if ($isLocal -and -not $AcceptNotTested -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + retest, or finalize -AcceptNotTested"; return }
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested) { Set-FailedTesting $rec $st; return }
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is tracked nowhere
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }

@@ -1051,6 +1051,8 @@ if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to th
 }
 # 6c. decision pauses waiting for the owner (an agent stopped an item: a behaviour change not asked for, or several valid paths)
 foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ })) {
+  # ENV-FIX: a local-env fix only the coordinator may do; never a question for the owner
+  if ($d.kind -eq 'envfix') { Flag 'ACT' "ENV-FIX $($d.id) ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Fix the local env (local-env: localenv.ps1 up/refresh/drop, shared DB repair), then & $($KitCmd.orch) decide answer -Id $($d.id) -By coordinator -Answer 'done: <what you did>' (cannot: 'cannot: <why>')"; continue }
   Flag 'ACT' "DECISION $($d.id) ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Ask the owner (options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { "; recommended: $($d.recommend)" })), then & $($KitCmd.orch) decide answer -Id $($d.id) -Answer '<their words>'"
 }
 # 6d. deploy asks, only under deploy.trigger "ask" (merged work not deployed, window open; checked hourly: deploy plan asks the CI
@@ -1821,12 +1823,15 @@ function Invoke-Learn {
 #   & $O decide list [-Pending] [-Json]          # the coordinator (supervise shows pending ones as ACT)
 #   & $O decide answer -Id <id> -Answer "<the owner's words>" [-By <who>]
 #   & $O decide get -Id <id> · wait -Id <id> [-MaxMinutes 50]   # the agent / the workflow waits; exit 0 answered, 1 still pending
+#   & $O decide ask -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the local env fix needed>"   # ENV-FIX: a local-env
+#     fix only the coordinator may do (up/down/refresh/drop, shared DB repair); it does the fix, then answers "done: <what>"
 # A decision request stops only that item ("needs decision"); the workflow continues the others and resumes the item with the answer.
 # Files: <runtime>/work/decisions/<id>.json; the question and the answer are also appended to the contracts file (agents re-read it).
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'get', 'wait')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
-    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json)
+    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json,
+    [ValidateSet('decision', 'envfix')][string]$Kind = 'decision')
   $dir = Get-KitPath decisions -Create
   $get = { param($i) $f = Join-Path $dir "$i.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
   $save = { param($o) $f = Join-Path $dir "$($o.id).json"; Invoke-KitLocked $f { $o | ConvertTo-Json -Depth 5 | Set-Content $f -Encoding utf8 } }
@@ -1835,9 +1840,13 @@ function Invoke-Decide {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." [-Recommend A] [-Contracts <file>]'; exit 2 }
       $opts = @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })   # 'A: ..','B: ..'
-      $o = [ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')"; run = $Run; agent = $Agent; item = $Item; question = $Question
+      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')"; kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('s') }
       & $save ([pscustomobject]$o)
+      if ($Kind -eq 'envfix') {
+        & $note $Contracts "## ENV-FIX NEEDED $($o.id) ($Agent, item $Item)`n$Question`nDone: pending (the coordinator appends it below)"
+        "ENV-FIX $($o.id) pending: the coordinator fixes the local env; item $Item waits. Wait: orch.ps1 decide wait -Id $($o.id)"; return
+      }
       $null = Test-KitProse -Kind decision-request -Text ("$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $Recommend")
       & $note $Contracts ("## DECISION NEEDED $($o.id) ($Agent, item $Item)`n$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $(if ($Recommend) { $Recommend } else { 'none' })`nAnswer: pending (the coordinator appends it below)")
       "DECISION $($o.id) pending: item $Item stops (needs decision); continue your other items. Wait: orch.ps1 decide wait -Id $($o.id)"

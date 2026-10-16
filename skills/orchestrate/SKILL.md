@@ -38,8 +38,9 @@ proposes a deploy (`deploy.trigger: owner`, the default; `ask` = one batched ask
 | Dev path | Who / what | You do |
 |---|---|---|
 | success | build -> local PASS -> review clean -> CI green -> merged | nothing; E7 at the end |
-| local test failed | the agent loops (fix, redeploy, all goals) up to 3 rounds | nothing; it reports `localTest` |
-| blocked after N rounds | MRs stay open, item BLOCKED with the failing goals | read the report; a follow-up wave or ask the owner |
+| local test failed | the agent loops (fix, redeploy, all goals) up to 3 rounds, `localRetries` more, then ONE stronger round (`models.retest`) | nothing; it reports `localTest` |
+| still FAIL after the stronger round | MRs stay open, item held with the failing goals | you decide: a follow-up wave, or ask the owner |
+| ENV-FIX (local env) | the agent stopped one item for a coordinator-only env fix (`needsEnvFix`); BLOCKED only = owner decision / remote-only | E4 |
 | needs decision | the agent stopped one item (`decide ask`), others continue | E4: relay, `decide answer`; the workflow resumes it |
 | review findings / CI red | one fix round (local tests again), CI again | nothing; open findings -> follow-up wave |
 | conflict at merge | append-only: auto (keepboth); real code: blocking finding | follow-up fix (E7) |
@@ -52,7 +53,9 @@ proposes a deploy (`deploy.trigger: owner`, the default; `ask` = one batched ask
 tasks not live left out) -> per item test -> retest when > 25%
 NOT_TESTED -> note audit -> ONE stronger retry (`models.retest`) of every check still NOT_TESTED -> verify every FAIL ->
 finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new defect -> one [Bug] per
-ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3; `orch.ps1 recover`).
+ask (E6); PENDING -> app follow-up. Local env items: still NOT_TESTED -> ENV-FIX (E4) and a retest (`envFixCycles`, 2), then
+held (`envFixOpen`), never failedTesting. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3;
+`orch.ps1 recover`).
 
 ## Steps (you = the coordinator)
 0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts live in the brief / run.json / memory / the repo's CLAUDE.md.
@@ -75,7 +78,7 @@ ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.
 | E1 | You launched a workflow / agent, or a new session finds runs, and no heartbeat runs (a heartbeat dies with its session) | ONE heartbeat: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief` and act on its ACT / WATCH lines. A second session's supervisor steps aside by itself. Stop it when nothing runs |
 | E2 | supervise prints ACT / WATCH | do the printed action / re-check next round; leave healthy agents alone |
 | E3 | Agents or a workflow stopped (crash, network loss, usage limit, RAM, a restart) | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, a filled resume brief and the exact `Workflow({ scriptPath, resumeFromRunId, args })` (args the workflow recorded itself); resume refused -> the printed relaunch (`mode: 'resume'`); QA items never published -> its `qa.ps1 finalize` lines; never restart from scratch. You stopped it: `supervise -MarkStopped <run>` |
-| E4 | DECISION <id> (supervise, the report's `decisions`) | ask the owner with the options + recommendation; `orch.ps1 decide answer -Id <id> -Answer '<their words>'`; the waiting item resumes |
+| E4 | DECISION <id> (supervise, the report's `decisions`) · ENV-FIX <id> (a local-env fix only you may do; `envFixes`, `envFixOpen`) | DECISION: ask the owner with the options + recommendation; `orch.ps1 decide answer -Id <id> -Answer '<their words>'`. ENV-FIX: do the fix (local-env: `up`/`refresh`/`drop`, shared DB repair), `decide answer -Id <id> -By coordinator -Answer 'done: <what>'` (or `'cannot: <why>'`); never ask the owner. The waiting item resumes. Held after the cycles: fix + `qa.ps1 retest`, or `finalize -AcceptNotTested` |
 | E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back: `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live (supervise also does it). Never ask for or propose a deploy yourself |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /dev-wave `mode: 'bugfix'` for all (reproduce locally first) |
 | E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (never parse the notification); MR states from the report; open findings -> follow-up wave; `deployBatch` waits for a person's word (E5); then E10 |

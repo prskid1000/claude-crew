@@ -62,7 +62,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
    ui ...`,
    `swarm.ps1 release` when done. Save evidence as in qa-kit "Evidence" (the human doc reuses it).
 4. A goal fails, a log shows an error, or a request returns 5xx: Debug locally, fix (dev-kit step 3), commit, deploy again,
-   re-run ALL goals (a fix can break an earlier one). Max 3 rounds; then report BLOCKED with the failing goals and evidence.
+   re-run ALL goals (a fix can break an earlier one). Max 3 rounds; then report FAIL with the failing goals and evidence (a
+   stronger round follows, then the coordinator). Never BLOCKED for an env reason: "Unblock yourself".
 5. Every goal PASS and the logs clean: `promote`, `release`, then dev-kit step 6. Put "Local env <env> r<n>: goals passed" in
    the
    MR and the report.
@@ -75,16 +76,23 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 3. Attach a debugger when the service has a `debugPort` (`localenv.ps1 envs` prints it): JVM jdwp, node --inspect, debugpy, ...
 4. Record the reproduction (steps, request/response, log lines, screenshots) in the testing-goals doc under "Reproduction".
 5. Fix, then re-run the SAME reproduction as the first local check; then all goals.
-6. Cannot reproduce locally (data, integration or config only on the test env): say why in the goals doc, then reproduce on the
-   test env (qa-kit tools, never production) and continue.
+6. Cannot reproduce locally (data, integration or config only on the test env): first make it local ("Unblock yourself"); a
+   remote-only dependency: say why in the goals doc, then reproduce on the test env (qa-kit tools, never production) and continue.
+
+## Unblock yourself (we own the local env: a local check never ends NOT_TESTED, a local loop never BLOCKED for an env reason)
+- Data: the env API (baseline first, verify by id); config / flags / env vars: `<kit>/.state/localenv/<env>.env` or the app's
+  settings API; services: `deploy`, `use`, `logs`, `events`; not deployed: `deploy` the branch; phone-only: a lane with the
+  local-env APK; a missing integration: wire it locally or point it at a stub or the test env's service (lease note).
+- Coordinator-only (`up`, `down`, `refresh`, `drop`, shared DB repair): ENV-FIX `orch.ps1 decide ask -Kind envfix -Run <run>
+  -Agent <id> -Item <item> -Question "<the fix>"`, then WAIT (`decide wait -Id <id>`) and continue: an env fix request, not a
+  verdict. Only org-rule out-of-scope channels stay OUT_OF_SCOPE.
 
 **Rules**
 - No dev servers by hand (the guard blocks them while `localEnv` is set); never edit env worktrees, push `localenv/*` or install
   there.
 - A migration layer changes the shared local DB for every layer: say so. Unsure? `migrations -Env <env> -Branch <b>` first.
-- Local DB drift (a leftover table, a missing user or grant) breaking a deploy: report it to the coordinator (`refresh` /
-  owner),
-  never repair the shared DB by hand.
+- Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
+  yourself"), never repair the shared DB by hand.
 - `up`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed;
   report it, never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.

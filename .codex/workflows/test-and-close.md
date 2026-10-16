@@ -10,7 +10,7 @@ Codex has no pipeline/phase scripting engine equivalent to Claude Code's Workflo
 
 1. **Prepare** -- args.select only: a lead agent (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out
 2. **Test** -- one agent per guide: web/API pool in parallel, app guides one per phone
-3. **Verify** -- note audit + independent re-test of every FAIL
+3. **Verify** -- note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL
 4. **Close** -- report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask
 5. **Learn** -- signals + LESSONS.md updates (40-line cap) from this run
 

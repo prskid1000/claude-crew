@@ -9,7 +9,7 @@ Antigravity has no pipeline/phase scripting engine equivalent to Claude Code's W
 ## Phases
 
 1. **Build** -- one agent per area: worktree, code, testing goals, local test loop, MRs, testing doc
-2. **Decide** -- items paused for an owner decision wait for the answer, then resume
+2. **Decide** -- items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume
 3. **Review** -- independent reviewer per agent + CI pipelines
 4. **Fix** -- one fix round (local tests again), then merge in order and register the tracker task
 5. **Deploy** -- the merged work joins the deploy batch silently; a person says deploy <env> (never asked, never deployed here)

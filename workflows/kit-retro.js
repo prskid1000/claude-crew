@@ -70,7 +70,7 @@ const RESULT = {
 
 const LENSES = [
   { key: 'dev', focus: 'dev agents: worktrees, builds/tests, commits/hooks, migrations, MR/merge flow, guard blocks, review findings from /dev-wave' },
-  { key: 'qa', focus: 'QA and the local test loop: verdict quality (notes reclassified, verify "not reproduced" rate), failedTesting and NOT_TESTED causes, local-test rounds and blocked items, flaky selectors/UI gotchas, evidence problems, unpublished items' },
+  { key: 'qa', focus: 'QA and the local test loop: verdict quality (notes reclassified, verify "not reproduced" rate), failedTesting and NOT_TESTED causes, local-test rounds, stronger fix rounds, ENV-FIX requests (local env: what the agents could not unblock themselves) and blocked items, flaky selectors/UI gotchas, evidence problems, unpublished items' },
   { key: 'speed', focus: 'speed and resources: gate waits and build durations per kind, memory estimates vs peaks, slow steps, permission prompts, things agents repeat that a script should do' },
   { key: 'docs', focus: 'documents and evidence: report/guide/MR/comment formats, evidence naming warnings, templates agents ignored or misused, unclear instructions in SKILL.md/agents' },
 ]
