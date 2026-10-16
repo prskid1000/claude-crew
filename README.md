@@ -79,9 +79,11 @@ flowchart LR
   agents_qa_tester_md(qa-tester)
   agents_qa_verifier_md(qa-verifier)
   skills_android_swarm_SKILL_md[android-swarm]
+  skills_databases_SKILL_md[databases]
   skills_dev_kit_SKILL_md[dev-kit]
   skills_kit_audit_SKILL_md[kit-audit]
   skills_local_env_SKILL_md[local-env]
+  skills_new_relic_SKILL_md[new-relic]
   skills_orchestrate_SKILL_md[orchestrate]
   skills_qa_kit_SKILL_md[qa-kit]
   skills_tech_audit_SKILL_md[tech-audit]
@@ -256,6 +258,23 @@ flowchart LR
 flowchart LR
   skills_tech_audit_SKILL_md[tech-audit]
   skills_tech_audit_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill tech-audit| LESSONS_md[LESSONS.md]
+  skills_tech_audit_SKILL_md -->|step 1, read fully (local overlay: one profile p| skills_tech_audit_reference_projects_magicsuite_md[magicsuite.md]
   skills_tech_audit_SKILL_md -->|step 8: validate file (must print schema problem| skills_tech_audit_tech_audit_py[tech-audit.py]
+```
+<!-- kit-graph:end -->
+
+<!-- kit-graph:start skill-databases -->
+```mermaid
+flowchart LR
+  skills_databases_SKILL_md[databases]
+  skills_databases_SKILL_md -->|when the router sends you here; the MCP servers | skills_databases_SKILL_md[SKILL.md]
+```
+<!-- kit-graph:end -->
+
+<!-- kit-graph:start skill-new-relic -->
+```mermaid
+flowchart LR
+  skills_new_relic_SKILL_md[new-relic]
+  skills_new_relic_SKILL_md -->|when the router sends you here| skills_new_relic_SKILL_md[SKILL.md]
 ```
 <!-- kit-graph:end -->
