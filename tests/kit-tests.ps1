@@ -1,9 +1,8 @@
 #Requires -Version 7
 <#
-kit-tests.ps1: the kit's offline tests in one file (no real tracker, git host, Drive or services: throw-away kit copies, local
-git repos and mocked CLIs). Run after changing a kit script (orchestrate K3, CONTRIBUTING):
-  pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area dev|qa|orch|local|all]
-Inputs: the kit next to this folder. Outputs: PASS / FAIL lines and a total. Exit codes: 0 all pass · 1 a check failed · 2 usage error.
+kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
+Run after a kit script change (orchestrate K2): pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area dev|qa|orch|local|all]
+Inputs: the kit next to this folder. Outputs: PASS / FAIL lines and a total. Exit codes: 0 pass · 1 a check failed · 2 usage error.
 #>
 param([ValidateSet('dev', 'qa', 'orch', 'local', 'all')][string]$Area = 'all')
 $ErrorActionPreference = 'Stop'
@@ -12,17 +11,17 @@ $script:fails = 0
 function Expect($what, $cond) { if ($cond) { "PASS $what" } else { "FAIL $what"; $script:fails++ } }
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
-  foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/paths.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
-      'skills/orchestrate/orch.ps1', 'skills/orchestrate/kit.ps1', 'skills/local-env/localenv.ps1', 'skills/local-env/migrations.py', 'LESSONS.md') {
+  foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
+      'skills/orchestrate/orch.ps1', 'skills/local-env/localenv.ps1', 'LESSONS.md') {
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k
 }
 function Remove-TestKit($k) { Remove-Item (Split-Path $k) -Recurse -Force -ErrorAction SilentlyContinue }
-Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # every test kit uses its own runtime and state
+Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 
-# =============================================================== dev: worktrees, deploy merge, git host, tracker, guard, devtools
+# === dev: worktrees, deploy merge, git host, tracker, guard, devtools
 if ($Area -in 'dev', 'all') {
   "== dev"
   $k = New-TestKit dev; $D = Join-Path $k 'skills/dev-kit/dev.ps1'; $O = Join-Path $k 'skills/orchestrate/orch.ps1'
@@ -49,7 +48,7 @@ if ($Area -in 'dev', 'all') {
     Expect 'deploy merge is a merge commit' ($wt -and @((git -C $wt log -1 --format=%p) -split ' ').Count -eq 2)
     Expect 'deploy merge ran the pre-commit hook' ($gd -and (Test-Path (Join-Path $gd 'hook-ran')))
   } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-  # git host: GitLab passes paths through to glab, GitHub translates them to gh (mocked CLIs, fresh process)
+  # git host: GitLab passes paths to glab, GitHub translates them
   $gh = @'
 $script:calls = [Collections.Generic.List[string]]::new()
 function glab { $script:calls.Add("glab $($args -join ' ')"); $global:LASTEXITCODE = 0; '{"iid":5,"state":"merged"}' }
@@ -79,7 +78,7 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
   $f = Join-Path (Split-Path $k) 'githost-test.ps1'; Set-Content $f $gh
   $res = @(pwsh -NoProfile -File $f (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
   foreach ($x in 'gl-get', 'gl-put', 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'memo', 'gh-auto') { Expect "git host: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  # tracker verbs per backend: the CLI / REST call each one builds (-DryRun), and the 'none' store for real
+  # tracker verbs: each backend's call (-DryRun); 'none' store for real
   foreach ($case in @(@('clickup', @('status', '12', 'failedTesting'), 'clickup status set'), @('github', @('list', 'o/r', 'promoted', '-Type', 'github'), 'gh issue list -R o/r'),
       @('gitlab', @('list', 'g/p', 'inTest'), 'labels=status%3Ain'), @('jira', @('list', 'PROJ', 'failedTesting'), 'search/jql'))) {
     $env:KIT_TRACKER_TYPE = $case[0]
@@ -102,7 +101,7 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
   Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
   $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
   Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
-  # pipes: no head pipeline is busy (done=false) unless no CI is confirmed (no-ci); a failed host call (unknown) is busy too
+  # pipes: busy only with a head pipeline, no-ci or a failed host call (unknown)
   $pt = @'
 . $args[0]
 $ast = [Management.Automation.Language.Parser]::ParseFile($args[1], [ref]$null, [ref]$null)
@@ -124,42 +123,41 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
   $f = Join-Path (Split-Path $k) 'pipes-test.ps1'; Set-Content $f $pt
   $res = @(pwsh -NoProfile -File $f (Join-Path $k 'skills/dev-kit/lib.ps1') $D 2>&1)
   foreach ($x in 'no-ci', 'no-pipeline', 'unknown') { Expect "pipes: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  # check: an UNRUN typecheck (a baseline of > 200 errors in unchanged files) exits 5, not 0 like a pass
+  # check: an UNRUN typecheck (> 200 baseline errors) exits 5, not 0
   $ud = Join-Path (Split-Path $k) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
   '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
   'for (let i = 0; i < 250; i++) console.log(`src/old${i}.ts(1,1): error TS2322: x`); process.exit(2)' | Set-Content "$ud/tsc.js"
   git -C $ud init -q; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m init
   $out = pwsh -NoProfile -File $D check -Dir $ud -Step typecheck 2>&1 | Out-String
   Expect 'check: a typecheck UNRUN exits 5' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN')
-  # guard: a non-empty hook payload that is not JSON denies (and is logged); empty stdin (run by hand) allows
+  # guard: a non-JSON payload denies (logged); empty stdin allows
   $gbad = '{not json' | pwsh -NoProfile -File $D guard | Out-String
   $gnone = '' | pwsh -NoProfile -File $D guard | Out-String
   Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
-  # lib.ps1 in a linked kit worktree (no kit.local.json there) reads the main clone's config; git fetch with a space in the path
+  # lib.ps1 in a linked kit worktree reads the main clone's config; git fetch on a spaced path
   $mk = Join-Path (Split-Path $k) 'main kit'; New-Item -ItemType Directory -Force "$mk/skills/dev-kit" | Out-Null
-  Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/paths.json') "$mk/skills/dev-kit/"
+  Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/kit.example.json') "$mk/skills/dev-kit/"
   git -C $mk init -q; git -C $mk add -A; git -C $mk -c user.name=t -c user.email=t@t commit -q -m init
   @{ tracker = @{ type = 'jira' } } | ConvertTo-Json | Set-Content "$mk/skills/dev-kit/kit.local.json"
   $lw = Join-Path (Split-Path $k) 'wt kit'; git -C $mk worktree add -q --detach $lw 2>$null
   $tt = pwsh -NoProfile -Command ". '$lw/skills/dev-kit/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
   Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*wt kit failed' -and $tt -match '(?m)^False')
-  # kit.ps1: --help 0 / unknown verb 2; in a linked kit worktree Update-Exclude writes the exclude git reads (the main clone's),
-  # Set-Memory leaves the worktree alone, and pre-commit sees a user's unstaged README edit (it then does not stage README.md)
-  $KP = Join-Path $k 'skills/orchestrate/kit.ps1'
+  # orch.ps1: --help 0, unknown verb 2; linked kit worktree: Update-Exclude uses the main clone, Set-Memory skips it,
+  # pre-commit keeps a user's unstaged README edit unstaged
+  $KP = Join-Path $k 'skills/orchestrate/orch.ps1'
   $null = pwsh -NoProfile -File $KP --help; $h0 = $LASTEXITCODE; $null = pwsh -NoProfile -File $KP bogus-verb; $h2 = $LASTEXITCODE
   $mk = Join-Path (Split-Path $k) 'kit main'; New-Item -ItemType Directory -Force "$mk/skills/dev-kit", "$mk/skills/orchestrate" | Out-Null
-  Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/paths.json') "$mk/skills/dev-kit/"; Copy-Item $KP "$mk/skills/orchestrate/"
+  Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/kit.example.json') "$mk/skills/dev-kit/"; Copy-Item $KP "$mk/skills/orchestrate/"
   'readme' | Set-Content "$mk/README.md"
   git -C $mk init -q; git -C $mk add -A; git -C $mk -c user.name=t -c user.email=t@t commit -q -m init
   @{ localOnly = @('secret.txt') } | ConvertTo-Json | Set-Content "$mk/skills/dev-kit/kit.local.json"
   $lw = Join-Path (Split-Path $k) 'kit wt'; git -C $mk worktree add -q --detach $lw 2>$null
   'edited' | Set-Content "$lw/README.md"
-  $kx = (pwsh -NoProfile -File "$lw/skills/orchestrate/kit.ps1" setup -Exclude 2>&1 | Out-String) + (pwsh -NoProfile -Command ". '$lw/skills/orchestrate/kit.ps1'; 'unstaged:' + (Test-UnstagedEdits '$lw' 'README.md')" 2>&1 | Out-String)
-  Expect 'kit.ps1: --help 0, unknown verb 2; worktree excludes go to the main clone, no memory in a worktree, unstaged README seen' ($h0 -eq 0 -and $h2 -eq 2 -and
+  $kx = (pwsh -NoProfile -File "$lw/skills/orchestrate/orch.ps1" setup -Exclude 2>&1 | Out-String) + (pwsh -NoProfile -Command ". '$lw/skills/orchestrate/orch.ps1'; 'unstaged:' + (Test-UnstagedEdits '$lw' 'README.md')" 2>&1 | Out-String)
+  Expect 'orch.ps1: --help 0, unknown verb 2; worktree excludes go to the main clone, no memory in a worktree, unstaged README seen' ($h0 -eq 0 -and $h2 -eq 2 -and
     (Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory") -and $kx -match 'unstaged:True')
-  # dev-wave local loop (mocked agents): BLOCKED without blockedKind = FAIL; still FAIL after the rounds -> ONE stronger fix round
-  # (models.retest); an ENV-FIX item waits for the coordinator's answer, then resumes
-  $wfd = [IO.File]::ReadAllText((Join-Path $src 'workflows/dev-wave.js')) -replace '^export const meta', 'const meta'
+  # buildy local loop: BLOCKED without blockedKind = FAIL; still FAIL -> ONE retest round; ENV-FIX waits
+  $wfd = [IO.File]::ReadAllText((Join-Path $src 'workflows/buildy.js')) -replace '^export const meta', 'const meta'
   $jsd = @'
 const lt = (status, extra = {}) => ({ status, env: 'shop r1', rounds: 3, failing: status === 'PASS' ? [] : ['G1 still 500'], goalsDoc: 'g.md', ...extra })
 const rep = (status, extra = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest: lt(status), needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...extra })
@@ -188,10 +186,10 @@ run(args, a.agent, () => {}, () => {}, pipeline).then((oa) => run(args, b.agent,
 '@
   $jf = Join-Path (Split-Path $k) 'dw-local.mjs'; [IO.File]::WriteAllText($jf, $jsd.Replace('__BODY__', $wfd))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text') { Expect "dev-wave local loop: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'blocked-is-fail', 'strong-round', 'envfix', 'flow-text') { Expect "buildy local loop: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 4)) { $res | Select-Object -First 5 }
-  # dev-wave (mocked agents): a blocking review finding -> fix round -> ONE re-review before the merge; a deferred item is
-  # tracked with its promotion held; the default run name = brief name + 4 hex of its path (the same as orch.ps1 Get-LaunchRunName)
+  # buildy: blocking finding -> fix round -> ONE re-review; deferred item: promotion held;
+  # run name = brief name + 4 path-hash hex
   $jsr = @'
 const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
 const rep = (extra = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest: lt, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...extra })
@@ -221,13 +219,50 @@ run(args, agent, () => {}, () => {}, pipeline).then(() => {
   $jf = Join-Path (Split-Path $k) 'dw-review.mjs'; [IO.File]::WriteAllText($jf, $jsr.Replace('__BODY__', $wfd))
   $res = @(node $jf 2>&1)
   $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
-  foreach ($x in 're-review', 'hold') { Expect "dev-wave: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
-  Expect 'dev-wave: the default run name matches orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
+  foreach ($x in 're-review', 'hold') { Expect "buildy: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  Expect 'buildy: the default run name matches orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
   if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 2) { $res | Select-Object -First 5 }
+  # buildy duel: 2 POCs, revy compares, bounded debate, owner judges; winner ships
+  $jsu = @'
+const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
+const rep = (id) => ({ mrs: [{ url: `https://h/g/api/-/merge_requests/${id === 'D2' ? 2 : 1}`, repo: 'api', merged: false }], worktrees: [`C:/wt/${id}`], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest: lt, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc' })
+const calls = []
+async function agent(prompt, o) {
+  calls.push({ label: o.label, agentType: o.agentType, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^duel:/.test(o.label)) return { approach: o.label.endsWith('D1') ? 'cache' : 'index', summary: 'poc', evidence: ['run.json'], worktrees: [`C:/wt/${o.label.slice(5)}`], branch: 'f/x-poc', localTest: 'PASS' }
+  if (/^debate:/.test(o.label)) return { points: [{ claim: 'faster', evidence: '120 ms vs 300 ms' }], concede: [], rest: true }
+  if (o.label === 'duel-compare' || o.label === 'duel-moderate') return { record: '| correctness | a | b |', unsupported: [], recommend: 'B' }
+  if (o.label === 'duel-ask') return { ok: true, output: 'DECISION d-20261016000000-duel-ab12 pending' }
+  if (o.label === 'duel-verdict') return { ok: true, output: 'ANSWERED d-20261016000000-duel-ab12: B, the index wins' }
+  if (/^build:/.test(o.label)) return rep(o.label.slice(6))
+  if (/^review:/.test(o.label)) return { findings: [] }
+  if (/^ci:/.test(o.label)) return { done: true, mrs: [{ mr: '2', status: 'success' }] }
+  if (/^ship:/.test(o.label)) return { ...rep('D2'), mrs: [{ url: 'https://h/g/api/-/merge_requests/2', repo: 'api', merged: true, mergeState: 'MERGED' }] }
+  return { ok: true, output: '[]', signals: 0, lessonsChanged: [] }
+}
+const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
+const parallel = async (fns) => Promise.all(fns.map((f) => f()))
+const args = { brief: 'C:/b/duel.md', mode: 'duel', duel: { question: 'cache or index?', rounds: 2 }, agents: [{ id: 'D1', items: 'A1', area: 'q' }, { id: 'D2', items: 'A1', area: 'q' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
+run(args, agent, () => {}, () => {}, pipeline, parallel).then((o) => {
+  const deb = calls.filter((c) => /^debate:/.test(c.label))
+  console.log(`duel-pocs:${calls.filter((c) => /^duel:D[12]$/.test(c.label) && c.agentType === 'devy').length === 2 && calls.some((c) => c.label === 'duel-compare' && c.agentType === 'revy')}`)
+  console.log(`duel-debate:${deb.length === 2 && deb.every((c) => /board msg/.test(c.prompt))}`)
+  console.log(`duel-judge:${o.duel && o.duel.winner === 'D2' && calls.some((c) => c.label === 'duel-ask' && /-Recommend B/.test(c.prompt)) && calls.some((c) => c.label === 'duel-close:D1')}`)
+  console.log(`duel-ships-winner:${calls.some((c) => c.label === 'build:D2' && /DUEL WON/.test(c.prompt)) && !calls.some((c) => c.label === 'build:D1') && calls.some((c) => c.label === 'ship:D2')}`)
+  console.log(`crew-only:${calls.every((c) => ['devy', 'revy', 'checky', 'kitty'].includes(c.agentType))}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $wfd2 = [IO.File]::ReadAllText((Join-Path $src 'workflows/buildy.js')) -replace '^export const meta', 'const meta'
+  $jf = Join-Path (Split-Path $k) 'dw-duel.mjs'; [IO.File]::WriteAllText($jf, $jsu.Replace('__BODY__', $wfd2))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only') { Expect "buildy duel: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 5) { $res | Select-Object -First 5 }
   Remove-TestKit $k
 }
 
-# =============================================================== qa: the result rule (finalize), deploy detection
+# === qa: result rule (finalize), deploy detection
 if ($Area -in 'qa', 'all') {
   "== qa"
   $k = New-TestKit qa; $Q = Join-Path $k 'skills/qa-kit/qa.ps1'; $store = Join-Path $k '.state/tracker-none'
@@ -254,7 +289,7 @@ if ($Area -in 'qa', 'all') {
   Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
   Expect 'the comment lists the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '## Untested checks' -and $_.text -match '### C2' }).Count -eq 1)
   Expect 'no task created for untested checks' (-not @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count)
-  # local env item: NOT_TESTED alone keeps the task open (ENV-FIX); -AcceptNotTested (the coordinator's call) -> failedTesting
+  # local item: NOT_TESTED alone keeps the task open; -AcceptNotTested -> failedTesting
   $lo = New-Run 'LO' @(@{ code = 'L1'; task = 'TL'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
   $rj = Get-Content "$lo/run.json" -Raw | ConvertFrom-Json; $rj | Add-Member localEnv 'shop'; $rj | ConvertTo-Json -Depth 8 | Set-Content "$lo/run.json"
   $null = Fin $lo 'L1'; $rl = Rec $lo 'L1'
@@ -281,7 +316,7 @@ if ($Area -in 'qa', 'all') {
   $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
   $null = Fin $h 'H1'; $w = Rec $h 'H1'; $null = Fin $h 'H2'
   Expect 'shared task waits for its sibling, then failedTesting' ($w.waitingFor -contains 'H2' -and (Rec $h 'H2').failedTesting)
-  # deploy detection: a squash-merged deploy MR counts as deployed (canned git-host answers)
+  # deploy detection: a squash-merged deploy MR counts
   $t = @'
 . $args[0]
 $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
@@ -307,8 +342,8 @@ $p = Canned @([pscustomobject]@{ iid = 8; sha = 'S0'; squash_commit_sha = 'L'; m
   $res = @(pwsh -NoProfile -File $f $Q 2>&1)
   Expect 'deployed: a squash-merged deploy MR counts as deployed' (@($res | Where-Object { "$_" -eq 'squash:True' }).Count -eq 1)
   Expect 'deployed: a deploy MR without the commit does not' (@($res | Where-Object { "$_" -eq 'other:True' }).Count -eq 1)
-  # test-and-close: a check still NOT_TESTED gets one stronger retry (models.retest, opus) before the result rule (mocked agents)
-  $wf = [IO.File]::ReadAllText((Join-Path $src 'workflows/test-and-close.js')) -replace '^export const meta', 'const meta'
+  # testy: still NOT_TESTED -> one models.retest (opus) retry first
+  $wf = [IO.File]::ReadAllText((Join-Path $src 'workflows/testy.js')) -replace '^export const meta', 'const meta'
   $js = @'
 const calls = []
 const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
@@ -330,10 +365,9 @@ run(args, agent, () => {}, () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-retry.mjs'; [IO.File]::WriteAllText($jf, $js.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  Expect 'test-and-close: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
-  Expect 'test-and-close: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
-  # test-and-close local item: NOT_TESTED after the stronger retry -> ENV-FIX (decide ask -Kind envfix), wait, retest; never
-  # failedTesting: fixed -> published with the PASS; still NOT_TESTED after 2 cycles -> held for the coordinator, not published
+  Expect 'testy: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
+  Expect 'testy: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
+  # testy local item: NOT_TESTED after retry -> ENV-FIX + retest; fixed: published; 2 cycles: held
   $js3 = @'
 const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
 const mk = (fixWorks) => { const calls = []; return { calls, agent: async (prompt, o) => {
@@ -356,10 +390,9 @@ run(args, a.agent, () => {}, () => {}, null).then(() => run(args, b.agent, () =>
 '@
   $jf = Join-Path (Split-Path $k) 'tc-envfix.mjs'; [IO.File]::WriteAllText($jf, $js3.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "test-and-close local: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "testy local: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
-  # test-and-close merges retries per check: a retry with fewer checks keeps the first run's FAIL; a renamed duplicate id (C5b)
-  # is retried under its guide id (C5) and takes the result
+  # testy retries per check: fewer checks keep the first FAIL; a duplicate (C5b) retries as C5
   $js4 = @'
 const calls = []
 const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
@@ -382,9 +415,9 @@ run(args, agent, () => {}, () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-merge.mjs'; [IO.File]::WriteAllText($jf, $js4.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'keeps-fail', 'guide-id') { Expect "test-and-close retries: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'keeps-fail', 'guide-id') { Expect "testy retries: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
-  # test-and-close select: Prepare builds the run (qa-kit L1), the resume record holds the runDir, an item's own target pins its testers
+  # testy select: Prepare builds the run; resume keeps runDir; item target pins testers
   $js2 = @'
 const calls = []
 async function agent(prompt, o) {
@@ -407,10 +440,10 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-select.mjs'; [IO.File]::WriteAllText($jf, $js2.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'prepare', 'record', 'item-target') { Expect "test-and-close select: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'prepare', 'record', 'item-target') { Expect "testy select: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
-  # ---- deep review batch 2 (qa.ps1 / test-and-close / browser.mjs)
-  # seat: a live holder keeps its claim past 6 h; an unknown holder's old claim is free; still waiting = exit 4 (2 = usage error)
+  # ---- review batch 2: qa.ps1, testy, browser.mjs
+  # seat: live holders keep claims past 6 h; unknown holders' old claims are free; waiting = exit 4
   $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath qa-seats }; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
   $crd = Join-Path (Split-Path $k) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
   $me = Get-Process -Id $PID
@@ -422,26 +455,26 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
   $null = pwsh -NoProfile -File $Q seat acquire -Agent test:C3 -Kind api -KeepFreeGB 100000 -WaitMinutes 0; $c3 = $LASTEXITCODE
   $null = pwsh -NoProfile -File $Q seat release -Agent test:C3
   Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; still waiting exits 4' ($c1 -eq 3 -and $o1 -match 'ALREADY' -and $o2 -notmatch 'ALREADY' -and $c3 -eq 4)
-  # finalize: two siblings of one shared task published at the same time resolve it (both used to wait for each other)
+  # finalize: two siblings of one shared task published together resolve it
   $sr = New-Run 'SR' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') }, @{ code = 'S2'; task = 'TS'; checks = , @('C2', 'PASS') })
   $ps = @('S1', 'S2' | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', "`"$Q`"", 'finalize', '-RunDir', "`"$sr`"", '-Code', $_ -PassThru -WindowStyle Hidden })
   $ps | Wait-Process -Timeout 180
   Expect 'finalize: parallel siblings of a shared task resolve it (one closes, not both waiting)' (((Rec $sr 'S1').closed -or (Rec $sr 'S2').closed) -and (Task 'TS').status -eq 'closed')
-  # finalize -ExpectChecks: a truncated results.json copy is refused (publish throws, -Check exit 1); -Results only with -Check
+  # finalize -ExpectChecks refuses a truncated results.json; -Results needs -Check
   $ex = New-Run 'EX' @(@{ code = 'E1'; task = 'TE'; checks = @(@('C1', 'PASS'), @('C2', 'PASS')) })
   $eo = pwsh -NoProfile -File $Q finalize -RunDir $ex -Code E1 -ExpectChecks 5 2>&1 | Out-String
   $null = pwsh -NoProfile -File $Q finalize -RunDir $ex -Code E1 -Check -ExpectChecks 5 2>&1; $ec = $LASTEXITCODE
   $null = pwsh -NoProfile -File $Q finalize -RunDir $ex -Code E1 -Check -ExpectChecks 2 2>&1; $eok = $LASTEXITCODE
   $er = pwsh -NoProfile -File $Q finalize -RunDir $ex -Code E1 -Results results-retry.json 2>&1 | Out-String
   Expect 'finalize: -ExpectChecks refuses a truncated copy; -Results needs -Check' ($eo -match 'truncated copy' -and -not (Test-Path "$ex/E1/finalize.json") -and $ec -eq 1 -and $eok -eq 0 -and $er -match 'only with -Check')
-  # finalize -Check -FixNames -Results results-retry.json renames only the files that retry cites; results.json is untouched
+  # finalize -FixNames on results-retry.json renames only the files it cites
   New-Item -ItemType Directory -Force "$ex/E1/shots" | Out-Null; 'x' | Set-Content "$ex/E1/shots/retryshot.png"; 'y' | Set-Content "$ex/E1/shots/othershot.png"
   @{ code = 'E1'; checks = @(@{ id = 'C2'; subtask_id = 'TE'; screen = 's'; result = 'PASS'; what_was_done = 'w'; observed = 'o'; evidence = @('retryshot.png') }); findings = @(); setup_changes = @(); data_created = @() } | ConvertTo-Json -Depth 6 | Set-Content "$ex/E1/results-retry.json"
   $before = Get-Content "$ex/E1/results.json" -Raw
   $null = pwsh -NoProfile -File $Q finalize -RunDir $ex -Code E1 -Check -FixNames -Results results-retry.json 2>&1
   Expect 'finalize -Results: a scoped retry renames only its own files' (-not (Test-Path "$ex/E1/shots/retryshot.png") -and (Test-Path "$ex/E1/shots/othershot.png") -and (Get-Content "$ex/E1/results-retry.json" -Raw) -match 'E1-C2_' -and (Get-Content "$ex/E1/results.json" -Raw) -eq $before)
   Remove-Item "$ex/E1/shots" -Recurse -Force; Remove-Item "$ex/E1/results-retry.json" -Force
-  # finalize: a results comment that failed keeps the task as it is and is posted on the next run (then the result rule applies)
+  # finalize: a failed results comment keeps the task, posted next run
   $cf = New-Run 'CF' @(@{ code = 'F1'; task = 'TF'; checks = , @('C1', 'PASS') })
   @{ id = 'TF'; name = 'Task F'; status = 'in test'; parent = $null; list = 'L1'; assignees = @(); description = ''; comments = @() } | ConvertTo-Json | Set-Content (Join-Path $store 'TF.json')
   (Get-Item (Join-Path $store 'TF.json')).IsReadOnly = $true
@@ -449,11 +482,11 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
   (Get-Item (Join-Path $store 'TF.json')).IsReadOnly = $false
   $null = Fin $cf 'F1'; $r2 = Rec $cf 'F1'
   Expect 'finalize: a failed results comment keeps the task open, the next run posts it and closes' ($r1.commentFailed -and -not $r1.closed -and $r2.closed -and @((Task 'TF').comments | Where-Object { $_.text -match 'Test results' }).Count -eq 1)
-  # finalize keeps the caller's working directory (Push-Location / Pop-Location)
+  # finalize keeps the caller's cwd
   $here0 = (Get-Location).Path
   $wd = pwsh -NoProfile -Command "Set-Location '$($env:TEMP)'; . '$Q'; `$null = Invoke-Finalize -RunDir '$ex' -Code E1 -NoTracker *>&1; (Get-Location).Path" | Select-Object -Last 1
   Expect 'finalize: the caller''s directory is restored' ($wd.TrimEnd('\') -eq $env:TEMP.TrimEnd('\') -and (Get-Location).Path -eq $here0)
-  # gdocs (fake gws on PATH): a re-run reuses the first run's Google Doc; a failed share is a warning
+  # gdocs: a re-run reuses the first Google Doc; a failed share warns
   $gb = Join-Path (Split-Path $k) 'fakebin'; New-Item -ItemType Directory -Force $gb | Out-Null; $glog = Join-Path $gb 'gws.log'
   "@echo off`r`necho %* >> `"$glog`"`r`necho %* | findstr /c:`"permissions`" >nul && (echo 403 forbidden & exit /b 1)`r`necho {`"id`":`"D1`",`"webViewLink`":`"https://x.example/D1`"}" | Set-Content (Join-Path $gb 'gws.cmd') -Encoding ascii
   $gd = New-Run 'GD' @(@{ code = 'G1'; task = 'TG'; checks = , @('C1', 'PASS') }, @{ code = 'G2'; task = 'TG'; checks = , @('C2', 'PASS') })
@@ -464,14 +497,14 @@ run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
   $docs2 = @(Get-Content $glog | Where-Object { $_ -match 'google-apps.document' }).Count
   $env:PATH = $oldPath
   Expect 'finalize gdocs: a re-run reuses the report doc; a failed share is a warning' ($docs1 -eq 1 -and $docs2 -eq 1 -and $g1 -match 'sharing \S+ with anyone-with-the-link failed' -and (Rec $gd 'G1').waitingFor -contains 'G2')
-  # retest reusing a code archives the earlier round (its finalize.json made the retest ALREADY)
+  # a retest reusing a code archives the earlier round
   $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') })
   @{ id = 'TZ'; name = 'Task Z'; status = 'open'; parent = $null; list = 'L1'; assignees = @(); description = '### C1 — s'; comments = @() } | ConvertTo-Json | Set-Content (Join-Path $store 'TZ.json')
   $null = Fin $rt 'Z1'
   $ro = pwsh -NoProfile -File $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-String
   $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
   Expect 'retest: a reused code archives finalize.json / results.json, the item is testable again' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
-  # deployed: a git host that did not answer is UNKNOWN, not NOT-DEPLOYED
+  # deployed: an unanswered git host is UNKNOWN, not NOT-DEPLOYED
   $t2 = @'
 . $args[0]
 function Invoke-HostApi { $null }
@@ -486,12 +519,12 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
   $f2 = Join-Path (Split-Path $k) 'deployed-null.ps1'; Set-Content $f2 $t2
   $res = @(pwsh -NoProfile -File $f2 $Q 2>&1)
   Expect 'deployed: no answer from the git host = UNKNOWN; an answer = NOT-DEPLOYED' ((@($res) -contains 'down:UNKNOWN') -and (@($res) -contains 'up:NOT-DEPLOYED'))
-  # api: no answer (connection refused) exits 1, the status still prints; ui with an unknown action exits 2
+  # api: connection refused exits 1, status still prints; ui unknown action exits 2
   @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $k 'skills/qa-kit/targets.local.json')
   $ao = pwsh -NoProfile -File $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
   $null = pwsh -NoProfile -File $Q ui bogus 2>&1; $uc = $LASTEXITCODE
   Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2)
-  # browser.mjs pick(): a clear error for an out-of-range nth and for an element without a box
+  # browser.mjs pick(): clear errors for an out-of-range nth or a boxless element
   $nm = Join-Path $src 'skills/qa-kit/node_modules'
   if (Test-Path (Join-Path $nm 'puppeteer-core')) {
     Copy-Item (Join-Path $src 'skills/qa-kit/browser.mjs') (Join-Path $k 'skills/qa-kit/')
@@ -504,7 +537,7 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
     $bf = Join-Path (Split-Path $k) 'pick-test.mjs'; [IO.File]::WriteAllText($bf, $bjs)
     $res = @(node $bf 2>&1)
     Expect 'browser.mjs pick: clear errors for a bad nth and a hidden element' ((@($res) -contains 'nth:true') -and (@($res) -contains 'box:true'))
-    # shared per-user browser (owner 2026-10-16): one registered port per target+tenant+user, the same on every call; logins are locked
+    # shared browser: one stable port per target+tenant+user; logins locked
     $sjs = "import { sessionPort, sessionKey, withLock } from '$bm'`n" +
       "const a1 = await sessionPort('stg', 'acme', 'admin'), a2 = await sessionPort('stg', 'acme', 'admin'), b = await sessionPort('stg', 'acme', 'viewer'), c = await sessionPort('prod2', 'acme', 'admin')`n" +
       "console.log('port:' + (a1 === a2 && new Set([a1, b, c]).size === 3))`n" +
@@ -514,8 +547,8 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
     $sf = Join-Path (Split-Path $k) 'session-test.mjs'; [IO.File]::WriteAllText($sf, $sjs)
     $res = @(node $sf 2>&1)
     Expect 'browser.mjs: one port per target+tenant+user (stable, never shared), logins serialized by a lock' ((@($res) -contains 'port:true') -and (@($res) -contains 'lock:true') -and (@($res) -contains 'key:true'))
-    # the port is a stable hash of the key (the same after the registry is lost), the registry is durable (.state); go() on an
-    # expired session re-logs in once under the lock and retries; no logout or storage clear; a saved login is never dropped for age
+    # port = key hash (survives a lost registry); an expired session re-logs once under the lock;
+    # no logout or storage clear; saved logins never expire by age
     $reg = Join-Path $k '.state/browser-ports.json'; $p1 = (Get-Content $reg -Raw | ConvertFrom-Json).'stg|acme|admin'; Remove-Item $reg
     $gjs = "import { sessionPort, go } from '$bm'`n" +
       "console.log('stable:' + ((await sessionPort('stg', 'acme', 'admin')) === $p1))`n" +
@@ -528,8 +561,7 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
     Expect 'browser.mjs: port stable from the key, registry durable; go() re-logs in once on an expired session; never logs out' ((@($res) -contains 'stable:true') -and (@($res) -contains 'relogin:true') -and (Test-Path $reg) -and $bsrc -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600' -and $bsrc -match 'MAX_TABS = 8' -and $bsrc -match 'browser\.newPage\(\)')
     [IO.Directory]::Delete((Join-Path $k 'skills/qa-kit/node_modules'))   # the junction only, never its target
   } else { 'SKIP browser.mjs pick (no puppeteer-core installed in skills/qa-kit)' }
-  # test-and-close: web testers attach to the shared per-user Chrome (no ports, no killSession); scoped retries write results-retry.json;
-  # publish passes -ExpectChecks
+  # testy: web testers share the per-user Chrome; scoped retries -> results-retry.json; publish -ExpectChecks
   $js5 = @'
 const ports = []
 const ck = (id, result) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: 'o', evidence: [], attempts: 1 })
@@ -554,9 +586,9 @@ run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, items }, a.agent, ()
 '@
   $jf = Join-Path (Split-Path $k) 'tc-ports.mjs'; [IO.File]::WriteAllText($jf, $js5.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'ports', 'retry-file', 'expect') { Expect "test-and-close: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'ports', 'retry-file', 'expect') { Expect "testy: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
-  # owner 2026-10-16: a FAIL with saved evidence that one re-test does not reproduce stays FAIL (flaky); without evidence it may pass
+  # a FAIL with evidence one re-test misses stays FAIL; without evidence it may pass
   $js6 = @'
 const calls = []
 const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
@@ -577,7 +609,7 @@ run(args, agent, () => {}, () => {}, null).then(() => {
 '@
   $jf = Join-Path (Split-Path $k) 'tc-flaky.mjs'; [IO.File]::WriteAllText($jf, $js6.Replace('__BODY__', $wf))
   $res = @(node $jf 2>&1)
-  foreach ($x in 'flaky', 'no-evidence') { Expect "test-and-close verify: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  foreach ($x in 'flaky', 'no-evidence') { Expect "testy verify: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
   $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
   $rk = Get-Content "$fk/K1/results.json" -Raw | ConvertFrom-Json; $rk.checks[0] | Add-Member flaky $true; $rk | ConvertTo-Json -Depth 8 | Set-Content "$fk/K1/results.json"
@@ -587,7 +619,7 @@ run(args, agent, () => {}, () => {}, null).then(() => {
   Remove-TestKit $k
 }
 
-# =============================================================== orch: track, decisions, deploy batching, lessons
+# === orch: track, decisions, deploy batching, lessons
 if ($Area -in 'orch', 'all') {
   "== orch"
   $k = New-TestKit orch; $O = Join-Path $k 'skills/orchestrate/orch.ps1'; $tf = Join-Path $k '.state/tracking.json'
@@ -601,7 +633,7 @@ if ($Area -in 'orch', 'all') {
   $tasks = (Get-Content $tf -Raw | ConvertFrom-Json -AsHashtable).tasks
   Expect 'track: remove drops the MR and its pair' ((@($tasks.abc123.mrs) -join ',') -eq 'web!1' -and -not @($tasks.abc123.mergeAfter).Count)
   Remove-Item Env:KIT_TRACKER_TYPE
-  # decisions: ask -> pending (contracts note) -> answer -> wait returns the answer
+  # decisions: ask -> pending -> answer -> wait returns it
   $cf = Join-Path (Split-Path $k) 'brief.contracts.md'; '# contracts' | Set-Content $cf
   $out = pwsh -NoProfile -File $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'A: keep','B: recompute' -Recommend A -Contracts $cf | Out-String
   $id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
@@ -610,20 +642,20 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O decide answer -Id $id -Answer 'A, keep it'
   $w = pwsh -NoProfile -File $O decide wait -Id $id -MaxMinutes 1 | Out-String
   Expect 'decide: answer -> wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ }).Count)
-  # ENV-FIX: decide ask -Kind envfix -> pending e-<id> for the coordinator (contracts note), answered "done: ..." -> wait returns it
+  # ENV-FIX: ask -Kind envfix -> pending e-<id>; answer -> wait returns it
   $out = pwsh -NoProfile -File $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
   $eid = if ($out -match 'ENV-FIX (e-\S+) pending') { $Matches[1] }
   $pend = @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ })
   $null = pwsh -NoProfile -File $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
   $w = pwsh -NoProfile -File $O decide wait -Id $eid -MaxMinutes 1 | Out-String
   Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
-  # deep review 2026-10-16: unique decision ids, board check needs -Worktree, --help exits 0 and runs nothing
+  # unique decision ids; board check needs -Worktree; --help runs nothing
   $i1 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A1 -Question 'q1' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
   $i2 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A2 -Question 'q2' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
   $null = pwsh -NoProfile -File $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
-  $hp = pwsh -NoProfile -File (Join-Path $k 'skills/orchestrate/kit.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
-  Expect 'decide ids unique within a second; board check without -Worktree exit 2; kit.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'kit maintenance in one file' -and $hp -notmatch 'setup:')
-  # deploy batching (offline fixture): one batch per env from every tracked task; the window holds a second deploy
+  $hp = pwsh -NoProfile -File (Join-Path $k 'skills/orchestrate/orch.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
+  Expect 'decide ids unique within a second; board check without -Worktree exit 2; orch.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'commands in one file' -and $hp -notmatch 'setup:')
+  # deploy batching: one batch per env; the window holds a second deploy
   $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'
   @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
   $null = New-Item -ItemType Directory -Force (Split-Path $tf); @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } | ConvertTo-Json -Depth 6 | Set-Content $tf
@@ -637,29 +669,29 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!1','api!3' -By tester
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy record: the window holds the next ask (WAIT), the pending request is cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
-  # deploy.trigger owner (the default): merged work is READY and waits for a person's "deploy <env>"; supervise never asks
+  # deploy.trigger owner (default): merged work waits READY for "deploy <env>"; supervise never asks
   @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
   $null = pwsh -NoProfile -File $O deploy request -Mrs 'api!3' -Run w3 -Offline $fx
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy plan: trigger owner (default) -> READY inside the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
   $sup = (Get-Command (Join-Path $k 'skills/orchestrate/orch.ps1')).ScriptBlock.Ast.Extent.Text -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
   Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
-  # crash recovery: the workflow's own args record (FNV-checked) wins over a short typed record; recover prints the resume call
+  # crash recovery: the FNV-checked args record beats a typed one; recover prints the resume
   $ld = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath launches }; New-Item -ItemType Directory -Force $ld | Out-Null
   $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
   $af = Join-Path (Split-Path $k) 'args.json'; [IO.File]::WriteAllText($af, $full)
   $h = & { . $O; Get-KitFnv $full }
-  $bad = pwsh -NoProfile -File $O launch -Self -Script dev-wave.js -Run wave-x -ArgsFile $af -Fnv 00000000 | Out-String; $badCode = $LASTEXITCODE
-  $ok = pwsh -NoProfile -File $O launch -Self -Script dev-wave.js -Run wave-x -ArgsFile $af -Fnv $h | Out-String
+  $bad = pwsh -NoProfile -File $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv 00000000 | Out-String; $badCode = $LASTEXITCODE
+  $ok = pwsh -NoProfile -File $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv $h | Out-String
   Expect 'launch -Self: a wrong hash is MISMATCH (exit 1), the right one RECORDED' ($badCode -eq 1 -and $bad -match 'MISMATCH' -and $ok -match 'RECORDED')
-  $null = pwsh -NoProfile -File $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/dev-wave.js') -ArgsJson '{"brief":"C:/b/wave-x.md"}' 2>&1
+  $null = pwsh -NoProfile -File $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/wave-x.md"}' 2>&1
   $rj = Get-Content (Join-Path $ld 'wf_t1.json') -Raw | ConvertFrom-Json; $rj.holderPid = 999999; $rj | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ld 'wf_t1.json')   # its session is gone
   $l = pwsh -NoProfile -File $O launch -List -Brief | Out-String
   $rc = pwsh -NoProfile -File $O recover | Out-String
-  Expect 'launch -List / recover: the stopped run resumes with the workflow''s exact args' ($l -match 'wf_t1' -and $l -match 'self-dev-wave-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
-  # deep review batch 2 (orch): board TAKEOVER beats under the entry lock; self records per args hash; track promotion
-  # hold, statuses past the current one never re-applied, "All MRs merged" posted once; deploy plan UNKNOWN on a failed check;
-  # supervise step-aside; LESSONS.md lock released on a failed -Bump; top-level --help; MergedTip on a submodule's git dir
+  Expect 'launch -List / recover: the stopped run resumes with the workflow''s exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
+  # orch batch 2: board TAKEOVER under lock; self records per args hash; promotion hold; passed statuses
+  # never re-applied; "All MRs merged" once; deploy plan UNKNOWN on a failed check; supervise step-aside;
+  # LESSONS.md lock freed on a failed -Bump; top-level --help; MergedTip on a submodule
   $bwt = Join-Path (Split-Path $k) 'bwt'
   $j1 = pwsh -NoProfile -File $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
   $j2 = pwsh -NoProfile -File $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
@@ -668,8 +700,8 @@ if ($Area -in 'orch', 'all') {
   Expect 'board: a beat after a TAKEOVER stops (exit 1), no lock left behind' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
   $a2 = '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'; $af2 = Join-Path (Split-Path $k) 'args2.json'; [IO.File]::WriteAllText($af2, $a2)
   $h2 = & { . $O; Get-KitFnv $a2 }
-  $null = pwsh -NoProfile -File $O launch -Self -Script dev-wave.js -Run wave-x -ArgsFile $af2 -Fnv $h2
-  Expect 'launch -Self: two launches with one run name keep two records' (@(Get-ChildItem $ld -Filter 'self-dev-wave-wave-x-*.json').Count -eq 2)
+  $null = pwsh -NoProfile -File $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af2 -Fnv $h2
+  Expect 'launch -Self: two launches with one run name keep two records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
   $rn = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
   Expect 'launch: a brief-named run carries 4 hex of the brief path' ($rn -match '^wave-x-[0-9a-f]{4}$')
   $tt = @'
@@ -706,7 +738,7 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
   @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 } | ConvertTo-Json | Set-Content $lkf
   $sv = pwsh -NoProfile -File $O supervise -Brief -Session me | Out-String
   Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, no .lock left' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-Path "$lkf.lock"))
-  $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Bump 'no such lesson words'; $bc2 = $LASTEXITCODE
+  $null = pwsh -NoProfile -File $O learn -Skill revy -Bump 'no such lesson words'; $bc2 = $LASTEXITCODE
   Expect 'learn -Bump miss: exit 1, LESSONS.md lock released' ($bc2 -eq 1 -and -not (Test-Path (Join-Path $k 'LESSONS.md.lock')))
   $hlp = pwsh -NoProfile -File $O --help | Out-String; $hc2 = $LASTEXITCODE; $null = pwsh -NoProfile -File $O nope; $nc = $LASTEXITCODE
   Expect 'orch.ps1 --help: the header only, exit 0; an unknown verb exit 2' ($hc2 -eq 0 -and $hlp -match '^\s*orch\.ps1: the coordinator' -and $hlp -notmatch '__verb|#>' -and $nc -eq 2)
@@ -717,7 +749,7 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
   $gd = "$(git -C "$sm/super/m" rev-parse --path-format=absolute --git-common-dir)".Trim()
   $mt = & { . $O; $fa = (Get-Command Invoke-Cleanup).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'MergedTip' }, $true) | Select-Object -First 1; . ([scriptblock]::Create($fa.Extent.Text)); $global:seen = @(); function Invoke-HostApi([string]$Path) { $global:seen += $Path; @() }; $null = MergedTip $gd 'f/x'; $global:seen -join ' ' }
   Expect 'cleanup: MergedTip on a submodule''s git dir asks the submodule''s project, not the superproject' ($mt -match 'g%2Fsubrepo' -and $mt -notmatch 'superrepo')
-  # network loss: a tracker write that fails on the network is queued in the outbox, replayed once the network is back
+  # network loss: a failed tracker write queues in the outbox, replays when back
   $nt = @'
 . $args[0]
 $env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type clickup
@@ -731,7 +763,7 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   $nf = Join-Path (Split-Path $k) 'outbox-test.ps1'; Set-Content $nf $nt
   $res = @(pwsh -NoProfile -File $nf (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
   foreach ($x in 'queued', 'sent', 'real') { Expect "outbox: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  # a seat / claim whose session process is gone never blocks (a dead tester's seat once blocked setup -Migrate)
+  # a dead session's seat / claim never blocks
   $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath qa-seats }; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
   @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
   $rd = Join-Path (Split-Path $k) 'runs/S'; New-Item -ItemType Directory -Force $rd | Out-Null
@@ -741,15 +773,16 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   Expect 'seats: a dead holder''s seat is freed, its claim taken over' (-not (Test-Path "$sd/seats/test_D1.json") -and $cl -notmatch 'ALREADY' -and (Get-Content "$sd/claims/S__S1.json" -Raw | ConvertFrom-Json).owner -eq 'w1')
   $out = "Merge branch 'feature/long-branch-name-for-testing' into deploy/staging-longer-name" | python -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') prose --kind merge-commit - | Out-String
   Expect 'prose: a merge commit is its own kind (no conv, no 72-char subject)' ($LASTEXITCODE -eq 0)
-  # lessons: one LESSONS.md, a section per skill; an org term routes a lesson to LESSONS.local.md
+  # lessons: a LESSONS.md section per skill; org terms route to LESSONS.local.md
   @{ orgTerms = @('Acmecorp') } | ConvertTo-Json | Set-Content (Join-Path $k 'skills/dev-kit/kit.local.json')
-  $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Lesson '(2×) a generic lesson'
-  $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Lesson 'an Acmecorp lesson'
-  $r1 = pwsh -NoProfile -File $O learn -Read -Skill tech-audit | Out-String
+  $null = pwsh -NoProfile -File $O learn -Skill revy -Lesson '(2×) a generic lesson'
+  $null = pwsh -NoProfile -File $O learn -Skill revy -Lesson 'an Acmecorp lesson'
+  $r1 = pwsh -NoProfile -File $O learn -Read -Skill revy | Out-String
   Expect 'learn: generic lesson in LESSONS.md, org-term lesson in LESSONS.local.md' ($r1 -match 'a generic lesson' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $k 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $k 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
-  $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Fixed 'a generic lesson'
-  Expect 'learn: -Fixed moves the line to ## History' ((Get-Content (Join-Path $k 'LESSONS.md') -Raw) -match '(?s)## History.*\(fixed in kit\) \(2×\) a generic lesson')
-  # prose: templates.md "Writing standards" measured by kittool.py prose
+  $null = pwsh -NoProfile -File $O learn -Skill revy -Fixed 'a generic lesson'
+  $hi = pwsh -NoProfile -File $O learn -History -Grep 'a generic lesson' | Out-String
+  Expect 'learn: -Fixed retires the line (gone from LESSONS.md, listed by learn -History)' ((Get-Content (Join-Path $k 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) \(2×\) a generic lesson')
+  # prose: templates.md "Writing standards" via kittool.py prose
   $KT = Join-Path $src 'skills/orchestrate/kittool.py'; $pf = Join-Path $k 'mr.md'
   "## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- none`n## Links`n- doc" | Set-Content $pf
   $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-shaped MR body passes' ($LASTEXITCODE -eq 0)
@@ -761,11 +794,11 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   $rj = Join-Path $k 'results.json'; '{"checks":[{"id":"T1","note":"ok"},{"id":"T2","note":"' + ('word ' * 45) + '"}]}' | Set-Content $rj
   $out = python -X utf8 $KT prose --kind result-note $rj | Out-String
   Expect 'prose: a results.json note over 40 words is a finding' ($LASTEXITCODE -eq 1 -and $out -match '45 words')
-  # kittool args: --help prints usage (0) and writes nothing; an unknown flag or a non-kit folder is a usage error (2)
+  # kittool: --help (0) writes nothing; unknown flag or non-kit folder = 2
   Push-Location $k; $null = python -X utf8 $KT lint --help; $h = $LASTEXITCODE; $null = python -X utf8 $KT flow --bogus 2>&1; $u = $LASTEXITCODE
   $null = python -X utf8 $KT lint (Join-Path $k 'skills') 2>&1; $nk = $LASTEXITCODE; Pop-Location
   Expect 'kittool: --help exits 0 and writes nothing; unknown flag / non-kit dir exit 2' ($h -eq 0 -and $u -eq 2 -and $nk -eq 2 -and -not (Test-Path (Join-Path $k '--help')))
-  # kittool: TOML/YAML-escaped descriptions, LF ports, port_deploy keeps user files and drops stale generated ones, PROSE uses the linted kit
+  # kittool: escaped TOML/YAML, LF ports, port_deploy keeps user files, drops stale ones; PROSE on linted kit
   $ktt = @'
 import importlib.util, json, os, sys, tempfile, tomllib
 from pathlib import Path
@@ -803,10 +836,54 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
   $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
   foreach ($x in 'kittool-ports', 'kittool-deploy', 'kittool-misc') { Expect "kittool: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  # crew board: join -Type, msg / inbox; a dispute split after 2 rounds becomes a decision
+  $j1 = pwsh -NoProfile -File $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C:/wt/x7' | Out-String
+  $j2 = pwsh -NoProfile -File $O board join -Type revy -Agent R7 -Run w7 | Out-String
+  $null = pwsh -NoProfile -File $O board msg -Agent R7 -To X7 -Text 'I need a.ts'
+  $ib = pwsh -NoProfile -File $O board inbox -Agent X7 | Out-String
+  $dp = pwsh -NoProfile -File $O board dispute -Agent X7 -With R7 -Item A1 -Claim 'no null check needed' -Evidence 'a.ts:3' -Propose 'drop it' | Out-String
+  $did = if ($dp -match 'DISPUTE (p-\S+) open') { $Matches[1] }
+  $null = pwsh -NoProfile -File $O board dispute -Id $did -Agent R7 -Answer disagree -Evidence 'b.ts:9'
+  $null = pwsh -NoProfile -File $O board dispute -Id $did -Agent X7 -Claim 'b.ts is dead' -Evidence 'git grep: no caller'
+  $esc = pwsh -NoProfile -File $O board dispute -Id $did -Agent R7 -Answer disagree -Evidence 'router.ts:12' | Out-String
+  $dl = pwsh -NoProfile -File $O decide list -Pending | Out-String
+  Expect 'board: join -Type shows the type; msg reaches the inbox; a dispute split after 2 rounds becomes a pending decision' ($j2 -match 'X7\s+devy' -and
+    $ib -match 'from R7: I need a\.ts' -and $did -and $esc -match 'escalated: DECISION d-' -and $dl -match "Dispute $did")
+  # setup -Migrate: renamed workflows' launch records and skills' signals follow the new names
+  $km = New-TestKit mig; $Om = Join-Path $km 'skills/orchestrate/orch.ps1'
+  $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
+  $ldm = & { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath launches -Create }
+  [IO.File]::WriteAllText((Join-Path $ldm 'm1.json'), "{`"script`": `"C:/kit/workflows/$oldWf.js`", `"completed`": `"2026-10-16T10:00:00`"}")
+  Add-Content (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath signals -Create }) "{`"at`":`"2026-10-16T10:00:00`",`"skill`":`"$oldSk`",`"kind`":`"idea`",`"text`":`"x`"}" -Encoding utf8
+  $mg = pwsh -NoProfile -File $Om setup -Migrate 2>&1 | Out-String
+  Expect 'setup -Migrate: renamed workflows and skills follow the manifest (launch records, signals)' ((Get-Content (Join-Path $ldm 'm1.json') -Raw) -match 'workflows/buildy\.js' -and
+    (Get-Content (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath signals }) -Raw) -match '"skill":"revy"')
+  Remove-TestKit $km
+  # kittool new / rename / remove / release: part + registry entry change together, no alias
+  $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
+  foreach ($f in @(git -C $src ls-files) + @('agents/devy.md', 'agents/revy.md', 'agents/checky.md', 'agents/kitty.md')) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
+  git -C $kc init -q; git -C $kc add -A; git -C $kc -c user.name=t -c user.email=t@t commit -q -m 'feat: base'
+  $KT2 = Join-Path $kc 'skills/orchestrate/kittool.py'
+  $n1 = & $py -X utf8 $KT2 new agent zappy --skill dev-kit 2>&1 | Out-String
+  $l1 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
+  $mf = { (Get-Content (Join-Path $kc 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json)._manifest }
+  $okNew = (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).agents.zappy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '\| R\d+ \| TODO\(new\).*`zappy` agent' -and $l1 -match 'TODO-STUB'
+  $r1 = & $py -X utf8 $KT2 rename agent zappy zippy 2>&1 | Out-String
+  $okRen = (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).renamed.zappy -eq 'zippy' -and
+    (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '`zippy` agent' -and (Test-Path (Join-Path $kc '.codex/agents/zippy.toml')) -and -not (Test-Path (Join-Path $kc '.codex/agents/zappy.toml'))
+  $x1 = & $py -X utf8 $KT2 remove agent zippy 2>&1 | Out-String
+  $okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -notmatch 'zippy'
+  # lint: a general-purpose agent() call and an old name are problems
+  $wfp = Join-Path $kc 'workflows/tidy.js'; Add-Content $wfp "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
+  $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
+  $rel = & $py -X utf8 $KT2 release 2>&1 | Out-String
+  Expect "kittool new / rename / remove: registered, renamed everywhere with ports, removed with its row (new $okNew, rename $okRen, remove $okRem)" ($okNew -and $okRen -and $okRem)
+  Expect 'kittool lint: AGENT-TYPE for a general-purpose agent() call, OLD-NAME for a renamed name; release proposes a SemVer tag' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $rel -match '^# v\d+\.\d+\.\d+')
+  Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
   Remove-TestKit $k
 }
 
-# =============================================================== local: LIGHT/HEAVY migration wiring, migrations.py
+# === local: LIGHT/HEAVY migration wiring, devtools.py migrations
 if ($Area -in 'local', 'all') {
   "== local"
   $k = New-TestKit local; $L = Join-Path $k 'skills/local-env/localenv.ps1'
@@ -849,9 +926,9 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
   $f = Join-Path (Split-Path $k) 'revert-test.ps1'; Set-Content $f $t
   $res = @(pwsh -NoProfile -File $f $L (Join-Path (Split-Path $k) 'le') 2>&1)
   foreach ($x in 'light', 'heavy', 'plan', 'revert', 'applied', 'nohook', 'missing-sha') { Expect "local env: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  $out = & $py -X utf8 (Join-Path $k 'skills/local-env/migrations.py') selftest 2>&1 | Out-String
-  Expect 'migrations.py selftest' ($LASTEXITCODE -eq 0)
-  # localenv usage errors exit 2 (unknown verb, unknown env, a missing -Branch); a start-lock timeout throws, never starts unlocked
+  $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') migrations selftest 2>&1 | Out-String
+  Expect 'devtools.py migrations selftest' ($LASTEXITCODE -eq 0)
+  # localenv usage errors exit 2; a start-lock timeout throws, never runs unlocked
   $k2 = New-TestKit le2; $L2 = Join-Path $k2 'skills/local-env/localenv.ps1'
   @{ localEnv = @{ envs = @{ shop = @{ services = @() } } } } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $k2 'skills/dev-kit/kit.local.json')
   $null = pwsh -NoProfile -File $L2 bogus 2>&1; $c1 = $LASTEXITCODE
@@ -859,8 +936,7 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
   $null = pwsh -NoProfile -File $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
   Expect 'localenv: usage errors exit 2; a start-lock timeout throws' ($c1 -eq 2 -and $c2 -eq 2 -and $c3 -eq 2 -and (Get-Content $L2 -Raw) -match 'if \(-not \$got\) \{ \$mx\.Dispose\(\); throw')
   Remove-TestKit $k2
-  # swarm: "-Reverse 8080,8081" as one token gives two ports; lease files written whole; release keeps the lane leased ('__stopping__')
-  # until swarm down finished (mock adb + down)
+  # swarm: "-Reverse 8080,8081" = two ports; whole lease files; release holds the lane ('__stopping__') until down ends
   $swt = @'
 $ErrorActionPreference = 'Stop'
 $tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -887,15 +963,15 @@ $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A')
   $res = @(pwsh -NoProfile -File $sf (Join-Path $src 'skills/android-swarm/swarm.ps1') (Join-Path ([IO.Path]::GetTempPath()) "swarm-test-$PID") 2>&1)
   foreach ($x in 'reverse', 'release') { Expect "swarm: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
   Remove-Item $sf, (Join-Path ([IO.Path]::GetTempPath()) "swarm-test-$PID") -Recurse -Force -ErrorAction SilentlyContinue
-  # migrations: selftest covers file order, IF NOT EXISTS, ALTER ... DROP, upserts, trivial WHERE, non-ASCII paths (run above as 'migrations.py selftest')
+  # migrations selftest (run above): order, IF NOT EXISTS, ALTER DROP, upserts, trivial WHERE, non-ASCII
   Remove-TestKit $k
 }
 
-  # kit-flow issues: keywords in strings / comments / one-line pipelines are no loops; real unbounded loops are (kitflow.py)
+  # kit-flow: loop words in strings / comments / one-liners are no loops; unbounded ones are (kittool.py 2b)
   $fx = @'
 import re, sys, types, collections
 sys.path.insert(0, sys.argv[1])
-import kitflow
+import kittool
 T = {'fp.ps1': '''function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
 function Hint { "== heartbeat: arm ONE: CronCreate (cron */10 * * * *), prompt: run supervise and retry when stale" }
 function Keep($x, $rm) { $x.m = @(@($x.m) | Where-Object { $p = "$_" -split '>', 2; $p[0] -notin $rm }) }
@@ -904,14 +980,17 @@ function Bounded { for ($i = 0; $i -lt 3; $i++) { Start-Sleep 1 }; foreach ($x i
 ''', 'fp.py': 'def port():\n    print("kittool port: GEMINI.md stale or missing; retry later")\n',
      'fp.mjs': 'export function login(page, L) {\n  if (!page.url().includes(L.path)) {   // logged in as someone else: clear and retry\n    return 1\n  }\n}\n',
      'real.ps1': 'function Poll($f) {\n  while ($true) { Start-Sleep 5; if (Test-Path $f) { break } }\n}\n',
-     'real.mjs': 'export async function waitDone(poll) {\n  let done = false\n  while (!done) { done = await poll() }\n}\n'}
+     'real.mjs': 'export async function waitDone(poll) {\n  let done = false\n  while (!done) { done = await poll() }\n}\n',
+     'marked.ps1': 'function Watch($f) {\n  while ($true) { Start-Sleep 5 }   # flow: unbounded on purpose - watch until Ctrl+C\n}\n'}
 k = types.SimpleNamespace(files=list(T), texts=T, dir=sys.argv[2], skills=[], agents={}, workflows={})
-c = collections.Counter(m.group(0) for i in kitflow.model(k, [])['issues'] for m in [re.search(r'(fp|real)\.\w+', i['text'])] if m)
-print(' '.join(f'{f}={c.get(f, 0)}' for f in T))
+d = kittool.model(k, [])
+c = collections.Counter(m.group(0) for i in d['issues'] for m in [re.search(r'(fp|real|marked)\.\w+', i['text'])] if m)
+print(' '.join(f'{f}={c.get(f, 0)}' for f in T), 'deliberate=' + str(sum(1 for i in d['deliberate'] if 'marked.ps1' in i['text'])))
 '@
-  $fxf = Join-Path ([IO.Path]::GetTempPath()) "kitflow-fixture-$PID.py"; Set-Content $fxf $fx -Encoding utf8
+  $fxf = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $fxf $fx -Encoding utf8
   $res = "$(& $py -X utf8 $fxf (Join-Path $src 'skills/orchestrate') ([IO.Path]::GetTempPath()) 2>&1)"
   Expect "kit-flow: no false loop issues ($res)" ($res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0')
   Expect 'kit-flow: real unbounded loops flagged once each' ($res -match 'real\.ps1=1 real\.mjs=1')
+  Expect 'kit-flow: a loop marked `flow: <reason>` is listed as deliberate, not counted' ($res -match 'marked\.ps1=0' -and $res -match 'deliberate=1')
 
 "$script:fails failure(s)"; exit [int]($script:fails -gt 0)
