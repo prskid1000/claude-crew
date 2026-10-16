@@ -353,7 +353,7 @@ refuses unfilled ones); then `port`, lint 0, tests.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 70000 · mjs 8000 · json 6600 · tests 35750 · total 396000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 35750 · total 396000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
   Over a budget: trim first (dense prose, dedupe, never golf that hurts reading); only when trimming cannot make room,
   `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any
