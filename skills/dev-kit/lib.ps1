@@ -1,4 +1,4 @@
-﻿<#
+<#
 Kit library: config, paths, OS, tracker + git-host adapters; every kit script dot-sources it once:
   . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: dev-kit/kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
@@ -222,6 +222,60 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 }
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
+# ---- budget (README "Configuration" budget): per agent = the running tool's DEFAULT compaction point; the kit writes no compaction setting
+function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
+  $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).budget
+  $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
+  $envs = @(Get-ChildItem env: | ForEach-Object Name)
+  if (-not $Tool) { $Tool = if ($env:KIT_TOOL) { $env:KIT_TOOL } elseif ($env:CLAUDECODE) { 'claude' } elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' } }
+  $n = 'unknown'; $tok = 0; $src = ''
+  if ($Tool -eq 'claude') {
+    if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }
+    $m = $Model.ToLower(); $big = $m -match '\[1m\]|fable|^(opus|sonnet|haiku|inherit|default)?$'
+    # 1M by default: Opus 4.7+, Sonnet 5+, Haiku 5.5+, Fable, the bare aliases; older ids 200k unless [1m]
+    if ($m -match '(opus|sonnet|haiku)-(\d+)(?:-(\d)(?!\d))?') { $big = $big -or ([double]$Matches[2] + [double]"0$($Matches[3])" / 10) -ge @{ opus = 4.7; sonnet = 5; haiku = 5.5 }[$Matches[1]] }
+    if ($big -or $m -match 'claude|opus|sonnet|haiku') {
+      if ($env:CLAUDE_CODE_DISABLE_1M_CONTEXT -eq '1') { $big = $false }
+      $n = if ($big) { 'claude-1m' } else { 'claude-200k' }; $tok = [int](& $row $n).tokens
+      if ($env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $tok = [int]$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW; $src = 'env CLAUDE_CODE_AUTO_COMPACT_WINDOW' }
+      if ($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $tok = [math]::Min($tok, [int]($(if ($big) { 1e6 } else { 2e5 }) * [double]$env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100)); $src = 'env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' }
+    }
+  } elseif ($Tool -eq 'codex') {
+    $ch = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
+    $tt = "$(Get-Content (Join-Path $ch 'config.toml') -Raw -ErrorAction SilentlyContinue)"
+    if (-not $Model -and $tt -match '(?m)^\s*model\s*=\s*"([^"]+)"') { $Model = $Matches[1] }
+    $mc = try { @((Get-Content (Join-Path $ch 'models_cache.json') -Raw | ConvertFrom-Json).models | Where-Object slug -eq $Model)[0] } catch { $null }
+    $n = 'codex'
+    if ($tt -match '(?m)^\s*model_auto_compact_token_limit\s*=\s*(\d+)') { $tok = [int]$Matches[1]; $src = 'config.toml model_auto_compact_token_limit' }
+    elseif ($mc.auto_compact_token_limit) { $tok = [int]$mc.auto_compact_token_limit; $src = 'models_cache.json auto_compact_token_limit' }
+    else {
+      $w = if ($mc.context_window) { [double]$mc.context_window * $(if ($mc.effective_context_window_percent) { [double]$mc.effective_context_window_percent } else { 100 }) / 100 } else { $Window }
+      $tok = [int]($w * [double](& $row $n).fraction)
+    }
+  } elseif ($Tool -eq 'antigravity' -and $Window) { $n = 'antigravity'; $tok = [int]($Window * [double](& $row $n).fraction) }
+  if (-not $tok) { $n = 'unknown'; $tok = [int](& $row $n).tokens }
+  $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
+  [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
+}
+# free-RAM samples (gate waits + supervise) for the report's mean
+function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
+# spend = the agent's context now: the last usage of its transcript (input + cache + output), what the tool compacts on
+function Get-KitSpend([string]$File) {
+  if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
+  $t = @(Get-Content -LiteralPath $File -Tail 300)
+  for ($i = $t.Count - 1; $i -ge 0; $i--) {
+    if ($t[$i] -notmatch '"usage"') { continue }
+    $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.message.usage; if (-not $u) { continue }
+    return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
+  }
+}
+# the transcript holding a marker (board SESSION token, launch -Self line); this session first
+function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl') {
+  $root = if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
+  foreach ($f in @(Get-ChildItem $root -Recurse -Filter $Filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) } | Sort-Object { -not $sid -or $_.FullName -notmatch [regex]::Escape($sid) }, { -$_.LastWriteTime.Ticks })) {
+    if (Select-String -LiteralPath $f.FullName -SimpleMatch $Marker -Quiet) { return $f.FullName }
+  }
+}
 
 # holder = first non-shell ancestor + start time (pid reuse); Test-KitHolder: $true alive, $false gone, $null unknown
 $script:KitShells = '^(pwsh|powershell|bash|sh|zsh|dash|fish|cmd|conhost|env|timeout|sudo|python\d*(\.\d+)?|py)$'

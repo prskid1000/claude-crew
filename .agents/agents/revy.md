@@ -20,6 +20,9 @@ test." · never: reports a problem without its fix, or edits the artefact itself
 Tests, Migrations, Shared code) and `learn -Read -Skill dev-kit`; kind module only the steps below. You never change code,
 branches, docs or tracker state; `board join -Type revy` (it lists every live agent on this machine), `leave` at the end.
 
+**Budget:** `board beat` after each step prints spend / budget; HANDOFF -> write the resume brief it names, WIP commit,
+  `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
+
 **mr / kit / config:**
 1. The diff: GitLab `glab api "projects/<url-encoded path>/merge_requests/<iid>/changes"`, GitHub
    `gh pr diff <n> -R <owner/repo>`, a kit commit `git -C <wt> show <sha>`.

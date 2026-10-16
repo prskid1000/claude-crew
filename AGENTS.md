@@ -25,6 +25,9 @@ import. Edit only here. Claude Code-only mechanics (hooks, the Workflow and Skil
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc -> all pass: closed · own check failed or
   incomplete: failedTesting (back to dev) · a new defect: one [Bug] task under the original ask.
+- **Budget** (both flows): an agent's budget = its tool's default compaction point; at 80% it hands off (resume brief, fresh
+  agent). A run's cap = its planned agents' budgets: over it at launch = refused with the split; at 80% nothing new starts,
+  the rest returns as `next` (README "Configuration" `budget`).
 - **Decision pauses**: a change to existing behaviour a user sees (output, screens, data, rules applied) that the task did
   not ask for, or several valid paths -> the agent asks; internal logic changes with the same user-visible behaviour need no
   ask. It asks (`orch.ps1 decide ask`), that item waits for the owner's answer, the rest continue.

@@ -69,24 +69,24 @@ const RESULT = {
 const LENSES = [
   { key: 'dev', focus: 'dev agents: worktrees, builds/tests, commits/hooks, migrations, MR/merge flow, guard blocks, review findings from /buildy' },
   { key: 'qa', focus: 'QA and the local test loop: verdict quality (notes reclassified, verify "not reproduced" rate), failedTesting and NOT_TESTED causes, local-test rounds, stronger fix rounds, ENV-FIX requests (local env: what the agents could not unblock themselves) and blocked items, flaky selectors/UI gotchas, evidence problems, unpublished items' },
-  { key: 'speed', focus: 'speed and resources: gate waits and build durations per kind, memory estimates vs peaks, slow steps, permission prompts, things agents repeat that a script should do' },
+  { key: 'speed', focus: 'speed and resources: gate waits and build durations per kind, memory estimates vs peaks, slow steps, permission prompts, things agents repeat that a script should do; budget: runs stopped at 80% of their cap and agent handoffs (outcome.budget, signals): what grew them, how to split or trim' },
   { key: 'docs', focus: 'documents and evidence: report/guide/MR/comment formats, evidence naming warnings, templates agents ignored or misused, unclear instructions in SKILL.md/agents' },
 ]
 
 phase('Analyse')
 // launch record (orch.ps1 launch -Self, FNV-1a): a resume needs the args byte-exact
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
-const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
+const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`, BUD = { cap: 0, stopAt: 0.8 }   // BUDGET (README "Configuration")
 for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
   const r = await agent(`STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${AF} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${AJ}
 ARGS>>>
-2. Run in PowerShell: & ${C}/skills/orchestrate/orch.ps1 launch -Self -Script tidy.js -Run 'tidy' -ArgsFile '${AF}' -Fnv ${fnv(AJ)}
-Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`,
+2. Run in PowerShell: & ${C}/skills/orchestrate/orch.ps1 launch -Self -Script tidy.js -Run 'tidy' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:3,kitty/${(A.models || {}).analyse || ''}:4,kitty/${(A.models || {}).apply || ''}:1'
+Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`,
     { label, phase: 'Analyse', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
-  if (r && r.ok) break
+  if (r && r.ok) { try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(r.output || '') || [])[1])) } catch (e) {} break }
 }
 await agent(`STEP: write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')}.start (create the folder), nothing else. Return ok=true.`,
   { label: 'stamp-start', phase: 'Analyse', agentType: 'kitty', model: 'haiku', effort: 'low' })
@@ -116,6 +116,11 @@ if (!all.length) {
 }
 
 phase('Apply')
+if (BUD.cap) {   // the last new agent: not past the stop line
+  const m = await agent(`STEP: run exactly this in PowerShell and return ok=true with its output line:${PATHS}\n& ${C}/skills/orchestrate/orch.ps1 budget -Run 'tidy' -Json`, { label: 'budget', phase: 'Apply', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model: 'haiku', effort: 'low' })
+  const sp = (() => { try { return JSON.parse(m.output).spent } catch (e) { return 0 } })()
+  if (sp >= BUD.stopAt * BUD.cap) { log(`BUDGET: spent ${sp} of the cap ${BUD.cap}: apply not started`); return { applied: [], proposedForApproval: all.map((p) => p.text), rejected: [], report: 'budget stop before apply', next: { scriptPath: `${C}/workflows/tidy.js`, args: A } } }
+}
 const res = await agent(`Kind retro (apply): you maintain the kit (${C}). Apply this retrospective.${PATHS}
 
 Proposals from 4 analysts (may overlap or conflict), to APPLY now:

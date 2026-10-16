@@ -12,37 +12,20 @@ export const meta = {
 }
 
 /* args, one of:
-1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (logical, default ['inTest']),
-   lists?, tasks?, exclude?, mine? }, target: '<targets.local.json name | kit.local.json qa.targets group>', kitDir, name?,
-   mandate? }
-2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an EXTRA worker for queued items) }
-3. Full run.json (also written to <runDir>/run.json for qa.ps1 finalize) + runDir:
-{
-  runDir: '<runtime>/work/qa-runs/2026-10-01-epic-x', // <runtime> = <kitDir>/.runtime
-  kitDir: 'C:/work/.claude', // absolute (default '.claude' under workspace root)
-  title: 'Product X epic', // doc names and bug titles
-  target: 'my-staging', // a targets.local.json name
-  tester: 'Full Name',
-  mandate: ['<the user request, verbatim>', '...'], // stops agents declining
-  context: '<deployed builds, accounts, test data, changed screens>',
-  contextFiles: ['C:/.../product-rules.md'], // optional; testers read them first
-  envLines: ['Web: ...', 'API: ...'], // shown in the report
-  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },
-    // parent: the ask of parentless tasks
-  outOfScope: ['<channel>'], // default kit.local.json qa.outOfScope
-  webParallel: 5, apiParallel: 5,
-  verify: true, // false: no re-test of FAILs (args or run.json)
-  learn: true, // 'auto': only after failures / NOT_TESTED / retries / errors
-  lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: '' } ],
-  localEnv: '<optional: the run is on this local env (kit.local.json localEnv.envs)>', envFixCycles: 2, envFixWaitMinutes: 300,
-  // local items (it.localEnv || localEnv): see ENV-FIX
-  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional; default run.json target>', localEnv: '<optional>',
-    subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
-    retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
-    model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high', // optional, TEST step (see modelFor)
-    verifyModel: 'opus' } ], // optional, VERIFY step (default models.verify)
-  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' }, // '' = session default (retest '' = off)
-  // skipClose: test + verify only; the lead publishes (finalize -Code); items sharing a task need none
+1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
+   target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
+2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
+3. Full run.json (+ runDir; also written to <runDir>/run.json for qa.ps1 finalize):
+{ runDir: '<runtime>/work/qa-runs/<date>-<name>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
+  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
+  envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
+  outOfScope: ['<channel>'] (default qa.outOfScope), webParallel: 5, apiParallel: 5, verify: true (false: no FAIL re-test),
+  learn: true | 'auto', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: '' }],
+  localEnv: '<local env of the run>', envFixCycles: 2, envFixWaitMinutes: 300,
+  items: [{ code: 'F2', title, guideFile, lane: 'web'|'api'|'app', target?, localEnv?, subtasks: [{ id, name, mrs: '!12, !34' }],
+    retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
+    model?, effort? (TEST step), verifyModel? }],
+  models: { prepare: 'sonnet', verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' } ('' = session default; retest '' = off)
 } */
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
@@ -52,23 +35,23 @@ const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
 // launch record first (orch.ps1 launch -Self, FNV-1a); runDir rides along once known
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : `select-${R.name || R.target || 'run'}`) + (R.instance ? `-${R.instance}` : '')
-async function recordArgs(run, runDir, phaseName) {
+async function recordArgs(run, runDir, phaseName, plan = '') {
   const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
   const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
 ARGS>>>
-2. Run in PowerShell (pwsh 7): & ${K0}/skills/orchestrate/orch.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}
-Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
+2. Run in PowerShell (pwsh 7): & ${K0}/skills/orchestrate/orch.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
+Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
   for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
     const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
-    if (r && r.ok) return true
+    if (r && r.ok) return r.output || ''
   }
   log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
-  return false
+  return ''
 }
-await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')
+if (R.select && !R.runDir) await recordArgs(RUN0, '', 'Prepare')   // the run is recorded again with its plan once its items are known
 // PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
   phase('Prepare')
@@ -82,13 +65,12 @@ Follow ${K0}/skills/qa-kit/SKILL.md "Lead steps" L1 (selection) with this job (J
 Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,
     { label: 'prepare', phase: 'Prepare', schema: { type: 'object', properties: { runDir: { type: 'string' }, items: { type: 'number' },
       left: { type: 'array', items: { type: 'object' } },
-      summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] }, agentType: 'checky' })
+      summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] }, agentType: 'checky', model: (R.models || {}).prepare || 'sonnet' })
   if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (qa-kit L1), launch with { runDir }')
   for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
   log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
   if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
   R = { ...rest, runDir: prep.runDir }
-  await recordArgs(RUN0, prep.runDir, 'Prepare')   // same args + fnv, now with runDir
 }
 if (R.runDir && !Array.isArray(R.items)) {
   // validate: small models may truncate run.json
@@ -180,6 +162,7 @@ const CHECKS_SCHEMA = {
     findings: { type: 'array', items: { type: 'string' } },
     setup_changes: { type: 'array', items: { type: 'string' } },
     data_created: { type: 'array', items: { type: 'string' } },
+    handoff: { type: 'string', description: 'only at your budget handoff (board beat printed HANDOFF): the resume brief path (checks done, checks left); a fresh tester continues' },
   },
   required: ['code', 'checks', 'findings', 'setup_changes', 'data_created'],
 }
@@ -216,41 +199,26 @@ function localBlock(it) {
   const e = LOCALENV(it)
   if (!e) return ''
   return `
-LOCAL ENV "${e}" — we own its data, config, flags, services and migrations: NOT_TESTED is not a final verdict here. Unblock it yourself:
-- data: the env API (qa.ps1 api), the baseline fixtures first (verify by id), create only what is missing; config / flags / env vars:
-  ${KIT}/.state/localenv/${e}.env or the app's settings API (restore after; setup_changes); services: & ${KIT}/skills/local-env/localenv.ps1
-  status|use|logs|events -Env ${e}; not deployed: localenv.ps1 deploy -Env ${e} -Dir <a worktree of the MR branch> (dev.ps1 wt new);
-  phone-only: a lane with the local-env APK (android-swarm); a missing integration: wire it locally or point the local service at a
-  stub or the test env's service (say so in the lease note and setup_changes).
-- Only what kitty or the coordinator may do (localenv.ps1 up/down/refresh/drop, shared DB repair): NOT_TESTED with cause and env_fix =
-  the exact fix; the workflow raises ENV-FIX (kitty fixes it) and retests. Channels in OUT_OF_SCOPE stay OUT_OF_SCOPE.`
+LOCAL ENV "${e}": we own its data, config, flags, services and migrations, so NOT_TESTED is not final; unblock it yourself: data via
+  qa.ps1 api (baseline fixtures first, create only what is missing); config / flags: ${KIT}/.state/localenv/${e}.env or the settings
+  API (restore after; setup_changes); services: & ${KIT}/skills/local-env/localenv.ps1 status|use|logs|events -Env ${e}; not deployed:
+  localenv.ps1 deploy -Env ${e} -Dir <a worktree of the MR branch>; phone-only: a lane with the local-env APK; a missing integration:
+  wire it or point it at a stub / the test env's service (say so). Only kitty / the coordinator (localenv.ps1 up/down/refresh/drop,
+  shared DB repair): NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests. OUT_OF_SCOPE stays.`
 }
 const COMMON = (it) => `${PATHS}
-WHY YOU ARE DOING THIS
-${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
-Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
-
-AGENT BOARD — join first: & ${ORCH} board join -Type checky -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <your phone serial (app lanes)>; stop on CLAIM/DUPLICATE; leave when done.
-
-RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED${LOCALENV(it) ? ' only after LOCAL ENV below' : ', which sends the task back to its developer'}; evidence names
-<CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
-"QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress. observed <= 40 words (the report caps at 900 words).
-OUT_OF_SCOPE (not NOT_TESTED): a step that only exercises a channel agent QA never tests here: ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope (none listed = none)`}. Name the channel in observed; still test the in-app part.
-
-ENVIRONMENT AND CONTEXT
-- Target "${tgt(it) || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there). ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}: a local run never calls a shared
-  environment. No load, stress or parallel request floods on a shared environment unless a check of the guide asks for it.
+WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
+BOARD first: & ${ORCH} board join -Type checky -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
+RULES: ${QA}/SKILL.md tester steps (any defect is FAIL with defect own|new, never a note; not deployed = NOT_TESTED${LOCALENV(it) ? ' only after LOCAL ENV below' : ' (back to its developer)'};
+evidence <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots|evidence, only files that exist; shared envs: "QA-<CODE>" data, settings
+restored and listed in setup_changes). ~10 min per check, scripts < 2 min with progress, observed <= 40 words.
+OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part.
+TARGET "${tgt(it) || '(default)'}" (${QA}/targets.local.json; passwords only there), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}; no load or floods on a shared env unless a check asks.
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
-- LEAD NOTES: ${R.runDir}/lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
-  you cannot be messaged directly. Re-read it before each check and whenever you are blocked; if you asked the lead something,
-  continue with other checks and look there again before marking anything NOT_TESTED for that reason.
-
-TOOLS (details: SKILL.md step 3)
-- API: & '${Q}' api -Target ${tgt(it) || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
-- Code: read the CURRENT code on the deployed branch; a step a later change made obsolete -> test the same intent, PASS_WITH_NOTE.
-- Tracker: & '${KIT}/skills/dev-kit/dev.ps1' tracker view|comments <id> (never a tracker CLI directly).`
-
+LEAD NOTES: ${R.runDir}/lead-notes.md (the lead answers there; you cannot be messaged): re-read before each check and before any NOT_TESTED.
+TOOLS: API & '${Q}' api -Target ${tgt(it) || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>];
+code: the CURRENT deployed branch (a step a later change made obsolete -> same intent, PASS_WITH_NOTE); tracker: & '${KIT}/skills/dev-kit/dev.ps1' tracker view|comments <id>.`
 const WEB = (ports, it) => `
 BROWSER (web)
 - Your own headless Chrome via ${QA}/browser.mjs (read its header); no chrome-devtools MCP, no emulators/adb. Scripts in <outDir>/scripts:
@@ -322,23 +290,19 @@ returning early with untested checks will be rejected and re-run.`
 function auditPrompt(it, res) {
   const notes = res.checks.filter((c) => c.result === 'PASS_WITH_NOTE').map((c) => `- ${c.id} (${c.screen}): ${c.observed}`).join('\n')
   const finds = (res.findings || []).map((f, i) => `- F${i + 1}: ${f}`).join('\n')
-  return `You are checky (role verify: the note audit). Testers sometimes hide real defects in notes; catch them. Package ${it.code} (${it.title}).
-- PASS_WITH_NOTE is legitimate ONLY for (a) guide text out of date because later intended work changed the flow and the intent holds,
-  or (b) a purely cosmetic difference while behaviour is correct.
-- A DEFECT is: 5xx or unexpected 4xx; crash; stuck/blocking flow; data changed wrongly or not saved; wrong records affected; broken
-  navigation; a missing screen the feature needs — whether or not it's in the guide's scope.
-- NOT defects: test-data/setup notes, tester mistakes, intended product decisions, platform limits, config missing on the test environment,
-  and guide-conditional checks (the guide itself says the step may not apply: "if the tenant has X", "conditional step") whose condition
-  does not hold on the target - unless the condition being false is itself the defect.
-- NOT EXERCISED (third class, neither defect nor pass): a part of the check's Expected the tester never exercised (a second theme not
-  rendered, a timeout/error path not triggered, verified through the API only because the UI path was not reached). Return it with
-  defect=false, notExercised=true, part=<that part>, and unreachable=true when the screen/endpoint that part needs is missing or
-  unreachable. The workflow turns it into its own check (<id>n): NOT_TESTED, or FAIL when unreachable. Never leave it inside a note.
-${R.tracker && R.tracker.parent ? `- Skip issues already tracked by an existing [Bug] task under ${R.tracker.parent} (& '${KIT}/skills/dev-kit/dev.ps1' tracker view ${R.tracker.parent} lists its subtasks).` : ''}
-- Return {id, defect, reason, own} (own = true when the defect is in this task's expected behaviour; false = outside what the task changed) plus notExercised/part/unreachable when it applies, per note check; defects that sit only in findings -> newDefects (screen, what_was_done, observed with the exact
-  failing call/message, evidence file names that exist in ${outDir(it)}/shots or evidence).
-- You may read evidence, code, or call the API read-only (GET). Change nothing.
-
+  return `You are checky (role verify: the note audit): catch real defects hidden in notes. Package ${it.code} (${it.title}).
+- PASS_WITH_NOTE is legitimate ONLY for (a) guide text outdated by later intended work while the intent holds, or (b) a purely
+  cosmetic difference with correct behaviour.
+- DEFECT: 5xx or unexpected 4xx, crash, stuck flow, data changed wrongly or not saved, wrong records, broken navigation, a missing
+  screen the feature needs, in the guide's scope or not. NOT defects: test-data/setup notes, tester mistakes, intended decisions,
+  platform limits, config missing on the target, guide-conditional checks whose condition does not hold (unless that is the defect).
+- NOT EXERCISED (neither defect nor pass): a part of Expected never exercised (a path not triggered, API-only because the UI was not
+  reached): defect=false, notExercised=true, part, unreachable=true when the needed screen/endpoint is missing; it becomes its own
+  check (<id>n: NOT_TESTED, FAIL when unreachable). Never leave it inside a note.
+${R.tracker && R.tracker.parent ? `- Skip issues already tracked by a [Bug] task under ${R.tracker.parent} (& '${KIT}/skills/dev-kit/dev.ps1' tracker view ${R.tracker.parent}).` : ''}
+- Return per note check {id, defect, reason, own (true = this task's expected behaviour)} plus notExercised/part/unreachable;
+  defects only in findings -> newDefects (screen, what_was_done, observed with the failing call, evidence names in ${outDir(it)}/shots|evidence).
+- Read evidence and code, GET-only API calls; change nothing.
 PASS_WITH_NOTE checks:
 ${notes || '(none)'}
 
@@ -364,15 +328,15 @@ ${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_d
 ${seatBlock(it, `verify:${it.code}`)}
 ${COMMON(it)}
 ${laneBlock(it, ports, L)}
-Return one verdict per check id, with attempts (how many times you ran it) and outcome:
-- confirmed: the behaviour really differs from Expected (confirmed=true).
-- refuted: not reproduced UNDER the first tester's conditions above (a FAIL with saved evidence then stays FAIL, marked flaky: save your _verify evidence too) (same login/session type, same time window - e.g. right after a
-  restart, deploy or idle period - and at least as many attempts; one clean run never refutes a FAIL) (confirmed=false).
-- inconclusive: you could not recreate those conditions; say which one in observed (confirmed=true: the FAIL stays).
-Every verdict needs basis: the _verify evidence files you saved, the log window you read, or the code path (file:line). A refuted
-verdict with no _verify evidence and no code basis is counted as inconclusive. Read the CURRENT code of the failing path; an
-intermittent server failure: read the server log / observability for the first tester's UTC window before you re-test. Keep or
-correct each FAIL's defect class (own / new).`
+Per check id one verdict with attempts and outcome:
+- confirmed: really differs from Expected (confirmed=true).
+- refuted: not reproduced UNDER the first tester's conditions (same login/session type, same window, e.g. right after a restart,
+  deploy or idle; at least as many attempts; one clean run never refutes); a FAIL with saved evidence then stays FAIL, marked
+  flaky: save your _verify evidence too (confirmed=false).
+- inconclusive: those conditions could not be recreated; say which in observed (confirmed=true: the FAIL stays).
+basis = your _verify evidence, the log window read, or the code path (file:line); a refutation without _verify evidence or code
+basis counts as inconclusive. Read the CURRENT code of the failing path; intermittent server failures: read the server log for the
+first tester's UTC window first. Keep or correct each FAIL's defect class (own / new).`
 }
 
 function finalPrompt(it, res) {
@@ -411,6 +375,11 @@ async function runItem(it, idx, L) {
   let retried = false
   let res = await agent(testPrompt(it, ports, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
   if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
+  for (let h = 0; res && res.handoff && h < 3; h++) {   // budget handoff -> a fresh tester
+    log(`${it.code}: HANDOFF at its budget (${res.handoff}): a fresh tester continues`)
+    const more = await agent(testPrompt({ ...it, scoped: true }, vports, L) + `\nHANDOFF: a previous tester reached its budget; read its resume brief ${res.handoff} first and test only the checks it lists as left.`, { label: `handoff:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
+    res = more && !more.skipped ? { ...res, handoff: more.handoff || '', checks: [...res.checks.filter((c) => !more.checks.some((m) => m.id === c.id)), ...more.checks], findings: [...new Set([...(res.findings || []), ...(more.findings || [])])] } : { ...res, handoff: '' }
+  }
   if (!res || ntShare(res) > 0.25) {
     log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
     const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
@@ -578,6 +547,7 @@ async function pool(list, size, offset, laneOf) {
   const worker = async (w) => {
     while (next < list.length) {
       const k = next++
+      if (!(await gate('Test'))) { STOPPED.push(list[k].code); continue }
       out[k] = await runItem(list[k], offset + k, laneOf ? laneOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
     }
     // app lane done: return the lease (phone shuts down unless someone waits)
@@ -592,6 +562,29 @@ async function pool(list, size, offset, laneOf) {
   return out
 }
 
+// BUDGET (README "Configuration" budget): cap = the plan's budgets; over it -> refused + split; at stopAt no new item, rest -> next
+const BATCH = R.batch > 0 && R.items.length > R.batch ? R.batch : 0
+const LATER = BATCH ? R.items.slice(BATCH).map((it) => it.code) : [], STOPPED = []
+if (BATCH) R = { ...R, items: R.items.slice(0, BATCH) }
+const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
+const PLAN = [...R.items.map((it) => `checky/${modelFor(it).model || ''}:1,checky/${MODELS.verify}:1,step/${MODELS.close}:1,item:1`), `step/haiku:3,kitty/${MODELS.learn}:1`].join(',')
+try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(await recordArgs(RUN0, R.runDir, 'Test', PLAN)) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
+const nextCall = (codes) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, only: codes } })
+if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
+  const batch = Math.max(1, Math.floor(R.items.length * BUD.stopAt * BUD.cap / BUD.estimate))
+  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: test ${batch} item(s) per run (args.batch)`)
+  return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: { scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, batch } } }
+}
+async function gate(phaseName) {   // before a new item; measures only near the stop line
+  if (BUD.stop || !BUD.cap) return !BUD.stop
+  BUD.guess += BUD.unit
+  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
+  BUD.m = BUD.m || agent(`STEP: run exactly this in PowerShell and return ok=true with its output line:${PATHS}\n& ${ORCH} budget -Run '${RUN0}' -Json`,
+    { label: 'budget', phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' }).catch(() => null).then((r) => { try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {} BUD.m = null })
+  await BUD.m
+  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running items finish, no new one starts; the rest -> next`) }
+  return !BUD.stop
+}
 const web = R.items.filter((it) => (it.lane || 'web') === 'web')
 const api = R.items.filter((it) => it.lane === 'api')
 const app = R.items.filter((it) => it.lane === 'app')
@@ -629,7 +622,8 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // LEARN 'auto': only after something eventful; a clean run gets the cleanup
 phase('Learn')
 // every finished run ends with a retro (orchestrate E10)
-const retroDue = (results) => { log('RETRO DUE: run /tidy (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/tidy (orchestrate E10)' } }
+const retroDue = (results) => { log('RETRO DUE: run /tidy (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true,
+  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop }, ...(STOPPED.length + LATER.length ? { next: nextCall([...STOPPED, ...LATER]) } : {}) } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`STEP: run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
@@ -641,7 +635,7 @@ const learned = await agent(`Kind retro (learn step): you maintain the kit's mem
 Outcome (JSON):
 ${JSON.stringify(all).slice(0, 60000)}
 
-1. One signal per notable event (failures, retries, NOT_TESTED causes, audit reclassifications / not-exercised splits, verify "not reproduced" or "inconclusive", anything that
+1. One signal per notable event (failures, retries, budget stops / handoffs, NOT_TESTED causes, audit reclassifications / not-exercised splits, verify "not reproduced" or "inconclusive", anything that
    cost time or worked unusually well):
    & ${ORCH} learn -Skill <qa-kit|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. & ${ORCH} learn -Read -Skill qa-kit and the recent signals (learn -Show -Last 200). A pattern seen >= 2 times that is not a lesson yet:

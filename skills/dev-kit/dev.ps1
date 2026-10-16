@@ -666,7 +666,7 @@ while ((Get-Date) -lt $deadline) {
       elseif ($mode -eq 'small') { $myTurn = $true; $smallFill = $true; Write-Host "[gate] small build (~$([int]$medianSec) s, $need GB) backfilling ahead of $($head.owner) (waited $([int]$headWaited) min; its $($head.need) GB doesn't fit yet)" }
     }
     if (-not $myTurn) {
-      $waits++
+      $waits++; Add-KitMemSample $s.Avail
       if ($waits % 3 -eq 1) { Write-Host "[gate] queued #$($pos + 1) of $($queue.Count) (owner $owner); next: $($head.owner) $($head.kind)" }
     }
     else {
@@ -691,10 +691,10 @@ while ((Get-Date) -lt $deadline) {
       Remove-Item $myTicket -ErrorAction SilentlyContinue
       @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
       $entry = Join-Path $ledger "$($proc.Id).json"
-      @{ pid = $proc.Id; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
+      @{ pid = $proc.Id; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
       break
     }
-    $waits++
+    $waits++; Add-KitMemSample $s.Avail
     $msg = "[gate] waiting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> would leave $([math]::Round($left,1)) GB (< $KeepFreeGB)"
     if ($waits % 15 -eq 1) { $msg += ". Biggest users: $(Top-Users $s.Snap)" }
     Write-Host $msg

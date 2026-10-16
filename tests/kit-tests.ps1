@@ -749,6 +749,9 @@ if ($Area -in 'orch', 'all') {
   $h2 = & { . $O; Get-KitFnv $a2 }
   $null = pwsh -NoProfile -File $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af2 -Fnv $h2
   Expect 'launch -Self: two launches with one run name keep two records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
+  '{"kitDir":"C:/k","runDir":"C:/r"}' | Set-Content (Join-Path $ld 'args-testy-r.json'); '{"script":"","at":"bad"}' | Set-Content (Join-Path $ld 'broken.json')
+  $ll = pwsh -NoProfile -File $O launch -List 2>&1 | Out-String; $cl = pwsh -NoProfile -File $O cleanup -IfDue -Quiet 2>&1 | Out-String; $clc = $LASTEXITCODE
+  Expect 'launch records: args dumps and broken records are skipped; a SessionStart hook never surfaces an error' ($ll -notmatch 'Exception|Cannot bind' -and $cl -notmatch 'Exception|Cannot bind' -and $clc -eq 0)
   $rn = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
   Expect 'launch: a brief-named run carries 4 hex of the brief path' ($rn -match '^wave-x-[0-9a-f]{4}$')
   $tt = @'
@@ -959,6 +962,60 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   Expect "kittool new / rename / remove: registered, renamed everywhere with ports, removed with its row (new $okNew, rename $okRen, remove $okRem)" ($okNew -and $okRen -and $okRem)
   Expect 'kittool lint: AGENT-TYPE for a general-purpose agent() call, OLD-NAME for a renamed name (also joined: last-<old>s); release proposes a SemVer tag' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and $rel -match '^# v\d+\.\d+\.\d+')
   Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
+  # budget: per-tool default compaction points, the plan cap, agent handoff + fresh continuation
+  $bj = { param([string[]]$a) pwsh -NoProfile -File $O budget @a -Json | ConvertFrom-Json }
+  $cx = Join-Path (Split-Path $k) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
+  '{"models":[{"slug":"gpt-5.5","context_window":272000,"effective_context_window_percent":95}]}' | Set-Content "$cx/models_cache.json"; 'model = "gpt-5.5"' | Set-Content "$cx/config.toml"
+  $b1 = & $bj '-Tool', 'claude', '-Model', 'claude-opus-5-5'; $b2 = & $bj '-Tool', 'claude', '-Model', 'claude-sonnet-4-6'; $b5 = & $bj '-Tool', 'unknown'
+  $env:CODEX_HOME = $cx; $b3 = & $bj '-Tool', 'codex'; "model = ""gpt-5.5""`nmodel_auto_compact_token_limit = 200000" | Set-Content "$cx/config.toml"; $b4 = & $bj '-Tool', 'codex'; Remove-Item Env:CODEX_HOME
+  $bp = & $bj '-Tool', 'claude', '-Plan', 'devy/claude-opus-5-5:1,revy/claude-sonnet-4-6:1'
+  Expect "budget: per-tool defaults and the plan cap (sum)" ("$($b1.budget)/$($b1.handoff) $($b2.budget)/$($b2.handoff) $($b3.budget)/$($b3.handoff) $($b4.budget)/$($b4.handoff) $($b5.budget)/$($b5.handoff) $($bp.cap)" -eq '967000/773600 167000/133600 232560/186048 200000/160000 160000/128000 1134000')
+  $env:KIT_TRANSCRIPTS = Join-Path (Split-Path $k) 'tx'; New-Item -ItemType Directory -Force $env:KIT_TRANSCRIPTS | Out-Null
+  $hj = pwsh -NoProfile -File $O board join -Agent H1 -Run hr -Model claude-opus-5-5 | Out-String; $ht = if ($hj -match 'SESSION (\S+)') { $Matches[1] }
+  @("{""type"":""user"",""text"":""SESSION $ht""}", '{"message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":799999,"output_tokens":0}}}') | Set-Content (Join-Path $env:KIT_TRANSCRIPTS 'agent-h1.jsonl')
+  $hb = pwsh -NoProfile -File $O board beat -Session $ht | Out-String; $hf = if ($hb -match 'leave -Session \S+ -Handoff (\S+),') { $Matches[1] }
+  $null = pwsh -NoProfile -File $O board leave -Session $ht -Handoff $hf; $hr = pwsh -NoProfile -File $O recover | Out-String
+  $h2 = pwsh -NoProfile -File $O board join -Agent H1 -Run hr | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
+  Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
+  # supervise -Brief report: snapshot of the formatter (normal, below the floor, ASCII, narrow)
+  $rd = @{ agents = @(@{ type = 'checky'; name = 'W1'; mode = 'test'; spend = 50000; prevSpend = 30000 }, @{ type = 'checky'; name = 'J1'; mode = 'env-fix'; wait = $true }, @{ type = 'devy'; name = 'P1'; mode = 'build'; spend = 10000; prevSpend = 0 })
+    mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; avgFree = 15; disk = 'D: 100 GB free'; info = @('deploy ready: stage (2 MR(s))')
+    resources = @(@{ name = '🟢 rm · api'; type = 'local env'; by = 'W1'; gb = 3 }, @{ name = '🌐 rm·acme·admin'; type = 'test browser'; by = 'W1'; gb = 2 }, @{ name = '🔴 hm · api'; type = 'local env'; by = 'down: memory'; gb = 0 })
+    flags = @(@{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }); detailFile = 'r.md' }
+  $r1 = (& { . $O; Format-KitReport $rd -Width 160 -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd -Ascii -Width 80 }) -join "`n"
+  $want1 = @('| Agent | Doing |', '|---|---|', '| 🛠️ 1 × devy (+10kT) | build 1 (P1) |', '| 🧪 2 × checky (+20kT) | ⏸ env-fix 1 (J1) · test 1 (W1) |', '',
+    "🖥️ **RAM** $('🟦' * 2)$('🟪' * 13)$('⬜' * 5) **48 / 64 GB**", '🟦 ours 5 · 🟪 others 43 · ⬜ free 16 (avg 15) · 🛡️ floor 8 · 💽 disk D: 100 GB free', '',
+    '| Resource | Used by | RAM | Resource | Used by | RAM |', '|---|---|---|---|---|---|', '| 🟢 rm · api | W1 | 3 | 🔴 hm · api | down: memory | — |', '| 🌐 rm·acme·admin | W1 | 2 |  | |  |', '',
+    '🚩 **Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
+  Expect 'supervise report snapshot (-Agents, wide)' ($r1 -eq $want1)
+  Expect 'supervise report: below the floor red, -Ascii, narrow, no agents by default' ($r2 -match '\*\*RAM\*\* \[OOx{16}\.{2}\] \*\*58 / 64 GB\*\*' -and $r2 -match '\| Resource \| Used by \| RAM \|\r?\n\|---\|---\|---\|\r?\n\| rm - api \| W1 \| 3 \|' -and (& { . $O; Format-KitReport $rd }) -join '' -match '(🟥){2}' -and ((& { . $O; Format-KitReport $rd }) -join '') -notmatch 'Agent')
+  # workflows: pre-launch refusal with the split, the 80% stop with next, a handoff continued by a fresh agent
+  $wsim = @'
+import { readFileSync } from 'node:fs'
+const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
+  if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
+  if (o.label === 'budget') return { ok: true, output: JSON.stringify({ spent }) }
+  if (/^(build|handoff):/.test(o.label)) return { mrs: [], worktrees: [], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest: { status: 'PASS', env: 'e', rounds: 1, failing: [], goalsDoc: 'g' }, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'd', handoff: o.label.startsWith('build') ? handoff : '' }
+  if (/^(test|handoff|retest)/.test(o.label)) return { code: o.label.split(':')[1], checks: [{ id: 'C1', subtask_id: 't', screen: 's', result: 'PASS', what_was_done: 'x', observed: 'y', evidence: [], attempts: 1 }], findings: [], setup_changes: [], data_created: [], handoff: '' }
+  return { ok: true, output: '[]', signals: 0, lessonsChanged: [], json: '' } } } }
+const pipeline = async (items, ...st) => Promise.all(items.map(async (a) => { let x = await st[0](a); for (const s of st.slice(1)) x = await s(x, a); return x }))
+const run = (src, args, m) => new Function('args', 'agent', 'pipeline', 'parallel', 'log', 'phase', `return (async () => {\n${src}\n})()`)(args, m.agent, pipeline, async (f) => Promise.all(f.map((g) => g())), () => {}, () => {})
+const B = readFileSync(process.argv[2], 'utf8'), T = readFileSync(process.argv[3], 'utf8')
+const ba = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }, { id: 'X2', items: 'A2' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const m1 = mk('{"cap":100000,"estimate":500000,"stopAt":0.8}'); const o1 = await run(B, ba, m1)
+console.log(`refuse:${o1.refused === true && o1.batch === 1 && o1.next.args.batch === 1 && !m1.calls.some((c) => /^build:/.test(c.label))}`)
+const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 0, 'C:/b/handoff-X1.md'); const o2 = await run(B, { ...ba, agents: [ba.agents[0]] }, m2)
+console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /resume brief C:\/b\/handoff-X1\.md/.test(c.prompt)) && !o2.next}`)
+const items = ['W1', 'W2', 'W3'].map((c) => ({ code: c, title: c, guideFile: 'g', lane: 'web', subtasks: [{ id: 't' }], skipClose: true }))
+const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o3 = await run(T, { runDir: 'C:/r/run1', kitDir: 'C:/kit', items, webParallel: 1, mandate: ['m'], learn: false, verify: false }, m3)
+console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.some((c) => c.label === 'budget') && !m3.calls.some((c) => c.label === 'test:W2')}`)
+'@
+  $wsf = Join-Path (Split-Path $k) 'wf-budget.mjs'; [IO.File]::WriteAllText($wsf, $wsim)
+  $strip = { param($n) [IO.File]::ReadAllText((Join-Path $src "workflows/$n")) -replace '(?m)^export const meta', 'const meta' }
+  $bsf = Join-Path (Split-Path $k) 'b.js'; $tsf = Join-Path (Split-Path $k) 't.js'; [IO.File]::WriteAllText($bsf, (& $strip 'buildy.js')); [IO.File]::WriteAllText($tsf, (& $strip 'testy.js'))
+  $res = @(node $wsf $bsf $tsf 2>&1)
+  foreach ($x in 'refuse', 'handoff', 'stop-next') { Expect "workflow budget: $x" (@($res) -contains "${x}:true") }
+  if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 3) { $res | Select-Object -First 5 }
   Remove-TestKit $k
 }
 

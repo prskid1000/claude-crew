@@ -20,6 +20,8 @@ Non-negotiables:
 - Board first (`orch.ps1 board join -Type devy ...`; it lists every live agent on this machine); DUPLICATE for your id -> stop
   without writing; `board check` before every commit; a file, task, env or seat someone else holds -> `board msg` the holder,
   never collide; `leave` at the end.
+- **Budget:** `board beat` after each step prints spend / budget; HANDOFF -> write the resume brief it names, WIP commit,
+  `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
 - Your own worktree (`dev.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
 - Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
   `swarm.ps1 acquire`.
