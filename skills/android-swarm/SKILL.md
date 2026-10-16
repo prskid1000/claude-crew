@@ -1,12 +1,12 @@
 ---
 name: android-swarm
-description: "Load when: you need an Android phone lane: a dev agent testing locally with the local-env APK, an app-lane qa-tester on a test env, the lead building the lane APK or creating / resetting lanes, or a person leasing a phone by hand. Not when: you drive the app on a phone you already leased -> qa-kit (qa.ps1 ui); a batch of app tests -> /test-and-close via orchestrate."
+description: "Load when: an Android phone lane is needed: devy's local test with the local-env APK, checky on an app lane, checky lead building a run's lane APK, kitty creating / resetting lanes, a person leasing a phone. Not when: driving the app on a leased phone -> qa-kit (qa.ps1 ui); a batch of app tests -> /testy via orchestrate."
 ---
 
-**Load when** (all must hold): Android emulators or an APK are involved; you are a dev agent (local test loop), an app-lane
-`qa-tester`, the lead, or a person testing by hand.
-**Not when:** driving the app UI -> `qa-kit` (`qa.ps1 ui`); testing a batch -> `/test-and-close`; coding -> `dev-kit`.
-**Hands off to:** `qa-kit` step 3 / `local-env` "Local testing" (the leased phone), `/test-and-close` with `lanes`.
+**Load when** (all must hold): Android emulators or an APK are involved; you are `devy` (local test loop), an app-lane
+`checky` (lead: the lane APK), `kitty` (lanes), or a person testing by hand.
+**Not when:** driving the app UI -> `qa-kit` (`qa.ps1 ui`); testing a batch -> `/testy`; coding -> `dev-kit`.
+**Hands off to:** `qa-kit` step 3 / `local-env` "Local testing" (the leased phone), `/testy` with `lanes`.
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
@@ -14,7 +14,7 @@ description: "Load when: you need an Android phone lane: a dev agent testing loc
 | `<kit>/LESSONS.md` | step A0 / L0: `orch.ps1 learn -Read -Skill android-swarm` |
 | `swarm.ps1` | A1-A4 (`acquire`, `ensure`, `launch`, `release`, `status`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim`, `arrange` run by `up` |
 
-Lanes and the app: `swarm.config.json` (git-ignored; written by `kit.ps1 setup -WriteLocal` from `dev-kit/kit.example.json`):
+Lanes and the app: `swarm.config.json` (git-ignored; written by `orch.ps1 setup -WriteLocal` from `dev-kit/kit.example.json`):
 `lanes[] {name, port, user, notes, headless}`, `app {kind, package, appDir, buildTask, buildArgs, apkGlob, permissions,
 localManifests, localReverse, branch, javaHome, javaVersions}`. Output (APKs, `build.log`, emulator logs, `swarm.json`) goes to
 `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
@@ -24,7 +24,7 @@ localManifests, localReverse, branch, javaHome, javaVersions}`. Output (APKs, `b
   can reach the local env's http API; `acquire -Apk local` installs it and `adb reverse`s `app.localReverse` (the local API
   ports). Debug variants are not used: they need Metro / a dev launcher.
 
-## App-lane steps (dev agents and testers)
+## App-lane steps (devy and checky)
 - A0. `orch.ps1 learn -Read -Skill android-swarm`.
 - A1. `swarm.ps1 acquire -Agent <id> -Lane <name> [-Holder <board code>] [-Apk local]`: returns at once if it is yours, else
   waits

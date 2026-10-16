@@ -1,12 +1,12 @@
 ---
 name: dev-kit
-description: "Load when: you write, fix, test or ship code in a repo of this workspace: as a dev-agent from a brief, or directly for one small change. Not when: you coordinate several agents -> orchestrate; you test deployed work on a test env -> qa-kit; you audit code without changing it -> tech-audit; you review someone's MRs -> mr-reviewer agent."
+description: "Load when: you write, fix, test or ship code in a repo of this workspace: as devy from a brief, or directly for one small change. Not when: you coordinate several agents -> orchestrate; you test deployed work on a test env -> qa-kit; you audit code without changing it or review someone's MRs -> revy agent."
 ---
 
-**Load when** (all must hold): you change code in a repo of this workspace; you are a `dev-agent` from a brief, or the main
+**Load when** (all must hold): you change code in a repo of this workspace; you are `devy` from a brief, or the main
 session on a one-small-change router row.
-**Not when:** coordinating agents -> `orchestrate`; testing deployed work -> `qa-kit`; static audit -> `tech-audit`; reviewing
-MRs -> `mr-reviewer`; running the shared local env itself -> `local-env` (you use it at step 5).
+**Not when:** coordinating agents -> `orchestrate`; testing deployed work -> `qa-kit`; static audit or reviewing
+MRs -> `revy`; running the shared local env itself -> `local-env` (you use it at step 5).
 **Hands off to:** `local-env` (steps 2 and 5: reproduce, test), the coordinator (your final report; the workflow merges after
 review; a person's `deploy <env>` starts the deploy), testers through the human testing doc (step 6).
 **Files** (every file in this folder; read or run each only at its step):
@@ -19,10 +19,9 @@ review; a person's `deploy <env>` starts the deploy), testers through the human 
 | `lib.ps1` | library dot-sourced by every kit script (config, paths, OS, tracker and git-host adapters); never run by hand |
 | `devtools.py` | step 6 (`mr`, `doc`, `finish`), step 7 (`merge`), rebase conflicts (`keepboth`), check migrations (`lbcheck`, run by `check`) |
 | `spec.mjs` | step 4: the test runner `check -Step test` uses for a web project without a unit-test target (never by hand) |
-| `paths.json` | the one map of runtime (`.runtime/`) and durable (`.state/`) paths, read by lib.ps1 / devtools / spec / browser |
-| `kit.example.json` | setup: `kit.ps1 setup -WriteLocal` writes `kit.local.json` and the other local files from it (keys: README "Configuration") |
+| `kit.example.json` | setup: `orch.ps1 setup -WriteLocal` writes `kit.local.json` and the other local files from it (keys: README "Configuration"); `_paths` = the one map of runtime (`.runtime/`) and durable (`.state/`) paths every script resolves (lib.ps1, devtools, spec, browser) |
 
-## Steps (every dev agent; your brief wins where it differs)
+## Steps (every devy; your brief wins where it differs)
 ```powershell
 $D = '<kit>/skills/dev-kit/dev.ps1'; $O = '<kit>/skills/orchestrate/orch.ps1'; $L = '<kit>/skills/local-env/localenv.ps1'
 & $O learn -Read -Skill dev-kit                                                # 0. lessons
@@ -43,7 +42,7 @@ $D = '<kit>/skills/dev-kit/dev.ps1'; $O = '<kit>/skills/orchestrate/orch.ps1'; $
 python <kit>/skills/dev-kit/devtools.py mr <wt> "<title>" body.md              # 6. MR (templates.md "MR body")
 python <kit>/skills/dev-kit/devtools.py doc "<title>" testing.md               #    human testing doc -> link it on the task and in the MR
 python <kit>/skills/dev-kit/devtools.py finish <task> <doc url> solution.md review   # guide link + solution comment + status review
-#   7. merge: inside /dev-wave the workflow merges after review (never you). One small change by yourself:
+#   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...                              #    promoted once all merge (automatic)
 & $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. joins the deploy batch silently (never deploy, never ask)

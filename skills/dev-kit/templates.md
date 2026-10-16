@@ -20,11 +20,11 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 |---|---|---|---|---|
 | skill | how an agent does one job | front matter, Load when, Not when, Hands off to, Files, numbered steps, Rules, Learn | 3200t 130ch | path |
 | skill-step | one numbered step | `N. **Name:** action -> result` + commands | 90w 30sw | cmd |
-| agent | an agent's contract | front matter, Load first, non-negotiables, report shape, self-improvement | 900t 130ch | path |
+| agent | an agent's contract (a crew member holds its own steps) | front matter, Character, Kind, Load first, non-negotiables, report shape, self-improvement | 2400t 130ch | path |
 | rule | a hard rule for one file kind | `paths:` front matter (path-scoped), bullets | 900t 12b 130ch | — |
 | reference | a guide inside a SKILL.md / README | `##` per topic, bullets, tables | each:250w 130ch | path |
 | lesson | one LESSONS.md line | `- <when> -> <do this> (<why>)` | 1l 50w 300ch | — |
-| history | one LESSONS.md History entry | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
+| history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
 | wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | what must be true before merge | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
@@ -85,7 +85,7 @@ stopped (testing goals, local test loop, MRs); never redo finished work. Files c
 ```
 
 ## Testing goals
-Written by the dev agent BEFORE testing (dev-kit step 4); the local test loop runs it; the human testing doc grows out of it.
+Written by devy BEFORE testing (dev-kit step 4); the local test loop runs it; the human testing doc grows out of it.
 ```markdown
 # Testing goals: <task id> <title>
 Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (localenv.ps1 status).
@@ -171,12 +171,34 @@ Recommended: <A/B, one line why>
 Answer: pending
 ```
 
-## Final reports (one shape per role, <= 200 words)
-- **dev-agent**: MRs + merge state · local test result (goals passed / rounds / ENV-FIX ids / blocked: decision or remote, why) · testing doc link · done / deferred /
-  needs-decision ids · settings/data to seed · hooks left in other areas.
-- **mr-reviewer**: findings only (file, line, severity, fix).
-- **qa-tester / qa-verifier**: results.json (the workflow's schema); summary line per package.
-- **kit-auditor**: branch + commits · fixed / proposed / ASK counts · report path · the lead's next steps.
+## Final reports (one shape per crew member, <= 200 words)
+- **devy**: MRs + merge state · local test result (goals passed / rounds / ENV-FIX ids / blocked: decision or remote, why) · testing
+  doc link · done / deferred / needs-decision ids · settings/data to seed · hooks left in other areas · disputes opened.
+- **revy**: findings only (file/line or section, severity, the suggested change: patch hunk or rewritten text).
+- **checky**: results.json (the workflow's schema); summary line per package; lead: the run report link and the result rule applied.
+- **kitty**: branch + commits · fixed / proposed / ASK counts · report path · the lead's next steps.
+
+## Dispute (`orch.ps1 board dispute`; one per disagreement)
+Opened by the agent that disagrees; the other answers ONCE with its evidence; agreement -> both record it and continue; still split
+after 2 rounds -> `decide ask` with both positions side by side (the owner judges; only that item waits); every verdict is a
+learn signal (/tidy turns repeats into rules).
+```markdown
+## DISPUTE <id> (<from> vs <to>, item <item>)
+Claim: <what is wrong, one line> · Evidence: <files, runs, numbers, file:line> · Proposed: <the outcome you want>
+Answer (<to>): <agree | disagree> — <its evidence>
+```
+
+## Debate record (a duel: two devy POCs, revy moderates)
+```markdown
+# Duel <question> (<run>)
+| Criterion | POC A (<devy id>, <approach>) | POC B (<devy id>, <approach>) |
+|---|---|---|
+| correctness · risk · size · performance · fit | <fact + evidence> | <fact + evidence> |
+## Agreed facts
+## Open disagreements (each side's evidence)
+## Final pitch A · Final pitch B (<= 80 words each)
+## Fact-check (revy: claims without evidence)
+```
 
 ## Script header (every kit script; kit-lint SCRIPT-HEADER)
 ```powershell
@@ -192,11 +214,11 @@ Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Q
 UNKNOWN, never a state. Idempotent where possible. `learn` signals for surprises.
 
 ## Audit report
-Saved to `<runtime>/logs/kit-audits/audit-<date>.md` (kit-audit step 9).
+Saved to `<runtime>/logs/kit-audits/audit-<date>.md` (kitty step 9).
 ```markdown
 # Kit audit <date> (<commit>, branch kit/audit-<date>)
 ## Result
-- <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · files <n>/50 · tokens <n>
+- <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · content <n>/<cap> · plumbing <n>/<cap> · tokens <n>
 ## Setup / config / recovery
 - FIX ... | ACT ... | ASK `<file> <key>`: <why> (never values)
 ## Findings

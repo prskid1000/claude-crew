@@ -1,14 +1,14 @@
 ---
 name: qa-kit
-description: "Load when: you test deployed work on a test environment (qa-tester / qa-verifier, or one change checked directly), you set up a test-only run as the lead, or a person tests by hand from a human testing doc. Not when: a batch of deployed tasks is to be tested by agents -> /test-and-close via orchestrate; testing a change before merge -> local-env; static audit -> tech-audit; phone lanes -> android-swarm."
+description: "Load when: testing deployed work on a test env (checky test / verify, or one change checked directly), checky lead setting up a test-only run, or a person testing by hand from a human testing doc. Not when: agents test a batch of deployed tasks -> /testy via orchestrate; before merge -> local-env; static audit -> revy agent; phone lanes -> android-swarm."
 ---
 
 **Load when** (all must hold): the work is testing DEPLOYED changes on a test environment (never production): you are a
-`qa-tester` / `qa-verifier`, the main session checking one change, the lead preparing a test-only run, or a person testing by
+`checky` (test / verify), the main session checking one change, `checky` lead preparing a test-only run, or a person testing by
 hand.
-**Not when:** several deployed tasks tested by agents -> `/test-and-close` (load `orchestrate`); before merge -> `local-env`
+**Not when:** several deployed tasks tested by agents -> `/testy` (load `orchestrate`); before merge -> `local-env`
 (dev flow step 5); booting phones -> `android-swarm`; fixing what failed -> `dev-kit` (bugfix wave).
-**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /test-and-close), the coordinator
+**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator
 (failedTesting
 tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Files** (every file in this folder; read or run each only at its step):
@@ -114,10 +114,10 @@ deactivate, delete or re-password test logins; one shared Chrome per target + te
   -> `dev.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
 
 ## Lead steps (a test-only run; orchestrate T1-T4)
-- L0. Machine setup once: `kit.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
+- L0. Machine setup once: `orch.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
   passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
-- L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/test-and-close.js`; one
+- L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
   item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, subtasks:[{id,name,mrs}], retest?, only?}`), guides
   exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, the baseline data (reuse
@@ -137,7 +137,7 @@ deactivate, delete or re-password test logins; one shared Chrome per target + te
      -> `localenv.ps1 status -Env <env>`, every MR commit in the running release -> in. Else left out with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
-- L2. Launch `/test-and-close { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
+- L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
   kitDir, mandate }` (Prepare = L1 Selection); `launch` record (orchestrate). Lead notes are the only channel to running testers.
 - L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on
   disk);
