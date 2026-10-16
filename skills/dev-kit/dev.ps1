@@ -10,7 +10,8 @@ Verbs:
   pipes -Mrs <url>,... [-MaxMinutes 8]      wait for MR pipelines (JSON)
   guard [-SelfTest]                         PreToolUse hook (reads the tool call JSON on stdin)
 Inputs: kit.local.json (lib.ps1), the verb's parameters. Outputs: text, or JSON where -Json is offered.
-Exit codes: 0 ok · 1 problem found (failed check, conflict, blocked) · 2 usage error · gate/check pass through the command's code.
+Exit codes: 0 ok · 1 problem found (failed check, conflict, blocked) · 2 usage error · gate/check pass through the command's code ·
+check 5 = a typecheck was UNRUN (nothing failed, nothing was checked: say "typecheck unrun" in the MR; the other steps still ran).
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -894,6 +895,7 @@ param(
   [switch]$RealAngular   # test with spec.mjs: real @angular/core instead of the stub (auto-on when a named spec imports @angular/forms)
 )
 $ErrorActionPreference = 'Stop'
+$script:anyUnrun = $false
 $K = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
 Write-Host "[check] $($st.stack) in $($st.dir)"
@@ -1206,7 +1208,7 @@ foreach ($s in $steps) {
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }                                                       # Gradle build cache
   if ($Show) { "$s : $cmd"; continue }
   $unrun = $false
-  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $rc = 0 } else { $rc = [int]$r } }
+  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
@@ -1214,6 +1216,7 @@ foreach ($s in $steps) {
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }
 if (-not $Show -and -not $ran) { Write-Host "[check] nothing to run for $Step" }
+if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (an unchecked run is not a pass)'; exit 5 }   # it exited 0 like a pass
 exit 0
 }
 
@@ -1225,6 +1228,8 @@ exit 0
 #
 # Output: {"done":true|false,"mrs":[{"mr":url,"status":"success|failed|running|...","job":"<failed job>","error":"<last error lines>"}]}
 # done=false = some pipelines still running after -MaxMinutes (call again). Exit codes: 0 always (read the JSON; done=false = still running).
+# no-pipeline and unknown (a failed host call) stay busy until -MaxMinutes; only a CONFIRMED absence of CI (GitLab: no required
+# pipeline, no ci_config_path / Auto DevOps, .gitlab-ci.yml 404 on the target; GitHub: .github/workflows 404) is status no-ci (done).
 # GitLab MRs (.../-/merge_requests/<n>) through glab; GitHub pull requests (.../pull/<n>) through gh (status = the PR's checks).
 function Invoke-Pipes {
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
@@ -1236,7 +1241,11 @@ function GhState($url) {
   if (-not $pr) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($pr.state -eq 'MERGED') { return [ordered]@{ mr = $url; status = 'merged' } }
   $checks = @($pr.statusCheckRollup)
-  if (-not $checks.Count) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }
+  if (-not $checks.Count) {
+    $repo = $url -replace '^https?://[^/]+/([^/]+/[^/]+)/pull/.*$', '$1'
+    $wf = gh api "repos/$repo/contents/.github/workflows" 2>&1 | Out-String
+    return [ordered]@{ mr = $url; status = $(if ($LASTEXITCODE -and $wf -match '\b404\b|Not Found') { 'no-ci' } else { 'no-pipeline' }) }
+  }
   $res = @($checks | ForEach-Object { if ($_.conclusion) { $_.conclusion } elseif ($_.state) { $_.state } else { $_.status } } | ForEach-Object { "$_".ToUpper() })
   $bad = @($checks | Where-Object { "$($_.conclusion)$($_.state)".ToUpper() -match 'FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE' })
   $o = [ordered]@{ mr = $url; status = $(if ($bad.Count) { 'failed' } elseif ($res | Where-Object { $_ -match 'PENDING|QUEUED|IN_PROGRESS|EXPECTED|WAITING|REQUESTED' }) { 'running' } else { 'success' }) }
@@ -1248,16 +1257,23 @@ function GhState($url) {
   }
   $o
 }
+# no CI at all, confirmed by the project settings and a 404 for the CI file (any error = has CI)
+function Test-NoCi($proj, $m) {
+  $pj = Invoke-HostApi "projects/$proj"
+  if (-not $pj -or $pj.only_allow_merge_if_pipeline_succeeds -or $pj.ci_config_path -or $pj.auto_devops_enabled -or -not $m.target_branch) { return $false }
+  $f = glab api "projects/$proj/repository/files/.gitlab-ci.yml?ref=$([uri]::EscapeDataString($m.target_branch))" 2>&1 | Out-String
+  [bool]($LASTEXITCODE -and $f -match '\b404\b' -and $f -notmatch 'file_name')
+}
 function State($url) {
   if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
   if ($url -notmatch '^https?://(?<h>[^/]+)/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
   $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
   $env:GITLAB_HOST = $Matches.h; $script:HostType = 'gitlab'   # glab would otherwise ask gitlab.com (self-hosted servers: the MR's own host)
-  $m = Invoke-HostApi "projects/$proj/merge_requests/$iid"
+  $m = Invoke-HostApi "projects/$proj/merge_requests/$iid" -NoMemo
   if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }
   $p = $m.head_pipeline
-  if (-not $p) { return [ordered]@{ mr = $url; status = 'no-pipeline' } }
+  if (-not $p) { return [ordered]@{ mr = $url; status = $(if (Test-NoCi $proj $m) { 'no-ci' } else { 'no-pipeline' }) } }
   $o = [ordered]@{ mr = $url; status = $p.status }
   if ($p.status -eq 'failed') {
     $job = @(Invoke-HostApi "projects/$proj/pipelines/$($p.id)/jobs" | Where-Object status -eq 'failed')[0]
@@ -1272,8 +1288,8 @@ function State($url) {
 $start = Get-Date; $end = $start.AddMinutes($MaxMinutes)
 do {
   $states = @($list | ForEach-Object { State $_ })
-  # right after a push the pipeline does not exist yet: 'no-pipeline' counts as busy for 3 min (after that: a repo without MR CI)
-  $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled' -or ($_.status -eq 'no-pipeline' -and ((Get-Date) - $start).TotalMinutes -lt 3) })
+  # no-pipeline / unknown stay busy until -MaxMinutes (a pipeline may still start, a host call may have failed): never "done"
+  $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled', 'no-pipeline', 'unknown' })
   if (-not $busy -or (Get-Date) -gt $end) { break }
   Start-Sleep 30
 } while ($true)
@@ -1386,7 +1402,15 @@ if ($SelfTest) {
   "$($cases.Count - $fail)/$($cases.Count) passed"
   exit [int]($fail -gt 0)
 }
-$in = [Console]::In.ReadToEnd() | ConvertFrom-Json
+# empty stdin (run by hand) allows; a non-empty payload that is not JSON denies and is logged (it used to allow everything)
+$stdin = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
+if (-not "$stdin".Trim()) { exit 0 }
+try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
+  $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
+  "$((Get-Date).ToString('s'))`t-`tmalformed hook input`t$one" | Add-Content (Get-KitPath guard-log -Create)
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: the hook input was not JSON (logged to guard.log); retry the command' } } | ConvertTo-Json -Compress -Depth 4
+  exit 0
+}
 $cmd = [string]$in.tool_input.command
 if (-not $cmd) { exit 0 }
 $K = $PSScriptRoot   # this kit's dev-kit folder (messages point agents at the right scripts)

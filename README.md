@@ -40,6 +40,7 @@ moves state, `kit.ps1 setup -Migrate` once nothing runs.
 |---|---|---|
 | `tracker` | `{ "type": "none" }` | `type` clickup / github / gitlab / jira / none; `statuses` maps the logical statuses open, inProgress, review, promoted, inTest, failedTesting, closed; `list`, `repo`, `owner`, `branchTag`, `issueType`, `subtaskType` |
 | `gitHost`, `gitHostType`, `githubHost`, `gitlabGroup` | `gitlab.com`, from gitHost, `github.com`, none | the git host and the group/owner for short refs `<repo>!<iid>` |
+| `holdMerge` | `[]` | repos (names / aliases, or `true` = all) whose MRs a person merges because their target deploys: `devtools.py merge` answers NOT_MERGED "held for approval" (the /dev-wave arg `holdMerge` holds them inside a wave) |
 | `repos` | none | `[{ name, aliases, checkout, target, linkFrom, linkFromByTarget, linkPaths, deploys }]`; `deploys[]` per test env: CI `branch` + `job`, `awsStack` + `region`, `ssh {host, key, repoDir, appDir, subdir, exclude, service}`, `manual`, `laneApk` |
 | `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches` | workspace, `<repos>-wt`, `{}`, `[]` | where checkouts and worktrees live; short repo names; branches never force-pushed |
 | `trackerRepos`, `trackerLists`, `productTargets` | `[]` | repos searched for a task's MRs; tracker containers for `deploy intest`; which env a path needs |

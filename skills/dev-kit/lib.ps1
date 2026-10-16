@@ -76,6 +76,11 @@ $__kit = Split-Path (Split-Path $__devkit)
 $__ws = Split-Path $__kit
 $__cfg = $null
 $__cfgFile = Join-Path $__devkit 'kit.local.json'
+# a linked kit worktree has no kit.local.json (local-only): read the main clone's, else every script there ran unconfigured
+if (-not (Test-Path $__cfgFile)) {
+  $__cd = "$(git -C $__devkit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
+  if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/dev-kit/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
+}
 if (Test-Path $__cfgFile) { try { $__cfg = Get-Content $__cfgFile -Raw | ConvertFrom-Json } catch { Write-Warning "ignoring $__cfgFile (invalid JSON): $_" } }
 function Get-KitValue([string]$Name, $Default) {
   if ($__cfg -and ($__cfg.PSObject.Properties.Name -contains $Name) -and $null -ne $__cfg.$Name -and "$($__cfg.$Name)" -ne '') { return $__cfg.$Name }
@@ -141,12 +146,11 @@ function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = 
   $key = "$common|$($Refs -join ',')"
   if ($global:KitFetched.ContainsKey($key) -and ((Get-Date) - $global:KitFetched[$key].at).TotalMinutes -lt 10) { return $global:KitFetched[$key].ok }
   $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
-  $err = [IO.Path]::GetTempFileName()
-  $p = Start-Process git -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardError $err
-  $ok = $p.WaitForExit($TimeoutSec * 1000)
-  Remove-Item $err -Force -ErrorAction SilentlyContinue
-  if (-not $ok) { try { $p.Kill($true) } catch {}; Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
-  $ok = $ok -and $p.ExitCode -eq 0
+  # Invoke-KitExe passes each argument as one (a -Dir with spaces broke Start-Process -ArgumentList) and keeps stderr
+  $r = Invoke-KitExe git $a $TimeoutSec
+  if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
+  elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
+  $ok = -not $r.timedOut -and $r.code -eq 0
   $global:KitFetched[$key] = @{ at = Get-Date; ok = $ok }; $ok
 }
 # ================================ 3. OS helpers (Windows, Linux, macOS) ================================
@@ -960,10 +964,11 @@ function __Files($files) { @($files | ForEach-Object { [pscustomobject]@{ new_pa
 
 # GET answers are memoised per process for 90 s (a supervise sweep asks the same MRs / pipelines many times); any write clears it
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
-function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}) {
+# -NoMemo: a poll loop (dev.ps1 pipes, every 30 s) must see fresh states, not a 90 s old answer
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {
   $mk = "$($script:HostType)|$Path"
   if ($Method -ne 'GET') { $global:KitHostMemo.Clear() }
-  elseif ($global:KitHostMemo.ContainsKey($mk) -and ((Get-Date) - $global:KitHostMemo[$mk].at).TotalSeconds -lt 90) { return $global:KitHostMemo[$mk].v }
+  elseif (-not $NoMemo -and $global:KitHostMemo.ContainsKey($mk) -and ((Get-Date) - $global:KitHostMemo[$mk].at).TotalSeconds -lt 90) { return $global:KitHostMemo[$mk].v }
   $v = __Invoke-HostApi $Path $Method $Fields
   if ($Method -eq 'GET' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v } }
   $v

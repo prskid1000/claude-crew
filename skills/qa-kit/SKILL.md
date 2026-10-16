@@ -27,13 +27,15 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env unless a check of the guide asks for it.
-1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says); `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone
-   serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and report. Phones: `swarm.ps1
+1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
+   `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and
+   report. Phones: `swarm.ps1
    acquire|release` (keep the lease through waits < 30 min).
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
-   `qa.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]`;
+   `qa.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
+   on HTTP 0 / 4xx / 5xx; status and body still print);
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
    app `qa.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
@@ -70,7 +72,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `note`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
-   "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames` until exit 0 (it prints [prose]
+   "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
+   (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose]
    findings);
    `board leave`,
    release seat / phone / Chrome ports (`killSession()`); return the results.

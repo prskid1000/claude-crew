@@ -116,7 +116,7 @@ AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:K
 gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
   & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
-  exit 0 = go. exit 2 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
+  exit 0 = go. exit 4 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
   exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
   Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
@@ -278,7 +278,8 @@ Your phone is leased (rules: ${SWARM}/SKILL.md steps A1-A4):
 }
 const API = `
 API-ONLY LANE
-- No browser, no emulator: test through qa.ps1 api (and read-only DB access if available). Save request/response evidence for every check.`
+- No browser, no emulator: test through qa.ps1 api (and read-only DB access if available). Save request/response evidence for every check.
+  qa.ps1 api exits 1 on HTTP >= 400 or no answer (the status and body still print): judge the status against Expected.`
 
 function laneBlock(it, ports, L) {
   if (it.lane === 'app') return appBlock(L) + (it.alsoWeb ? WEB(ports, it) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
@@ -304,11 +305,12 @@ ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only t
 Return checks, findings, setup_changes and data_created.
 For a check you ran more than once (LLM-driven / timing: 5+), set attempts and window (conditions + UTC times): a verifier must
 recreate them before it may refute your FAIL.
-LAST STEP before returning: write that same result as ${outDir(it)}/results.json (Write tool) and run
-  & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames
-  (publishes nothing; renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites results.json). Exit 1 = evidence
-  named in results.json is missing, a name it could not fix, or duplicate check ids: save the file or drop the name, give each check
-  its own id, and re-run until exit 0. Return the checks as results.json now has them (fixed names).
+LAST STEP before returning: write that same result as ${outDir(it)}/${it.scoped ? 'results-retry.json' : 'results.json'} (Write tool) and run
+  & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${it.scoped ? ' -Results results-retry.json' : ''}
+  (publishes nothing; renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites that file). Exit 1 = evidence
+  named in it is missing, a name it could not fix, or duplicate check ids: save the file or drop the name, give each check
+  its own id, and re-run until exit 0. Return the checks as the file now has them (fixed names).${it.scoped ? `
+  Never write ${outDir(it)}/results.json: it holds the other checks of this item.` : ''}
 
 NON-NEGOTIABLE: there is no session time limit and nobody is waiting on you. "No time" or "not executed" are not valid NOT_TESTED reasons;
 returning early with untested checks will be rejected and re-run.`
@@ -373,10 +375,10 @@ function finalPrompt(it, res) {
   return `Publish the test results of package ${it.code}.${PATHS}
 1. Write this JSON exactly as given to ${outDir(it)}/results.json (Write tool; change nothing):
 ${JSON.stringify(res)}
-2. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames   (publishes nothing; renames
+2. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames -ExpectChecks ${res.checks.length}   (publishes nothing; renames
    off-standard evidence files and rewrites results.json to match). Exit 1 = evidence named in results.json is missing, a name it
-   could not fix, or duplicate check ids: fix that data (step 3) and re-run it until exit 0.
-   Then (timeout 600000): & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code}
+   could not fix, duplicate check ids, or fewer checks than sent (write step 1 again, complete): fix that data (step 3) and re-run it until exit 0.
+   Then (timeout 600000): & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -ExpectChecks ${res.checks.length}
    It refuses to publish while evidence listed in results.json is missing. It publishes the report (Google Doc + Drive evidence, or report.md in the run folder - kit.local.json reports.type), comments on the
    tasks (dev.ps1 tracker) and applies the result rule: closed / failedTesting / one [Bug] per ask for new defects.
 3. If it errors, fix only data problems in results.json (drop a missing evidence file name, suffix a duplicate check id; an off-standard
@@ -388,9 +390,10 @@ const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result =
 const tag = (L) => (L ? '@' + L.name : '')
 
 async function runItem(it, idx, L) {
-  // pools at 0/100/200/300, % 400: own ports per pool; the worker instance shifts the base (w1 + w2 once shared 9600-9604)
+  // pools at 0/100/200/300 (idx), instances 400 slots apart, offset by the run's hash: 1600 slots of 10 ports from 20000.
+  // One run's instances w0-w3 never share a port (the old 40-slot stride collided past ~20 items); two runs rarely (board claims)
   const inst = parseInt(String(R.instance || 'w0').replace(/\D/g, ''), 10) || 0
-  const p = 9600 + ((inst * 40 + idx) % 400) * 10
+  const p = 20000 + ((parseInt(fnv(String(R.runDir)), 16) % 1600 + inst * 400 + idx) % 1600) * 10
   const ports = `${p}-${p + 4}`
   const vports = `${p + 5}-${p + 9}`
   const phase = 'Test'
@@ -452,7 +455,7 @@ async function runItem(it, idx, L) {
   if (blocked.length && MODELS.retest) {
     log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
     const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed}`).join('\n')
-    const r2 = await agent(testPrompt({ ...it, only: [...new Set(blocked.map((c) => c.guideId || c.id))] }, vports, L) +
+    const r2 = await agent(testPrompt({ ...it, only: [...new Set(blocked.map((c) => c.guideId || c.id))], scoped: true }, vports, L) +
       `\nSTRONGER RETRY: a first tester could not complete these checks. What blocked it:\n${why}\nWork around each blocker (other data, user, path, the API, the lead notes) and execute the check; NOT_TESTED again only when truly impossible, with the cause.`,
       { label: `retest-strong:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
     for (const c2 of (r2 && !r2.skipped && r2.checks) || []) {
@@ -483,7 +486,7 @@ async function runItem(it, idx, L) {
     }
     envFix = { id, cycles: cyc, state: !ans ? 'no answer' : /:\s*cannot\b/i.test(ans) ? 'coordinator cannot' : 'fixed', answer: ans || '' }
     if (envFix.state !== 'fixed') break
-    const r3 = await agent(testPrompt({ ...it, only: [...new Set(open.map((c) => c.guideId || c.id))] }, vports, L) +
+    const r3 = await agent(testPrompt({ ...it, only: [...new Set(open.map((c) => c.guideId || c.id))], scoped: true }, vports, L) +
       `\nENV FIX DONE: the coordinator fixed the local env for these checks (${id}): ${ans}\nExecute each check now; NOT_TESTED again only with cause and env_fix.`,
       { label: `envfix-retest:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...(MODELS.retest ? { model: MODELS.retest, effort: MODELS.retestEffort || 'high' } : {}) })
     for (const c2 of (r3 && !r3.skipped && r3.checks) || []) {
@@ -542,9 +545,10 @@ ${JSON.stringify(res)}
 2. ${outDir(it)}/held.json:
 ${JSON.stringify({ code: it.code, held: why, envFix, summary: line, at: '<now>' })}
 Replace <now> with the current UTC time (ISO 8601) when you write it (workflow scripts can't read the clock: Date.now()/new Date() throw).
-3. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames   (publishes nothing; renames
-   off-standard evidence files and rewrites results.json to match) and return its output. Exit 1 = evidence named in results.json is
-   missing, a name it could not fix, or duplicate check ids: return ok=true anyway with that output (the lead fixes them before publishing).`,
+3. Run in PowerShell: & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames -ExpectChecks ${res.checks.length}   (publishes nothing; renames
+   off-standard evidence files and rewrites results.json to match) and return its output. "a truncated copy" = write file 1 again,
+   complete, and re-run. Other exit 1 (evidence missing, a name it could not fix, duplicate check ids): return ok=true anyway with that
+   output (the lead fixes them before publishing).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
     log(`${line} (results saved; ${holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
     return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }

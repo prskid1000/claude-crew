@@ -150,8 +150,10 @@ function Say($s) { if (-not $Quiet) { $s } }
 # Takes effect from the next session. Opt out with  "memory": { "keepDefault": true }  in kit.local.json (then a user-level
 # autoMemoryDirectory, e.g. one structured folder for all projects, or the harness default applies).
 function Set-Memory {
-  try { $cfg = Get-Content (Join-Path $kit 'skills/dev-kit/kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $cfg = $null }
+  try { $cfg = Get-Content $KitConf.ConfigFile -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $cfg = $null }
   if ($cfg -and $cfg.memory -and $cfg.memory.keepDefault) { return $null }
+  $gd = "$(git -C $kit rev-parse --path-format=absolute --git-dir 2>$null)".Trim(); $cd = "$(git -C $kit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
+  if ($gd -and $cd -and $gd -ne $cd) { return 'memory: a linked kit worktree - autoMemoryDirectory is set only in the main clone' }
   $dir = Join-Path $kit 'memory'
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
   $want = ($dir -replace '\\', '/')
@@ -166,11 +168,11 @@ function Set-Memory {
 
 function Update-Exclude {
   if (-not (Test-Path (Join-Path $kit '.git'))) { return 'not a git clone: no .git/info/exclude' }
-  $gd = Join-Path $kit '.git'
-  if (Test-Path $gd -PathType Leaf) { $gd = ((Get-Content $gd -Raw) -replace '^gitdir:\s*', '').Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $kit $gd } }
-  $ex = Join-Path $gd 'info/exclude'
+  $ex = "$(git -C $kit rev-parse --path-format=absolute --git-path info/exclude 2>$null)".Trim()
+  if (-not $ex) { return 'git rev-parse --git-path info/exclude failed: excludes not written' }
+  New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null
   $paths = @()
-  $kl = Join-Path $kit 'skills/dev-kit/kit.local.json'
+  $kl = $KitConf.ConfigFile
   if (Test-Path $kl) { try { $paths = @((Get-Content $kl -Raw | ConvertFrom-Json).localOnly | Where-Object { $_ } | ForEach-Object { ($_ -replace '\\', '/').Trim('/') }) } catch { return "kit.local.json is not valid JSON: $_" } }
   $begin = '# >>> kit localOnly (managed by skills/orchestrate/kit.ps1 setup; edit kit.local.json "localOnly" instead)'
   $end = '# <<< kit localOnly'
@@ -254,7 +256,7 @@ Say 'kit ready.'
 # Exit 2 = block (stderr goes back to the model); exit 0 = allow.
 function Invoke-GuardSendMessage {
 $ErrorActionPreference = 'SilentlyContinue'
-$in = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$in = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() | ConvertFrom-Json }   # run by hand: no stdin wait
 $to = "$($in.tool_input.to)".Trim()
 if ($to -notmatch '^(?<id>a[0-9a-f]{12,})$') { exit 0 }
 $id = $Matches.id
@@ -278,7 +280,7 @@ function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
 $root = $KitConf.Kit
 $zero = '0' * 40
-$updates = @([Console]::In.ReadToEnd() -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
+$updates = @($(if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
 $hits = @()
 
 # commits being pushed: new ones only (for a new branch: those on no remote yet)
@@ -297,9 +299,7 @@ if ($revs.Count) {
 
 # 2. org terms
 $terms = @()
-$cfg = Join-Path $root 'skills/dev-kit/kit.local.json'
-# a linked kit worktree has no kit.local.json (local-only): read the main clone's, else the scan was silently skipped
-if (-not (Test-Path $cfg)) { $common = git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null; if ($LASTEXITCODE -eq 0 -and $common) { $c2 = Join-Path (Split-Path "$common".Trim()) 'skills/dev-kit/kit.local.json'; if (Test-Path $c2) { $cfg = $c2 } } }
+$cfg = $KitConf.ConfigFile   # in a linked kit worktree: the main clone's (lib.ps1), else the scan was silently skipped
 if ($env:KIT_ORG_TERMS) { $terms = @($env:KIT_ORG_TERMS -split ',' | Where-Object { $_.Trim() }) }
 elseif (Test-Path $cfg) { try { $terms = @((Get-Content $cfg -Raw | ConvertFrom-Json).orgTerms | Where-Object { $_ }) } catch { $hits += "CONFIG      $cfg is not valid JSON: $_" } }
 if (-not $terms.Count) { Write-Host 'pre-push: no orgTerms in skills/dev-kit/kit.local.json - org-term scan skipped' }
@@ -344,13 +344,17 @@ exit 0
 # Regenerates the README graph sections (kittool flow --readme) and the ports (kittool port: .codex/, .agents/, GEMINI.md, plus the
 # workspace copies when the kit is an installed <workspace>/.claude), stages them, fails when port --check still differs or while
 # kit-lint finds blocking problems (unreached files, budgets, file cap, conventions). Run by .githooks/pre-commit.
+# a file with unstaged working-tree edits (porcelain Y column set): the hook must not stage the user's own changes with its own
+function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
 function Invoke-PreCommit {
   $root = $KitConf.Kit
   $py = Get-Python
   if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow / port cannot run)' -ForegroundColor Red; exit 1 }
+  $userEdits = Test-UnstagedEdits $root 'README.md'
   & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
-  if (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
+  if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
+  elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
   # ports: regenerate (and deploy to the workspace when this is an installed <workspace>/.claude), stage the kit-side files
   & $py -X utf8 $KitCmd.kittool port | Out-Null
   if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - kittool port failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
@@ -373,6 +377,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'guard-sendmessage' { Invoke-KitVerb Invoke-GuardSendMessage $__rest }
     'prepush' { Invoke-KitVerb Invoke-PrePush $__rest }
     'precommit' { Invoke-KitVerb Invoke-PreCommit $__rest }
-    default { Get-Content $PSCommandPath -TotalCount 11 | Select-Object -Skip 1; exit 2 }
+    { $_ -in '--help', '-h', '-?', 'help' } { Get-Content $PSCommandPath -TotalCount 9 | Select-Object -Skip 1; exit 0 }
+    default { Get-Content $PSCommandPath -TotalCount 9 | Select-Object -Skip 1; exit 2 }
   }
 }

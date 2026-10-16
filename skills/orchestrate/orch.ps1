@@ -74,6 +74,10 @@ function Warnings($me, $act) {
     }
   }
 }
+# one board entry, read-modify-written under its lock; $Change gets the entry and returns it to save ($null = leave it alone)
+function Update-BoardEntry([string]$Path, [scriptblock]$Change) {
+  Invoke-KitLocked $Path { if (Test-Path $Path) { $e0 = Get-Content $Path -Raw | ConvertFrom-Json; $n0 = & $Change $e0; if ($null -ne $n0) { $n0 | ConvertTo-Json | Set-Content $Path } } }
+}
 function Print($act) {
   if (-not $act) { 'board: no other active agents'; return }
   'board (active agents):'
@@ -101,15 +105,13 @@ switch ($Action) {
       $why = if ((Test-KitHolder $o) -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and $shared.Count) { "-Resume on $($shared -join ', ')" } else { $null }
       if (-not $why) { continue }
       try {
-        $j = Get-Content $o.file -Raw | ConvertFrom-Json
-        $j.status = 'left'; $j | Add-Member -Force NoteProperty takenOverBy $tok; $j | Add-Member -Force NoteProperty takenOverAt $now.ToString('o')
-        $j | ConvertTo-Json | Set-Content $o.file
+        Update-BoardEntry $o.file { param($j) $j.status = 'left'; $j | Add-Member -Force NoteProperty takenOverBy $tok; $j | Add-Member -Force NoteProperty takenOverAt $now.ToString('o'); $j }
         $notes += "TAKEOVER: replaced session $($o.session) ($why; joined $(([datetime]$o.joined).ToString('HH:mm')), last beat $(([datetime]$o.beat).ToString('HH:mm')))"
       } catch { $notes += "could not take over session $($o.session): $_" }
     }
     $me = [ordered]@{ agent = $Agent; session = $tok; run = $Run; area = $Area; items = $Items; worktrees = @($Worktrees); contracts = $Contracts
                       status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID } + (Get-KitHolder)
-    $me | ConvertTo-Json | Set-Content (Join-Path $dir "$tok.json")
+    $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { $me | ConvertTo-Json | Set-Content $mf }
     $act = @(Active | Where-Object session -ne $tok)
     Print $act
     $notes | ForEach-Object { $_ }
@@ -121,10 +123,10 @@ switch ($Action) {
   }
   'beat' {
     $f = Join-Path $dir "$Session.json"; if (-not (Test-Path $f)) { throw "unknown session $Session - join first" }
-    $me = Get-Content $f -Raw | ConvertFrom-Json
-    if ($me.status -eq 'left' -and $me.takenOverBy) { "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
-    $me.beat = (Get-Date).ToString('o'); if ($Status) { $me.status = $Status }
-    $me | ConvertTo-Json | Set-Content $f
+    $script:beatEntry = $null; $script:beatTaken = $null
+    Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-Date).ToString('o'); if ($Status) { $x.status = $Status }; $script:beatEntry = $x; $x }
+    if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
+    $me = $script:beatEntry
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" } }
@@ -137,7 +139,7 @@ switch ($Action) {
   }
   'leave' {
     $f = Join-Path $dir "$Session.json"
-    if (Test-Path $f) { $me = Get-Content $f -Raw | ConvertFrom-Json; $me.status = 'left'; $me.beat = (Get-Date).ToString('o'); $me | ConvertTo-Json | Set-Content $f }
+    Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); $x }
     "left ($Session)"
   }
 }
@@ -182,7 +184,7 @@ if ($Self) {
   try { $a = $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { "MISMATCH: not valid JSON ($($_.Exception.Message))"; exit 1 }
   $leaf = Split-Path $Script -Leaf
   $rec = [ordered]@{ script = (Join-Path $kit "workflows/$leaf"); run = $Run; args = $a; fnv = $got; at = (Get-Date).ToString('o') } + (Get-KitHolder)
-  $rec | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Get-SelfLaunchFile $leaf $Run) -Encoding utf8
+  $rec | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Get-SelfLaunchFile $leaf $Run $got) -Encoding utf8
   "RECORDED $leaf $Run (fnv $got)"; exit 0
 }
 
@@ -226,12 +228,12 @@ exit 0
 }
 
 # self record of a workflow's own args (launch -Self): one file per workflow + run name
-function Get-SelfLaunchFile([string]$Leaf, [string]$Run) { Join-Path (Get-KitPath launches -Create) ("self-{0}-{1}.json" -f (($Leaf -replace '\.js$', '') -replace '[^\w.-]', '_'), ($Run -replace '[^\w.-]', '_')) }
+function Get-SelfLaunchFile([string]$Leaf, [string]$Run, [string]$Fnv = '') { Join-Path (Get-KitPath launches -Create) ("self-{0}-{1}{2}.json" -f (($Leaf -replace '\.js$', '') -replace '[^\w.-]', '_'), ($Run -replace '[^\w.-]', '_'), $(if ($Fnv) { "-$Fnv" } else { '' })) }
 # the board / brief run name a workflow derives from its args (dev-wave: run or the brief's name; test-and-close: the run folder)
 function Get-LaunchRunName($a) {
   if (-not $a) { return '' }
   if ($a.run) { return [string]$a.run }
-  if ($a.brief) { return ([IO.Path]::GetFileName([string]$a.brief) -replace '\.md$', '') }
+  if ($a.brief) { return "$([IO.Path]::GetFileName([string]$a.brief) -replace '\.md$', '')-$((Get-KitFnv ([string]$a.brief)).Substring(0, 4))" }
   if ($a.runDir) { return (Split-Path ([string]$a.runDir) -Leaf) }
   ''
 }
@@ -247,14 +249,16 @@ function Get-StoppedRuns([int]$Hours = 24, [switch]$All) {
     if ($at -lt $since) { continue }
     if (-not $All -and (Test-KitHolder $r) -eq $true) { continue }   # its session still runs it
     $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
-    $sf = Get-SelfLaunchFile $leaf $run
-    if (-not ($run -and (Test-Path -LiteralPath $sf))) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | Select-Object -First 1 -ExpandProperty file }
+    # the self record of this launch: same workflow + run, nearest in time (several launches may share a run name); else any within 30 min
+    $sf = @($selfs | Where-Object { $run -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
+    if (-not $sf) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | Select-Object -First 1 -ExpandProperty file }
     if ($sf) { $used[$sf] = $true; $run = (Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json).run }
     [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $f.FullName; selfFile = $sf; runDir = $r.runDir; record = $r }
   }
   foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and [datetime]$_.at -ge $since }) {
     if (-not $All -and (Test-KitHolder $s) -eq $true) { continue }
-    $known = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File | Where-Object { $_.Name -notlike 'self-*' } | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run }).Count
+    # only a completed record of THIS launch (same run name, within 30 min) hides it: an older finished run of that name does not
+    $known = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File | Where-Object { $_.Name -notlike 'self-*' } | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count
     if ($known) { continue }   # that run finished under a record that named it
     [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $s.args.runDir; record = $null }
   }
@@ -370,7 +374,7 @@ function Get-OrphanQaItems([int]$Hours = 48) {
 # File: <kit>/tracking.local.json (durable, git-ignored; Get-KitPath tracking): { tasks: {<task>: ...}, automerge: {<ref>: time} }
 # (automerge = merge-when-green intents from devtools.py merge, re-armed by `run`). orch.ps1 supervise -AutoFix calls `run` every round.
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'remove', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail)
+param([Parameter(Position = 0)][ValidateSet('add', 'remove', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # a throw does not stop this script ($ErrorActionPreference = 'SilentlyContinue' suppresses it): refuse with Fail
@@ -535,6 +539,8 @@ switch ($Action) {
     if ($PSBoundParameters.ContainsKey('OnMerged')) { $o.onMerged = @($OnMerged -split '\s*,\s*') }
     if ($Discover) { $o.discover = $true }
     if ($Wave) { $o.wave = $Wave }   # a dev-wave still fixing this task (started before the task existed): hold until it ends
+    # -HoldPromotion '<why>': tracked (merge order, deploy), but never promoted until released with -HoldPromotion '' (deferred items)
+    if ($PSBoundParameters.ContainsKey('HoldPromotion')) { if ($HoldPromotion) { $o.holdPromotion = $HoldPromotion } else { $o.Remove('holdPromotion') } }
     if ($MergeAfter) {
       $o.mergeAfter = @(@($o.mergeAfter) + @($MergeAfter -split '\s*,\s*') | Where-Object { $_ } | Select-Object -Unique)
       # a consumer already scheduled (merge-when-green) before its order was registered would merge first: cancel it, merge-after re-schedules it
@@ -549,7 +555,7 @@ switch ($Action) {
     if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
     elseif (-not $o.done) { $o.done = $false }
     Save $o; $s = Load $Task   # print what is stored (other processes' MRs and merge orders merged in): a re-add shows the real state
-    "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
+    "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($s.holdPromotion) { " (promotion HELD: $($s.holdPromotion))" })$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
   }
   'remove' {
     $raw = "$Task".Trim().Trim("'", '"')   # an exact stored key first (legacy entries: '0', 'CU-<id>'), else the normalised id
@@ -618,6 +624,7 @@ switch ($Action) {
         }
         if ($o.mrs -notcontains $dep) { $o.mrs = @(@($o.mrs) + $dep) }   # only the dependent: the producer may be another task's MR
       }
+      if ($o.holdPromotion) { Hold "HOLD $($o.task): promotion held ($($o.holdPromotion)); release: orch.ps1 track add -Task $($o.task) -HoldPromotion ''"; continue }
       if ($o.discover) {
         # a config gap, not an MR problem: only worth saying when nothing was registered by hand either
         if (-not @($KitConf.TrackerRepos).Count -and -not @($o.mrs).Count) { if (-not $Quiet) { "CONFIG $($o.task): -Discover needs ""trackerRepos"" in kit.local.json (or register MRs: orch.ps1 track add -Task $($o.task) -Mrs <repo>!<iid>)" } }
@@ -657,14 +664,22 @@ switch ($Action) {
       # never move a task backwards: QA may already have closed it (then later fix MRs registered on it merge)
       $now = TaskStatus $o.task
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
+      # statuses after the current one only: a re-run (or a killed run) set "for review" again on a promoted task
+      $todo = @($o.onMerged)
+      for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       $setFailed = $false
-      foreach ($s in $o.onMerged) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
+      foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }   # not done: the next run retries (no "status set" comment either)
       $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
       $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
-      try { $null = Add-TrackerComment $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
+      # posted once: a run killed after the comment (before Save) posted it again on the next run
+      $allC = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
+      if (-not $o.mergedCommentAt -and -not @($allC | Where-Object { $_ -match '^All MRs merged' }).Count) {
+        $o.mergedCommentAt = (Get-Date).ToString('s'); Save $o
+        try { $null = Add-TrackerComment $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
+      }
       # the task must also carry its agent's solution + testing steps (an agent that got the tracker syntax wrong posted nothing)
-      $cmts = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text } | Where-Object { $_ -notmatch '^All MRs merged' }
+      $cmts = @($allC | Where-Object { $_ -notmatch '^All MRs merged' })
       if (-not ($cmts | Where-Object { $_ -match '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide|live check' })) {
         # agents often get the comment wrong: post the live checks from the dev agent's own report (workflow journal) instead of flagging
         $proj = $KitConf.ClaudeProjectDir
@@ -727,9 +742,13 @@ function L($s) { [void]$lines.Add($s) }
 # one supervisor per machine: a second session's heartbeat steps aside (two sessions once fixed and flagged the same things twice)
 $lk = Join-Path (Get-KitPath cache -Create) 'supervise.lock'
 $me = if ($Session) { $Session } else { "pid$PID" }
-$held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
-if (-not $Takeover -and -not $MarkStopped -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt 30) { "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
-@{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json | Set-Content $lk
+$script:aside = $null
+Invoke-KitLocked $lk {
+  $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
+  if (-not $Takeover -and -not $MarkStopped -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt 30) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
+  @{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json | Set-Content $lk
+}
+if ($script:aside) { $script:aside; return }
 $t0 = Get-Date; $deadline = $t0.AddSeconds($BudgetSeconds); $script:skipped = @()
 function Within($name) { if ((Get-Date) -lt $deadline) { $true } else { if ($name -notin $script:skipped) { $script:skipped += $name }; $false } }
 # every network call of the sweep is short (20 s, 2 tries) and every child script gets only the budget left: never past the budget
@@ -877,13 +896,13 @@ if (Test-Path $adb) {
     $boardLive = @($entries | Where-Object { & $holdsLease $_ $ls }).Count
     $age = [int]($now - [datetime]$ls.since).TotalMinutes
     if ($ls.agent -eq 'manual') {   # booted by hand (swarm.ps1 acquire -Agent manual): the user owns it; never reclaimed, only a reminder
-      if ($age -ge 240) { Flag 'WATCH' "phone $($ls.lane) booted by hand $([int]($age / 60)) h ago is still up" "If you are done with it: & $P release -Agent manual" }
+      if ($age -ge 240) { Flag 'WATCH' "phone $($ls.lane) booted by hand $([int]($age / 60)) h ago is still up" "If you are done with it: & $($KitCmd.swarm) release -Agent manual" }
       continue
     }
     $dead = (Test-KitHolder $ls) -eq $false   # the session that leased it is gone (crash, restart): no 60-min wait
     if (-not $dead -and ($laneLive -or $boardLive -or $age -lt 60)) { continue }
     if ($AutoFix) { $r = & $P release -Agent $ls.agent 2>&1; Flag 'INFO' "auto-fixed: released orphan phone lease $($ls.lane) held by $($ls.agent) for $age min: $r" 'Its holder is gone (crashed or finished without release).' }
-    else { Flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent) for $age min, holder not active" "& $P release -Agent $($ls.agent)" }
+    else { Flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent) for $age min, holder not active" "& $($KitCmd.swarm) release -Agent $($ls.agent)" }
   }
   $pkg = if ($swarmCfg) { $swarmCfg.app.package } else { $null }
   foreach ($sr in $serials) {
@@ -1200,11 +1219,11 @@ foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -an
   $h = Invoke-HostApi "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)"
   if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } }
   elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') {   # GitHub PRs
-  $h = gh pr view $m.url --json state,autoMergeRequest 2>$null | ConvertFrom-Json
+  $gr = Invoke-KitExe 'gh' @('pr', 'view', $m.url, '--json', 'state,autoMergeRequest') (Get-KitNetTimeout); $h = if ($gr.code -eq 0) { try { $gr.out | ConvertFrom-Json } catch { $null } } else { $null }
   if ($h.state -eq 'MERGED') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.autoMergeRequest) { $m.mergeState = 'SCHEDULED' } } } }
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
 $wavesDir = Get-KitPath waves -Create
-$out | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $wavesDir "$Run.json")
+$wvf = Join-Path $wavesDir "$Run.json"; $wvt = "$wvf.$PID.tmp"; $out | ConvertTo-Json -Depth 8 | Set-Content $wvt; Move-Item -LiteralPath $wvt -Destination $wvf -Force   # atomic for readers
 if ($Json) { $out | ConvertTo-Json -Depth 8; exit 0 }
 
 "=== $Run $(if ($running) { "(running: $($running -join ', '))" } else { '(complete)' })"
@@ -1353,7 +1372,10 @@ $wfArgs.agents[0].area = (($checks | ForEach-Object screen) -join '; ').Substrin
 $wfArgs | ConvertTo-Json -Depth 5 -Compress
 $tj = Get-KitPath tracking   # durable <kit>/tracking.local.json (orch.ps1 track)
 $tracked = (Test-Path $tj) -and @((Get-Content $tj -Raw | ConvertFrom-Json).tasks.PSObject.Properties.Name) -contains $Task
-if ($tracked) { "already tracked: $Task" } else { & $KitCmd.orch track add -Task $Task -Discover | Out-Null; "tracking $Task (-Discover)" }
+if ($tracked) { "already tracked: $Task" } else {
+  $ta = @(& $KitCmd.orch track add -Task $Task -Discover 2>&1); $tc = $LASTEXITCODE
+  if ($tc) { Write-Warning "track add -Task $Task -Discover failed (exit $tc): $(($ta | Select-Object -Last 2) -join ' ')"; "NOT tracked: $Task (run orch.ps1 track add -Task $Task -Discover by hand)" } else { "tracking $Task (-Discover)" }
+}
 }
 
 # ---------------------------------------------------------------- cleanup: kit-created leftovers (worktrees, browsers, daemons, runtime)
@@ -1504,11 +1526,11 @@ foreach ($root in $WorktreeRoot) {
     $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     if ($newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
     if (-not (Invoke-GitFetch -Dir $d)) { continue }                                          # offline / auth / timed out: decide nothing
-    $heads = git -C $d ls-remote --heads origin $br 2>$null
-    if ($LASTEXITCODE -ne 0 -or $heads) { continue }                                          # still on the remote, or remote unreachable (offline/auth)
+    $lr = Invoke-KitExe 'git' @('-C', $d, 'ls-remote', '--heads', 'origin', $br) (Get-KitNetTimeout)   # bounded: a hung remote stalled cleanup
+    if ($lr.code -ne 0 -or $lr.timedOut -or "$($lr.out)".Trim()) { continue }                                          # still on the remote, or remote unreachable (offline/auth)
     $unpushed = git -C $d log --oneline "@{upstream}..HEAD" 2>$null
     if ($LASTEXITCODE -eq 0 -and $unpushed) { continue }
-    $main = Split-Path (git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)   # the repo the worktree belongs to
+    $main = "$(git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()   # the repo's git dir (a submodule's lives in <super>/.git/modules/<m>)
     # "not on the remote" also fits a fresh worktree whose branch was never pushed (another wave's cleanup at idle 0 deleted
     # agents' new worktrees mid-run): remove only when the host shows a merged MR/PR at exactly this branch's tip
     $tip = (git -C $d rev-parse HEAD 2>$null)
@@ -1522,7 +1544,7 @@ foreach ($root in $WorktreeRoot) {
 # leftovers of merged MRs too (SourceTree lists them all); a branch checked out anywhere is never touched
 # an unconfigured kit (no kit.local.json, e.g. a kit worktree under test) only guesses its repos root: leave other repos alone
 $roots = @($KitConf.ReposRoot) | Where-Object { $_ -and (Test-Path $_) -and (Test-Path $KitConf.ConfigFile) }
-foreach ($r in $roots) { foreach ($c in Get-ChildItem $r -Directory) { if (Test-Path (Join-Path $c.FullName '.git')) { $repos[$c.FullName] = $true } } }
+foreach ($r in $roots) { foreach ($c in Get-ChildItem $r -Directory) { if (Test-Path (Join-Path $c.FullName '.git')) { $gd = "$(git -C $c.FullName rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if ($gd) { $repos[$gd] = $true } } } }   # keyed by git dir, like the worktrees
 foreach ($repo in @($repos.Keys)) {
   if (-not (git -C $repo rev-parse --git-dir 2>$null)) { continue }
   if (-not (Invoke-GitFetch -Dir $repo)) { continue }                                       # offline / auth / timed out: decide nothing
@@ -1540,7 +1562,7 @@ foreach ($repo in @($repos.Keys)) {
 # 8. rotate logs
 if (-not $WorktreesOnly) {
 foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File | ForEach-Object FullName) + (Get-KitPath signals))) {
-  if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep }; [void]$actions.Add("rotated $f to 5000 lines") }
+  if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { Invoke-KitLocked $f { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep } }; [void]$actions.Add("rotated $f to 5000 lines") }
 }
 
 }
@@ -1768,6 +1790,9 @@ function Invoke-Learn {
     $f = if ($Project -or $orgWord -or $inLocal) { $loc } else { $pub }
     if ($f -eq $loc -and -not (Test-Path $loc)) { [IO.File]::WriteAllText($loc, "# Kit lessons - org / project (LOCAL ONLY: git-ignored, never published)`nRead with LESSONS.md at step 0 (learn -Read prints both). Same shape: ## <skill>, one line each.`n") }
     if ($orgWord -and -not $Project) { "lesson names an org term: written to LESSONS.local.md (never published)" }
+    # read-modify-write of the whole lessons file under its lock: agents learning at the same time lost each other's lines
+    $script:learnRc = 0
+    Invoke-KitLocked $f {
     $L = & $load $f; while ($L.Count -and $L[$L.Count - 1] -eq '') { $L.RemoveAt($L.Count - 1) }
     $r = & $range $L $Skill
     if (-not $r) { $h = $L.IndexOf('## History'); $at = if ($h -ge 0) { $h } else { $L.Count }; $L.Insert($at, ''); $L.Insert($at, "## $Skill"); $r = & $range $L $Skill }
@@ -1784,7 +1809,7 @@ function Invoke-Learn {
     }
     if ($Bump) {
       $hit = @(& $idx | Where-Object { $L[$_].Contains($Bump) })
-      if ($hit.Count -ne 1) { "-Bump must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; exit 1 }
+      if ($hit.Count -ne 1) { "-Bump must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
       $s = $L[$hit[0]]
       if ($Append) { $c = $Append.Trim().TrimEnd('.'); $s = if ($s -match '^(.*?)\.?(\s*\(\d+×\))$') { "$($Matches[1]). $c.$($Matches[2])" } else { "$($s.TrimEnd('.')). $c." } }
       $m = [regex]::Match($s, '\((\d+)×\)')
@@ -1793,7 +1818,7 @@ function Invoke-Learn {
     }
     if ($Fixed) {
       $hit = @(& $idx | Where-Object { $L[$_].Contains($Fixed) })
-      if ($hit.Count -ne 1) { "-Fixed must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; exit 1 }
+      if ($hit.Count -ne 1) { "-Fixed must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
       $moved.Add(($L[$hit[0]] -replace '^- (\(fixed in kit\) )?', '- (fixed in kit) ')); $L.RemoveAt($hit[0]); $r = & $range $L $Skill
     }
     # cap per section: the oldest (bottom-most) general lines first (project lines below "### Project:" stay)
@@ -1810,6 +1835,8 @@ function Invoke-Learn {
     }
     [IO.File]::WriteAllText($f, (($L -join "`n") + "`n"))
     "$(Split-Path $f -Leaf) ## ${Skill}: $(@(& $idx).Count) lines (max $Max)$(if ($moved.Count) { "; moved $($moved.Count) to ## History" })"
+    }
+    if ($script:learnRc) { exit $script:learnRc }
     return
   }
   if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read / -Show / -Stats / -Lesson / -Bump / -Fixed / -Trim)'; exit 2 }
@@ -1950,7 +1977,11 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if ($Env) { $pa += @('-Target', $Env) }
     $r = Invoke-KitExe 'pwsh' $pa $lim
     $timedOut = $r.timedOut
-    foreach ($x in @(try { $r.out | ConvertFrom-Json } catch { @() })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
+    $txt = "$($r.out)"; $j0 = $txt.IndexOf('[')   # warnings may come before the JSON
+    $parsed = if ($j0 -ge 0) { try { @(ConvertFrom-Json $txt.Substring($j0) -NoEnumerate) } catch { $null } } else { $null }
+    # exit 0/1 = all / not all deployed; anything else, no JSON or no row at all = the check failed: UNKNOWN, never NOTHING
+    if ($r.code -notin 0, 1 -or $null -eq $parsed -or -not @($parsed | Where-Object { $_.mr }).Count) { $timedOut = $true }
+    foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()   # owner: a person says "deploy <env>", nobody asks · ask: one batched ask per env
   $win = Get-KitSetting 'deploy.minIntervalHours' 4
@@ -1979,7 +2010,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   if ($Json) { ConvertTo-Json @($plan) -Depth 6; return }
   foreach ($p in $plan) {
-    $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('dd MMM HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check timed out (git host / ssh unreachable?): plan again" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }
+    $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('dd MMM HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check failed or timed out (git host / ssh unreachable?): plan again" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }
     "DEPLOY $($p.target): $($p.status)$when | last $(if ($p.last) { "$(([datetime]$p.last).ToString('dd MMM HH:mm')) ($($p.lastSource))" } else { 'unknown' })"
     foreach ($b in $p.mrs) { "  - $($b.mr)$(if ($b.task) { " task $($b.task)" }) $($b.state): $($b.detail) [$($b.why)]" }
   }
@@ -1987,6 +2018,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 }
 
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
+  if ($__verb -in '-h', '--help', 'help', '-?') { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
   switch ($__verb) {
     'board' { Invoke-KitVerb Invoke-Board $__rest }
     'learn' { Invoke-KitVerb Invoke-Learn $__rest }
@@ -1999,6 +2031,6 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'deploy' { Invoke-KitVerb Invoke-Deploy $__rest }
     'decide' { Invoke-KitVerb Invoke-Decide $__rest }
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }
-    default { Get-Content $PSCommandPath -TotalCount 19 | Select-Object -Skip 1; exit 2 }
+    default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }
   }
 }

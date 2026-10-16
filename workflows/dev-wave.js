@@ -56,7 +56,7 @@ for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { r
 const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
 const MODE = A.mode || 'feature'
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (orchestrate step 3).')
-const RUN = A.run || (A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')
+const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // + path hash: same file name, other wave (orch.ps1 Get-LaunchRunName)
 const REVIEW = A.review !== false
 const REVIEW_AUTO = A.review === 'auto'
 const LEARN = A.learn === undefined ? true : A.learn
@@ -128,7 +128,7 @@ const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', 
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 // Crash recovery: the FULL args go to the launch record first (orch.ps1 launch -Self, FNV-1a checked): a resume after a restart
 // needs them byte-exact, and a hand-typed record once lacked the agents list
-const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
 async function recordArgs(wf, run, a, phaseName) {
   const json = JSON.stringify(a)
   const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
@@ -369,6 +369,12 @@ const results = await pipeline(
       x = { ...x, findings: [...findings.filter((f) => f.severity === 'nit'), ...blocking], fixed: true, report: await localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix') }
       const lt2 = x.report.localTest || {}
       if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
+      if (findings.some((f) => f.severity !== 'nit')) {
+        const rv2 = await agent(reviewPrompt(a, x.report) + `\nRE-REVIEW after the fix round: check that these findings are resolved and that the fix added no new problem:\n${findings.filter((f) => f.severity !== 'nit').map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`,
+          { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'mr-reviewer', ...pick('review') })
+        const again = rv2 ? (rv2.findings || []).filter((f) => f.severity !== 'nit') : [{ mr: x.report.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem: 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', fix: 'Re-run the review (one-off mr-reviewer), then merge.' }]
+        if (again.length) { log(`${a.id}: re-review after the fix round: ${again.length} finding(s) - not merged`); return { ...x, fixed: false, findings: [...x.findings, ...again] } }
+      }
       const failures = await ciGate(a, x.report)
       if (failures.length) { log(`${a.id}: pipelines still failing after the fix round - left open`); return { ...x, fixed: false, findings: [...x.findings, ...failures] } }
     }
@@ -378,14 +384,15 @@ const results = await pipeline(
   async (x, a) => {
     if (!x || x.error || !x.report || !x.report.mrs.length) return x
     const deferred = x.report.deferred || []
-    if (deferred.length || x.stopped || x.blocked) { log(`${a.id}: tracker task NOT registered (${x.blocked || (deferred.length ? 'deferred items' : 'agent stopped')})`); return { ...x, trackHeld: x.blocked || 'deferred or stopped' } }
+    const why = x.blocked || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
+    if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with orch.ps1 track add -Task <id> -HoldPromotion ''`)
     const tr = await agent(`Register agent ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
 MRs: ${x.report.mrs.map((m) => m.url).join(', ')}
 1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
-2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>'
+2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : ''}
 Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, ...pick('ship'), effort: 'low' })
     if (!tr || !tr.ok) log(`${a.id}: WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
-    return x
+    return why ? { ...x, trackHeld: why } : x
   },
 )
 

@@ -675,6 +675,7 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
   $got = $false
   try { $got = $mx.WaitOne([TimeSpan]::FromMinutes(45)) } catch [Threading.AbandonedMutexException] { $got = $true }
+  if (-not $got) { $mx.Dispose(); throw "[$e] $($s.name): another service start held the machine-wide start lock for 45 min - not started (localenv.ps1 events)" }
   try {
     Wait-Room $e $s
     $log = LogFile $e $s.name; if (Test-Path $log) { Move-Item $log "$log.prev" -Force }
@@ -1479,4 +1480,13 @@ switch ($Action) {
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
 elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 11 | Select-Object -Skip 1; exit 2 }
-else { Invoke-KitVerb Invoke-LocalEnv @($args) }
+else {
+  try { Invoke-KitVerb Invoke-LocalEnv @($args) }
+  catch {
+    $m = "$($_.Exception.Message)"
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -or $m -match 'unknown env|-Env needed|No local environments configured|unknown or ambiguous parameter|unknown option|needs -') {
+      [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2
+    }
+    throw
+  }
+}

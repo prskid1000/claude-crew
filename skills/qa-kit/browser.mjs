@@ -276,21 +276,27 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
   return box
 }
 
-export async function clickSel(page, selector, { right = false, nth = 0 } = {}) {
+// the nth match, scrolled into view, with its box: a clear error instead of a TypeError on a bad nth or a hidden element
+export async function pick(page, selector, nth = 0, what = 'element') {
   await page.waitForSelector(selector, { visible: true, timeout: 20000 })
-  const el = (await page.$$(selector))[nth]
+  const all = await page.$$(selector)
+  const el = all[nth]
+  if (!el) throw new Error(`${what}: "${selector}" has ${all.length} match(es), no index ${nth}`)
   await el.scrollIntoView()
   const b = await el.boundingBox()
+  if (!b) throw new Error(`${what}: "${selector}" [${nth}] has no box (hidden or detached)`)
+  return { el, b }
+}
+
+export async function clickSel(page, selector, { right = false, nth = 0 } = {}) {
+  const { b } = await pick(page, selector, nth, 'clickSel')
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: right ? 'right' : 'left' })
   await settle(page, 700)
 }
 
 // Hover-triggered menus: move the pointer in from outside, in steps, so mouseenter fires.
 export async function hoverSel(page, selector, { nth = 0 } = {}) {
-  await page.waitForSelector(selector, { visible: true, timeout: 20000 })
-  const el = (await page.$$(selector))[nth]
-  await el.scrollIntoView()
-  const b = await el.boundingBox()
+  const { b } = await pick(page, selector, nth, 'hoverSel')
   await page.mouse.move(b.x - 40, b.y - 40)
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 })
   await sleep(900)
@@ -298,11 +304,10 @@ export async function hoverSel(page, selector, { nth = 0 } = {}) {
 
 // Replace an input's value (text, number, date/time pickers): click, select all, type, Enter.
 export async function setInput(page, selector, value, { nth = 0, enter = true } = {}) {
-  await page.waitForSelector(selector, { visible: true, timeout: 20000 })
-  const el = (await page.$$(selector))[nth]
-  await el.scrollIntoView()
+  const { el } = await pick(page, selector, nth, 'setInput')
   await el.click({ clickCount: 3 })
-  await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control')
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control'   // select-all is Cmd+A on macOS
+  await page.keyboard.down(mod); await page.keyboard.press('KeyA'); await page.keyboard.up(mod)
   await page.keyboard.press('Backspace')
   await el.type(String(value), { delay: 20 })
   if (enter) await page.keyboard.press('Enter')

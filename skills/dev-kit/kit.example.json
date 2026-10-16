@@ -10,6 +10,7 @@
   "trackerLists": ["<tracker container whose promoted tasks deploy intest checks: list id / owner/repo / project key>"],
   "productTargets": [ { "pathRegex": "^product-a/", "targetRegex": "^a-", "label": "product A test env" } ],
   "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
+  "holdMerge": [],
   "tracker": {
     "_readme": "type: none (default) | clickup | github | gitlab | jira. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples for each backend: _examples.",
     "type": "none",

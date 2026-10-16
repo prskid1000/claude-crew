@@ -33,8 +33,21 @@ import xml.etree.ElementTree as ET   # lbcheck (it was missing: every lbcheck ru
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # the dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude folder)
+def _cfg_file():
+    own = os.path.join(KIT, 'kit.local.json')
+    if os.path.exists(own):
+        return own
+    try:   # a linked kit worktree: the main clone's local config
+        cd = subprocess.run(['git', '-C', KIT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True,
+                            text=True, encoding='utf-8', timeout=10).stdout.strip()
+        alt = os.path.join(os.path.dirname(cd), 'skills', 'dev-kit', 'kit.local.json') if cd else ''
+        return alt if alt and os.path.exists(alt) else own
+    except Exception:
+        return own
+
+
 try:
-    CFG = json.load(open(os.path.join(KIT, 'kit.local.json'), encoding='utf-8'))
+    CFG = json.load(open(_cfg_file(), encoding='utf-8'))
 except Exception:
     CFG = {}
 GLAB, GH, GWS = (shutil.which(x) for x in ('glab', 'gh', 'gws'))
@@ -366,8 +379,8 @@ def _remember_automerge(ref):
             with open(path + '.tmp', 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=1)
             os.replace(path + '.tmp', path)
-    except Exception:
-        pass
+    except Exception as e:   # a lost intent is never re-armed: say so
+        print(f'[merge] could not record the merge-when-green intent for {ref} in {path}: {e}', file=sys.stderr)
 
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
@@ -460,9 +473,12 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
     state_of(repo, iid) -> 'merged' / 'opened' / 'closed' / ''. Returns [(producer ref, state, task id)]."""
     path = tracking or kit_path('tracking')
     try:
-        data = json.load(open(path, encoding='utf-8-sig')) if os.path.exists(path) else {}
-    except Exception:
-        return []
+        with open(path, encoding='utf-8-sig') as fh:
+            data = json.load(fh) if os.path.exists(path) else {}
+    except FileNotFoundError:
+        data = {}
+    except Exception as e:   # unreadable: the merge order is unknown -> WAIT, never "no producers"
+        return [(f'(tracking file unreadable: {e})', 'unknown', '-')]
     out = []
     for tid, t in ((data or {}).get('tasks') or {}).items():
         if not isinstance(t, dict):
@@ -482,6 +498,20 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
     return out
 
 
+def held(proj):
+    """kit.local.json holdMerge: true (every repo) or repo names / aliases / paths; a held repo's MRs are never merged by a script."""
+    h = CFG.get('holdMerge')
+    if h is True:
+        return True
+    names = [str((CFG.get('repoAliases') or {}).get(x) or x) for x in (h if isinstance(h, list) else [])]
+    return any(_same_repo(n, proj) for n in names)
+
+
+def _gh_workflows(worktree):
+    d = os.path.join(worktree, '.github', 'workflows')
+    return os.path.isdir(d) and any(f.endswith(('.yml', '.yaml')) for f in os.listdir(d))
+
+
 def auto_merge(worktree, iid, max_wait=90):
     """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge), or merge
     at once when it is green already or the project has no CI. Waits at most max_wait seconds (with flushed progress lines), so it
@@ -490,6 +520,8 @@ def auto_merge(worktree, iid, max_wait=90):
     A consumer MR whose registered producer (orch.ps1 track -MergeAfter) is not merged yet is not merged: WAIT ("waiting for producer")."""
     iid = str(iid).strip().rsplit('!', 1)[-1].lstrip('#')   # '!203' / 'web!203' / '#12' -> the number
     host, proj = remote(worktree)
+    if held(proj):
+        return f'{proj}!{iid} is held for approval (kit.local.json holdMerge): a person merges it\nNOT_MERGED'
     waiting = unmerged_producers(proj, iid, lambda r, i: _host_mr_state(host, proj, r, i))
     if waiting:
         lines =[f'waiting for producer {ref} ({st}; task {tid}): {proj}!{iid} merges only after it' for ref, st, tid in waiting]
@@ -568,7 +600,14 @@ def auto_merge(worktree, iid, max_wait=90):
         put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
         return _gitlab_final(enc, proj, iid, put, st)
     out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch', '--auto'], cwd=worktree)
-    if 'clean status' in out.lower():   # nothing to wait for (no required checks): auto-merge is refused, merge directly
+    if 'clean status' in out.lower():   # no required checks: auto-merge is refused; merge directly only when CI is done and green
+        pv = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'statusCheckRollup'], cwd=worktree))
+        roll = pv.get('statusCheckRollup') if isinstance(pv, dict) else None
+        cs = [r.get('conclusion') or r.get('state') for r in roll or []]
+        if roll is None or any(c in ('FAILURE', 'CANCELLED', 'ERROR', 'TIMED_OUT') for c in cs):
+            return f'#{iid}: checks unreadable or failed: {str(pv)[:200]}\n' + ('PIPELINE_FAILED' if roll else 'WAIT')
+        if (not cs and _gh_workflows(worktree)) or any(c not in ('SUCCESS', 'NEUTRAL', 'SKIPPED') for c in cs):
+            return f'#{iid}: workflows still running (or not started yet), no required checks: run merge again in a few minutes\nWAIT'
         out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)
     v = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state,mergeable,autoMergeRequest,statusCheckRollup'], cwd=worktree))
     concl = [r.get('conclusion') or r.get('state') for r in v.get('statusCheckRollup') or []]
@@ -581,9 +620,11 @@ def auto_merge(worktree, iid, max_wait=90):
 def merge_when_green(worktree, iid, timeout_min=90):
     """Poll the pipeline; squash-merge when green. Never merges on failure or conflict. Prefer auto_merge (no waiting)."""
     host, proj = remote(worktree)
+    if held(proj):
+        return f'{proj}!{iid} is held for approval (kit.local.json holdMerge)\nNOT_MERGED'
     waiting = unmerged_producers(proj, iid, lambda r, i: _host_mr_state(host, proj, r, i))
     if waiting:
-        return '; '.join(f'waiting for producer {ref} ({st}; task {tid})' for ref, st, tid in waiting) + ': not merged'
+        return '; '.join(f'waiting for producer {ref} ({st}; task {tid})' for ref, st, tid in waiting) + ': not merged\nWAIT'
     end = time.time() + timeout_min * 60
     while time.time() < end:
         if host == 'gitlab':
@@ -602,22 +643,25 @@ def merge_when_green(worktree, iid, timeout_min=90):
             ok = bool(runs) and all(c in ('SUCCESS', 'NEUTRAL', 'SKIPPED') for c in concl)
             st = 'success' if ok else ('failed' if bad else 'running')
         if state == 'merged':
-            return 'already merged'
+            return 'already merged\nMERGED'
         if conflict:
-            return 'CONFLICT: dev.ps1 wt sync, resolve (devtools.py keepboth for append-only files), re-check, push --force-with-lease to YOUR branch'
+            return 'CONFLICT: dev.ps1 wt sync, resolve (devtools.py keepboth for append-only files), re-check, push --force-with-lease to YOUR branch\nCONFLICT'
         if bad:
-            return f'PIPELINE {st}: fix it, do not merge'
+            return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
         if host == 'gitlab' and st is None:   # no MR CI in this repo: auto_merge() decides (merges once no pipeline is coming)
             res = auto_merge(worktree, iid)
             if merge_word(res) != 'WAIT':
                 return res
         if ok:
             if host == 'gitlab':
-                return _run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge',
-                             '-f', 'squash=true', '-f', 'should_remove_source_branch=true'])[:300]
-            return _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)[:300]
+                put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge',
+                                  '-f', 'squash=true', '-f', 'should_remove_source_branch=true', *(['-f', f"sha={m['sha']}"] if m.get('sha') else [])]))
+                return _gitlab_final(enc, proj, iid, put, st)
+            out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)
+            v = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state'], cwd=worktree))
+            return f"{out[:300]}\n{'MERGED' if isinstance(v, dict) and v.get('state') == 'MERGED' else 'NOT_MERGED'}"
         time.sleep(60)
-    return 'TIMEOUT waiting for pipeline'
+    return 'TIMEOUT waiting for pipeline\nWAIT'
 
 
 # ---------- Documents (reports.type: gdocs = Google Docs via gws, markdown = files under <runtime>/work/docs) ----------
@@ -720,8 +764,11 @@ def make_doc(title, html_path, parent=None):
         os.chdir(cwd)
     if 'id' not in r:
         raise SystemExit(f'gws upload failed: {r}')
-    gws('drive', 'permissions', 'create', params={'fileId': r['id'], 'supportsAllDrives': True}, body={'type': 'anyone', 'role': 'reader'})
-    return f"https://docs.google.com/document/d/{r['id']}/edit"
+    url = f"https://docs.google.com/document/d/{r['id']}/edit"
+    p = gws('drive', 'permissions', 'create', params={'fileId': r['id'], 'supportsAllDrives': True}, body={'type': 'anyone', 'role': 'reader'})
+    if not (isinstance(p, dict) and p.get('id')):
+        raise SystemExit(f'{url} was uploaded but not shared (anyone with the link): {str(p)[:300]} - share it by hand or fix gws auth')
+    return url
 
 
 # ---------- append-only conflicts (rebase), Liquibase sanity check, self-test ----------
@@ -925,6 +972,44 @@ def selftest():
     finally:
         g.update(saved)
     expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
+    # batch 2: holdMerge, unreadable tracking, GitHub clean status with running workflows, share failure, lost intent
+    saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'gws', 'REPORT_TYPE', 'GWS', 'kit_path')}
+    cfg0 = dict(CFG)
+    try:
+        g['remote'] = lambda wt: ('gitlab', 'g/web'); g['_run'] = lambda *a, **k: puts.append('called') or '{}'
+        CFG['holdMerge'] = ['web']; puts.clear()
+        expect('holdMerge: a held repo is NOT_MERGED, no host call', merge_word(auto_merge('.', '7')) == 'NOT_MERGED' and not puts)
+        CFG.pop('holdMerge', None)
+        fd, bad = tempfile.mkstemp(suffix='.json'); os.write(fd, b'{broken'); os.close(fd)
+        w = saved['unmerged_producers']('g/web', '7', lambda r, i: 'merged', tracking=bad); os.remove(bad)
+        expect('an unreadable tracking file is a wait, not "no producers"', len(w) == 1 and 'unreadable' in w[0][0])
+        g['unmerged_producers'] = lambda *a, **k: []
+        g['remote'] = lambda wt: ('github', 'o/web')
+        def ghrun(cmd, cwd=None, check=False):
+            s = ' '.join(str(c) for c in cmd)
+            if '--auto' in s:
+                return 'Pull request #7 is in clean status'
+            if 'statusCheckRollup' in s and 'state,' not in s:
+                return '{"statusCheckRollup": [{"status": "IN_PROGRESS", "conclusion": ""}]}'
+            puts.append(s)
+            return '{}'
+        g['_run'] = ghrun; puts.clear()
+        expect('GitHub clean status with a running workflow: WAIT, no direct merge', merge_word(auto_merge('.', '7')) == 'WAIT' and not any('pr merge' in p for p in puts))
+        g['REPORT_TYPE'] = 'gdocs'; g['GWS'] = 'gws'
+        g['gws'] = lambda *a, **k: {'id': 'D1'} if 'files' in a else {'error': 'insufficient permissions'}
+        fd, md = tempfile.mkstemp(suffix='.html'); os.close(fd)
+        try:
+            make_doc('t', md); expect('a doc that could not be shared is refused', False)
+        except SystemExit as e:
+            expect('a doc that could not be shared is refused', 'not shared' in str(e))
+        os.remove(md)
+        g['kit_path'] = lambda n: os.path.join(tempfile.gettempdir(), 'no-such-dir-kit', 'x', 'tracking.json')
+        err = io.StringIO()
+        with _c.redirect_stderr(err):
+            _remember_automerge('web!7')
+        expect('a lost merge-when-green intent is reported', 'could not record' in err.getvalue())
+    finally:
+        g.update(saved); CFG.clear(); CFG.update(cfg0)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
@@ -955,7 +1040,9 @@ if __name__ == '__main__':
         print(res)
         sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # header: 1 = not merged (refused, conflict, wait)
     elif cmd == 'merge-wait':     # old behaviour: poll until merged (blocks up to 90 min)
-        print(merge_when_green(a[1], a[2]))
+        res = merge_when_green(a[1], a[2])
+        print(res)
+        sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)
     elif cmd == 'keepboth':
         sys.exit(keepboth(a[1:]))
     elif cmd == 'lbcheck':

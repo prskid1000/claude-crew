@@ -129,9 +129,10 @@ param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
   [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall, [string]$Holder,
   [string]$Apk,        # acquire: install this APK instead of apk/app.apk ('local' = apk/app-local.apk, the local-env build)
-  [int[]]$Reverse      # acquire: adb reverse these ports (default with -Apk local: swarm.config.json app.localReverse)
+  [string[]]$Reverse   # acquire: adb reverse these ports (default with -Apk local: swarm.config.json app.localReverse)
 )
 $ErrorActionPreference = 'Stop'
+$Reverse = @(Split-KitList $Reverse | ForEach-Object { [int]$_ })
 $c = Get-SwarmConfig
 $adb = $c.adb; $pkg = $c.app.package
 $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
@@ -146,6 +147,7 @@ function Locked([scriptblock]$b) {
 # waiters touch their file every loop; one not touched for 3 min died and must not block the queue
 function Waiters { Get-ChildItem $waitDir -Filter '*.json' | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
 function Lease($name) { $f = Join-Path $dir "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
+function Save-Json($o, [string]$f) { $t = "$f.$PID.tmp"; $o | ConvertTo-Json -Depth 5 | Set-Content $t -Encoding utf8; Move-Item $t $f -Force }
 function Running($l) { [bool]((& $adb devices) -match "^emulator-$($l.port)\s+device") }
 function ApkStamp { $a = Get-Item (Join-Path $c.apkDir 'app.apk') -ErrorAction SilentlyContinue; if ($a) { "$($a.Length)-$($a.LastWriteTimeUtc.Ticks)" } }
 # What the lanes run (swarm.ps1 build writes app.json) and whether the branch has moved on since (local ref only: no fetch)
@@ -190,15 +192,15 @@ switch ($Action) {
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
     $wf = Join-Path $waitDir "$Agent.json"
     $since = (Get-Date).ToString('s')
-    @{ agent = $Agent; lane = $Lane; since = $since } | ConvertTo-Json | Set-Content $wf
+    Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
     while (-not $got) {
       $got = Locked {
-        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { @{ agent = $Agent; lane = $Lane; since = $since } | ConvertTo-Json | Set-Content $wf }   # heartbeat
+        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
         $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
         if ($mine) {   # already ours (also when it went offline: a held lane is never handed to anyone else)
           $script:had = $true
-          if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; $o | ConvertTo-Json | Set-Content $lf } }
+          if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; Save-Json $o $lf } }
           return $mine[0]
         }
         # fair: the oldest waiter whose wish a free lane can satisfy goes first
@@ -211,13 +213,12 @@ switch ($Action) {
         $up = @($free | Where-Object { Running $_ })
         $pick = if ($up) { $up[0] } else { $free[0] }
         $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') } + (Get-KitHolder); if ($Holder) { $new.holder = $Holder }   # holderPid: supervise frees a crashed session's lease at once
-        $new | ConvertTo-Json | Set-Content (Join-Path $dir "$($pick.name).json")
+        Save-Json $new (Join-Path $dir "$($pick.name).json")
         $pick
       }
       if (-not $got) {
         if ((Get-Date) -gt $deadline) { Remove-Item $wf -Force -ErrorAction SilentlyContinue; throw "no phone free within $WaitMinutes min (swarm.ps1 status shows who holds them)" }
-        if (-not $told) { "$(if ($script:why) { $script:why } else { "all $(if ($Lane) { "$Lane is" } else { 'lanes are' }) leased" }); waiting for a release or memory (fair queue) ..."; $told = $true }
-        $script:why = $null
+        if (-not $told) { "all $(if ($Lane) { "$Lane is" } else { 'lanes are' }) leased; waiting for a release or memory (fair queue) ..."; $told = $true }
         Start-Sleep 20
       }
     }
@@ -255,7 +256,7 @@ switch ($Action) {
     }
     $rev = @(if ($PSBoundParameters.ContainsKey('Reverse')) { $Reverse } elseif ($Apk -eq 'local') { @($c.app.localReverse) })
     foreach ($port in $rev) { & $adb -s $serial reverse "tcp:$port" "tcp:$port" | Out-Null }
-    if ($rev.Count) { Locked { $lf = Join-Path $dir "$($got.name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; $o | Add-Member -Force reverse @($rev); $o | ConvertTo-Json | Set-Content $lf } }
+    if ($rev.Count) { Locked { $lf = Join-Path $dir "$($got.name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; $o | Add-Member -Force reverse @($rev); Save-Json $o $lf } }
     if (-not $Apk -and -not $NoInstall -and $c.app.kind -and (ApkStamp)) {
       $onPhone = ((& $adb -s $serial shell 'cat /sdcard/.qa-apk-stamp 2>/dev/null') -join '').Trim()
       if ($onPhone -ne (ApkStamp)) {
@@ -292,12 +293,18 @@ switch ($Action) {
     foreach ($l in $mine) {
       $serial = "emulator-$($l.port)"
       if (Running $l) { & $adb -s $serial shell am force-stop $pkg 2>$null; & $adb -s $serial reverse --remove-all 2>$null }
+      $lf = Join-Path $dir "$($l.name).json"
       $waiting = Locked {
-        Remove-Item (Join-Path $dir "$($l.name).json") -Force -ErrorAction SilentlyContinue
-        @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
+        $n = @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
+        if ($Keep -or $n -or -not (Running $l)) { Remove-Item $lf -Force -ErrorAction SilentlyContinue }
+        else { Save-Json ([ordered]@{ agent = '__stopping__'; lane = $l.name; serial = $serial; since = (Get-Date).ToString('s') } + (Get-KitHolder)) $lf }
+        $n
       }
       if ($Keep -or $waiting) { "$($l.name) released (kept running: $(if ($Keep) { '-Keep' } else { "$waiting agent(s) waiting" }))" }
-      elseif (Running $l) { & $KitCmd.swarm down -Lanes $l.name -KeepBrowsers | Out-Null; "$($l.name) released and shut down" }
+      elseif ((Lease $l.name).agent -eq '__stopping__') {
+        try { & $KitCmd.swarm down -Lanes $l.name -KeepBrowsers | Out-Null; "$($l.name) released and shut down" }
+        finally { Locked { if ((Lease $l.name).agent -eq '__stopping__') { Remove-Item $lf -Force -ErrorAction SilentlyContinue } } }
+      }
       else { "$($l.name) released" }
     }
   }
@@ -479,6 +486,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
 $adb = $c.adb; $pkg = $c.app.package; $Mode = 'Release'
+$Serials = @(Split-KitList $Serials)
 if (-not $Serials) { $Serials = (Get-Content $c.state -Raw | ConvertFrom-Json).serial }
 $apk = if ($Apk) { $Apk } else { Join-Path $c.apkDir 'app.apk' }
 if (-not (Test-Path $apk)) { throw "$apk missing - run swarm.ps1 build" }
@@ -538,6 +546,7 @@ param(
   [switch]$Force                    # act on a lane even if an agent holds its lease
 )
 $ErrorActionPreference = 'Stop'
+$Lanes = @(Split-KitList $Lanes)
 $c = Get-SwarmConfig
 $adb = $c.adb
 $sdk = Split-Path (Split-Path $c.adb)
@@ -638,6 +647,7 @@ $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
 $adb = $c.adb
 $all = @($c.lanes)
+$Lanes = @(Split-KitList $Lanes)
 if (-not $Lanes) { $Lanes = @($all | Select-Object -First $(if ($Count -gt 0) { $Count } else { $all.Count }) | ForEach-Object name) }
 $gate = ({ & $KitCmd.dev gate @args })
 $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'; New-Item -ItemType Directory -Force $ledger | Out-Null
@@ -703,8 +713,10 @@ foreach ($o in $out) {
 }
 $out = $ready
 # merge by lane: other lanes booted by earlier calls stay in swarm.json (an empty/corrupt file counts as none)
-$prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
-ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
+Invoke-KitLocked $c.state {
+  $prev = try { @(Get-Content $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | Where-Object { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
+  ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
+}
 foreach ($i in 1..3) { Start-Sleep 4; & $KitCmd.swarm arrange | Out-Null }
 & $KitCmd.swarm arrange
 if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
@@ -716,6 +728,7 @@ if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
 # headless test browsers started by qa-kit/browser.mjs (<runtime>/cache/chrome-profiles). Nothing else is touched.
 function Invoke-Down {
 param([string[]]$Lanes, [switch]$KeepBrowsers)
+$Lanes = @(Split-KitList $Lanes)
 $c = Get-SwarmConfig
 $adb = $c.adb
 foreach ($l in @($c.lanes) | Where-Object { -not $Lanes -or $Lanes -contains $_.name }) {

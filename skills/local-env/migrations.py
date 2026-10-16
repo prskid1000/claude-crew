@@ -42,7 +42,9 @@ DEFAULTS = {
     'smallDataRows': 20,
     'referenceTables': r'(?i)(^|_)(ref|lookup|types?|status(es)?|configs?|settings?|authorit(y|ies)|permissions?|roles?|menus?|features?|translations?)$',
     'heavySql': [r'\bDROP\s+(TABLE|COLUMN|DATABASE|SCHEMA)\b', r'\bTRUNCATE\b', r'\bMODIFY\b', r'\bCHANGE\s+(COLUMN\s+)?\w',
-                 r'\bDELIMITER\b', r'\bCREATE\s+(DEFINER|PROCEDURE|FUNCTION|TRIGGER|EVENT)\b', r'\bRENAME\s+TABLE\b'],
+                 r'\bDELIMITER\b', r'\bCREATE\s+(DEFINER|PROCEDURE|FUNCTION|TRIGGER|EVENT)\b', r'\bRENAME\s+TABLE\b',
+                 r'\bALTER\s+TABLE\b.*\bDROP\s+(?!(INDEX|KEY|FOREIGN\s+KEY|CONSTRAINT|CHECK|PRIMARY\s+KEY|DEFAULT)\b)[`"]?\w',
+                 r'\bON\s+DUPLICATE\s+KEY\s+UPDATE\b', r'\bREPLACE\s+INTO\b', r'\bWHERE\s+(1\s*=\s*1|TRUE|1)\s*$'],
     'lightSql': [r'^SET\s', r'^ALTER\s+TABLE\s+\S+\s+(ADD|RENAME|DROP\s+(INDEX|KEY|FOREIGN\s+KEY|CONSTRAINT|CHECK))\b',
                  r'^CREATE\s+(UNIQUE\s+|FULLTEXT\s+)?INDEX\b', r'^CREATE\s+TABLE\b', r'^CREATE\s+(OR\s+REPLACE\s+)?VIEW\b',
                  r'^DROP\s+(INDEX|VIEW)\b', r'^INSERT\s+(IGNORE\s+)?INTO\b', r'^UPDATE\b.+\bWHERE\b', r'^DELETE\s+FROM\b.+\bWHERE\b'],
@@ -110,7 +112,7 @@ def split_names(v):
 def change_from(t, attrs, cols, where, text):
     """t: change type; attrs: dict; cols: column names; where: WHERE text or None; text: SQL body."""
     tbl = (attrs.get('tableName') or attrs.get('baseTableName') or attrs.get('viewName') or '').strip('`"').lower()
-    c = {'type': t, 'table': tbl, 'columns': cols, 'where': bool(norm(where)), 'rows': 1 if t == 'insert' else 0, 'sql': text or '',
+    c = {'type': t, 'table': tbl, 'columns': cols, 'where': bool(norm(where)) and not re.fullmatch(r'(?i)\(?\s*(1\s*=\s*1|true|1)\s*\)?', norm(where)), 'rows': 1 if t == 'insert' else 0, 'sql': text or '',
          'creates': [], 'refs': [], 'attrs': {k: v for k, v in attrs.items() if isinstance(v, str)}}
     if t == 'createTable':
         c['creates'] = [tbl] + [f'{tbl}.{x}' for x in cols]
@@ -127,7 +129,7 @@ def change_from(t, attrs, cols, where, text):
         c['refs'] = [tbl, rt] + [f'{tbl}.{x}' for x in split_names(attrs.get('baseColumnNames'))] + [f'{rt}.{x}' for x in split_names(attrs.get('referencedColumnNames'))]
     elif t == 'sql':
         body = text or ''
-        for m in re.finditer(r'(?is)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?(\w+)', body):
+        for m in re.finditer(r'(?is)\bCREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\b)[`"]?(\w+)', body):
             c['creates'].append(m.group(1).lower())
         for m in re.finditer(r'(?is)\bALTER\s+TABLE\s+[`"]?(\w+)[`"]?\s+ADD\s+(?:COLUMN\s+)?[`"]?(\w+)', body):
             if m.group(2).upper() not in ('INDEX', 'KEY', 'CONSTRAINT', 'UNIQUE', 'FOREIGN', 'PRIMARY', 'FULLTEXT', 'CHECK'):
@@ -358,7 +360,11 @@ def classify(a, cfg):
     repo = a.repo
     mb = (git(repo, 'merge-base', a.base, a.head, ok=True) or '').strip() or a.base
     under = [u.strip().strip('/').replace('\\', '/') for u in (a.under or '').split(',') if u.strip()]
-    rows = [l.split('\t') for l in (git(repo, 'diff', '--name-status', '-M', mb, a.head) or '').splitlines() if l.strip()]
+    tok = (git(repo, 'diff', '--name-status', '-z', '-M', mb, a.head) or '').split('\0')
+    rows, i = [], 0
+    while i < len(tok) and tok[i]:
+        n = 3 if tok[i][0] in 'RC' else 2   # R<score>\0old\0new, else <st>\0path
+        rows.append(tok[i:i + n]); i += n
     out, reasons, files, created = [], [], [], set()
     parsed = []
     for r in rows:
@@ -371,6 +377,10 @@ def classify(a, cfg):
         parsed.append((st, path, old, head_text, base_text))
     for st, path, old, head_text, base_text in parsed:
         lp = logical(path, cfg)
+        if (st != 'D' and head_text is None) or (st in 'MRD' and base_text is None):
+            out.append({'file': lp, 'path': path, 'id': '*', 'author': '', 'hash': '', 'status': 'unparsed', 'class': 'heavy', 'rule': 'unparsed',
+                        'why': FILE_RULES['unparsed'].format(why='git show could not read it'), 'guarded': False, 'creates': [], 'refs': [], 'changes': []})
+            continue
         new_cs, why_h, _ = parse(path, head_text, cfg) if head_text is not None else ([], '', '')
         old_cs, why_b, _ = parse(old, base_text, cfg) if base_text is not None else ([], '', '')
         if new_cs is None or old_cs is None:
@@ -391,15 +401,15 @@ def classify(a, cfg):
         for c in new_cs:
             if c['status'] == 'same':
                 continue
-            if c['status'] == 'added':
-                for ch in c['changes']:
-                    created.update(ch['creates'])
             c.update({'file': lp, 'path': path})
             out.append(c)
-    for c in out:
+    for c in out:   # in file order: only objects EARLIER changeSets created count as "created here"
         if c['id'] == '*':
             continue
         c['class'], c['rule'], c['why'] = judge(c, created, cfg)
+        if c['status'] == 'added':
+            for ch in c['changes']:
+                created.update(ch['creates'])
         c['guarded'] = bool(re.search(r'(?i)MARK_RAN|CONTINUE', c['onFail']))
         c['creates'] = sorted({x for ch in c['changes'] for x in ch['creates']})
         c['refs'] = sorted({x for ch in c['changes'] for x in ch['refs']} - set(c['creates']))
@@ -588,7 +598,7 @@ class Repo:
         if save:
             a += ['--save', save]
         if cfg:
-            p = os.path.join(self.d, '..', os.path.basename(self.d) + '-cfg.json'); json.dump(cfg, open(p, 'w')); a += ['--config', p]
+            p = os.path.join(self.d, '..', os.path.basename(self.d) + '-cfg.json'); open(p, 'w', encoding='utf-8').write(json.dumps(cfg)); a += ['--config', p]
         return run(*a)
 
 
@@ -643,6 +653,27 @@ class Classify(unittest.TestCase):
         self.heavy('rawsql', '<sql>ALTER TABLE orders MODIFY qty BIGINT</sql>', 'raw-sql', '<sql>ALTER TABLE orders MODIFY qty INT</sql>')
         self.heavy('retype', '<modifyDataType tableName="orders" columnName="qty" newDataType="SMALLINT"/>', 'retype', '<modifyDataType tableName="orders" columnName="qty" newDataType="INT"/>')
         self.heavy('loaddata', '<loadData tableName="orders" file="x.csv"/>', 'bulk-file', '<sql>SELECT 1</sql>')
+
+    def test_order_and_sql_gaps_are_heavy(self):
+        # drop an existing column, add it back later: the first changeSet still drops data
+        sha = self.r.branch('dropreadd', {f'{CL}/20260402000000_x.xml': xml(
+            cs('20260402000000-1', '<dropColumn tableName="orders" columnName="qty"/>', '<addColumn tableName="orders"><column name="qty" type="INT"/></addColumn>'),
+            cs('20260402000000-2', '<addColumn tableName="orders"><column name="qty" type="INT"/></addColumn>'))})
+        res = self.r.classify(sha)
+        self.assertEqual((res['class'], res['changesets'][0]['rule']), ('heavy', 'drop-data'), res['reasons'])
+        # CREATE TABLE IF NOT EXISTS then a drop of it: the table may have existed
+        sha = self.r.branch('ifnot', {f'{CL}/20260403000000_x.xml': xml(
+            cs('20260403000000-1', '<sql>CREATE TABLE IF NOT EXISTS orders (id BIGINT)</sql>', '<sql>SELECT 1</sql>'),
+            cs('20260403000000-2', '<dropTable tableName="orders"/>', '<sql>CREATE TABLE orders (id BIGINT)</sql>'))})
+        self.assertEqual(self.r.classify(sha)['changesets'][1]['rule'], 'drop-data')
+        for name, body in (('altdrop', 'ALTER TABLE orders ADD note INT, DROP qty'), ('upsert', 'INSERT INTO orders (id) VALUES (1) ON DUPLICATE KEY UPDATE qty = 0'),
+                           ('trivwhere', 'UPDATE orders SET qty = 0 WHERE 1=1')):
+            self.heavy(name, f'<sql>{body}</sql>', 'raw-sql', '<sql>SELECT 1</sql>')
+        self.heavy('trivxml', '<update tableName="orders"><column name="qty" valueNumeric="0"/><where>1=1</where></update>', 'unbounded', '<sql>SELECT 1</sql>')
+
+    def test_non_ascii_path_is_read(self):
+        sha = self.r.branch('uml', {f'{CL}/20260404000000_bestellung_\u00e4.xml': xml(cs('20260404000000-1', '<dropTable tableName="orders"/>', '<sql>CREATE TABLE orders (id BIGINT)</sql>'))})
+        self.assertEqual(self.r.classify(sha)['class'], 'heavy')
 
     def test_drop_own_is_light(self):
         sha = self.r.branch('dropown', {f'{CL}/20260401000000_own.xml': xml(
@@ -711,7 +742,7 @@ class Plan(unittest.TestCase):
         self.assertEqual(res['blocked'], [])
         cut = open(os.path.join(res['searchPath'], 'config', 'liquibase', 'changelog', '20260201000000_light.xml'), encoding='utf-8').read()
         self.assertEqual(cut.count('<changeSet'), 6)
-        self.assertIn('config/liquibase/changelog/20260201000000_light.xml', open(os.path.join(res['searchPath'], 'localenv-revert.xml')).read())
+        self.assertIn('config/liquibase/changelog/20260201000000_light.xml', open(os.path.join(res['searchPath'], 'localenv-revert.xml'), encoding='utf-8').read())
 
     def test_dependent_layer_blocks(self):
         a = self.manifest('a', self.r.branch('a', {f'{CL}/20260201000000_light.xml': LIGHT_FILE}))

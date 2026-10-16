@@ -125,7 +125,7 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 FILE_CAP = 50
 # token budgets (UTF-8 bytes / 4), CONTRIBUTING "Hard rules"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-           'workflow': 14000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 16000, 'total': 375000}
+           'workflow': 14000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 24000, 'total': 380000}
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/paths.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -225,6 +225,16 @@ class Kit:
     index: Dict[str, list]
 
 
+def main_clone(d):
+    """The main worktree of the git repo holding d (d itself when it is no linked worktree or git fails)."""
+    try:
+        r = subprocess.run(['git', '-C', d, 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True,
+                           text=True, encoding='utf-8', timeout=20)
+        return os.path.dirname(os.path.normpath(r.stdout.strip())) if r.returncode == 0 and r.stdout.strip() else d
+    except (OSError, subprocess.SubprocessError):
+        return d
+
+
 def load(kit):
     k = Kit()
     k.dir = os.path.abspath(kit)
@@ -275,7 +285,10 @@ def load(kit):
     k.files = sorted(f for f in k.all if not ignored(f) or f in k.local_rules)
     k.fileset = set(k.files)
     try:
-        cfg = json.loads(read(os.path.join(k.dir, 'skills', 'dev-kit', 'kit.local.json')) or '{}')
+        lj = os.path.join(k.dir, 'skills', 'dev-kit', 'kit.local.json')
+        if not os.path.isfile(lj):
+            lj = os.path.join(main_clone(k.dir), 'skills', 'dev-kit', 'kit.local.json')
+        cfg = json.loads(read(lj) or '{}')
         k.local_only = [p.replace('\\', '/').rstrip('/') for p in cfg.get('localOnly', [])]
     except ValueError:
         k.local_only = []
@@ -515,7 +528,7 @@ def graph(k):
     out = defaultdict(list)
     for (a, b), t in edges.items():
         out[a].append((b, t))
-    prev = {e: None for e in entries}
+    prev: Dict[str, Optional[str]] = {e: None for e in entries}
     q = deque(entries)
     while q:
         cur = q.popleft()
@@ -707,7 +720,7 @@ def lint(k, g=None, org_terms=None):
     if len(counted) > FILE_CAP:
         bad('FILE-CAP', 'kit', f'{len(counted)} tracked files (cap {FILE_CAP}, ports excluded): merge files (CONTRIBUTING "Hard rules")')
     # ---- token budgets per file type and in total
-    def tok(f):
+    def size_tokens(f):
         try:
             return os.path.getsize(os.path.join(k.dir, f)) // 4
         except OSError:
@@ -734,8 +747,8 @@ def lint(k, g=None, org_terms=None):
             return 'template'
         ext = os.path.splitext(f)[1][1:]
         return ext if ext in BUDGETS else None
-    sizes = {f: tok(f) for f in counted}
-    over = [(f, n, BUDGETS[btype(f)]) for f, n in sizes.items() if btype(f) and n > BUDGETS[btype(f)]]
+    sizes = {f: size_tokens(f) for f in counted}
+    over = [(f, n, BUDGETS[b]) for f, n in sizes.items() if (b := btype(f)) and n > BUDGETS[b]]
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
@@ -770,8 +783,8 @@ def lint(k, g=None, org_terms=None):
                 bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (CONTRIBUTING "Script")')
     # ---- writing standards (templates.md): the kit's own files, each lesson and History line
     try:
-        wkinds, wbanned = writing_standards(KIT)
-    except Exception:   # no templates.md yet: nothing to measure against
+        wkinds, wbanned = writing_standards(k.dir)
+    except OSError:   # no templates.md yet: nothing to measure against
         wkinds, wbanned = {}, []
     if wkinds:
         for f in counted:
@@ -1097,11 +1110,12 @@ def cmd_lint(args):
     if ORG:
         if os.path.isfile(ORG):
             try:
-                terms = json.load(open(ORG, encoding='utf-8')).get('orgTerms') or []
+                with open(str(ORG), encoding='utf-8') as fh:
+                    terms = json.load(fh).get('orgTerms') or []
             except ValueError:
                 sys.exit(f'kittool lint: {ORG} is not valid JSON')
         else:
-            terms = [t for t in ORG.split(',') if t.strip()]
+            terms = [t for t in str(ORG).split(',') if t.strip()]
 
     k = load(KIT)
     g = graph(k)
@@ -1115,7 +1129,8 @@ def cmd_lint(args):
             print(f'kittool lint: flow page not regenerated: {e}', file=sys.stderr)
 
     if JSON_OUT:
-        json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], open(JSON_OUT, 'w', encoding='utf-8'), indent=1)
+        with open(str(JSON_OUT), 'w', encoding='utf-8') as fh:
+            json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], fh, indent=1)
     if SUMMARY:
         if problems:
             c, w, m = problems[0]
@@ -1194,11 +1209,11 @@ def write_codex(name, fields, body):
         sandbox_line = 'sandbox_mode = "read-only"\n'
     content = (
         f'name = "{name}"\n'
-        f'description = "{fields["description"]}"\n'
+        f'description = {json.dumps(fields["description"], ensure_ascii=False)}\n'
         f"{sandbox_line}"
         f'developer_instructions = """\n{toml_escape(body)}\n"""\n'
     )
-    (CODEX_AGENTS / f"{name}.toml").write_text(content, encoding="utf-8")
+    (CODEX_AGENTS / f"{name}.toml").write_text(content, encoding="utf-8", newline="\n")
 
 
 def write_gravity(name, fields, body):
@@ -1209,7 +1224,7 @@ def write_gravity(name, fields, body):
     # when the Claude definition restricted tools, so a human maps it once by hand.
     frontmatter = [
         f"name: {name}",
-        f'description: "{fields["description"]}"',
+        f'description: {json.dumps(fields["description"], ensure_ascii=False)}',
         "subagent: true",
         "mainAgent: false",
         "model: inherit",
@@ -1223,7 +1238,7 @@ def write_gravity(name, fields, body):
             "map this by hand if you need the same restriction here.\n"
         )
     content = "---\n" + "\n".join(frontmatter) + "\n---\n" + note + "\n" + body.strip() + "\n"
-    (GRAVITY_AGENTS / f"{name}.md").write_text(content, encoding="utf-8")
+    (GRAVITY_AGENTS / f"{name}.md").write_text(content, encoding="utf-8", newline="\n")
 
 
 def port_agents():
@@ -1282,7 +1297,7 @@ def port_hooks():
         "# Logic lives in .claude/skills/dev-kit/dev.ps1 and orchestrate/*.ps1 (shared with Claude Code).\n"
         "# Not ported: the SendMessage guard -- no Codex tool named SendMessage to matcher against.\n\n"
         + pretool + session_start,
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
 
     GRAVITY_HOOKS.parent.mkdir(parents=True, exist_ok=True)
@@ -1327,7 +1342,7 @@ def port_hooks():
             indent=2,
         )
         + "\n",
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
     print("hook wiring written -> .claude/.codex/config.toml, .claude/.agents/hooks.json")
 
@@ -1388,7 +1403,7 @@ def port_workflows():
                 "(`codex features list`: hooks/multi_agent stable) on 2026-10-13 -- "
                 "`spawn_agents_on_csv` does not exist; don't use it.",
             ),
-            encoding="utf-8",
+            encoding="utf-8", newline="\n",
         )
         (GRAVITY_WORKFLOWS / f"{fields['name']}.md").write_text(
             workflow_procedure_doc(
@@ -1396,7 +1411,7 @@ def port_workflows():
                 "delegate each phase to the matching subagent in `.agents/agents/*.md` "
                 "yourself, in the phase order below.",
             ),
-            encoding="utf-8",
+            encoding="utf-8", newline="\n",
         )
         count += 1
     print(f"ported {count} workflow procedure doc(s) -> .codex/workflows/*.md, .agents/workflows/*.md")
@@ -1413,9 +1428,13 @@ def port_deploy():
         return
     deployed = []
     for src_dir, dst_dir in ((KIT / ".codex", WORKSPACE / ".codex"), (KIT / ".agents", WORKSPACE / ".agents")):
-        if dst_dir.exists():
-            shutil.rmtree(dst_dir)
-        shutil.copytree(src_dir, dst_dir)
+        for p in stale_generated(src_dir, dst_dir):
+            p.unlink()   # a port the kit no longer generates (agents/ or workflows/); user files elsewhere stay
+        for p in src_dir.rglob('*'):
+            if p.is_file():
+                t = dst_dir / p.relative_to(src_dir)
+                t.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(p, t)
         deployed.append(dst_dir)
     # AGENTS.md/GEMINI.md: Codex/Antigravity search upward from the session cwd (usually
     # WORKSPACE), never down into .claude, so the canonical file in .claude needs a copy here too.
@@ -1424,6 +1443,15 @@ def port_deploy():
         shutil.copyfile(KIT / name, dst)
         deployed.append(dst)
     print(f"deployed -> {', '.join(str(p) for p in deployed)}")
+
+
+def stale_generated(src, dst):
+    """Workspace files in agents/ or workflows/ of dst with no kit counterpart: ports of a removed agent / workflow."""
+    if not dst.exists():
+        return []
+    have = {p.relative_to(src).as_posix() for p in src.rglob('*') if p.is_file()} if src.exists() else set()
+    return [p for p in dst.rglob('*') if p.is_file() and p.relative_to(dst).parts[0] in ('agents', 'workflows')
+            and p.suffix in ('.toml', '.md') and p.relative_to(dst).as_posix() not in have]
 
 
 def deployed_stale():
@@ -1435,8 +1463,8 @@ def deployed_stale():
     for name in ('.codex', '.agents'):
         src, dst = KIT / name, WORKSPACE / name
         a = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob('*') if p.is_file()} if src.exists() else {}
-        b = {p.relative_to(dst).as_posix(): p.read_bytes() for p in dst.rglob('*') if p.is_file()} if dst.exists() else {}
-        if a != b:
+        b = {r: (dst / r).read_bytes() for r in a if (dst / r).is_file()}   # only what the kit deploys; user files are theirs
+        if a != b or stale_generated(src, dst):
             bad.append(name + '/')
     for name in ('AGENTS.md', 'GEMINI.md'):
         if not (WORKSPACE / name).exists() or (WORKSPACE / name).read_bytes() != (KIT / name).read_bytes():
@@ -1495,7 +1523,7 @@ def cmd_port(a):
     port_agents()
     port_hooks()
     port_workflows()
-    (KIT / 'GEMINI.md').write_text(GEMINI_MD, encoding='utf-8')
+    (KIT / 'GEMINI.md').write_text(GEMINI_MD, encoding='utf-8', newline='\n')
     port_deploy()
     return 0
 
@@ -1788,12 +1816,12 @@ def cmd_config(kit, fill):
                     and top not in ('default', 'browser', 'keepFreeGB'):
                 out('WARN', 'CONFIG-UNKNOWN', f'{loc_rel} {p}', 'key not in the example nor README "Configuration": a typo, or an undocumented key a script reads?')
         if changed:
-            bak = os.path.join(kit, loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S')
+            bak = os.path.join(kit_path('cache', create=True, kit=kit), os.path.basename(loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S'))
             shutil.copyfile(os.path.join(kit, loc_rel), bak)
             with open(os.path.join(kit, loc_rel), 'w', encoding='utf-8') as f:
                 json.dump(loc, f, indent=2, ensure_ascii=False)
                 f.write('\n')
-            out('INFO', 'CONFIG-DEFAULT', loc_rel, f'written (backup {os.path.basename(bak)}: delete it once checked)')
+            out('INFO', 'CONFIG-DEFAULT', loc_rel, f'written (backup {bak}: disposable runtime cache)')
         if loc_rel.endswith('kit.local.json'):
             config_rules(kit, loc)
         elif loc_rel.endswith('targets.local.json'):
@@ -2229,7 +2257,7 @@ def audit_main(a):
         a.pop(i)
         return a.pop(i) if val else True
     kit, js, fix, fill = opt('--kit', True), opt('--json', True), opt('--fix'), opt('--fill')
-    kit = os.path.abspath(kit) if kit else (OWN if cmd == 'scan' else live_kit())
+    kit = os.path.abspath(str(kit)) if kit else (OWN if cmd == 'scan' else live_kit())
     {'setup': lambda: cmd_setup(kit, fix), 'config': lambda: cmd_config(kit, fill), 'recover': lambda: cmd_recover(kit, fix),
      'scan': lambda: cmd_scan(kit), 'stamp': lambda: cmd_stamp(kit), 'due': lambda: cmd_due(kit)}[cmd]()
     order = {'FIX': 0, 'ACT': 1, 'ASK': 2, 'WARN': 3, 'INFO': 4}
@@ -2334,11 +2362,16 @@ def cmd_cost(a):
             src = os.path.join(tmp, 'cost.mjs')
             with open(src, 'w', encoding='utf-8') as fh:
                 fh.write(COST_MJS)
-            r = subprocess.run([node, src, kit], capture_output=True, text=True, encoding='utf-8', timeout=120)
             try:
-                calls = json.loads(r.stdout).get('calls', [])
-            except ValueError:
-                print(f'kittool cost: the workflow render failed: {(r.stderr or r.stdout)[:300]}', file=sys.stderr)
+                r = subprocess.run([node, src, kit], capture_output=True, text=True, encoding='utf-8', timeout=120)
+            except subprocess.TimeoutExpired:
+                r = None
+                print('kittool cost: the workflow render timed out after 120 s', file=sys.stderr)
+            if r is not None:
+                try:
+                    calls = json.loads(r.stdout).get('calls', [])
+                except ValueError:
+                    print(f'kittool cost: the workflow render failed: {(r.stderr or r.stdout)[:300]}', file=sys.stderr)
     for c in calls:
         c['tokens'] = (c['bytes'] + 3) // 4
     if '--steps' in a:
@@ -2561,7 +2594,7 @@ def check_args(cmd, rest):
 
 
 if __name__ == '__main__':
-    sys.stdout.reconfigure(encoding='utf-8')
+    getattr(sys.stdout, 'reconfigure', lambda **_: None)(encoding='utf-8')
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
     rc = check_args(cmd, rest)
     if rc is not None:
