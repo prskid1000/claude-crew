@@ -596,10 +596,10 @@ console.log('ninth:' + (got.every(Boolean) && tabs.length === 8 && max === 8))
 const e = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch((x) => x.message)
 console.log('fails:' + /all 8 tabs of k\|t\|a stayed busy for 1 s/.test(e))
 const f = `${kitPath('sessions')}/tabs-k__t__a.json`, reg = JSON.parse(readFileSync(f, 'utf8'))
-reg[tabs[1].__tid].pid = 999999; reg[tabs[2].__tid].agent = 'Z'; writeFileSync(f, JSON.stringify(reg))
+reg[tabs[1].__tid].pid = 999999; reg[tabs[2].__tid].agent = 'Z'; reg[tabs[1].__tid].at = reg[tabs[2].__tid].at = reg[tabs[1].__tid].seen = reg[tabs[2].__tid].seen = 0; reg[tabs[3].__tid].pid = 999999; writeFileSync(f, JSON.stringify(reg))
 mkdirSync(kitPath('board'), { recursive: true }); writeFileSync(`${kitPath('board')}/z.json`, JSON.stringify({ agent: 'Z', status: 'left' }))
-const dead = tabs[1], left = tabs[2], t = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch(() => null)
-console.log('orphans:' + (!!t && !tabs.includes(dead) && !tabs.includes(left) && tabs.length === 7))
+const dead = tabs[1], left = tabs[2], grace = tabs[3], t = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch(() => null)
+console.log('orphans:' + (!!t && !tabs.includes(dead) && !tabs.includes(left) && tabs.includes(grace) && tabs.length === 7))
 const S = kitPath('sessions'); writeFileSync(kitPath('browser-ports'), JSON.stringify({ 'k|t|a': 9, 'u__v|t|a': 9 }))
 writeFileSync(`${S}/tabs-u____v__t__a.json`, JSON.stringify({ _key: 'u__v|t|a' })); writeFileSync(`${S}/tabs-gone.json`, JSON.stringify({ _key: 'gone' }))
 await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs-u____v__t__a.json`) && !existsSync(`${S}/tabs-gone.json`)))
@@ -751,7 +751,6 @@ if ($Area -in 'orch', 'all') {
  Expect 'deploy plan: trigger owner -> READY in the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
  $sup = (Get-Command (Join-Path $k 'skills/orchestrate/orch.ps1')).ScriptBlock.Ast.Extent.Text -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
  Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
- # crash recovery: the FNV-checked args record beats a typed one; recover prints the resume
  $ld = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath launches }; New-Item -ItemType Directory -Force $ld | Out-Null
  $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
  $af = Join-Path (Kd) 'args.json'; [IO.File]::WriteAllText($af, $full)
@@ -918,7 +917,7 @@ ok_main = kt.main_clone(str(tmp)) == str(tmp)
 # lint measures PROSE against the linted kit's templates.md (k.dir), not the script's kit
 src = open(sys.argv[1], encoding='utf-8').read()
 ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src \
-    and "kit_path('cache', create=True, kit=kit), os.path.basename(loc_rel)" in src and "render timed out" in src
+    and "kit_path('cache', create=True, kit=kit), osp.basename(loc_rel)" in src and "render timed out" in src
 print(f'kittool-ports:{ok_toml and ok_lf}')
 print(f'kittool-deploy:{ok_deploy}')
 print(f'kittool-misc:{ok_main and ok_prose}')
@@ -965,7 +964,6 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   (gc (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath signals }) -Raw) -match '"skill":"revy"')
  Expect 'setup -Migrate: renamed runtime / state names move (audit reports, audit stamp)' (-not (Test-Path $oa) -and (Test-Path (Join-Path (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath kitty-audits }) 'audit-1.md')) -and (Test-Path (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath last-kitty-audit })))
  Remove-TestKit $km
- # kittool new / rename / remove / release: part + registry entry change together, no alias
  $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
  foreach ($f in @(git -C $src ls-files) + @('agents/devy.md', 'agents/revy.md', 'agents/checky.md', 'agents/kitty.md')) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
  git -C $kc init -q; git -C $kc add -A; git -C $kc -c user.name=t -c user.email=t@t commit -q -m 'feat: base'
@@ -1012,19 +1010,31 @@ print(f'kittool-misc:{ok_main and ok_prose}')
  $null = Px $O board leave -Session $ht -Handoff $hf; $hr = Px $O recover | Out-String
  $h2 = Px $O board join -Agent H1 -Run hr | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
  Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
- # supervise -Brief report: snapshot of the formatter (normal, below the floor, ASCII, narrow)
  $rd = @{ agents = @(@{ type = 'checky'; name = 'W1'; mode = 'test'; spend = 50000; prevSpend = 30000 }, @{ type = 'checky'; name = 'J1'; mode = 'env-fix'; wait = $true }, @{ type = 'devy'; name = 'P1'; mode = 'build'; spend = 10000; prevSpend = 0 })
-  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; avgFree = 15; disk = 'D: 100 GB free'; info = @('deploy ready: stage (2 MR(s))')
+  mem = @{ TotalGB = 64; AvailGB = 16 }; ram = @{ kit = 5; browsers = 4; apps = 3; servers = 1; vms = 2; windows = 13; unknown = 20 }; unknown = @('foo 0.6'); top = @(@{ name = 'Teams'; gb = 2.4; mark = '💤' }); keepFree = 8; avgFree = 15; disk = 'D: 100 GB free'; info = @('deploy ready: stage (2 MR(s))')
   resources = @(@{ name = '🟢 rm · api'; type = 'local env'; by = 'W1'; gb = 3 }, @{ name = '🌐 rm·acme·admin'; type = 'test browser'; by = 'W1'; gb = 2 }, @{ name = '🔴 hm · api'; type = 'local env'; by = 'down: memory'; gb = 0 })
-  flags = @(@{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }); detailFile = 'r.md' }
+  flags = @(@{ level = 'ASK'; what = 'Teams 2.4 GB 💤 — close it?'; action = 'ask' }, @{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }); detailFile = 'r.md' }
  $r1 = (& { . $O; Format-KitReport $rd -Width 160 -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd -Ascii -Width 80 }) -join "`n"
  $want1 = @('| Agent | Doing |', '|---|---|', '| 🛠️ 1 × devy (+10kT) | build 1 (P1) |', '| 🧪 2 × checky (+20kT) | ⏸ env-fix 1 (J1) · test 1 (W1) |', '',
-  "🖥️ **RAM** $('🟦' * 2)$('🟪' * 13)$('⬜' * 5) **48 / 64 GB**", '🟦 ours 5 · 🟪 others 43 · ⬜ free 16 (avg 15) · 🛡️ floor 8 · 💽 disk D: 100 GB free', '',
+  "🖥️ **RAM** $('🟦' * 2)🟨🟧🟪$('🟫' * 4)$('⬛' * 6)$('⬜' * 5) **48 / 64 GB**", '🟦 kit 5 · 🟨 your browsers 4 · 🟧 your apps 3 · 🟩 servers 1 · 🟪 WSL / VMs 2 · 🟫 Windows 13 · ⬛ unknown 20 (foo 0.6) · ⬜ free 16 (avg 15) · 🛡️ floor 8 · 💽 disk D: 100 GB free', 'top apps: Teams 2.4 💤 (💤 idle · 📈 +1 GB)', '',
   '| Resource | Used by | RAM | Resource | Used by | RAM |', '|---|---|---|---|---|---|', '| 🟢 rm · api | W1 | 3 | 🔴 hm · api | down: memory | — |', '| 🌐 rm·acme·admin | W1 | 2 |  | |  |', '',
-  '🚩 **Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
+  '🚩 **Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- ❓ **ASK** · Teams 2.4 GB 💤 — close it? -> ask', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
  Expect 'supervise report snapshot (-Agents, wide)' ($r1 -eq $want1)
- Expect 'supervise report: below the floor red, -Ascii, narrow, no agents by default' ($r2 -match '\*\*RAM\*\* \[OOx{16}\.{2}\] \*\*58 / 64 GB\*\*' -and $r2 -match '\| Resource \| Used by \| RAM \|\r?\n\|---\|---\|---\|\r?\n\| rm - api \| W1 \| 3 \|' -and (& { . $O; Format-KitReport $rd }) -join '' -match '(🟥){2}' -and ((& { . $O; Format-KitReport $rd }) -join '') -notmatch 'Agent')
- # workflows: pre-launch refusal with the split, the 80% stop with next, a handoff continued by a fresh agent
+ Expect 'supervise report: below the floor red, -Ascii, narrow, no agents by default' ($r2 -match '\*\*RAM\*\* \[KKBAVW{4}U{6}\.{5}\] \*\*58 / 64 GB\*\*' -and $r2 -match '\| Resource \| Used by \| RAM \|\r?\n\|---\|---\|---\|\r?\n\| rm - api \| W1 \| 3 \|' -and (& { . $O; Format-KitReport $rd }) -join '' -match '(🟥){2}' -and ((& { . $O; Format-KitReport $rd }) -join '') -notmatch 'Agent')
+ $an = & { . $O; $n = Get-Date; $c = @{ usedGB = 40; cpu = 95; runs = @(@{ id = 'wf1'; at = $n.AddMinutes(-25).ToString('o'); path = 'j.jsonl' }); trains = @(@{ env = 'shop'; key = 't1 build' })
+   logs = @(@{ path = 'api.log'; errors = 2; first = 'ERROR boom' }); restarts = @(@{ env = 'shop'; svc = 'api'; n = 3 }); outbox = 4; toolErrors = 2; errorRun = 'wf1'; lint = '2 problem(s)'
+   adopted = @(@{ env = 'shop'; svc = 'web'; port = 4200 }); stray = @('junk.txt') }
+  $p = @{ usedGB = 36; outbox = 1; toolErrors = 1; cpuHighSince = $n.AddMinutes(-11).ToString('o'); trains = @{ shop = @{ key = 't1 build'; since = $n.AddMinutes(-21).ToString('o') } } }
+  "$((Get-KitAnomalies $c $p $n).flags.what -join "`n")`n$((Get-KitAnomalies @{ usedGB = 1; cpu = 5 } @{} $n).flags.Count)" }
+ $want = 'STALL: run wf1', 'STALL: shop train', 'ERROR SPIKE: 2', 'RESTART LOOP: shop api', 'RAM \+4', 'CPU 95%', 'outbox grew to 4', '1 new agent', 'main lint red', 'shop web port 4200', 'UNKNOWN: junk.txt', '\n0$'
+ Expect "supervise anomalies: every flag from its fixture, none on a quiet round" (-not @($want | Where-Object { $an -notmatch $_ }).Count)
+ $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} }); Add-Content $lg "ERROR one`nTraceback (most recent call last)`nfine"
+ $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
+ $oc = & { . $O; $o = (Get-Date).AddMinutes(-40); $mk = { param($i, $pp, $n, $c) [pscustomobject]@{ Id = $i; ParentId = $pp; Name = $n; Cpu = $c; Created = $o } }
+  $pr = @((& $mk 10 1 'cmd.exe' 1), (& $mk 11 10 'conhost.exe' 1), (& $mk 12 99 'pwsh.exe' 5), (& $mk 13 98 'pwsh.exe' 1), (& $mk 14 97 'python.exe' 1), (& $mk 99 0 'x' 1), (& $mk 98 0 'claude' 1), (& $mk 97 0 'y' 1))
+  @(Get-KitOrphanConsoles $pr @{ 10 = 1; 11 = 1; 12 = 1; 13 = 1 } @{ '10' = 1; '11' = 1; '12' = 1; '13' = 1; '14' = 1 } 10 @{ 13 = 1 }).Id -join ',' }
+ Expect "supervise: orphan kit consoles = parent gone / idle, never busy, tool-shell or owner ones ($oc)" ($oc -eq '10')
+ Expect 'supervise anomalies: only new log error lines count' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 2)
  $wsim = @'
 import { readFileSync } from 'node:fs'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
@@ -1108,9 +1118,19 @@ Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
  $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
  $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
  $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
- $pr = & { . $L2; $st = @{ leases = @{ dead = @{ until = (Get-Date).AddHours(1).ToString('o'); holderPid = 999999 }; live = @{ until = (Get-Date).AddHours(1).ToString('o'); holderPid = $PID } }; holds = @{}; requests = @() }; Prune $st; ($st.leases.Keys | Sort-Object) -join ',' }
- Expect "localenv: a lease ends with its holder process ($pr)" ($pr -eq 'live')
- Expect 'localenv: usage errors exit 2; a start-lock timeout throws' ($c1 -eq 2 -and $c2 -eq 2 -and $c3 -eq 2 -and (gc $L2 -Raw) -match 'if \(-not \$got\) \{ \$mx\.Dispose\(\); throw')
+ $pr = & { . $L2; $o = (Get-Date).AddMinutes(-11).ToString('o'); $u = (Get-Date).AddHours(1).ToString('o')
+  $st = @{ leases = @{ dead = @{ until = $u; holderPid = 999999; seen = $o }; grace = @{ until = $u; holderPid = 999999; seen = (Get-Date).AddMinutes(-3).ToString('o') }; live = @{ until = $u; holderPid = $PID } }
+   holds = @{ own = @{ owner = $true; until = (Get-Date).AddMinutes(5).ToString('o') }; old = @{ owner = $true; until = $o }; co = @{ agent = 'main'; seen = $o } }; requests = @() }
+  Prune $st; "$(($st.leases.Keys | Sort-Object) -join ',')|$(($st.holds.Keys | Sort-Object) -join ',')|$($st.leases.grace.graceLeft)" }
+ Expect "leases: no live holder -> kept for the grace, then gone; owner holds keep their minutes; a coordinator hold needs a heartbeat ($pr)" ($pr -eq 'grace,live|own|7')
+ $lv = & { . $L2; $b = Get-KitPath board -Create; @{ agent = 'B1'; session = 'B1-s'; status = 'working'; beat = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content "$b/B1-s.json"
+  @{ at = (Get-Date).ToString('o'); running = @('build:R1'); labels = @('build:R1', 'local:X1') } | ConvertTo-Json | Set-Content (Get-KitPath live-steps -Create)
+  "$(Test-KitLive @{ session = 'B1-s'; holderPid = 999999 })$(Test-KitLive @{ agent = 'R1' })$(Test-KitLive @{ agent = 'X1'; holderPid = $PID })" }
+ Expect "leases: live by a board beat or a running workflow step; a finished step is not ($lv)" ($lv -eq 'TrueTrueFalse')
+ $lf = & { . (Join-Path $k2 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath localenv -Create) 'shop.json' }; '{"holds":{"main":{"services":["api"],"agent":"main"}}}' | Set-Content $lf
+ $u1 = Px $L2 up -Env shop 2>&1 | Out-String; $c4 = $LASTEXITCODE; $null = Px $L2 unhold -Env shop -Agent main 2>&1
+ Expect "localenv: up refuses without -Services; unhold ends a hold" ($c4 -eq 1 -and $u1 -match 'up needs -Services' -and -not @((Get-Content $lf -Raw | ConvertFrom-Json).holds.PSObject.Properties).Count)
+ Expect 'localenv: usage errors exit 2; a start-lock timeout throws' ($c1 -eq 2 -and $c2 -eq 2 -and $c3 -eq 2 -and (Get-Content $L2 -Raw) -match 'if \(-not \$got\) \{ \$mx\.Dispose\(\); throw')
  Remove-TestKit $k2
  # swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; ios serial = udid; avd; build command
  $swt = @'
@@ -1119,6 +1139,9 @@ $tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null; Set-Item E
 $adb = "$tmp/adb.cmd"; Set-Content $adb "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device)`r`nexit /b 0" -Encoding ascii
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L1'; port = 5560 }); adb = $adb; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }
 $P = Get-KitPath phones -Create; $lf = "$P/L1.json"
+@{ agent = 'B'; lane = 'L1'; serial = 'emulator-5560'; since = (Get-Date).AddMinutes(-20).ToString('s'); seen = (Get-Date).AddMinutes(-11).ToString('o'); holderPid = 999999 } | ConvertTo-Json | Set-Content $lf
+$rc = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A') *>&1 | Out-String
+"reclaim:$($rc -match 'reclaimed L1 from B' -and (Get-Content $lf -Raw | ConvertFrom-Json).agent -eq 'A')"
 @{ agent = 'A'; lane = 'L1'; serial = 'emulator-5560'; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $lf
 $j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Reverse', '8080,8081') | Select-Object -Last 1 | ConvertFrom-Json
 "reverse:$((@($j.reverse) -join ',') -eq '8080,8081' -and (@((Get-Content $lf -Raw | ConvertFrom-Json).reverse) -join ',') -eq '8080,8081' -and -not @(Get-ChildItem $P -Filter '*.tmp').Count)"
@@ -1138,8 +1161,36 @@ git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit
 '@
  $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
  $res = @(Px "$sf.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $sf 2>&1)
- foreach ($x in 'reverse:True', 'release:True', 'kinds:True True True') { Expect "swarm: $x" ($res -contains $x) }
+ foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True True') { Expect "swarm: $x" ($res -contains $x) }
  Remove-Item "$sf.ps1", $sf -Recurse -Force -ea 0
+ # lanes 0..N on demand: 3 requests, RAM for 2 boots: 2 boot, the 3rd waits, takes lane 1 when A releases it; no 3rd emulator ever starts
+ $lsc = @'
+$tmp = $args[1]; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]
+$dev = Join-Path $tmp 'devices.txt'; $adb = Join-Path $tmp 'adb.cmd'
+Set-Content $adb "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& type `"$dev`" 2>nul)`r`nexit /b 0" -Encoding ascii
+$script:SwarmCfg = [pscustomobject]@{ lanes = @(1..3 | ForEach-Object { [pscustomobject]@{ name = "L$_"; port = 5560 + 2 * $_ } }); adb = $adb; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }
+Set-Content "$tmp/mock.ps1" @"
+param([Parameter(Position = 0)]`$Verb, `$Lanes, `$Mode, [switch]`$ColdBoot, [switch]`$KeepBrowsers)
+`$port = 5560 + 2 * [int]("`$Lanes" -replace '\D')
+if (`$Verb -eq 'up') { if (Test-Path '$tmp/full') { Start-Sleep 2; Write-Warning "`$Lanes not started: no memory turn"; return }; Add-Content '$dev' "emulator-`$port``tdevice"; Add-Content '$tmp/boots.txt' `$Lanes }
+if (`$Verb -eq 'down') { Set-Content '$dev' @(Get-Content '$dev' | Where-Object { `$_ -notmatch "-`$port\s" }) }
+"@
+$KitCmd.swarm = "$tmp/mock.ps1"
+if ($args[2] -eq 'C') { Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'C', '-NoInstall', '-WaitMinutes', '2') | Select-Object -Last 1; return }
+New-Item -ItemType File -Force $dev | Out-Null
+$a = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-NoInstall') | Select-Object -Last 1 | ConvertFrom-Json
+$b = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'B', '-NoInstall') | Select-Object -Last 1 | ConvertFrom-Json
+New-Item -ItemType File "$tmp/full" | Out-Null
+$cp = Start-Process pwsh -ArgumentList '-NoProfile', '-File', $PSCommandPath, $args[0], $tmp, 'C' -PassThru -WindowStyle Hidden -RedirectStandardOutput "$tmp/c.out"
+for ($i = 0; $i -lt 60 -and -not (Test-Path (Join-Path (Get-KitPath phones) 'L3.json')); $i++) { Start-Sleep -Milliseconds 500 }
+$null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A'); $null = $cp.WaitForExit(120000)
+$cj = @(Get-Content "$tmp/c.out" | Where-Object { $_ -match '^\{' })[-1] | ConvertFrom-Json
+"scale:$($a.lane -eq 'L1' -and $b.lane -eq 'L2' -and $cj.lane -eq 'L1' -and (@(Get-Content "$tmp/boots.txt") -join ',') -eq 'L1,L2')"
+'@
+ $lf2 = "$([IO.Path]::GetTempPath())lanes-test-$PID"; New-Item -ItemType Directory -Force $lf2 | Out-Null; Set-Content "$lf2.ps1" $lsc
+ $res = @(Px "$lf2.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $lf2 2>&1)
+ Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile, no extra boot ($(@($res | Where-Object { "$_" -match '^scale:' })))" ($res -contains 'scale:True')
+ Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ea 0
  Remove-TestKit $k
 }
 

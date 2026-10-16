@@ -45,9 +45,10 @@ shot / openurl / log, `$env:KIT_DEVICE=<udid>`) · none (verbs refuse; app check
   `app.branch`); a side checkout writes `app-<branch>-<commit>.apk` unless `-Shared`.
 - L2. `swarm.ps1 avd create` once per machine; a stuck or corrupt lane: `avd reset -Lanes <name> -Level
   cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; Apple silicon: `abi` `arm64-v8a`).
-- L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `supervise
-  -AutoFix` frees orphan leases and stops idle phones. At most 2 app lanes while a web pool or a dev wave runs.
-- L4. A person testing by hand: `swarm.ps1 acquire -Agent manual -Lane <name>` ... `release -Agent manual` (never reclaimed).
+- L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `acquire` and
+  `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes
+  while a web pool or a dev wave runs.
+- L4. A person testing by hand: `swarm.ps1 acquire -Agent manual -Lane <name>` ... `release -Agent manual` (owner hold, 240 min).
 - Linux/macOS: SDK from `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`; `arrange` is Windows-only.
 
 **Learn:** `orch.ps1 learn -Skill android-swarm -Kind <kind> -Text "<what + fix>"`.

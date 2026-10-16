@@ -117,8 +117,9 @@ deactivate, delete or re-password test logins; one shared Chrome per target + te
   passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
-  item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, subtasks:[{id,name,mrs}], retest?, only?}`), guides
-  exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
+  item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, services? (local: leased),
+  subtasks:[{id,name,mrs}], retest?, only?}`),
+  guides exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, the baseline data (reuse
   it: verify by id before creating), reindex, server config; what the lead cannot unblock -> item `skip` with the reason.
   **Selection** (the workflow's Prepare agent, from its job JSON; the same by hand):

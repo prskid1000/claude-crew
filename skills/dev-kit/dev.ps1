@@ -511,7 +511,7 @@ if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -repl
 $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
 New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
-function Read-History { try { gc $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
+function Read-History { try { gc $histFile -Raw -EA Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
 
 $kind = Get-Kind $Cmd
 $default = if ($Kinds.Contains($kind)) { $Kinds[$kind][1] } else { 2 }
@@ -691,7 +691,7 @@ while ((Get-Date) -lt $deadline) {
    Remove-Item $myTicket -ea 0
    @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
    $entry = Join-Path $ledger "$($proc.Id).json"
-   @{ pid = $proc.Id; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
+   @{ pid = $proc.Id; gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
    break
   }
   $waits++; Add-KitMemSample $s.Avail
@@ -716,12 +716,12 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
  try {
   try { $got = $gate.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
   if ($got) {
-   $txt = if (Test-Path $histFile) { gc $histFile -Raw -ErrorAction Stop } else { '' }
-   $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
+   $txt = if (Test-Path $histFile) { gc $histFile -Raw -EA Stop } else { '' }
+   $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -EA Stop } else { @{} }
    if ($h -is [hashtable]) {
     $h[$histKey] = @(@($h[$histKey] | ? { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; cmd = $(if ($Cmd.Length -gt 60) { $Cmd.Substring(0, 60) } else { $Cmd }) } | select -Last 10)
-    $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
-    Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
+    $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -EA Stop
+    Move-Item "$histFile.tmp" $histFile -Force -EA Stop
    }
   }
  } catch {} finally { if ($got) { $gate.ReleaseMutex() } }
@@ -863,7 +863,7 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
  try {
   try { $got = $mx.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
   if (-not $got) { return }
-  $h = gc -LiteralPath $hf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+  $h = gc -LiteralPath $hf -Raw -EA Stop | ConvertFrom-Json -AsHashtable -EA Stop
   if ($h -isnot [hashtable]) { return }
   $best = $null; $bestAt = [datetime]::MinValue
   foreach ($k in @($h.Keys)) { foreach ($s in @($h[$k])) {
@@ -872,8 +872,8 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
    if ($at -ge $fromUtc -and $at -gt $bestAt) { $best = $s; $bestAt = $at } } }
   if (-not $best) { return }
   $best.ok = $true; $best.baseline = $true
-  $h | ConvertTo-Json -Depth 3 | Set-Content "$hf.tmp" -ErrorAction Stop
-  Move-Item "$hf.tmp" $hf -Force -ErrorAction Stop
+  $h | ConvertTo-Json -Depth 3 | Set-Content "$hf.tmp" -EA Stop
+  Move-Item "$hf.tmp" $hf -Force -EA Stop
  } catch {} finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
@@ -1193,7 +1193,7 @@ if ($SelfTest) {
 }
 $stdin = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
 if (-not "$stdin".Trim()) { exit 0 }
-try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
+try { $in = $stdin | ConvertFrom-Json -EA Stop } catch {
  $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
  "$((Get-Date).ToString('s'))`t-`tmalformed hook input`t$one" | Add-Content (Get-KitPath guard-log -Create)
  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: the hook input was not JSON (logged to guard.log); retry the command' } } | ConvertTo-Json -Compress -Depth 4
@@ -1203,7 +1203,7 @@ $cmd = [string]$in.tool_input.command
 if (-not $cmd) { exit 0 }
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
-try { $kc = gc (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | ? { $_ } | % { [regex]::Escape($_) }) } catch {}
+try { $kc = gc (Join-Path $K 'kit.local.json') -Raw -EA Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | ? { $_ } | % { [regex]::Escape($_) }) } catch {}
 
 function Deny($why) {
  if ($in.session_id) {   # test runs must not raise a guard WATCH

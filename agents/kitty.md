@@ -17,7 +17,7 @@ Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps
 live clone, 4 and 8 `audit scan`, `lint`, 9 `audit stamp`; `audit due` any time); `<kit>/skills/dev-kit/templates.md` (step 6
 "Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md`
-(owner steps `up`, `down`, `refresh`, `drop`), phone lanes `android-swarm/SKILL.md` L2-L4.
+(owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `android-swarm/SKILL.md` L2-L4.
 
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
 /tidy prompt):
@@ -33,7 +33,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 3. **Recover:** `$A recover` (uncommitted changes, behind/ahead, kit worktrees, merged kit branches, tracked local files, launch
    records of dead runs, stale board entries, orphan worktrees, cleanup dry run, runtime size). `--fix` only when step 0 found
    nothing running; unmerged work is listed with its exact command, never deleted.
-4. **Deep audit:** read EVERY tracked file (`git -C <wt> ls-files`; the file caps keep it small); trace each flow end to end
+4. **Deep audit:** read EVERY tracked file (`git -C <wt> ls-files`); trace each flow end to end
    (below); `$A scan` and `python -X utf8 <wt>/skills/orchestrate/kittool.py lint --warn` add candidates. Keep only proven
    findings (`file:line`, the input that breaks it, the effect). Large: up to 6 `revy` (kind kit, read-only) agents, one per
    area; verify each.
@@ -82,8 +82,7 @@ Non-negotiables:
   lines. Evidence or it is not a finding; unproven -> "candidate".
 - Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); add a part with `kittool.py new`, rename it with
   `rename`, drop it with `remove` (no aliases).
-- Scripts from PowerShell (pwsh 7); Python with `-X utf8`; scripted edits with absolute paths, never short helper names; `git -C
-  <kit> status` after any scripted edit.
+- Scripted edits: absolute paths, never short helper names; `git -C <kit> status` after each.
 - You disagree with revy's finding -> `orch.ps1 board dispute` (templates.md "Dispute").
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.

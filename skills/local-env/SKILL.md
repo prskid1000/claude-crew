@@ -15,7 +15,7 @@ or you are the coordinator running / repairing an env.
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill local-env` |
-| `localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `migrations`, `sql -Query` (read-only), `promote`, `release`, `task`); owner: `up`, `down`, `drop`, `refresh`; `_daemon` / `_exec` are internal |
+| `localenv.ps1` | steps 1-6 (`envs`, `status`, `deploy`, `wait`, `use`, `logs`, `events`, `migrations`, `sql -Query` (read-only), `promote`, `release`, `task`); owner: `up -Services [-Owner]`, `unhold`, `down`, `drop`, `refresh`; `_daemon` / `_exec` are internal |
 | `<kit>/skills/dev-kit/devtools.py` | run by `localenv.ps1` (`devtools.py migrations`) to class a deploy's migrations and plan reverts (`localenv.ps1 migrations` shows it); `migrations selftest` after changing it |
 
 ## Model
@@ -23,8 +23,9 @@ or you are the coordinator running / repairing an env.
   in a folder; ports unique across envs). Release N = target commit + agent branches merged as **layers** (`localenv/<env>`,
   never pushed).
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch; a
-  failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up for N min and is never cut by a
-  switch-over. Services stop after idle grace, at once under memory pressure; starts wait for RAM + CPU (the gate's floor).
+  failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up while its holder is live
+  (README "Leases"), never cut by a switch-over. Services stop after idle grace, at once under memory pressure; starts wait for
+  RAM + CPU (the gate's floor).
 - **Migrations** (`localEnv.migrations` rules): LIGHT (reversible, small) run on the main env and are reverted exactly when the
   layer leaves; HEAVY (drops data, unbounded, no rollback, unauditable) get a sandbox (own build + DB copy, `sb<k>-<svc>`) or a
   DB snapshot first. Any tool (Liquibase, Flyway, Alembic, EF, Prisma, Django, Rails, Sqitch, goose, Knex, up/down SQL);
@@ -95,6 +96,7 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 - A migration layer changes the shared local DB for every layer: say so. Unsure? `migrations -Env <env> -Branch <b>` first.
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
   yourself"), never repair the shared DB by hand.
-- `up`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed;
+- `up` (only named services), `unhold`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then
+  fail with the biggest users listed;
   report it, never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.

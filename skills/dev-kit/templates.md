@@ -54,9 +54,9 @@ Local env: <env name in kit.local.json localEnv, or "none: <why>">. Test env aft
 |---|---|---|---|---|
 | <repo> | `<repos root>/<repo>` | `main` | | <tool / none> |
 
-| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Complex? |
-|---|---|---|---|---|---|
-| X1 | <ids> | <area> | <repos> | <range or —> | <yes: why / no> |
+| Agent | Items | Area (screens / packages / files) | Repos | Migration range | Services (leased, nothing else) | Complex? |
+|---|---|---|---|---|---|---|
+| X1 | <ids> | <area> | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
 
 Overlaps: <who touches what in a shared file>. Contracts: <field / endpoint X1 adds, X2 consumes after X1 merges>.
 Branch `f/<tag><task>-<slug>`, worktree name = agent id. Tracker task under <epic> in <list>, assigned to <user>.
@@ -88,7 +88,7 @@ stopped (testing goals, local test loop, MRs); never redo finished work. Files c
 Written by devy BEFORE testing (dev-kit step 4); the local test loop runs it; the human testing doc grows out of it.
 ```markdown
 # Testing goals: <task id> <title>
-Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (localenv.ps1 status).
+Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (localenv.ps1 status), services <the leased ones>.
 ## Goals (what must be true)
 | # | Goal | Check (steps) | Expected | Proof: automated test / local manual check | Result |
 |---|---|---|---|---|---|

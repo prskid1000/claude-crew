@@ -2,14 +2,32 @@
 
 **[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built by `kittool.py flow --public` on each push)
 
-A multi-agent dev + QA kit for Claude Code (with ports for Codex and Antigravity) for **any project type**: any stack (JVM,
-.NET, Node / web frameworks, Python, Go, Rust, mobile, native; one repo or many), any migration tool, any local env shape, test
-environment, deploy mechanism and issue tracker. Everything org- or product-specific lives in git-ignored config
-(`skills/dev-kit/kit.local.json`, `rules/*.local.md`); the kit itself assumes no tenants, no web + API + app trio, no database.
+A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
+local env shape, test env, deploy mechanism and tracker. Org specifics live only in git-ignored config
+(`skills/dev-kit/kit.local.json`, `rules/*.local.md`); the kit assumes no tenants, no web + API + app trio, no database.
+Every diagram is generated at pre-commit (`kittool.py flow --readme`) from the manifest, the Router and the flow model.
 
 ## The crew
-Four agents, one per lifecycle job, no general-purpose agent (a mechanical step is a `STEP:` prompt); the table is generated
-from the manifest (`kit.example.json` `_manifest`).
+The owner talks to the coordinator; it routes each request to a workflow or one crew member (`kit.example.json` `_manifest`).
+<!-- kit-graph:start crew -->
+```mermaid
+flowchart LR
+  OW([owner]) -->|asks, says deploy env| CO[coordinator: Router + Events]
+  CO -->|R5| W_buildy[/buildy/]
+  W_buildy -->|spawns| A_devy(devy)
+  W_buildy -->|spawns| A_revy(revy)
+  W_buildy -->|spawns| A_kitty(kitty)
+  CO -->|R8| W_testy[/testy/]
+  W_testy -->|spawns| A_checky(checky)
+  W_testy -->|spawns| A_kitty(kitty)
+  CO -->|R4| W_tidy[/tidy/]
+  W_tidy -->|spawns| A_kitty(kitty)
+  CO -->|R5, R6| A_devy(devy)
+  CO -->|R13, R14| A_revy(revy)
+  CO -->|R10| A_checky(checky)
+  CO -->|R2, R3| A_kitty(kitty)
+```
+<!-- kit-graph:end -->
 <!-- kit-graph:start table-crew -->
 | Agent | Job | Kinds / roles | Used in | Can't | Character |
 |---|---|---|---|---|---|
@@ -18,24 +36,224 @@ from the manifest (`kit.example.json` `_manifest`).
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
 <!-- kit-graph:end -->
-- **Character** (traits, bias, catchphrase, never) shapes judgement and tone, never a rule. **Board**: every agent's step 0
-  `orch.ps1 board join` lists the live agents on this machine; holders are asked with `board msg`. **Disputes**: `board dispute`,
-  one evidence answer, still split after 2 rounds -> the owner judges (`decide ask`). **Duels**: `/buildy mode: 'duel'`, two devy
-  POCs, revy compares and fact-checks a 3-round debate, the owner picks the winner.
+Board, disputes, duels (`/buildy mode: 'duel'`): AGENTS.md "Crew".
 
-## The two flows
-- **Dev** = `devy` -> `revy` -> CI -> merge: code -> testing-goals doc -> local env test loop (bounded) -> review + CI -> merge
-  (producers first), human testing doc, `promoted` -> waits for a person's `deploy <env>` -> `inTest` -> closed, or failed testing.
-- **Test-only** = `checky` lead / test / verify: all pass -> closed · own check failed or incomplete -> `failedTesting` · new
-  defect -> one `[Bug]` under the ask. **Kit** = `kitty` -> `revy` -> push main.
-- **Budget** and **decision pauses**: AGENTS.md "The two flows"; the rule: "Configuration" `budget`.
-## Workflows
+## Router
+First matching row wins (from the `AGENTS.md` Router table).
+<!-- kit-graph:start router -->
+```mermaid
+flowchart TD
+  Q([request]) --> R0
+  R0{"R0: The request matches a row of Org router…"} -->|yes| T0["that org row's target"]
+  R0 -->|no| R1
+  R1{"R1: A coordinator event: a workflow…"} -->|yes| T1["orchestrate → its Events table"]
+  R1 -->|no| R2
+  R2{"R2: Kit friction or a kit change: a kit…"} -->|yes| T2["kitty agent"]
+  R2 -->|no| R3
+  R3{"R3: The owner asks to audit, review,…"} -->|yes| T3["kitty agent"]
+  R3 -->|no| R4
+  R4{"R4: A /buildy or /testy finished, the…"} -->|yes| T4["/tidy"]
+  R4 -->|no| R5
+  R5{"R5: Coding with more than 2 items, 2+…"} -->|yes| T5["/buildy"]
+  R5 -->|no| R6
+  R6{"R6: Coding: one small change in one repo"} -->|yes| T6["direct, dev-kit steps"]
+  R6 -->|no| R7
+  R7{"R7: A person says deploy env, or deployed…"} -->|yes| T7["direct: orchestrate E5"]
+  R7 -->|no| R8
+  R8{"R8: Deployed tasks on a test environment,…"} -->|yes| T8["/testy"]
+  R8 -->|no| R9
+  R9{"R9: A person tests by hand from a human…"} -->|yes| T9["qa-kit → H steps"]
+  R9 -->|no| R10
+  R10{"R10: Test, check or verify one thing outside…"} -->|yes| T10["checky agent"]
+  R10 -->|no| R11
+  R11{"R11: The local env outside a running flow:…"} -->|yes| T11["local-env"]
+  R11 -->|no| R12
+  R12{"R12: Phones or APKs outside a running flow:…"} -->|yes| T12["android-swarm"]
+  R12 -->|no| R13
+  R13{"R13: Review something already written,…"} -->|yes| T13["revy agent"]
+  R13 -->|no| R14
+  R14{"R14: Static audit of one module's code for…"} -->|yes| T14["revy agent"]
+  R14 -->|no| R15
+  R15{"R15: A question, an explanation, an…"} -->|yes| T15["direct"]
+```
+<!-- kit-graph:end -->
+
+## Dev flow (/buildy)
+devy codes and tests on the local env in a loop, revy reviews, the workflow merges; only a person's `deploy <env>` ships it.
+<!-- kit-graph:start flow-dev -->
+```mermaid
+flowchart LR
+  T([task / bug]) --> C[devy: code]
+  C --> G[testing-goals doc]
+  G --> R{bug?}
+  R -->|yes| RP[reproduce on the local env]
+  R -->|no| L
+  RP --> L[local test loop: deploy branch, lease, run every goal]
+  L -->|goal fails, < 3 rounds| C
+  L -->|3 rounds failed| SR[one stronger fix round]
+  SR -->|still failing| B[[held: the coordinator decides]]
+  L -.->|coordinator-only env fix| EF[[ENV-FIX: the coordinator fixes, the item waits]]
+  EF -.->|done| L
+  C -.->|behaviour not asked for / several paths| D[[decision request: the item waits]]
+  D -.->|owner answers| C
+  L -->|every goal passes| V[review + CI]
+  V -->|findings / red| C
+  V -->|clean, green| M[merge, producers first]
+  M --> H[human testing doc + tracker promoted]
+  H --> DB[merged work waits: nobody asks]
+  DB -->|a person says deploy env| DP[deploy at once + record]
+  DP --> IT[tracker inTest]
+  IT --> HT([testers close it, or failedTesting -> back to dev])
+```
+<!-- kit-graph:end -->
+
+## Test-only flow (/testy)
+checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
+<!-- kit-graph:start flow-test-only -->
+```mermaid
+flowchart LR
+  Q([deployed tasks + testing docs]) --> TE[checky per doc: web, API, phone lanes]
+  TE --> AU[note audit]
+  AU --> SR[stronger retry of NOT_TESTED]
+  SR -->|local env, still NOT_TESTED| EF[[ENV-FIX: coordinator fixes, retest; then held]]
+  SR --> VE[checky re-tests every FAIL]
+  VE --> FI{result rule}
+  FI -->|all pass| CL[closed]
+  FI -->|own check failed / incomplete on a shared env| FT[failedTesting: back to dev, no new task]
+  FI -->|new defect| BG[one Bug task under the ask]
+  FT --> BW[bugfix wave: reproduce locally first]
+  BG --> BW
+```
+<!-- kit-graph:end -->
 <!-- kit-graph:start table-workflows -->
 | Workflow | Covers | Crew | Router row |
 |---|---|---|---|
 | `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels | `devy`, `revy`, `kitty` | R5 |
 | `/testy` | any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env | `checky`, `kitty` | R8 |
 | `/tidy` | kit upkeep: learning signals -> lessons + rule updates, cleanup, the weekly audit kick-off | `kitty` | R4 |
+<!-- kit-graph:end -->
+
+## Task lifecycle
+Logical tracker statuses (`tracker.statuses` maps them to your board's names).
+<!-- kit-graph:start flow-lifecycle -->
+```mermaid
+stateDiagram-v2
+  [*] --> open
+  open --> inProgress: devy starts
+  inProgress --> review: MRs open
+  review --> inProgress: findings / red CI
+  review --> promoted: every MR merged (track)
+  promoted --> inTest: a person said deploy env
+  inTest --> closed: every check passes
+  inTest --> failedTesting: own check failed / incomplete
+  failedTesting --> inProgress: bugfix /buildy
+  inTest --> open: new defect = one [Bug] task
+  closed --> [*]
+```
+<!-- kit-graph:end -->
+
+## Local env and deploys
+One shared instance per env, branches as layers; deploys wait for a person's word (`deploy.trigger`).
+<!-- kit-graph:start flow-local-env -->
+```mermaid
+flowchart LR
+  BR[branch] -->|localenv deploy| TR[train: merge, gated build, switch-over]
+  TR -->|conflict / build fail| RF[refused / rejected: fix]
+  TR --> LV[live release]
+  LV -->|use: lease| CK[goals: api, browser, phone with the local-env APK]
+  CK -->|errors| DBG[debug: logs, events, DB read-only, debugPort]
+  DBG --> BR
+  CK -->|every goal passes| PR[promote, release]
+```
+<!-- kit-graph:end -->
+<!-- kit-graph:start flow-deploy -->
+```mermaid
+flowchart LR
+  MW[merged MRs from every session] --> PL[orch deploy plan]
+  RQ[deploy request: workflows] --> PL
+  CI[last deploy: CI + kit log] --> PL
+  PL -->|trigger owner| RD[READY: waits, nobody asks]
+  RD -->|a person says deploy env| DO[deploy per org rules]
+  PL -->|trigger ask, window open| ASK[ASK the owner once per env]
+  PL -->|trigger ask, inside the window| WT[WAIT until the window ends]
+  ASK -->|yes| DO
+  DO --> RC[deploy record] --> IN[deploy intest]
+```
+<!-- kit-graph:end -->
+
+## Budget and handoff
+The rule: "Configuration" `budget`; per-tool defaults in the table.
+<!-- kit-graph:start flow-budget -->
+```mermaid
+flowchart LR
+  P[plan: agents x budget = run cap] -->|estimate > cap| SP[refused: split into batches]
+  P --> RUN[run]
+  RUN -->|spend >= runStopAt x cap| NX[no new item; rest returns as next]
+  NX -->|coordinator relaunches| P
+  RUN --> AG[agent] -->|spend >= handoffAt x budget| HB[resume brief + board leave -Handoff]
+  HB -->|fresh agent, same -Agent -Run| AG
+```
+<!-- kit-graph:end -->
+<!-- kit-graph:start table-budget -->
+| Tool / window | Budget | Source |
+|---|---|---|
+| claude-1m | 967000 | Claude Code model-config docs: 1M models compact at ~967k |
+| claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
+| codex | 0.9 x window | community-derived: 0.9 x ~/.codex/models_cache.json window x effective %; auto_compact_token_limit wins |
+| antigravity | 0.8 x window | unverified: 0.8 x the model window |
+| unknown | 160000 | 0.8 x 200k |
+<!-- kit-graph:end -->
+
+## Leases
+One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, sandboxes, builds; only owner
+holds (`localenv.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
+<!-- kit-graph:start flow-leases -->
+```mermaid
+flowchart LR
+  H[holder: workflow step, board beat, pid, owner -Minutes] -->|use / acquire / openTab / gate| R[env service, tab, phone, sandbox, build]
+  R --> L{holder live?}
+  L -->|yes: seen = now| R
+  L -->|no| G[grace: idle.graceMinutes, report shows ⏳]
+  G -->|holder back| R
+  G -->|grace over| X[stopped / released]
+  R -->|release / unhold| X
+```
+<!-- kit-graph:end -->
+
+## Recovery after a crash or restart
+WIP commits after every dev-flow step, so a fresh agent loses nothing.
+<!-- kit-graph:start flow-recovery -->
+```mermaid
+sequenceDiagram
+  participant O as owner
+  participant C as coordinator
+  participant K as kit scripts
+  participant A as fresh agent
+  O->>C: restart / new session
+  C->>K: orch.ps1 health (SessionStart)
+  K-->>C: stopped runs, handoffs, dirty worktrees
+  C->>K: orch.ps1 recover
+  K-->>C: resume brief + exact resume call per run
+  C->>A: relaunch from the brief (WIP commits kept)
+  A->>K: board join -Resume (TAKEOVER, not DUPLICATE)
+  C->>K: supervise -AutoFix every 10 min
+```
+<!-- kit-graph:end -->
+
+## Kit upkeep
+The kit learns from every run and fixes itself in a kit worktree.
+<!-- kit-graph:start flow-upkeep -->
+```mermaid
+flowchart LR
+  AG[every agent] -->|orch.ps1 learn| SG[signals]
+  SG -->|run finished / 15 piled up| TI[/tidy: kitty/]
+  TI --> LS[LESSONS.md + rule changes]
+  LS -->|step 0 reads its section| AG
+  HB[supervise heartbeat] -->|flags| EV[orchestrate Events]
+  EV -->|kit friction| KF[kitty fix -> revy -> push main]
+  WK[weekly nudge] --> AU[kitty audit] --> KF
+  KF -->|git pull when idle| AG
+```
 <!-- kit-graph:end -->
 
 ## Install
@@ -48,47 +266,46 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 `npm install` in `skills/qa-kit`. Update: `git pull`, then `orch.ps1 setup -Migrate` once nothing runs if health says so.
 
 ## Using it
-- Ask the main session; the `AGENTS.md` Router launches `/buildy`, `/testy`, `/tidy` or one crew member. One heartbeat
-  (`orch.ps1 supervise -AutoFix -Brief`, every 10 min) prints the owner's report (RAM, resources, flags) and the coordinator
-  acts on its flags; after a restart `orch.ps1 recover`.
-- Every script prints its usage without arguments.
-## Configuration (`skills/dev-kit/kit.local.json`; every key optional; `kit.example.json` shows each)
-| Key | Default | Meaning |
+- Ask the main session; the Router launches the rest. The heartbeat (`orch.ps1 supervise -AutoFix -Brief`, every 10 min)
+  prints the owner's report: RAM buckets + free, top apps (💤 idle, 📈 growing), resources (⏳ holder gone), flags (ACT,
+  WATCH: STALL, ERROR SPIKE, RESTART LOOP, RESOURCE SPIKE, SILENT FAILURE, UNKNOWN, ORPHAN CONSOLES; ❓ ASK); `-Deep` (each 6th round): the
+  hour digest. After a restart: `orch.ps1 recover`. Every script prints its usage without arguments.
+
+## Configuration
+`skills/dev-kit/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).
+<!-- kit-graph:start table-config -->
+| Key | Example / default | Meaning |
 |---|---|---|
-| `tracker` | `{ "type": "none" }` | `type` clickup / github / gitlab / jira / none; `statuses` maps open, inProgress, review, promoted, inTest, failedTesting, closed; `list`, `repo`, `owner`, `branchTag`, `bugPrefix` (`[Bug]`), `issueType`, `subtaskType` |
-| `gitHost`, `gitHostType`, `githubHost`, `gitlabGroup` | `gitlab.com`, from gitHost, `github.com`, none | the git host and the group/owner for short refs `<repo>!<iid>` |
-| `holdMerge` | `[]` | repos (or `true` = all) whose MRs a person merges (their target deploys): `devtools.py merge` says NOT_MERGED "held for approval" |
-| `repos` | none | `[{ name, aliases, checkout, target, role (producer / consumer), linkFrom, linkFromByTarget, linkPaths, deploys }]`; `deploys[]` per env (`production: true`: never tested): CI `branch` + `job` (= target: trunk), `tag` (`{date}`), `awsStack` + `region`, `ssh {host, key, repoDir, appDir, subdir, exclude, service}`, `manual`, `laneApk` |
-| `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches`, `protectedBranchesMode` | workspace, `<repos>-wt`, `{}`, `[]`, `extend` | where checkouts and worktrees live; short repo names; branches never force-pushed (`replace`: without main/master/develop) |
-| `commitStyle`, `locale.cosmeticPattern`, `locale.testCommentPattern` | `conventional`, English | subject rule (`free` / a regex); small QA check; testing comment |
-| `trackerRepos`, `trackerLists`, `productTargets` | `[]` | repos searched for a task's MRs; tracker containers for `deploy intest`; which env a path needs |
-| `localEnv` | none | local envs (local-env skill): `envs.<env>.services[] {name, repo, dir, start, build, artifact, port, debugPort, health, dependsOn, hot, external}`, `tasks`, `smoke`, `db {snapshot, restore, rollback, applied, tag}`, `sandbox`, `migrations` rules, lease / idle limits |
-| `deploy.trigger` | `owner` | `owner`: nobody asks or proposes a deploy, a person says `deploy <env>` and it runs end to end; `ask`: one batched ask per env (supervise DEPLOY ASK) |
-| `deploy.minIntervalHours`, `deploy.planTimeoutSec`, `deploy.productionPattern` | `4`, `180`, `(?i)prod\|critical` | `ask` only: one ask per test env per window (a number or `{ "default": 4, "<target>": 24 }`); `deploy plan`'s wall clock; production by name when `production` is unset |
-| `budget.handoffAt`, `runStopAt`, `estimate`, `defaults` | `0.8`, `0.8`, per role, the table below | **The budget rule:** an agent's budget = the DEFAULT compaction point of its tool, detected at runtime (`orch.ps1 budget`; the kit writes no compaction setting); handoff at `handoffAt` x budget (resume brief, fresh agent); a run's cap = the sum of its planned agents' budgets (`launch -Self -Plan`): estimate over `runStopAt` x cap = refused with the split (`batch`), at `runStopAt` x cap no new item starts, the rest returns as `next` |
-| `net.timeoutSec` | `60` | per git-host / tracker call (devtools.py: one deadline for all tries, max 120 s); reads retry transient failures, writes never; lost tracker writes wait in `.state/outbox.jsonl` (supervise replays) |
-| `tests.<stack>.testFor` | per stack | test names `check -Touched` looks for from a changed file's `{name}` |
-| `reports.type`, `driveParent` | gdocs when `gws` exists, else markdown | QA reports and testing docs: Google Docs or files |
-| `qa.outOfScope` | `[]` | channels agent QA never tests (OUT_OF_SCOPE) |
-| `qa.targets` | `{}` | target groups for `/testy` `select` runs: `<group>: [{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]` (first match = the item's env) |
-| `gate.keepFreeGB`, `gate.startHeapGB`, `gate.heapMinGB` | 15% of RAM (min 6), per tool, 4 | the memory gate |
-| `supervise.ramActPct`, `supervise.minDiskFreeGB` | 90, 30 | heartbeat thresholds |
-| `kitAudit.everyDays`, `cleanup.maxBrowserProfiles`, `memory.keepDefault`, `build.mavenOffline`, `devices.type` | 7, 4, false, true, android | audit nudge, browser profiles kept, auto-memory location, Maven -o, device lanes (or ios, none) |
-| `bugfixMandate`, `localOnly`, `orgTerms` | none | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
-| `localFiles` (example only) | — | `orch.ps1 setup -WriteLocal` writes `targets.local.json` and `swarm.config.json` from it |
+| `gitHost`, `gitHostType`, `githubHost`, `gitlabGroup` | gitlab.com | the git host (type from the host) and the group / owner for short refs &lt;repo&gt;!&lt;iid&gt; |
+| `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches` | /path/to/src | checkouts (default the workspace), worktrees (&lt;repos&gt;-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop) |
+| `commitStyle`, `locale.cosmeticPattern`, `locale.testCommentPattern` |  | subject rule conventional (free / a regex); English defaults: small QA check, testing comment |
+| `devices` | {"type": "android"} | type: android (default) / ios (Simulators, macOS) / none (verbs refuse, app checks NOT_TESTED) |
+| `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
+| `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField (a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk |
+| `driveParent` | &lt;Google Drive folder or shared-drive id for testing docs and reports… | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
+| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2} | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram) |
+| `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
+| `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
+| `bugfixMandate`, `localOnly`, `orgTerms` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
+| `findings` |  | required: the QA finding fields (default root_cause, why_today, why_not_prod, db_migration, code_location) |
+| `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name or group/project, for… | type: none (default) / clickup / github / gitlab / jira. statuses maps the logical statuses to your board's names (a list = the first is set, all match); bugPrefix [Bug]. Examples for each backend: _examples. |
+| `reports` | {"type": "markdown"} | type: gdocs (Google Docs + Drive via gws; default when gws is installed) / markdown (files in the run folder, carried by the tracker comment) |
+| `qa` | {"outOfScope": ["&lt;a channel agent QA never tests, e.g. a chat app,… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). |
+| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
+| `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them) |
+| `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
+| `localEnv` | {"maxLeaseMinutes": 120, "idle": {"minMinutes": 15, "maxMinutes":… | Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.&lt;env&gt;.db.engine (postgres, mysql, mariadb, sqlserver, sqlite, oracle, mongodb) + name / user fill the DB hooks. Secrets: &lt;kit&gt;/.state/localenv/&lt;env&gt;.env (dotenv), never here. |
+| `memory` | {"keepDefault": false} | keepDefault: false = Claude Code auto memory lives in &lt;kit&gt;/memory/ (git-ignored); true = keep the user's own setting. |
+| `kitAudit` | {"everyDays": 7} | everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off). |
+| `build` | {"mavenOffline": true} | mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true). |
+| `gate` | {"heapMinGB": 4, "startHeapGB": {"gradle": 12, "maven": 8, "node": 4}} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor. |
+| `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | The budget rule: an agent's budget = its tool's DEFAULT compaction point (orch.ps1 budget; the kit sets none; defaults: README table); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split (batch), at runStopAt x cap no new item starts, the rest returns as next. estimate: per agent / item |
+<!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`, `ANDROID_HOME`, `ANDROID_SERIAL`, `CHROME_PATH`.
 A repo whose stack is detected wrongly: `.claude-stack.json` next to its build file (`{ "commands": { "test": "make test T={tests}" } }`).
-
-<!-- kit-graph:start table-budget -->
-| Tool / window | Budget | Source |
-|---|---|---|
-| claude-1m | 967000 | Claude Code model-config docs: 1M models compact at ~967k |
-| claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
-| codex | 0.9 x window | community-derived: 0.9 x ~/.codex/models_cache.json window x effective %; auto_compact_token_limit wins |
-| antigravity | 0.8 x window | unverified: 0.8 x the model window |
-| unknown | 160000 | 0.8 x 200k |
-<!-- kit-graph:end -->
 
 ## Layout, state and safety
 - `<kit>/.runtime/` disposable (`work/`, `cache/`, `logs/`), `<kit>/.state/` durable; both git-ignored, every path named in
@@ -118,9 +335,11 @@ refuses unfilled ones); then `port`, lint 0, tests.
 - **30 content + 8 plumbing files** [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports; plumbing = LICENSE, .gitignore,
   .gitattributes, .githooks/*, .github/*, settings.json; git-ignored local files never count). One script per area; templates
   fold into a SKILL.md, an agent or `dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
-- **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded): always-loaded 3500 · SKILL.md 3200 · agent 2400 ·
-  rule 900 · template 2600 · templates.md 4000 · README 7000 · LESSONS.md 30000 (40 lines per skill) · workflow 15000 · .ps1
-  58000 · .py 70000 · .mjs 8000 · json 6000 · tests 30000 · total: `_manifest.caps.totalTokens`.
+- **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
+  `BUDGETS` and `_manifest.caps`:
+<!-- kit-graph:start table-caps -->
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 70000 · mjs 8000 · json 6000 · tests 32500 · total 396000 · files: 30 content + 8 plumbing
+<!-- kit-graph:end -->
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
 - **Generic** [ORG-TERM]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`
@@ -142,19 +361,13 @@ refuses unfilled ones); then `port`, lint 0, tests.
   `kit.example.json` sample. **Hook**: `pwsh` exec form, SessionStart < 2 s, slow work async.
 
 ### Before every push
-```powershell
-python -X utf8 skills/orchestrate/kittool.py lint                 # 0 problems, 0 counted flow issues
-python -X utf8 skills/orchestrate/kittool.py port; python -X utf8 skills/orchestrate/kittool.py port --check
-pwsh -NoProfile -File tests/kit-tests.ps1                         # or -Area dev|qa|orch|local
-python -X utf8 skills/orchestrate/kittool.py lint --org-terms skills/dev-kit/kit.local.json
-python -X utf8 skills/orchestrate/kittool.py cost --steps         # after a workflow change
-```
+`agents/kitty.md` step 8: `kittool.py lint` (0 problems, 0 counted flow issues), `port` + `port --check`, `tests/kit-tests.ps1
+[-Area dev|qa|orch|local]`, `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow change.
 pre-commit regenerates README graph sections and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `dev.ps1 wt commit`.
 ### Rule examples
-Copy a block into `rules/<name>.md` (or `rules/<name>.local.md` for org-only conventions, listed in `kit.local.json`
-`localOnly`), keep the `paths:` front matter, adapt it to your repo. A path-scoped rule loads only when a matching file is opened.
-Org-specific test conventions (frameworks, base classes, fixture helpers, naming) belong in your `rules/*.local.md`.
+Copy a block into `rules/<name>.md` (org-only: `rules/<name>.local.md`, in `localOnly`) and adapt it; a `paths:` rule loads only
+when a matching file is opened.
 
 #### Database migrations (any tool)
 ```markdown
@@ -189,7 +402,7 @@ paths: ["**/src/main/java/**", "**/src/main/kotlin/**"]
 # Backend
 - DTOs in APIs, never entities; additive changes (optional fields, new endpoints); validation at the boundary.
 - Unit tests next to the package (`src/test/...`), integration tests tagged; `dev.ps1 check -Dir <module> -Step test -Touched`.
-```r
+```
 
 ## How the kit fits together
 Generated by `kittool.py flow --readme` (pre-commit); interactive: `<kit>/.runtime/cache/kit-flow.html` (public: the kit map above).
@@ -230,78 +443,6 @@ flowchart LR
   workflows_tidy_js -->|spawns| agents_revy_md
   agents_checky_md -->|loads| skills_qa_kit_SKILL_md
   agents_devy_md -->|loads| skills_dev_kit_SKILL_md
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start flow-dev -->
-```mermaid
-flowchart LR
-  T([task / bug]) --> C[devy: code]
-  C --> G[testing-goals doc]
-  G --> R{bug?}
-  R -->|yes| RP[reproduce on the local env]
-  R -->|no| L
-  RP --> L[local test loop: deploy branch, lease, run every goal]
-  L -->|goal fails, < 3 rounds| C
-  L -->|3 rounds failed| SR[one stronger fix round]
-  SR -->|still failing| B[[held: the coordinator decides]]
-  L -.->|coordinator-only env fix| EF[[ENV-FIX: the coordinator fixes, the item waits]]
-  EF -.->|done| L
-  C -.->|behaviour not asked for / several paths| D[[decision request: the item waits]]
-  D -.->|owner answers| C
-  L -->|every goal passes| V[review + CI]
-  V -->|findings / red| C
-  V -->|clean, green| M[merge, producers first]
-  M --> H[human testing doc + tracker promoted]
-  H --> DB[merged work waits: nobody asks]
-  DB -->|a person says deploy env| DP[deploy at once + record]
-  DP --> IT[tracker inTest]
-  IT --> HT([testers close it, or failedTesting -> back to dev])
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start flow-test-only -->
-```mermaid
-flowchart LR
-  Q([deployed tasks + testing docs]) --> TE[checky per doc: web, API, phone lanes]
-  TE --> AU[note audit]
-  AU --> SR[stronger retry of NOT_TESTED]
-  SR -->|local env, still NOT_TESTED| EF[[ENV-FIX: coordinator fixes, retest; then held]]
-  SR --> VE[checky re-tests every FAIL]
-  VE --> FI{result rule}
-  FI -->|all pass| CL[closed]
-  FI -->|own check failed / incomplete on a shared env| FT[failedTesting: back to dev, no new task]
-  FI -->|new defect| BG[one Bug task under the ask]
-  FT --> BW[bugfix wave: reproduce locally first]
-  BG --> BW
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start flow-local-env -->
-```mermaid
-flowchart LR
-  BR[branch] -->|localenv deploy| TR[train: merge, gated build, switch-over]
-  TR -->|conflict / build fail| RF[refused / rejected: fix]
-  TR --> LV[live release]
-  LV -->|use: lease| CK[goals: api, browser, phone with the local-env APK]
-  CK -->|errors| DBG[debug: logs, events, DB read-only, debugPort]
-  DBG --> BR
-  CK -->|every goal passes| PR[promote, release]
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start flow-deploy -->
-```mermaid
-flowchart LR
-  MW[merged MRs from every session] --> PL[orch deploy plan]
-  RQ[deploy request: workflows] --> PL
-  CI[last deploy: CI + kit log] --> PL
-  PL -->|trigger owner| RD[READY: waits, nobody asks]
-  RD -->|a person says deploy env| DO[deploy per org rules]
-  PL -->|trigger ask, window open| ASK[ASK the owner once per env]
-  PL -->|trigger ask, inside the window| WT[WAIT until the window ends]
-  ASK -->|yes| DO
-  DO --> RC[deploy record] --> IN[deploy intest]
 ```
 <!-- kit-graph:end -->
 

@@ -152,9 +152,12 @@ function Get-KitTemp { [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/') }
 function Get-ExeName([string]$Name) { if ($KitIsWindows) { "$Name.exe" } else { $Name } }
 
 function Get-SysMem {
+ $mx = @{}
  if ($KitIsWindows) {
   $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
-  $avail = (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes).AvailableMBytes / 1KB
+  $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, PoolPagedResidentBytes, PoolNonpagedBytes, CommittedBytes, CommitLimit
+  $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
+  $mx = @{ PoolGB = [math]::Round(($pm.PoolPagedResidentBytes + $pm.PoolNonpagedBytes) / 1GB, 1); CommitGB = [math]::Round($pm.CommittedBytes / 1GB, 1); CommitLimitGB = [math]::Round($pm.CommitLimit / 1GB, 1) }
   $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
  }
  elseif ($KitIsMac) {
@@ -171,7 +174,7 @@ function Get-SysMem {
   $free = $m['MemFree'] / 1MB
   $avail = $(if ($m.ContainsKey('MemAvailable')) { $m['MemAvailable'] } else { $m['MemFree'] + $m['Cached'] + $m['Buffers'] }) / 1MB
  }
- [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) }
+ [pscustomobject](@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) } + $mx)
 }
 
 # free RAM: Windows free physical; Linux/macOS available (page cache keeps MemFree ~0)
@@ -201,9 +204,9 @@ function ConvertFrom-PsElapsed([string]$e) {
 
 function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows (no CommandLine/Created)
  $all = if ($KitIsWindows) {
-  $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'WorkingSetSize', 'CreationDate' }
-  foreach ($p in Get-CimInstance Win32_Process -Property $props -ea 0) {
-   [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate }
+  $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
+  foreach ($p in Get-CimInstance Win32_Process -Property $props -EA SilentlyContinue) {   # Private: bytes; Cpu: seconds used
+   [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
   }
  }
  else {
@@ -215,7 +218,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
    $id = [int]$Matches[1]; $cl = $Matches[5]; $n = [string]$names[$id]
    $exe = Split-Path (($cl -split '\s+')[0]) -Leaf
    if ($n.Length -ge 15 -and $exe.StartsWith($n)) { $n = $exe }
-   [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]) }
+   [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
   }
  }
  if ($Name) { @($all | ? { $_.Name -match $Name }) } else { @($all) }
@@ -294,6 +297,40 @@ function Test-KitHolder($o) {
  if (-not $p) { return $false }
  if ($o.holderStart) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$o.holderStart).TotalSeconds) -lt 2 } catch {} }
  $true
+}
+# ---- liveness leases (README "Leases"): ONE rule for env services, test browsers, phones, sandboxes, builds
+function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
+function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
+ $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder)
+ if ($OwnerMinutes) { $l.owner = $true; $l.until = (Get-Date).AddMinutes($OwnerMinutes).ToString('o') }   # only owner holds keep minutes
+ if ($ProcessId) { $l.pid = $ProcessId }; $l
+}
+$script:KitLiveCache = @{}
+function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
+# live: owner hold before until | pid | running workflow step (live-steps) | board beat (session, else agent) < idle.beatMinutes
+# | coordinator: heartbeat < 20 min | holder process
+function Test-KitLive($l) {
+ $now = Get-Date; $bm = [double](Get-KitSetting 'idle.beatMinutes' 20); $a = "$($l.agent)"
+ if ($l.owner -or ($l.until -and -not $a -and -not $l.holderPid)) { return [datetime]$l.until -gt $now }   # a pre-lease hold keeps its minutes
+ if ($l.pid -and (Get-Process -Id ([int]$l.pid) -EA SilentlyContinue)) { return $true }
+ $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt 15) { $s } } catch {} }
+ $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
+ if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
+ $b = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -EA SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
+  Where-Object { $_.status -ne 'left' -and $(if ($l.session) { $_.session -eq $l.session } else { $_.agent -and $_.agent -in @($a, $l.holder) }) })
+ if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Get-Process -Id ([int]$_.pid) -EA SilentlyContinue)) }).Count) { return $true }
+ if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
+ if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -EA SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt 20) { return $true } }
+ (Test-KitHolder $l) -eq $true
+}
+# keep? live: seen = now; else kept idle.graceMinutes past seen (graceLeft)
+function Update-KitLease($l) {
+ $now = Get-Date
+ if (Test-KitLive $l) { Set-KitProp $l seen $now.ToString('o'); Set-KitProp $l graceLeft $null; return $true }
+ if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
+ if (-not $l.seen) { Set-KitProp $l seen $now.ToString('o') }   # first seen dead: the grace starts now
+ $left = [double](Get-KitSetting 'idle.graceMinutes' 10) - ($now - [datetime]$l.seen).TotalMinutes
+ Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left))); $left -gt 0
 }
 
 # wall-clocked CLI -> { code, out, err, timedOut }; CLI functions (test mocks) run directly
@@ -769,7 +806,7 @@ function Get-TrackerComments([string]$Id) {
 function __TrOsFullName {
  $n = ''
  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
-  try { $n = (Get-LocalUser $env:USERNAME -ErrorAction Stop).FullName } catch {}
+  try { $n = (Get-LocalUser $env:USERNAME -EA Stop).FullName } catch {}
   if (-not $n) { try { Add-Type -AssemblyName System.DirectoryServices.AccountManagement; $n = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.DisplayName } catch {} }
  } else { try { $n = ((getent passwd $env:USER) -split ':')[4] -split ',' | select -First 1 } catch {} }
  if (-not $n) { try { $n = git config --global user.name } catch {} }

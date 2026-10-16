@@ -3,7 +3,7 @@ localenv.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) t
 on; a service = a start command in a folder (default dev.ps1 stack `run`). Model: local-env SKILL.md "Local testing".
   & <kit>/skills/local-env/localenv.ps1 <verb> [args]
 Verbs: envs · status · deploy · wait · use · release · promote · task · logs · events · migrations · sql -Query (read-only)
-       (owner) up · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
+       (owner) up -Services [-Owner] · unhold · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
 In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; status -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed · 2 usage (unknown env, no localEnv) · 3 still running (wait -Id).
 #>
@@ -225,7 +225,7 @@ function Update-State([string]$e, [scriptblock]$Change) {
  }
 }
 function Alive($p) { $p -and [bool](Get-Process -Id ([int]$p) -ea 0) }
-function PStart($p) { try { (Get-Process -Id ([int]$p) -ErrorAction Stop).StartTime } catch { $null } }
+function PStart($p) { try { (Get-Process -Id ([int]$p) -EA Stop).StartTime } catch { $null } }
 function Owned($x) {
  if (-not ($x -and $x.pid -and (Alive $x.pid))) { return $false }
  if (-not $x.pstart) { return $true }
@@ -239,18 +239,11 @@ function EnvProcess([int]$p, [string]$e) {
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | ? { $_ }) }
 
-# ---- leases, holds, demand (a lease ends at its time, or when its board entry is gone)
-function SessionDead([string]$session) {
- if (-not $session) { return $false }
- $f = Join-Path (Get-KitPath board) "$session.json"
- if (-not (Test-Path $f)) { return $true }
- try { $b = gc $f -Raw | ConvertFrom-Json } catch { return $false }
- $b.status -eq 'left' -or ((Get-Date) - [datetime]$b.beat).TotalMinutes -gt 20
-}
+# ---- leases, holds, demand: a lease ends at its time, or with no live holder past the grace (Update-KitLease)
 function Prune($st) {
- foreach ($a in @($st.leases.Keys)) { $l = $st.leases[$a]; if ([datetime]$l.until -lt (Get-Date) -or (SessionDead $l.session) -or ($l.pid -and -not (Alive $l.pid)) -or (Test-KitHolder $l) -eq $false) { $st.leases.Remove($a) } }
- foreach ($a in @($st.holds.Keys)) { if ([datetime]$st.holds[$a].until -lt (Get-Date)) { $st.holds.Remove($a) } }
- $st.requests = @($st.requests | ? { $_.status -ne 'done' -or ((Get-Date) - [datetime]$_.at).TotalHours -lt 24 } | select -Last 60)
+ foreach ($a in @($st.leases.Keys)) { $l = $st.leases[$a]; if ([datetime]$l.until -lt (Get-Date) -or -not (Update-KitLease $l)) { $st.leases.Remove($a) } }
+ foreach ($a in @($st.holds.Keys)) { if (-not (Update-KitLease $st.holds[$a])) { $st.holds.Remove($a) } }
+ $st.requests = @($st.requests | Where-Object { $_.status -ne 'done' -or ((Get-Date) - [datetime]$_.at).TotalHours -lt 24 } | Select-Object -Last 60)
  if ($st.train -and -not (Alive $st.train.pid) -and ($st.train.pid -or ((Get-Date) - [datetime]$st.train.at).TotalSeconds -gt 60)) {
   foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($st.train.requests)) { $r.status = 'queued' } }   # worker died: the train runs again
   $st.train = $null
@@ -540,7 +533,7 @@ function New-Sandbox([string]$e, [int]$k, $r, $layer) {
  }
  $deps = @($inst | % { @($_.dependsOn) } | ? { $_ -and $_ -notlike "sb$k-*" } | select -Unique)
  if ($deps.Count) {
-  Update-State $e { param($x) $x.holds["sandbox-sb$k"] = @{ services = @(Closure $e $deps); until = (Get-Date).AddHours(24).ToString('o') } }
+  Update-State $e { param($x) $x.holds["sandbox-sb$k"] = @{ services = @(Closure $e $deps) } + (New-KitLease $layer.agent) }   # lives while its agent does
   $until = (Get-Date).AddMinutes(10)
   while (@($deps | ? { $d = Svc $e $_; (Managed $d) -and -not (Healthy $e $d) }).Count) {
    if ((Get-Date) -gt $until) { return @{ ok = $false; message = "sandbox dependencies not up within 10 min: $($deps -join ', ')" } }
@@ -1149,11 +1142,11 @@ finally {
 # ---- commands (owner / brief asks); calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
- [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+ [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'down', 'drop', 'refresh', '_exec')][string]$Action,
  [Alias('Env')][string]$EnvName,
  [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
  [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
- [string]$Session, [string]$Artifact, [string]$Query,
+ [string]$Session, [string]$Artifact, [string]$Query, [switch]$Owner,
  [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [switch]$Json
 )
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services)
@@ -1235,10 +1228,10 @@ function Show-Status([string]$env1) {
   train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); requests = @($st.train.requests).Count } })
   queue = @($st.requests | ? status -eq 'queued' | % { "$($_.agent): $($_.kind) $($_.branch)" })
   services = @($svc)
-  leases = @($st.leases.Keys | % { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = ([datetime]$l.until).ToString('HH:mm'); release = $l.release; note = $l.note } })
-  holds = @($st.holds.Keys | % { [pscustomobject]@{ who = $_; services = @($st.holds[$_].services); until = ([datetime]$st.holds[$_].until).ToString('HH:mm') } })
-  recent = @($st.requests | ? status -eq 'done' | select -Last 5 | % { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
-  sandboxes = @($st.sandboxes.Keys | Sort-Object | % { $x = $st.sandboxes[$_]; "$_ $($x.branch) ($($x.agent)) $(@($x.services | ForEach-Object { $s = Svc $env1 $_; "$_ :$($s.port) $(if (Healthy $env1 $s) { 'up' } else { 'down' })" }) -join ', ')$(if ($x.promoted) { ' PROMOTED' })" })
+  leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = ([datetime]$l.until).ToString('HH:mm'); release = $l.release; note = $l.note; graceLeft = $l.graceLeft } })
+  holds = @($st.holds.Keys | ForEach-Object { $h = $st.holds[$_]; [pscustomobject]@{ who = $_; services = @($h.services); owner = [bool]$h.owner; until = $(if ($h.until) { ([datetime]$h.until).ToString('HH:mm') }); at = $h.at; graceLeft = $h.graceLeft } })
+  recent = @($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
+  sandboxes = @($st.sandboxes.Keys | Sort-Object | ForEach-Object { $x = $st.sandboxes[$_]; "$_ $($x.branch) ($($x.agent)) $(@($x.services | ForEach-Object { $s = Svc $env1 $_; "$_ :$($s.port) $(if (Healthy $env1 $s) { 'up' } else { 'down' })" }) -join ', ')$(if ($x.promoted) { ' PROMOTED' })" })
   loop = $(if ($st.loop -and (Alive $st.loop.pid)) { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
  }
  if ($Agent -and $Agent -ne 'main' -and $st.leases[$Agent]) {
@@ -1262,8 +1255,9 @@ function Show-Status([string]$env1) {
  }
  foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { "  MIGRATIONS $($l.mclass)$(if ($l.mclass -eq 'LIGHT') { " ($($l.mcount) changeSets, exact revert on leave)" } elseif (@($l.mwhy).Count) { ": $(@($l.mwhy)[0])" } else { ' (snapshot)' })" }) } }
  if ($o.sandboxes) { "  sandboxes: $($o.sandboxes -join '; ')" }
- if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] until $($_.until) (r$($_.release))$(if ($_.note) { " $($_.note)" })" }) -join '; ')" }
- if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] until $($_.until)" }) -join '; ')" }
+ $gr = { param($x) if ($null -ne $x.graceLeft) { " ⏳ no live holder: ends in $($x.graceLeft) min" } }
+ if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] until $($_.until) (r$($_.release))$(if ($_.note) { " $($_.note)" })$(& $gr $_)" }) -join '; ')" }
+ if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] $(if ($_.owner) { "owner until $($_.until)" } else { 'while live' })$(& $gr $_)" }) -join '; ')" }
  if ($o.recent) { "  recent: $($o.recent -join '; ')" }
  if ($o.mine) { "  YOU ($Agent): $($o.mine)" }
 }
@@ -1327,7 +1321,7 @@ switch ($Action) {
     if ($old -and $blocked.Count) {   # a train waits on it: kept, not extended
      $o.ok = $true; $o.rel = $old.release; $o.until = [datetime]$old.until; $o.capped = $true
     } elseif (-not $blocked.Count) {
-     $x.leases[$Agent] = @{ services = $names; repos = @(); until = (Get-Date).AddMinutes($min).ToString('o'); release = [int]$x.release.n; session = $Session; note = $Note; at = (Now) } + (Get-KitHolder)   # the holder's death frees it (Prune)
+     $x.leases[$Agent] = @{ services = $names; repos = @(); until = (Get-Date).AddMinutes($min).ToString('o'); release = [int]$x.release.n; note = $Note } + (New-KitLease $Agent $Session)   # no live holder: Prune frees it
      $o.ok = $true; $o.rel = $x.release.n; $o.until = (Get-Date).AddMinutes($min)
     } else { $o.why = "train $($x.train.id) is switching $($blocked -join ', ') ($($x.train.phase))" }
    }
@@ -1343,12 +1337,17 @@ switch ($Action) {
   if (Wait-Up $names) { Show-Status $e }
  }
  'release' { Update-State $e { param($x) $x.leases.Remove($Agent) }; Event $e 'release-lease' @{ agent = $Agent }; "[$e] lease of $Agent released" }
- 'up' {
-  $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed })); $min = if ($Minutes) { $Minutes } else { 120 }
-  Update-State $e { param($x) $x.holds[$Agent] = @{ services = $names; until = (Get-Date).AddMinutes($min).ToString('o') }; $x.suppress = $null }
-  "[$e] holding $($names -join ', ') up for $min min (for $Agent)"
+ 'up' {   # -Owner: the owner's hold for -Minutes (120); else a hold that lives while its holder does
+  if (-not $Services) { $st = Read-State $e; Prune $st; "[$e] up needs -Services <svc,..>. Leases need: $(@($st.leases.Keys | ForEach-Object { "$_ [$(@($st.leases[$_].services) -join ',')]" }) -join '; ')$(if (-not $st.leases.Count) { 'nothing' })"; exit 1 }
+  $names = @(Closure $e $Services); $min = if ($Minutes) { $Minutes } else { 120 }
+  Update-State $e { param($x) $x.holds[$Agent] = @{ services = $names } + (New-KitLease $Agent $Session $(if ($Owner) { $min })); $x.suppress = $null }
+  "[$e] holding $($names -join ', ') for $Agent $(if ($Owner) { "(owner) for $min min: unhold when done" } else { 'while it is live (board beat / step / pid): unhold when done' })"
   Ensure-Loop
   if (Wait-Up $names) { Show-Status $e }
+ }
+ 'unhold' {   # ends a hold (-Services: only those); services stop when idle, never at once
+  Update-State $e { param($x) if ($x.holds[$Agent]) { $left = @($x.holds[$Agent].services | Where-Object { $Services -and $_ -notin (Closure $e $Services) }); if ($left.Count) { $x.holds[$Agent].services = $left } else { $x.holds.Remove($Agent) } } }
+  Event $e 'unhold' @{ agent = $Agent; services = @($Services) }; "[$e] hold of $Agent $(if ($Services) { "on $($Services -join ', ') " })removed: services stop after their idle grace"
  }
  'down' {
   $names = if ($Services) { @(@($Services) + @(Dependents $e $Services) | select -Unique) } else { All-Managed }
@@ -1387,7 +1386,7 @@ switch ($Action) {
   # code lease: no train changes the worktree meanwhile
   $until = (Get-Date).AddMinutes($Wait); $o = @{}
   while ($true) {
-   Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); until = (Get-Date).AddMinutes($MaxLeaseMin).ToString('o'); release = [int]$x.release.n; note = "task $Task"; at = (Now); pid = $PID }; $o.ok = $true } }
+   Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); until = (Get-Date).AddMinutes($MaxLeaseMin).ToString('o'); release = [int]$x.release.n; note = "task $Task" } + (New-KitLease $Agent $Session -ProcessId $PID); $o.ok = $true } }
    if ($o.ok) { break }
    if ((Get-Date) -gt $until) { "[$e] a train is changing $rn : run the task again later"; return }
    Start-Sleep 3

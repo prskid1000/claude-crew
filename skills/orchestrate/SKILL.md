@@ -26,11 +26,8 @@ decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps. Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
 
-**Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change):
-1 code -> 2 testing-goals doc -> 3 reproduce + test on the local env (loop, max 3 rounds) -> 4 review, CI, merge (producers
-first), human testing doc, tracker promoted (no user gate) ->
-5 merged work waits (`deploy request`, silent) -> a person says `deploy <env>` -> E5 at once -> testers. Nobody asks or
-proposes a deploy (`deploy.trigger: owner`, the default; `ask` = one batched ask per env).
+**Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
+steps: AGENTS.md "The two flows"): merged work waits silently (`deploy request`) until a person says `deploy <env>` -> E5.
 
 | Dev path | Who / what | You do |
 |---|---|---|
@@ -75,8 +72,8 @@ held (`envFixOpen`), never failedTesting. Items the workflow could not publish -
 ## Events (check this table whenever something happens)
 | # | Event | Action |
 |---|---|---|
-| E1 | You launched a workflow / agent, or a new session finds runs, and no heartbeat runs (a heartbeat dies with its session) | ONE heartbeat every 10 min: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste its output verbatim (one own line only when an ACT needs action), act on ACT / WATCH. A second session's supervisor steps aside by itself. Stop it when nothing runs |
-| E2 | supervise prints ACT / WATCH | do the printed action / re-check next round (the E1 heartbeat); leave healthy agents alone |
+| E1 | You launched a workflow / agent, or a new session finds runs, and no heartbeat runs (a heartbeat dies with its session) | ONE heartbeat every 10 min: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste its output verbatim (one own line only when an ACT needs action), act on its flags; a second session's supervisor steps aside. Stop it when nothing runs |
+| E2 | supervise prints ACT / WATCH / ❓ ASK | do the printed action (ASK: ask the owner once, record `supervise -App <name> -Answer <keep or close>`); leave healthy agents alone |
 | E3 | Agents or a workflow stopped (crash, limits, a restart), or an agent handed off at its budget | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, a filled resume brief and the exact `Workflow({ scriptPath, resumeFromRunId, args })` (args the workflow recorded itself); resume refused -> the printed relaunch (`mode: 'resume'`); QA items never published -> its `qa.ps1 finalize` lines; never from scratch. You stopped it: `supervise -MarkStopped <run>` |
 | E4 | DECISION <id> (supervise, the report's `decisions`; a dispute still split after 2 rounds or a duel's debate record: both positions side by side) · ENV-FIX <id> (a local-env fix only kitty or you may do; `envFixes`, `envFixOpen`) | DECISION: ask the owner with the options + recommendation (the owner judges a dispute or duel); `orch.ps1 decide answer -Id <id> -Answer '<their words>'`; several valid paths that evidence would settle -> you may start a /buildy `mode: 'duel'`. ENV-FIX: spawn `kitty` (kind env) with the request: it does the fix (local-env `up`/`refresh`/`drop`, shared DB repair) and answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'` (or `'cannot: <why>'`); never ask the owner. The waiting item resumes. Held after the cycles: fix + `qa.ps1 retest` (a local item never goes to failedTesting for an env reason; no close path for NOT_TESTED) |
 | E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back: `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live (supervise also does it). Never ask for or propose a deploy yourself |

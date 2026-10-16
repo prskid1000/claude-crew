@@ -174,13 +174,15 @@ switch ($Action) {
      return $mine[0]
     }
     # fair: oldest waiter a free lane satisfies first
-    $free = @($lanes | ? { -not (Lease $_.name) })
+    foreach ($ln in $lanes) { $o = Lease $ln.name; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
+    $free = @($lanes | Where-Object { -not (Lease $_.name) })
     if (-not $free) { return $null }
     $ahead = @(Waiters | ? { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
     if ($ahead.Count -ge $free.Count) { return $null }
-    $up = @($free | ? { Running $_ })
-    $pick = if ($up) { $up[0] } else { $free[0] }
-    $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = (LaneSerial $pick); since = (Get-Date).ToString('s') } + (Get-KitHolder); if ($Holder) { $new.holder = $Holder }   # holderPid: supervise frees a crashed session's lease
+    # a free running lane, else one booting for no one, else boot a new one (the gate admits it)
+    $up = @($free | ? { Running $_ }); $booting = @($free | Where-Object { -not (Running $_) -and ((& $adb devices) -match "^$([regex]::Escape((LaneSerial $_)))\s") })
+    $pick = if ($up) { $up[0] } elseif ($booting) { $booting[0] } else { $free[0] }
+    $new = @{ lane = $pick.name; serial = (LaneSerial $pick); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '' $(if ($Agent -eq 'manual') { 240 }))   # no live holder for idle.graceMinutes: reclaimed
     Save-Json $new (Join-Path $dir "$($pick.name).json")
     $pick
    }
@@ -190,11 +192,24 @@ switch ($Action) {
     Start-Sleep 20
    }
   }
-  Remove-Item $wf -Force -ea 0
-  $serial = LaneSerial $got
   $memQueued = $false
   try {
-   if (-not (Running $got)) { $memQueued = Boot $got -Until $deadline }
+   if (-not (Running $got)) {
+    # wait for RAM in 1-min gate turns, still a waiter (a release then keeps its lane up); a lane that frees up wins, this boot is dropped
+    $env:KIT_SWARM_TURN_MIN = 1
+    do {
+     $memQueued = Boot $got -Until (Get-Date).AddSeconds(30)
+     if (-not $memQueued -or (Running $got)) { break }
+     if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date }
+     $sw = Locked {
+      $f = @($lanes | Where-Object { $_.name -ne $got.name -and -not (Lease $_.name) -and (Running $_) })[0]
+      if ($f) { Remove-Item (Join-Path $dir "$($got.name).json") -Force; Save-Json (@{ lane = $f.name; serial = (LaneSerial $f); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '')) (Join-Path $dir "$($f.name).json"); $f }
+     }
+     if ($sw) { Write-Host "$($got.name): boot dropped, $($sw.name) is free and running"; $got = $sw; $memQueued = $false; break }
+    } while ((Get-Date) -lt $deadline)
+    Remove-Item Env:KIT_SWARM_TURN_MIN -ea 0
+   }
+   Remove-Item $wf -Force -ea 0
    if (-not (Running $got) -and -not $script:had -and -not $memQueued) {
     "$($got.name): first boot failed, retrying once (cold boot; lease kept)" | Out-Host
     $memQueued = Boot $got -Cold -Until $deadline
@@ -211,7 +226,7 @@ switch ($Action) {
    if ($memQueued) { throw "$($got.name): no memory turn within -WaitMinutes; lease released (acquire later)" }
    throw "$($got.name) did not boot (emulator problem); lease released"
   }
-  $installed = 'kept'
+  $serial = LaneSerial $got; $installed = 'kept'
   if ($Apk) {   # side APK: stamp removed
    $ap = if ($Apk -eq 'local') { Join-Path $c.apkDir "app-local$([IO.Path]::GetExtension($c.appFile))" } else { $Apk }
    if (-not (Test-Path $ap)) { throw "no app at $ap (local-env build: swarm.ps1 build -Local)" }
@@ -570,7 +585,7 @@ if (-not $Lanes) { $Lanes = @($all | select -First $(if ($Count -gt 0) { $Count 
 $gate = ({ & $KitCmd.dev gate @args })
 $ledger = Join-Path (Get-KitTemp) 'claude-build-gate'; New-Item -ItemType Directory -Force $ledger | Out-Null
 function FreeGB { Get-FreeGB }
-function Turn($what, $gb) { & $gate -Dir $c.dir -Cmd "exit 0 #$what $name" -NeedGB $gb -WaitMinutes 30 | select -Last 1 | Out-Host; if ($LASTEXITCODE) { Write-Warning "$name not started: no memory turn within 30 min" }; -not $LASTEXITCODE }   # fair turn + memory
+function Turn($what, $gb) { & $gate -Dir $c.dir -Cmd "exit 0 #$what $name" -NeedGB $gb -WaitMinutes $(if ($env:KIT_SWARM_TURN_MIN) { [int]$env:KIT_SWARM_TURN_MIN } else { 30 }) | select -Last 1 | Out-Host; if ($LASTEXITCODE) { Write-Warning "$name not started: no memory turn within 30 min" }; -not $LASTEXITCODE }   # fair turn + memory
 
 $out = @()
 foreach ($name in $Lanes) {
@@ -632,7 +647,7 @@ foreach ($o in $out) {
 $out = $ready
 # merge by lane (empty/corrupt file = none)
 Invoke-KitLocked $c.state {
- $prev = try { @(gc $c.state -Raw -ErrorAction Stop | ConvertFrom-Json) | ? { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
+ $prev = try { @(gc $c.state -Raw -EA Stop | ConvertFrom-Json) | ? { $_.lane -and $_.lane -notin $Lanes } } catch { @() }
  ConvertTo-Json @(@($prev) + @($out)) | Set-Content $c.state -Encoding utf8
 }
 foreach ($i in 1..3) { Start-Sleep 4; & $KitCmd.swarm arrange | Out-Null }
