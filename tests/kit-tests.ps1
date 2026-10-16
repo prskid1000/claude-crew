@@ -842,4 +842,27 @@ $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A')
   Remove-TestKit $k
 }
 
+  # kit-flow issues: keywords in strings / comments / one-line pipelines are no loops; real unbounded loops are (kitflow.py)
+  $fx = @'
+import re, sys, types, collections
+sys.path.insert(0, sys.argv[1])
+import kitflow
+T = {'fp.ps1': '''function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
+function Hint { "== heartbeat: arm ONE: CronCreate (cron */10 * * * *), prompt: run supervise and retry when stale" }
+function Keep($x, $rm) { $x.m = @(@($x.m) | Where-Object { $p = "$_" -split '>', 2; $p[0] -notin $rm }) }
+function Label { $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }; $v }
+function Bounded { for ($i = 0; $i -lt 3; $i++) { Start-Sleep 1 }; foreach ($x in @(1, 2)) { $x }; while ((Get-Date) -lt $end) { Start-Sleep 5 } }
+''', 'fp.py': 'def port():\n    print("kittool port: GEMINI.md stale or missing; retry later")\n',
+     'fp.mjs': 'export function login(page, L) {\n  if (!page.url().includes(L.path)) {   // logged in as someone else: clear and retry\n    return 1\n  }\n}\n',
+     'real.ps1': 'function Poll($f) {\n  while ($true) { Start-Sleep 5; if (Test-Path $f) { break } }\n}\n',
+     'real.mjs': 'export async function waitDone(poll) {\n  let done = false\n  while (!done) { done = await poll() }\n}\n'}
+k = types.SimpleNamespace(files=list(T), texts=T, dir=sys.argv[2], skills=[], agents={}, workflows={})
+c = collections.Counter(m.group(0) for i in kitflow.model(k, [])['issues'] for m in [re.search(r'(fp|real)\.\w+', i['text'])] if m)
+print(' '.join(f'{f}={c.get(f, 0)}' for f in T))
+'@
+  $fxf = Join-Path ([IO.Path]::GetTempPath()) "kitflow-fixture-$PID.py"; Set-Content $fxf $fx -Encoding utf8
+  $res = "$(& $py -X utf8 $fxf (Join-Path $src 'skills/orchestrate') ([IO.Path]::GetTempPath()) 2>&1)"
+  Expect "kit-flow: no false loop issues ($res)" ($res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0')
+  Expect 'kit-flow: real unbounded loops flagged once each' ($res -match 'real\.ps1=1 real\.mjs=1')
+
 "$script:fails failure(s)"; exit [int]($script:fails -gt 0)

@@ -1,0 +1,42 @@
+# Publishes the interactive kit map (kittool.py flow --public) to GitHub Pages on every push to main.
+name: kit map
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the page (public files only)
+        run: python -X utf8 skills/orchestrate/kittool.py flow --public --out _site/index.html
+      - name: Org-term scan (only when the ORG_TERMS secret is set)
+        env:
+          ORG_TERMS: ${{ secrets.ORG_TERMS }}
+        run: |
+          if [ -z "$ORG_TERMS" ]; then echo "no ORG_TERMS secret: scan skipped"; exit 0; fi
+          pat=$(printf '%s' "$ORG_TERMS" | tr ',' '\n' | sed '/^\s*$/d' | paste -sd'|')
+          if grep -rliE "$pat" _site; then echo "org term found in the published page"; exit 1; fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

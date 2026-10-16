@@ -11,7 +11,7 @@ Parsing is cached per file content hash. Refs that point nowhere, outcomes nothi
 import hashlib, json, os, re, time
 from collections import defaultdict, deque
 
-VER = 4
+VER = 7
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -30,19 +30,29 @@ JSONF = re.compile(r'(?<![\w/.-])((?:[\w-]+\.)?(?:run|results|launch|contracts|r
                    r'checks|verdicts?|plan|history|outbox|deploys?|signals|learning)\.jsonl?)\b')
 WRITE = re.compile(r'Set-Content|Out-File|Add-Content|WriteAll|AppendAll|Export-|New-Item|Move-Item|Copy-Item|Remove-Item|-Create\b|'
                    r'write_text|json\.dump|open\([^)]*[\'"][wa]|writeFileSync|appendFileSync|mkdirSync|\b(?:write|append|record|save|update)s?\b', re.I)
-CF = [('parallel', r'\bparallel\(|Promise\.all|\bpipeline\(|-Parallel\b|Start-ThreadJob|Start-Job\b|\bin parallel\b|\bpools?\b'),
-      ('wait', r'decide wait|\bWait-\w+|Start-Sleep|time\.sleep|setTimeout|merge-when-green|memory gate|\bgate (?:slot|queue)|holdMerge|'
-               r'\blease\b|seat acquire|-MaxMinutes\b|\bwaits? (?:for|until)\b'),
-      ('timer', r'-IfDue\b|every \d+ ?min\w*|\bcron\b|heartbeat|IdleHours|minIntervalHours|\bweekly\b|idle grace|\bstale\w*\b'),
-      ('retry', r'\bretr(?:y|ies)\b|\bat most \d+ (?:rounds?|times|tries)|\bmax(?:imum)? \d+ rounds?|\battempts?\b|stronger (?:fix|retry|round)|\bre-?test\b'),
-      ('error', r'\bcatch\b|\btrap\b|roll(?:ed)?[ -]?back|\bbisect\b|\bfallback\b|\brecover\w*\b'),
-      ('event', r'\bnotification\b|\bsignals?\b|\bboard beat\b|\bbeat\b|supervise (?:flag|prints)|\bon SessionStart\b'),
-      ('lock', r'\bLocked\b|\blocked\(|\.lock\b|Mutex|O_EXCL|\bclaims?\b'),
-      ('exit', r'\bexit [0-3]\b|sys\.exit\(|Exit codes?:'),
-      ('human', r"(?:person|owner|tester|human|lead)\s+(?:says|answers|approves|tests|asks|decides)|\bby hand\b|a person's (?:word|yes)")]
-CF = [(k, re.compile(p, re.I)) for k, p in CF]
-BOUND = re.compile(r'(?:at most|max(?:imum)?|<=|≤|up to)\s*(\d+)\s*(rounds?|times|tries|retries|attempts|min\w*|h(?:ours?)?|s\b|cycles?)|'
-                   r'every (\d+) ?(min\w*|h\w*|s\b|days?)|-MaxMinutes (\d+)|(?:minIntervalHours|IdleHours|staleMin)\D{0,6}(\d+)', re.I)
+# control-flow points: code is matched on its STRIPPED text (comments and string literals blanked), docs on their steps
+CODE_CF = [('parallel', r'\bparallel\(|Promise\.all(?:Settled)?\(|\bpipeline\(|-Parallel\b|Start-ThreadJob|Start-Job\b|ThreadPoolExecutor'),
+           ('wait', r'\bStart-Sleep\b|\btime\.sleep\(|\bsetTimeout\(|\bWait-(?:Job|Process|Event)\b|\.wait\(|\bWaitForExit\('),
+           ('error', r'\bcatch\b|\btrap\b|\bexcept\b|\.catch\('),
+           ('lock', r'\bLocked\b|\blocked\(|O_EXCL|\bMutex\b|\bflock\('),
+           ('exit', r'\bexit\s+[0-9]\b|\bsys\.exit\(|\bprocess\.exit\(')]
+DOC_CF = [('parallel', r'\bin parallel\b|\bparallel\(|\bpools?\b|\blanes?\b'),
+          ('wait', r'\bdecide wait\b|\bwaits? (?:for|until)\b|merge-when-green|memory gate|\bholdMerge\b|\blease\b|seat acquire'),
+          ('error', r'roll(?:ed)?[ -]?back|\bbisect\b|\bfallback\b|\brecover\w*\b'),
+          ('event', r'\bnotification\b|\bsupervise (?:flag|prints)\b|\bon SessionStart\b'),
+          ('human', r"(?:person|owner|tester|human|lead)\s+(?:says|answers|approves|tests|asks|decides)|\bby hand\b|a person's (?:word|yes)")]
+CODE_CF = [(k, re.compile(x)) for k, x in CODE_CF]
+DOC_CF = [(k, re.compile(x, re.I)) for k, x in DOC_CF]
+LOOP_HEAD = {'ps1': re.compile(r'\b(foreach|for|while|until)\s*\(|\bdo\s*\{|\bForEach-Object\b|(?<![\w-])%\s*\{'),
+             'js': re.compile(r'\b(for|while)\s*\(|\bdo\s*\{|\.forEach\('),
+             'py': re.compile(r'^\s*(for|while)\b(.*):\s*(?:#.*)?$', re.M), 'sh': re.compile(r'\b(for|while|until)\b\s')}
+LIMIT = r'(?:max|Max|MAX|cap\b|len\(|limit|Limit|round|Round|tries|Tries|TRIES|attempt|Attempt|timeout|Timeout|deadline|Deadline|budget|Budget|' \
+        r'end|End|until|Until|Get-Date|Date\.now|time\.time|monotonic|elapsed|Elapsed|count|Count|length|Length|\$i\b|\bi\b|\bn\b|\d)'
+CMP = r'(?:-lt|-le|-gt|-ge|<=?|>=?)'
+CRON = re.compile(r"""['"`]([\d*/,-]+ [\d*/,-]+ [\d*/,-]+ [\d*/,-]+ [\d*/,-]+)['"`]""")
+DOC_LOOP = re.compile(r'\b(repeat\w*|re-?run\w*|loop(?:s|ing)?)\b|\b(?:at most|max(?:imum)?|up to)\s+\d+\s+(?:rounds?|times|tries|attempts|cycles?)\b', re.I)
+DOC_BOUND = re.compile(r'(?:at most|max(?:imum)?|up to|<=|≤)\s*(\d+)\s*(\w+)|(\d+)\s+(rounds?|times|tries|retries|attempts|cycles?)\b|'
+                       r'every\s+(\d+)\s*(\w+)|\b(weekly|daily|hourly|once|twice)\b', re.I)
 OUTCOMES = ('PASS', 'FAIL', 'BLOCKED', 'NONE', 'NOT_TESTED', 'PASS_WITH_NOTE', 'OUT_OF_SCOPE', 'LIVE', 'REFUSED', 'REJECTED', 'ROLLED BACK',
             'SANDBOX', 'ACT', 'WATCH', 'INFO', 'HEAVY', 'LIGHT', 'MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED',
             'closed', 'failedTesting', 'failed testing', 'in test', 'promoted', '[Bug]', 'merged', 'held', 'deferred', 'blocked')
@@ -69,23 +79,175 @@ class P:
     def __init__(s, f):
         s.f, s.parts, s.refs, s.text = f, [], [], {}
 
-    def part(s, pid, label, kind, ln, desc=''):
-        s.parts.append([pid, label, kind, ln, short(desc, 260)])
+    def part(s, pid, label, kind, ln, desc='', end=0):
+        s.parts.append([pid, label, kind, ln, short(desc, 260), end])
         return pid
 
     def ref(s, *r):
         s.refs.append(list(r))
 
 
-def bound_of(t):
-    m = BOUND.search(t or '')
+def doc_bound(t):
+    m = DOC_BOUND.search(t or '')
     if not m:
         return ''
-    g = [x for x in m.groups() if x]
-    return ('every ' if m.group(3) else 'max ') + ' '.join(g[:2])
+    if m.group(7):
+        return m.group(7).lower()
+    if m.group(5):
+        return f'every {m.group(5)} {m.group(6)}'
+    return f'max {m.group(1) or m.group(3)} {m.group(2) or m.group(4)}'
 
 
-def scan(p, src, text, ln, code, aliases):
+def strip_code(text, lg, keep_tpl=False, keep_str=False):
+    """text with comments and string literals blanked (same length, newlines kept), so keyword checks see only code."""
+    out, i, n = list(text), 0, len(text)
+
+    def blank(a, b):
+        for j in range(a, min(b, n)):
+            if out[j] != '\n':
+                out[j] = ' '
+
+    def close(q, a, esc):
+        j = a
+        while j < n and text[j] != q and not (text[j] == '\n' and lg in ('js', 'py')):
+            j += 2 if text[j] == esc else 1
+        return j + 1
+    while i < n:
+        c, two = text[i], text[i:i + 2]
+        if lg == 'ps1' and two == '<#':
+            j = text.find('#>', i)
+            j = n if j < 0 else j + 2
+        elif lg == 'ps1' and two in ("@'", '@"') and text[i + 2:i + 3] in ('\n', '\r'):
+            j = text.find('\n' + two[1] + '@', i)
+            j = n if j < 0 else j + 3
+        elif (lg in ('ps1', 'py', 'sh') and c == '#') or (lg == 'js' and two == '//'):
+            j = text.find('\n', i)
+            j = n if j < 0 else j
+        elif lg == 'js' and two == '/*':
+            j = text.find('*/', i)
+            j = n if j < 0 else j + 2
+        elif lg == 'py' and text[i:i + 3] in ('"""', "'''"):
+            j = text.find(text[i:i + 3], i + 3)
+            j = n if j < 0 else j + 3
+        elif lg == 'js' and c == '`':
+            j, depth = i + 1, 0
+            while j < n and not (text[j] == '`' and depth == 0):
+                depth += text[j:j + 2] == '${'
+                depth -= depth > 0 and text[j] == '}'
+                j += 2 if text[j] == '\\' else 1
+            j += 1
+            if keep_tpl:
+                i = j
+                continue
+        elif c in ('"', "'"):
+            j = close(c, i + 1, '`' if lg == 'ps1' else '\\')
+            if lg == 'ps1' and c == "'":
+                while j < n and text[j] == "'":   # '' is an escaped quote
+                    j = close("'", j + 1, '\0')
+        else:
+            i += 1
+            continue
+        if not (keep_str and (text[i] in '"\'`' or text[i:i + 2] in ('@"', "@'"))):
+            blank(i, j)
+        i = max(j, i + 1)
+    return ''.join(out)
+
+
+def code_control(p, src, raw, live, ln, lg, fname='', lns=None):
+    """Control-flow points in one code block: loops with their bound (or none), schedules, parallel, waits, errors, locks, exits."""
+    def at(pos):
+        k = live.count('\n', 0, pos)
+        return lns[min(k, len(lns) - 1)] if lns else ln + k
+    for kind, rx in CODE_CF:
+        m = rx.search(live)
+        if m:
+            cid = p.part(f'{src}~{kind}', m.group(0).strip('(. '), kind, at(m.start()), raw[max(0, m.start() - 40):m.end() + 120])
+            p.ref('edge', src, cid, 'has', m.group(0).strip('(. '), '')
+    loops = []
+    rx = LOOP_HEAD.get(lg)
+    for m in (rx.finditer(live) if rx else []):
+        kw = (m.group(1) if m.groups() and m.group(1) else m.group(0)).strip('(.{ %')
+        if kw in ('while', 'until') and re.search(r'\}\s*$', live[max(0, m.start() - 40):m.start()]):
+            continue   # the tail of a do { } while (...): the do loop carries it
+        if lg == 'py':
+            head = m.group(2)
+        elif m.group(0).rstrip().endswith('('):
+            j, d = m.end(), 1
+            while j < len(live) and d:
+                d += {'(': 1, ')': -1}.get(live[j], 0)
+                j += 1
+            head = live[m.end():j - 1]
+        else:
+            k = re.search(r'\}\s*(while|until)\s*\(([^\n]*)\)', live[m.end():m.end() + 6000])
+            head = k.group(2) if k else ''
+        body = live[m.end():m.end() + 2500]
+        if kw.lower() in ('foreach', 'foreach-object', '%', 'map', 'filter', 'reduce', 'some', 'every') or \
+                (lg == 'py' and kw == 'for') or (kw == 'for' and re.search(r'\b(of|in)\b', head) and ';' not in head):
+            bound = 'collection'
+        elif kw == 'for' and ';' in head:
+            bound = 'counter' if re.search(CMP, head) else ''
+        elif re.search(CMP, head):
+            bound = 'condition'
+        elif re.search(r'^\s*\$?\w+\.(?:Count|length)\s*$|^\s*\w+\s*$', head) and not re.search(r'^\s*\$?(true|True|1)\s*$', head):
+            bound = 'drain' if re.search(r'Count|length|queue|stack|todo|work|^\s*\w*q\w*\s*$', head) else ''
+        else:
+            bound = ''
+        if not bound and re.search(r'\b(if|elif|elseif)\b[^\n]*' + LIMIT + r'.{0,700}?\b(break|throw|return|raise|exit)\b', body, re.S):
+            bound = 'guarded exit'
+        if not bound and re.search(r'Split-Path|\.[Pp]arent\b|dirname|rsplit|(\w+)\s*=\s*\w+\[\s*\$?\1\s*\]|\w+\[\w+\[-1\]\]', body[:600] + head):
+            bound = 'walk'
+        if not bound and re.search(r'\.pop\(|\.shift\(|Dequeue|\+\+|\+=\s*1\b', raw[m.end():m.end() + 600]):
+            bound = 'drain / counter'
+        loops.append((kw, bound, at(m.start()), raw[m.start():m.start() + 160]))
+    if fname and lg in ('ps1', 'py', 'js') and re.search(r'(?<![\w-])' + re.escape(fname) + r'\s*[\s(]', live.split('\n', 1)[-1]):
+        loops.append(('recursion', 'structural', ln, fname))
+    for m in CRON.finditer(raw):
+        mm = re.match(r'\*/(\d+)', m.group(1))
+        cid = p.part(f'{src}~timer', f'cron {m.group(1)}', 'timer', at(m.start()), m.group(1))
+        p.ref('edge', cid, src, 'triggers', f'cron {m.group(1)}', '')
+        p.ref('edge', cid, cid, 'loop', f'every {mm.group(1)} min' if mm else m.group(1), f'every {mm.group(1)} min' if mm else m.group(1))
+    m = re.search(r'-IfDue\b|\beveryDays\b|IntervalHours\b|IdleHours\b', live)
+    if m:
+        cid = p.part(f'{src}~timer', m.group(0), 'timer', at(m.start()), raw[max(0, m.start() - 40):m.end() + 120])
+        p.ref('edge', cid, src, 'triggers', m.group(0), '')
+        p.ref('edge', cid, cid, 'loop', 'interval: ' + m.group(0).strip('-'), 'interval')
+    if loops:
+        free = [x for x in loops if not x[1]]
+        lab = ', '.join(sorted({x[0] for x in loops}))
+        cid = p.part(f'{src}~retry', f'loop: {lab}' + (' (no bound)' if free else ''), 'retry', (free or loops)[0][2],
+                     '; '.join(f'{k} [{b or "NO BOUND"}] :{l} {short(t, 60)}' for k, b, l, t in loops[:6]))
+        p.ref('edge', src, cid, 'has', lab, '')
+        b = '' if free else ', '.join(sorted({x[1] for x in loops}))
+        p.ref('edge', cid, cid, 'loop', b or 'no bound', b)
+        if free:
+            p.ref('nobound', cid, f'{p.f}:{free[0][2]}', short(free[0][3], 80))
+
+
+def doc_control(p, src, text, ln):
+    """Control-flow points a doc step states: loops (repeat / rounds / retry, with their bound), schedules, waits, humans ..."""
+    for kind, rx in DOC_CF:
+        m = rx.search(text)
+        if m:
+            cid = p.part(f'{src}~{kind}', short(m.group(0), 28), kind, ln + text.count('\n', 0, m.start()), text[max(0, m.start() - 60):m.end() + 140])
+            p.ref('edge', *((cid, src, 'triggers') if kind in ('human', 'event') else (src, cid, 'has')), short(m.group(0), 40), '')
+    m = re.search(r'every\s+\d+\s*(?:min\w*|h\w*|days?)\b|\b(?:weekly|daily|hourly)\b|\bcron\b[^.\n]*\d', text, re.I)
+    if m:
+        b = doc_bound(text[m.start():m.end() + 40]) or short(m.group(0), 30)
+        cid = p.part(f'{src}~timer', short(m.group(0), 28), 'timer', ln + text.count('\n', 0, m.start()), text[max(0, m.start() - 60):m.end() + 140])
+        p.ref('edge', cid, src, 'triggers', short(m.group(0), 40), '')
+        p.ref('edge', cid, cid, 'loop', b, b)
+    m = DOC_LOOP.search(text)
+    if m:
+        b = doc_bound(text[max(0, m.start() - 160):m.end() + 200])
+        cid = p.part(f'{src}~retry', short(m.group(0), 20) + (f' ({b})' if b else ' (no bound)'), 'retry', ln + text.count('\n', 0, m.start()),
+                     text[max(0, m.start() - 60):m.end() + 160])
+        p.ref('edge', src, cid, 'has', short(m.group(0), 40), '')
+        p.ref('edge', cid, cid, 'loop', b or 'no bound', b)
+        if not b and re.search(r'(?i)\b(?:repeat\w*|loop\w*)\b[^.\n]{0,80}\buntil\b', text):
+            p.ref('nobound', cid, f'{p.f}:{ln + text.count(chr(10), 0, m.start())}', short(text[max(0, m.start() - 40):m.end() + 60], 80))
+
+
+def scan(p, src, text, ln, code, aliases, mask=None):
     """Refs in one block of text owned by part src: commands, external CLIs, state, config, names, outcomes."""
     base = os.path.basename(p.f)
     spans = [(0, text)] if code else [(m.start(1), m.group(1)) for m in re.finditer(r'`([^`]+)`', text)]
@@ -93,6 +255,8 @@ def scan(p, src, text, ln, code, aliases):
         def at(m):
             pos = off + m.start()
             line = text[text.rfind('\n', 0, pos) + 1:pos]
+            if mask is not None:
+                return ln + text.count('\n', 0, pos), bool(code and pos < len(mask) and mask[pos] != text[pos])
             return ln + text.count('\n', 0, pos), bool(code and re.search(r'(^|\s)(#|//|\*)', line))
         for m in CMD.finditer(t):
             p.ref('cmd', src, m.group(1), m.group(2), m.group(3) or '', *at(m))
@@ -103,9 +267,11 @@ def scan(p, src, text, ln, code, aliases):
                 p.ref('cmd', src, b, m.group(4), m.group(5) or '', *at(m))
         for rx in EXT:
             for m in rx.finditer(t):
-                if m.group(1) in GIT_VERBS:
+                if m.group(1) in GIT_VERBS and not at(m)[1]:
                     p.ref('edge', src, '@ext/git ' + m.group(1), 'calls', f'{base}:{at(m)[0]}', '')
         for m in TOOLS.finditer(t):
+            if at(m)[1]:
+                continue   # a CLI named in a message or comment is no call
             tool = m.group(1) or m.group(3) or m.group(5) or m.group(7)
             verb = m.group(2) or (m.group(4) if code else '') or m.group(6) or ''
             p.ref('edge', src, '@ext/' + (tool + ' ' + verb).strip(), 'calls', f'{base}:{at(m)[0]}', '')
@@ -123,23 +289,6 @@ def scan(p, src, text, ln, code, aliases):
         last = m.start()
         toks.setdefault(m.group(0), n)
     p.ref('tok', src, sorted(toks.items()), ln)
-
-
-def control(p, src, text, ln):
-    """Control-flow points inside a part: one child node per kind, with the bound it states."""
-    for kind, rx in CF:
-        m = rx.search(text)
-        if not m:
-            continue
-        b = bound_of(text[max(0, m.start() - 120):m.end() + 160])
-        cid = p.part(f'{src}~{kind}', short(m.group(0), 28) + (f' ({b})' if b else ''), kind, ln + text.count('\n', 0, m.start()),
-                     text[max(0, m.start() - 60):m.end() + 140])
-        if kind in ('human', 'event', 'timer'):
-            p.ref('edge', cid, src, 'triggers', short(m.group(0), 40), '')
-        else:
-            p.ref('edge', src, cid, 'has', short(m.group(0), 40), '')
-        if kind in ('retry', 'timer'):
-            p.ref('edge', cid, cid, 'loop', b or 'no bound', b)
 
 
 def spans_of(lines, lg):
@@ -177,10 +326,12 @@ def spans_of(lines, lg):
 def parse_code(p, f, text):
     lg, base = lang(f), os.path.basename(f)
     lines = text.split('\n')
+    live = strip_code(text, lg).split('\n')
+    tlive = strip_code(text, lg, keep_tpl=True).split('\n') if lg == 'js' else live
     sp = spans_of(lines, lg)
     own = [None] * len(lines)
     for a, b, name in sorted(sp, key=lambda x: x[1] - x[0], reverse=True):
-        pid = p.part(f'{f}#{name}', name + ('()' if lg != 'ps1' else ''), 'fn', a + 1, lines[a].strip())
+        pid = p.part(f'{f}#{name}', name + ('()' if lg != 'ps1' else ''), 'fn', a + 1, lines[a].strip(), b + 1)
         for i in range(a, b + 1):
             own[i] = pid
     aliases = {}
@@ -234,12 +385,14 @@ def parse_code(p, f, text):
     for i, l in enumerate(lines):
         src = own[i] or f
         for m in re.finditer(r"([\w$.\]\[]+?)\s*(?:===?|!==?|-c?eq|-ne|==|!=)\s*'([^'\n]{1,24})'", l):
+            if live[i][m.start():m.start() + 1] in (' ', ''):
+                continue   # inside a comment or a string
             subj, val = m.group(1).lstrip('$').split('.')[-1].strip('[]'), m.group(2)
             if subj in SUBVAR + ('__verb', 'cmd') or not re.match(r'^[\w \[\]-]{1,24}$', val) or not (
                     subj in ekeys or re.match(r'^[A-Z][A-Z_ ]+$', val) or subj.lower() in DSUBJ):
                 continue
             decision(p, f, src, subj, val, lines, i, base)
-        m = re.match(r'\s*switch\s*(?:-\w+\s*)*\(\s*\$([\w.]+)\s*\)', l)
+        m = re.match(r'\s*switch\s*(?:-\w+\s*)*\(\s*\$([\w.]+)\s*\)', live[i])
         if m and m.group(1).split('.')[-1] not in SUBVAR + ('__verb',):
             ind = None
             for j in range(i + 1, min(len(lines), i + 200)):
@@ -303,10 +456,10 @@ def parse_code(p, f, text):
         blocks[own[i] or f].append((i + 1, l))
     for src, bl in blocks.items():
         t = '\n'.join(l for _, l in bl)
-        scan(p, src, t, bl[0][0], True, aliases)
+        scan(p, src, t, bl[0][0], True, aliases, '\n'.join(tlive[n - 1] for n, _ in bl))
         p.ref('fn', src, sorted(set(re.findall(r'([A-Za-z_][\w-]*)\s*\(' if lg != 'ps1' else r'(?<![\w$.-])([A-Za-z_][\w-]*)', t))), bl[0][0])
         if src != f:
-            control(p, src, t, bl[0][0])
+            code_control(p, src, t, '\n'.join(live[n - 1] for n, _ in bl), bl[0][0], lg, src.split('#')[-1] if '#' in src else '', [n for n, _ in bl])
 
 
 def decision(p, f, src, subj, val, lines, i, base):
@@ -377,7 +530,7 @@ def parse_md(p, f, text):
     for src, bl in buf.items():
         t = '\n'.join(l for _, l in bl)
         scan(p, src, t, bl[0][0], False, {})
-        control(p, src, t, bl[0][0]) if src != f else None
+        doc_control(p, src, t, bl[0][0]) if src != f else None
         for m in re.finditer(r'\b([\w-]+)(?: SKILL\.md)?\s+(?:steps?\s+(\d+|[A-Z]{1,3}\d+[a-z]?)|([A-Z]{1,3}\d+[a-z]?))\b', t):
             p.ref('step', src, m.group(1), m.group(2) or m.group(3), bl[0][0])
         for m in re.finditer(r'(?<![\w#-])([A-Z]{1,3}\d{1,2}[a-z]?)(?![\w-])', t):
@@ -478,16 +631,16 @@ def fkind(f):
 def link(k, parsed, problems):
     N, E, issues, grp = {}, {}, [], {}
 
-    def node(i, label, kind, f, ln=0, d=''):
+    def node(i, label, kind, f, ln=0, d='', end=0):
         if i not in N:
-            N[i] = [i, label, kind, f, ln, d]
+            N[i] = [i, label, kind, f, ln, d, end]
         return i
 
     for f in k.files:
         lab = f.split('/')[1] if fkind(f) == 'skill' else os.path.basename(f)
         node(f, lab, 'file', f, 1, '')
-        for pid, label, kind, ln, d in parsed[f]['parts']:
-            node(pid, label, kind, f, ln, d)
+        for pid, label, kind, ln, d, *end in parsed[f]['parts']:
+            node(pid, label, kind, f, ln, d, (end or [0])[0])
     node('@session', 'every session', 'event', '(events)', 0, 'the harness loads CLAUDE.md (+ imports) and the always-on rules')
     PSEUDO = {'ext': '(external CLIs)', 'file': '(shared files)', 'outcome': '(outcomes)', 'state': '(state)', 'config': '(config)'}
 
@@ -611,29 +764,87 @@ def link(k, parsed, problems):
                     edge(s2, tgt, 'branch', r[2])
             elif kind == 'enum':
                 pass
-    # one more pass for enums after every branch edge exists (comparisons may follow the schema in the file)
+    # an outcome is handled when any branch, switch case, map key or table row anywhere in the kit names it (code: outside comments)
+    alltext = '\n'.join(strip_code(k.texts.get(f, ''), lang(f), keep_str=True) if lang(f) in ('ps1', 'py', 'js') else k.texts.get(f, '')
+                         for f in k.files)
+
+    def handled(v):
+        q = re.escape(v)
+        return bool(re.search(r"(?:===?|!==?|==|!=|-c?eq|-c?ne|-c?in|-notin|\bin\b|includes\(|\bcase|has\()\s*[\[(]?\s*['\"]" + q + r"['\"]|"
+                              r"['\"]" + q + r"['\"]\s*(?::|=>|\)\s*\{|\s*\{)|^\|\s*`?" + q + r"`?\s*\||(?<![\w-])" + q + r"(?![\w-])[^\n]{0,40}?(?:->|→)", alltext, re.M))
     for f in k.files:
         for r in parsed[f]['refs']:
             if r[0] == 'enum':
-                handled = {e[3][2:] for e in E.values() if e[0] == r[1] and e[2] == 'branch'}
+                br = {e[3][2:] for e in E.values() if e[0] == r[1] and e[2] == 'branch'}
                 for v in r[2]:
-                    if v not in handled:
+                    if v not in br:
                         edge(r[1], '@outcome/' + v, 'branch', f'= {v} (schema)')
-                    if v not in handled and v not in TERMINAL:
-                        issues.append({'code': 'UNHANDLED', 'node': r[1], 'text': f'{N[r[1]][1]} outcome {v}: no code branches on it ({f})'})
+                    if v not in br and v not in TERMINAL and not handled(v):
+                        issues.append({'code': 'UNHANDLED', 'node': r[1], 'text': f'{N[r[1]][1]} outcome {v}: nothing branches on it ({f}:{N[r[1]][4]})'})
+            elif r[0] == 'nobound':
+                issues.append({'code': 'NO-BOUND', 'node': r[1], 'text': f'{r[2]}: loop with no bound ({r[3]})'})
     for miss, where in sorted(unres.items()):
         issues.append({'code': 'UNRESOLVED', 'node': sorted(where)[0].rsplit(':', 1)[0], 'text': f'{miss}: no such command/step ({", ".join(sorted(where)[:3])})'})
-    for e in E.values():
-        if e[2] == 'loop' and e[0] == e[1] and not e[4] and N[e[0]][2] in ('retry', 'timer'):
-            issues.append({'code': 'NO-BOUND', 'node': e[0], 'text': f'{N[e[0]][1]}: a loop with no stated bound ({N[e[0]][3]}:{N[e[0]][4]})'})
     for i, n in N.items():
         if n[2] == 'decision' and (n[3].endswith('.md') or n[3].startswith('workflows/')):
             outs = [e for e in E.values() if e[0] == i and e[2] == 'branch']
-            if outs and all(e[1].startswith('@outcome/') and e[1][9:] not in TERMINAL for e in outs):
-                issues.append({'code': 'DEAD-END', 'node': i, 'text': f'{n[1]}: outcomes {", ".join(sorted({e[1][9:] for e in outs}))} lead nowhere ({n[3]}:{n[4]})'})
+            vals = {e[1][9:] for e in outs}
+            if outs and all(e[1].startswith('@outcome/') for e in outs) and not any(v in TERMINAL or handled(v) for v in vals):
+                issues.append({'code': 'DEAD-END', 'node': i, 'text': f'{n[1]}: outcomes {", ".join(sorted(vals))} lead nowhere ({n[3]}:{n[4]})'})
+    named = named_cycles(N, E, issues)
     for c, w, m in problems:
         issues.append({'code': c, 'node': w if w in N else None, 'text': f'{w}: {m}'})
-    return pack(k, N, E, issues)
+    return pack(k, N, E, issues, named)
+
+
+# the crew's own named cycles: each hop must exist in the extracted graph (<= 4 edges); a missing hop is a GAP, never drawn
+NAMED = [('heartbeat', [('timer', r'^cron |every \d+ ?min'), ('cmd', r'orch\.ps1 supervise$'), ('outcome|decision', r'^ACT\b'),
+                        ('row', r'^E\d+'), ('timer', r'^cron |every \d+ ?min')]),
+         ('learn -> retro -> lessons', [('cmd', r'orch\.ps1 learn$'), ('state', r'^signals$'), ('slash', r'^/kit-retro$'),
+                                        ('file', r'^LESSONS\.md$'), ('step', r'^0\. .*learn'), ('cmd', r'orch\.ps1 learn$')]),
+         ('failedTesting -> dev -> deploy -> QA', [('outcome', r'^failedTesting$'), ('slash', r'^/dev-wave$'), ('cmd', r'orch\.ps1 deploy$'),
+                                                   ('cmd', r'orch\.ps1 deploy intest$'), ('slash', r'^/test-and-close$'), ('outcome', r'^failedTesting$')])]
+
+
+def named_cycles(N, E, issues):
+    out = defaultdict(list)
+    for a, b, kind, _, _ in E.values():
+        if kind in FLOW:
+            out[a].append(b)
+    found = []
+    for name, hops in NAMED:
+        sets = [[i for i, n in N.items() if re.fullmatch(k, n[2]) and re.search(rx, n[1])] for k, rx in hops]
+        nodes, gaps = [], []
+        for (ka, ra), (kb, rb), A, B in zip(hops, hops[1:], sets, sets[1:]):
+            path = hop(out, A, set(B)) if A and B else None
+            if path:
+                nodes += path
+            else:
+                gaps.append(f'{ra} -> {rb}' + ('' if A and B else ' (no such node)'))
+        for g in gaps:
+            issues.append({'code': 'GAP', 'node': (sets[0] or [None])[0], 'text': f'cycle "{name}": no edge {g} (the source never states it)'})
+        found.append({'label': name + (f' ({len(gaps)} gap{"s" if len(gaps) > 1 else ""})' if gaps else ''), 'ids': list(dict.fromkeys(nodes)),
+                      'bound': '', 'kind': 'named', 'gaps': gaps})
+    return found
+
+
+def hop(out, A, B, depth=4):
+    prev = {a: None for a in A}
+    fr = list(A)
+    for _ in range(depth):
+        nx = []
+        for u in fr:
+            for v in out[u]:
+                if v not in prev:
+                    prev[v] = u
+                    if v in B:
+                        path = [v]
+                        while prev[path[-1]] is not None:
+                            path.append(prev[path[-1]])
+                        return path[::-1]
+                    nx.append(v)
+        fr = nx
+    return None
 
 
 def branch_target(text, f, cmds, kc, N, steps=None, skills=None, wfs=None):
@@ -665,7 +876,7 @@ def branch_target(text, f, cmds, kc, N, steps=None, skills=None, wfs=None):
     return '@outcome/' + m.group(1) if m else None
 
 
-def pack(k, N, E, issues):
+def pack(k, N, E, issues, named=()):
     ids = list(N)
     ix = {i: n for n, i in enumerate(ids)}
     files = sorted({n[3] for n in N.values()})
@@ -701,8 +912,8 @@ def pack(k, N, E, issues):
     for n, e in enumerate(edges):   # named loops: each loop edge + the shortest way back
         if e[2] != 'loop' and not (e[5] and e[2] in ('branch', 'next')):
             continue
-        if e[0] == e[1] and N[ids[e[0]]][2] in ('retry', 'timer') and not e[4]:
-            continue
+        if e[0] == e[1] and N[ids[e[0]]][2] in ('retry', 'timer') and (not e[4] or (N[ids[e[0]]][2] == 'retry' and not N[ids[e[0]]][3].endswith('.md'))):
+            continue   # code loops with a structural bound are nodes, not chips
         path = [e[0]] if e[0] == e[1] else (shortest(out, e[1], e[0]) or [e[1], e[0]])
         if path:
             lab = f"{N[ids[e[0]]][1]} ↻{' ' + e[4] if e[4] else ''}"
@@ -715,14 +926,16 @@ def pack(k, N, E, issues):
         if len(comp) >= 2:
             names = sorted(comp, key=lambda n: -len(out[n]))[:3]
             cycles.append({'label': short(' → '.join(N[ids[n]][1] for n in names), 50) + f' ({len(comp)})', 'nodes': comp, 'bound': '', 'kind': 'scc'})
+    for c in named:
+        cycles.append({'label': c['label'], 'nodes': [ix[i] for i in c['ids']], 'bound': '', 'kind': 'named', 'gaps': c['gaps']})
     seen, uniq = set(), []
-    rank = {'call': 0, 'phase': 0, 'step': 1, 'cmd': 1, 'row': 1, 'decision': 1, 'scc': 2}
+    rank = {'named': -1, 'call': 0, 'phase': 0, 'step': 1, 'cmd': 1, 'row': 1, 'decision': 1, 'scc': 2}
     for c in sorted(cycles, key=lambda c: (rank.get(c['kind'], 3), len(c['nodes']))):
         key = tuple(sorted(c['nodes']))
         if key not in seen:
             seen.add(key)
             uniq.append(c)
-    nodes = [[N[i][1], N[i][2], fx[N[i][3]], N[i][4], N[i][5], i] for i in ids]
+    nodes = [[N[i][1], N[i][2], fx[N[i][3]], N[i][4], N[i][5], i, N[i][6] if len(N[i]) > 6 else 0] for i in ids]
     fk = [{'id': f, 'kind': fkind(f) if not f.startswith('(') else 'pseudo'} for f in files]
     for it in issues:
         it['node'] = ix.get(it['node']) if it.get('node') in ix else (ix.get(it['node'].split(':')[0]) if it.get('node') else None)
@@ -789,90 +1002,142 @@ def tarjan(n, out):
     return comps
 
 
-def html(data):
+def html(data, src_name=''):
+    data = dict(data, src=src_name)
     return PAGE.replace('__DATA__', json.dumps(data, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/'))
 
 
+def write(out, data, texts):
+    """The page plus its sidecar (<page>-src.js: every file's text, loaded only when a node's code is first shown)."""
+    side = out[:-5] + '-src.js' if out.endswith('.html') else out + '-src.js'
+    with open(side, 'w', encoding='utf-8') as fh:
+        fh.write('window.KF_SRC=' + json.dumps(texts, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/') + ';')
+    with open(out, 'w', encoding='utf-8') as fh:
+        fh.write(html(data, os.path.basename(side)))
+
+
 PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kit flow</title>
-<style>:root{--bg:#f8fafc;--fg:#0f172a;--mut:#64748b;--ln:#cbd5e1;--pn:#ffffffee;--hi:#d97706;--bad:#dc2626}
-@media (prefers-color-scheme:dark){:root{--bg:#0b1120;--fg:#e2e8f0;--mut:#94a3b8;--ln:#334155;--pn:#111827ee;--hi:#fbbf24;--bad:#f87171}}
-html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px system-ui,sans-serif}
-#c{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
-.bar{position:fixed;left:8px;right:8px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;pointer-events:none}.bar>*{pointer-events:auto}
-#top{top:6px}#chips{top:36px;max-height:80px;overflow:auto}
-.p{background:var(--pn);border:1px solid var(--ln);border-radius:11px;padding:2px 7px;cursor:pointer;user-select:none;white-space:nowrap}
-.p.off{opacity:.35}.p.bad{border-color:var(--bad);color:var(--bad)}b.p{cursor:default}.p i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
-input,select{background:var(--pn);color:var(--fg);border:1px solid var(--ln);border-radius:11px;padding:2px 7px;font:inherit}
-#pan{position:fixed;right:8px;top:108px;bottom:8px;width:min(380px,calc(100vw - 16px));background:var(--pn);border:1px solid var(--ln);border-radius:8px;display:none;flex-direction:column}
-#pan.on{display:flex}#ptabs{display:flex;gap:4px;padding:6px}#pbody{overflow:auto;padding:0 8px 8px;flex:1}
-.st{padding:2px 0;border-bottom:1px solid var(--ln);cursor:pointer}.st small{color:var(--mut)}.st.bad{color:var(--bad)}
-#tip{position:fixed;max-width:420px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap}</style></head><body>
-<canvas id="c"></canvas>
-<div class="bar" id="top"><b class="p">kit flow</b><span class="p" id="cnt"></span><span class="p" id="iss"></span><input id="q" placeholder="search (Enter)" size="16">
-<label class="p">depth <input id="dep" type="range" min="1" max="6" value="2" style="width:60px;vertical-align:middle"></label>
-<select id="tr"><option value="">trace from…</option></select><span class="p" id="trs">trace selected</span><span class="p" id="fit">fit</span><span class="p" id="pt">panel</span></div>
-<div class="bar" id="chips"></div><div id="pan"><div id="ptabs"></div><div id="pbody"></div></div><div id="tip"></div>
+<style>:root{--bg:#f8fafc;--fg:#0f172a;--mut:#64748b;--ln:#e2e8f0;--pn:#ffffff;--pn2:#f1f5f9;--hi:#d97706;--bad:#dc2626;--sel:#2563eb22;
+--kw:#7c3aed;--st:#047857;--cm:#94a3b8;--nu:#c2410c;--va:#0369a1;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1120;--fg:#e2e8f0;--mut:#94a3b8;--ln:#1e293b;--pn:#0f172a;--pn2:#111c33;--hi:#fbbf24;--bad:#f87171;--sel:#60a5fa22;
+--kw:#c4b5fd;--st:#6ee7b7;--cm:#64748b;--nu:#fdba74;--va:#7dd3fc}}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px system-ui,sans-serif}
+#app{display:flex;height:100%}#main{position:relative;flex:1;min-width:0}#c{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}#top>*{pointer-events:auto}
+.b{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:4px 9px;cursor:pointer;user-select:none;white-space:nowrap;color:var(--fg);font:inherit}
+.b.on{background:var(--fg);color:var(--bg)}.seg{display:inline-flex}.seg .b{border-radius:0;margin-left:-1px}.seg .b:first-child{border-radius:8px 0 0 8px}.seg .b:last-child{border-radius:0 8px 8px 0}
+input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;position:absolute;top:30px;left:0;background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:6px;min-width:220px;z-index:5;box-shadow:0 8px 24px #0003}
+.dd.open>.menu{display:block}.menu label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}.menu label:hover{background:var(--pn2)}.menu small{margin-left:auto;color:var(--mut)}
+#legb{position:absolute;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center}
+#leg{display:none;position:absolute;left:10px;bottom:52px;background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;box-shadow:0 8px 24px #0003;max-width:min(640px,calc(100% - 20px))}
+#leg.open{display:block}#leg .g{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 14px}#leg .it{display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
+#leg h4{margin:8px 0 4px;font-size:11px;color:var(--mut);font-weight:600}
+#side{width:0;transition:width .18s ease;background:var(--pn);border-left:1px solid var(--ln);display:flex;flex-direction:column;position:relative;overflow:hidden}
+#side.drag{transition:none}#grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}#grip:hover{background:var(--sel)}
+#rail{width:44px;background:var(--pn2);border-left:1px solid var(--ln);display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px}
+.ri{position:relative;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--mut)}.ri:hover,.ri.on{background:var(--pn);color:var(--fg)}
+.ri.on::before{content:'';position:absolute;left:-5px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--fg)}
+.badge{position:absolute;right:-2px;top:-2px;min-width:16px;height:16px;border-radius:8px;background:var(--bad);color:#fff;font-size:10px;display:grid;place-items:center;padding:0 3px}
+#sh{padding:10px 12px 8px 14px;border-bottom:1px solid var(--ln);font-weight:600;display:flex;align-items:center;gap:8px;min-height:40px}
+#sb{flex:1;overflow:auto;padding:0 0 12px 6px}.sticky{position:sticky;top:0;background:var(--pn);padding:8px 8px 6px 6px;z-index:1;display:flex;gap:6px;flex-wrap:wrap}
+.li{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:6px;cursor:pointer}.li:hover{background:var(--pn2)}.li.on{background:var(--sel)}
+.li .t{flex:1;min-width:0}.li .f{display:block;font:11px var(--mono);color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.li.bad .t{color:var(--bad)}
+.num{font:600 10px var(--mono);color:var(--mut);min-width:20px;text-align:right;padding-top:2px}.grp{font-size:11px;color:var(--mut);font-weight:600;padding:8px 8px 2px}
+.empty{color:var(--mut);padding:16px 10px;line-height:1.5}.ico{flex:none}
+pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color:var(--mut);min-width:44px;text-align:right;padding-right:10px;user-select:none}.cl .x{white-space:pre;flex:1}
+.cl.me{background:var(--sel)}.kw{color:var(--kw)}.st{color:var(--st)}.cm{color:var(--cm);font-style:italic}.nu{color:var(--nu)}.va{color:var(--va)}
+#meta{padding:8px 14px;border-bottom:1px solid var(--ln);color:var(--mut);line-height:1.5}#meta .f{font:11px var(--mono)}#meta a,.lnk{color:var(--va);cursor:pointer;margin-right:12px;text-decoration:none}
+#tip{position:fixed;max-width:380px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap;box-shadow:0 4px 14px #0002;z-index:9}
+select.b{max-width:100%}</style></head><body>
+<div id="app"><div id="main"><canvas id="c"></canvas>
+<div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key, bottom-left); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
+<input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div>
+<span class="b" id="legb" title="key"></span><div id="leg"></div></div>
+<div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
+<div id="rail"></div></div><div id="tip"></div>
 <script>
 const D = __DATA__, $ = s => document.querySelector(s), cv = $('#c'), X = cv.getContext('2d'), tip = $('#tip');
-// node kinds: color, shape, legend; edge kinds: color, arrowhead
-const NK = {file: ['#64748b', 'sq', 'file'], cmd: ['#2563eb', 'sq', 'command'], ext: ['#78716c', 'sq', 'external CLI'], slash: ['#ea580c', 'tri', 'slash command'],
-  fn: ['#64748b', 'ci', 'function'], phase: ['#ea580c', 'pill', 'workflow phase'], call: ['#0d9488', 'hex', 'agent() call'], section: ['#a8a29e', 'ci', 'section'],
-  step: ['#16a34a', 'ci', 'step'], row: ['#15803d', 'pill', 'table row'], event: ['#7c3aed', 'star', 'event / hook'], state: ['#b45309', 'oct', 'state'],
-  config: ['#0891b2', 'x', 'config key'], outcome: ['#9ca3af', 'ring', 'outcome'], decision: ['#d97706', 'dia', 'decision'], parallel: ['#8b5cf6', 'para', 'parallel'],
-  wait: ['#ca8a04', 'itri', 'wait / gate'], timer: ['#0e7490', 'ring', 'timer'], retry: ['#db2777', 'tri', 'retry'], error: ['#dc2626', 'x', 'error path'],
-  lock: ['#57534e', 'sq', 'lock'], exit: ['#991b1b', 'oct', 'exit'], human: ['#e11d48', 'star', 'human']};
-const EK = {calls: ['#94a3b8', 'tri'], runs: ['#2563eb', 'tri'], impl: ['#0ea5e9', 'open'], next: ['#16a34a', 'tri'], spawns: ['#0d9488', 'dbl'], loads: ['#a3a3a3', 'open'],
-  routes: ['#2563eb', 'tri'], branch: ['#d97706', 'dia'], loop: ['#db2777', 'tri'], writes: ['#b45309', 'dot'], reads: ['#b45309', 'open'], triggers: ['#7c3aed', 'tri'], has: ['#94a3b8', 'none']};
-const N = D.nodes.map((a, i) => ({i, l: a[0], k: a[1], g: a[2], ln: a[3], d: a[4], id: a[5], out: [], in: [], x: 0, y: 0, vx: 0, vy: 0, fx: null}));
+const LS = {get(k, d) { try { const v = localStorage.getItem('kf.' + k); return v == null ? d : JSON.parse(v) } catch (e) { return d } }, set(k, v) { try { localStorage.setItem('kf.' + k, JSON.stringify(v)) } catch (e) {} }};
+// icons (24x24 stroke paths) and six colour families
+const IC = {bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', person: 'M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c1-5 15-5 16 0', clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2',
+  table: 'M3 5h18v14H3zM3 10h18M9 5v14', slash: 'M15 4l-6 16', puzzle: 'M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z',
+  robot: 'M6 8h12v11H6zM12 4v4M9.5 13h.01M14.5 13h.01M9 16h6M4 12v3M20 12v3', flow: 'M4 5h5v5H4zM15 14h5v5h-5zM9 7.5h3a3 3 0 0 1 3 3v3.5',
+  term: 'M4 4h16v16H4zM8 9l3 3-3 3M13 15h3', fn: 'M15 4c-3 0-3 2-4 8s-1 8-4 8M8 10h7', globe: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18',
+  git: 'M6 3v12M18 6a3 3 0 1 0 0 .01M6 21a3 3 0 1 0 0-6a3 3 0 1 0 0 6M18 9c0 5-5 6-9 8', doc: 'M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6',
+  list: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01', diamond: 'M12 3l9 9-9 9-9-9zM9 12h6', hour: 'M6 3h12M6 21h12M7 3c0 6 10 6 10 9s-10 3-10 9M17 3c0 6-10 6-10 9s10 3 10 9',
+  loop: 'M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4', par: 'M7 4v16M12 4v16M17 4v16', lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+  warn: 'M12 3l10 18H2zM12 10v5M12 18h.01', door: 'M13 3H5v18h8M9 12h12M18 9l3 3-3 3', flag: 'M5 21V4h12l-2 4 2 4H5', db: 'M4 6c0-3 16-3 16 0v12c0 3-16 3-16 0zM4 6c0 3 16 3 16 0M4 12c0 3 16 3 16 0',
+  gear: 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2', code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
+  route: 'M6 19a2 2 0 1 0 0-4a2 2 0 1 0 0 4M18 9a2 2 0 1 0 0-4a2 2 0 1 0 0 4M6 15V9a4 4 0 0 1 4-4h6M18 9v6a4 4 0 0 1-4 4H8', key: 'M8 15a4 4 0 1 0 0-8a4 4 0 1 0 0 8M12 11h9M18 11v3M15 11v2'};
+const P2 = Object.fromEntries(Object.entries(IC).map(([k, d]) => [k, new Path2D(d)]));
+const FAM = {trig: ['Triggers', '#8b5cf6'], crew: ['Crew', '#0d9488'], code: ['Commands & code', '#3b82f6'], docs: ['Docs', '#16a34a'], ctrl: ['Control flow', '#d97706'], data: ['Data', '#ea580c']};
+const KD = {event: ['trig', 'bolt', 'event / hook'], human: ['trig', 'person', 'human'], timer: ['trig', 'clock', 'timer / schedule'], row: ['trig', 'table', 'table row'],
+  slash: ['crew', 'slash', 'slash command'], 'file-skill': ['crew', 'puzzle', 'skill'], 'file-agent': ['crew', 'robot', 'agent'], 'file-workflow': ['crew', 'flow', 'workflow'],
+  call: ['crew', 'robot', 'agent() call'], phase: ['crew', 'flow', 'phase'], cmd: ['code', 'term', 'command'], 'file-script': ['code', 'term', 'script'], fn: ['code', 'fn', 'function'],
+  ext: ['code', 'globe', 'external CLI'], 'file-doc': ['docs', 'doc', 'doc file'], section: ['docs', 'doc', 'section'], step: ['docs', 'list', 'step'],
+  decision: ['ctrl', 'diamond', 'decision'], wait: ['ctrl', 'hour', 'wait / gate'], retry: ['ctrl', 'loop', 'loop / retry'], parallel: ['ctrl', 'par', 'parallel'], lock: ['ctrl', 'lock', 'lock'],
+  error: ['ctrl', 'warn', 'error path'], exit: ['ctrl', 'door', 'exit'], outcome: ['ctrl', 'flag', 'outcome'], state: ['data', 'db', 'state'], config: ['data', 'gear', 'config key'], 'file-pseudo': ['data', 'db', 'group']};
+const EK = {calls: ['#94a3b8', 'solid'], runs: ['#3b82f6', 'solid'], impl: ['#0ea5e9', 'solid'], next: ['#16a34a', 'solid'], spawns: ['#0d9488', 'solid'], loads: ['#a3a3a3', 'dot'],
+  routes: ['#8b5cf6', 'solid'], branch: ['#d97706', 'solid'], loop: ['#db2777', 'dash'], writes: ['#ea580c', 'solid'], reads: ['#ea580c', 'dot'], triggers: ['#8b5cf6', 'dash'], has: ['#94a3b8', 'dot']};
+const N = D.nodes.map((a, i) => ({i, l: a[0], k: a[1], g: a[2], ln: a[3], d: a[4], id: a[5], end: a[6] || 0, out: [], in: [], x: 0, y: 0, vx: 0, vy: 0, fx: null}));
 const E = D.edges.map((a, i) => ({i, s: a[0], t: a[1], k: a[2], l: a[3], b: a[4], back: a[5]}));
 E.forEach(e => { N[e.s].out.push(e); N[e.t].in.push(e) });
-N.forEach(n => n.r = n.k === 'file' ? 9 : 3 + Math.min(6, Math.sqrt(n.out.length + n.in.length) * .8));
-const G = D.files.map((f, i) => ({i, id: f.id, kind: f.kind, m: N.filter(n => n.g === i), x: 0, y: 0}));
+const G = D.files.map((f, i) => ({i, id: f.id, kind: f.kind, m: N.filter(n => n.g === i)}));
 G.forEach(g => g.fn = g.m.find(n => n.k === 'file'));
-const bad = new Map(); D.issues.forEach(it => it.node != null && bad.set(it.node, it.text));
-const nkOn = Object.fromEntries(Object.keys(NK).map(k => [k, true])), ekOn = Object.fromEntries(Object.keys(EK).map(k => [k, true]));
-const coll = new Set(), choice = {};
-let VN = [], VE = [], focus = null, fE = null, sel = null, trSteps = null, hover = null;
-// initial layout: files on a spiral by size, parts scattered inside
+N.forEach(n => { n.kk = n.k === 'file' ? 'file-' + (G[n.g].kind || 'doc') : n.k; if (!KD[n.kk]) n.kk = 'file-doc'; n.fam = KD[n.kk][0]; n.col = FAM[n.fam][1];
+  n.r = n.k === 'file' ? 11 : 5 + Math.min(7, Math.sqrt(n.out.length + n.in.length)) });
+// progressive levels: 0 = the crew (crew files, events, router rows), 1 = parts of files and commands, 2 = internals
+const LV0 = n => (n.k === 'file' && n.fam === 'crew') || n.k === 'event' || /^AGENTS\.md#§Router\?$/.test(n.id);
+const lvOf = n => LV0(n) ? 0 : n.k === 'decision' ? (/\.md#|^workflows\//.test(n.id) ? 1 : 2) : (n.k === 'file' || /slash|phase|call|step|section|cmd|timer|human|row/.test(n.k)) ? 1 : 2;
+N.forEach(n => n.lv = lvOf(n));
+const bad = new Map(); D.issues.forEach(it => it.node != null && bad.set(it.node, (bad.get(it.node) || []).concat(it)));
+const famOn = Object.fromEntries(Object.keys(FAM).map(k => [k, true])), ekOn = Object.fromEntries(Object.keys(EK).map(k => [k, k !== 'has']));
+const coll = new Set();
+let LVL = 0, VN = [], VE = [], focus = null, fE = null, sel = null, force = new Set(), trace = null, tIdx = -1, hover = null, fitSc = 1;
+// layout seed: files on a spiral by size, parts inside
 let ang = 0, rad = 0;
-[...G].sort((a, b) => b.m.length - a.m.length).forEach(g => { const R = 10 * Math.sqrt(g.m.length) + 30; rad += R * .55; ang += 2.4; g.x = Math.cos(ang) * rad; g.y = Math.sin(ang) * rad;
-  g.m.forEach(n => { const a = Math.random() * 6.28, d = Math.random() * R * .6; n.x = g.x + Math.cos(a) * d; n.y = g.y + Math.sin(a) * d }) });
-const rep = n => coll.has(n.g) && G[n.g].fn ? G[n.g].fn : n;
-const vis = n => nkOn[n.k] && (!coll.has(n.g) || n.k === 'file');
+[...G].sort((a, b) => b.m.length - a.m.length).forEach(g => { const R = 10 * Math.sqrt(g.m.length) + 30; rad += R * .55; ang += 2.4; const gx = Math.cos(ang) * rad, gy = Math.sin(ang) * rad;
+  g.m.forEach(n => { const a = Math.random() * 6.28, d = Math.random() * R * .6; n.x = gx + Math.cos(a) * d; n.y = gy + Math.sin(a) * d }) });
+function vis(n) { if (!famOn[n.fam]) return false; if (force.has(n)) return true; if (coll.has(n.g)) return n.k === 'file'; return n.lv <= LVL }
+function rep(n) { if (vis(n)) return n; if (n.par && vis(n.par)) return n.par; const f = G[n.g].fn; return f && f !== n && vis(f) ? f : null }
+N.forEach(n => { const b = n.in.find(e => e.k === 'branch' && N[e.s].k === 'decision'); if (n.k === 'row' && b) n.par = N[b.s] });
 function rebuild() {
-  VN = N.filter(vis); const seen = new Set(); VE = [];
-  for (const e of E) { if (!ekOn[e.k]) continue; const a = rep(N[e.s]), b = rep(N[e.t]); if (!vis(a) || !vis(b) || (a === b && e.s !== e.t)) continue;
-    const key = a.i + ',' + b.i + e.k; if (seen.has(key)) continue; seen.add(key); VE.push({a, b, e}) }
-  $('#cnt').textContent = `${VN.length} nodes · ${VE.length} edges · ${D.counts.cycles} loops`; heat(.6)
+  VN = N.filter(vis); const seen = new Map(); VE = [];
+  for (const e of E) { if (!ekOn[e.k]) continue; const a = rep(N[e.s]), b = rep(N[e.t]); if (!a || !b || (a === b && e.s !== e.t)) continue;
+    const key = a.i + ',' + b.i + ',' + e.k; if (seen.has(key)) { seen.get(key).n++; continue } const v = {a, b, e, n: 1}; seen.set(key, v); VE.push(v) }
+  $('#lv').querySelectorAll('.b').forEach((b, i) => b.classList.toggle('on', i === LVL)); heat(.15)
 }
-// force simulation: grid-binned repulsion + collision, link springs, gravity to the file's centroid, file-vs-file repulsion
-let alpha = 1;
-const heat = a => { alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(loop) };
+// force simulation: grid-binned repulsion + collision, springs, cohesion to the file's centroid (file hub sits on it), file-vs-file repulsion
+let alpha = 1, raf = 0;
+const heat = a => { alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(frame) };
 function tick() {
   for (const g of G) { g.cx = g.cy = g.c = 0 }
-  for (const n of VN) { const g = G[n.g]; g.cx += n.x; g.cy += n.y; g.c++ }
+  for (const n of N) { if (n.k === 'file' && G[n.g].m.length > 1) continue; const g = G[n.g]; g.cx += n.x; g.cy += n.y; g.c++ }
   for (const g of G) if (g.c) { g.cx /= g.c; g.cy /= g.c; g.R = 9 * Math.sqrt(g.c) + 18; g.sx = g.sy = 0 }
   const C = 46, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
-  for (const n of VN) { const k = key(Math.floor(n.x / C), Math.floor(n.y / C)); (grid.get(k) || grid.set(k, []).get(k)).push(n) }
-  for (const n of VN) { const gx = Math.floor(n.x / C), gy = Math.floor(n.y / C);
+  for (const n of N) { const k = key(Math.floor(n.x / C), Math.floor(n.y / C)); (grid.get(k) || grid.set(k, []).get(k)).push(n) }
+  for (const n of N) { const gx = Math.floor(n.x / C), gy = Math.floor(n.y / C);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const m of grid.get(key(gx + i, gy + j)) || []) {
-      if (m.i <= n.i) continue; let dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy || .01, d = Math.sqrt(d2);
-      let f = (n.g === m.g ? 30 : 120) / d2 * alpha; const mn = n.r + m.r + 3; if (d < mn) f += (mn - d) / d * .4;
+      if (m.i <= n.i) continue; const dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy || .01, d = Math.sqrt(d2);
+      let f = (n.g === m.g ? 30 : 120) / d2 * alpha; const mn = n.r + m.r + 4; if (d < mn) f += (mn - d) / d * .4;
       n.vx += dx * f; n.vy += dy * f; m.vx -= dx * f; m.vy -= dy * f } }
-  for (const {a, b} of VE) { if (a === b) continue; const same = a.g === b.g, L = same ? 20 : 180, s = (same ? .1 : .0015) * alpha;
+  for (const e of E) { const a = N[e.s], b = N[e.t]; if (a === b) continue; const same = a.g === b.g, L = same ? 22 : 180, s = (same ? .1 : .0015) * alpha;
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - L) / d * s; a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f }
   const GL = G.filter(g => g.c);
-  for (let i = 0; i < GL.length; i++) for (let j = i + 1; j < GL.length; j++) { const p = GL[i], q = GL[j], dx = p.cx - q.cx, dy = p.cy - q.cy, d = Math.hypot(dx, dy) || 1, m = p.R + q.R + 30;
+  for (let i = 0; i < GL.length; i++) for (let j = i + 1; j < GL.length; j++) { const p = GL[i], q = GL[j], dx = p.cx - q.cx, dy = p.cy - q.cy, d = Math.hypot(dx, dy) || 1, m = p.R + q.R + 40;
     if (d < m) { const f = (m - d) / d * (.03 + .25 * alpha); p.sx += dx * f; p.sy += dy * f; q.sx -= dx * f; q.sy -= dy * f } }
   for (const g of GL) { g.sx -= g.cx * (.003 + .004 * alpha); g.sy -= g.cy * (.003 + .004 * alpha) }
-  for (const n of VN) { const g = G[n.g]; n.vx += (g.cx - n.x) * (.01 + .04 * alpha) + g.sx; n.vy += (g.cy - n.y) * (.01 + .04 * alpha) + g.sy;
+  for (const n of N) { const g = G[n.g];
+    if (n.k === 'file' && g.m.length > 1) { n.x = g.cx; n.y = g.cy; n.vx = n.vy = 0; continue }
+    n.vx += (g.cx - n.x) * (.01 + .04 * alpha) + g.sx; n.vy += (g.cy - n.y) * (.01 + .04 * alpha) + g.sy;
     if (n.fx != null) { n.x = n.fx; n.y = n.fy; n.vx = n.vy = 0; continue } n.vx *= .55; n.vy *= .55; n.x += n.vx; n.y += n.vy }
   alpha *= .99
 }
-// view
-let tx = innerWidth / 2, ty = innerHeight / 2, sc = .3, raf = 0, dpr = 1;
-const size = () => { dpr = devicePixelRatio || 1; cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; draw() };
-const w2s = (x, y) => [x * sc + tx, y * sc + ty], s2w = (x, y) => [(x - tx) / sc, (y - ty) / sc];
+// view + semantic zoom (zoom level picks the detail level)
+let tx = 0, ty = 0, sc = .3, W = 0, H = 0, dpr = 1;
+const size = () => { const r = $('#main').getBoundingClientRect(), ow = W; W = r.width; H = r.height; dpr = devicePixelRatio || 1; cv.width = W * dpr; cv.height = H * dpr; if (ow) tx += (W - ow) / 2; draw() };
+const s2w = (x, y) => [(x - tx) / sc, (y - ty) / sc];
+function zoomLevel() { const z = sc / fitSc, L = z < 1.8 ? 0 : z < 4 ? 1 : 2; if (L !== LVL) { LVL = L; rebuild() } }
 function hull(P) {
   P = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (P.length < 3) return P;
   const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
@@ -880,141 +1145,180 @@ function hull(P) {
   for (const p of P.reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p) }
   return lo.slice(0, -1).concat(up.slice(0, -1))
 }
-function shape(s, x, y, r) {
-  X.beginPath();
-  const poly = pts => { pts.forEach(([a, b], i) => i ? X.lineTo(x + a * r, y + b * r) : X.moveTo(x + a * r, y + b * r)); X.closePath() };
-  if (s === 'ci' || s === 'ring') X.arc(x, y, r, 0, 6.283);
-  else if (s === 'sq') X.rect(x - r, y - r, 2 * r, 2 * r);
-  else if (s === 'dia') poly([[0, -1.4], [1.4, 0], [0, 1.4], [-1.4, 0]]);
-  else if (s === 'tri') poly([[0, -1.3], [1.2, .9], [-1.2, .9]]);
-  else if (s === 'itri') poly([[0, 1.3], [1.2, -.9], [-1.2, -.9]]);
-  else if (s === 'hex') poly([[1, 0], [.5, .87], [-.5, .87], [-1, 0], [-.5, -.87], [.5, -.87]]);
-  else if (s === 'oct') poly([[.4, -1], [1, -.4], [1, .4], [.4, 1], [-.4, 1], [-1, .4], [-1, -.4], [-.4, -1]]);
-  else if (s === 'pill') X.roundRect ? X.roundRect(x - 1.6 * r, y - r, 3.2 * r, 2 * r, r) : X.rect(x - 1.6 * r, y - r, 3.2 * r, 2 * r);
-  else if (s === 'para') poly([[-.6, -1], [1.4, -1], [.6, 1], [-1.4, 1]]);
-  else if (s === 'star') poly([...Array(10)].map((_, i) => { const a = i * .628 - 1.571, q = i % 2 ? .45 : 1.3; return [Math.cos(a) * q, Math.sin(a) * q] }));
-  else if (s === 'x') poly([[-1, -.4], [-.4, -1], [0, -.6], [.4, -1], [1, -.4], [.6, 0], [1, .4], [.4, 1], [0, .6], [-.4, 1], [-1, .4], [-.6, 0]]);
-}
-function curve(a, b, back) {
-  const dx = b.x - a.x, dy = b.y - a.y, c = back ? .35 : .1;
-  return [a.x, a.y, (a.x + b.x) / 2 - dy * c, (a.y + b.y) / 2 + dx * c, b.x, b.y]
-}
-function head(kind, x, y, ang, s) {
-  const h = EK[kind] ? EK[kind][1] : 'tri'; if (h === 'none') return;
-  X.save(); X.translate(x, y); X.rotate(ang); X.beginPath();
-  if (h === 'dot') X.arc(-s * .6, 0, s * .45, 0, 6.283);
-  else if (h === 'dia') { X.moveTo(0, 0); X.lineTo(-s * .7, -s * .4); X.lineTo(-s * 1.4, 0); X.lineTo(-s * .7, s * .4); X.closePath() }
-  else { X.moveTo(0, 0); X.lineTo(-s, -s * .5); X.lineTo(-s, s * .5); X.closePath(); if (h === 'dbl') { X.moveTo(-s * .7, 0); X.lineTo(-s * 1.7, -s * .5); X.lineTo(-s * 1.7, s * .5); X.closePath() } }
-  if (h === 'open') { X.stroke() } else X.fill(); X.restore()
-}
+function icon(name, x, y, s, col, lw) { X.save(); X.translate(x - s / 2, y - s / 2); X.scale(s / 24, s / 24); X.strokeStyle = col; X.lineWidth = lw * 24 / s; X.lineCap = X.lineJoin = 'round'; X.stroke(P2[name]); X.restore() }
 function draw() {
-  raf = 0; const bg = getComputedStyle(document.body).backgroundColor, fg = getComputedStyle(document.body).color, hi = getComputedStyle(document.documentElement).getPropertyValue('--hi');
-  X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = bg; X.fillRect(0, 0, innerWidth, innerHeight); X.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * tx, dpr * ty);
-  const lw = 1 / sc, F = n => !focus || focus.has(n);
-  X.lineJoin = 'round';
-  for (const g of G) { const m = g.m.filter(n => vis(n)); if (!m.length) continue;
-    const h = hull(m.map(n => [n.x, n.y])), col = g.kind === 'pseudo' ? '#94a3b8' : (NK[{skill: 'step', agent: 'call', workflow: 'phase', script: 'cmd'}[g.kind]] || NK.section)[0];
-    X.globalAlpha = focus && !m.some(F) ? .03 : .09; X.fillStyle = X.strokeStyle = col; X.lineWidth = 26; X.beginPath();
-    h.forEach((p, i) => i ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1])); X.closePath(); X.fill(); X.stroke();
-    X.globalAlpha = focus && !m.some(F) ? .2 : .85; X.fillStyle = fg; X.font = `600 ${Math.max(11, 12 / sc * .6)}px system-ui`; X.textAlign = 'center';
-    X.fillText(g.id.split('/').slice(-2).join('/') + (coll.has(g.i) ? ' ⊕' : ''), m.reduce((s, n) => s + n.x, 0) / m.length, Math.min(...m.map(n => n.y)) - 16) }
-  const arrows = sc > .7, lab = [];
-  for (const v of VE) { const {a, b, e} = v, on = fE ? fE.has(v) : !focus || (focus.has(a) && focus.has(b));
-    X.globalAlpha = on ? (fE ? .95 : .35) : .04; X.strokeStyle = X.fillStyle = fE && on ? hi : EK[e.k][0]; X.lineWidth = (fE && on ? 2 : e.k === 'loop' || e.back ? 1.3 : .8) * lw;
-    X.setLineDash(e.back || e.k === 'loop' ? [5 * lw, 3 * lw] : []); X.beginPath();
+  raf = 0; const cs = getComputedStyle(document.documentElement), bg = cs.getPropertyValue('--bg'), fg = cs.getPropertyValue('--fg'), hi = cs.getPropertyValue('--hi'), pn = cs.getPropertyValue('--pn');
+  X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = bg; X.fillRect(0, 0, W, H); X.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * tx, dpr * ty);
+  const lw = 1 / sc, F = n => !focus || focus.has(n), x0 = -tx / sc, y0 = -ty / sc, x1 = x0 + W / sc, y1 = y0 + H / sc, on = n => n.x > x0 - 50 && n.x < x1 + 50 && n.y > y0 - 50 && n.y < y1 + 50;
+  if (LVL > 0) for (const g of G) { if (!g.fn || coll.has(g.i)) continue; const m = g.m.filter(n => n.k !== 'file' && vis(n)); if (m.length < 2) continue;
+    const h = hull(m.map(n => [n.x, n.y])); X.globalAlpha = focus && !m.some(F) ? .03 : .07; X.fillStyle = X.strokeStyle = g.fn.col; X.lineWidth = 34; X.lineJoin = 'round';
+    X.beginPath(); h.forEach((p, i) => i ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1])); X.closePath(); X.fill(); X.stroke() }
+  const lab = [];
+  for (const v of VE) { const {a, b, e} = v; if (!on(a) && !on(b)) continue; const hl = fE ? fE.has(v) : false, dim = focus && !hl;
+    const loopy = e.back || e.k === 'loop'; X.globalAlpha = hl ? .95 : dim ? .04 : LVL === 0 ? .45 : LVL === 1 ? .25 : .14;
+    X.strokeStyle = X.fillStyle = hl ? hi : EK[e.k][0]; X.lineWidth = (hl ? 2 : loopy ? 1.4 : 1) * lw * (LVL === 0 ? 1.4 : 1);
+    X.setLineDash(loopy || EK[e.k][1] === 'dash' ? [6 * lw, 4 * lw] : EK[e.k][1] === 'dot' ? [1.5 * lw, 3 * lw] : []); X.beginPath();
     let mx, my, ang;
     if (a === b) { X.arc(a.x + a.r, a.y - a.r, a.r + 4, 0, 6.283); mx = a.x + a.r; my = a.y - 2 * a.r - 6; ang = 0 }
-    else { const c = curve(a, b, e.back || e.k === 'loop'); X.moveTo(c[0], c[1]); X.quadraticCurveTo(c[2], c[3], c[4], c[5]);
-      mx = (c[0] + 2 * c[2] + c[4]) / 4; my = (c[1] + 2 * c[3] + c[5]) / 4; ang = Math.atan2(c[5] - c[3], c[4] - c[2]) }
+    else { const dx = b.x - a.x, dy = b.y - a.y, c = loopy ? .35 : .1, cx = (a.x + b.x) / 2 - dy * c, cy = (a.y + b.y) / 2 + dx * c;
+      X.moveTo(a.x, a.y); X.quadraticCurveTo(cx, cy, b.x, b.y); mx = (a.x + 2 * cx + b.x) / 4; my = (a.y + 2 * cy + b.y) / 4; ang = Math.atan2(b.y - cy, b.x - cx) }
     X.stroke(); X.setLineDash([]);
-    if (a !== b && (arrows || (fE && on))) { const d = b.r + 1; head(e.k, b.x - Math.cos(ang) * d, b.y - Math.sin(ang) * d, ang, 6 * lw) }
-    if ((e.k === 'loop' && on && sc > .5) || ((e.back || e.k === 'loop') && fE && on)) lab.push([mx, my, '↻' + (e.b ? ' ' + e.b : ''), '#db2777']);
-    if (fE && on && fE.size < 300) lab.push([mx, my + 11 * lw, e.k + (e.l ? ' · ' + e.l : ''), fg]) }
-  X.globalAlpha = 1;
-  for (const n of VN) { const [col, s] = NK[n.k] || NK.fn; X.globalAlpha = F(n) ? 1 : .1; shape(s, n.x, n.y, n.r);
-    X.fillStyle = s === 'ring' ? bg : col; X.fill(); X.strokeStyle = bad.has(n.i) ? '#dc2626' : n === sel ? hi : col; X.lineWidth = (bad.has(n.i) || n === sel ? 2.4 : 1) * lw; X.stroke();
-    if (n.fx != null) { X.fillStyle = fg; X.fillRect(n.x - 1.5 * lw, n.y - n.r - 4 * lw, 3 * lw, 3 * lw) } }
-  X.font = `${11 * lw}px system-ui`; X.textAlign = 'left';
-  for (const n of VN) { const show = n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 160 || sc > .6) : sc * n.r > 4.5 || (sc > .45 && /slash|phase|event|human|row|file/.test(n.k)));
-    if (!show) continue; X.globalAlpha = F(n) ? 1 : .2; X.fillStyle = fg; X.fillText(n.l.slice(0, 48), n.x + n.r + 3 * lw, n.y + 4 * lw) }
-  for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.lineWidth = 3 * lw; X.strokeStyle = bg; X.strokeText(t.slice(0, 60), x, y); X.fillStyle = c; X.fillText(t.slice(0, 60), x, y) }
+    if (a !== b && (hl || sc > .8 || LVL === 0)) { const d = b.r + 2, s = 6 * lw, hx = b.x - Math.cos(ang) * d, hy = b.y - Math.sin(ang) * d;
+      X.beginPath(); X.moveTo(hx, hy); X.lineTo(hx - Math.cos(ang - .45) * s, hy - Math.sin(ang - .45) * s); X.lineTo(hx - Math.cos(ang + .45) * s, hy - Math.sin(ang + .45) * s); X.fill() }
+    if (loopy && (hl || (e.k === 'loop' && LVL === 0 && !focus))) lab.push([mx, my, '↻' + (e.b ? ' ' + e.b : ''), '#db2777']);
+    if (hl && fE.size < 120) lab.push([mx, my + 12 * lw, e.k + (e.l ? ' · ' + e.l : '') + (v.n > 1 ? ` (×${v.n})` : ''), fg]) }
+  const big = sc * 8 > 3;
+  for (const n of VN) { if (!on(n)) continue; const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r; X.globalAlpha = F(n) ? 1 : .12;
+    X.beginPath(); X.arc(n.x, n.y, r, 0, 6.283); X.fillStyle = pn; X.fill(); X.globalAlpha *= .22; X.fillStyle = n.col; X.fill(); X.globalAlpha = F(n) ? 1 : .12;
+    const ring = bad.has(n.i) && (sel === n || (focus && focus.has(n))) ? '#dc2626' : n === sel ? hi : n.col; X.strokeStyle = ring; X.lineWidth = (n === sel || ring === '#dc2626' ? 2.5 : 1.2) * lw; X.stroke();
+    if (r * sc > 5) icon(KD[n.kk][1], n.x, n.y, r * 1.15, n.col, Math.max(1.2 * lw, r * .12));
+    if (n.fx != null) { X.fillStyle = fg; X.beginPath(); X.arc(n.x + r * .8, n.y - r * .8, 2.2 * lw, 0, 6.283); X.fill() } }
+  X.textAlign = 'center';
+  for (const n of VN) { if (!on(n)) continue; const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, show = n === sel || n === hover || (focus ? focus.has(n) && (focus.size < 150 || r * sc > 6) : (n.lv === LVL || n.k === 'file') && r * sc > 4.5 && big);
+    if (!show) continue; X.globalAlpha = F(n) ? 1 : .2; X.font = `${n.k === 'file' ? 600 : 400} ${(n.k === 'file' ? 12 : 11) * lw}px system-ui`;
+    X.lineWidth = 3 * lw; X.strokeStyle = bg; const t = n.l.slice(0, 40); X.strokeText(t, n.x, n.y + r + 12 * lw); X.fillStyle = fg; X.fillText(t, n.x, n.y + r + 12 * lw) }
+  for (const [x, y, t, c] of lab) { X.globalAlpha = 1; X.font = `${10.5 * lw}px system-ui`; X.lineWidth = 3 * lw; X.strokeStyle = bg; X.strokeText(t.slice(0, 64), x, y); X.fillStyle = c; X.fillText(t.slice(0, 64), x, y) }
+  if (trace) { X.font = `600 ${10 * lw}px system-ui`; const done = new Set();
+    trace.forEach((s, i) => { const n = rep(s.n); if (!n || done.has(n)) return; done.add(n); const t = String(i + 1), w = (t.length * 6 + 8) * lw, bx = n.x + n.r * .7, by = n.y - n.r - 9 * lw;
+      X.globalAlpha = 1; X.fillStyle = i === tIdx ? hi : n.col; X.beginPath(); X.roundRect ? X.roundRect(bx - w / 2, by - 7 * lw, w, 14 * lw, 7 * lw) : X.rect(bx - w / 2, by - 7 * lw, w, 14 * lw); X.fill();
+      X.fillStyle = '#fff'; X.fillText(t, bx, by + 3.5 * lw) }) }
   X.globalAlpha = 1
 }
-function loop() { raf = 0; for (let i = 0; i < 2 && alpha > .02; i++) tick(); draw(); if (alpha > .02 || drag) raf = requestAnimationFrame(loop) }
-function fit() { const xs = VN.map(n => n.x), ys = VN.map(n => n.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  sc = Math.min((innerWidth - 40) / (x1 - x0 + 80), (innerHeight - 130) / (y1 - y0 + 80)); tx = innerWidth / 2 - (x0 + x1) / 2 * sc; ty = 110 + (innerHeight - 110) / 2 - (y0 + y1) / 2 * sc; draw() }
-const center = n => { tx = innerWidth / 2 - n.x * sc; ty = innerHeight / 2 - n.y * sc; draw() };
-// focus: neighbourhood (both directions, depth slider), a cycle, a search, a trace
-function hood(n) {
-  const d = +$('#dep').value, f = new Set([n]), es = new Set(); let fr = [n];
-  for (let k = 0; k < d; k++) { const nx = []; for (const v of VE) for (const [p, q] of [[v.a, v.b], [v.b, v.a]]) if (fr.includes(p)) { es.add(v); if (!f.has(q)) { f.add(q); nx.push(q) } } fr = nx }
-  focus = f; fE = es; draw()
+function frame() { raf = 0; for (let i = 0; i < 2 && alpha > .02; i++) tick(); draw(); if (alpha > .02 || drag) raf = requestAnimationFrame(frame) }
+function fitTo(ns) { ns = ns && ns.length ? ns : VN; if (!ns.length) return; const xs = ns.map(n => n.x), ys = ns.map(n => n.y), a = Math.min(...xs), b = Math.max(...xs), c = Math.min(...ys), d = Math.max(...ys);
+  sc = Math.min((W - 60) / (b - a + 120), (H - 90) / (d - c + 120), 2.5); tx = W / 2 - (a + b) / 2 * sc; ty = 30 + (H - 30) / 2 - (c + d) / 2 * sc; draw() }
+const center = n => { tx = W / 2 - n.x * sc; ty = H / 2 - n.y * sc; draw() };
+function setLevel(L) { const cx = (W / 2 - tx) / sc, cy = (H / 2 - ty) / sc; sc = fitSc * [1, 2.4, 5][L]; tx = W / 2 - cx * sc; ty = H / 2 - cy * sc; LVL = L; rebuild() }
+// focus: click = a node's direct neighbours (both ways); click a highlighted neighbour (or shift) = extend from it
+function neigh(n, extend) {
+  if (!extend || !focus) { focus = new Set([n]); fE = new Set() }
+  if (!fE) fE = new Set()
+  focus.add(n); for (const v of VE) if (v.a === n || v.b === n) { fE.add(v); focus.add(v.a); focus.add(v.b) } draw()
 }
-function setFocus(nodes) { focus = new Set(nodes.map(rep)); fE = new Set(VE.filter(v => focus.has(v.a) && focus.has(v.b))); draw() }
-function pick(n) { sel = n; trSteps = null; n ? hood(n) : (focus = fE = null, draw()) }
-// trace: ordered walk from an entry (agent, event, row, slash command ...); decisions follow the chosen outcome; loops shown once
-const PRI = {routes: 0, runs: 1, impl: 1, spawns: 2, branch: 3, triggers: 4, has: 5, calls: 6, writes: 7, loads: 8, next: 9, loop: 10};
-function trace(start) {
-  const steps = [], seen = new Set(), maxD = +$('#dep').value + 5;
-  const COST = {calls: 2, has: 2, loads: 2, writes: 2};
+function select(n, extend) { sel = n; if (n) { neigh(n, extend); openSide('code') } else { focus = fE = null; draw() } }
+function show(nodes, edgesToo) { force = new Set(nodes); rebuild(); focus = new Set(nodes.map(rep).filter(Boolean)); fE = new Set(VE.filter(v => focus.has(v.a) && focus.has(v.b))); draw() }
+// trace: ordered walk from an entry; decisions follow the chosen outcome; loops shown once (cost: internals count double)
+const PRI = {routes: 0, runs: 1, impl: 1, spawns: 2, branch: 3, triggers: 4, has: 5, calls: 6, writes: 7, loads: 8, next: 9, loop: 10}, COST = {calls: 2, has: 2, loads: 2, writes: 2}, choice = {};
+function walk(start) {
+  const steps = [], seen = new Set();
   (function go(n, dep, via) {
-    if (steps.length > 400) return; seen.add(n); steps.push({n, dep, via}); if (dep >= maxD) return;
-    let outs = n.out.filter(e => PRI[e.k] != null).sort((a, b) => PRI[a.k] - PRI[b.k] || N[a.t].ln - N[b.t].ln);
-    const br = outs.filter(e => e.k === 'branch');
-    if (n.k === 'decision' && br.length) outs = outs.filter(e => e.k !== 'branch').concat([br[Math.min(choice[n.i] || 0, br.length - 1)]]);
+    if (steps.length > 300) return; seen.add(n); steps.push({n, dep, via}); if (dep >= 7) return;
+    let outs = n.out.filter(e => PRI[e.k] != null && !(n.k === 'fn' && (e.k === 'has' || (e.k === 'calls' && N[e.t].k === 'fn')))).sort((a, b) => PRI[a.k] - PRI[b.k] || N[a.t].ln - N[b.t].ln);
+    const br = outs.filter(e => e.k === 'branch'); if (n.k === 'decision' && br.length) outs = outs.filter(e => e.k !== 'branch').concat([br[Math.min(choice[n.i] || 0, br.length - 1)]]);
     for (const e of outs) { const t = N[e.t]; if (seen.has(t)) { if (e.back || e.k === 'loop') steps.push({n: t, dep: dep + 1, via: e, loop: 1}); continue } go(t, dep + (COST[e.k] || 1), e) }
   })(start, 0, null);
-  trSteps = steps; sel = start; setFocus(steps.map(s => s.n)); fE = new Set(VE.filter(v => steps.some(s => s.via && rep(N[s.via.s]) === v.a && rep(N[s.via.t]) === v.b))); draw(); panel('trace')
+  return steps
 }
-const fl = n => `${D.files[n.g].id}${n.ln ? ':' + n.ln : ''}`;
-function panel(tab) {
-  $('#pan').classList.add('on'); $('#ptabs').innerHTML = ''; const body = $('#pbody'); body.innerHTML = '';
-  for (const t of ['trace', 'loops', 'issues']) { const b = document.createElement('span'); b.className = 'p' + (t === tab ? '' : ' off'); b.textContent = t; b.onclick = () => panel(t); $('#ptabs').append(b) }
-  const row = (html, cls, fn) => { const d = document.createElement('div'); d.className = 'st ' + (cls || ''); d.innerHTML = html; d.onclick = fn; body.append(d); return d };
-  const esc = s => String(s).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'})[c]);
-  if (tab === 'trace') {
-    if (!trSteps) return row('pick an entry in "trace from…", or select a node and press "trace selected"');
-    trSteps.forEach((s, i) => { const n = s.n, d = row(`<span style="padding-left:${s.dep * 8}px"></span><b>${i + 1}</b> ${s.loop ? '↻ back to' : ''} <i style="color:${NK[n.k][0]}">${n.k}</i> ${esc(n.l)}${s.via && s.via.l && !s.loop ? ` <small>(${esc(s.via.k)}: ${esc(s.via.l.slice(0, 50))})</small>` : ''} <small>${esc(fl(n))}</small>`,
-      bad.has(n.i) ? 'bad' : '', () => { center(n); sel = n; draw() });
+function runTrace(start) { trace = walk(start); tIdx = 0; show(trace.map(s => s.n)); const ids = new Set(trace.map(s => s.via).filter(Boolean)); fE = new Set(VE.filter(v => [...ids].some(e => rep(N[e.s]) === v.a && rep(N[e.t]) === v.b)));
+  fitTo([...focus]); tab('trace') }
+function stepTo(i) { if (!trace) return; tIdx = Math.max(0, Math.min(trace.length - 1, i)); sel = trace[tIdx].n; center(rep(sel) || sel); if (curTab === 'trace') tab('trace'); else draw() }
+// sidebar: rail tabs (Code, Trace, Loops, Issues), resizable, remembered
+const side = $('#side'), sb = $('#sb'), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+const svgI = (name, col, s = 16) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name]}"/></svg>`;
+const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues']};
+let curTab = LS.get('tab', 'code'), sideW = LS.get('w', 420), sideOpen = false;
+for (const t in TABS) { const d = document.createElement('div'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1]; d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:#db2777">${D.cycles.length}</span>` : '');
+  d.onclick = () => sideOpen && curTab === t ? closeSide() : openSide(t); $('#rail').append(d) }
+function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; LS.set('open', true) } tab(t); setTimeout(size, 200) }
+function closeSide() { sideOpen = false; side.style.width = '0'; LS.set('open', false); document.querySelectorAll('.ri').forEach(r => r.classList.remove('on')); setTimeout(size, 200) }
+const fl = n => D.files[n.g].id + (n.ln ? ':' + n.ln : '');
+const row = (n, title, extra, cls, fn) => { const d = document.createElement('div'); d.className = 'li ' + (cls || ''); d.innerHTML = (extra || '') + (n ? svgI(KD[n.kk][1], n.col) : '') + `<span class="t">${title}<span class="f">${n ? esc(fl(n)) : ''}</span></span>`; d.onclick = fn; return d };
+function filterBox(ph, onq) { const s = document.createElement('div'); s.className = 'sticky'; const i = document.createElement('input'); i.className = 'b'; i.placeholder = ph; i.style.width = '100%'; i.oninput = () => onq(i.value.toLowerCase()); s.append(i); sb.append(s); return s }
+function tab(t) {
+  document.querySelectorAll('.ri').forEach(r => r.classList.toggle('on', r.dataset.t === t)); $('#sh').innerHTML = svgI(TABS[t][0], null, 16) + TABS[t][1]; sb.innerHTML = ''; $('#meta').style.display = 'none';
+  if (t === 'code') return code(sel);
+  if (t === 'trace') {
+    const st = document.createElement('div'); st.className = 'sticky'; const se = document.createElement('select'); se.className = 'b'; se.style.flex = '1'; se.add(new Option('trace from… (agent, trigger, row, command)', ''));
+    const ent = N.filter(n => /slash|event|human|timer|row/.test(n.k) || (n.k === 'file' && n.fam === 'crew'));
+    ent.sort((a, b) => a.kk.localeCompare(b.kk) || a.l.localeCompare(b.l)).forEach(n => se.add(new Option(`${KD[n.kk][2]}: ${n.l}`.slice(0, 80), n.i)));
+    se.value = trace ? trace[0].n.i : ''; se.onchange = () => se.value && runTrace(N[+se.value]); st.append(se);
+    for (const [lab, d] of [['‹ prev', -1], ['next ›', 1]]) { const b = document.createElement('span'); b.className = 'b'; b.textContent = lab; b.onclick = () => stepTo(tIdx + d); st.append(b) }
+    const b2 = document.createElement('span'); b2.className = 'b'; b2.textContent = 'from selected'; b2.onclick = () => sel && runTrace(sel); st.append(b2); sb.append(st);
+    if (!trace) { sb.insertAdjacentHTML('beforeend', '<div class="empty">Pick an entry above (an agent, a trigger, a router row …) or select a node and press "from selected". The path is numbered on the graph; prev / next walk it; a decision step lets you switch the outcome.</div>'); return }
+    trace.forEach((s, i) => { const n = s.n, d = row(n, `${s.loop ? '↻ back to ' : ''}${esc(n.l)}${s.via && !s.loop ? ` <small style="color:var(--mut)">${esc(s.via.k)}</small>` : ''}`,
+      `<span class="num" style="padding-left:${Math.min(s.dep, 8) * 6}px">${i + 1}</span>`, (i === tIdx ? 'on ' : '') + (bad.has(n.i) ? 'bad' : ''), () => { stepTo(i); openSide('code') });
       const br = n.out.filter(e => e.k === 'branch');
-      if (n.k === 'decision' && br.length > 1 && !s.loop) { const se = document.createElement('select'); br.forEach((e, j) => se.add(new Option(`${e.l} → ${N[e.t].l}`.slice(0, 60), j)));
-        se.value = choice[n.i] || 0; se.onclick = ev => ev.stopPropagation(); se.onchange = () => { choice[n.i] = +se.value; trace(trSteps[0].n) }; d.append(se) } })
-  } else if (tab === 'loops') D.cycles.forEach(c => row(`<i style="color:${(NK[c.kind] || ['#db2777'])[0]}">${c.kind}</i> ${esc(c.label)} <small>${c.nodes.length} nodes</small>`, '', () => { sel = null; setFocus(c.nodes.map(i => N[i])); center(N[c.nodes[0]]) }));
-  else D.issues.forEach(it => row(`<b>${esc(it.code)}</b> ${esc(it.text)}`, 'bad', () => { if (it.node != null) { const n = rep(N[it.node]); pick(n); center(n) } }))
+      if (n.k === 'decision' && br.length > 1 && !s.loop) { const x = document.createElement('select'); x.className = 'b'; br.forEach((e, j) => x.add(new Option(`${e.l} → ${N[e.t].l}`.slice(0, 60), j)));
+        x.value = choice[n.i] || 0; x.onclick = ev => ev.stopPropagation(); x.onchange = () => { choice[n.i] = +x.value; runTrace(trace[0].n) }; d.querySelector('.t').append(x) }
+      sb.append(d) }); return
+  }
+  const list = document.createElement('div');
+  const fill = q => { list.innerHTML = '';
+    if (t === 'loops') { if (!D.cycles.length) list.innerHTML = '<div class="empty">No loops or cycles found.</div>';
+      D.cycles.filter(c => !q || c.label.toLowerCase().includes(q)).forEach(c => { const n = N[c.nodes[0]];
+        list.append(row(n, esc(c.label) + ` <small style="color:var(--mut)">${c.kind} · ${c.nodes.length} nodes${c.gaps && c.gaps.length ? ' · gaps: ' + esc(c.gaps.join('; ')) : ''}</small>`, '', c.gaps && c.gaps.length ? 'bad' : '',
+          () => { trace = null; sel = n; show(c.nodes.map(i => N[i])); fitTo([...focus]) })) }) }
+    else { if (!D.issues.length) list.innerHTML = '<div class="empty">No unknown behaviour: every reference resolves, every outcome is handled, every loop has a bound.</div>';
+      const by = {}; D.issues.filter(it => !q || (it.code + ' ' + it.text).toLowerCase().includes(q)).forEach(it => (by[it.code] = by[it.code] || []).push(it));
+      for (const c in by) { list.insertAdjacentHTML('beforeend', `<div class="grp">${esc(c)} · ${by[c].length}</div>`);
+        by[c].forEach(it => { const n = it.node != null ? N[it.node] : null; list.append(row(n, esc(it.text), '', 'bad', () => { if (n) { trace = null; show([n]); sel = n; neigh(n, true); center(n); openSide('code') } })) }) } } };
+  filterBox(t === 'loops' ? 'filter loops…' : 'filter issues…', fill); sb.append(list); fill('')
 }
-// chips: node kinds and edge kinds (toggle), with counts
-const chips = $('#chips');
-for (const [map, on, key] of [[NK, nkOn, 'k'], [EK, ekOn, 'k']]) for (const k in map) { const c = (map === NK ? N : E).filter(x => x.k === k).length; if (!c) continue;
-  const b = document.createElement('span'); b.className = 'p'; b.innerHTML = `<i style="background:${map[k][0]};${map === EK ? 'height:3px' : ''}"></i>${map === NK ? map[k][2] : '→ ' + k} ${c}`;
-  b.title = map === NK ? 'node kind: click to hide / show' : 'edge kind (arrowhead: ' + map[k][1] + '): click to hide / show';
-  b.onclick = () => { on[k] = !on[k]; b.classList.toggle('off'); rebuild() }; chips.append(b) }
-$('#iss').textContent = `${D.counts.issues} unknown`; $('#iss').title = 'unresolved refs, unhandled outcomes, loops without a bound, dead ends, lint problems';
-if (D.counts.issues) $('#iss').classList.add('bad'); $('#iss').onclick = () => panel('issues');
-$('#pt').onclick = () => $('#pan').classList.contains('on') ? $('#pan').classList.remove('on') : panel(trSteps ? 'trace' : 'loops');
-const tsel = $('#tr'), ent = N.filter(n => /slash|event|human|timer|row/.test(n.k) || (n.k === 'file' && /^agents\/|orchestrate\/SKILL/.test(n.id)));
-ent.sort((a, b) => a.k.localeCompare(b.k) || a.l.localeCompare(b.l)).forEach(n => tsel.add(new Option(`${n.k === 'file' ? (n.id.startsWith('agents/') ? 'agent' : 'coordinator') : n.k}: ${n.l}`.slice(0, 70), n.i)));
-tsel.onchange = () => tsel.value && trace(N[+tsel.value]);
-$('#trs').onclick = () => sel && trace(sel); $('#fit').onclick = fit; $('#dep').oninput = () => trSteps ? trace(trSteps[0].n) : sel && hood(sel);
-$('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); sel = null; trSteps = null; if (!q) { focus = fE = null; return draw() }
-  focus = new Set(VN.filter(n => (n.l + ' ' + n.id + ' ' + n.d).toLowerCase().includes(q))); fE = null; draw() };
-$('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; pick(n); center(n) } };
-// pointer: pan, drag a node (pins it; right-click unpins), click selects, double-click collapses / expands its file
+// code view: the node's span from the sidecar source (loaded on first use), highlighted, its own line marked
+const HL = {ps1: [/#.*$/, /\b(function|param|if|elseif|else|foreach|for|while|do|until|switch|return|break|continue|throw|try|catch|finally|exit|in)\b/, /\$[\w:]+/],
+  py: [/#.*$/, /\b(def|class|if|elif|else|for|while|return|break|continue|raise|try|except|finally|with|as|import|from|in|not|and|or|lambda|yield|None|True|False)\b/, /\bself\b/],
+  js: [/\/\/.*$/, /\b(const|let|var|function|async|await|if|else|for|while|do|return|break|continue|throw|try|catch|new|of|in|export|import|from|true|false|null)\b/, /\$\{[^}]*\}/],
+  md: [/<!--.*-->/, /^#{1,6} .*|\*\*[^*]+\*\*/, /`[^`]+`/], json: [/$^/, /\b(true|false|null)\b/, /"[\w.-]+"(?=\s*:)/]};
+function hl(line, lg) { const h = HL[lg] || HL.md, rx = new RegExp(`(${h[0].source})|('(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")|(${h[1].source})|(${h[2].source})|(\\b\\d+(?:\\.\\d+)?\\b)`, 'g');
+  let out = '', last = 0; line.replace(rx, (m, c, s, k, v, nu, off) => { out += esc(line.slice(last, off)) + `<span class="${c ? 'cm' : s ? 'st' : k ? 'kw' : v ? 'va' : 'nu'}">${esc(m)}</span>`; last = off + m.length; return m });
+  return out + esc(line.slice(last)) }
+let srcWanted = null, more = 0;
+function code(n) {
+  if (!n) { sb.innerHTML = '<div class="empty">Click a node on the graph: its source span shows here, with its line marked.</div>'; return }
+  const f = D.files[n.g].id, real = !f.startsWith('('), abs = (D.kit + '/' + f).replace(/\\/g, '/'), ln = n.ln || 1;
+  $('#sh').innerHTML = svgI(KD[n.kk][1], n.col, 18) + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.l)}</span><small style="color:var(--mut);font-weight:400">${esc(KD[n.kk][2])}</small>`;
+  const m = $('#meta'); m.style.display = 'block'; const iss = bad.get(n.i) || [];
+  m.innerHTML = `<div class="f">${esc(f)}${n.ln ? ':' + n.ln : ''}</div>${n.d ? `<div>${esc(n.d)}</div>` : ''}${iss.map(it => `<div style="color:var(--bad)">⚠ ${esc(it.code)}: ${esc(it.text)}</div>`).join('')}
+    <div>${n.out.length} out · ${n.in.length} in${real ? ` · ${D.kit ? `<a href="vscode://file/${encodeURI(abs)}:${ln}">open in editor</a>` : ''}${D.repoUrl ? `<a target="_blank" rel="noopener" href="${D.repoUrl}/${encodeURI(f)}#L${ln}">view on GitHub</a>` : ''}<span class="lnk" id="cp">copy path:line</span>` : ''}</div>`;
+  if (real) $('#cp').onclick = () => { const t = `${f}:${ln}`; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => { const a = document.createElement('textarea'); a.value = t; document.body.append(a); a.select(); document.execCommand('copy'); a.remove() }); $('#cp').textContent = 'copied' };
+  if (!real) { sb.innerHTML = '<div class="empty">A shared node (state, config, outcome or external CLI): no single source span. Its edges on the graph show who reads, writes or calls it.</div>'; return }
+  if (!window.KF_SRC) { sb.innerHTML = '<div class="empty">loading source…</div>'; if (!srcWanted && D.src) { srcWanted = document.createElement('script'); srcWanted.src = D.src; srcWanted.onload = () => curTab === 'code' && code(sel); srcWanted.onerror = () => sb.innerHTML = '<div class="empty">Source sidecar not found next to this page.</div>'; document.head.append(srcWanted) } return }
+  const lines = (window.KF_SRC[f] || '').split('\n'), lg = {ps1: 'ps1', psm1: 'ps1', py: 'py', js: 'js', mjs: 'js', md: 'md', json: 'json', sh: 'py'}[f.split('.').pop()] || 'md';
+  let end = n.end; if (!end) { const nx = G[n.g].m.filter(o => o.ln > ln && o.k !== 'file').map(o => o.ln); end = nx.length ? Math.min(...nx) - 1 : lines.length }
+  if (n.k === 'file') end = lines.length; const a = Math.max(1, ln - (n.k === 'file' ? 0 : 2)), cap = a + 80 + more;
+  sb.innerHTML = ''; const pre = document.createElement('pre'); pre.style.padding = '8px 0';
+  pre.innerHTML = lines.slice(a - 1, Math.min(end, cap)).map((l, i) => `<div class="cl${a + i === ln ? ' me' : ''}"><span class="n">${a + i}</span><span class="x">${hl(l, lg)}</span></div>`).join('');
+  sb.append(pre); if (end > cap) { const b = document.createElement('div'); b.className = 'empty'; b.innerHTML = `<span class="lnk">show more (${end - cap} lines)</span>`; b.onclick = () => { more += 80; code(n) }; sb.append(b) }
+  const me = pre.querySelector('.me'); if (me) me.scrollIntoView({block: 'center'})
+}
+// resize the sidebar: drag its left edge (280 px .. 70 %), double-click resets
+$('#grip').onpointerdown = e => { e.preventDefault(); side.classList.add('drag'); const mv = ev => { sideW = Math.max(280, Math.min(innerWidth * .7, innerWidth - 44 - ev.clientX)); side.style.width = sideW + 'px'; size(); if (sel) center(rep(sel) || sel) };
+  const up = () => { side.classList.remove('drag'); LS.set('w', sideW); removeEventListener('pointermove', mv); removeEventListener('pointerup', up) }; addEventListener('pointermove', mv); addEventListener('pointerup', up) };
+$('#grip').ondblclick = () => { sideW = 420; side.style.width = sideW + 'px'; LS.set('w', sideW); setTimeout(size, 200) };
+// top bar: level, Show (families), Edges (kinds), search, legend key
+['Overview', 'Detail', 'Everything'].forEach((t, i) => { const b = document.createElement('span'); b.className = 'b'; b.textContent = t; b.onclick = () => setLevel(i); $('#lv').append(b) });
+function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector('.menu'); dd.firstElementChild.onclick = e => { e.stopPropagation(); document.querySelectorAll('.dd').forEach(x => x !== dd && x.classList.remove('open')); dd.classList.toggle('open') };
+  m.onclick = e => e.stopPropagation();
+  for (const [k, html, c] of items) { const l = document.createElement('label'); l.innerHTML = `<input type="checkbox" ${state[k] ? 'checked' : ''}>${html}<small>${c}</small>`; l.firstChild.onchange = ev => { state[k] = ev.target.checked; rebuild() }; m.append(l) } }
+menu('#ddS', Object.keys(FAM).map(f => [f, `${svgI(Object.values(KD).find(k => k[0] === f)[1], FAM[f][1])} ${FAM[f][0]}`, N.filter(n => n.fam === f).length]), famOn);
+menu('#ddE', Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => [k, `<svg width="26" height="8"><line x1="1" y1="4" x2="25" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="6 4"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg> ${k}`, E.filter(e => e.k === k).length]), ekOn);
+const leg = $('#leg'), cnt = k => N.filter(n => n.kk === k).length;
+leg.innerHTML = '<h4 style="margin-top:0">Nodes</h4><div class="g">' + Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join('') +
+  '</div><h4>Edges</h4><div class="g">' + Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join('') +
+  '</div><h4>Families</h4><div class="g">' + Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join('') + '</div>';
+$('#legb').innerHTML = svgI('key', null, 18); $('#legb').onclick = e => { e.stopPropagation(); leg.classList.toggle('open') }; $('#legb').onmouseenter = () => leg.classList.add('open'); leg.onclick = e => e.stopPropagation();
+addEventListener('click', () => { leg.classList.remove('open'); document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')) });
+$('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); trace = null; if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) };
+$('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; select(n); center(n) } };
+$('#fit').onclick = () => { fitTo(); fitSc = sc; LVL = 0; rebuild() };
+// pointer: pan, drag a node (pins it; right-click unpins), click = neighbours (+code), click a highlighted node or shift = extend, double-click = collapse its file
 let drag = null;
-const hit = (sx, sy) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const d = Math.hypot(n.x - x, n.y - y); if (d < n.r + 5 / sc && d < bd) { bd = d; best = n } } return best };
-cv.addEventListener('pointerdown', e => { const n = hit(e.clientX, e.clientY); drag = {n, x: e.clientX, y: e.clientY, tx, ty, moved: false}; cv.setPointerCapture(e.pointerId) });
-cv.addEventListener('pointermove', e => {
-  if (!drag) { const n = hit(e.clientX, e.clientY); if (n !== hover) { hover = n; draw() }
-    if (n) { tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 14, innerWidth - 430) + 'px'; tip.style.top = e.clientY + 14 + 'px';
-      tip.textContent = `${n.l}  [${NK[n.k][2]}]\n${fl(n)}${n.d ? '\n' + n.d : ''}${bad.has(n.i) ? '\n⚠ ' + bad.get(n.i) : ''}\n${n.out.length} out · ${n.in.length} in` } else tip.style.display = 'none'; return }
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; if (!drag.moved) return;
-  if (drag.n) { const [x, y] = s2w(e.clientX, e.clientY); drag.n.fx = x; drag.n.fy = y; heat(.3) } else { tx = drag.tx + dx; ty = drag.ty + dy; draw() } });
-cv.addEventListener('pointerup', () => { if (drag && !drag.moved) pick(drag.n && drag.n !== sel ? drag.n : null); drag = null });
-cv.addEventListener('dblclick', e => { const n = hit(e.clientX, e.clientY); if (!n || !G[n.g].fn) return; coll.has(n.g) ? coll.delete(n.g) : coll.add(n.g); sel = null; focus = fE = null; rebuild() });
-cv.addEventListener('contextmenu', e => { const n = hit(e.clientX, e.clientY); if (n) { e.preventDefault(); n.fx = n.fy = null; heat(.2) } });
-cv.addEventListener('wheel', e => { e.preventDefault(); const f = Math.exp(-e.deltaY * .0015); tx = e.clientX - (e.clientX - tx) * f; ty = e.clientY - (e.clientY - ty) * f; sc *= f; draw() }, {passive: false});
-addEventListener('keydown', e => { if (e.key === 'Escape') { sel = null; trSteps = null; focus = fE = null; $('#q').value = ''; draw() } });
-addEventListener('resize', size);
-rebuild(); for (let i = 0; i < 420; i++) tick(); size(); fit(); heat(.05);
-window.KF = {N, G, trace, pick, center, hood, setFocus, fit, panel, coll, rebuild, get sc() { return sc }, set sc(v) { sc = v }};
+const hit = (sx, sy) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, d = Math.hypot(n.x - x, n.y - y); if (d < r + 4 / sc && d < bd) { bd = d; best = n } } return best };
+const pt = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] };
+cv.addEventListener('pointerdown', e => { const [x, y] = pt(e), n = hit(x, y); drag = {n, x, y, tx, ty, moved: false}; cv.setPointerCapture(e.pointerId) });
+cv.addEventListener('pointermove', e => { const [x, y] = pt(e);
+  if (!drag) { const n = hit(x, y); if (n !== hover) { hover = n; draw() }
+    if (n) { tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 14, innerWidth - 390) + 'px'; tip.style.top = e.clientY + 14 + 'px'; tip.textContent = `${n.l}\n${KD[n.kk][2]} · ${fl(n)}${bad.has(n.i) ? '\n⚠ ' + bad.get(n.i)[0].code : ''}` } else tip.style.display = 'none'; return }
+  const dx = x - drag.x, dy = y - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; if (!drag.moved) return;
+  if (drag.n) { const [wx, wy] = s2w(x, y); drag.n.fx = wx; drag.n.fy = wy; heat(.2) } else { tx = drag.tx + dx; ty = drag.ty + dy; draw() } });
+cv.addEventListener('pointerup', e => { if (drag && !drag.moved) { const n = drag.n; if (!n) { sel = null; focus = fE = null; trace = null; force = new Set(); rebuild() } else select(n, e.shiftKey || (focus && focus.has(n) && n !== sel)) } drag = null });
+cv.addEventListener('dblclick', e => { const n = hit(...pt(e)); if (!n || !G[n.g].fn) return; coll.has(n.g) ? coll.delete(n.g) : coll.add(n.g); rebuild() });
+cv.addEventListener('contextmenu', e => { const n = hit(...pt(e)); if (n) { e.preventDefault(); n.fx = n.fy = null; heat(.2) } });
+cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = pt(e), f = Math.exp(-e.deltaY * .0015); tx = x - (x - tx) * f; ty = y - (y - ty) * f; sc *= f; zoomLevel(); draw() }, {passive: false});
+addEventListener('keydown', e => { if (e.key === 'Escape') { leg.classList.remove('open'); sel = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; rebuild() }
+  if (trace && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && document.activeElement.tagName !== 'INPUT') stepTo(tIdx + (e.key === 'ArrowRight' ? 1 : -1)) });
+new ResizeObserver(size).observe($('#main'));
+rebuild(); for (let i = 0; i < 420; i++) tick(); size(); fitTo(); fitSc = sc; draw(); if (LS.get('open', false)) openSide(curTab);
+window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, center, get sc() { return sc }};
 </script></body></html>
 '''

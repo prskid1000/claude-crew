@@ -10,7 +10,7 @@ the checks below before every push. `kittool.py lint` enforces what it can; its 
   concern area; references and templates fold into the SKILL.md or `dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
 - **Token budgets** [BUDGET] (tokens = UTF-8 bytes / 4): always-loaded (`CLAUDE.md` + `AGENTS.md` + always-on rules) 3500 ·
   SKILL.md 3200 · agent 900 · rule 900 · template / example 2600 · `dev-kit/templates.md` 4000 · README / CONTRIBUTING 7000 · LESSONS.md 30000 (40 lines per
-  skill section) · workflow 14000 · .ps1 48000 · .py 44000 · .mjs 8000 · json 3000 · tests 24000 · total 380000. `kittool.py
+  skill section) · workflow 14000 · .ps1 48000 · .py 44000 · .mjs 8000 · json 3000 · tests 24000 · total 395000. `kittool.py
   lint` prints the top consumers when one is over.
 - **Every file reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md (Router) -> skill / workflow / agent
   -> the Files-index row that names the file and the step that reads or runs it. Mentions do not count. Every edge carries its

@@ -2,7 +2,7 @@
 """kittool.py: the kit's own tooling in one file - lint, flow graph, ports, audit, cost. Python 3.8+, no dependencies.
 
   python -X utf8 kittool.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--org-terms <kit.local.json | a,b>] [--json <out>]
-  python -X utf8 kittool.py flow  [<kit>] [--out <file.html>] [--readme] [--watch] [--open]
+  python -X utf8 kittool.py flow  [<kit>] [--out <file.html>] [--readme] [--watch] [--open] [--public]
   python -X utf8 kittool.py port  [--check]
   python -X utf8 kittool.py audit setup|config|recover|scan|stamp|due [--kit <dir>] [--fix] [--fill] [--json <file>]
   python -X utf8 kittool.py cost  [<kit>] [--steps] [--json]
@@ -120,12 +120,12 @@ def locked(path, stale=120):
 # ================================ 2. graph + checks (lint and flow share it) ================================
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}
 # repo plumbing outside the graph: generated ports (port writes them) and git / legal files (reached by git itself)
-REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents')
+REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents', '.github')
 GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 FILE_CAP = 50
 # token budgets (UTF-8 bytes / 4), CONTRIBUTING "Hard rules"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 900, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-           'workflow': 14000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 24000, 'total': 380000}
+           'workflow': 14000, 'ps1': 48000, 'py': 44000, 'mjs': 8000, 'json': 3000, 'tests': 24000, 'total': 395000}
 # the one map of runtime + durable paths, and the files allowed to know raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/paths.json'
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -1016,26 +1016,44 @@ def flow_args(a):
     out = a[a.index('--out') + 1] if '--out' in a else None
     rest = [x for i, x in enumerate(a) if not x.startswith('--') and (i == 0 or a[i - 1] != '--out')]
     kit = os.path.abspath(rest[0] if rest else KIT_DIR)
-    return kit, os.path.abspath(out or default_out(kit)), '--watch' in a, '--open' in a, '--readme' in a
+    return kit, os.path.abspath(out or default_out(kit)), '--watch' in a, '--open' in a, '--readme' in a, '--public' in a
 
 
 def page_data(k, g, problems, kit=None):
     """Page model (kitflow.py): the parts inside every file, the edges between them, loops, issues."""
-    return kitflow.model(k, problems, kit_path('kit-flow-cache', kit=live_root(kit or k.dir)))
+    live = live_root(kit or k.dir)
+    data = kitflow.model(k, problems, kit_path('kit-flow-cache', kit=live))
+    data['kit'], data['_texts'] = live.replace('\\', '/'), {f: k.texts.get(f, '') for f in k.files}
+    return data
 
 
-def build(kit):
+def public_only(k):
+    """--public (the published page): drop every local-only file (kit.local.json localOnly, *.local.*, rules/*.local.md)."""
+    keep = [f for f in k.files if '.local.' not in os.path.basename(f) and not any(f == x or f.startswith(x.rstrip('/') + '/') for x in k.local_only)]
+    k.files, k.fileset = keep, set(keep)
+    k.texts = {f: t for f, t in k.texts.items() if f in k.fileset}
+    k.skills = [x for x in k.skills if f'skills/{x}/SKILL.md' in k.fileset]
+    k.agents = {n: f for n, f in k.agents.items() if f in k.fileset}
+    k.workflows = {n: f for n, f in k.workflows.items() if f in k.fileset}
+    return k
+
+
+def build(kit, public=False):
     k = load(kit)
+    if public:
+        k = public_only(k)
     g = graph(k)
-    return page_data(k, g, lint(k, g))
+    data = page_data(k, g, lint(k, g))
+    if public:   # no local paths in the published page; code links go to the repo host when CI says where
+        repo, sha = os.environ.get('GITHUB_REPOSITORY'), os.environ.get('GITHUB_SHA')
+        data['kit'], data['repoUrl'] = '', (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/blob/{sha}" if repo and sha else '')
+    return data
 
 
-def render(kit, out, quiet=False, data=None):
-    data = data or build(kit)
+def render(kit, out, quiet=False, data=None, public=False):
+    data = data or build(kit, public)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    page = kitflow.html(data)
-    with open(out, 'w', encoding='utf-8') as fh:
-        fh.write(page)
+    kitflow.write(out, data, data.pop('_texts', {}))
     c = data['counts']
     if not quiet:
         print(f"kit-flow: {out}  ({c['files']} files, {c['nodes']} nodes, {c['edges']} edges, {c['cycles']} loops, {c['issues']} issues)")
@@ -1056,7 +1074,7 @@ def signature(kit):
 
 
 def cmd_flow(a):
-    kit, out, watch, open_it, readme = flow_args(a)
+    kit, out, watch, open_it, readme, public = flow_args(a)
     if not os.path.isdir(kit):
         sys.exit(f'kittool flow: no such folder {kit}')
     if readme:
@@ -1069,7 +1087,7 @@ def cmd_flow(a):
             with open(p, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.write(new)
             print(f'kittool flow: README.md graph sections updated')
-    render(kit, out)
+    render(kit, out, public=public)
     if open_it:
         if sys.platform.startswith('win'):
             os.startfile(out)  # type: ignore[attr-defined]  # noqa
@@ -1084,7 +1102,7 @@ def cmd_flow(a):
             if cur != last:
                 last = cur
                 try:
-                    render(kit, out)
+                    render(kit, out, public=public)
                 except Exception as e:  # keep watching through a half-written file
                     print('kittool flow: render failed, will retry:', e)
     return 0
@@ -2545,7 +2563,7 @@ def cmd_prose(a):
 # per subcommand: switches, flags taking a value, whether a positional kit dir is allowed (`lint --help` once became a kit
 # dir named "--help" and got a .runtime written into it)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
-        'flow': ({'--readme', '--watch', '--open'}, {'--out'}, True),
+        'flow': ({'--readme', '--watch', '--open', '--public'}, {'--out'}, True),
         'port': ({'--check'}, set(), False),
         'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False),
         'cost': ({'--steps', '--json'}, set(), True),
