@@ -56,8 +56,9 @@ argument-hint: "[focus: setup | config | recover | audit | all]"
    changes: diff it first) -> proposed with the exact edit. Then in `<wt>`: lint 0, `port` + `port --check`, parse touched
    .ps1, `py_compile` .py, `node --check` .mjs / wrapped workflows, `tests/kit-tests.ps1`, `cost --steps` after a workflow
    change.
-9. **Ship:** `dev.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> push -u origin kit/audit-<date>`;
-   never push `main`, never merge. Report (templates.md "Audit report"). `$A stamp`; `board leave`.
+9. **Ship:** `dev.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks again,
+   `git -C <wt> push origin HEAD:main` (fast-forward only); the live clone pulls it when no run uses the kit.
+   Report (templates.md "Audit report"). `$A stamp`; `board leave`.
 
 | Flow | Hops to trace |
 |---|---|
