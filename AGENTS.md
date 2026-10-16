@@ -87,7 +87,8 @@ starts only when a person says `deploy <env>`: nobody asks or proposes one). The
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit.
 - The kit learns: every agent reads its lessons at step 0 (`orch.ps1 learn -Read -Skill <skill>`) and records surprises with
-  `orch.ps1 learn`. A business-logic change the task did not ask for, or several valid paths -> `orch.ps1 decide ask`.
+  `orch.ps1 learn`. A user-visible behaviour change the task did not ask for, or several valid paths -> `orch.ps1 decide
+  ask` ("Decision pauses").
 - **The main session coordinating agents** loads `orchestrate` and follows its Events table (heartbeat, decisions, `deploy <env>`,
   recovery after a restart, HEAL, LEARN, retro, kit commits).
 

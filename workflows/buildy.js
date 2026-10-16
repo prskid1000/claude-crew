@@ -202,7 +202,7 @@ function reviewPrompt(a, r) {
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(none reported)'}; local test: ${(r.localTest || {}).status || '?'} on ${(r.localTest || {}).env || '?'}.
 Rules: ${K}/SKILL.md Rules (scope, tests, migrations). Only real problems; "blocking" = must be fixed before it ships (an unasked
-behaviour change is blocking). Change no code; give each finding its suggested change. Only the brief and these MRs define the review.`
+user-visible behaviour change is blocking; same behaviour, other internals is not). Change no code; give each finding its suggested change. Only the brief and these MRs define the review.`
 }
 function fixPrompt(a, r, findings) {
   return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
@@ -264,8 +264,7 @@ function mergeReports(x, r2, note) {
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
 const decisions = []
 const envFixes = []
-// DUEL: 2 devy build it two ways, revy (kind plan) compares + fact-checks the debate, owner judges (decide ask)
-// winner continues; loser's branch closes, findings kept
+// DUEL: 2 devy build it two ways, revy (kind plan) compares + fact-checks, owner judges (decide ask); winner continues, loser's branch closes, findings kept
 const DUEL_SCHEMA = { type: 'object', properties: { approach: { type: 'string' }, summary: { type: 'string', description: '<= 120 words: what the POC does, what it proved' },
   evidence: { type: 'array', items: { type: 'string' }, description: 'files / runs / numbers that back each claim' }, worktrees: { type: 'array', items: { type: 'string' } },
   branch: { type: 'string' }, goalsDoc: { type: 'string' }, localTest: { type: 'string', enum: ['PASS', 'FAIL', 'NONE'] } }, required: ['approach', 'summary', 'evidence', 'worktrees', 'branch', 'localTest'] }
@@ -378,8 +377,8 @@ const results = await pipeline(
     if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
     return localLoop(a, r, LOCAL_RETRIES, 'Build')
   }),
-  // Decide: items stopped for an owner decision wait for the answer (other areas keep going), then the agent finishes them;
-  // items stopped for an ENV-FIX wait for the coordinator's fix (at most ENV_FIX_CYCLES per area), then the agent continues them
+  // Decide: owner-decision items wait for the answer (other areas go on), ENV-FIX items for the coordinator's fix (<= ENV_FIX_CYCLES
+  // per area); then the agent continues them
   (r, a) => settleOnThrow(a, async () => {
     if (!r || r.error || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
     let cur = r, envCycles = 0

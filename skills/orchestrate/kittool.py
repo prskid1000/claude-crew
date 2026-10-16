@@ -6,8 +6,9 @@
   python -X utf8 kittool.py port  [--check]
   python -X utf8 kittool.py audit setup|config|recover|scan|stamp|due [--kit <dir>] [--fix] [--fill] [--json <file>]
   python -X utf8 kittool.py cost  [<kit>] [--steps] [--routes] [--json]
-  python -X utf8 kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>]
-  python -X utf8 kittool.py rename agent|skill|workflow|rule <old> <new> · remove <kind> <name>
+  python -X utf8 kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>] · new adr <title>
+  python -X utf8 kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new> · remove <kind> <name>
+  python -X utf8 kittool.py prose --kind <kind> <file> [--json] · prose --kinds   # a text vs templates.md "Writing standards"
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (no CHANGELOG file)
 
 Inputs: the kit folder (default: the kit this file lives in), skills/dev-kit/kit.example.json (_paths, _manifest), kit.local.json (org terms, localOnly).
@@ -26,8 +27,8 @@ lint checks (the same graph flow draws; strict: every problem fails, --warn repo
   JUNK            runtime output or reserved-name files among the kit files
   RUNTIME-RAW / RUNTIME-MAP / RUNTIME-DURABLE  paths built by hand; a workflow's `const KP` differs from kit.example.json _paths; durable state in the runtime
   CONFIG-UNDOC    a kit.example.json key missing from README "Configuration"
-  FILE-CAP / PLUMBING-CAP  more content files than FILE_CAP (docs, agents, workflows, skills, scripts, config examples, tests) or
-                  plumbing files than PLUMBING_CAP (LICENSE, .gitignore, .gitattributes, .githooks/*, .github/*, settings.json); ports excluded
+  FILE-CAP / PLUMBING-CAP  more content files than _manifest.caps.content (docs, agents, workflows, skills, scripts, config examples, tests) or
+                  plumbing files than caps.plumbing (LICENSE, .gitignore, .gitattributes, .githooks/*, .github/*, settings.json); ports excluded
   BUDGET          a file or the kit over its token budget (README "Extending"); the top consumers are listed
   SCRIPT-HEADER   an entry script without a header block naming its usage and "Exit codes"
 PROSE           a kit file, lesson or History line breaks its templates.md "Writing standards" limits
@@ -38,6 +39,7 @@ DESKTOP-OPEN    a script opens a file, browser or app on the desktop without an 
   MANIFEST / SCHEMA  the files vs kit.example.json _manifest (agents, skills, workflows, Router + Events rows, Character, tools);
                   front matter, Character and manifest entries vs their JSON Schemas
   OLD-NAME / AGENT-TYPE / TODO-STUB  a renamed name left anywhere; a workflow agent() without a crew agentType; a scaffolding stub left
+  NON-CREW / DECISION-WORDING  a non-crew agent spawned in an agent, skill or workflow; a decision rule without "user-visible"
 
 audit:
 the mechanical half of the kit audit (agents/kitty.md steps 1-3, 4, 9). The agent reads and judges; this tool lists.
@@ -128,10 +130,10 @@ REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '
 GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
-FILE_CAP, PLUMBING_CAP = 33, 8
+CAPS = {'content': 30, 'plumbing': 8, 'totalTokens': 360000}   # only a fallback: kit.example.json _manifest.caps is the source (lint MANIFEST)
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-           'workflow': 15000, 'ps1': 58000, 'py': 70000, 'mjs': 8000, 'json': 6000, 'tests': 28000, 'total': 395000}
+           'workflow': 15000, 'ps1': 58000, 'py': 70000, 'mjs': 8000, 'json': 6000, 'tests': 28000}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -147,9 +149,7 @@ IMPORT_RE = re.compile(r'^@([\w./-]+\.md)\s*$', re.MULTILINE)
 
 
 def resolve_imports(text, base_dir, _seen=None):
-    """Expand Claude Code's own `@<path>.md` import lines (e.g. CLAUDE.md pointing at a
-    canonical AGENTS.md shared with Codex/Antigravity) so every text-based check below sees
-    the same content Claude Code itself would load, regardless of which file is the real one."""
+    """Expand Claude Code's `@<path>.md` import lines (CLAUDE.md -> AGENTS.md) so text checks see what Claude Code loads."""
     seen = _seen if _seen is not None else set()
 
     def repl(m):
@@ -166,8 +166,7 @@ def resolve_imports(text, base_dir, _seen=None):
 
 
 def read(p, raw=False):
-    """File text with line endings normalised to LF (a Windows clone with core.autocrlf checks files out as CRLF);
-    raw=True keeps them (WF-CRLF)."""
+    """File text with LF line endings (a core.autocrlf clone checks out CRLF); raw=True keeps them (WF-CRLF)."""
     try:
         with open(p, encoding='utf-8', errors='replace', newline='') as f:
             text = f.read()
@@ -212,7 +211,7 @@ def table_rows(text):
 
 
 class Kit:
-    """Everything load() reads (annotated so editors and type checkers know the attributes)."""
+    """Everything load() reads (annotated for editors and type checkers)."""
     dir: str
     repo: str
     repo_files: List[str]
@@ -232,7 +231,7 @@ class Kit:
 
 
 def main_clone(d):
-    """The main worktree of the git repo holding d (d itself when it is no linked worktree or git fails)."""
+    """Main worktree of the repo holding d (d itself if not a linked worktree or git fails)."""
     try:
         r = subprocess.run(['git', '-C', d, 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True,
                            text=True, encoding='utf-8', timeout=20)
@@ -726,7 +725,10 @@ def lint(k, g=None, org_terms=None):
     plumbing = [x for x in counted if x.startswith(PLUMBING)]
     content = [x for x in counted if x not in plumbing]
     caps = manifest(k.dir).get('caps') or {}
-    cap_c, cap_p = caps.get('content', FILE_CAP), caps.get('plumbing', PLUMBING_CAP)
+    if caps and caps != CAPS:
+        bad('MANIFEST', PATHS_JSON, f'_manifest.caps {caps} differ from the kittool.py fallback {CAPS}: keep them equal')
+    caps = {**CAPS, **caps}
+    cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
         bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples, tests; '
             'ports excluded): merge files (README "Extending")')
@@ -769,7 +771,7 @@ def lint(k, g=None, org_terms=None):
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
     total = sum(sizes.values())
-    cap_t = caps.get('totalTokens', BUDGETS['total'])
+    cap_t = caps['totalTokens']
     if total > cap_t:
         over.append(('kit total', total, cap_t))
     if over:
@@ -1021,9 +1023,8 @@ def update_readme(text, sections):
 
 
 # ==== 2b. kit-flow model + page
-# Nodes: every kit part by file (commands, functions, phases, agent() calls, steps, rows, decisions, control-flow points,
-# state, config keys, CLIs). Edges: regex refs with reason + file:line, cached per content hash. Issues: dangling refs,
-# unhandled outcomes, unbounded loops. Page: offline canvas force graph.
+# Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
+# Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
 VER = 8
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
@@ -2371,7 +2372,7 @@ window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, s
 '''
 
 
-# ================================ 3. flow: the HTML page and the README graph sections ================================
+# ==== 3. flow: the HTML page and the README graph sections
 def live_root(kit):
     """The main worktree of kit's repo (the live clone): a worktree's commit or lint refreshes the page the owner opens."""
     try:
@@ -2657,12 +2658,8 @@ def port_agents():
 
 
 def port_hooks():
-    """Guard + SessionStart hook logic already lives in .claude/skills/dev-kit/dev.ps1 guard,
-    .../orchestrate/orch.ps1 health and orch.ps1 cleanup. We don't copy the logic; we
-    point each tool's own hook config at the SAME scripts, so there is one implementation and
-    three thin wire-ups. NOT ported: the `SendMessage` guard (orchestrate/orch.ps1 guard-sendmessage)
-    -- `SendMessage` is a Claude Code tool name with no Codex/Antigravity equivalent to matcher
-    against, so there is nothing to wire it to; this stays Claude-only."""
+    """Point each tool's hook config at the same scripts (dev.ps1 guard, orch.ps1 health / cleanup): one implementation.
+    Not ported: the SendMessage guard (no Codex/Antigravity tool to match it)."""
     # SessionStart of settings.json minus the cosmetic `orch.ps1 health -Flow -Fetch`
     session_start_cmds = [
         ("orch.ps1 health", 15),
@@ -2820,11 +2817,8 @@ def port_workflows():
 
 
 def port_deploy():
-    """Mirror the canonical .claude/.codex and .claude/.agents out to the workspace root,
-    where the real Codex/Antigravity CLIs actually look (confirmed live: `codex`/`agy` resolve
-    .codex//.agents from the session cwd, not from inside .claude). The workspace root usually
-    isn't a git repo itself, so this copy is a deploy target, not a second source of truth --
-    same relationship as the kit repo itself being cloned into <workspace>/.claude."""
+    """Copy .claude/.codex and .claude/.agents to the workspace root, where codex / agy look (session cwd, not .claude):
+    a deploy target, not a second source of truth."""
     if KIT.name != '.claude':   # second clone / worktree: no workspace above
         print(f"not deployed: {KIT} is not a workspace's .claude folder (the ports inside the kit are updated)")
         return
@@ -2856,8 +2850,8 @@ def stale_generated(src, dst):
 
 
 def deployed_stale():
-    """The workspace copies port_deploy writes (<workspace>/.codex, .agents, AGENTS.md, GEMINI.md) that differ from the kit;
-    [] when the kit is no installed <workspace>/.claude (a worktree or second clone deploys nothing)."""
+    """port_deploy's workspace copies (.codex, .agents, AGENTS.md, GEMINI.md) that differ from the kit; [] when the kit is
+    not an installed <workspace>/.claude (a worktree or second clone deploys nothing)."""
     if KIT.name != '.claude':
         return []
     bad = []
@@ -2874,10 +2868,8 @@ def deployed_stale():
 
 
 def check_stale():
-    """--check: exit 1 if .codex/.agents would change, without writing. Wired into
-    orch.ps1 health (SessionStart) so drift between .claude/agents and the ported
-    copies surfaces the same way any other kit-health nudge does. Generates every port into a
-    temp copy and compares contents (only checking that the files exist missed every edit)."""
+    """--check: exit 1 if .codex/.agents would change, without writing (orch.ps1 health, SessionStart). Generates every port
+    into a temp copy and compares contents (existence alone missed every edit)."""
     import contextlib, io, tempfile
     g = globals()
     outs = ("CODEX_AGENTS", "GRAVITY_AGENTS", "CODEX_CONFIG", "GRAVITY_HOOKS", "CODEX_WORKFLOWS", "GRAVITY_WORKFLOWS")
@@ -3487,7 +3479,7 @@ def cmd_recover(kit, fix):
 def cmd_scan(kit):
     files = tracked(kit) or []
     lint = os.path.join(kit, 'skills', 'orchestrate', 'kittool.py')
-    tmp = os.path.join(kit_path('cache', create=True, kit=kit), 'kit-audit-lint.json')
+    tmp = os.path.join(kit_path('cache', create=True, kit=kit), 'kitty-audit-lint.json')
     if os.path.exists(tmp):
         os.remove(tmp)
     rc, _, e = run([py(), '-X', 'utf8', lint, 'lint', kit, '--warn', '--no-flow', '--json', tmp], timeout=120)
@@ -3625,7 +3617,7 @@ def doc_flags(kit, files):
 
 # ---- stamp / due
 def last_audit(kit):
-    p = kit_path('last-kit-audit', kit=kit)
+    p = kit_path('last-kitty-audit', kit=kit)
     try:
         return datetime.datetime.fromisoformat(open(p, encoding='utf-8').read().strip()[:19])
     except (OSError, ValueError):
@@ -3633,7 +3625,7 @@ def last_audit(kit):
 
 
 def cmd_stamp(kit):
-    p = kit_path('last-kit-audit', create=True, kit=kit)
+    p = kit_path('last-kitty-audit', create=True, kit=kit)
     now = datetime.datetime.now().isoformat(timespec='seconds')
     with open(p, 'w', encoding='utf-8') as f:
         f.write(now + '\n')
@@ -3681,7 +3673,7 @@ def audit_main(a):
 
 # ==== 7. cost: tokens per agent type + workflow prompts
 COST_MJS = r'''// Renders every prompt a kit workflow builds, by running the workflow with mock agents and sample args.
-// Used by kit-cost.ps1 (token budget per agent type); also a cheap behaviour check: the label/model/agentType of every
+// Used by kittool.py cost (token budget per agent type); also a cheap behaviour check: the label/model/agentType of every
 // step is printed, so a prompt refactor can be diffed against the previous version.
 //   node kit-cost.mjs <kitDir> [--prompts] [--clean] [--set <wf>.<arg>=<json>]...  -> JSON { calls: [{ wf, label, agentType, model, effort, bytes }], logs }
 //   --clean: reviews find nothing and every QA check passes (exercises learn: 'auto'); --set buildy.review='"auto"' overrides a sample arg
@@ -3751,8 +3743,8 @@ console.log(JSON.stringify({ calls: calls.map(({ prompt, ...c }) => (keep ? { ..
 
 
 def cmd_cost(a):
-    """Tokens (UTF-8 bytes / 4) each agent type reads at start - the always-loaded files, its agent definition, its skill and its
-    LESSONS.md section - plus the prompt each workflow step builds (the workflows run under node with mock agents)."""
+    """Start tokens (UTF-8 bytes / 4) per agent type (always-loaded files, agent definition, skill, LESSONS.md section) plus
+    each workflow step's prompt (workflows run under node with mock agents)."""
     kit = os.path.abspath(next((x for x in a if not x.startswith('--')), KIT_DIR))
     tok = lambda s: (len(s.encode('utf-8')) + 3) // 4
     ftok = lambda rel: tok(read(os.path.join(kit, rel)))
@@ -3795,6 +3787,24 @@ def cmd_cost(a):
         rows.append({'agent': f'run: {wf} ({len(cs)} steps)', 'always': always * len(cs), 'files': sum(c['tokens'] for c in cs)})
     for r_ in rows:
         r_['total'] = r_['always'] + r_['files']
+    if '--routes' in a:   # per Router row: always-loaded + Load first skill + the target's start files (a workflow: its whole run)
+        start = {r_['agent'][:-8]: r_['files'] for r_ in rows if r_['agent'].endswith(' (start)')}
+        runs = {r_['agent'].split()[1]: r_['total'] for r_ in rows if r_['agent'].startswith('run: ')}
+        rows = []
+        for c in table_rows(section(read(os.path.join(kit, 'AGENTS.md')), 'Router') or ''):
+            tgt, lf = c[2], c[3] if len(c) > 3 else ''
+            wf = next((w for w in runs if f'/{w}' in tgt), '')
+            ag = next((x for x in start if re.search(rf'`{x.split()[0]}` agent', tgt) and ('(module)' in x) == ('module' in tgt)), '')
+            sk = [s for s in skills if f'`{s}`' in tgt + lf or (f'{s} steps' in tgt)]
+            n = (runs[wf] if wf else always) + (start[ag] if ag else 0) + sum(ftok(f'skills/{s}/SKILL.md') for s in sk)
+            rows.append({'route': c[0].strip('*'), 'target': '/' + wf if wf else ag or ', '.join(sk) or 'direct', 'total': n})
+        if '--json' in a:
+            print(json.dumps(rows, indent=1))
+            return 0
+        print('| Route | loads | tokens |\n|---|---|---:|')
+        for r_ in rows:
+            print(f"| {r_['route']} | {r_['target']} | {r_['total']} |")
+        return 0
     if '--json' in a:
         print(json.dumps(rows, indent=1))
         return 0
@@ -3893,12 +3903,12 @@ def character_block(ch, width=128):
 
 
 def old_name_rx(old):
-    # bare name or file name; <name>.stamp sharing the stem is no reference
-    return re.compile(r'(?<![\w/.-])' + re.escape(old) + r'(?![\w-])(?!\.(?:local\.)?stamp\b)')
+    # bare, file or joined name (last-<old>, <old>s, <old>-x); <name>.stamp sharing the stem is no reference
+    return re.compile(r'(?<![\w/.-])((?:\w+-)*)' + re.escape(old) + r'((?:s|-\w+)*)(?![\w-])(?!\.(?:local\.)?stamp\b)')
 
 
 def registry_lint(k, bad):
-    """MANIFEST / SCHEMA / OLD-NAME / AGENT-TYPE / TODO-STUB checks (part of lint)."""
+    """MANIFEST / SCHEMA / OLD-NAME / AGENT-TYPE / TODO-STUB / NON-CREW / DECISION-WORDING checks (part of lint)."""
     man = manifest(k.dir)
     if not man:
         bad('MANIFEST', PATHS_JSON, 'no _manifest section (the registry of agents, skills, workflows, Router and Events rows, caps)')
@@ -3970,6 +3980,13 @@ def registry_lint(k, bad):
                 bad('OLD-NAME', f'{f}:{t.count(chr(10), 0, m.start()) + 1}', f'old name "{o}" (now "{olds[o]}"): no aliases, update the reference')
         if TODO in t and f != 'skills/orchestrate/kittool.py':   # the templates live here
             bad('TODO-STUB', f'{f}:{t.count(chr(10), 0, t.index(TODO)) + 1}', f'{TODO} left by kittool.py new: fill it in')
+        ln = lambda m: f'{f}:{t.count(chr(10), 0, m.start()) + 1}'
+        for m in re.finditer(r'business[- ]logic change', t, re.I):   # the rule is what a user sees, not where the code sits
+            if 'decide ask' in t[m.start():m.start() + 300] and 'user-visible' not in t[max(0, m.start() - 150):m.start() + 300]:
+                bad('DECISION-WORDING', ln(m), 'a decision pause is a user-visible behaviour change (AGENTS.md "Decision pauses"), not a "business-logic change"')
+        m = re.search(r'(?<!no )\b(?:Explore|Plan|general-purpose) agents?\b', t) if f.startswith(('agents/', 'workflows/')) or f.endswith('SKILL.md') else None
+        if m:
+            bad('NON-CREW', ln(m), f'"{m.group(0)}": only crew agents ({", ".join(sorted(crew))}) are spawned')
 
 
 def write_characters(kit=None):
@@ -4058,12 +4075,23 @@ def _test_stub(kit, what):
 
 
 def cmd_new(a):
-    """kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>]"""
+    """kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>] | new adr <title>"""
     kit = KIT_DIR
     if len(a) < 2:
         print(cmd_new.__doc__, file=sys.stderr)
         return 2
     kind, name = a[0], a[1]
+    if kind == 'adr':   # a decision record: one LESSONS.md "## Decisions" line, the title is free text
+        title = ' '.join(a[1:]).strip()
+        line = f'- {datetime.date.today():%Y-%m-%d} {title}: context {TODO} · decision {TODO} · consequences {TODO}'
+
+        def fn(t):
+            if not re.search(r'^## Decisions\s*$', t, re.M):
+                return t.rstrip('\n') + '\n\n## Decisions\n' + line + '\n'
+            return re.sub(r'(^## Decisions\s*\n(?:(?!## ).*\n)*)', lambda m: m.group(1).rstrip('\n') + '\n' + line + '\n', t, count=1, flags=re.M)
+        _sub_file(kit, 'LESSONS.md', fn)
+        print(f'LESSONS.md Decisions: {title}: fill every {TODO}')
+        return 0
     opt = lambda n, d='': a[a.index(n) + 1] if n in a and a.index(n) + 1 < len(a) else d
     if not re.match(r'^[a-z][a-z0-9-]*(\.[a-zA-Z0-9]+)*$', name):
         sys.exit(f'kittool new: "{name}" is not a kebab-case name')
@@ -4226,10 +4254,61 @@ def _references(kit, word, skip=()):
 PART_PATH = {'agent': 'agents/{}.md', 'skill': 'skills/{}', 'workflow': 'workflows/{}.js', 'rule': 'rules/{}.md'}
 
 
+def _rename_id(kit, kind, old, new):
+    """rename event E<n> E<m> | config-key a.b.old a.b.new (same parent): the row / key, the registry and every reference."""
+    if kind == 'event':
+        if not (re.fullmatch(r'E\d+', old) and re.fullmatch(r'E\d+', new)):
+            sys.exit('kittool rename event: ids look like E5')
+        man = manifest(kit) or {}
+        if old not in man.get('events', []) or new in man.get('events', []):
+            sys.exit(f'kittool rename event: {old} must be registered and {new} free')
+        _edit_manifest(kit, lambda m: m.__setitem__('events', [new if x == old else x for x in m.get('events', [])]))
+    else:
+        po, pn = old.split('.'), new.split('.')
+        if po[:-1] != pn[:-1]:
+            sys.exit('kittool rename config-key: same parent only (a.b.old -> a.b.new)')
+
+        def leaf(path):
+            d = json.loads(read(path))
+            cur = d
+            for x in po[:-1]:
+                cur = cur.get(x) if isinstance(cur, dict) else None
+            if not isinstance(cur, dict) or po[-1] not in cur or pn[-1] in cur:
+                return False
+            items = [(pn[-1] if x == po[-1] else x, v) for x, v in cur.items()]   # same place in the file
+            cur.clear()
+            cur.update(items)
+            with open(path, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
+            return True
+        if not leaf(os.path.join(kit, PATHS_JSON)):
+            sys.exit(f'kittool rename config-key: {old} must exist in {PATHS_JSON} and {new} must not')
+        loc = os.path.join(kit, PATHS_JSON.replace('example', 'local'))
+        if os.path.exists(loc) and leaf(loc):
+            print(f'migrated {os.path.basename(loc)}: {old} -> {new}')
+    rx = re.compile(r'(?<![\w.-])' + re.escape(old) + r'(?![\w-]|\.\w)')
+    for f in _git(kit, 'ls-files').stdout.splitlines():
+        p = os.path.join(kit, f)
+        if f.startswith(GENERATED) or f == PATHS_JSON or not f.lower().endswith(TEXT_EXT) or not os.path.isfile(p):
+            continue
+        with open(p, encoding='utf-8', errors='replace', newline='') as fh:
+            raw = fh.read()
+        t2 = rx.sub(new, raw)
+        if t2 != raw:
+            with open(p, 'w', encoding='utf-8', newline='') as fh:
+                fh.write(t2)
+            print(f'updated {f}')
+    _regen(kit)
+    print(f'renamed {kind} {old} -> {new}')
+    return 0
+
+
 def cmd_rename(a):
-    """kittool.py rename agent|skill|workflow|rule <old> <new>: moves the file(s), rewrites every reference, updates the manifest
-    (old -> new joins _manifest.renamed: the migration note), regenerates the ports. No alias stays."""
+    """kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new>: moves the part, rewrites every reference, updates
+    the manifest (a part's old -> new joins _manifest.renamed; a config key also moves in kit.local.json), regenerates the ports."""
     kit = KIT_DIR
+    if len(a) >= 3 and a[0] in ('event', 'config-key'):
+        return _rename_id(kit, *a[:3])
     if len(a) < 3 or a[0] not in PART_PATH:
         print(cmd_rename.__doc__, file=sys.stderr)
         return 2
@@ -4252,7 +4331,7 @@ def cmd_rename(a):
         p = os.path.join(kit, f)
         with open(p, encoding='utf-8', errors='replace', newline='') as fh:
             raw = fh.read()
-        t2 = rx.sub(new, raw)
+        t2 = rx.sub(lambda mt: mt.group(1) + new + mt.group(2), raw)   # keep joined prefix / suffix (last-<old>, <old>s)
         if t2 != raw:
             with open(p, 'w', encoding='utf-8', newline='') as fh:
                 fh.write(t2)
@@ -4401,7 +4480,7 @@ def cmd_release(a):
 REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
           'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\bCU-\w+',
           'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
-          'cmd': r'`[^`]*\b(?:pwsh|python|node|git|dev\.ps1|orch\.ps1|qa\.ps1|kit\.ps1|swarm\.ps1|localenv\.ps1|kittool\.py|devtools\.py|npm|&)\b[^`]*`',
+          'cmd': r'`[^`]*\b(?:pwsh|python|node|git|dev\.ps1|orch\.ps1|qa\.ps1|swarm\.ps1|localenv\.ps1|kittool\.py|devtools\.py|npm|&)\b[^`]*`',
           'evidence': r'\.(?:png|jpe?g|json|log|txt|html?)\b|https?://\S+',
           'expected': r'(?i)\bexpected\b', 'options': r'(?m)^\s*[-*]?\s*(?:Option\s+)?A[:)]', 'recommended': r'(?i)\brecommended\b',
           'verdict': r'\b(?:PASS|FAIL|BLOCKED|PASS_WITH_NOTE|NOT_TESTED)\b',
@@ -4551,7 +4630,7 @@ ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}
         'flow': ({'--readme', '--watch', '--open', '--public'}, {'--out', '--minutes'}, True),
         'port': ({'--check'}, set(), False),
         'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False),
-        'cost': ({'--steps', '--json'}, set(), True),
+        'cost': ({'--steps', '--routes', '--json'}, set(), True),
         'prose': ({'--json', '--kinds'}, {'--kind'}, False),
         'new': (set(), {'--crew', '--skill'}, False), 'rename': (set(), set(), False), 'remove': (set(), set(), False),
         'release': ({'--tag', '--publish'}, set(), False)}

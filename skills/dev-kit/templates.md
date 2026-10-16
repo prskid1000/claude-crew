@@ -214,7 +214,7 @@ Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Q
 UNKNOWN, never a state. Idempotent where possible. `learn` signals for surprises.
 
 ## Audit report
-Saved to `<runtime>/logs/kit-audits/audit-<date>.md` (kitty step 9).
+Saved to `<runtime>/logs/kitty-audits/audit-<date>.md` (kitty step 9).
 ```markdown
 # Kit audit <date> (<commit>, branch kit/audit-<date>)
 ## Result

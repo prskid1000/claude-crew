@@ -46,14 +46,34 @@ export const meta = {
 } */
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
-let ARGS0 = args || {}   // for a resume (recordArgs)
+const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
+const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
+// launch record first (orch.ps1 launch -Self, FNV-1a); runDir rides along once known
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : `select-${R.name || R.target || 'run'}`) + (R.instance ? `-${R.instance}` : '')
+async function recordArgs(run, runDir, phaseName) {
+  const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
+  const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}
+1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+<<<ARGS
+${json}
+ARGS>>>
+2. Run in PowerShell (pwsh 7): & ${K0}/skills/orchestrate/orch.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}
+Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
+  for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+    const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
+    if (r && r.ok) return true
+  }
+  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
+  return false
+}
+await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')
 // PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
   phase('Prepare')
   const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
   if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
-  const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
   const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
   const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
     statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tracking}`, runSettings: rest }
@@ -67,7 +87,8 @@ Return runDir (absolute, forward slashes), items (count in run.json), left [{ id
   for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
   log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
   if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
-  ARGS0 = R = { ...rest, runDir: prep.runDir }   // so a resume reuses the prepared run
+  R = { ...rest, runDir: prep.runDir }
+  await recordArgs(RUN0, prep.runDir, 'Prepare')   // same args + fnv, now with runDir
 }
 if (R.runDir && !Array.isArray(R.items)) {
   // validate: small models may truncate run.json
@@ -188,26 +209,6 @@ const AUDIT_SCHEMA = {
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }, lessonsChanged: { type: 'array', items: { type: 'string' } } }, required: ['signals', 'lessonsChanged'] }
 const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
-// resumes need the full args byte-exact (orch.ps1 launch -Self)
-const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
-async function recordArgs(wf, run, a, phaseName) {
-  const json = JSON.stringify(a)
-  const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
-  const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
-1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
-<<<ARGS
-${json}
-ARGS>>>
-2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}
-Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
-  for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
-    const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model, effort: 'low' })
-    if (r && r.ok) return true
-  }
-  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
-  return false
-}
-await recordArgs('testy', R.instance ? `${RUNNAME}-${OWNER}` : RUNNAME, ARGS0, 'Test')
 
 // an item may name its own env (it.target)
 const tgt = (it) => (it && it.target) || R.target || ''
@@ -548,7 +549,7 @@ async function runItem(it, idx, L) {
   const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new')
   if (it.skipClose || holdLocal) {
     // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
-    const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator decides (fix + qa.ps1 retest, or finalize -AcceptNotTested)` : 'publish left to the lead (skipClose)'
+    const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + qa.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'
     await agent(`STEP (checky, role lead): write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}

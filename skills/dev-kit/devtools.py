@@ -34,7 +34,7 @@ shutil.which, so the same names work on every OS.
 """
 import argparse, hashlib, html, json, os, re, shutil, subprocess, sys, tempfile, time
 from collections import Counter
-import xml.etree.ElementTree as ET   # for lbcheck
+import xml.etree.ElementTree as ET
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
@@ -114,18 +114,36 @@ def locked(path, stale=120):
                 pass
 
 
+# like lib.ps1 Invoke-KitRetry: transient errors retry (2 s, 6 s); a write retries only errors proving nothing was sent
+TRANSIENT = re.compile(r'(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests')
+NO_CONNECT = re.compile(r'(?i)could not resolve|no such host|connection refused|unreachable|dial tcp')
+
+
+def _is_write(cmd):
+    s = [str(c) for c in cmd[1:]]
+    m = next((s[i + 1] for i, c in enumerate(s[:-1]) if c in ('-X', '--method')), 'GET')
+    return m.upper() != 'GET' or any(w in s[:4] for w in ('create', 'merge', 'update', 'comment', 'note', 'edit', 'close', 'upload', 'delete'))
+
+
 def _run(cmd, cwd=None, check=False):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
-    try:   # a hung CLI must not outlive the tool timeout
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=120)
-    except subprocess.TimeoutExpired:
-        if check:
-            raise SystemExit(f'timed out after 120 s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
-        return 'error: timed out after 120 s'
-    out = ((p.stdout or '') + (p.stderr or '')).strip()
-    if check and p.returncode:   # a failed write must not print 'done' / exit 0
-        raise SystemExit(f'failed (exit {p.returncode}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
+    sec = int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 60)   # net.timeoutSec, as lib.ps1
+    tries, write, delay = max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), _is_write(cmd), 2
+    for i in range(1, tries + 1):
+        try:   # a hung CLI must not outlive the tool timeout
+            p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=sec)
+            out, rc, hung = ((p.stdout or '') + (p.stderr or '')).strip(), p.returncode, False
+        except subprocess.TimeoutExpired:
+            out, rc, hung = f'error: timed out after {sec} s', -1, True
+        if not rc or i >= tries or not ((hung and not write) or (NO_CONNECT if write else TRANSIENT).search(out)):
+            break
+        time.sleep(delay)
+        delay *= 3
+    if check and hung:
+        raise SystemExit(f'timed out after {sec} s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
+    if check and rc:   # a failed write must not print 'done' / exit 0
+        raise SystemExit(f'failed (exit {rc}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
     return out
 
 
@@ -143,8 +161,7 @@ def _text(arg):
 
 
 def _body(arg):
-    """A body that must come from a file (mr, finish, newtask): a missing file is an error, never the file name as the body
-    (an MR once opened with the literal 'body.md' as its description). Multi-line text passes as it is."""
+    """Body from a file (mr, finish, newtask): a missing file is an error, never its name as the body; multi-line text passes."""
     if os.path.isfile(arg) or '\n' in arg:
         return _text(arg)
     raise SystemExit(f'file not found: {arg} - write it first (nothing was created)')
@@ -157,7 +174,7 @@ TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {})
 
 
 def _tracker(*args):
-    """Run dev.ps1 tracker <verb> ...; long texts go through a temp file (dev.ps1 tracker reads a file path as its content)."""
+    """dev.ps1 tracker <verb> ...; long texts go via a temp file (it reads a file path as the content)."""
     tmp = []
     try:
         argv = []
@@ -201,7 +218,7 @@ def subtasks(parent, statuses=None):
 
 
 def prose(kind, text):
-    """templates.md "Writing standards": print the findings of kittool.py prose for a text about to be published (never truncates)."""
+    """Print kittool.py prose findings (templates.md "Writing standards") for a text about to be published; never truncates."""
     tool = os.path.join(KIT_DIR, 'skills', 'orchestrate', 'kittool.py')
     if not os.path.isfile(tool):
         return []
@@ -230,7 +247,7 @@ def new_task(list_id, parent, assignee, name, desc_md, priority='2'):
 
 
 def set_status(tid, status):
-    """status: a logical name (review, promoted, inTest, closed, ... mapped by tracker.statuses) or the tracker's own name."""
+    """status: logical (review, promoted, inTest, closed, ... via tracker.statuses) or the tracker's own name."""
     return _tracker('status', tid, status)
 
 
@@ -271,8 +288,8 @@ def remote(worktree):
 
 
 def target_of(worktree):
-    """The MR target: the worktree's record (dev.ps1 wt new), else kit.local.json repos[].target of this repo, else origin/HEAD.
-    A fallback is printed (stderr) with where it came from; None only when all three are missing."""
+    """MR target: the worktree's record (dev.ps1 wt new), else kit.local.json repos[].target, else origin/HEAD.
+    A fallback is printed (stderr) with its source; None when all three are missing."""
     gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
     gd = gd if os.path.isabs(gd) else os.path.join(worktree, gd)
     f = os.path.join(gd, 'claude-target')
@@ -308,7 +325,7 @@ FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
 
 def _verified_gaps(body_md):
-    """'## How tested' should say what was not run and how pure logic was proven (templates.md "MR body"): True when it has neither line."""
+    """True when '## How tested' says neither what was not run nor how pure logic was proven (templates.md "MR body")."""
     m = re.search(r'^## How tested[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
     sec = m.group(1) if m else ''
     return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
@@ -318,8 +335,7 @@ UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/l
 
 
 def _ui_line_missing(worktree, tgt, body_md):
-    """templates.md "MR body" '## How tested' carries '- UI: <spec / screenshot> (or "not a UI change")': the changed UI files when the body has no
-    UI: line and the diff against origin/<target> touches templates or styles, else []."""
+    """Changed UI files (templates / styles vs origin/<target>) when '## How tested' has no 'UI:' line (templates.md "MR body"), else []."""
     if re.search(r'(?im)^\s*[-*]?\s*(\*\*)?UI(\*\*)?\s*:', body_md) or not tgt:
         return []
     out = _run(['git', '-C', worktree, 'diff', '--name-only', f'origin/{tgt}...HEAD'])
@@ -369,9 +385,8 @@ def mr_create(worktree, title, body_md, tgt=None):
 
 
 def _remember_automerge(ref):
-    """GitLab drops 'merge when pipeline succeeds' when new commits are pushed (e.g. a rebase after scheduling).
-    Record the intent in the durable tracking file (<kit>/tracking.local.json, "automerge"); orch.ps1 track run (every supervise
-    round) re-arms it until the MR merges."""
+    """GitLab drops merge-when-green on a new push (e.g. a rebase): record the intent in the durable tracking file ("automerge");
+    orch.ps1 track run re-arms it every supervise round until the MR merges."""
     path = kit_path('tracking')
     try:
         with locked(path):
@@ -392,7 +407,7 @@ MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NO
 
 
 def merge_word(res):
-    """The status word on the last line of auto_merge's result (NOT_MERGED when there is none)."""
+    """Status word on the last line of auto_merge's result (NOT_MERGED when none)."""
     last = (str(res or '').strip().splitlines() or [''])[-1].strip()
     return last if last in MERGE_WORDS else 'NOT_MERGED'
 
@@ -402,8 +417,8 @@ def _progress(msg):
 
 
 def _gitlab_no_ci_config(enc, m):
-    """True when the project shows it has no CI: it does not require a pipeline to merge, has no custom CI config path,
-    no Auto DevOps and no .gitlab-ci.yml on the MR's target branch. (A 404 is required: any other error counts as 'has CI'.)"""
+    """True when the project has no CI: no required pipeline, no custom CI config path, no Auto DevOps, no .gitlab-ci.yml on
+    the MR's target branch (only a 404 counts as missing; any other error = 'has CI')."""
     p = _json(_run([GLAB, 'api', f'projects/{enc}']))
     if not p.get('id') or p.get('only_allow_merge_if_pipeline_succeeds') or p.get('ci_config_path') or p.get('auto_devops_enabled'):
         return False
@@ -415,7 +430,7 @@ def _gitlab_no_ci_config(enc, m):
 
 
 def _gitlab_final(enc, proj, iid, put, st):
-    """Re-read the MR after the merge PUT (a merge can take a moment) and turn its state into the result text + status word."""
+    """Re-read the MR after the merge PUT (it can take a moment); its state -> result text + status word."""
     m = {}
     for i in range(4):
         m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
@@ -436,7 +451,7 @@ def _gitlab_final(enc, proj, iid, put, st):
 
 
 def _norm_ref(ref):
-    """'web!12', a quoted ref, an MR/PR URL or an alias (kit.local.json repoAliases) -> (repo, iid) as orch.ps1 track stores them."""
+    """'web!12', a quoted ref, an MR/PR URL or an alias (repoAliases) -> (repo, iid) as orch.ps1 track stores them."""
     r = str(ref or '').strip().strip('\'"')
     group = CFG.get('gitlabGroup') or ''
     m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pull)/(?P<i>\d+)', r)
@@ -454,13 +469,13 @@ def _norm_ref(ref):
 
 
 def _same_repo(repo, proj):
-    """Does a tracking ref's repo ('web', 'group/web') name the project path from the origin remote ('group/sub/web')?"""
+    """Does a tracking ref's repo ('web', 'group/web') name the origin project path ('group/sub/web')?"""
     a, b = repo.lower().strip('/'), proj.lower().strip('/')
     return a == b or b.endswith('/' + a)
 
 
 def _host_mr_state(host, proj, repo, iid):
-    """'merged' / 'opened' / 'closed' / '' (unknown) of <repo>!<iid>, resolved like orch.ps1 track (gitlabGroup, else the remote's group)."""
+    """'merged'/'opened'/'closed'/'' (unknown) of <repo>!<iid>, resolved like orch.ps1 track (gitlabGroup, else the remote's group)."""
     if '/' in repo:
         path = repo
     else:
@@ -473,9 +488,8 @@ def _host_mr_state(host, proj, repo, iid):
 
 
 def unmerged_producers(proj, iid, state_of, tracking=None):
-    """Producer-before-consumer: the mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', written by orch.ps1 track add -MergeAfter)
-    in the durable tracking file whose consumer is this MR (<proj>!<iid>) and whose producer is not merged yet.
-    state_of(repo, iid) -> 'merged' / 'opened' / 'closed' / ''. Returns [(producer ref, state, task id)]."""
+    """Unmerged producers of this MR (<proj>!<iid>): tracking-file mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', orch.ps1
+    track add -MergeAfter). state_of(repo, iid) -> 'merged'/'opened'/'closed'/''. Returns [(producer ref, state, task id)]."""
     path = tracking or kit_path('tracking')
     try:
         with open(path, encoding='utf-8-sig') as fh:
@@ -504,7 +518,7 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
 
 
 def held(proj):
-    """kit.local.json holdMerge: true (every repo) or repo names / aliases / paths; a held repo's MRs are never merged by a script."""
+    """holdMerge: true (every repo) or repo names / aliases / paths; a held repo's MRs are never merged by a script."""
     h = CFG.get('holdMerge')
     if h is True:
         return True
@@ -518,11 +532,9 @@ def _gh_workflows(worktree):
 
 
 def auto_merge(worktree, iid, max_wait=90):
-    """Ask the host to merge as soon as the pipeline is green (GitLab 'merge when pipeline succeeds', GitHub auto-merge), or merge
-    at once when it is green already or the project has no CI. Waits at most max_wait seconds (with flushed progress lines), so it
-    finishes inside an agent's tool timeout. The result's LAST line is exactly one status word (merge_word):
-    MERGED / SCHEDULED / WAIT (run again in a few minutes) / CONFLICT / PIPELINE_FAILED / NOT_MERGED, read back from the host.
-    A consumer MR whose registered producer (orch.ps1 track -MergeAfter) is not merged yet is not merged: WAIT ("waiting for producer")."""
+    """Merge when green (GitLab merge-when-pipeline-succeeds, GitHub auto-merge), or at once when green already or without CI.
+    Waits <= max_wait s with flushed progress (fits a tool timeout). Last line = one merge_word, read back from the host:
+    MERGED / SCHEDULED / WAIT (run again later) / CONFLICT / PIPELINE_FAILED / NOT_MERGED. Unmerged producer (track -MergeAfter): WAIT."""
     iid = str(iid).strip().rsplit('!', 1)[-1].lstrip('#')   # '!203' / 'web!203' / '#12' -> the number
     host, proj = remote(worktree)
     if held(proj):
@@ -546,9 +558,8 @@ def auto_merge(worktree, iid, max_wait=90):
         if st in ('failed', 'canceled'):
             return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
         args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true'] + (['-f', f"sha={m['sha']}"] if m.get('sha') else [])   # a push after the read refuses the merge
-        # No MR CI: merge-when-green waits forever. No pipeline required + no CI config -> merge now; CI file + no head/ref
-        # pipeline 5 min after the MR's update (not the commit date: an old commit pushed now has no pipeline YET) -> no CI.
-        # Else WAIT: GitLab merges at once without a head pipeline.
+        # no CI: merge-when-green waits forever. No pipeline required + no CI config -> merge now; CI file + no pipeline 5 min
+        # after the MR update (not the commit date: an old commit pushed now has none YET) -> no CI; else WAIT
         no_ci = False
         if st is None:
             if _gitlab_no_ci_config(enc, m):
@@ -617,7 +628,7 @@ def auto_merge(worktree, iid, max_wait=90):
 
 
 def merge_when_green(worktree, iid, timeout_min=90):
-    """Poll the pipeline; squash-merge when green. Never merges on failure or conflict. Prefer auto_merge (no waiting)."""
+    """Poll the pipeline; squash-merge when green, never on failure or conflict. Prefer auto_merge (no waiting)."""
     host, proj = remote(worktree)
     if held(proj):
         return f'{proj}!{iid} is held for approval (kit.local.json holdMerge)\nNOT_MERGED'
@@ -676,7 +687,7 @@ def gws(*args, params=None, body=None, upload=None):
 
 
 def keep_doc(title, path):
-    """markdown reports: keep a copy under <runtime>/work/docs (worktrees get removed) and return its path."""
+    """markdown reports: keep a copy under <runtime>/work/docs (worktrees get removed); return its path."""
     d = kit_path('docs', create=True)
     slug = re.sub(r'[^A-Za-z0-9]+', '-', title).strip('-')[:80] or 'doc'
     dst = os.path.join(d, slug + os.path.splitext(path)[1])
@@ -686,8 +697,8 @@ def keep_doc(title, path):
 
 
 def md_to_html(md, title=''):
-    """Small Markdown -> HTML converter (no dependency) for `doc`: headings, tables, lists, bold, italics, code, links, rules.
-    gws uploads Markdown as plain text (tables become pipes), so .md guides are converted before upload."""
+    """Dependency-free Markdown -> HTML for `doc` (gws uploads Markdown as plain text): headings, tables, lists, emphasis, code,
+    links, rules."""
     import html as _h
 
     def inline(t):
@@ -737,8 +748,8 @@ def md_to_html(md, title=''):
 
 
 def make_doc(title, html_path, parent=None):
-    """Publish a document. gdocs: upload HTML (or Markdown text) as a Google Doc shared anyone-with-link (reader); avoid '&' in titles.
-    markdown: keep the file (.md or .html) and return its path - attach it with dev.ps1 tracker attach <task> <path>."""
+    """Publish a document. gdocs: HTML (or Markdown) as a Google Doc, anyone-with-link reader; avoid '&' in titles.
+    markdown: keep the file (.md / .html), return its path (attach: dev.ps1 tracker attach <task> <path>)."""
     if REPORT_TYPE != 'gdocs':
         return keep_doc(title, html_path)
     if not GWS:
@@ -772,8 +783,8 @@ def make_doc(title, html_path, parent=None):
 
 # --- keepboth (rebase), lbcheck, self-test
 def keepboth(paths):
-    """Resolve simple conflict blocks by keeping OURS then THEIRS (append-only files only: changelog includes, route/nav lists,
-    i18n keys, DI registrations, barrel exports, requirements.txt, item lists). Never on real code conflicts."""
+    """Resolve conflict blocks as OURS then THEIRS; append-only files only (changelog includes, route/nav lists, i18n keys,
+    DI registrations, barrel exports, requirements.txt), never real code."""
     left = 0
 
     pat = re.compile(r'<<<<<<< [^\r\n]*\r?\n(.*?)(?:\|\|\|\|\|\|\| [^\r\n]*\r?\n.*?)?=======\r?\n(.*?)>>>>>>> [^\r\n]*(?:\r?\n|\Z)', re.S)   # last block may end the file
@@ -790,18 +801,12 @@ def keepboth(paths):
 
 
 def lbcheck(argv):
-    """Liquibase sanity check for any repo: replays the changelogs in master.xml order (schema only, approximate) and
-flags addColumn of a column that already exists, or createTable of a table that already exists, when the changeSet
-has no guarding <preConditions>. Also flags schema changeSets without a <rollback>.
-
-  python devtools.py lbcheck <path/to/master.xml> [sinceTimestamp]
-
-Only files whose name starts with a timestamp >= sinceTimestamp (yyyyMMddHHmmss) are reported (default: all), plus files named
-in env LBCHECK_CHANGED (basenames separated by '|'; dev.ps1 check passes the changelog files git changed recently, so repos that
-do not name changelogs with a timestamp are checked too).
-Includes are resolved relative to the including file, the classpath root (the folder above 'config/liquibase/...', else the
-'resources' folder) or master.xml's folder.
-Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n > 0."""
+    """Liquibase sanity check: replays master.xml's changelogs in order (schema only, approximate); flags addColumn / createTable
+of an existing column / table without guarding <preConditions>, and schema changeSets without <rollback>.
+Reports files whose name timestamp >= since (yyyyMMddHHmmss; default all) plus basenames in env LBCHECK_CHANGED ('|'-separated;
+dev.ps1 check passes recently changed changelogs, so untimestamped names are checked too). Includes resolve against the
+including file, the classpath root (above 'config/liquibase/...', else 'resources') or master.xml's folder.
+Prints one line per issue, then 'ISSUES <n>'; exit 1 when n > 0."""
     sys.stdout.reconfigure(encoding='utf-8')
     MASTER = os.path.abspath(argv[0])
     SINCE = argv[1] if len(argv) > 1 else '0'
@@ -816,17 +821,14 @@ Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n 
 
     tables, issues = {}, []
 
-
     def local(tag):
         return tag.split('}', 1)[-1]
-
 
     def resolve(f, base):
         for p in (os.path.join(base, f), os.path.join(CP_ROOT, f.lstrip('/')), os.path.join(MASTER_DIR, f.lstrip('/'))):
             if os.path.exists(p):
                 return p
         return os.path.join(CP_ROOT, f.lstrip('/'))
-
 
     def apply(fname, cs, report):
         guarded = any(local(ch.tag) == 'preConditions' for ch in cs)
@@ -863,7 +865,6 @@ Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n 
                     tables[tn][new] = tables[tn].pop(old)
         if report and kinds and not has_rb and not kinds <= AUTO_ROLLBACK:
             issues.append(f'{fname} {cs.get("id")}: {", ".join(sorted(kinds))} without a <rollback>')
-
 
     def walk(path, fname):
         try:
@@ -902,7 +903,6 @@ Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n 
                     if f.endswith('.xml'):
                         walk(os.path.join(d, f), f)
 
-
     walk(MASTER, 'master.xml')
     for i in issues:
         print(i)
@@ -911,17 +911,15 @@ Prints one line per issue and ends with 'ISSUES <n>'; the exit code is 1 when n 
 
 
 def selftest():
-    """Offline checks: a missing MR/solution body file is refused; mergeAfter pairs find the producer and warn on a repo name that
-    does not match the remote; merge_word reads the last line. Exit 0 = all pass."""
+    """Offline checks (missing body file refused; mergeAfter finds producers, warns on an unmatched repo name; merge_word).
+    Exit 0 = all pass."""
     import contextlib as _c, io
     fails = 0
-
 
     def expect(what, cond):
         nonlocal fails
         print(('PASS ' if cond else 'FAIL ') + what)
         fails += 0 if cond else 1
-
 
     try:
         _body('no-such-body.md')
@@ -1013,23 +1011,15 @@ def selftest():
 
 
 
-# ===== migrations: local env migration audit (run by localenv.ps1)
-# LIGHT changeSets revert exactly when their layer leaves; HEAVY ones need a sandbox / DB snapshot.
-#   python devtools.py migrations classify --repo <checkout> --base <ref> --head <sha> [--config <json file>]
-#     [--under a,b] [--save <dir>]
-#   python devtools.py migrations plan --leaving <manifest.json,..> [--staying <manifest.json,..>]
-#     [--repo <worktree>] [--out <dir>]
-#   python devtools.py migrations rules [--config <json file>] | migrations selftest
-# Exit codes: 0 ok · 1 error (unreadable repo, bad config) · 2 usage error.
-# classify: migration files (config "pattern", below --under) changed from merge-base(base, head) to head ->
-#   { class: light|heavy|none, changesets: [ { file, path, id, author, hash, status, class, rule, why, guarded, creates, refs } ],
-#     reasons: [ "<file>::<id> <rule>: <why>" ] }; --save: <dir>/manifest.json + head files in <dir>/files/<file>.
-# plan: leaving layers' changeSets (manifests in live order) absent from --repo / staying manifests (file/id/author/hash)
-#   -> { revert: [ newest first ], kept, blocked: [ staying changeSets using what a revert removes ] }; --out:
-#   <dir>/revert.json, <dir>/files (changelogs cut to the reverts) + localenv-revert.xml (rollback-count touches only those).
-# Rules: DEFAULT_RULES; config "rules" replaces, "extraRules" go first; first match decides; none = light.
-# Parsers: Liquibase XML/YAML/JSON/formatted SQL; config "parsers" [ { match, parser | cmd } ] adds more (cmd: file path
-#   appended, prints changeset JSON). Unparsed migration file = HEAVY.
+# ===== migrations: local env migration audit (run by localenv.ps1). LIGHT changeSets revert when their layer leaves; HEAVY need a snapshot.
+#   python devtools.py migrations classify --repo <checkout> --base <ref> --head <sha> [--config <json file>] [--under a,b] [--save <dir>]
+#   python devtools.py migrations plan --leaving <manifest.json,..> [--staying <manifest.json,..>] [--repo <worktree>] [--out <dir>]
+#   python devtools.py migrations rules [--config <json file>] | migrations selftest. Exit: 0 ok · 1 error · 2 usage.
+# classify: migration files (config "pattern", below --under) changed merge-base..head -> { class: light|heavy|none, changesets:
+#   [ { file, path, id, author, hash, status, class, rule, why, guarded, creates, refs } ], reasons }; --save: manifest.json + files/.
+# plan: leaving changeSets absent from --repo / staying manifests -> { revert (newest first), kept, blocked }; --out: revert.json,
+#   files/ (changelogs cut to the reverts), localenv-revert.xml. Rules: DEFAULT_RULES ("rules" replaces, "extraRules" first; first
+#   match decides; none = light). Parsers: Liquibase XML/YAML/JSON/SQL + config "parsers" [ { match, parser | cmd } ]; unparsed = HEAVY.
 KNOWN = {'createTable', 'dropTable', 'addColumn', 'dropColumn', 'renameColumn', 'renameTable', 'modifyDataType', 'createIndex',
          'dropIndex', 'addForeignKeyConstraint', 'dropForeignKeyConstraint', 'addUniqueConstraint', 'dropUniqueConstraint',
          'addPrimaryKey', 'dropPrimaryKey', 'addNotNullConstraint', 'dropNotNullConstraint', 'addDefaultValue', 'dropDefaultValue',
@@ -1829,10 +1819,9 @@ Project profile (<kit>/skills/dev-kit/projects/<project>.local.md, local; one pe
 ## Review lessons
 '''
 
-# validate (exit 1 on any problem): JSON array, exact 23 keys, string values, allowed vocab, unique ids, in-scope triage
-# filled, out-of-scope analytical empty. summary: <module>-summary.md (chat / MR) + .html (Docs friendly; share via doc).
+# validate (exit 1 on a problem): JSON array, 23 string keys, vocab, unique ids, in-scope triage filled, out-of-scope analysis
+# empty. summary: <module>-summary.md (chat / MR) + .html (share via doc).
 def validate(argv):
-
 
     KEYS = ['id', 'module', 'layer', 'type', 'in_scope', 'subtype', 'title', 'area', 'severity', 'current', 'expected',
             'business_impact', 'root_cause', 'why_today', 'why_not_prod', 'customer_impact', 'db_migration', 'suggested_fix',
@@ -1907,7 +1896,6 @@ def validate(argv):
 
 def summary(argv):
 
-
     ap = argparse.ArgumentParser()
     ap.add_argument('file')
     ap.add_argument('--sources', default='')
@@ -1961,7 +1949,6 @@ def summary(argv):
     H.append(f"<p>{len(ins)} in-scope findings: " + ', '.join(f'{by_type[t]} {t}' for t in ('Bug', 'Performance', 'Tech Debt') if by_type[t]) +
              f". {len(unverified)} rest on unverified inference; {len(dbm)} need a DB migration." + (f" Sources: {E(a.sources)}." if a.sources else '') + "</p>")
 
-
     def table(items, cols):
         t = ["<table style='border-collapse:collapse;width:100%'><tr>"] + [f"<td style='{cell};background:#1f3a68;color:#fff'><b>{c}</b></td>" for c, _ in cols] + ['</tr>']
         for i, r in enumerate(items):
@@ -1978,7 +1965,6 @@ def summary(argv):
                     t.append(f"<td style='{cell}'>{v}</td>")
             t.append('</tr>')
         return ''.join(t) + '</table>'
-
 
     if top:
         H.append(f"<h2 style='{h2}'>Critical and High</h2>" + table(top, [('ID', 'id'), ('Sev', 'severity'), ('Title', 'title'), ('Current', 'current'), ('Where', 'code_location'), ('Fix', 'suggested_fix')]))
@@ -1997,6 +1983,19 @@ if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     a = sys.argv[1:]
     cmd = a[0] if a else ''
+    # per-command usage from the header; --help never becomes an id; unknown flags and missing args are usage errors
+    use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
+    ARITY = {'task': 1, 'subtasks': 1, 'newtask': 5, 'status': 2, 'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'merge-wait': 2,
+             'doc': 2, 'keepboth': 1, 'lbcheck': 1, 'findings': 1, 'migrations': 1, 'selftest': 0}
+    FLAGS = {'findings': {'--sources', '--out'}}
+    if cmd in ('-h', '--help', 'help') or (use and any(x in ('-h', '--help') for x in a[1:]) and cmd != 'migrations'):
+        print('\n'.join(use) if use else __doc__)
+        sys.exit(0)
+    bad = [x for x in a[1:] if re.match(r'^--?[A-Za-z][\w-]*$', x) and x not in FLAGS.get(cmd, set())] if cmd != 'migrations' else []
+    if cmd not in ARITY or bad or len(a) - 1 < ARITY[cmd]:
+        print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY else __doc__, file=sys.stderr)
+        print('\n'.join(use) if use else '', file=sys.stderr)
+        sys.exit(2)
     if cmd == 'task':
         t = task(a[1])
         print(' | '.join([t.get('name') or '', t.get('status') or '', t.get('url') or task_url(a[1]), str(t.get('parent') or '')]))

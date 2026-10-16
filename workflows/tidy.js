@@ -19,7 +19,7 @@ const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const pick = (stage) => ((A.models || {})[stage] ? { model: A.models[stage] } : {})
 const RT = (A.runtimeDir || `${C}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"guard-log": "logs/guard.log", "qa-runs": "work/qa-runs/", "audits": "work/audits/", "retros": "logs/retros/"}, "durable": {"signals": "learning.jsonl", "last-retro": "learning.stamp"}}
+const KP = {"runtime": {"guard-log": "logs/guard.log", "qa-runs": "work/qa-runs/", "audits": "work/audits/", "retros": "logs/retros/", "launches": "work/launches/"}, "durable": {"signals": "learning.jsonl", "last-retro": "learning.stamp"}}
 const rp = (n) => (n in KP.durable ? `${C}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -74,6 +74,20 @@ const LENSES = [
 ]
 
 phase('Analyse')
+// launch record (orch.ps1 launch -Self, FNV-1a): a resume needs the args byte-exact
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
+for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+  const r = await agent(`STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
+1. Write the line between the markers to ${AF} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+<<<ARGS
+${AJ}
+ARGS>>>
+2. Run in PowerShell: & ${C}/skills/orchestrate/orch.ps1 launch -Self -Script tidy.js -Run 'tidy' -ArgsFile '${AF}' -Fnv ${fnv(AJ)}
+Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`,
+    { label, phase: 'Analyse', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
+  if (r && r.ok) break
+}
 await agent(`STEP: write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')}.start (create the folder), nothing else. Return ok=true.`,
   { label: 'stamp-start', phase: 'Analyse', agentType: 'kitty', model: 'haiku', effort: 'low' })
 const found = await parallel(LENSES.map((l) => () => agent(`Kind retro (analyst): you analyse the multi-agent dev/QA kit. Lens: ${l.focus}.

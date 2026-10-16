@@ -14,20 +14,7 @@ check 5 = typecheck UNRUN (nothing checked: say "typecheck unrun" in the MR; the
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path $PSScriptRoot 'lib.ps1')
-# ---- wt: worktrees for parallel agents (any repo, stack)
-#   $D = '<workspace>/.claude/skills/dev-kit/dev.ps1'
-#   & $D wt new -Repo <main checkout> -Branch <branch> -Target <target branch> -Name <agent prefix> [-LinkFrom <checkout>]
-#   & $D wt sync -Dir <wt>  # fetch + rebase onto the target (before editing, push, merge)
-#   & $D wt commit -Dir <wt> -Message "<msg>" | -MessageFile <file>   # hooks really run (.husky fixed in worktrees)
-#   & $D wt status -Dir <wt>  # branch, target, ahead/behind, dirty files, linked deps
-#   & $D wt remove -Dir <wt> [-Force]  # unlink deps safely, then remove the worktree
-#   & $D wt list -Repo <main checkout>
-# new: <Root>/<Name>-<repo folder> on a new branch from origin/<Target>; links node_modules (next to tracked package.json) and
-#   .venv (next to pyproject.toml/requirements.txt) from -LinkFrom (default: main checkout) as junctions/symlinks; warns on
-#   package.json dependency drift; copies .husky/_. commit first adds what a worktree lacks of these.
-# Never npm/yarn/pip install in a linked folder: it writes into the source checkout.
-# sync/commit/status/remove: -Dir (default: cwd) must be a worktree top, else refused (git -C would hit an enclosing repo).
-# commit also completes an in-progress merge (deploy branch: git merge --no-commit).
+# ---- wt: a worktree per agent; deps linked from -LinkFrom (never install into a linked folder), hooks really run
 function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
@@ -36,7 +23,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
-# else git -C walks up to an enclosing repo and add -A sweeps its files in
+# else git -C hits an enclosing repo
 function Resolve-Wt($d) {
   if (-not $d) { $d = (Get-Location).Path }
   if (-not (Test-Path -LiteralPath $d -PathType Container)) { throw "no such folder: $d" }
@@ -51,7 +38,6 @@ function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
   (@('dependencies', 'devDependencies') | ForEach-Object { if ($p.$_) { $p.$_.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
 }
-# links node_modules / .venv from $src where missing; returns them
 function Add-DepLinks($path, $src, $target) {
   $made = @()
   foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | Where-Object { $_ -notmatch 'node_modules/' })) {
@@ -68,7 +54,6 @@ function Add-DepLinks($path, $src, $target) {
   }
   $made
 }
-# copies .husky/_ from the first source having it
 function Copy-HookDirs($path, $sources) {
   foreach ($hs in @($sources | Where-Object { $_ } | ForEach-Object { (Resolve-Path $_).Path } | Select-Object -Unique)) {
     foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
@@ -77,7 +62,7 @@ function Copy-HookDirs($path, $sources) {
     }
   }
 }
-# git sees a symlink as a file (dir rule node_modules/ misses it; add -A would commit it): exclude each link path
+# git sees a symlink as a file (add -A would commit it): exclude each link
 function Exclude-Links($path, $links) {
   if (-not $links -or $KitIsWindows) { return }
   $ex = Join-Path (git -C $path rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
@@ -91,7 +76,6 @@ switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
     $Repo = (Resolve-Path $Repo).Path
-    # Root: -Root, $env:CLAUDE_WT_ROOT, kit.local.json worktreeRoots[0] (cleanup/status scan it too), else <repo parent>-wt
     if (-not $Root) {
       $kcRoot = $null
       try { if ($env:CLAUDE_WT_ROOT -or (Get-KitValue 'worktreeRoots' $null)) { $kcRoot = @($KitConf.WorktreeRoots)[0] } } catch { }
@@ -99,8 +83,7 @@ switch ($Action) {
     }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
     if (Test-Path $path) { throw "$path already exists - resume there (dev.ps1 wt status -Dir $path) or pick another -Name" }
-    # no -LinkFrom: repos[].linkFromByTarget[<target>] (linkFrom for the default target): another branch's installs = wrong deps.
-    # Resolved before the worktree exists: a missing configured source is an error (no silent fallback).
+    # another branch's installs = wrong deps; a missing configured source is an error, no fallback
     $r = $null
     $kc = Join-Path $PSScriptRoot 'kit.local.json'
     if (Test-Path $kc) {
@@ -127,17 +110,16 @@ switch ($Action) {
       }
     }
     G -C $Repo fetch -q origin $Target | Out-Null
-    $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # a bare name matches by suffix (fix also matched f/fix)
+    $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # a bare name matches by suffix
     git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
-    # the local branch outlives wt remove: reuse it as is (-B would reset it and lose unpushed commits)
+    # reuse the local branch: -B would lose unpushed commits
     if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch already exists - checked it out as it is$(if ($remoteBranch) { " (also on origin: compare with origin/$Branch before pushing)" })" }
     elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
     $links = @(Add-DepLinks $path $src $Target)
-    # repos[].linkPaths: git-ignored local files every worktree needs (credentials, .env ...) from the dependency source, else
-    # main; folders linked, files copied.
+    # linkPaths: git-ignored files every worktree needs
     foreach ($lp in @($r.linkPaths) | Where-Object { $_ }) {
       $from = @((Join-Path $src $lp), (Join-Path $Repo $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
       $to = Join-Path $path $lp
@@ -146,7 +128,7 @@ switch ($Action) {
       New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
       if ((Get-Item $from).PSIsContainer) { New-DirLink $to $from; $links += $to } else { Copy-Item $from $to }
     }
-    # a --ignore-scripts dependency checkout has no .husky/_: take missing hook folders from the main checkout
+    # a --ignore-scripts checkout has no .husky/_
     Copy-HookDirs $path @($src, $Repo)
     Meta $path 'links' ($links -join "`n")
     Exclude-Links $path $links
@@ -167,8 +149,7 @@ switch ($Action) {
     $Dir = Resolve-Wt $Dir
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if (-not $Message -or -not $Message.Trim()) { throw 'commit needs -Message or -MessageFile' }
-    # a worktree not made by new lacks .husky/_ and its hooks' node_modules: add them from the main checkout.
-    # main checkout = the common git dir's core.worktree (submodule: .git/modules/<name>), else the common dir's parent
+    # a worktree not made by new lacks .husky/_ and hook node_modules
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
     $cw = git --git-dir="$common" config core.worktree
     $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
@@ -181,14 +162,14 @@ switch ($Action) {
     }
     $hp = (git -C $Dir config core.hooksPath)
     $c = @()
-    # a hooksPath folder without hook scripts (husky v8 .husky/_ with only husky.sh) skips hooks too
+    # a hooksPath without hook scripts skips hooks too
     $hpFull = if ($hp -and [IO.Path]::IsPathRooted($hp)) { $hp } elseif ($hp) { Join-Path $Dir $hp }
     if ($hp -and -not (Test-Path (Join-Path $hpFull 'pre-commit')) -and -not (Test-Path (Join-Path $hpFull 'prepare-commit-msg'))) {
       if (Test-Path (Join-Path $Dir '.husky')) { $c = @('-c', 'core.hooksPath=.husky') }
       else { Write-Warning "core.hooksPath=$hp does not exist in this worktree - hooks would be skipped" }
     }
-    if (-not $NoStage) { git -C $Dir add -A }   # stage everything (agents expect commit to include their changes)
-    # a merge in progress is a merge commit: its subject names branches, not a Conventional type
+    if (-not $NoStage) { git -C $Dir add -A }
+    # merge subjects name branches, not a Conventional type
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
     $null = Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message
     git -C $Dir @c commit -m $Message
@@ -206,18 +187,18 @@ switch ($Action) {
   'remove' {
     $Dir = Resolve-Wt $Dir
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
-    # entries inside a node_modules farm belong to it: removed and restored with it
+    # farm entries go with the farm
     $farms = @($links | Where-Object { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })
     $links = @($links | Where-Object { $l = $_; -not @($farms | Where-Object { $l.StartsWith($_ + [IO.Path]::DirectorySeparatorChar) }).Count })
     if (-not $Force) {
-      # git worktree remove's own dirty test (untracked counts), BEFORE any link goes; our links don't count
+      # git's dirty test before any link goes; our links don't count
       $mine = @($links | ForEach-Object { [IO.Path]::GetRelativePath($Dir, $_).Replace('\', '/') })
       $dirty = @(git -C $Dir status --porcelain | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) })
       if ($dirty) { throw "uncommitted or untracked files in $Dir - commit/push or delete them, or pass -Force:`n$($dirty | Select-Object -First 10 | Out-String)" }
     }
     $undo = @(foreach ($l in $links) { if ($l -notin $farms) { , @($l, [string]@((Get-Item $l -Force).Target)[0]) } })
     $farmUndo = @(foreach ($f in $farms) { $m = Join-Path $f '.kit-farm.json'; if (Test-Path $m) { , @($f, ((Get-Content $m -Raw).Trim() -split '\|')) } })
-    foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }   # links only, never the linked folders (farm: its links, then the folder)
+    foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }   # links only, never their targets
     $main = ((git -C $Dir worktree list --porcelain | Select-Object -First 1) -replace '^worktree ', '')
     git -C $main worktree remove $(if ($Force) { '--force' }) $Dir
     if ($LASTEXITCODE) {
@@ -231,18 +212,12 @@ switch ($Action) {
 }
 }
 
-# ---- stack: a module's build/test commands, detected from marker files
-#   & $D stack -Dir <dir> [-Json]   # table (stack, dir, commands) or JSON
-# Nearest match from -Dir up to the git root. Placeholders filled by check: {tests}, {files}, {sln}.
-# run = the dev server / app start localenv.ps1 uses when a service names none ({port}).
-# Override: .claude-stack.json next to the marker; keys set replace detected ones, e.g.
-#   { "stack": "custom", "commands": { "compile": "make", "test": "make test T={tests}" } }
+# ---- stack: commands from the nearest marker file up to the git root; .claude-stack.json overrides
 function Invoke-Stack {
 param([string]$Dir = (Get-Location).Path, [switch]$Json)
 $ErrorActionPreference = 'Stop'
 $Dir = (Resolve-Path $Dir).Path
-if (Test-Path -LiteralPath $Dir -PathType Leaf) { $Dir = Split-Path $Dir }   # -Dir <file> (a .sln, pom.xml ...) = its folder
-# Repo-local wrappers: .\mvnw.cmd / .\gradlew.bat on Windows, ./mvnw / ./gradlew elsewhere
+if (Test-Path -LiteralPath $Dir -PathType Leaf) { $Dir = Split-Path $Dir }
 function Wrapper($d, $name, $winExt, $fallback) {
   if ($KitIsWindows) { if (Test-Path (Join-Path $d "$name.$winExt")) { return ".\$name.$winExt" } }
   elseif (Test-Path (Join-Path $d $name)) { return "./$name" }
@@ -253,7 +228,6 @@ function Has($d, $pattern) { [bool](Get-ChildItem -LiteralPath $d -Filter $patte
 function First($d, $pattern) { Get-ChildItem -LiteralPath $d -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
 function ReadJson($f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
 function ReadText($f) { if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue } else { '' } }
-# Node package manager: the lockfile in its folder or above, up to the git root; default npm
 function Get-NodePm($d) {
   $top = (git -C $d rev-parse --show-toplevel 2>$null); if ($top) { $top = (Resolve-Path $top).Path }
   $x = $d
@@ -266,19 +240,18 @@ function Get-NodePm($d) {
   }
   'npm'
 }
-# <pm> run <script> [args] in each package manager's argument form
 function NodeRun($pm, $script, $argText) {
   $a = if ($argText) { " $argText" } else { '' }
   switch ($pm) { 'npm' { "npm $(if ($script -ne 'test') { 'run ' })$script$(if ($a) { ' --' + $a })" } 'yarn' { "yarn $script$a" } default { "$pm run $script$a" } }
 }
-# a references-only tsconfig.json (Vite/Nx) type-checks nothing: use tsconfig.app.json when present
+# a references-only tsconfig.json type-checks nothing
 function TsProject($d) {
   $t = ReadText (Join-Path $d 'tsconfig.json')
   if ((Test-Path (Join-Path $d 'tsconfig.app.json')) -and $t -match '"references"\s*:\s*\[\s*\{' -and $t -match '"files"\s*:\s*\[\s*\]') { return 'tsconfig.app.json' }
   $null
 }
 
-# no unit-test target: spec.mjs bundles *.spec.ts with the project's esbuild, runs them under node (no TestBed/DOM)
+# no unit-test target: spec.mjs runs specs under node
 function NodeSpecCmd { "node `"$($KitCmd.spec)`" {tests}" }
 
 function Get-NodeTools($d) {
@@ -304,8 +277,7 @@ function Get-Stack($d) {
   if (Test-Path (Join-Path $d 'pom.xml')) {
     $s = 'java-maven'
     $mvn = Wrapper $d 'mvnw' 'cmd' 'mvn'
-    # offline (-o): no network / remote-repo lock contention between parallel builds; needs ~/.m2/repository
-    # (build.mavenOffline: false = never)
+    # offline: no repo lock contention between parallel builds
     $off = if ((Get-KitSetting 'build.mavenOffline' $true) -ne $false -and "$(Get-KitSetting 'build.mavenOffline' $true)" -ne 'false' -and (Test-Path (Join-Path $HOME '.m2/repository'))) { '-o ' } else { '' }
     $c.compile = "$mvn $off-q compile"
     $c.test = "$mvn $off-q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
@@ -317,7 +289,7 @@ function Get-Stack($d) {
     $android = (Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($android) {
       $s = 'android-gradle'
-      # Variant: .claude-stack.json androidVariant, else Debug (<first flavor>Debug with productFlavors: no plain Debug tasks)
+      # productFlavors: no plain Debug tasks
       $var = [string](ReadJson (Join-Path $d '.claude-stack.json')).androidVariant
       if (-not $var) {
         $var = 'Debug'
@@ -339,12 +311,12 @@ function Get-Stack($d) {
     }
   }
   elseif ((Has $d '*.sln') -or (Has $d '*.csproj') -or (Has $d '*.fsproj') -or (Has $d '*.vbproj')) {
-    # any non-SDK project in the solution -> MSBuild (builds SDK-style too)
+    # a non-SDK project needs MSBuild
     $projs = Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Include *.csproj, *.fsproj, *.vbproj -File -ErrorAction SilentlyContinue | Select-Object -First 50
     $legacy = [bool]($projs | Where-Object { -not (Select-String -LiteralPath $_.FullName -Pattern '<Project\s+Sdk=' -Quiet) } | Select-Object -First 1)
     if ($legacy) {
       $s = 'dotnet-msbuild'
-      # msbuild / vstest.console are on PATH only in a Developer prompt: else vswhere finds them
+      # msbuild is on PATH only in a Developer prompt
       $msb = 'msbuild'; $vst = 'vstest.console.exe'
       $vswhere = if ($KitIsWindows -and ${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe' }
       if ($vswhere -and (Test-Path $vswhere)) {
@@ -353,14 +325,14 @@ function Get-Stack($d) {
       }
       $c.compile = "$msb `"{sln}`" /m:2 /v:q /nologo /p:Configuration=Debug"
       $c.build = "$msb `"{sln}`" /m:2 /v:q /nologo /p:Configuration=Release"
-      $c.test = "$vst {tests}"   # .NET Framework test runner: Windows only
+      $c.test = "$vst {tests}"
     } else {
       $s = 'dotnet'
       $c.compile = 'dotnet build "{sln}" -nologo -v q -m:2'
       $c.test = 'dotnet test "{sln}" -nologo --filter "{tests}"'
       $c.format = 'dotnet format "{sln}" --verify-no-changes'
       $c.build = 'dotnet build "{sln}" -nologo -v q -c Release'
-      if ((Has $d '*.csproj') -or (Has $d '*.fsproj')) { $c.run = 'dotnet run --urls http://localhost:{port}' }   # a project folder (not a solution root)
+      if ((Has $d '*.csproj') -or (Has $d '*.fsproj')) { $c.run = 'dotnet run --urls http://localhost:{port}' }
     }
   }
   elseif (Test-Path (Join-Path $d 'angular.json')) {
@@ -368,8 +340,6 @@ function Get-Stack($d) {
     $tsc = if (Test-Path (Join-Path $d 'tsconfig.app.json')) { 'tsconfig.app.json' } else { 'tsconfig.json' }
     $c.typecheck = "npx tsc -p $tsc --noEmit"
     $c.build = 'npx ng build --configuration production'
-    # test only with a 'test' target; flags per builder (Karma takes --browsers, unit-test/Vitest not); none -> spec.mjs.
-    # build: --configuration production only when the build target defines it.
     $ngTest = $null
     try {
       $aj = Get-Content (Join-Path $d 'angular.json') -Raw | ConvertFrom-Json
@@ -382,24 +352,23 @@ function Get-Stack($d) {
     } catch { $ngTest = 'karma' }
     if ($ngTest -match 'karma') { $c.test = 'npx ng test --watch=false --browsers=ChromeHeadless --include {tests}' }
     elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
-    else { $c.test = NodeSpecCmd }   # no test target: spec.mjs
+    else { $c.test = NodeSpecCmd }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
     $c.run = 'npx ng serve --port {port}'
   }
   elseif (Test-Path (Join-Path $d 'package.json')) {
     $n = Get-NodeTools $d; $deps = @('node_modules')
     $s = if ($n.Deps -contains 'react-native') { 'react-native' } elseif ($n.Deps -contains 'next') { 'node-next' } elseif ($n.Deps -contains 'react') { 'node-react' } else { 'node' }
-    $pm = Get-NodePm $d   # npm / yarn / pnpm / bun, from the lockfile
+    $pm = Get-NodePm $d
     if ($n.Ts) { $tp = TsProject $d; $c.typecheck = if ($tp) { "npx tsc -p $tp --noEmit" } else { 'npx tsc --noEmit' } }
     if ($n.Vitest) { $c.test = 'npx vitest run {tests}' }
     elseif ($n.Jest) { $c.test = 'npx jest ' + $(if ($n.JestCfg) { "--config $($n.JestCfg) " } else { '' }) + '{tests} --no-watchman --forceExit' }
     elseif ($n.Scripts -contains 'test') { $c.test = NodeRun $pm 'test' '{tests}' }
-    elseif ($n.Ts -and $s -ne 'react-native') { $c.test = NodeSpecCmd }   # TypeScript web project with no test runner
+    elseif ($n.Ts -and $s -ne 'react-native') { $c.test = NodeSpecCmd }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
     if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = NodeRun $pm 'build' '' }
     $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null
     if ($s -eq 'react-native' -and $agw) { $c.build = "cd android && $agw assembleRelease" }
-    # dev server: Metro for React Native, else the project's dev / start script
     $c.run = if ($s -eq 'react-native') { if ($n.Deps -contains 'expo') { 'npx expo start --port {port}' } else { 'npx react-native start --port {port}' } }
              elseif ($n.Scripts -contains 'dev') { NodeRun $pm 'dev' '' } elseif ($n.Scripts -contains 'start') { NodeRun $pm 'start' '' } else { $null }
   }
@@ -409,7 +378,6 @@ function Get-Stack($d) {
           elseif (-not $KitIsWindows -and (Test-Path (Join-Path $d '.venv/bin/python'))) { '.venv/bin/python' }
           elseif ($KitIsWindows -or -not (Resolve-Tool python3)) { 'python' } else { 'python3' }
     $c.compile = "$py -m compileall -q -x `"[\\/](\.venv|venv|node_modules|\.git)[\\/]`" {files}"   # never walk a linked .venv
-    # ruff else flake8, pytest else unittest: one call to the project's interpreter; unaskable -> config files decide
     $cfgText = @('pyproject.toml', 'setup.cfg', 'tox.ini') | ForEach-Object { ReadText (Join-Path $d $_) }
     $have = $null
     $pyExe = if ($py -match '^\.venv') { Join-Path $d $py } else { (Resolve-Tool $py) }
@@ -425,7 +393,7 @@ function Get-Stack($d) {
       $c.lint = if ($have -match 'ruff' -and ($ruffCfg -or -not ($flakeCfg -and $have -match 'flake8'))) { "$py -m ruff check {files}" } elseif ($have -match 'flake8') { "$py -m flake8 {files}" } else { $null }
       $c.test = if ($have -match 'pytest' -or $pytestCfg) { "$py -m pytest {tests} -q" } else { "$py -m unittest {tests}" }
     }
-    if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }   # Django; other frameworks: .claude-stack.json commands.run
+    if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
   elseif (Test-Path (Join-Path $d 'go.mod')) {
@@ -443,7 +411,7 @@ function Get-Stack($d) {
   elseif (Test-Path (Join-Path $d 'Makefile')) {
     $s = 'make'
     $c.compile = 'make'
-    if ((ReadText (Join-Path $d 'Makefile')) -match '(?m)^test\s*:') { $c.test = 'make test' }   # only when the Makefile has a test target
+    if ((ReadText (Join-Path $d 'Makefile')) -match '(?m)^test\s*:') { $c.test = 'make test' }
   }
   if (-not $s) { return $null }
 
@@ -475,33 +443,17 @@ else {
 }
 }
 
-# ---- gate: machine-wide memory gate for heavy builds/tests (any stack) so parallel work never exhausts RAM
-#   & $D gate -Dir <dir> -Cmd "<command>"   (usually via dev.ps1 check)
-# Runs in -Dir under cmd.exe (elsewhere: `cd /d <dir> && <cmd>`; ';' rewrite below) or /bin/sh (`cd <dir> && <cmd>`).
-# No fixed parallel limit: start when available RAM - promised (running builds) - estimate >= KeepFreeGB.
-# - available = free + reclaimable (lib.ps1: Windows, Linux, macOS)
-# - KeepFreeGB: 15% of RAM (min 6 GB); -KeepFreeGB, $env:CLAUDE_GATE_KEEP_FREE_GB or kit.local.json gate.keepFreeGB
-# - estimate learned per kind + repo (history.json): recent peak (last 5) + 15%, cap 60% of RAM; under 2 samples: kind default
-# - promised = per running gated build, max(0, estimate - its process tree's use now); ledger <OS temp>/claude-build-gate
-# - starts one at a time under a named mutex, FAIR QUEUE: fewest starts in 30 min first, then longest wait; others
-#   backfill only while the head doesn't fit and waited < 20 min, then one SMALL build at a time (owner, small: below).
-# - history samples { gb, sec, ok, at, code, cmd (60 chars) }
-# - heaps: ceiling = start value or peak x 1.25, floor = peak x 1.1 (min 4 GB); N queued builds share free memory equally,
-#   clamped to [floor, ceiling] (crowded -> heaps shrink toward real use, never below: no GC thrash)
-# - waiting prints queue position and, at times, top memory users
-# Exit: the command's code, or 3 if not started within -WaitMinutes. Killed by someone else = no code failure: rerun.
+# ---- gate: machine-wide memory gate so parallel builds never exhaust RAM; exit = the command's code, 3 = not started in time
 function Invoke-Gate {
 param(
   [Parameter(Mandatory)][string]$Cmd,
   [string]$Dir = (Get-Location).Path,
   [int]$WaitMinutes = 90,
-  [double]$KeepFreeGB = $(if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { -1 }),   # -1 = 15% of total RAM, min 6 GB
-  [double]$NeedGB = 0,         # 0 = learned / default estimate for this command kind
-  [int]$MaxParallel = 0        # 0 = no fixed cap (memory decides)
+  [double]$KeepFreeGB = $(if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { -1 }),   # -1 = 15% of RAM, min 6 GB
+  [double]$NeedGB = 0,
+  [int]$MaxParallel = 0
 )
-# JVM (Maven/Gradle) and Node heap caps are dynamic and override inherited flags (MAVEN_OPTS=-Xmx16g):
-#   no history: Gradle 12 GB, Maven 8 GB, Node 4 GB; after 2 runs peak x 1.25 within [4 GB, start]; tight memory -> toward 4 GB.
-#   kit.local.json gate: { "keepFreeGB": 6, "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } }
+# dynamic heap caps override inherited flags (MAVEN_OPTS=-Xmx16g)
 $HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
 if ($KeepFreeGB -lt 0) { $KeepFreeGB = [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
 $StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
@@ -510,7 +462,6 @@ $nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -
 if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = '-Dorg.gradle.workers.max=4' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
-# command kind -> default GB until real peaks are learned
 $Kinds = [ordered]@{
   'emulator'      = @('^exit 0 #emulator', 4.5)
   'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
@@ -532,7 +483,7 @@ $Kinds = [ordered]@{
 }
 function Get-Kind([string]$c) { foreach ($k in $Kinds.Keys) { if ($c -match $Kinds[$k][0]) { return $k } }; 'other' }
 
-# cmd.exe has no ';': one outside double quotes before whitespace/end -> ' & '; inside a word (a.jar;b.jar, -Dx=a;b) stays
+# cmd.exe has no ';'
 function ConvertTo-CmdSeparators([string]$c) {
   $sb = [Text.StringBuilder]::new(); $inQ = $false
   for ($i = 0; $i -lt $c.Length; $i++) {
@@ -550,9 +501,9 @@ function ConvertTo-CmdSeparators([string]$c) {
 }
 if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';' separator - running as: $semi"; $Cmd = $semi } }
 
-# wrappers as .\gradlew.bat / .\mvnw.cmd: Claude Code's NoDefaultCurrentDirectoryInExePath=1 hides bare names in cwd
+# NoDefaultCurrentDirectoryInExePath hides bare names in cwd
 $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
-# test runners fork a worker per core: cap them
+# runners fork a worker per core
 if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bpytest\b' -and $Cmd -match '\s-n\s+auto') { $Cmd = $Cmd -replace '\s-n\s+auto', ' -n 2' }
@@ -564,7 +515,6 @@ function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | Con
 
 $kind = Get-Kind $Cmd
 $default = if ($Kinds.Contains($kind)) { $Kinds[$kind][1] } else { 2 }
-# Project = main repo + subfolder (backend/services/api); worktrees map to the main checkout (x1-backend -> backend)
 $project = Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf
 $top = (git -C $Dir rev-parse --show-toplevel 2>$null)
 if ($top) {
@@ -576,15 +526,14 @@ if ($top) {
 
 $histKey = "$kind|$project"
 $hist = Read-History
-$samples = @($hist[$histKey] | Where-Object { $_ })        # [{gb, sec, ok}, ...] newest last
+$samples = @($hist[$histKey] | Where-Object { $_ })
 $peaks = @($samples | ForEach-Object { [double]$_.gb })
 $secs = @($samples | ForEach-Object { [double]$_.sec } | Sort-Object)
-# Small (may backfill past a starving head): kind median <= 120 s and <= 2 GB (project samples, else all; < 2 samples: never)
+# small builds may backfill past a starving head
 function Get-MedianSec([double[]]$Secs) { $s = @($Secs | Sort-Object); if ($s.Count -lt 2) { return -1 }; $s[[int][math]::Floor($s.Count / 2)] }
 function Test-SmallBuild([double]$Need, [double]$MedianSec) { $MedianSec -ge 0 -and $MedianSec -le 120 -and $Need -le 2 }
 $kindSecs = if ($secs.Count -ge 2) { $secs } else { @($hist.Keys | Where-Object { $_ -like "$kind|*" } | ForEach-Object { @($hist[$_]) | Where-Object { $_ -and $null -ne $_.sec } | ForEach-Object { [double]$_.sec } }) }
 $medianSec = Get-MedianSec $kindSecs
-# Estimate: 2+ peaks -> max of last 5 + 15%, cap 60% of RAM; fewer -> the kind's default
 function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) {
   if (@($Peaks).Count -lt 2) { return $Default }
   $recentMax = (@($Peaks) | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
@@ -592,30 +541,27 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
 }
 $need = if ($NeedGB -gt 0) { $NeedGB } else { Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB }
 
-# dynamic JVM / Node heap (gate header)
 $jvmKind = $kind -like 'maven*'
 $nodeKind = $kind -in @('ng-test', 'web-build', 'js-test', 'tsc-lint', 'rn-bundle', 'e2e')
 $gradleKind = $kind -in @('android-build', 'android-test', 'gradle')
 $heap = 0
 if ($jvmKind -or $nodeKind -or $gradleKind) {
-  # Gradle starts high and learns down; Maven/Node at the floor. G1 tight free-ratios + periodic GC keep the heap at live data
-  # so the peak can fall (else a JVM fills -Xmx and the estimate never drops).
-  $startHeap = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }   # not $startGB: same variable as the $StartGB table
+  # G1 free-ratios keep the heap at live data, so the learned peak can fall
+  $startHeap = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }   # not $startGB: same variable
   $maxGB = [math]::Max($startHeap, 8)
   $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling((($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.25) } else { $startHeap }
   $heap = [math]::Min($maxGB, [math]::Max($HeapMinGB, $heap))
-  if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history yet: assume the heap can fill up
+  if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history: the heap can fill up
 }
 function Set-HeapEnv([int]$gb) {
-  if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }   # G1 returns unused heap to the OS
+  if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }
   if ($nodeKind) { $env:NODE_OPTIONS = "$nodeKeep --max-old-space-size=$($gb * 1024)".Trim() }
   if ($gradleKind -and $script:Cmd -notmatch 'org\.gradle\.jvmargs') {
-    # Gradle daemon heap = org.gradle.jvmargs; a -D on the command line overrides it
+    # a -D overrides org.gradle.jvmargs
     $script:Cmd = ([regex]'(gradlew(\.bat)?|\bgradle)(?=\s|$)').Replace($script:Cmd, "`$1 `"-Dorg.gradle.jvmargs=-Xmx${gb}g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000 -Dfile.encoding=UTF-8`"", 1)
   }
 }
 
-# Owner for fair turns: $env:CLAUDE_AGENT, else worktree minus repo suffix (b-api-backend -> b-api), else first dash part (x1)
 function Get-OwnerName([string]$Leaf, [string]$Repo) {
   if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { return $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) }
   ($Leaf -split '-')[0]
@@ -623,7 +569,7 @@ function Get-OwnerName([string]$Leaf, [string]$Repo) {
 $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf }
 $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
 $heapBase = $heap
-# never below this project's real use (a smaller heap thrashes in GC)
+# a smaller heap thrashes in GC
 $heapFloor = if ($heap -gt 0 -and $peaks.Count -ge 2) { [math]::Min($heapBase, [math]::Max($HeapMinGB, [int][math]::Ceiling((($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum) * 1.1))) } else { $HeapMinGB }
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $startsFile = Join-Path $ledger 'starts.jsonl'
@@ -673,8 +619,7 @@ function Get-State {
   }
   [pscustomobject]@{ Avail = (Get-AvailGB); Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
 }
-# May a non-head build start? '' no; 'backfill' (head doesn't fit, waited < 20 min: any fitting build); 'small' (head waited
-# 20+ min: one small fitting build at a time, so the head waits at most one short build)
+# head waited 20+ min: one small build at a time, so it waits at most one short build
 function Get-BackfillMode([double]$HeadNeed, [double]$HeadWaitedMin, [double]$Need, [double]$Room, [bool]$Small, [int]$SmallRunning) {
   if ($HeadNeed -le $Room -or $Need -gt $Room) { return '' }
   if ($HeadWaitedMin -lt 20) { return 'backfill' }
@@ -701,7 +646,6 @@ while ((Get-Date) -lt $deadline) {
   try {
     $s = Get-State
     $queue = Get-Queue
-    # heap: equal share of free memory per queued build, clamped to [floor, ceiling]
     if ($heapBase -gt 0 -and $NeedGB -le 0 -and $queue.Count -ge 2) {
       $share = [math]::Floor(($s.Avail - $s.Promised - $KeepFreeGB) / $queue.Count - 0.5)
       $h2 = [math]::Min($heapBase, [math]::Max($heapFloor, $share))
@@ -711,7 +655,6 @@ while ((Get-Date) -lt $deadline) {
       }
     }
     $left = $s.Avail - $s.Promised - $need
-    # only the head starts; others backfill while the head doesn't fit (and isn't starving)
     $pos = [array]::IndexOf(@($queue | ForEach-Object { [int]$_.pid }), [int]$PID)
     $head = if ($queue.Count) { $queue[0] } else { $null }
     $myTurn = ($pos -le 0); $smallFill = $false
@@ -727,7 +670,6 @@ while ((Get-Date) -lt $deadline) {
       if ($waits % 3 -eq 1) { Write-Host "[gate] queued #$($pos + 1) of $($queue.Count) (owner $owner); next: $($head.owner) $($head.kind)" }
     }
     else {
-    # tight memory: shrink the heap toward the floor instead of waiting
     if ($heap -gt 0 -and $left -lt $KeepFreeGB -and $NeedGB -le 0) {
       $room = [math]::Floor($s.Avail - $s.Promised - $KeepFreeGB - 0.5)
       if ($room -ge $heapFloor -and $room -lt $heap) {
@@ -739,7 +681,7 @@ while ((Get-Date) -lt $deadline) {
     if ($left -ge $KeepFreeGB -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { Set-HeapEnv $heap }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
-      # /s + outer quotes: cmd strips exactly those, so a leading quoted path ("C:\Program Files\...") survives
+      # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
       else {
         $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.ArgumentList.Add('-c'); $psi.ArgumentList.Add($Cmd)
@@ -762,15 +704,14 @@ while ((Get-Date) -lt $deadline) {
 }
 } finally { Remove-Item $myTicket -ErrorAction SilentlyContinue }
 if (-not $proc) { Write-Host "[gate] could not start within $WaitMinutes min"; exit 3 }
-# wait, sampling the tree's peak memory for the next estimate
-$sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: [math]::Max(int, double) would pick the int overload and truncate
+$sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, double) would truncate
 try {
-  $null = $proc.Handle   # the handle keeps ExitCode readable after exit
+  $null = $proc.Handle   # keeps ExitCode readable
   while (-not $proc.HasExited) { $peak = [math]::Max($peak, (Get-TreeGB $proc.Id (Get-Procs))); Start-Sleep -Seconds 5 }
   $proc.WaitForExit(); $code = $proc.ExitCode
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
-  # read-modify-write under the gate mutex (builds finish together); an unreadable file is left alone, never reset
+  # builds finish together; an unreadable file is never reset
   $got = $false
   try {
     try { $got = $gate.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
@@ -778,7 +719,6 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
       $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
-        # at / code / cmd are newer: older samples lack them
         $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; cmd = $(if ($Cmd.Length -gt 60) { $Cmd.Substring(0, 60) } else { $Cmd }) } | Select-Object -Last 10)
         $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
         Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
@@ -789,22 +729,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
 exit $code
 }
 
-# ---- check: gated compile / typecheck / lint / test / migrations (stack detected)
-#   & $D check -Dir <dir>  # quick: compile + typecheck + lint (what the stack has)
-#   & $D check -Dir <dir> -Step test -Tests "FooTest,BarTest"   # or "src/a.spec.ts"; needs -Tests unless -AllTests
-#   & $D check -Dir <dir> -Step lint -Files "src/a.ts src/b.ts"   # -Tests / -Files: comma or space separated
-#   & $D check -Dir <dir> -Step build  # full build (heavy, before shipping)
-#   & $D check -Dir <dir> -Step migrations  # Liquibase sanity check, if the repo has master.xml
-#   & $D check -Dir <dir> -Show  # print what would run
-# -Dir: the build-file folder (pom.xml, package.json, *.sln, pyproject.toml ...) or below. Quick lint: changed + untracked.
-# Python script-style .py checks (no test cases) run one by one with the project's python (unittest/pytest would exit 5).
-# No unit-test target: spec.mjs (node; DOM specs on the project's jsdom; no TestBed); -RealAngular = real @angular/core
-#   (auto-on when a named spec imports @angular/forms).
-# TS typecheck log <runtime>/logs/typecheck-<repo>-<time>.log. TS5103 (ignoreDeprecations rejected): one temp-tsconfig retry
-#   failing only on changed files (+ a BASELINE line); marker <runtime>/cache/tsbuild/ts5103.<hash>.flag (value + TS version)
-#   skips the doomed first run; baseline-only -> gate sample ok; baseline > 200 errors = UNRUN.
-# Container tests (*ContainerTest / *IT, Testcontainers) need `docker info` in 5 s, else exit 4 + start hint.
-# Exit: 0 ok, else the first failing step's code (3 = gate could not start it in time, 4 = no Docker).
+# ---- check: gated steps for the detected stack; exit = the first failing step's code (3 gate, 4 no Docker, 5 UNRUN)
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -812,10 +737,10 @@ param(
   [string]$Tests = '',
   [string]$Files = '',
   [switch]$AllTests,
-  [string]$Since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),   # migrations: only changelogs named with a timestamp >= this
+  [string]$Since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),
   [switch]$Show,
-  [switch]$Touched,     # -Step test: add the tests of files this branch changed (tests.<stack>.testFor)
-  [switch]$RealAngular   # real @angular/core instead of the stub
+  [switch]$Touched,
+  [switch]$RealAngular
 )
 $ErrorActionPreference = 'Stop'
 $script:anyUnrun = $false
@@ -823,8 +748,7 @@ $K = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
 Write-Host "[check] $($st.stack) in $($st.dir)"
 
-# Changed files (existing, full paths, under the stack dir) since the target fork point + untracked unignored ones. Base =
-# the recorded target (wt new), else origin/HEAD, else upstream (@{upstream} alone = the pushed branch: misses commits).
+# @{upstream} alone = the pushed branch: misses commits
 function Get-ChangedFiles {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
   $gd = (git -C $st.dir rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
@@ -836,8 +760,7 @@ function Get-ChangedFiles {
   @($list | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique)
 }
 
-# tsc through the gate, log in <runtime>/logs. TS5103 (or its marker): one retry with a temp tsconfig (runtime cache, deleted)
-# extending the project's with a valid ignoreDeprecations and the repo's tsc; fail only on changed files + TS5xxx/TS6xxx.
+# TS5103: one retry with a temp tsconfig; fail only on changed files + config errors
 function Invoke-Typecheck([string]$TcCmd) {
   $top = git -C $st.dir rev-parse --show-toplevel 2>$null
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
@@ -845,7 +768,6 @@ function Invoke-Typecheck([string]$TcCmd) {
   $log = Join-Path (Get-KitPath logs -Create) "typecheck-$repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
   $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
-  # the repo's own tsc: nearest node_modules/.bin up to the git root (worktrees link node_modules)
   $bin = $null; $d = $st.dir
   while ($d) {
     $p = Join-Path $d "node_modules/.bin/$(if ($KitIsWindows) { 'tsc.cmd' } else { 'tsc' })"
@@ -856,7 +778,7 @@ function Invoke-Typecheck([string]$TcCmd) {
   $ver = '5.0'; $tsVer = ''
   if ($bin) { try { $tsVer = [string](Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $bin)) 'typescript/package.json') -Raw | ConvertFrom-Json).version; if ([int](($tsVer -split '\.')[0]) -ge 6) { $ver = '6.0' } } catch {} }
   $raw = try { Get-Content -LiteralPath $base -Raw } catch { '' }
-  # the TS5103 marker (check header) skips a doomed first run (~10-15 s, ~1 GB)
+  # the marker skips a doomed first run (~1 GB)
   $igd = if ($raw -match '"ignoreDeprecations"\s*:\s*"([^"]*)"') { $Matches[1] } else { '' }
   $md5 = { param($s) [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
   $flag = Join-Path (Get-KitPath tsbuild -Create) "ts5103.$(& $md5 "$($base.ToLower())|$igd|$tsVer").flag"
@@ -869,7 +791,6 @@ function Invoke-Typecheck([string]$TcCmd) {
     $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
     $nErr = @($out -match '^(.+?\(\d+,\d+\): )?error TS\d+').Count
     if (-not @($out -match 'error TS5103').Count) {
-      # hundreds of errors on a plain run: split like the fallback (yours fail; a huge baseline is UNRUN)
       if ($rc -and $nErr -gt $script:TypecheckUnrunAbove) { return (Split-TypecheckErrors $out $rc $null $null) }
       $out | ForEach-Object { Write-Host $_ }
       if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
@@ -878,7 +799,7 @@ function Invoke-Typecheck([string]$TcCmd) {
     Set-Content -LiteralPath $flag -Value "$base | ignoreDeprecations '$igd' | typescript $tsVer"
   }
   $tsCfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
-  # no files/include in the project config: tsc would include the temp config's folder: pin it
+  # else tsc includes the temp config's folder
   if ($raw -notmatch '"(files|include)"\s*:') {
     $pd = (Split-Path $base).Replace('\', '/')
     $ex = @('node_modules', 'bower_components', 'jspm_packages')
@@ -899,20 +820,19 @@ function Invoke-Typecheck([string]$TcCmd) {
     $rc = $LASTEXITCODE
   } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
   $out2 = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Skip $out.Count })
-  if ($rc -eq 3 -and -not $out2.Count) { return 3 }   # the gate could not start it
-  if (@($out2 -match 'error TS5103').Count) { Remove-Item -LiteralPath $flag -ErrorAction SilentlyContinue }   # the fallback is no cure here: next run starts over
+  if ($rc -eq 3 -and -not $out2.Count) { return 3 }
+  if (@($out2 -match 'error TS5103').Count) { Remove-Item -LiteralPath $flag -ErrorAction SilentlyContinue }   # no cure: next run starts over
   return (Split-TypecheckErrors $out2 $rc $fbCmd $fbStart)
 }
 
-# Changed-file and config errors fail; the rest is BASELINE; above $TypecheckUnrunAbove = UNRUN (node_modules mismatch).
-# $GateCmd/$Since: mark the gate sample ok when only baseline errors remain.
+# a huge baseline (node_modules mismatch) is UNRUN, not a pass
 function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
   $changed = @(Get-ChangedFiles | ForEach-Object { $_.ToLower() })
   $mine = [Collections.Generic.List[string]]::new(); $mineN = 0; $baseN = 0; $baseFiles = @{}; $cur = $null; $blocks = 0
   foreach ($l in $out2) {
     if ($l -match '^(?<f>.+?)\(\d+,\d+\): error TS(?<code>\d+)' -or $l -match '^error TS(?<code>\d+)') {
       $blocks++
-      $f = $Matches.f; $isCfg = (-not $f) -or $Matches.code -match '^[56]\d{3}$' -or $Matches.code -eq '18003'   # config/option errors always count
+      $f = $Matches.f; $isCfg = (-not $f) -or $Matches.code -match '^[56]\d{3}$' -or $Matches.code -eq '18003'
       $full = if ($f) { [IO.Path]::GetFullPath((Join-Path $st.dir $f)).ToLower() } else { $null }
       if ($isCfg -or $changed -contains $full) { $cur = 'mine'; $mineN++ } else { $cur = 'base'; $baseN++; $baseFiles[$full] = 1 }
     }
@@ -922,20 +842,18 @@ function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
   $mine | ForEach-Object { Write-Host $_ }
   Write-Host "BASELINE: $baseN errors outside your changes (in $($baseFiles.Count) files; not failing this check; full log: $log)"
   if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or in the config)"; return 1 }
-  if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }   # tsc failed without diagnostics
-  # a huge baseline hides your errors: UNRUN, not a pass (no gate ok)
+  if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }
   if ($baseN -gt $script:TypecheckUnrunAbove) {
     $gd = (git -C $st.dir rev-parse --git-dir 2>$null); if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
     $tgt = if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim() } else { '<target>' }
     Write-Host "[check] typecheck UNRUN: $baseN baseline errors (> $script:TypecheckUnrunAbove) - the linked node_modules do not match this branch, so real errors hide in the baseline. Say 'typecheck unrun' in the MR; the lead can set kit.local.json linkFromByTarget.$tgt to a checkout whose node_modules match $tgt (dev-kit reference/configuration.md)."
     return 'unrun'
   }
-  if ($rc -and $GateCmd) { Set-GateSampleOk $GateCmd $Since }   # baseline only: the gate sample passes too
+  if ($rc -and $GateCmd) { Set-GateSampleOk $GateCmd $Since }
   return 0
 }
 $script:TypecheckUnrunAbove = 200
 
-# turns this command's newest gate sample since the start ok (baseline), under the gate mutex; best effort
 function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
   $hf = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'history.json'
   if (-not (Test-Path -LiteralPath $hf)) { return }
@@ -959,8 +877,7 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
   } catch {} finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
-# without Docker container tests burn minutes, then fail like a code bug. Before the gate: *ContainerTest / *IT, or a named
-# class (or -AllTests) in a module whose build file and source use testcontainers.
+# without Docker, container tests burn minutes, then fail like a code bug
 function Test-DockerForContainerTests {
   $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
   $need = @($names | Where-Object { $_ -match '(Container|IT)(Test)?$' }).Count -gt 0
@@ -999,18 +916,16 @@ function Test-DockerForContainerTests {
 
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-  # master changelogs: *master.xml under liquibase/ or changelog/ (JHipster, Spring Boot); a YAML/JSON/SQL master: said unchecked
   $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
   $masters = @($all | Where-Object { $_ -match '\.xml$' })
   foreach ($o in @($all | Where-Object { $_ -notmatch '\.xml$' })) { Write-Host "[check] $o is not an XML changelog - lbcheck reads XML only, not checked" }
   if (-not $masters) { Write-Host '[check] no Liquibase XML master changelog in this repo - nothing to check'; exit 0 }
-  # changelogs without a yyyyMMddHHmmss prefix: those git changed in 14 days (or since -Since) too (LBCHECK_CHANGED, '|' list)
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
   $env:LBCHECK_CHANGED = (@(git -C $top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
   $rc = 0
   $mine = @($masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) })
   $under = @($mine | Where-Object { $_.StartsWith($st.dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) })
-  if ($under.Count) { $mine = $under }   # module has its own changelog: check only that one
+  if ($under.Count) { $mine = $under }
   foreach ($full in $mine) {
     $a = @($KitCmd.devtools, 'lbcheck', $full, $Since)
     $py = Get-Python
@@ -1025,19 +940,18 @@ $steps = if ($Step -eq 'quick') { 'compile', 'typecheck', 'lint' } else { @($Ste
 $ran = 0
 foreach ($s in $steps) {
   $cmd = $st.commands.$s
-  # no unit-test target: spec.mjs
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs') { Write-Host '[check] no unit-test target: running spec.mjs (specs under node; DOM specs under the project''s jsdom if it has one; TestBed/fakeAsync specs are reported NOT RUN)' }
   if ($Touched -and $s -eq 'test') {
-    # all tests of touched classes / modules: CI may skip tests (tests.<stack>.testFor overrides)
+    # CI may skip tests
     $chg = @(Get-ChangedFiles)
     $lay = Get-KitSetting "tests.$($st.stack)" $null
     $pat = if ($lay -and $lay.testFor) { @($lay.testFor) } else { switch -Regex ($st.stack) { 'maven|gradle|android|kotlin|java' { '{name}Test', '{name}Tests', '{name}IT' } 'dotnet|msbuild' { '{name}Tests', '{name}Test' } 'python' { 'test_{name}', '{name}_test' } 'go' { '{name}_test' } default { '{name}.spec', '{name}.test' } } }
     $tracked = @(git -C $st.dir ls-files 2>$null)
     $found = foreach ($cf in $chg) {
       $n = [IO.Path]::GetFileNameWithoutExtension($cf) -replace '\.(spec|test)$', ''
-      if ($cf -match '\.(spec|test)\.\w+$' -or $n -match '(Test|Tests|IT|_test)$' -or $n -match '^test_') { $cf; continue }   # a changed test runs itself
+      if ($cf -match '\.(spec|test)\.\w+$' -or $n -match '(Test|Tests|IT|_test)$' -or $n -match '^test_') { $cf; continue }
       foreach ($p in $pat) { $w = $p.Replace('{name}', $n); @($tracked | Where-Object { $b = [IO.Path]::GetFileName($_); $b -like "$w.*" }) | ForEach-Object { Join-Path $st.dir $_ } }
     }
     $byName = $st.stack -match 'maven|gradle|android|kotlin|java|dotnet|msbuild'
@@ -1048,10 +962,10 @@ foreach ($s in $steps) {
   }
   if ($cmd -match '\{tests\}') {
     if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
-    # each runner gets its own list form (commas reached eslint/jest/pytest as one name, spaces broke -Dtest)
+    # commas reached runners as one name, spaces broke -Dtest
     $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
     $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
-    # script-style checks (run at import, no test cases): unittest/pytest exit 5, so run each file
+    # unittest/pytest exit 5 on files without test cases
     $scripts = if ($pyRun -and $tl.Count) { @($tl | Where-Object { $_ -match '\.py$' -and (Test-Path -LiteralPath (Join-Path $st.dir $_) -PathType Leaf) -and -not (Select-String -LiteralPath (Join-Path $st.dir $_) -Pattern '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)' -Quiet) }) } else { @() }
     if ($scripts.Count -and $scripts.Count -eq $tl.Count) {
       $cmd = ($scripts | ForEach-Object { "$pyRun `"$_`"" }) -join ' && '
@@ -1063,7 +977,7 @@ foreach ($s in $steps) {
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and $cmd -notmatch '--real-angular') {
-    # the @angular/core stub breaks @angular/forms: such specs run on the real core
+    # the @angular/core stub breaks @angular/forms
     $why = if ($RealAngular) { '-RealAngular' } else {
       $hit = @(@($Tests -split '[,\s]+' | Where-Object { $_ }) | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { $_ -match '\.(spec|test)\.\w+$' -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
                Where-Object { (Get-Content -LiteralPath $_ -Raw) -match '[''"]@angular/forms[''"]' } | Select-Object -First 1)
@@ -1071,12 +985,11 @@ foreach ($s in $steps) {
     }
     if ($why) { $cmd += ' --real-angular'; Write-Host "[check] node-spec with the real @angular/core ($why)" }
   }
-  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') {   # -Show reports the Docker check without stopping
+  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') {
     $rc = Test-DockerForContainerTests
     if ($rc -and -not $Show) { exit $rc }
   }
   if ($cmd -match '\{sln\}') {
-    # .NET: the solution in the stack dir, else its single project (a test project folder)
     $sln = @(Get-ChildItem -LiteralPath $st.dir -Filter *.sln -File -ErrorAction SilentlyContinue)
     if (-not $sln.Count) { $sln = @(Get-ChildItem -LiteralPath $st.dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
     if ($sln.Count -ne 1) { throw "[check] $($st.dir): expected one .sln (or one project file), found $($sln.Count) - pass -Dir to the folder that has it" }
@@ -1084,9 +997,8 @@ foreach ($s in $steps) {
   }
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
-      # quick lint / compileall: branch changes + untracked, only files the linter reads (ruff/flake8 .py, eslint JS/TS)
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
-      # relative paths (gate runs in the stack dir): absolute ones overflow cmd.exe's 8191 chars
+      # absolute paths overflow cmd.exe's 8191 chars
       Push-Location $st.dir
       $changed = @(Get-ChangedFiles | Where-Object { $_ -match $ext } | ForEach-Object { Resolve-Path -Relative $_ })
       Pop-Location
@@ -1094,11 +1006,10 @@ foreach ($s in $steps) {
       $Files = ($changed | ForEach-Object { '"' + $_ + '"' }) -join ' '
     }
   }
-  # still over 8191 chars: run the step in file batches
   $batches = @($cmd)
   if ($cmd -match '\{files\}') {
     $batches = @()
-    $list = if ($Files) { @([regex]::Matches($Files, '"[^"]*"|[^\s,]+') | ForEach-Object Value) } else { @('.') }   # space or comma separated
+    $list = if ($Files) { @([regex]::Matches($Files, '"[^"]*"|[^\s,]+') | ForEach-Object Value) } else { @('.') }
     $room = 7000 - $cmd.Length; $cur = @()
     foreach ($f in $list) {
       if ($cur.Count -and (($cur -join ' ').Length + $f.Length + 1) -gt $room) { $batches += $cmd -replace '\{files\}', ($cur -join ' '); $cur = @() }
@@ -1110,14 +1021,13 @@ foreach ($s in $steps) {
   $cmd = $batches[$bi]
   if ($batches.Count -gt 1) { Write-Host "[check] $s batch $($bi + 1)/$($batches.Count)" }
   if ($st.solution) { $cmd = $cmd -replace '\{sln\}', $st.solution }
-  # speed-ups that don't change results:
-  if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }   # warm Maven daemon
-  if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {                                                                  # incremental type-check
+  if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
+  if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {
     $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
     $tsb = Get-KitPath tsbuild -Create
     $cmd += " --incremental --tsBuildInfoFile `"$(Join-Path $tsb "$hash.tsbuildinfo")`""
   }
-  if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }                                                       # Gradle build cache
+  if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
   $unrun = $false
   if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
@@ -1128,21 +1038,15 @@ foreach ($s in $steps) {
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }
 if (-not $Show -and -not $ran) { Write-Host "[check] nothing to run for $Step" }
-if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (an unchecked run is not a pass)'; exit 5 }   # it exited 0 like a pass
+if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (an unchecked run is not a pass)'; exit 5 }
 exit 0
 }
 
-# ---- pipes: wait for MR pipelines, JSON out (CI failures go back to the dev agent, not to a doomed merge)
-#   & $D pipes -Mrs https://gitlab.example.com/group/api/-/merge_requests/12,https://... [-MaxMinutes 8]
-# Output: {"done":bool,"mrs":[{"mr":url,"status":"success|failed|running|...","job":"<failed job>","error":"<last error lines>"}]}
-# Exit 0 always; done=false = still running after -MaxMinutes (call again). no-pipeline / unknown stay busy; only CONFIRMED no CI
-# (GitLab: no required pipeline, ci_config_path or Auto DevOps, .gitlab-ci.yml 404; GitHub: .github/workflows 404) = no-ci.
-# GitLab MRs via glab; GitHub PRs (.../pull/<n>) via gh (status = the PR's checks).
+# ---- pipes: wait for MR/PR pipelines (JSON); CI failures go back to the dev agent, not to a doomed merge
 function Invoke-Pipes {
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
-# GitHub: check runs / commit statuses as GitLab-style statuses
 function GhState($url) {
   $pr = gh pr view $url --json state,statusCheckRollup 2>$null | ConvertFrom-Json
   if (-not $pr) { return [ordered]@{ mr = $url; status = 'unknown' } }
@@ -1164,7 +1068,6 @@ function GhState($url) {
   }
   $o
 }
-# no CI: confirmed by the project settings and a CI-file 404 (any error = has CI)
 function Test-NoCi($proj, $m) {
   $pj = Invoke-HostApi "projects/$proj"
   if (-not $pj -or $pj.only_allow_merge_if_pipeline_succeeds -or $pj.ci_config_path -or $pj.auto_devops_enabled -or -not $m.target_branch) { return $false }
@@ -1175,7 +1078,7 @@ function State($url) {
   if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
   if ($url -notmatch '^https?://(?<h>[^/]+)/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
   $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
-  $env:GITLAB_HOST = $Matches.h; $script:HostType = 'gitlab'   # else glab asks gitlab.com (self-hosted: the MR's host)
+  $env:GITLAB_HOST = $Matches.h; $script:HostType = 'gitlab'   # else glab asks gitlab.com
   $m = Invoke-HostApi "projects/$proj/merge_requests/$iid" -NoMemo
   if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }
@@ -1195,7 +1098,7 @@ function State($url) {
 $start = Get-Date; $end = $start.AddMinutes($MaxMinutes)
 do {
   $states = @($list | ForEach-Object { State $_ })
-  # no-pipeline / unknown never "done" (a pipeline may still start, a host call may have failed)
+  # a pipeline may still start
   $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled', 'no-pipeline', 'unknown' })
   if (-not $busy -or (Get-Date) -gt $end) { break }
   Start-Sleep 30
@@ -1203,19 +1106,11 @@ do {
 [ordered]@{ done = (-not $busy); mrs = $states } | ConvertTo-Json -Depth 4 -Compress
 }
 
-# ---- guard: PreToolUse hook (Bash + PowerShell; .claude/settings.json) for the kit's hard rules:
-#   - no git stash (shared across worktrees) · no --no-verify / hook skipping · no adb kill-server (drops every emulator lane)
-#   - no force-push to main, master, develop, release/* or kit.local.json protectedBranches
-#   - no & <file>.md / Invoke-Item on a document (opens the owner's desktop app)
-#   - heavy builds/tests only via the gate (dev.ps1 check / gate), not raw mvn/gradle/dotnet/ng/jest/...
-#   - no deleting runtime work/ while runs are active (cache/, logs/ may go), nor the durable *.local state
-# Stdin: hook JSON; prints a deny + reason, or nothing (allow). Blocks logged to guard-log (<runtime>/logs/guard.log) for /tidy.
-# Tests: pwsh -NoProfile -File dev.ps1 guard -SelfTest (cases at the end of this file, real hook path; exit 1 on a failure)
+# ---- guard: PreToolUse hook for the kit's hard rules; prints a deny or nothing; tests: guard -SelfTest
 function Invoke-Guard {
-param([switch]$SelfTest)   # the hook passes no arguments
+param([switch]$SelfTest)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  # [tool, command, expect deny?] as hook calls without session_id (not logged)
   $cases = @(
     @('PowerShell', 'git stash', $true),
     @('PowerShell', 'git -C x stash pop', $true),
@@ -1234,7 +1129,6 @@ if ($SelfTest) {
     @('Bash', "cat > note.md <<EOF`ngit stash is shared`nEOF", $false),
     @('Bash', 'git checkout fix/stash-list', $false),
     @('Bash', 'echo done # not git stash', $false),
-    # [.., deny message]: opening a doc with & / . / Invoke-Item
     @('PowerShell', '& D:\kit\skills\dev-kit\LESSONS.md', $true, 'default desktop app'),
     @('PowerShell', '& "C:\x y\notes.txt"', $true, 'default desktop app'),
     @('PowerShell', 'Invoke-Item .\report.html', $true, 'default desktop app'),
@@ -1251,7 +1145,6 @@ if ($SelfTest) {
     @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind friction -Text `"Stopped agent left a commit; merge reported via devtools.py 'merged' but not verified`" -Ref repo!1 -Source workflow`n& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"recovery worked`" -Ref repo!1", $false, 'default desktop app'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, 'default desktop app'),
     @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, 'default desktop app'),
-    # [.., 'holds runs in progress']: deleting runtime work/ ({RT} = runtime folder name; runs judged active)
     @('Bash', "cd /d/x/{RT}/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
     @('Bash', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
     @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the {RT}/work folder" -Source workflow', $false, 'holds runs in progress'),
@@ -1260,10 +1153,8 @@ if ($SelfTest) {
     @('Bash', "python -c `"import shutil; shutil.rmtree('/d/x/{RT}/work')`"", $true, 'holds runs in progress'),
     @('Bash', 'cd /d/x/{RT} && rm -rf work', $true, 'holds runs in progress'),
     @('PowerShell', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
-    # stash in a heredoc fed to a non-shell interpreter is data; a real git stash after it is not
     @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
     @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
-    # [.., 'local env']: env branches never pushed; dev servers only via localenv.ps1 (localEnv configured)
     @('PowerShell', 'git -C x push origin localenv/shop', $true, 'local env'),
     @('Bash', 'git push -u origin HEAD:localenv/shop', $true, 'local env'),
     @('PowerShell', 'git push -u origin f/CU-1-x', $false, 'local env'),
@@ -1279,11 +1170,9 @@ if ($SelfTest) {
     @('PowerShell', 'dotnet run -- migrate', $false, 'local env'),
     @('Bash', 'cd web && yarn start', $true, 'local env'),
     @('Bash', 'git push origin --delete localenv/shop', $false, 'local env'),
-    # [.., 'force-push']: a '+' refspec is a force push; a plain push is not
     @('Bash', 'git push origin +HEAD:main', $true, 'force-push'),
     @('PowerShell', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
     @('Bash', 'git push origin HEAD:main', $false, 'force-push'),
-    # [.., 'Hooks must run']: --no-verify, -n, an emptied hooksPath
     @('Bash', 'git commit -n -m "x"', $true, 'Hooks must run'),
     @('PowerShell', 'git -C x commit -nm "x"', $true, 'Hooks must run'),
     @('Bash', 'git -c core.hooksPath=/dev/null commit -m x', $true, 'Hooks must run'),
@@ -1291,7 +1180,7 @@ if ($SelfTest) {
     @('PowerShell', 'git commit -m "use -n for a dry run"', $false, 'Hooks must run'),
     @('Bash', 'git log -n 3; git commit -m x', $false, 'Hooks must run')
   )
-  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'   # inherited by the hook runs below (as if localEnv were configured)
+  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'
   $fail = 0
   foreach ($c in $cases) {
     $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime') } } | ConvertTo-Json -Compress -Depth 4
@@ -1304,7 +1193,6 @@ if ($SelfTest) {
   "$($cases.Count - $fail)/$($cases.Count) passed"
   exit [int]($fail -gt 0)
 }
-# empty stdin (by hand) allows; a non-JSON payload denies and is logged
 $stdin = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
 if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
@@ -1315,15 +1203,13 @@ try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
 }
 $cmd = [string]$in.tool_input.command
 if (-not $cmd) { exit 0 }
-$K = $PSScriptRoot   # this kit's dev-kit folder (for messages)
-# extra shared branches (kit.local.json); cheap: runs before every shell command
+$K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
 try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
 
 function Deny($why) {
-  if ($in.session_id) {   # real hook calls only: test runs (no session) must not raise supervise's guard WATCH
+  if ($in.session_id) {   # test runs must not raise a guard WATCH
     $one = $raw -replace "[\r\n\t]+", " // "
-    # head + tail: the tripping line is often near the end
     if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
     "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$one" | Add-Content (Get-KitPath guard-log -Create)
   }
@@ -1331,9 +1217,8 @@ function Deny($why) {
   exit 0
 }
 
-# Judge command words only: quoted text (grep patterns, commit messages, -Text "...") is data.
+# quoted text, heredocs and here-strings are data
 $raw = $cmd
-# Heredoc bodies and here-strings (@' '@) are data too, unless the heredoc feeds a shell (bash/sh/pwsh <<EOF).
 function StripData([string]$t) {
   $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
       param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
@@ -1341,12 +1226,10 @@ function StripData([string]$t) {
   [regex]::Replace($t, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
 }
 $cmd = StripData $cmd
-# git [global options] stash as a real command only (not a word in a message, heredoc, here-string, comment, fix/stash-list).
-# PowerShell: its parse tree; Bash or unparsable: data stripped, git in command position; -c / -Command strings the same.
 function StashArgs($words) {
   for ($i = 0; $i -lt $words.Count; $i++) {
     $w = [string]$words[$i]
-    if ($w -in '-C', '-c', '--git-dir', '--work-tree', '--namespace') { $i++; continue }   # global option with a separate value
+    if ($w -in '-C', '-c', '--git-dir', '--work-tree', '--namespace') { $i++; continue }
     if ($w -like '-*') { continue }
     return $w -eq 'stash'
   }
@@ -1378,20 +1261,17 @@ function Test-GitStash([string]$text, [string]$tool, [int]$depth = 0) {
     $inner = $m.Groups[1].Value + $m.Groups[2].Value
     if (Test-GitStash $inner $(if ($m.Value -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }) ($depth + 1)) { return $true }
   }
-  $t = [regex]::Replace((StripData $text), '(?m)(^|\s)#.*$', '$1')   # comments
+  $t = [regex]::Replace((StripData $text), '(?m)(^|\s)#.*$', '$1')
   $t -match '(?m)(^|[;&|({`\n]|\$\()\s*(\w+=\S*\s+)*(\S*[\\/])?git(\.exe)?\s+((-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*stash\b'
 }
-# work/ (or the runtime root) holds in-flight runs: no delete while runs are active; cache/, logs/ may go. Durable state
-# (.state/tracking.json, learning.local.*, .state/tracker-none): never (cleanup prunes); KIT_ALLOW_RUNTIME_DELETE=1 overrides
+# work/ holds in-flight runs
 function ActiveWork {
-  if ($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1') { return 'work/selftest' }   # -SelfTest only: judge as if runs were active
+  if ($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1') { return 'work/selftest' }
   foreach ($n in 'board', 'phones', 'waves', 'qa-runs', 'qa-seats') {
     $d = Get-KitPath $n
     if ((Test-Path $d) -and @(Get-ChildItem $d -Recurse -Depth 1 -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-3) } | Select-Object -First 1).Count) { "work/$n" }
   }
 }
-# Per segment (; && || | newlines), heredocs dropped: a delete word in text or a runtime path in a separate cd is no delete;
-# a quoted argument counts only as a path or a delete call (python -c "...").
 function DeleteSegments([string]$t) {
   $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
       param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
@@ -1402,9 +1282,9 @@ function DeleteSegments([string]$t) {
   @($t -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_.Trim() })
 }
 $end = '[''"]?(\s|;|\||\)|$)'
-$delWord = '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)'   # a command word only, never inside a name like "2026-x-rm-y"
+$delWord = '(Remove-Item|(^|[\s;|&(`])(rm|rmdir|rd|del)(\s|$)|rimraf|shutil\.rmtree|Directory\]::Delete)'   # a command word only
 if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
-  $inRuntime = $false   # a cd into the runtime earlier makes relative arguments (work, ., *) runtime paths
+  $inRuntime = $false
   foreach ($seg in DeleteSegments $raw) {
     if ($seg -match '^\s*(cd|Set-Location|sl|pushd|Push-Location)\s') { $inRuntime = $seg -match '\.runtime([\\/]+work)?[\\/]*\s*$'; continue }
     if ($seg -notmatch $delWord) { continue }
@@ -1418,14 +1298,12 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
     }
   }
 }
-# stash as a real git subcommand only (Test-GitStash; tests: guard -SelfTest)
 if (Test-GitStash $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: dev.ps1 wt commit -Message "wip: ..."' }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm.ps1 avd reset).' }
-# Opening a doc or URL (& / . / Invoke-Item / Start-Process / start / explorer / xdg-open / open) pops up a desktop app
-# instead of reading it: only on the owner's ask (--open). PowerShell: parse tree; Bash/unparsable: regex, quotes stripped.
+# opening a doc pops up a desktop app instead of reading it
 function Test-OpenDoc([string]$text, [string]$tool) {
   $doc = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)$'
-  # kit script call (& <path>.ps1|.py|.mjs): the rest of the line is arguments (unpaired -Text quotes); own-line doc opens count
+  # kit script call: the rest is arguments
   $text = [regex]::Replace($text, '(?m)(^|[;{]|&&)\s*&\s+(''[^'']+\.(ps1|py|mjs)''|"[^"]+\.(ps1|py|mjs)"|[^\s;''"]+\.(ps1|py|mjs))(\s.*)?$', '$1')
   if ($tool -ne 'Bash') {
     $tk = $null; $er = $null
@@ -1444,17 +1322,14 @@ function Test-OpenDoc([string]$text, [string]$tool) {
 }
 if (Test-OpenDoc $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) {
   Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
-# git commit -n / -nm / -an is --no-verify too
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run. Commit with $($KitCmd.dev) wt commit (it fixes hooksPath in worktrees); fix what the hook reports." }
-# per push command: a protected name elsewhere on the line is not a push target
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value
   if ($p -match '(--force(?![-\w])|\s-f\b|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after dev.ps1 wt sync.'
   }
 }
-# localenv/<env> branches are local merges, never pushed; with localEnv set, dev servers run only as env services.
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { Deny 'localenv/<env> is a local env branch (a merge of every agent''s layer): never push it. Push your own branch; the local env takes it with localenv.ps1 deploy -Dir <worktree>.' }
 }
@@ -1466,11 +1341,10 @@ if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatc
     }
   }
 }
-# heavy builds/tests must go through the gate
 $gated = $cmd -match 'dev\.ps1["'']?\s+(gate|check)\b|swarm\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
 $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
          $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
-         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or   # run as a command, not a name in a list (Get-Process java,msbuild)
+         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
          $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)'
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the machine-wide memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], or $($KitCmd.dev) gate -Dir <dir> -Cmd '<cmd>' for anything else."
@@ -1479,15 +1353,13 @@ exit 0
 }
 
 # ---- tracker: the tracker adapter (lib.ps1 section 4)
-#   & $D tracker view|status|comment|comments|create|owner|url|describe|rename|attach|list ... [-Type <backend>] [-DryRun]
-#   comment / describe text: positional, -Text "<text>" or -File <path> (an unknown -Option is a usage error, never text)
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
     elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -DryRun -Json)"; exit 2 }   # never passed on as text
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
@@ -1513,7 +1385,7 @@ function Invoke-Tracker {
   }
 }
 
-if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
+if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
   switch ($__verb) {
     'wt' { Invoke-KitVerb Invoke-Wt $__rest }
     'stack' { Invoke-KitVerb Invoke-Stack $__rest }
@@ -1522,6 +1394,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'pipes' { Invoke-KitVerb Invoke-Pipes $__rest }
     'guard' { Invoke-KitVerb Invoke-Guard $__rest }
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
+    { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 0 }
     default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
   }
 }

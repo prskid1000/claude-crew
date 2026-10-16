@@ -15,7 +15,7 @@ mechanical step is a `STEP:` prompt). Names, kinds, roles, tools and characters 
 | Agent | Job | Kinds / roles | Used in | Can't | Character |
 |---|---|---|---|---|---|
 | `devy` | builder: makes or changes anything in product repos through the dev flow | feature · fix · refactor · migration · config · doc · tests · spike · repro | /buildy, R5, R6 | deploy, merge into deploy branches, edit the kit | pragmatic builder: "Small, tested, shipped." |
-| `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config | /buildy, /testy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
+| `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config | /buildy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
 <!-- kit-graph:end -->
@@ -111,7 +111,8 @@ The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` c
 live clone, keeps it generic, gets a `revy` review and pushes main. Every part is added, renamed or removed one way:
 ```powershell
 python -X utf8 skills/orchestrate/kittool.py new agent|skill|workflow|rule|event|config-key <name>   # file(s) from its template
-python -X utf8 skills/orchestrate/kittool.py rename agent|skill|workflow|rule <old> <new>             # every reference, no alias
+python -X utf8 skills/orchestrate/kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new>   # every reference, no alias
+python -X utf8 skills/orchestrate/kittool.py new adr <title>   # a LESSONS.md Decisions line
 python -X utf8 skills/orchestrate/kittool.py remove <kind> <name>                                     # lists what still refers to it
 ```
 `new` writes the part (front matter, a Character block for an agent, a Files index for a skill, a header doc for a workflow),
