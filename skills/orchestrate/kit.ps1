@@ -5,7 +5,7 @@ Verbs:
   health [-Flow] [-Fetch]                  SessionStart hook: git state, gates, stopped runs, lint, ports, retro / audit nudges (JSON for the hook)
   setup [-Exclude] [-Quiet] [-Migrate]     install / repair (idempotent); -Migrate moves the old layout (.claude-runtime, root *.local.* state)
   guard-sendmessage                        PreToolUse hook for SendMessage
-  prepush · precommit                      the git hooks' logic (.githooks/pre-push, .githooks/pre-commit)
+  prepush · precommit                      the git hooks' logic (.githooks/pre-push, .githooks/pre-commit; .githooks/post-merge regenerates the flow page)
 Inputs: the kit clone, kit.local.json. Outputs: text (hooks: one JSON line). Exit codes: 0 ok · 1 blocked / problem · 2 usage error (hooks: 2 = block).
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -127,7 +127,7 @@ exit 0
 #   pwsh -File ... kit.ps1 setup -Migrate <old runtime> [-Work] [-Apk]                 # carry durable state over (never deletes)
 #
 # Install / repair:
-#   - git config core.hooksPath .githooks   (the versioned pre-push gate: org terms, ignored/local files; kit-health checks it)
+#   - git config core.hooksPath .githooks   (versioned hooks: pre-commit, pre-push gate, post-merge flow page; kit-health checks it)
 #   - points Claude Code auto memory at <kit>/memory (autoMemoryDirectory in settings.local.json; created if missing)
 # - writes the kit.local.json "localOnly" paths into the clone's .git/info/exclude (a managed block), so org-only skills and
 #     files stay untracked and never show in git status (kit-health runs -Exclude at every SessionStart)
@@ -228,7 +228,7 @@ if ($Migrate) {
 # ---- install / repair
 if (-not (Test-Path (Join-Path $kit '.git'))) { Write-Warning "$kit is not a git clone: install with  git clone https://github.com/prskid1000/claude-crew <workspace>/.claude" }
 else {
-  if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-push gate on)' }
+  if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-commit, pre-push, post-merge on)' }
   $r = Update-Exclude; if ($r) { Say $r }
 }
 $m = Set-Memory; if ($m) { Say $m }
