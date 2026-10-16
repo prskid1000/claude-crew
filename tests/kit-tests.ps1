@@ -47,7 +47,7 @@ if ($Area -in 'dev', 'all') {
     $gd = if ($wt) { (git -C $wt rev-parse --absolute-git-dir).Trim() }
     Expect 'deploy merge is a merge commit' ($wt -and @((git -C $wt log -1 --format=%p) -split ' ').Count -eq 2)
     Expect 'deploy merge ran the pre-commit hook' ($gd -and (Test-Path (Join-Path $gd 'hook-ran')))
-    $kl = "$k/skills/dev-kit/kit.local.json"; @{ repos = @(@{ name = 'repo'; checkout = "$r/repo"; target = 'main'; deploys = @(@{ target = 'live'; tag = 'rel-{date}' }) }) } | ConvertTo-Json -Depth 5 | Set-Content $kl
+    $kl = "$k/skills/dev-kit/kit.local.json"; @{ repos = @(@{ checkout = "$r/repo"; target = 'main'; deploys = @(@{ target = 'live'; tag = 'rel-{date}' }) }) } | ConvertTo-Json -Depth 5 | Set-Content $kl
     $dm = { pwsh -NoProfile -File $O deploy merge -Repo "$r/repo" @args 2>&1 | Out-String }; $o1 = & $dm -To main; $o2 = & $dm -To live -Push; Remove-Item $kl
     Expect 'deploy merge: trunk = no merge; tag deploy pushes a tag' ($o1 -match 'trunk' -and $o2 -match 'pushed rel-' -and (git -C "$r/origin.git" tag) -match '^rel-')
   } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
@@ -695,32 +695,30 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
   $w = pwsh -NoProfile -File $O decide wait -Id $eid -MaxMinutes 1 | Out-String
   Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
-  # unique decision ids; board check needs -Worktree; --help runs nothing
-  $i1 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A1 -Question 'q1' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
-  $i2 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A2 -Question 'q2' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
+  $i1, $i2 = 'A1', 'A2' | ForEach-Object { (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item $_ -Question "q$_" -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
   $null = pwsh -NoProfile -File $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
   $hp = pwsh -NoProfile -File (Join-Path $k 'skills/orchestrate/orch.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
   Expect 'decide ids unique within a second; board check without -Worktree exit 2; orch.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'commands in one file' -and $hp -notmatch 'setup:')
   # deploy batching
-  $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'
-  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
-  $null = New-Item -ItemType Directory -Force (Split-Path $tf); @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } | ConvertTo-Json -Depth 6 | Set-Content $tf
+  $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'; $J = { param($o, $f) $o | ConvertTo-Json -Depth 6 | Set-Content $f }; $dep = { pwsh -NoProfile -File $O deploy @args }
+  & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
+  $null = New-Item -ItemType Directory -Force (Split-Path $tf); & $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } $tf
   $fx = Join-Path (Split-Path $k) 'deploy-fixture.json'
-  @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'not on staging yet' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } | ConvertTo-Json -Depth 6 | Set-Content $fx
-  $plan = { @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json) }; $p = & $plan
-  Expect 'deploy plan: prod (name), live (production) out, preprod (production false) in; one ASK batch for stage' (($p.target -join ',') -eq 'stage,preprod' -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
-  $null = pwsh -NoProfile -File $O deploy request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx; $p = & $plan
+  & $J @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } $fx
+  $plan = { @(& $dep plan -Offline $fx -Json | ConvertFrom-Json) }; $p = & $plan
+  Expect 'deploy plan: production by name / flag / false; one ASK batch for stage' (($p.target -join ',') -eq 'stage,preprod' -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
+  $null = & $dep request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx; $p = & $plan
   Expect 'deploy request: another session''s MR joins the same batch' ((@($p[0].mrs.mr | Sort-Object) -join ',') -eq 'api!1,api!3')
-  $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
-  Expect 'deploy record: the window holds the next ask (WAIT), the pending request is cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
-  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
-  $fx2 = Join-Path (Split-Path $k) 'deploy-fixture2.json'; @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } | ConvertTo-Json -Depth 6 | Set-Content $fx2
-  $dr = pwsh -NoProfile -File $O deploy request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String
+  $null = & $dep record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
+  Expect 'deploy record: WAIT in the window, the request cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
+  & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } $cfgF
+  $fx2 = Join-Path (Split-Path $k) 'deploy-fixture2.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } $fx2
+  $dr = & $dep request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String
   Expect 'deploy request: only the MR repo''s deploys; UNKNOWN names the deploy and why' ($dr -match 'DEPLOY stage: UNKNOWN: the deploy check failed: api!5: cannot reach the host' -and $dr -notmatch 'pystage')
-  $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!5' -By tester
-  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
-  $null = pwsh -NoProfile -File $O deploy request -Mrs 'api!3' -Run w3 -Offline $fx; $p = & $plan
-  Expect 'deploy plan: trigger owner (default) -> READY inside the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
+  $null = & $dep record -Env stage -Mrs 'api!5' -By tester
+  & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } $cfgF
+  $null = & $dep request -Mrs 'api!3' -Run w3 -Offline $fx; $p = & $plan
+  Expect 'deploy plan: trigger owner -> READY in the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
   $sup = (Get-Command (Join-Path $k 'skills/orchestrate/orch.ps1')).ScriptBlock.Ast.Extent.Text -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
   Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
   # crash recovery: the FNV-checked args record beats a typed one; recover prints the resume
@@ -851,7 +849,7 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   Expect 'prose: filler, missing sections and a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')
   $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
   Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
-  $wc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; k.load_json = lambda p: ({'commitStyle': 'free'}, None); print(k.words('日本 wörd ok'), k.commit_rx())"
+  $wc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
   Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
   $rj = Join-Path $k 'results.json'; '{"checks":[{"id":"T1","note":"ok"},{"id":"T2","note":"' + ('word ' * 45) + '"}]}' | Set-Content $rj
   $out = python -X utf8 $KT prose --kind result-note $rj | Out-String
