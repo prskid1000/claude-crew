@@ -61,9 +61,9 @@ const REVIEW = A.review !== false
 const REVIEW_AUTO = A.review === 'auto'
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = Number.isFinite(A.localRetries) ? A.localRetries : 1
-const DECIDE_TRIES = Math.max(1, Math.ceil((Number.isFinite(A.decisionWaitMinutes) ? A.decisionWaitMinutes : 300) / 50))
+const DECIDE_TRIES = Math.max(1, Math.ceil((Number.isFinite(A.decisionWaitMinutes) ? A.decisionWaitMinutes : 300) / 9))
 const ENV_FIX_CYCLES = Number.isFinite(A.envFixCycles) ? A.envFixCycles : 2
-const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(A.envFixWaitMinutes) ? A.envFixWaitMinutes : 300) / 50))
+const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(A.envFixWaitMinutes) ? A.envFixWaitMinutes : 300) / 9))
 const SENSITIVE = /(^|[\\/])(db|migrations?|changelog|liquibase|flyway|alembic|prisma)([\\/.]|$)|\.sql$|auth|security|permission|role|acl|passw|secret|token|crypto|oauth|login|session|policy|csrf|cors/i
 const smallChange = (r) => Number.isFinite(r.changedLines) && r.changedLines < 40 && Array.isArray(r.changedFiles) && r.changedFiles.length > 0 &&
   !r.changedFiles.some((p) => SENSITIVE.test(p))
@@ -207,7 +207,7 @@ Fix each or explain why it is not a problem. Then run the local test loop again 
 put the fix on a new branch from the target (dev.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {
-  return `Run exactly this PowerShell command and return its JSON output (fields done, mrs). Nothing else.${PATHS}
+  return `Run exactly this PowerShell command (tool timeout 600000) and return its JSON output (fields done, mrs). Nothing else.${PATHS}
 $env:CLAUDE_AGENT='ci-${a.id}'; & ${DEV} pipes -Mrs ${r.mrs.filter((m) => !m.merged).map((m) => m.url).join(',')} -MaxMinutes 8
 If the JSON says "done": false, run it again (at most 3 times in total) and return the last JSON.`
 }
@@ -227,7 +227,7 @@ Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
 python ${DT} merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}). A consumer merges only after its producer printed MERGED;
 otherwise register & ${ORCH} track add -Task <task id from the MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><producer repo>!<iid>'.
-${wait.length ? `These producer MRs of other areas are NOT merged yet: ${wait.map((m) => m.url).join(', ')}: register every MR of this area behind them (-MergeAfter), merge none.\n` : ''}${SYNC_NOTE}
+${wait.length ? `These producer MRs of other areas are NOT merged yet: ${wait.map((m) => m.url).join(', ')}: register each MR listed above behind them (-MergeAfter; never a held MR), merge none.\n` : ''}${SYNC_NOTE}
 ${MERGE_WORD_NOTE}
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
@@ -238,12 +238,22 @@ log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto
 // merge, don't replace: a later round reports only its own work; the build report holds the items done
 const uniq = (x) => [...new Set(x)]
 const byId = (x) => [...new Map(x.map((d) => [d.id, d])).values()]
+const byKey = (x, k) => [...new Map(x.map((d) => [d[k], d])).values()]
+// decide wait in slices the agent's tool timeout allows (a 50 min wait was killed after <= 10 min: items deferred hours too early)
+async function waitAnswer(id, label, tries) {
+  for (let t = 0; t < tries; t++) {
+    const w = await agent(`Run exactly this in PowerShell (tool timeout 600000) and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
+& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, { label, phase: 'Decide', schema: OK_SCHEMA, model: 'haiku', effort: 'low' })
+    if (w && w.ok) return w.output
+  }
+  return null
+}
 function mergeReports(x, r2, note) {
   if (!r2) return x
   const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
   return { ...x, ...r2, mrs, worktrees: uniq([...(x.worktrees || []), ...(r2.worktrees || [])]), done: uniq([...(x.done || []), ...(r2.done || [])]),
     deferred: byId([...(x.deferred || []), ...(r2.deferred || [])]).filter((d) => !(r2.done || []).includes(d.id)),
-    needsDecision: r2.needsDecision || [], needsEnvFix: r2.needsEnvFix || [], needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
+    needsDecision: byKey([...(x.needsDecision || []), ...(r2.needsDecision || [])], 'decisionId'), needsEnvFix: byKey([...(x.needsEnvFix || []), ...(r2.needsEnvFix || [])], 'envFixId'), needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
     seed: uniq([...(x.seed || []), ...(r2.seed || [])]), foreignHooks: uniq([...(x.foreignHooks || []), ...(r2.foreignHooks || [])]),
     testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
@@ -289,51 +299,47 @@ const results = await pipeline(
   // items stopped for an ENV-FIX wait for the coordinator's fix (at most ENV_FIX_CYCLES per area), then the agent continues them
   (r, a) => settleOnThrow(a, async () => {
     if (!r || r.error || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
-    let cur = r
-    for (let cyc = 0; (cur.needsEnvFix || []).length; cyc++) {
-      const fixes = cur.needsEnvFix
-      if (cyc >= ENV_FIX_CYCLES) {
-        cur = { ...cur, needsEnvFix: [], deferred: byId([...(cur.deferred || []), ...fixes.map((f) => ({ id: f.item, reason: `ENV-FIX ${f.envFixId} unresolved after ${ENV_FIX_CYCLES} cycle(s): the coordinator decides` }))]) }
-        log(`${a.id}: ENV-FIX unresolved after ${ENV_FIX_CYCLES} cycle(s) for ${fixes.map((f) => f.item).join(', ')} - deferred, the coordinator decides`)
-        break
-      }
-      const done = []
-      for (const f of fixes) {
-        envFixes.push({ agent: a.id, ...f })
-        log(`${a.id}: item ${f.item} waits for ENV-FIX ${f.envFixId} (the coordinator fixes the local env: orch.ps1 decide answer)`)
-        let ans = null
-        for (let t = 0; t < ENV_FIX_TRIES && !ans; t++) {
-          const w = await agent(`Run exactly this in PowerShell and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
-& ${ORCH} decide wait -Id ${f.envFixId} -MaxMinutes 50`, { label: `envfix:${a.id}`, phase: 'Decide', schema: OK_SCHEMA, model: 'haiku', effort: 'low' })
-          if (w && w.ok) ans = w.output
+    let cur = r, envCycles = 0
+    const asked = new Set()
+    // until nothing waits: a resumed round may raise new decisions / env fixes; every resume goes through the local loop again
+    for (let round = 0; round < 8; round++) {
+      const fixes = cur.needsEnvFix || []
+      const decs = (cur.needsDecision || []).filter((d) => !asked.has(d.decisionId))
+      if (!fixes.length && !decs.length) break
+      if (fixes.length) {
+        if (envCycles++ >= ENV_FIX_CYCLES) {
+          cur = { ...cur, needsEnvFix: [], deferred: byId([...(cur.deferred || []), ...fixes.map((f) => ({ id: f.item, reason: `ENV-FIX ${f.envFixId} unresolved after ${ENV_FIX_CYCLES} cycle(s): the coordinator decides` }))]) }
+          log(`${a.id}: ENV-FIX unresolved after ${ENV_FIX_CYCLES} cycle(s) for ${fixes.map((f) => f.item).join(', ')} - deferred, the coordinator decides`)
+          continue
         }
-        done.push({ ...f, ans })
+        const done = []
+        for (const f of fixes) {
+          envFixes.push({ agent: a.id, ...f })
+          log(`${a.id}: item ${f.item} waits for ENV-FIX ${f.envFixId} (the coordinator fixes the local env: orch.ps1 decide answer)`)
+          done.push({ ...f, ans: await waitAnswer(f.envFixId, `envfix:${a.id}`, ENV_FIX_TRIES) })
+        }
+        const answered = done.filter((f) => f.ans && !/:\s*cannot\b/i.test(f.ans))
+        const failed = done.filter((f) => !answered.includes(f))
+        if (failed.length) cur = { ...cur, deferred: byId([...(cur.deferred || []), ...failed.map((f) => ({ id: f.item, reason: `ENV-FIX ${f.envFixId}: ${f.ans ? f.ans : 'no fix within the wait'} (the coordinator decides)` }))]) }
+        cur = { ...cur, needsEnvFix: [] }
+        if (!answered.length) continue
+        const r2 = await agent(continuePrompt(a, cur, `The coordinator fixed the local env:\n${answered.map((f) => `- item ${f.item} (${f.envFixId}): ${f.ans}`).join('\n')}\nContinue those items (local test loop, MR, testing doc).`),
+          { label: `envfix-resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
+        cur = await localLoop(a, mergeReports(cur, r2, 'After ENV-FIX'), LOCAL_RETRIES, 'Decide')
+        continue
       }
-      const answered = done.filter((f) => f.ans && !/:\s*cannot\b/i.test(f.ans))
-      const failed = done.filter((f) => !answered.includes(f))
-      if (failed.length) cur = { ...cur, deferred: byId([...(cur.deferred || []), ...failed.map((f) => ({ id: f.item, reason: `ENV-FIX ${f.envFixId}: ${f.ans ? f.ans : 'no fix within the wait'} (the coordinator decides)` }))]) }
-      cur = { ...cur, needsEnvFix: [] }
-      if (!answered.length) break
-      const r2 = await agent(continuePrompt(a, cur, `The coordinator fixed the local env:\n${answered.map((f) => `- item ${f.item} (${f.envFixId}): ${f.ans}`).join('\n')}\nContinue those items (local test loop, MR, testing doc).`),
-        { label: `envfix-resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
-      cur = await localLoop(a, mergeReports(cur, r2, 'After ENV-FIX'), LOCAL_RETRIES, 'Decide')
-    }
-    const pendingD = [...new Map([...(r.needsDecision || []), ...(cur.needsDecision || [])].map((d) => [d.decisionId, d])).values()]
-    for (const d of pendingD) {
-      decisions.push({ agent: a.id, ...d })
-      log(`${a.id}: item ${d.item} waits for decision ${d.decisionId} (the coordinator asks the owner: orch.ps1 decide answer)`)
-      let ans = null
-      for (let t = 0; t < DECIDE_TRIES && !ans; t++) {
-        const w = await agent(`Run exactly this in PowerShell and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
-& ${ORCH} decide wait -Id ${d.decisionId} -MaxMinutes 50`, { label: `decide:${a.id}`, phase: 'Decide', schema: OK_SCHEMA, model: 'haiku', effort: 'low' })
-        if (w && w.ok) ans = w.output
+      for (const d of decs) {
+        asked.add(d.decisionId)
+        decisions.push({ agent: a.id, ...d })
+        log(`${a.id}: item ${d.item} waits for decision ${d.decisionId} (the coordinator asks the owner: orch.ps1 decide answer)`)
+        const ans = await waitAnswer(d.decisionId, `decide:${a.id}`, DECIDE_TRIES)
+        if (!ans) { cur = { ...cur, deferred: byId([...(cur.deferred || []), { id: d.item, reason: `needs decision ${d.decisionId} (no answer within the wait)` }]) }; continue }
+        const r2 = await agent(continuePrompt(a, cur, `The owner answered decision ${d.decisionId} for item ${d.item}: ${ans}\nFinish item ${d.item} accordingly (testing goals, local test loop, MR, testing doc).`),
+          { label: `resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
+        cur = await localLoop(a, mergeReports(cur, r2, `Decision ${d.decisionId}`), LOCAL_RETRIES, 'Decide')
       }
-      if (!ans) { cur = { ...cur, deferred: byId([...(cur.deferred || []), { id: d.item, reason: `needs decision ${d.decisionId} (no answer within the wait)` }]) }; continue }
-      const r2 = await agent(continuePrompt(a, cur, `The owner answered decision ${d.decisionId} for item ${d.item}: ${ans}\nFinish item ${d.item} accordingly (testing goals, local test loop, MR, testing doc).`),
-        { label: `resume:${a.id}`, phase: 'Decide', schema: REPORT, agentType: 'dev-agent', ...modelOf(a) })
-      cur = mergeReports(cur, r2, `Decision ${d.decisionId}`)
     }
-    return { ...cur, needsDecision: [] }
+    return { ...cur, needsDecision: [], needsEnvFix: [] }
   }),
   // Review + CI (+ one fix round), then ship
   (r, a) => settleOnThrow(a, async () => {
@@ -404,9 +410,13 @@ async function ship(a, x) {
   }
   const r3 = await agent(shipPrompt(a, x.report, wait), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, ...pick('ship'), effort: 'low' })
   if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
-  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'NOT_MERGED' : 'OPEN')]))
+  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
   const mrs = x.report.mrs.map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
   const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => ({ mr: m.url, file: '-', severity: 'blocking', problem: `Merge conflict outside append-only files: ${r3.summary}`.slice(0, 1500), fix: 'wt sync, resolve by hand, re-check, push --force-with-lease, devtools.py merge again.' }))
+  for (const m of mrs.filter((m) => !isHeld(m) && ['WAIT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'].includes(m.mergeState))) {
+    conflicts.push({ mr: m.url, file: '-', severity: 'blocking', problem: `Not merged (${m.mergeState}): ${r3.summary}`.slice(0, 1500),
+      fix: m.mergeState === 'WAIT' ? 'devtools.py merge again in a few minutes (or orch.ps1 track run once the producer merged)' : 'read the MR state; fix the pipeline or merge by hand' })
+  }
   return { ...x, shipFindings: conflicts, report: { ...x.report, mrs, summary: `MR state (authoritative): ${mrs.map((m) => `${m.url} ${m.mergeState}`).join(', ')}\n\n${x.report.summary}` } }
 }
 

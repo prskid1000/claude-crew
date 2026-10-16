@@ -664,7 +664,8 @@ foreach ($name in $Lanes) {
     $ini = Join-Path $c.avdDir "$name.avd\emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
     $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
-    $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # a window only when asked: -ShowAll or headless: false; if ($noWin) { $a += '-no-window' }
+    $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # a window only when asked: -ShowAll or headless: false
+    if ($noWin) { $a += '-no-window' }   # was inside the comment above: every lane opened a window
     # start via WMI so the emulator is not a child of this shell (a tool timeout would otherwise kill it).
     # SW_HIDE: no console/terminal window per emulator (they piled up and stayed open after the phone exited). The phone's own
     # window belongs to the qemu child process and still shows unless -no-window. (WMI rejects CREATE_NO_WINDOW: ReturnValue 21.)

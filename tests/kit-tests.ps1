@@ -269,6 +269,32 @@ run(args, a.agent, () => {}, () => {}, null).then(() => run(args, b.agent, () =>
   $res = @(node $jf 2>&1)
   foreach ($x in 'envfix-ask', 'envfix-pass', 'envfix-held') { Expect "test-and-close local: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
   if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
+  # test-and-close merges retries per check: a retry with fewer checks keeps the first run's FAIL; a renamed duplicate id (C5b)
+  # is retried under its guide id (C5) and takes the result
+  $js4 = @'
+const calls = []
+const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
+async function agent(prompt, o) {
+  calls.push({ label: o.label, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^test:/.test(o.label)) return { code: 'A1', checks: [ck('C1', 'FAIL', { defect: 'own' }), ck('C2', 'NOT_TESTED'), ck('C3', 'NOT_TESTED'), ck('C4', 'PASS'), ck('C5', 'PASS'), ck('C5', 'NOT_TESTED')], findings: [], setup_changes: [], data_created: [] }
+  if (/^retest:/.test(o.label)) return { code: 'A1', checks: [ck('C2', 'PASS'), ck('C3', 'PASS')], findings: [], setup_changes: [], data_created: [] }
+  if (/^retest-strong:/.test(o.label)) return { code: 'A1', checks: [ck('C5', 'PASS')], findings: [], setup_changes: [], data_created: [] }
+  if (/^verify:/.test(o.label)) return { verdicts: [{ id: 'C1', outcome: 'confirmed', confirmed: true, attempts: 1, observed: 'again', evidence: [], basis: 'none' }] }
+  return { ok: true, output: 'published', signals: 0, lessonsChanged: [] }
+}
+const args = { runDir: 'C:/runs/R4', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+run(args, agent, () => {}, () => {}, null).then(() => {
+  const cl = calls.find((c) => c.label === 'close:A1'), s = calls.find((c) => c.label === 'retest-strong:A1')
+  console.log(`keeps-fail:${!!cl && /"id":"C1"[^}]*"result":"FAIL"/.test(cl.prompt) && /"id":"C3"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+  console.log(`guide-id:${!!s && /ONLY these checks: C5\./.test(s.prompt) && /"id":"C5b"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'tc-merge.mjs'; [IO.File]::WriteAllText($jf, $js4.Replace('__BODY__', $wf))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'keeps-fail', 'guide-id') { Expect "test-and-close retries: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 2)) { $res | Select-Object -First 5 }
   # test-and-close select: Prepare builds the run (qa-kit L1), the resume record holds the runDir, an item's own target pins its testers
   $js2 = @'
 const calls = []
@@ -328,6 +354,12 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
   $w = pwsh -NoProfile -File $O decide wait -Id $eid -MaxMinutes 1 | Out-String
   Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
+  # deep review 2026-10-16: unique decision ids, board check needs -Worktree, --help exits 0 and runs nothing
+  $i1 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A1 -Question 'q1' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
+  $i2 = (pwsh -NoProfile -File $O decide ask -Run w1 -Agent X9 -Item A2 -Question 'q2' -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
+  $null = pwsh -NoProfile -File $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
+  $hp = pwsh -NoProfile -File (Join-Path $k 'skills/orchestrate/kit.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
+  Expect 'decide ids unique within a second; board check without -Worktree exit 2; kit.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'kit maintenance in one file' -and $hp -notmatch 'setup:')
   # deploy batching (offline fixture): one batch per env from every tracked task; the window holds a second deploy
   $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'
   @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
@@ -336,7 +368,7 @@ if ($Area -in 'orch', 'all') {
   @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'not on staging yet' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } | ConvertTo-Json -Depth 6 | Set-Content $fx
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy plan: prod never a candidate; one ASK batch for stage with the undeployed MR only' ($p.Count -eq 1 -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
-  $null = pwsh -NoProfile -File $O deploy request -Mrs 'api!3' -Run w2 -Offline $fx
+  $null = pwsh -NoProfile -File $O deploy request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy request: another session''s MR joins the same batch' ((@($p[0].mrs.mr | Sort-Object) -join ',') -eq 'api!1,api!3')
   $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!1','api!3' -By tester
@@ -406,6 +438,10 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
   $rj = Join-Path $k 'results.json'; '{"checks":[{"id":"T1","note":"ok"},{"id":"T2","note":"' + ('word ' * 45) + '"}]}' | Set-Content $rj
   $out = python -X utf8 $KT prose --kind result-note $rj | Out-String
   Expect 'prose: a results.json note over 40 words is a finding' ($LASTEXITCODE -eq 1 -and $out -match '45 words')
+  # kittool args: --help prints usage (0) and writes nothing; an unknown flag or a non-kit folder is a usage error (2)
+  Push-Location $k; $null = python -X utf8 $KT lint --help; $h = $LASTEXITCODE; $null = python -X utf8 $KT flow --bogus 2>&1; $u = $LASTEXITCODE
+  $null = python -X utf8 $KT lint (Join-Path $k 'skills') 2>&1; $nk = $LASTEXITCODE; Pop-Location
+  Expect 'kittool: --help exits 0 and writes nothing; unknown flag / non-kit dir exit 2' ($h -eq 0 -and $u -eq 2 -and $nk -eq 2 -and -not (Test-Path (Join-Path $k '--help')))
   Remove-TestKit $k
 }
 

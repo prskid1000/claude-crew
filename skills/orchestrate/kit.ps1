@@ -298,6 +298,8 @@ if ($revs.Count) {
 # 2. org terms
 $terms = @()
 $cfg = Join-Path $root 'skills/dev-kit/kit.local.json'
+# a linked kit worktree has no kit.local.json (local-only): read the main clone's, else the scan was silently skipped
+if (-not (Test-Path $cfg)) { $common = git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null; if ($LASTEXITCODE -eq 0 -and $common) { $c2 = Join-Path (Split-Path "$common".Trim()) 'skills/dev-kit/kit.local.json'; if (Test-Path $c2) { $cfg = $c2 } } }
 if ($env:KIT_ORG_TERMS) { $terms = @($env:KIT_ORG_TERMS -split ',' | Where-Object { $_.Trim() }) }
 elseif (Test-Path $cfg) { try { $terms = @((Get-Content $cfg -Raw | ConvertFrom-Json).orgTerms | Where-Object { $_ }) } catch { $hits += "CONFIG      $cfg is not valid JSON: $_" } }
 if (-not $terms.Count) { Write-Host 'pre-push: no orgTerms in skills/dev-kit/kit.local.json - org-term scan skipped' }
@@ -345,6 +347,7 @@ exit 0
 function Invoke-PreCommit {
   $root = $KitConf.Kit
   $py = Get-Python
+  if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow / port cannot run)' -ForegroundColor Red; exit 1 }
   & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
@@ -357,6 +360,7 @@ function Invoke-PreCommit {
   if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - ports still differ after regeneration: $chk" -ForegroundColor Red; exit 1 }
   $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
+  if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
   $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
   if ($probs.Count) { Write-Host "pre-commit: BLOCKED - kit-lint: $($probs.Count) problem(s):" -ForegroundColor Red; $probs | Select-Object -First 25 | ForEach-Object { Write-Host "  $($_.code) $($_.where): $($_.problem)" }; exit 1 }
   exit 0

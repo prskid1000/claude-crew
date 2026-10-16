@@ -29,6 +29,7 @@ Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. C
 shutil.which, so the same names work on every OS.
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time
+import xml.etree.ElementTree as ET   # lbcheck (it was missing: every lbcheck run ended in PARSE ERROR)
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # the dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude folder)
@@ -98,7 +99,12 @@ def locked(path, stale=120):
 def _run(cmd, cwd=None, check=False):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8')
+    try:   # a hung glab / gh / gws call must not outlive the agent's tool timeout
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=120)
+    except subprocess.TimeoutExpired:
+        if check:
+            raise SystemExit(f'timed out after 120 s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
+        return 'error: timed out after 120 s'
     out = ((p.stdout or '') + (p.stderr or '')).strip()
     if check and p.returncode:   # a failed write (status, comment, create) must not print 'done' and exit 0
         raise SystemExit(f'failed (exit {p.returncode}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
@@ -387,7 +393,7 @@ def _gitlab_no_ci_config(enc, m):
     if not tgt:
         return False
     f = _run([GLAB, 'api', f'projects/{enc}/repository/files/.gitlab-ci.yml?ref={tgt}'])
-    return '404' in f and 'file_name' not in f
+    return bool(re.search(r'\b404\b', f)) and 'not found' in f.lower() and 'file_name' not in f   # an HTTP 404, not any '404' text
 
 
 def _gitlab_final(enc, proj, iid, put, st):
@@ -502,7 +508,7 @@ def auto_merge(worktree, iid, max_wait=90):
         st = (m.get('head_pipeline') or {}).get('status')
         if st in ('failed', 'canceled'):
             return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
-        args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true']
+        args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true'] + (['-f', f"sha={m['sha']}"] if m.get('sha') else [])   # a push after the read refuses the merge
         # A repo without MR CI never gets a pipeline: merge_when_pipeline_succeeds would then wait forever (two reviewed MRs once
         # stayed open while the poller slept and died with its agent). Decide from the project first: no pipeline required and no
         # CI config at all -> merge now. Otherwise (a CI file whose rules may skip MRs): no pipeline for the MR head and none on the
@@ -525,6 +531,8 @@ def auto_merge(worktree, iid, max_wait=90):
                 # return WAIT at once instead of waiting for the new pipeline to appear
                 def _no_ci():
                     pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines']))
+                    if not isinstance(pls, list):   # the query failed: unknown, never 'no CI' (-> WAIT)
+                        return False, False
                     pls = [p for p in pls if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(pls, list) else []
                     refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&sha={sha}&per_page=1'])) if ref else {}
                     refp = [p for p in refp if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(refp, list) else None
@@ -543,7 +551,11 @@ def auto_merge(worktree, iid, max_wait=90):
                     none_yet, has = _no_ci()
                 if has:
                     st = 'running'
-                no_ci = none_yet and age + waited > 300
+                # a repo WITH a CI config but no pipeline for the MR head: never merge without CI (an MR once merged that way);
+                # its rules skipped the MR or the pipeline never started -> run it, or the coordinator merges by hand
+                if none_yet and age + waited > 300:
+                    return (f'no pipeline for the head of !{iid} although the repo has CI (rules skipped it, or it never started): '
+                            f'run the pipeline, then merge again; or the coordinator merges by hand\nNOT_MERGED')
                 if not has and not no_ci:
                     left = int(max(30, 310 - age - waited)) if none_yet else 60
                     return f'WAIT: no pipeline on !{iid} yet (a pipeline is still expected); run merge again in {left} s\nWAIT'
@@ -883,6 +895,36 @@ def selftest():
     expect('the open producer is found', out == [('api!3', 'opened', 'T1')])
     expect('a pair naming another repo is reported, not silently skipped', 'names repo other' in err.getvalue())
     expect('merge_word reads the last line', merge_word('x\nWAIT') == 'WAIT' and merge_word('x') == 'NOT_MERGED')
+    # CI gate (canned glab answers): a repo WITH CI and no head pipeline after 5 min is NOT_MERGED, a failed query WAIT, never a merge
+    g = globals()
+    saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', '_progress')}
+    old = '2020-01-01T00:00:00Z'
+    puts = []
+    def canned(pls):
+        def run(cmd, cwd=None, check=False):
+            s = ' '.join(str(c) for c in cmd)
+            if '-X PUT' in s:
+                puts.append(s)
+                return '{"merged":"yes"}'
+            if s.endswith('merge_requests/7'):
+                return json.dumps({'state': 'opened', 'sha': 'abc', 'source_branch': 'f/x', 'target_branch': 'main', 'updated_at': old})
+            if 'merge_requests/7/pipelines' in s:
+                return pls
+            if 'pipelines?ref=' in s:
+                return '[]'
+            if s.endswith('projects/g%2Fr'):
+                return '{"id": 1}'
+            return '{"file_name": ".gitlab-ci.yml"}'   # the repo has a CI file
+        return run
+    try:
+        g['remote'] = lambda wt: ('gitlab', 'g/r'); g['unmerged_producers'] = lambda *a, **k: []; g['_progress'] = lambda m: None
+        g['_run'] = canned('[]')
+        expect('CI repo, no head pipeline after 5 min: NOT_MERGED, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'NOT_MERGED' and not puts)
+        g['_run'] = canned('error: 500 Internal Server Error')
+        expect('a failed pipeline query is WAIT, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'WAIT' and not puts)
+    finally:
+        g.update(saved)
+    expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
@@ -909,7 +951,9 @@ if __name__ == '__main__':
     elif cmd == 'mr':
         print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
     elif cmd == 'merge':          # merges now / schedules merge-when-green; waits <= 90 s for a pipeline to appear
-        print(auto_merge(a[1], a[2]))
+        res = auto_merge(a[1], a[2])
+        print(res)
+        sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # header: 1 = not merged (refused, conflict, wait)
     elif cmd == 'merge-wait':     # old behaviour: poll until merged (blocks up to 90 min)
         print(merge_when_green(a[1], a[2]))
     elif cmd == 'keepboth':

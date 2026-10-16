@@ -6,7 +6,7 @@ reproduce bugs and debug against. Stack-agnostic: a service is a start command i
 Verbs: envs · status · deploy · wait · use · release · promote · task · logs · events · migrations · (owner) up · down · drop · refresh
        _daemon -Env <env> [-Train <id>] (controller, started by this script) · _exec (service wrapper)
 Inputs: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Outputs: text; status -Json.
-Exit codes: 0 ok · 1 refused / rejected / rolled back / failed · 2 usage error (unknown env, no localEnv configured).
+Exit codes: 0 ok · 1 refused / rejected / rolled back / failed · 2 usage error (unknown env, no localEnv configured) · 3 still running (wait -Id).
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
@@ -1208,6 +1208,8 @@ function New-Request([hashtable]$r) {
   $r.id
 }
 # Wait for a request; prints the train's phase as it changes. Returns the request (done or not).
+# the header's exit codes for a queued request: a refused / rejected / rolled-back deploy used to exit 0
+function Exit-Request($r) { if ($r -and $r.status -ne 'done') { exit 3 }; if ($r -and "$($r.result.outcome)" -match '(?i)refus|reject|error|roll|fail') { exit 1 } }
 function Wait-Request([string]$rid) {
   $until = (Get-Date).AddMinutes($Wait); $said = $null
   while ($true) {
@@ -1337,11 +1339,11 @@ switch ($Action) {
       if ($mc.effective -eq 'light') { "[$e]   changeSets: $(@($mc.ids | Select-Object -First 6) -join ', ')$(if ($mc.count -gt 6) { ', ...' }); plan: localenv.ps1 migrations -Env $e -Branch $Branch" }
       else { foreach ($w in @($mc.why | Select-Object -First 5)) { "[$e]   HEAVY because $w" }; "[$e]   -> $(if (SandboxCfg $e) { 'own sandbox (own DB copy)' } elseif ((Get-EnvCfg $e).db.snapshot) { 'main env, DB snapshot first' } else { 'main env, no restore point (no db.snapshot hook)' })" }
     }
-    $null = Wait-Request $rid
+    Exit-Request (Wait-Request $rid)
   }
-  'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; $null = Wait-Request $rid }
-  'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; $null = Wait-Request $rid }
-  'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; $null = Wait-Request $Id }
+  'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
+  'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
+  'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; Exit-Request (Wait-Request $Id) }
   'use' {
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
@@ -1400,7 +1402,7 @@ switch ($Action) {
       Update-State $e { param($x) $x.sandboxes[$key].promoted = @{ by = $Agent; at = (Now); note = $Note } }
       $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = @{ $sbx.repo = $sbx.sha }; migrations = @{ $sbx.repo = $true }; noSandbox = $true }
       "[$e] $Branch promoted in sandbox $key; deploying it into the main env as request $rid (migrations: the shared DB changes)"
-      $null = Wait-Request $rid
+      Exit-Request (Wait-Request $rid)
       return
     }
     $o = @{ hit = @() }

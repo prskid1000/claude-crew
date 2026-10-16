@@ -76,6 +76,8 @@ const LENSES = [
 ]
 
 phase('Analyse')
+await agent(`Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')}.start (create the folder), nothing else. Return ok=true.`,
+  { label: 'stamp-start', phase: 'Analyse', model: 'haiku', effort: 'low' })
 const found = await parallel(LENSES.map((l) => () => agent(`You are a retrospective analyst for a multi-agent dev/QA kit. Lens: ${l.focus}.
 ${SOURCES}
 
@@ -91,7 +93,7 @@ const dead = found.filter((f) => !f).length
 log(`analysts proposed ${all.length} change(s)${dead ? ` - WARNING ${dead} analyst(s) returned nothing` : ''}`)
 if (!all.length) {
   // stamp anyway, so the session-start nudge stops counting the signals this retro already looked at - unless analysts failed
-  if (!dead) await agent(`Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')} (create the folder), nothing else. Return ok=true.`,
+  if (!dead) await agent(`Copy the content of ${rp('last-retro')}.start to ${rp('last-retro')} (the time this retro started), nothing else. Return ok=true.`,
     { label: 'stamp', phase: 'Apply', model: 'haiku', effort: 'low' })
   return { applied: [], proposedForApproval: [], rejected: [], report: dead ? `no proposals; ${dead} analyst(s) failed - re-run the retro` : 'nothing to change' }
 }
@@ -112,7 +114,7 @@ Steps:
 4. Write the report to ${rp('retros')}/retro-<yyyy-MM-dd-HHmm>.md (create the folder): what changed and why (with evidence), what awaits approval, what was rejected.
 5. Run python -X utf8 ${C}/skills/orchestrate/kittool.py lint (it also regenerates <runtime>/cache/kit-flow.html): fix every problem your changes
    caused (see ${C}/CONTRIBUTING.md) and list the rest in the report. Then & ${C}/skills/orchestrate/orch.ps1 cleanup -Quiet; include the freed space in the report.
-6. Write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')} so the next retro and the session nudge count only new signals.
+6. ${dead ? `Do NOT write ${rp('last-retro')}: ${dead} analyst(s) failed, their signals are not reviewed yet.` : `Copy the content of ${rp('last-retro')}.start (the time this retro started) to ${rp('last-retro')} so the next retro and the session nudge count only signals after it.`}
 Return the lists and the report path.`, { label: 'apply', phase: 'Apply', schema: RESULT, ...pick('apply') })
 
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)

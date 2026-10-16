@@ -106,7 +106,7 @@ const LEARN = R.learn === undefined ? true : R.learn
 // local env items: we own data, config, services: NOT_TESTED is never final (ENV-FIX cycles, bounded; then the coordinator decides)
 const LOCALENV = (it) => (it && it.localEnv) || R.localEnv || ''
 const ENV_FIX_CYCLES = Number.isFinite(R.envFixCycles) ? R.envFixCycles : 2
-const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 50))
+const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 9))   // 9 min slices: the tool timeout is 10
 const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run'
 // Memory seat + item claim (qa.ps1 seat): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
 function seatBlock(it, label) {
@@ -207,7 +207,7 @@ Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH 
   log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
   return false
 }
-await recordArgs('test-and-close', RUNNAME, ARGS0, 'Test')
+await recordArgs('test-and-close', R.instance ? `${RUNNAME}-${OWNER}` : RUNNAME, ARGS0, 'Test')
 
 // an item may name its own env (it.target, e.g. one per product); else the run's target
 const tgt = (it) => (it && it.target) || R.target || ''
@@ -345,8 +345,7 @@ ${finds || '(none)'}`
 // cold start, stall, LLM-driven), 5, so one clean warm re-run comes out inconclusive instead of refuting it.
 const INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
 function attemptsNeeded(c) {
-  if (c.attempts) return c.attempts
-  return INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1
+  return Math.max(c.attempts || 1, INTERMITTENT.test(`${c.observed || ''} ${c.what_was_done || ''}`) ? 5 : 1)
 }
 
 function verifyPrompt(it, fails, ports, L) {
@@ -402,21 +401,24 @@ async function runItem(it, idx, L) {
     log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running`)
     const prior = res ? `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${res.checks.filter((c) => c.result === 'NOT_TESTED').map((c) => c.id).join(', ')}. Reuse its valid evidence.` : ''
     const again = await agent(testPrompt(it, vports, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...modelFor(it) })
-    if (again && ntShare(again) < ntShare(res)) res = again
+    if (again && !again.skipped && res) {
+      for (const c2 of again.checks || []) {
+        const i = res.checks.findIndex((c) => c.id === c2.id)
+        if (i < 0) res.checks.push(c2)
+        else if (res.checks[i].result === 'NOT_TESTED' && c2.result !== 'NOT_TESTED') res.checks[i] = c2
+      }
+      res.findings = [...new Set([...(res.findings || []), ...(again.findings || [])])]
+    } else if (again && !again.skipped) res = again
     retried = true
   }
   if (!res) return { code: it.code, error: 'test agent returned nothing' }
-  // a local item goes on to the stronger retry and ENV-FIX cycles instead (we own the env)
-  if (ntShare(res) > 0.5 && !LOCALENV(it)) {
-    log(`${it.code}: still ${Math.round(ntShare(res) * 100)}% NOT_TESTED — not publishing; needs a manual look`)
-    return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
-  }
   res.code = it.code
   // unique check ids before audit and verify (two checks sharing an id would share one verdict): repeats get a b, c, ... suffix
   const seenIds = new Set()
   for (const c of res.checks) {
     let id = String(c.id || 'check'), k = 1
     while (seenIds.has(id)) id = `${c.id || 'check'}${String.fromCharCode(97 + k++)}`
+    if (id !== String(c.id || 'check')) c.guideId = String(c.id || 'check')
     c.id = id; seenIds.add(id)
   }
 
@@ -450,13 +452,13 @@ async function runItem(it, idx, L) {
   if (blocked.length && MODELS.retest) {
     log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
     const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed}`).join('\n')
-    const r2 = await agent(testPrompt({ ...it, only: blocked.map((c) => c.id) }, vports, L) +
+    const r2 = await agent(testPrompt({ ...it, only: [...new Set(blocked.map((c) => c.guideId || c.id))] }, vports, L) +
       `\nSTRONGER RETRY: a first tester could not complete these checks. What blocked it:\n${why}\nWork around each blocker (other data, user, path, the API, the lead notes) and execute the check; NOT_TESTED again only when truly impossible, with the cause.`,
       { label: `retest-strong:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
     for (const c2 of (r2 && !r2.skipped && r2.checks) || []) {
-      const i = res.checks.findIndex((c) => c.id === c2.id && c.result === 'NOT_TESTED')
+      const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
       if (i < 0 || c2.result === 'NOT_TESTED') continue
-      res.checks[i] = { ...c2, observed: `${c2.observed} (stronger retry; first attempt: ${res.checks[i].observed})` }
+      res.checks[i] = { ...c2, id: res.checks[i].id, observed: `${c2.observed} (stronger retry; first attempt: ${res.checks[i].observed})` }
     }
     retried = true
   }
@@ -475,21 +477,26 @@ async function runItem(it, idx, L) {
     log(`${it.code}: ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
     let ans = null
     for (let t = 0; t < ENV_FIX_TRIES && !ans; t++) {
-      const w = await agent(`Run exactly this in PowerShell and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
-& ${ORCH} decide wait -Id ${id} -MaxMinutes 50`, { label: `envfix-wait:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
+      const w = await agent(`Run exactly this in PowerShell (tool timeout 600000) and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
+& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, { label: `envfix-wait:${it.code}`, phase: 'Verify', schema: FINAL_SCHEMA, model: 'haiku', effort: 'low' })
       if (w && w.ok) ans = w.output
     }
     envFix = { id, cycles: cyc, state: !ans ? 'no answer' : /:\s*cannot\b/i.test(ans) ? 'coordinator cannot' : 'fixed', answer: ans || '' }
     if (envFix.state !== 'fixed') break
-    const r3 = await agent(testPrompt({ ...it, only: open.map((c) => c.id) }, vports, L) +
+    const r3 = await agent(testPrompt({ ...it, only: [...new Set(open.map((c) => c.guideId || c.id))] }, vports, L) +
       `\nENV FIX DONE: the coordinator fixed the local env for these checks (${id}): ${ans}\nExecute each check now; NOT_TESTED again only with cause and env_fix.`,
       { label: `envfix-retest:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', ...(MODELS.retest ? { model: MODELS.retest, effort: MODELS.retestEffort || 'high' } : {}) })
     for (const c2 of (r3 && !r3.skipped && r3.checks) || []) {
-      const i = res.checks.findIndex((c) => c.id === c2.id && c.result === 'NOT_TESTED')
+      const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
       if (i < 0 || c2.result === 'NOT_TESTED') continue
-      res.checks[i] = { ...c2, observed: `${c2.observed} (after ENV-FIX ${id}; first attempt: ${res.checks[i].observed})` }
+      res.checks[i] = { ...c2, id: res.checks[i].id, observed: `${c2.observed} (after ENV-FIX ${id}; first attempt: ${res.checks[i].observed})` }
     }
     retried = true
+  }
+  // still mostly NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict (a local item has ENV-FIX instead)
+  if (ntShare(res) > 0.5 && !LOCALENV(it)) {
+    log(`${it.code}: still ${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry — not publishing; needs a manual look`)
+    return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
   }
   const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
   if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (orchestrate E4)`)
@@ -513,7 +520,8 @@ async function runItem(it, idx, L) {
       // a refutation needs something to stand on: its own _verify evidence or a code / log basis (refutations without either were wrong)
       const basis = String(x.basis || '').trim()
       const verifyEv = (x.evidence || []).some((e) => /_verify[_.]/i.test(String(e)))
-      const codeBasis = /[\w-]+\.(java|kt|ts|tsx|js|mjs|py|cs|go|rb|php|sql|xml|html)(:\d+)?\b|\blogs?\b|observability/i.test(basis) && !/^none\b/i.test(basis)
+      const codeBasis = (/[\w-]+\.(java|kt|ts|tsx|js|mjs|py|cs|go|rb|php|sql|xml|html)(:\d+)?\b/i.test(basis) ||
+        (/\blogs?\b|observability/i.test(basis) && /\b\d{1,2}:\d{2}/.test(basis))) && !/^none\b|\b(no|not|without|never)\b[^.;]{0,30}\b(logs?|code|file)\b/i.test(basis)
       if (outcome === 'refuted' && !verifyEv && !codeBasis) { outcome = 'inconclusive'; x.observed = `${x.observed} (no verify evidence or basis recorded)` }
       if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
       c.evidence = [...c.evidence, ...(x.evidence || [])]
@@ -524,9 +532,10 @@ async function runItem(it, idx, L) {
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
   const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
-  if (it.skipClose || envFixOpen) {
+  const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new')
+  if (it.skipClose || holdLocal) {
     // verdicts stay on disk for the lead (qa.ps1 finalize -Code); held.json = finished for supervise and workers
-    const why = envFixOpen ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator decides (fix + qa.ps1 retest, or finalize -AcceptNotTested)` : 'publish left to the lead (skipClose)'
+    const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator decides (fix + qa.ps1 retest, or finalize -AcceptNotTested)` : 'publish left to the lead (skipClose)'
     await agent(`Write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
@@ -537,8 +546,8 @@ Replace <now> with the current UTC time (ISO 8601) when you write it (workflow s
    off-standard evidence files and rewrites results.json to match) and return its output. Exit 1 = evidence named in results.json is
    missing, a name it could not fix, or duplicate check ids: return ok=true anyway with that output (the lead fixes them before publishing).`,
       { label: `hold:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('hold'), effort: 'low' })
-    log(`${line} (results saved; ${envFixOpen ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
-    return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
+    log(`${line} (results saved; ${holdLocal ? 'ENV-FIX unresolved: the coordinator decides' : 'publish left to the lead'})`)
+    return { code: it.code, summary: line, result: res, eventful: true, envFix, envFixOpen: holdLocal, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
   }
   let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, ...pick('close'), effort: 'low' })
   if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, model: 'sonnet' })
@@ -583,6 +592,7 @@ const parts = await Promise.all([
 const all = parts.flat().filter(Boolean)
 
 // App follow-ups: PENDING web/api checks get an app item <code>A on the phones now, appended to run.json first (finalize reads it)
+for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a phone lane, but args.lanes is empty: the task stays open (add lanes, qa.ps1 retest)`)
 const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
   const it = R.items.find((x) => x.code === r.code)
   if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
@@ -604,7 +614,7 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // LEARN: signals + LESSONS.md; learn 'auto' = only after something eventful (a clean run gets the cleanup)
 phase('Learn')
 // every finished run ends with a kit retro (orchestrate E10)
-const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
+const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
   await agent(`Run exactly this in PowerShell and report its last output line, nothing else:${PATHS}

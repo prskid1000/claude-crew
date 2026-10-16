@@ -129,6 +129,7 @@ switch ($Action) {
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" } }
   'check' {
+    if (-not $Worktree) { 'usage: board check -Worktree <dir> -Session <token>'; exit 2 }
     $mine = Norm $Worktree
     $others = @(Active | Where-Object { $_.session -ne $Session -and (@($_.worktrees | ForEach-Object { Norm $_ }) -contains $mine) })
     if ($others) { $others | ForEach-Object { "OTHER WRITER: $($_.agent) (session $($_.session), status $($_.status), beat $(([datetime]$_.beat).ToString('HH:mm')))" }; exit 1 }
@@ -689,8 +690,7 @@ switch ($Action) {
     # a task's MRs all merged (also when a person merged them after its wave ended): its worktrees and local branches are
     # finished now - sweep them once, in the background (the wave/QA flows sweep at their own end; nothing else triggers it)
     if ($script:merged) {
-      $cl = ({ & $KitCmd.orch cleanup @args })
-      Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-File', $cl, '-WorktreesOnly', '-WorktreeIdleHours', '0', '-Quiet' | Out-Null
+      Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-NonInteractive', '-File', "`"$($KitCmd.orch)`"", 'cleanup', '-WorktreesOnly', '-WorktreeIdleHours', '0', '-Quiet' | Out-Null   # quoted: a path with spaces
     }
   }
 }
@@ -978,7 +978,7 @@ if ($AutoFix -and (Within 'tracker + deploy checks')) {
   # promoted tasks whose MRs went live on a test environment: QA can start now (never guess "not deployed yet" by hand)
   $D = ({ & $KitCmd.qa deployed @args })
   foreach ($o in @((Read-KitTracking).tasks.Values)) {   # durable (stops at the budget: the rest next round)
-    if (-not (Within 'deploy checks')) { break } <kit>/tracking.local.json (orch.ps1 track)
+    if (-not (Within 'deploy checks')) { break }   # <kit>/.state/tracking.json (orch.ps1 track)
     # liveOn does not stop the check: a repo can deploy to several test environments (one live first is often not the one the
     # task is tested on), so keep looking for newly live ones until the 3-day window ends
     if (-not $o.done -or -not $o.doneAt -or ($now - [datetime]$o.doneAt).TotalDays -gt 3) { continue }
@@ -1840,7 +1840,7 @@ function Invoke-Decide {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." [-Recommend A] [-Contracts <file>]'; exit 2 }
       $opts = @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })   # 'A: ..','B: ..'
-      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')"; kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
+      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"; kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('s') }
       & $save ([pscustomobject]$o)
       if ($Kind -eq 'envfix') {
@@ -1889,6 +1889,8 @@ function Invoke-Decide {
 # and asks ONCE per env; never more than one deploy per env within deploy.minIntervalHours (kit.local.json: a number, or { "default": 4, "<target>": 24 }). Neighbours count: every tracked
 # task (all sessions write tracking), every pending request (work/deploys/pending.json) and the CI's last deploy on the deploy branch.
 # -Offline <fixture.json> (tests): { mrs: { "<ref>": { state, rows: [ { target, state, detail } ] } }, lastCi: { "<target>": "<iso>" } }
+# an MR / PR URL -> <repo>!<iid> (the last path segment); anything else unchanged
+function ConvertTo-MrRef([string]$m) { if ($m -match '://[^/]+/(?<p>[\w./-]+?)/(?:-/merge_requests|pull)/(?<i>\d+)') { "$(($Matches.p -split '/')[-1])!$($Matches.i)" } else { $m.Trim() } }
 # <alias>!<iid> -> <repo name>!<iid> (qa.ps1 deployed answers with the repo name of kit.local.json repos[])
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
@@ -1906,6 +1908,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $fx = if ($Offline) { Get-Content $Offline -Raw | ConvertFrom-Json } else { $null }
   if ($Action -eq 'request') {
     if (-not $Mrs.Count) { 'usage: deploy request -Mrs <repo>!<iid>,... -Run <run> [-Note ..]'; exit 2 }
+    $Mrs = @($Mrs | ForEach-Object { ConvertTo-MrRef $_ })
     Invoke-KitLocked $pf { $p = if (Test-Path $pf) { Get-Content $pf -Raw | ConvertFrom-Json } else { [pscustomobject]@{ requests = @() } }
       $p.requests = @(@($p.requests) + [pscustomobject]@{ at = (Get-Date).ToString('s'); run = $Run; mrs = $Mrs; note = $Note }); $p | ConvertTo-Json -Depth 5 | Set-Content $pf -Encoding utf8 }
     "requested a deploy for $($Mrs -join ', ') ($Run)"
@@ -1915,7 +1918,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     Invoke-KitLocked $log { Add-Content -LiteralPath $log ([ordered]@{ at = (Get-Date).ToString('s'); target = $Env; mrs = $Mrs; by = $By; note = $Note } | ConvertTo-Json -Compress) -Encoding utf8 }
     if (Test-Path $pf) {
       Invoke-KitLocked $pf { $p = Get-Content $pf -Raw | ConvertFrom-Json
-        foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { $Mrs.Count -and $_ -notin $Mrs }) }
+        # no -Mrs clears nothing (it once dropped every env's requests); refs compare in one form (URL / alias / repo!iid)
+        $done = @($Mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })
+        foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { -not $done.Count -or (Get-CanonMr (ConvertTo-MrRef $_)) -notin $done }) }
         $p.requests = @(@($p.requests) | Where-Object { @($_.mrs).Count }); $p | ConvertTo-Json -Depth 5 | Set-Content $pf -Encoding utf8 }
     }
     "recorded the deploy of $Env$(if ($Mrs.Count) { " ($($Mrs -join ', '))" }). Next: once qa.ps1 deployed shows them live, orch.ps1 deploy intest -Apply"
@@ -1963,7 +1968,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
           $p = Get-HostProject $r.name
           foreach ($pl in @(Invoke-HostApi "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=5")) {
             if ($pl.status -in 'running', 'pending', 'created') { $running = $true; continue }
-            if ($pl.status -eq 'success') { $at = [datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at }); if (-not $last -or $at -gt $last) { $last = $at; $src = "CI $($r.name) $($d.branch)" }; break }
+            if ($pl.status -eq 'success') { $at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); if (-not $last -or $at -gt $last) { $last = $at; $src = "CI $($r.name) $($d.branch)" }; break }
           } } }
     }
     $h = & $winOf $t

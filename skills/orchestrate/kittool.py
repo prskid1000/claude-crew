@@ -1801,7 +1801,7 @@ def example_of(ex_rel):
 SAFE_DEFAULTS = {'kitAudit.everyDays', 'cleanup.maxBrowserProfiles', 'supervise.ramActPct', 'supervise.minDiskFreeGB',
                  'build.mavenOffline', 'gate.heapMinGB'}
 # subtrees whose keys are user-chosen names (or samples): never "missing" against the example
-USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples', 'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests')
+USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples', 'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets')   # qa.targets: group names are the org's
 PLACEHOLDER = re.compile(r'<[^>]+>|/path/to|example\.(com|app)|your[- ]', re.I)
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
              'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
@@ -1846,8 +1846,10 @@ def load_json(path):
     try:
         with open(path, encoding='utf-8-sig') as f:
             return json.load(f), None
-    except ValueError as e:
+    except json.JSONDecodeError as e:
         return None, f'invalid JSON ({e.msg}, line {e.lineno})'
+    except (UnicodeDecodeError, OSError) as e:
+        return None, f'unreadable ({e})'
 
 
 def live_kit():
@@ -2333,14 +2335,18 @@ def cmd_scan(kit):
     files = tracked(kit) or []
     lint = os.path.join(kit, 'skills', 'orchestrate', 'kittool.py')
     tmp = os.path.join(kit_path('cache', create=True, kit=kit), 'kit-audit-lint.json')
-    run([py(), '-X', 'utf8', lint, kit, '--warn', '--no-flow', '--json', tmp], timeout=120)
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    rc, _, e = run([py(), '-X', 'utf8', lint, 'lint', kit, '--warn', '--no-flow', '--json', tmp], timeout=120)
+    if rc not in (0, 1):
+        out('ACT', 'LINT-RUN', 'kittool.py lint', f'exit {rc}: {(e or "")[:200]}')
     lj, _ = load_json(tmp)
     for p in lj or []:
         out('ACT', f'LINT-{p["code"]}', p['where'], p['problem'])
     live = live_kit()
     kl = os.path.join(live, 'skills', 'dev-kit', 'kit.local.json')
     if os.path.isfile(kl):
-        rc, o, _ = run([py(), '-X', 'utf8', lint, kit, '--no-flow', '--org-terms', kl], timeout=120)
+        rc, o, _ = run([py(), '-X', 'utf8', lint, 'lint', kit, '--no-flow', '--org-terms', kl], timeout=120)
         for l in o.splitlines():
             if l.startswith('ORG-TERM'):
                 out('ACT', 'GENERIC-ORG-TERM', l.split()[1].rstrip(':'), l.split(':', 1)[1].strip())
@@ -2786,9 +2792,63 @@ def cmd_prose(a):
     return 1 if found else 0
 
 # ================================ main ================================
+# per subcommand: switches, flags taking a value, whether a positional kit dir is allowed (`lint --help` once became a kit
+# dir named "--help" and got a .runtime written into it)
+ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
+        'flow': ({'--readme', '--watch', '--open'}, {'--out'}, True),
+        'port': ({'--check'}, set(), False),
+        'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False),
+        'cost': ({'--steps', '--json'}, set(), True),
+        'prose': ({'--json', '--kinds'}, {'--kind'}, False)}
+AUDIT_VERBS = {'setup', 'config', 'recover', 'scan', 'stamp', 'due'}
+
+
+def is_kit(d):
+    return os.path.isdir(os.path.join(d, 'skills')) and any(os.path.isfile(os.path.join(d, f)) for f in ('AGENTS.md', 'CLAUDE.md'))
+
+
+def check_args(cmd, rest):
+    """None = go on; else the exit code: --help/-h prints usage (0); an unknown command, flag or a non-kit dir is a usage error (2)."""
+    if cmd in ('-h', '--help', 'help') or (cmd in ARGS and any(x in ('-h', '--help') for x in rest)):
+        print(__doc__)
+        return 0
+    if cmd not in ARGS or (cmd == 'audit' and (not rest or rest[0] not in AUDIT_VERBS)):
+        print(__doc__)
+        return 2
+    if '--kit' in rest and rest.index('--kit') + 1 < len(rest) and not is_kit(rest[rest.index('--kit') + 1]):
+        print(f'kittool {cmd}: --kit {rest[rest.index("--kit") + 1]!r} is not a kit folder', file=sys.stderr)
+        return 2
+    switches, valued, positional = ARGS[cmd]
+    i = 0
+    while i < len(rest):
+        x = rest[i]
+        if x in valued:
+            if i + 1 >= len(rest):
+                print(f'kittool {cmd}: {x} needs a value', file=sys.stderr)
+                return 2
+            i += 2
+            continue
+        if x.startswith('-') and x != '-' and x not in switches:
+            print(f'kittool {cmd}: unknown option {x} (kittool.py --help)', file=sys.stderr)
+            return 2
+        if not x.startswith('-'):
+            if cmd == 'audit' and i == 0 and x in AUDIT_VERBS:
+                pass
+            elif cmd == 'prose':
+                pass   # the file to check
+            elif not positional or not is_kit(x):
+                print(f'kittool {cmd}: {x!r} is not a kit folder (needs skills/ and AGENTS.md or CLAUDE.md)', file=sys.stderr)
+                return 2
+        i += 1
+    return None
+
+
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
+    rc = check_args(cmd, rest)
+    if rc is not None:
+        sys.exit(rc)
     if cmd == 'lint':
         sys.exit(cmd_lint(rest))
     if cmd == 'flow':

@@ -459,7 +459,8 @@ function __TrCli([string]$Exe, [string[]]$A) {
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
   # CLIs print UTF-8 (read as UTF-8: the console code page turned '—' into mojibake). Reads and status sets retry any transient
   # error; other writes (comment, create, edit) only errors that prove nothing was sent.
-  $write = "$($A[0..1] -join ' ')" -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and "$($A[0..1] -join ' ')" -notmatch '(?i)status'
+  $write = ("$($A[0..1] -join ' ')" -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and "$($A[0..1] -join ' ')" -notmatch '(?i)status') -or
+    ("$($A -join ' ')" -match '(?i)(^|\s)(-X|--method)\s+(POST|PUT|PATCH|DELETE)\b' -and "$($A -join ' ')" -notmatch '(?i)status')
   $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
   try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $A (Get-KitNetTimeout) } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
   $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
@@ -1031,12 +1032,18 @@ function __Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fi
 # a comma list) and switches take no value. A function without a param block gets the tokens as they are.
 function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
+  # --help / -h / -? (not as a parameter's value) print the entry script's header and end it with 0: -h used to prefix-match a
+  # real parameter; any other --flag in a parameter slot is an unknown option, never a positional value
+  $src = $MyInvocation.PSCommandPath
+  $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
   $meta = (Get-Command $Fn).Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
-  if (-not $own.Count) { & $Fn @Tokens; return }
+  if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $Fn @Tokens; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
     $t = "$($Tokens[$i])"
+    if ($t -in '--help', '-?' -or ($t -in '-h', '-help' -and -not @($own | Where-Object { $_ -ieq $t.TrimStart('-') }).Count)) { & $help }
+    if ($t -match '^--\w') { throw "$($Fn -replace '^Invoke-', ''): unknown option $t (parameters take one dash; --help prints the usage)" }
     if ($t -match '^-([A-Za-z][\w-]*)(?::(.*))?$') {
       $n = $Matches[1]; $inline = $Matches[2]
       $p = @($own | Where-Object { $_ -ieq $n }); if (-not $p.Count) { $p = @($own | Where-Object { @($meta[$_].Aliases) -contains $n }) }; if (-not $p.Count) { $p = @($own | Where-Object { $_ -like "$n*" }) }

@@ -1361,6 +1361,10 @@ if ($SelfTest) {
     @('PowerShell', 'dotnet run -- migrate', $false, 'local env'),
     @('Bash', 'cd web && yarn start', $true, 'local env'),
     @('Bash', 'git push origin --delete localenv/shop', $false, 'local env'),
+    # [.., 'force-push'] - a '+' refspec is a force push too; a plain push is not
+    @('Bash', 'git push origin +HEAD:main', $true, 'force-push'),
+    @('PowerShell', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
+    @('Bash', 'git push origin HEAD:main', $false, 'force-push'),
     # [.., 'Hooks must run'] - skipping commit hooks: --no-verify, its short form -n, an emptied hooksPath
     @('Bash', 'git commit -n -m "x"', $true, 'Hooks must run'),
     @('PowerShell', 'git -C x commit -nm "x"', $true, 'Hooks must run'),
@@ -1532,7 +1536,7 @@ if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP
 # judged per push command: a protected name elsewhere in a compound line (git log origin/main; git push --force-with-lease) is not a push target
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value
-  if ($p -match '(--force(?![-\w])|\s-f\b)' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
+  if ($p -match '(--force(?![-\w])|\s-f\b|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after dev.ps1 wt sync.'
   }
 }

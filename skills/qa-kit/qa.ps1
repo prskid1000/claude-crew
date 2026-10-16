@@ -655,7 +655,7 @@ if ($Save) {
     $o
   }
   $script:secretKey = '(?i)passw|^pass$|^pwd$|secret|token|api_?key|authorization|cookie'
-  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { Redact ($s | ConvertFrom-Json) } catch { $s } }
+  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { Redact (ConvertFrom-Json $s -NoEnumerate) } catch { $s } }
   $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match '(?i)authorization|cookie|token|key|secret|password') { '[redacted]' } else { $script:sentHeaders[$k] } }
   $code, $check = if ($Save -match '^([A-Za-z0-9]+)-([A-Za-z]*\d+)') { $Matches[1], $Matches[2] } else { '', '' }
   [ordered]@{
@@ -918,13 +918,13 @@ function Format-Checks($list, [string]$heading) {
 }
 # the last item on a shared task decides: sibling items' failed / untested checks count too
 function SiblingHold($id) {
-  $own = 0; $nt = 0; $err = $null
+  $own = 0; $nt = 0; $err = $null; $pend = 0
   foreach ($c in @(@($run.items) | Where-Object { $_.code -ne $Code } | ForEach-Object code)) {
     $f = "$RunDir\$c\finalize.json"; if (-not (Test-Path $f)) { continue }
     $r = @((Get-Content $f -Raw | ConvertFrom-Json).subtasks | Where-Object { $_.id -eq $id -and -not $_.noTracker }) | Select-Object -First 1
-    if ($r) { $own += [int]$r.fail; $nt += [int]$r.notTested; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
+    if ($r) { $own += [int]$r.fail; $nt += [int]$r.notTested; $pend += [int]$r.pending; if ($r.bugError) { $err = "$c`: $($r.bugError)" } }
   }
-  [pscustomobject]@{ fail = $own; notTested = $nt; bugError = $err }
+  [pscustomobject]@{ fail = $own; notTested = $nt; bugError = $err; pending = $pend }
 }
 # the original ask of a tested task = its tracker parent; else run.json tracker.parent; else none (top level)
 $script:askCache = @{}
@@ -944,6 +944,7 @@ function Add-NewDefects($st, [object[]]$defects) {
   $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
   $mx = [Threading.Mutex]::new($false, "Global\kit-bugs-$h")
   $own = $true; try { $own = $mx.WaitOne(120000) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
+  if (-not $own) { $mx.Dispose(); throw "bugs.json of $RunDir is locked by another finalize for 2 min: re-run finalize -Code $Code" }
   try {
     $f = "$RunDir\bugs.json"
     $all = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
@@ -990,6 +991,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($pend) { $rec.keptOpen = "$pend check(s) pending in another lane"; return }
   if (-not $rec.total) { $rec.keptOpen = 'no check carries this task id (subtask_id)'; return }   # 0 of 0 is not a pass
   $sib = SiblingHold $st.id
+  if ($sib.pending) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
   # local env: untested checks alone are an env fix to make (ENV-FIX), not a failed test, unless the coordinator accepts them
   if ($isLocal -and -not $AcceptNotTested -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + retest, or finalize -AcceptNotTested"; return }
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested) { Set-FailedTesting $rec $st; return }

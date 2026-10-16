@@ -31,7 +31,7 @@ import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
-const CFG = JSON.parse(readFileSync(new globalThis.URL('../../targets.local.json', import.meta.url), 'utf8'))
+const CFG = JSON.parse(readFileSync(new globalThis.URL('./targets.local.json', import.meta.url), 'utf8'))
 // ---------------------------------------------------------------- kit paths (the one map: skills/dev-kit/paths.json)
 // kitPath('chrome-profiles') -> <runtime>/cache/chrome-profiles; <runtime> = $CLAUDE_RUNTIME, else <kit>/.runtime; durable under <kit>/.state
 const __HERE = dirname(fileURLToPath(import.meta.url))
