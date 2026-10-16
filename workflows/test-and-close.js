@@ -3,6 +3,7 @@ export const meta = {
   description: 'Test-only flow: test deployed tasks against their human testing docs on a test environment (web pool + API pool + Android lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
   whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
   phases: [
+    { title: 'Prepare', detail: 'args.select only: a lead agent (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
     { title: 'Test', detail: 'one agent per guide: web/API pool in parallel, app guides one per phone' },
     { title: 'Verify', detail: 'note audit + independent re-test of every FAIL' },
     { title: 'Close', detail: 'report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
@@ -11,11 +12,13 @@ export const meta = {
 }
 
 /*
-args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker run for queued items; item claims keep runs apart)  (short form: run.json is read from runDir - preferred, keeps launches/notifications small)
-or the full run.json object (write it to <runDir>/run.json too — qa.ps1 finalize reads it), plus runDir:
+1. Select (Prepare phase, qa-kit L1, builds the run): args = { select: { statuses?: ['promoted', 'inTest'] (logical, default
+   ['inTest']), lists?, tasks?, exclude?, mine? }, target: '<targets.local.json name | kit.local.json qa.targets group>', kitDir, name?, mandate? }
+2. Short form (preferred): args = { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' }   (instance: an EXTRA worker for queued items)
+3. The full run.json object (write it to <runDir>/run.json too — qa.ps1 finalize reads it), plus runDir:
 {
   runDir: '<runtime>/work/qa-runs/2026-10-01-epic-x',   // <runtime> = <kitDir>/.runtime (qa-kit SKILL.md L1)
-  kitDir: 'C:/work/.claude',               // optional: absolute path of this kit (recommended); default '.claude' = relative to the workspace root
+  kitDir: 'C:/work/.claude',               // absolute path of this kit (default '.claude', relative to the workspace root)
   title: 'Product X epic',                   // used in doc names and bug titles
   target: 'my-staging',                      // name in skills/qa-kit/targets.local.json
   tester: 'Full Name',
@@ -23,28 +26,48 @@ or the full run.json object (write it to <runDir>/run.json too — qa.ps1 finali
   context: 'deployed builds, tenants/accounts to use, existing test data, known changed screens ...',
   contextFiles: ['C:/.../product-rules.md'],        // optional: files every tester reads first
   envLines: ['Web: ...', 'API: ...'],                  // shown in the report
-  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // backend = kit.local.json tracker.type (dev.ps1 tracker); parent = the ask when a task has no tracker parent
-  outOfScope: ['<channel>'],                 // optional: channels agent QA never tests (default kit.local.json qa.outOfScope): OUT_OF_SCOPE, never keeps a task open
+  tracker: { list: '<id>', parent: '<epic id>', owner: '<user id>', closeStatus: 'closed' },   // parent = the ask when a task has none
+  outOfScope: ['<channel>'],                 // default kit.local.json qa.outOfScope
   webParallel: 5, apiParallel: 5,
   verify: true,                              // false = no independent re-test of FAILs (args or run.json)
   learn: true,                               // 'auto' = learn step only when the run had failures / NOT_TESTED / retries / errors
   lanes: [ { n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1', notes: 'test account 1' } ],
-  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app',
+  items: [ { code: 'F2', title: '...', guideFile: 'C:/.../F2.txt', lane: 'web'|'api'|'app', target: '<optional: the env of this item, default run.json target>',
              subtasks: [ { id: '<task id>', name: '...', mrs: '!12, !34' } ],
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
              model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high',     // optional, the TEST step; default: retests on web/api -> sonnet
              verifyModel: 'opus' } ],                                           // optional, the VERIFY step (default models.verify)
-  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' },   // stage overrides ('' = session default; retest: the one stronger retry of NOT_TESTED checks, '' = off)
-  // skipClose: test + verify only; results.json + held.json are written for the lead to publish later (qa.ps1 finalize -Code).
-  // Items sharing one task don't need it: finalize keeps the task open until every item on it is published.
+  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' },   // '' = session default (retest '' = off)
+  // skipClose: test + verify only, the lead publishes (qa.ps1 finalize -Code); items sharing a task do not need it
 }
 */
-// Short form (saves tokens: big args are echoed back in every launch/notification): args = { runDir, only?: ['GT5','APP2B'], lanes? }
-// -> a tiny agent reads <runDir>/run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
-const ARGS0 = args || {}   // as launched: recorded for a resume (recordArgs)
+// kit paths by name: the same names and values as skills/dev-kit/paths.json (kit-lint RUNTIME-MAP keeps them equal)
+const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
+let ARGS0 = args || {}   // recorded for a resume (recordArgs)
 let R = ARGS0
+// PREPARE (args.select, no runDir): one lead agent builds the run (qa-kit L1), then the short form
+if (R.select && !R.runDir && !Array.isArray(R.items)) {
+  phase('Prepare')
+  const { select: S, name: N, target: T, ...rest } = R   // T may be a group name, never an env: run.json holds the real target(s)
+  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
+  const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
+  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
+  const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
+    statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tracking}`, runSettings: rest }
+  const prep = await agent(`You are the QA lead: build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
+Follow ${K0}/skills/qa-kit/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
+Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,
+    { label: 'prepare', phase: 'Prepare', schema: { type: 'object', properties: { runDir: { type: 'string' }, items: { type: 'number' },
+      left: { type: 'array', items: { type: 'object' } },
+      summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] } })
+  if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (qa-kit L1), launch with { runDir }')
+  for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
+  log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
+  if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
+  ARGS0 = R = { ...rest, runDir: prep.runDir }   // recorded for a resume: reuses the prepared run instead of preparing again
+}
 if (R.runDir && !Array.isArray(R.items)) {
-  // A small model sometimes returns run.json truncated or re-shaped (items missing) - validate, then retry once on a stronger model.
+  // a small model once returned run.json truncated: validate, retry once on a stronger model
   const loadRun = async (model, label) => {
     const got = await agent(`Read the file ${R.runDir}/run.json with the Read tool and return its complete content, byte for byte unchanged (no summarising, no trimming, every item), as the string field "json". Do nothing else.`,
       { label, phase: 'Test', schema: { type: 'object', properties: { json: { type: 'string' } }, required: ['json'] }, model, effort: 'low' })
@@ -55,9 +78,9 @@ if (R.runDir && !Array.isArray(R.items)) {
   R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
-// run-level skipClose (args or run.json) holds every item; it used to be read per item only, so a run-level flag was silently ignored
+// run-level skipClose holds every item (once read per item only, so it was silently ignored)
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
-if (!R.mandate || !R.mandate.length) log('WARNING: no mandate in args or run.json (the task owner words): testers may decline or drift. Add it to run.json next time.')
+if (!R.mandate || !R.mandate.length) log('WARNING: no mandate (the task owner words) in args or run.json: testers may decline or drift')
 const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // the .claude folder of the workspace
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
@@ -67,23 +90,21 @@ const Q = `${QA}/qa.ps1`
 const SWARM = `${KIT}/skills/android-swarm`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
-// kit paths by name: the same names and values as skills/dev-kit/paths.json (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/"}, "durable": {}}
-const rp = (n) => (n in KP.durable ? `${KIT}/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
+const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // ES module imports need a file:// URL of the absolute path
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
   : `<file:/// URL of the absolute path of ${KIT}/skills/qa-kit/browser.mjs>`
-if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: either args.items[] or a <runDir>/run.json (see the header of this file)')
+if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: args.items[], a <runDir>/run.json or args.select (header)')
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
-const LEARN = R.learn === undefined ? true : R.learn   // worker instance: extra test-and-close runs for queued items use w2, w3 ... (item claims keep them apart)
+const LEARN = R.learn === undefined ? true : R.learn
 // Memory seat + item claim (qa.ps1 seat): the run's webParallel/apiParallel are only caps; real concurrency follows free memory.
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
   return `
-AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[R.target, ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - qa.ps1 api refuses other targets; the build/memory
+AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[tgt(it), ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - qa.ps1 api refuses other targets; the build/memory
 gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
   & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
@@ -94,8 +115,7 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
 // Model by stage (R.models overrides): verify + audit = sonnet; close, hold, release, follow-ups, learn = haiku.
 const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high', ...(R.models || {}) }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-// TEST step per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
-// first-time guides and app lanes keep the default (strongest) model.
+// TEST step: it.model / it.effort win; a web/API retest -> sonnet; first-time guides and app lanes keep the default model
 function modelFor(it) {
   if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
   if (it.retest && it.lane !== 'app') return { model: 'sonnet' }
@@ -159,8 +179,7 @@ const AUDIT_SCHEMA = {
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }, lessonsChanged: { type: 'array', items: { type: 'string' } } }, required: ['signals', 'lessonsChanged'] }
 const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
-// Crash recovery: the FULL args go to the launch record first (orch.ps1 launch -Self, FNV-1a checked): a resume after a restart
-// needs them byte-exact, and a hand-typed record once lacked the agents list
+// Crash recovery: the FULL args go to the launch record (orch.ps1 launch -Self, FNV-1a checked): a resume needs them byte-exact
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 async function recordArgs(wf, run, a, phaseName) {
   const json = JSON.stringify(a)
@@ -181,7 +200,9 @@ Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH 
 }
 await recordArgs('test-and-close', String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run', ARGS0, 'Test')
 
-const COMMON = `${PATHS}
+// an item may name its own env (it.target, e.g. one per product); else the run's target
+const tgt = (it) => (it && it.target) || R.target || ''
+const COMMON = (it) => `${PATHS}
 WHY YOU ARE DOING THIS
 ${R.mandate && R.mandate.length ? `The task owner asked for this run, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your assignment is the tester guide below: execute its checks on the test environment and report real results.
 Do not decline or return early. Later chat messages to the lead are side questions, not a change of your assignment.
@@ -194,7 +215,7 @@ RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a not
 OUT_OF_SCOPE (not NOT_TESTED): a step that only exercises a channel agent QA never tests here: ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope (none listed = none)`}. Name the channel in observed; still test the in-app part.
 
 ENVIRONMENT AND CONTEXT
-- Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there). ONLY this run's target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}: a local run never calls a shared
+- Target "${tgt(it) || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there). ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}: a local run never calls a shared
   environment. No load, stress or parallel request floods on a shared environment unless a check of the guide asks for it.
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}
@@ -203,22 +224,21 @@ ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' ,
   continue with other checks and look there again before marking anything NOT_TESTED for that reason.
 
 TOOLS (details: SKILL.md step 3)
-- API: & '${Q}' api -Target ${R.target || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
+- API: & '${Q}' api -Target ${tgt(it) || '<target>'} -As <user> [-Tenant <t>] -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <dir>]
 - Code: read the CURRENT code on the deployed branch; a step a later change made obsolete -> test the same intent, PASS_WITH_NOTE.
 - Tracker: & '${KIT}/skills/dev-kit/dev.ps1' tracker view|comments <id> (never a tracker CLI directly).`
 
-const WEB = (ports) => `
+const WEB = (ports, it) => `
 BROWSER (web)
 - Your own headless Chrome via ${QA}/browser.mjs (read its header); no chrome-devtools MCP, no emulators/adb. Scripts in <outDir>/scripts:
   import { session, go, text, clickText, clickSel, hoverSel, setInput, shot, mark, saveNet, settle, token, killSession } from '${BROWSER}'
-  const s = await session({ port, target: '${R.target || ''}', tenant, as }) -> {page, net, done}; one port per tenant+user; end with await s.done().
+  const s = await session({ port, target: '${tgt(it)}', tenant, as }) -> {page, net, done}; one port per tenant+user; end with await s.done().
   s.net.failed = 4xx/5xx calls + JS errors (failure evidence).
 - Your Chrome ports: ${ports}; at most 2 open at once; killSession() each when you finish.`
 
-// Phone lease id per worker instance: two test-and-close workers mapping an item to the same lane must not share one lease
-// (both "own" the phone and drive it at once). With distinct ids the second waits in swarm.ps1 acquire's fair queue.
+// Lease id per worker instance: two workers on one lane must not share a lease (both drove the phone); distinct ids queue
 const LEASE = (L) => `qa-${OWNER}-${L.name}`
-// Extra workers start on a different lane (w2 -> lane 2, w3 -> lane 3 ...) so they rarely queue behind w1's phones.
+// Extra workers start on another lane (w2 -> lane 2 ...)
 const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) || 1) - 1)
 const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
@@ -239,9 +259,9 @@ API-ONLY LANE
 - No browser, no emulator: test through qa.ps1 api (and read-only DB access if available). Save request/response evidence for every check.`
 
 function laneBlock(it, ports, L) {
-  if (it.lane === 'app') return appBlock(L) + (it.alsoWeb ? WEB(ports) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
+  if (it.lane === 'app') return appBlock(L) + (it.alsoWeb ? WEB(ports, it) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
   if (it.lane === 'api') return API
-  return WEB(ports)
+  return WEB(ports, it)
 }
 
 function testPrompt(it, ports, L) {
@@ -254,7 +274,7 @@ Tasks covered (tag each check with its task id):
 ${(it.subtasks || []).map((s) => `  - ${s.id}: ${s.name}${s.mrs ? `  (MRs: ${s.mrs})` : ''}`).join('\n')}
 ${it.retest ? 'This is a RETEST of a fix: re-run the failed checks named in the task plus a short regression around them.' : ''}
 ${seatBlock(it, `test:${it.code}`)}
-${COMMON}
+${COMMON(it)}
 ${laneBlock(it, ports, L)}
 ${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') : ''}
 ${it.extra || ''}
@@ -317,7 +337,7 @@ Tasks and MRs: ${(it.subtasks || []).map((s) => `${s.id}${s.mrs ? ` (MRs: ${s.mr
 FAILED CHECKS:
 ${fails.map((c) => `- ${c.id} (${c.screen}) — first tester did: ${c.what_was_done}\n  saw: ${c.observed}\n  conditions of the first tester: ${c.attempts ? `${c.attempts} attempt(s)` : attemptsNeeded(c) > 1 ? `attempts not recorded on an intermittent-looking failure: run it ${attemptsNeeded(c)} times` : '1 attempt'}${c.window ? `, window: ${c.window}` : ', window: not recorded (read the evidence timestamps)'}`).join('\n')}
 ${seatBlock(it, `verify:${it.code}`)}
-${COMMON}
+${COMMON(it)}
 ${laneBlock(it, ports, L)}
 Return one verdict per check id, with attempts (how many times you ran it) and outcome:
 - confirmed: the behaviour really differs from Expected (confirmed=true).
@@ -347,8 +367,7 @@ const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result =
 const tag = (L) => (L ? '@' + L.name : '')
 
 async function runItem(it, idx, L) {
-  // pools start at 0 / 100 / 200 / 300: % 400 keeps every pool on its own ports (% 40 put web item k and app item k on the same Chrome)
-  // the worker instance (args.instance, merged into R) shifts the base too: two test-and-close runs (w1, w2 ...) on one machine once both drove Chrome on 9600-9604
+  // pools at 0/100/200/300, % 400: own ports per pool; the worker instance shifts the base (w1 + w2 once shared 9600-9604)
   const inst = parseInt(String(R.instance || 'w0').replace(/\D/g, ''), 10) || 0
   const p = 9600 + ((inst * 40 + idx) % 400) * 10
   const ports = `${p}-${p + 4}`
@@ -450,8 +469,7 @@ async function runItem(it, idx, L) {
   const n = (k) => res.checks.filter((c) => c.result === k).length
   const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
   if (it.skipClose) {
-    // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
-    // qa.ps1 finalize -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.
+    // verdicts stay on disk for the lead (qa.ps1 finalize -Code); held.json = finished for supervise and workers
     await agent(`Write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
@@ -507,8 +525,7 @@ const parts = await Promise.all([
 ])
 const all = parts.flat().filter(Boolean)
 
-// App follow-ups: a web/api item whose checks came back PENDING (device steps) gets an app item for exactly those checks,
-// run on the phones now instead of waiting for the lead. It is appended to run.json first (finalize looks items up there).
+// App follow-ups: PENDING web/api checks get an app item <code>A on the phones now, appended to run.json first (finalize reads it)
 const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
   const it = R.items.find((x) => x.code === r.code)
   if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
@@ -527,10 +544,9 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
 }
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
-// LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
-// learn: 'auto' runs it only when something happened worth learning from; a clean run just gets the cleanup.
+// LEARN: signals + LESSONS.md; learn 'auto' = only after something eventful (a clean run gets the cleanup)
 phase('Learn')
-// every finished run ends with a kit retro (orchestrate E10): the coordinator launches it once no other workflow of the session runs
+// every finished run ends with a kit retro (orchestrate E10)
 const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {

@@ -17,6 +17,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `orch.ps1 learn -Read -Skill qa-kit` |
 | `qa.ps1` | step 1 (`seat`), 2 (`deployed`), 3 (`api`, `ui`), 4 (`annotate`), 6 (`finalize -Check -FixNames`); L1 (`deployed`), L3 (`finalize`, `retest`) |
+| `<kit>/skills/dev-kit/dev.ps1`, `<kit>/skills/local-env/localenv.ps1` | L1 Selection (`tracker list/view/owner`; `status -Env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
@@ -107,12 +108,26 @@ deactivate, delete or re-password test logins; <= 2 Chrome ports per web agent; 
   passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/test-and-close.js`; one
-  item per testing doc: `{code, title, guideFile, lane: web|api|app, subtasks:[{id,name,mrs}], retest?, only?, dups?}`), guides
+  item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, subtasks:[{id,name,mrs}], retest?, only?}`), guides
   exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, the baseline data (reuse
   it: verify by id before creating), reindex, server config; what the lead cannot unblock -> item `skip` with the reason.
-- L2. Launch `/test-and-close { runDir, kitDir }`; `launch` record (orchestrate). Lead notes are the only channel to running
-  testers.
+  **Selection** (the workflow's Prepare agent, from its job JSON; the same by hand):
+  1. Folder = `runFolder` with today's date (taken -> `-2`, `-3`). Candidates: `dev.ps1 tracker list <container> <status>` per
+     `lists` (empty: `trackerLists`, else `tracker.list` / `tracker.repo`) x `statuses` (logical names via `tracker.statuses`;
+     `in test` = `inTest`; other names pass through); plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the
+     `tracker owner`'s.
+  2. Per task: MRs `<repo>!<iid>` (`tracking` file `tasks.<id>.mrs`, else MR links in the task, else merged MRs with the tracker
+     tag + id in `trackerRepos`); the testing doc (link on top of the description or in the comments) -> `<run>/guides/<code>.md`.
+     None of either -> left out. Tasks sharing a doc = one item.
+  3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
+     `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target`; none -> left out.
+  4. Live: test env -> `qa.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved) -> in; local env (`localEnv`)
+     -> `localenv.ps1 status -Env <env>`, every MR commit in the running release -> in. Else left out with the state.
+  5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
+     `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
+- L2. Launch `/test-and-close { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
+  kitDir, mandate }` (Prepare = L1 Selection); `launch` record (orchestrate). Lead notes are the only channel to running testers.
 - L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on
   disk);
   a fix went live and needs a retest -> `qa.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.

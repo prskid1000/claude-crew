@@ -958,7 +958,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects found while testing $($st.name) ($(TaskUrl $st.id)), package $Code") }
     $n = [int]$s.baseCount + [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
     $name = "[Bug] $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)"
-    $body = "QA run **$title** on $($run.target) ($Date) found these defects outside what the tested tasks changed. Results report: $docUrl`n$(if ($guideUrl) { "Tester guide (check ids refer to it): $guideUrl`n" })`n" + (($entries | ForEach-Object md) -join "`n")
+    $body = "QA run **$title** on $(if ($item.target) { $item.target } else { $run.target }) ($Date) found these defects outside what the tested tasks changed. Results report: $docUrl`n$(if ($guideUrl) { "Tester guide (check ids refer to it): $guideUrl`n" })`n" + (($entries | ForEach-Object md) -join "`n")
     if ($s.base) { $body = "$($s.base.TrimEnd())`n`n$body" }
     if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
     else {
@@ -1016,7 +1016,7 @@ foreach ($st in @($item.subtasks)) {
       $out.subtasks += $rec; continue
     }
     $icon = if ($allFails.Count) { '❌' } elseif ($nt -or $pend) { '⚠️' } else { '✅' }
-    $msg = "$icon " + $(if ($item.retest) { "Retest of the fix ($Date): $pass of $($mine.Count - $oos) checks pass" } else { "Test results ($($run.target), $Date): $pass of $($mine.Count - $oos) checks pass" })
+    $msg = "$icon " + $(if ($item.retest) { "Retest of the fix ($Date): $pass of $($mine.Count - $oos) checks pass" } else { "Test results ($(if ($item.target) { $item.target } else { $run.target }), $Date): $pass of $($mine.Count - $oos) checks pass" })
     if ($ownFails.Count) { $msg += ", $($ownFails.Count) of this task's checks failed ($(($ownFails | ForEach-Object id) -join ', '))" }
     if ($nt) { $msg += ", $nt not tested ($(($ntChecks | ForEach-Object id) -join ', '))" }
     if ($oos) { $msg += ", $oos out of scope" }

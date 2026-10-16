@@ -48,7 +48,8 @@ proposes a deploy (`deploy.trigger: owner`, the default; `ask` = one batched ask
 | deploy batch | the workflow ends with `deployBatch` (it never deploys) | nothing until a person says `deploy <env>` (E5) |
 | stopped / restarted | launch record without completion | E3: `orch.ps1 recover`, resume from the record |
 
-**Test-only flow** (/test-and-close, deployed work on a test env, only its own target): per item test -> retest when > 25%
+**Test-only flow** (/test-and-close, deployed work on a test env, only its own target): `select` args -> Prepare (run.json,
+tasks not live left out) -> per item test -> retest when > 25%
 NOT_TESTED -> note audit -> ONE stronger retry (`models.retest`) of every check still NOT_TESTED -> verify every FAIL ->
 finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new defect -> one [Bug] per
 ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3; `orch.ps1 recover`).
@@ -63,7 +64,9 @@ ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook
    blocks it).
 5. **Close** (deploys only on a person's word, E5): reconcile backlog vs merged MRs; list only what is open, each with a reason.
-- T1-T4 (test-only): run folder + `run.json` (qa-kit L1) -> `/test-and-close { runDir, kitDir }` -> `launch` record -> E1.
+- T1-T4 (test-only): `/test-and-close { select: { statuses: ['promoted', 'inTest'], lists?, tasks?, exclude? }, target, kitDir,
+  mandate }` (its Prepare agent builds the run: qa-kit L1 Selection; `target` = an env or a `qa.targets` group), or a ready
+  `{ runDir, kitDir }` -> `launch` record -> E1. Its log lists the tasks left out (not live, no testing doc, no target).
 ~15 dev agents queue fine on the memory gate. Dev waves and app-lane QA on one machine: cap `lanes` at 2.
 
 ## Events (check this table whenever something happens)

@@ -203,6 +203,31 @@ run(args, agent, () => {}, () => {}, null).then(() => {
   $res = @(node $jf 2>&1)
   Expect 'test-and-close: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
   Expect 'test-and-close: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
+  # test-and-close select: Prepare builds the run (qa-kit L1), the resume record holds the runDir, an item's own target pins its testers
+  $js2 = @'
+const calls = []
+async function agent(prompt, o) {
+  calls.push({ label: o.label, prompt })
+  if (o.label === 'prepare') return { runDir: 'C:/rt/work/qa-runs/2026-01-01-local', items: 1, left: [{ id: 'T9', reason: 'not live' }], summary: 's' }
+  if (/^load-run/.test(o.label)) return { json: JSON.stringify({ target: 'local-a', items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', target: 'local-b', subtasks: [{ id: 'T1' }] }] }) }
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^test:/.test(o.label)) return { code: 'A1', checks: [{ id: 'C1', subtask_id: 'T1', screen: 's', result: 'PASS', what_was_done: 'w', observed: 'o', evidence: [], attempts: 1 }], findings: [], setup_changes: [], data_created: [] }
+  return { ok: true, output: '', signals: 0, lessonsChanged: [] }
+}
+const args = { select: { statuses: ['promoted', 'inTest'], exclude: ['T7'] }, target: 'local', kitDir: 'C:/kit', learn: false }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+const logs = []
+run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
+  const p = calls.find((c) => c.label === 'prepare'), rec = calls.find((c) => c.label === 'record-args'), t = calls.find((c) => c.label === 'test:A1')
+  console.log(`prepare:${!!p && /"statuses":\["promoted","inTest"\]/.test(p.prompt) && /"target":"local"/.test(p.prompt) && /"exclude":\["T7"\]/.test(p.prompt) && /qa-runs\/<yyyy-MM-dd>-local-promoted-intest/.test(p.prompt)}`)
+  console.log(`record:${!!rec && /"runDir":"C:\/rt\/work\/qa-runs\/2026-01-01-local"/.test(rec.prompt) && !/"select"/.test(rec.prompt)}`)
+  console.log(`item-target:${!!t && /KIT_QA_TARGETS='local-b'/.test(t.prompt) && logs.some((l) => /left out T9: not live/.test(l))}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'tc-select.mjs'; [IO.File]::WriteAllText($jf, $js2.Replace('__BODY__', $wf))
+  $res = @(node $jf 2>&1)
+  foreach ($x in 'prepare', 'record', 'item-target') { Expect "test-and-close select: $x" (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
+  if (-not (@($res | Where-Object { "$_" -match ':true$' }).Count -eq 3)) { $res | Select-Object -First 5 }
   Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
   Remove-TestKit $k
 }

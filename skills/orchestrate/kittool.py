@@ -2360,6 +2360,8 @@ function mock(label, opts) {
     case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
     case 'verify': return { verdicts: [{ id: 'T3', confirmed: true, observed: '500 again', evidence: [] }] }
     case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
+    case 'prepare': return { runDir: SAMPLE['test-and-close'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
+    case 'load-run': return { json: JSON.stringify(SAMPLE['test-and-close']) }
     case 'analyse': return { proposals: [{ file: `${kit}/skills/dev-kit/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
     case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
     default: return 'ok'
@@ -2375,6 +2377,7 @@ const SAMPLE = {
     items: [{ code: 'W1', title: 'Order form', guideFile: '/ws/guides/W1.md', lane: 'web', subtasks: [{ id: 't1', name: 'Order form', mrs: 'api!1' }] },
       { code: 'P1', title: 'Order app', guideFile: '/ws/guides/P1.md', lane: 'app', subtasks: [{ id: 't2', name: 'Order app', mrs: 'app!3' }] }] },
   'kit-retro': { kitDir: kit },
+  'test-and-close#select': { select: { statuses: ['promoted', 'inTest'] }, target: 'local', kitDir: kit, mandate: ['Test everything promoted or in test on local.'] },
 }
 
 for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--set') {
@@ -2383,7 +2386,7 @@ for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--set') {
 }
 const calls = [], logs = []
 for (const wf of Object.keys(SAMPLE)) {
-  const src = readFileSync(join(kit, 'workflows', `${wf}.js`), 'utf8').replace(/^export const meta/m, 'const meta')
+  const src = readFileSync(join(kit, 'workflows', `${wf.split('#')[0]}.js`), 'utf8').replace(/^export const meta/m, 'const meta')
   const body = new Function('args', 'agent', 'pipeline', 'parallel', 'log', 'phase', `return (async () => {\n${src}\n})()`)
   const agent = async (prompt, opts = {}) => {
     calls.push({ wf, label: opts.label || '?', agentType: opts.agentType || '', model: opts.model || '', effort: opts.effort || '', bytes: Buffer.byteLength(prompt, 'utf8'), prompt })
