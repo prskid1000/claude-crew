@@ -4268,24 +4268,30 @@ def _rename_id(kit, kind, old, new):
         if po[:-1] != pn[:-1]:
             sys.exit('kittool rename config-key: same parent only (a.b.old -> a.b.new)')
 
-        def leaf(path):
+        def leaf(path):   # parse + rename in memory; both files parse before either is written
             d = json.loads(read(path))
             cur = d
             for x in po[:-1]:
                 cur = cur.get(x) if isinstance(cur, dict) else None
             if not isinstance(cur, dict) or po[-1] not in cur or pn[-1] in cur:
-                return False
+                return None
             items = [(pn[-1] if x == po[-1] else x, v) for x, v in cur.items()]   # same place in the file
             cur.clear()
             cur.update(items)
-            with open(path, 'w', encoding='utf-8', newline='\n') as fh:
-                fh.write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
-            return True
-        if not leaf(os.path.join(kit, PATHS_JSON)):
+            return d
+        ex, loc = os.path.join(kit, PATHS_JSON), os.path.join(kit, PATHS_JSON.replace('example', 'local'))
+        done = [(p, leaf(p)) for p in (ex, loc) if os.path.exists(p)]
+        if not done or done[0][1] is None:
             sys.exit(f'kittool rename config-key: {old} must exist in {PATHS_JSON} and {new} must not')
-        loc = os.path.join(kit, PATHS_JSON.replace('example', 'local'))
-        if os.path.exists(loc) and leaf(loc):
-            print(f'migrated {os.path.basename(loc)}: {old} -> {new}')
+        for p, d in done:
+            if d is not None:
+                with open(p, 'w', encoding='utf-8', newline='\n') as fh:
+                    fh.write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
+                if p == loc:
+                    print(f'migrated {os.path.basename(loc)}: {old} -> {new}')
+        for ln in _git(kit, 'grep', '-n', '-w', po[-1], '--', '*.ps1', '*.py', '*.js', '*.mjs').stdout.splitlines()[:20]:
+            if old not in ln:
+                print(f'WARN nested read? {ln[:160]} (renamed only dotted {old}: check by hand)')
     rx = re.compile(r'(?<![\w.-])' + re.escape(old) + r'(?![\w-]|\.\w)')
     for f in _git(kit, 'ls-files').stdout.splitlines():
         p = os.path.join(kit, f)

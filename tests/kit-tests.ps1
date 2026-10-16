@@ -104,9 +104,9 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
   # devtools CLI: per-command --help (0, never an id), unknown flag / missing args 2; reads retry transient errors, writes do not
   $DT = Join-Path $k 'skills/dev-kit/devtools.py'
   $th = & $py -X utf8 $DT task --help 2>&1 | Out-String; $thc = $LASTEXITCODE; $null = & $py -X utf8 $DT task --bogus 2>&1; $tbc = $LASTEXITCODE; $null = & $py -X utf8 $DT status T1 2>&1; $tmc = $LASTEXITCODE
-  $fk = Join-Path (Split-Path $k) 'flaky.py'; [IO.File]::WriteAllText($fk, "import os, sys`nf = sys.argv[1]`nn = int(open(f).read()) if os.path.exists(f) else 0`nopen(f, 'w').write(str(n + 1))`nprint('connection reset' if n == 0 else 'ok')`nsys.exit(1 if n == 0 else 0)`n")
-  $rt = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; print(d._run([sys.executable, r'$fk', r'$fk.r']) + '|' + d._run([sys.executable, r'$fk', r'$fk.w', 'create']))" 2>&1 | Out-String
-  Expect "devtools: task --help 0, unknown flag / missing args 2, reads retried, writes not ($thc $tbc $tmc $($rt.Trim()))" ($thc -eq 0 -and $th -match 'devtools\.py task <taskId>' -and $th -notmatch 'subtasks' -and $tbc -eq 2 -and $tmc -eq 2 -and $rt.Trim() -eq 'ok|connection reset')
+  $fk = Join-Path (Split-Path $k) 'flaky.py'; [IO.File]::WriteAllText($fk, "import sys, subprocess as sp; sys.path.insert(0, sys.argv[1]); import devtools as d`nn = []; hang = [0]`ndef fake(cmd, **kw):`n    n.append(cmd)`n    if hang[0]: raise sp.TimeoutExpired(cmd, 1)`n    return sp.CompletedProcess(cmd, 1 if len(n) == 1 else 0, 'connection reset' if len(n) == 1 else 'ok', '')`nd.subprocess.run = fake`nr = d._tracker('view', 'T1'); a = len(n); n.clear()`ntry: d._tracker('create', 'x')`nexcept SystemExit: pass`nw = len(n); n.clear(); hang[0] = 1; d._run(['glab', 'api', 'x']); print(r, a, w, len(n))`n")
+  $rt = & $py -X utf8 $fk (Split-Path $DT) 2>&1 | Out-String
+  Expect "devtools: task --help 0, unknown flag / missing args 2, tracker reads retried, writes (create) never, a hung read once ($thc $tbc $tmc $($rt.Trim()))" ($thc -eq 0 -and $th -match 'devtools\.py task <taskId>' -and $th -notmatch 'subtasks' -and $tbc -eq 2 -and $tmc -eq 2 -and $rt.Trim() -eq 'ok 2 1 2')
   # pipes: busy only with a head pipeline, no-ci or a failed host call (unknown)
   $pt = @'
 . $args[0]
@@ -295,16 +295,11 @@ if ($Area -in 'qa', 'all') {
   Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
   Expect 'the comment lists the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '## Untested checks' -and $_.text -match '### C2' }).Count -eq 1)
   Expect 'no task created for untested checks' (-not @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count)
-  # local item: NOT_TESTED alone keeps the task open; -CloseNotTestedShared only for shared envs
+  # local item: NOT_TESTED alone keeps the task open (no close path for NOT_TESTED)
   $lo = New-Run 'LO' @(@{ code = 'L1'; task = 'TL'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
   $rj = Get-Content "$lo/run.json" -Raw | ConvertFrom-Json; $rj | Add-Member localEnv 'shop'; $rj | ConvertTo-Json -Depth 8 | Set-Content "$lo/run.json"
   $null = Fin $lo 'L1'; $rl = Rec $lo 'L1'
   Expect 'local env: NOT_TESTED keeps the task open, not failedTesting' (-not $rl.failedTesting -and -not $rl.closed -and $rl.keptOpen -match 'ENV-FIX' -and (Task 'TL').status -ne 'failed testing')
-  $cl = pwsh -NoProfile -File $Q finalize -RunDir $lo -Code L1 -CloseNotTestedShared 2>&1 | Out-String; $clc = $LASTEXITCODE
-  Expect 'local env: -CloseNotTestedShared is refused (exit 2), never failedTesting for an env reason' ($clc -eq 2 -and $cl -match 'shared test envs' -and -not (Rec $lo 'L1').failedTesting -and (Task 'TL').status -ne 'failed testing')
-  $sh = New-Run 'SH' @(@{ code = 'S1'; task = 'TS'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
-  $null = pwsh -NoProfile -File $Q finalize -RunDir $sh -Code S1 -CloseNotTestedShared 2>&1
-  Expect 'shared env: -CloseNotTestedShared closes a NOT_TESTED-only task' ((Rec $sh 'S1').closed -and -not (Rec $sh 'S1').failedTesting)
   $b = New-Run 'B' @(@{ code = 'B1'; task = 'T2'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
   $null = Fin $b 'B1'
   Expect 'own FAIL -> failedTesting, no [Bug]' ((Rec $b 'B1').failedTesting -and (Rec $b 'B1').fail -eq 1 -and -not (Bugs).Count)
@@ -570,8 +565,8 @@ $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = '
       "await go(page, 'https://app.test/x'); console.log('relogin:' + (cur === 'https://app.test/x' && n === 3))"
     # tab cap: 9 concurrent openers -> 8 tabs, the 9th waits; a full browser fails clearly; dead / left holders are swept
     $tjs = @'
-import { openTab, closeTab, kitPath } from '__BM__'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { openTab, closeTab, kitPath, sweepAll } from '__BM__'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 let n = 0, max = 0; const tabs = [], K = 'k|t|a'
 const mk = () => { const id = 'T' + (++n), p = { url: () => 'https://app/x', close: async () => { tabs.splice(tabs.indexOf(p), 1) },
   createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: id } }), detach: async () => {} }) }; return p }
@@ -588,10 +583,13 @@ reg[tabs[1].__tid].pid = 999999; reg[tabs[2].__tid].agent = 'Z'; writeFileSync(f
 mkdirSync(kitPath('board'), { recursive: true }); writeFileSync(`${kitPath('board')}/z.json`, JSON.stringify({ agent: 'Z', status: 'left' }))
 const dead = tabs[1], left = tabs[2], t = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch(() => null)
 console.log('orphans:' + (!!t && !tabs.includes(dead) && !tabs.includes(left) && tabs.length === 7))
+const S = kitPath('sessions'); writeFileSync(kitPath('browser-ports'), JSON.stringify({ 'k|t|a': 9, 'u__v|t|a': 9 }))
+writeFileSync(`${S}/tabs-u____v__t__a.json`, JSON.stringify({ _key: 'u__v|t|a' })); writeFileSync(`${S}/tabs-gone.json`, JSON.stringify({ _key: 'gone' }))
+await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs-u____v__t__a.json`) && !existsSync(`${S}/tabs-gone.json`)))
 '@
     $tf = Join-Path (Split-Path $k) 'tabs-test.mjs'; [IO.File]::WriteAllText($tf, $tjs.Replace('__BM__', $bm))
     $res = @(node $tf 2>&1)
-    foreach ($x in 'waits', 'ninth', 'fails', 'orphans') { Expect "browser.mjs tabs: $x" (@($res) -contains "${x}:true") }
+    foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x (sweep: a failed connect keeps the registry, the key lives in the file)" (@($res) -contains "${x}:true") }
     $pin = @(& { $env:KIT_QA_TARGETS = 'stg'; node --input-type=module -e "import('$bm').then((m) => m.session({ target: 'prod' })).catch((e) => console.log(e.message))" 2>&1; Remove-Item Env:KIT_QA_TARGETS })
     Expect 'browser.mjs session(): a pinned run refuses another target (KIT_QA_TARGETS)' ("$pin" -match "not this QA run's target")
     $gf = Join-Path (Split-Path $k) 'go-test.mjs'; [IO.File]::WriteAllText($gf, $gjs)
@@ -898,7 +896,8 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   $did2 = if ($dp2 -match 'DISPUTE (p-\S+) open') { $Matches[1] }; $df2 = Join-Path (& { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath disputes }) "$did2.json"
   (Get-Item $df2).LastWriteTime = (Get-Date).AddHours(-3)
   $ex = & { . $O; Invoke-DisputeExpiry } | Out-String
-  Expect 'board: a dispute silent 2 h escalates to a pending decision' ($ex -match "dispute $did2 .*escalated, DECISION d-" -and (Get-Content $df2 -Raw | ConvertFrom-Json).status -eq 'escalated' -and (pwsh -NoProfile -File $O decide list -Pending | Out-String) -match "Dispute $did2")
+  (Get-Item $df2).LastWriteTime = (Get-Date).AddHours(-3); $ex2 = & { . $O; Invoke-DisputeExpiry } | Out-String
+  Expect 'board: a dispute silent 2 h escalates to a pending decision once (re-read under the lock)' (-not $ex2.Trim() -and $ex -match "dispute $did2 .*escalated, DECISION d-" -and (Get-Content $df2 -Raw | ConvertFrom-Json).status -eq 'escalated' -and (pwsh -NoProfile -File $O decide list -Pending | Out-String) -match "Dispute $did2")
   $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath qa-seats -Create) 'seats' }; New-Item -ItemType Directory -Force $sd | Out-Null
   '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
   '{"leases":{"devy-A1":{"services":["api"],"repos":[],"until":"2026-10-16T12:00:00"}}}' | Set-Content (Join-Path (& { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath localenv -Create }) 'shop.json')
@@ -912,6 +911,8 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   Add-Content (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath signals -Create }) "{`"at`":`"2026-10-16T10:00:00`",`"skill`":`"$oldSk`",`"kind`":`"idea`",`"text`":`"x`"}" -Encoding utf8
   $oa = Join-Path (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath logs -Create }) ('kit' + '-audits'); New-Item -ItemType Directory -Force $oa | Out-Null; 'r' | Set-Content "$oa/audit-1.md"
   '2026-10-01' | Set-Content (Join-Path $km ".state/$('kit' + '-audit').stamp")
+  $hm = '{}' | pwsh -NoProfile -File $Om health 2>&1 | Out-String
+  Expect 'health: state under a renamed name nudges setup -Migrate' ($hm -match 'renamed state under its old name')
   $mg = pwsh -NoProfile -File $Om setup -Migrate 2>&1 | Out-String
   Expect 'setup -Migrate: renamed workflows and skills follow the manifest (launch records, signals)' ((Get-Content (Join-Path $ldm 'm1.json') -Raw) -match 'workflows/buildy\.js' -and
     (Get-Content (& { . (Join-Path $km 'skills/dev-kit/lib.ps1'); Get-KitPath signals }) -Raw) -match '"skill":"revy"')
@@ -935,10 +936,10 @@ print(f'kittool-misc:{ok_main and ok_prose}')
   $okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -notmatch 'zippy'
   # rename event / config-key (kit.local.json migrates) and new adr (a LESSONS.md Decisions line)
   $klj = Join-Path $kc 'skills/dev-kit/kit.local.json'; '{ "net": { "timeoutSec": 5 } }' | Set-Content $klj -Encoding utf8
-  $null = & $py -X utf8 $KT2 rename event E14 E15 2>&1; $null = & $py -X utf8 $KT2 rename config-key net.timeoutSec net.waitSec 2>&1
+  $null = & $py -X utf8 $KT2 rename event E14 E15 2>&1; $rnw = & $py -X utf8 $KT2 rename config-key net.timeoutSec net.waitSec 2>&1 | Out-String
   $null = & $py -X utf8 $KT2 new adr Budget per agent 2>&1
   $sk = Get-Content (Join-Path $kc 'skills/orchestrate/SKILL.md') -Raw
-  $okId = (& $mf).events -contains 'E15' -and -not ((& $mf).events -contains 'E14') -and $sk -match '\|\s*E15\s*\|' -and $sk -notmatch '\bE14\b' -and
+  $okId = $rnw -match 'WARN nested read\? skills/local-env/localenv\.ps1' -and (& $mf).events -contains 'E15' -and -not ((& $mf).events -contains 'E14') -and $sk -match '\|\s*E15\s*\|' -and $sk -notmatch '\bE14\b' -and
     (Get-Content (Join-Path $kc 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).net.waitSec -eq 60 -and (Get-Content $klj -Raw | ConvertFrom-Json).net.waitSec -eq 5 -and
     -not (git -C $kc grep -l 'net\.timeoutSec' -- . ':!.codex' ':!.agents') -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match '## Decisions\r?\n(?:.*\r?\n)*- \d{4}-\d\d-\d\d Budget per agent: context TODO\(new\)'
   Expect "kittool rename event + config-key (local key migrated), new adr -> LESSONS Decisions ($okId)" $okId

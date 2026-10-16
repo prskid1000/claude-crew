@@ -83,7 +83,7 @@ moves state, `orch.ps1 setup -Migrate` once nothing runs.
 | `localEnv` | none | local envs (local-env skill): `envs.<env>.services[] {name, repo, dir, start, build, artifact, port, debugPort, health, dependsOn, hot, external}`, `tasks`, `smoke`, `db {snapshot, restore, rollback, applied, tag}`, `sandbox`, `migrations` rules, lease / idle limits |
 | `deploy.trigger` | `owner` | `owner`: nobody asks or proposes a deploy, a person says `deploy <env>` and it runs end to end; `ask`: one batched ask per env (supervise DEPLOY ASK) |
 | `deploy.minIntervalHours`, `deploy.planTimeoutSec` | `4`, `180` | `ask` only: one ask per test env per window (a number or `{ "default": 4, "<target>": 24 }`); `deploy plan`'s wall clock |
-| `net.timeoutSec` | `60` | per git-host / tracker CLI call; transient failures retry (2 s, 6 s); tracker writes lost to the network wait in `.state/outbox.jsonl` until supervise replays them |
+| `net.timeoutSec` | `60` | per git-host / tracker CLI call (devtools.py: one deadline for all tries, max 120 s, writes never retried); transient failures retry (2 s, 6 s); tracker writes lost to the network wait in `.state/outbox.jsonl` until supervise replays them |
 | `tests.<stack>.testFor` | per stack | test names `check -Touched` looks for from a changed file's `{name}` |
 | `reports.type`, `driveParent` | gdocs when `gws` exists, else markdown | QA reports and testing docs: Google Docs or files |
 | `qa.outOfScope` | `[]` | channels agent QA never tests (OUT_OF_SCOPE) |

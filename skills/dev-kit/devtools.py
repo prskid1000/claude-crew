@@ -114,9 +114,9 @@ def locked(path, stale=120):
                 pass
 
 
-# like lib.ps1 Invoke-KitRetry: transient errors retry (2 s, 6 s); a write retries only errors proving nothing was sent
+# reads retry transient errors (2 s, 6 s) inside one deadline; writes never retry (a lost reply would duplicate a task / comment)
 TRANSIENT = re.compile(r'(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests')
-NO_CONNECT = re.compile(r'(?i)could not resolve|no such host|connection refused|unreachable|dial tcp')
+STOP_AT = [0.0]   # auto_merge sets its own end: no call outlives max_wait
 
 
 def _is_write(cmd):
@@ -125,18 +125,21 @@ def _is_write(cmd):
     return m.upper() != 'GET' or any(w in s[:4] for w in ('create', 'merge', 'update', 'comment', 'note', 'edit', 'close', 'upload', 'delete'))
 
 
-def _run(cmd, cwd=None, check=False):
+def _run(cmd, cwd=None, check=False, write=None):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
-    sec = int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 60)   # net.timeoutSec, as lib.ps1
-    tries, write, delay = max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), _is_write(cmd), 2
+    sec = min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))   # net.timeoutSec = the whole deadline
+    write = _is_write(cmd) if write is None else write
+    tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
+    end = min(time.time() + sec, STOP_AT[0] or float('inf'))
     for i in range(1, tries + 1):
+        left = max(10 if STOP_AT[0] else 1, int(end - time.time()))
         try:   # a hung CLI must not outlive the tool timeout
-            p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=sec)
+            p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=left)
             out, rc, hung = ((p.stdout or '') + (p.stderr or '')).strip(), p.returncode, False
         except subprocess.TimeoutExpired:
-            out, rc, hung = f'error: timed out after {sec} s', -1, True
-        if not rc or i >= tries or not ((hung and not write) or (NO_CONNECT if write else TRANSIENT).search(out)):
+            out, rc, hung, hangs = f'error: timed out after {left} s', -1, True, hangs + 1
+        if not rc or i >= tries or hangs > 1 or not (hung or TRANSIENT.search(out)) or end - time.time() < delay + 5:
             break
         time.sleep(delay)
         delay *= 3
@@ -187,9 +190,9 @@ def _tracker(*args):
                 tmp.append(p)
                 x = p
             argv.append(x)
-        # reads lenient (finish() handles failed lookups); writes fail loudly
-        return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'tracker', *argv],
-                    check=bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach'))
+        # reads lenient + retried (finish() handles failed lookups); writes fail loudly, never retried
+        w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach')
+        return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'tracker', *argv], check=w, write=w)
     finally:
         for p in tmp:
             try:
@@ -532,6 +535,14 @@ def _gh_workflows(worktree):
 
 
 def auto_merge(worktree, iid, max_wait=90):
+    STOP_AT[0] = time.time() + max_wait   # every host call ends inside max_wait (10 s floor per call)
+    try:
+        return _auto_merge(worktree, iid, max_wait)
+    finally:
+        STOP_AT[0] = 0.0
+
+
+def _auto_merge(worktree, iid, max_wait):
     """Merge when green (GitLab merge-when-pipeline-succeeds, GitHub auto-merge), or at once when green already or without CI.
     Waits <= max_wait s with flushed progress (fits a tool timeout). Last line = one merge_word, read back from the host:
     MERGED / SCHEDULED / WAIT (run again later) / CONFLICT / PIPELINE_FAILED / NOT_MERGED. Unmerged producer (track -MergeAfter): WAIT."""

@@ -611,7 +611,6 @@ param(
   [switch]$Check,
   [switch]$FixNames,
   [switch]$AllowMissing,
-  [switch]$CloseNotTestedShared,
   [int]$ExpectChecks = -1,              # truncated results.json refused
   [string]$Results = 'results.json',    # -Check: a retry renames only its own
   [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
@@ -624,7 +623,6 @@ if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ErrorAction 
 $RunDir = (Resolve-Path $RunDir).Path
 $run = Get-Content "$RunDir\run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
-if ($CloseNotTestedShared -and ($item.localEnv -or $run.localEnv)) { [Console]::Error.WriteLine("finalize: -CloseNotTestedShared is for shared test envs; local item ${Code}: fix the env (ENV-FIX) + qa.ps1 retest"); exit 2 }
 if (-not $item) { throw "no item $Code in $RunDir\run.json" }
 $D = "$RunDir\$Code"
 if ($Results -ne 'results.json' -and -not $Check) { throw '-Results works only with -Check (publishing reads results.json)' }
@@ -892,7 +890,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($sib.pending) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
   # local env: untested = ENV-FIX
   if ($isLocal -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + qa.ps1 retest"; return }
-  if ($rec.fail + $sib.fail + $(if ($CloseNotTestedShared) { 0 } else { $rec.notTested + $sib.notTested })) { Set-FailedTesting $rec $st; return }
+  if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested) { Set-FailedTesting $rec $st; return }
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is untracked
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }

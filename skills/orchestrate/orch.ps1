@@ -271,11 +271,12 @@ function Request-DisputeDecision($o, [string]$detail) {
 # silent 2 h: escalate to the owner
 function Invoke-DisputeExpiry([double]$Hours = 2) {
   foreach ($f in @(Get-ChildItem (Get-KitPath disputes) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalHours -ge $Hours })) {
-    $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; if ($o.status -ne 'open') { continue }
-    $last = @($o.rounds)[-1]
-    $o.status = 'escalated'; $o | Add-Member -Force decision (Request-DisputeDecision $o "no reply for $Hours h; $($o.from): $($last.claim) [$($last.evidence)]")
-    Invoke-KitLocked $f.FullName { $o | ConvertTo-Json -Depth 6 | Set-Content $f.FullName -Encoding utf8 }
-    "dispute $($o.id) ($($o.from) vs $($o.with)) silent $Hours h: escalated, DECISION $($o.decision)"
+    $r = @{}   # re-read + raise under the lock: a reply in between wins, never a second decision
+    Invoke-KitLocked $f.FullName { $o = Get-Content $f.FullName -Raw | ConvertFrom-Json; if ($o.status -ne 'open') { return }
+      $last = @($o.rounds)[-1]
+      $o.status = 'escalated'; $o | Add-Member -Force decision (Request-DisputeDecision $o "no reply for $Hours h; $($o.from): $($last.claim) [$($last.evidence)]")
+      $o | ConvertTo-Json -Depth 6 | Set-Content $f.FullName -Encoding utf8; $r.o = $o }
+    if ($r.o) { "dispute $($r.o.id) ($($r.o.from) vs $($r.o.with)) silent $Hours h: escalated, DECISION $($r.o.decision)" }
   }
 }
 function Get-SelfLaunchFile([string]$Leaf, [string]$Run, [string]$Fnv = '') { Join-Path (Get-KitPath launches -Create) ("self-{0}-{1}{2}.json" -f (($Leaf -replace '\.js$', '') -replace '[^\w.-]', '_'), ($Run -replace '[^\w.-]', '_'), $(if ($Fnv) { "-$Fnv" } else { '' })) }
@@ -1845,6 +1846,8 @@ if (Test-Path (Join-Path $kit '.git')) {
 }
 $legacy = Join-Path $kit '.claude-runtime'
 if ((Test-Path $legacy) -and -not (Get-Item $legacy).LinkType) { $msgs += "old runtime at $($legacy): move it once no agents run: pwsh -File $($KitCmd.orch) setup -Migrate" }
+$mv = @((Get-Content (Join-Path $kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json)._paths.legacy.moved.PSObject.Properties | Where-Object { $v = ([string]$_.Value).TrimEnd('/'); (Test-Path (Join-Path (Get-KitPath runtime) $v)) -or (Test-Path (Join-Path (Split-Path (Get-KitPath signals)) $v)) })
+if ($mv.Count) { $msgs += "renamed state under its old name ($(($mv | ForEach-Object Value) -join ', ')): pwsh -File $($KitCmd.orch) setup -Migrate once no agents run" }
 # workflows die with their session
 $hook = $null
 if ([Console]::IsInputRedirected) { try { $hook = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch {} }

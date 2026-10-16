@@ -214,7 +214,7 @@ function leftBoard(agent) {   // every board entry of the agent says left
 const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
 // close orphan tabs (caller holds the tabs lock); a tab nobody registered (older client) is an orphan after 10 min
 async function sweep(browser, key) {
-  const f = tabsFile(key), reg = readJson(f, {}), keep = {}, now = Date.now()
+  const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'
   let live = 0, closed = 0
   for (const p of await browser.pages()) {
     const id = await tabId(p).catch(() => ''), h = reg[id]
@@ -233,7 +233,7 @@ export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT |
     const page = await withLock(`tabs-${keyFile(key)}`, async () => {
       if ((await sweep(browser, key)).live >= MAX_TABS) return null
       const p = await browser.newPage(), f = tabsFile(key), reg = readJson(f, {})
-      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }
+      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key
       saveJson(f, reg)
       return p
     })
@@ -247,14 +247,15 @@ export async function closeTab(page, key) {
   await page.close().catch(() => {})
   await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); delete reg[id]; saveJson(f, reg) }).catch(() => {})
 }
-// every shared browser: close orphan tabs (orch.ps1 supervise -AutoFix); a registry without its Chrome is dropped
+// every shared browser: close orphan tabs (orch.ps1 supervise -AutoFix); a registry without a port is dropped, a failed connect keeps it
 export async function sweepAll() {
   const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
   let closed = 0
   for (const f of readdirSync(d).filter((x) => /^tabs-.*\.json$/.test(x))) {
-    const key = f.slice(5, -5).replace(/__/g, '|')
-    const b = ports[key] ? await puppeteer.connect({ browserURL: `http://127.0.0.1:${ports[key]}`, protocolTimeout: PROTO_MS }).catch(() => null) : null
-    if (!b) { try { unlinkSync(join(d, f)) } catch {}; continue }
+    const key = readJson(join(d, f), {})._key || f.slice(5, -5).replace(/__/g, '|')
+    if (!ports[key]) { try { unlinkSync(join(d, f)) } catch {}; continue }
+    const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${ports[key]}`, protocolTimeout: PROTO_MS }).catch(() => null)
+    if (!b) continue
     try { closed += (await withLock(`tabs-${keyFile(key)}`, () => sweep(b, key))).closed } finally { b.disconnect() }
   }
   return closed

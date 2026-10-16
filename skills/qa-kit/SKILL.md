@@ -63,8 +63,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still
      NOT_TESTED -> the task goes to failedTesting: never use it for "no time" (shared test envs).
    - **Local env item** (`localEnv`): no cause is final (local-env "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
-     with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting
-     (a shared-env item only: `finalize -CloseNotTestedShared` = the coordinator's call to close).
+     with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
      `attempts` and `window`; a verifier must recreate them to refute.
    - **Flaky**: a FAIL with saved evidence that a re-test does not reproduce stays FAIL, `flaky: true` (own ->
