@@ -822,6 +822,10 @@ if ($Area -in 'orch', 'all') {
  $null = pwsh @np $O launch -Self -Script testy.js -Run select-stg -ArgsFile $saf -Fnv (& { . $O; Get-KitFnv $sa }) -RunDir 'C:/rt/qa-runs/d-stg'
  $sr = gci $ld -Filter 'self-testy-select-stg-*.json' | gc -Raw | ConvertFrom-Json
  Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'select-stg')
+ $sl0 = pwsh @np $O launch -List -Brief | Out-String; $sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
+ $sr | Add-Member -Force completed (Get-Date).ToString('o'); $sr | ConvertTo-Json -Depth 10 | Set-Content $sf.FullName
+ $sl1 = pwsh @np $O launch -List -Brief | Out-String
+ Expect 'launch -List: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $sl1 -notmatch 'select-stg')
  # orch batch 2: board TAKEOVER under lock; self records per args hash; promotion hold; passed statuses
  # never re-applied; "All MRs merged" once; deploy plan UNKNOWN on a failed check; supervise step-aside;
  # LESSONS.md lock freed on a failed -Bump; top-level --help; MergedTip on a submodule
@@ -936,6 +940,8 @@ try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-n
  Push-Location $k; $null = python -X utf8 $KT lint --help; $h = $LASTEXITCODE; $null = python -X utf8 $KT flow --bogus 2>&1; $u = $LASTEXITCODE
  $null = python -X utf8 $KT lint (Join-Path $k 'skills') 2>&1; $nk = $LASTEXITCODE; Pop-Location
  Expect 'kittool: --help 0, writes nothing; bad flag / non-kit dir 2' ($h -eq 0 -and $u -eq 2 -and $nk -eq 2 -and -not (Test-Path (Join-Path $k '--help')))
+ $eol = git -C $src check-attr eol -- .codex/config.toml .agents/hooks.json .codex/agents/x.toml .agents/workflows/x.md GEMINI.md
+ Expect 'port: generated ports are eol=lf (an autocrlf clone shows no line-ending-only diffs)' (@($eol | Where-Object { $_ -match ': eol: lf$' }).Count -eq 5)
  # kittool internals (python)
  $ktt = @'
 import importlib.util, json, os, sys, tempfile, tomllib

@@ -344,10 +344,10 @@ function Get-StoppedRuns([int]$Hours = 24, [switch]$All) {
   $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
   $sf = @($selfs | Where-Object { $run -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | select -First 1 -ExpandProperty file
   if (-not $sf) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | select -First 1 -ExpandProperty file }
-  if ($sf) { $used[$sf] = $true; $run = (Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json).run }
+  if ($sf) { $used[$sf] = $true; $so = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($so.completed) { continue }; $run = $so.run }   # an owner-stopped self record ends the launch too
   [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $f.FullName; selfFile = $sf; runDir = $r.runDir; record = $r }
  }
- foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and [datetime]$_.at -ge $since }) {
+ foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and [datetime]$_.at -ge $since }) {
   if (-not $All -and (Test-KitHolder $s) -eq $true) { continue }
   # only a completed record of THIS launch hides it
   $known = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File | Where-Object { $_.Name -notlike 'self-*' } | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count
