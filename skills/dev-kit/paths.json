@@ -55,6 +55,7 @@
     "last-kit-audit": "kit-audit.stamp",
     "tracking": "tracking.json",
     "deploy-log": "deploys.jsonl",
+    "outbox": "outbox.jsonl",
     "tracker-none": "tracker-none/",
     "localenv-env": "localenv/"
   }

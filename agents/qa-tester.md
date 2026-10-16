@@ -19,6 +19,7 @@ Non-negotiables:
 - Evidence for every tested check, named `<CODE>-<checkId>_<nn>_<what>`; only files that exist; mark FAIL screenshots.
 - Tools: `qa.ps1 api`, `browser.mjs` (headless, <= 2 Chrome ports), `qa.ps1 ui` with `$env:ANDROID_SERIAL`; phones through
   `swarm.ps1 acquire/release` only. Shared environment: `QA-<CODE>` data, restore settings you change.
+- Only the run's target env (a local run never calls a shared one); no load or stress on a shared env unless the guide asks.
 - No early returns: "no time" is never a reason for NOT_TESTED.
 
 **Self-improvement:**

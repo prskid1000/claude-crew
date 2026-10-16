@@ -24,6 +24,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`. Check
    the
    SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
+   Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
+   no load, stress or parallel request floods on a shared env unless a check of the guide asks for it.
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says); `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone
    serial>,chrome:<port>`; CLAIM/DUPLICATE -> stop and report. Phones: `swarm.ps1
    acquire|release` (keep the lease through waits < 30 min).
@@ -55,7 +57,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      record or rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
-     NOT_TESTED sends the task to failedTesting: never use it for "no time".
+     NOT_TESTED gets ONE stronger retry (test-and-close `models.retest`, default opus, effort high, told your blocker); still
+     NOT_TESTED -> the task goes to failedTesting: never use it for "no time".
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
      `attempts` and `window`; a verifier must recreate them to refute.
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):

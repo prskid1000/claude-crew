@@ -34,14 +34,15 @@ or the full run.json object (write it to <runDir>/run.json too — qa.ps1 finali
              retest: false, only: ['L3','L4'], skipClose: false, alsoWeb: false, extra: '...', taskFiles: [],
              model: 'sonnet'|'opus'|'haiku', effort: 'low'|'medium'|'high',     // optional, the TEST step; default: retests on web/api -> sonnet
              verifyModel: 'opus' } ],                                           // optional, the VERIFY step (default models.verify)
-  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku' },   // optional stage overrides ('' = session default)
+  models: { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' },   // stage overrides ('' = session default; retest: the one stronger retry of NOT_TESTED checks, '' = off)
   // skipClose: test + verify only; results.json + held.json are written for the lead to publish later (qa.ps1 finalize -Code).
   // Items sharing one task don't need it: finalize keeps the task open until every item on it is published.
 }
 */
 // Short form (saves tokens: big args are echoed back in every launch/notification): args = { runDir, only?: ['GT5','APP2B'], lanes? }
 // -> a tiny agent reads <runDir>/run.json and the workflow uses it; `only` keeps just those item codes, `lanes` overrides run.json's.
-let R = args || {}
+const ARGS0 = args || {}   // as launched: recorded for a resume (recordArgs)
+let R = ARGS0
 if (R.runDir && !Array.isArray(R.items)) {
   // A small model sometimes returns run.json truncated or re-shaped (items missing) - validate, then retry once on a stronger model.
   const loadRun = async (model, label) => {
@@ -67,7 +68,7 @@ const SWARM = `${KIT}/skills/android-swarm`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/paths.json (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log"}, "durable": {}}
+const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // ES module imports need a file:// URL of the absolute path
 const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
@@ -82,7 +83,7 @@ const LEARN = R.learn === undefined ? true : R.learn   // worker instance: extra
 function seatBlock(it, label) {
   const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
   return `
-AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}';  (Bash: export CLAUDE_AGENT='${label}';) - the build/memory
+AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[R.target, ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - qa.ps1 api refuses other targets; the build/memory
 gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
   & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
@@ -91,7 +92,7 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
   Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
 // Model by stage (R.models overrides): verify + audit = sonnet; close, hold, release, follow-ups, learn = haiku.
-const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', ...(R.models || {}) }
+const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high', ...(R.models || {}) }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 // TEST step per item: it.model / it.effort win; otherwise a narrow web/API retest (re-running named failed checks) is routine -> sonnet,
 // first-time guides and app lanes keep the default (strongest) model.
@@ -158,6 +159,27 @@ const AUDIT_SCHEMA = {
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }, lessonsChanged: { type: 'array', items: { type: 'string' } } }, required: ['signals', 'lessonsChanged'] }
 const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
+// Crash recovery: the FULL args go to the launch record first (orch.ps1 launch -Self, FNV-1a checked): a resume after a restart
+// needs them byte-exact, and a hand-typed record once lacked the agents list
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+async function recordArgs(wf, run, a, phaseName) {
+  const json = JSON.stringify(a)
+  const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
+  const prompt = `Record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
+1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+<<<ARGS
+${json}
+ARGS>>>
+2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}
+Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
+  for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+    const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, model, effort: 'low' })
+    if (r && r.ok) return true
+  }
+  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
+  return false
+}
+await recordArgs('test-and-close', String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run', ARGS0, 'Test')
 
 const COMMON = `${PATHS}
 WHY YOU ARE DOING THIS
@@ -168,11 +190,12 @@ AGENT BOARD — join first: & ${ORCH} board join -Agent <CODE> -Run ${(R.runDir 
 
 RULES — ${QA}/SKILL.md tester steps (verdicts: any defect is FAIL, never a note, with defect own|new; not deployed = NOT_TESTED, which sends the task back to its developer; evidence names
 <CODE>-<checkId>_<nn>_<what>.<ext> in <outDir>/shots or <outDir>/evidence, only files that exist; shared-environment etiquette:
-"QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress.
+"QA-<CODE>" data, restore settings and list them in setup_changes). Time box ~10 min per check; script runs < 2 min, print progress. observed <= 40 words (the report caps at 900 words).
 OUT_OF_SCOPE (not NOT_TESTED): a step that only exercises a channel agent QA never tests here: ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope (none listed = none)`}. Name the channel in observed; still test the in-app part.
 
 ENVIRONMENT AND CONTEXT
-- Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there).
+- Target "${R.target || '(default)'}" in ${QA}/targets.local.json (URLs, users; passwords only there). ONLY this run's target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}: a local run never calls a shared
+  environment. No load, stress or parallel request floods on a shared environment unless a check of the guide asks for it.
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}
 - LEAD NOTES: ${R.runDir}/lead-notes.md (may not exist yet). The lead answers your questions there (logins, tenants, scope) -
@@ -379,6 +402,22 @@ async function runItem(it, idx, L) {
     if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
   }
 
+  // Stronger retry (owner rule): every check still NOT_TESTED gets ONE more attempt by a qa-tester on models.retest (default the
+  // strongest, effort high), scoped to those checks, told what blocked the first attempt; only then does the result rule apply.
+  const blocked = res.checks.filter((c) => c.result === 'NOT_TESTED')
+  if (blocked.length && MODELS.retest) {
+    log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
+    const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed}`).join('\n')
+    const r2 = await agent(testPrompt({ ...it, only: blocked.map((c) => c.id) }, vports, L) +
+      `\nSTRONGER RETRY: a first tester could not complete these checks. What blocked it:\n${why}\nWork around each blocker (other data, user, path, the API, the lead notes) and execute the check; NOT_TESTED again only when truly impossible, with the cause.`,
+      { label: `retest-strong:${it.code}${tag(L)}`, phase: 'Verify', schema: CHECKS_SCHEMA, agentType: 'qa-tester', model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
+    for (const c2 of (r2 && !r2.skipped && r2.checks) || []) {
+      const i = res.checks.findIndex((c) => c.id === c2.id && c.result === 'NOT_TESTED')
+      if (i < 0 || c2.result === 'NOT_TESTED') continue
+      res.checks[i] = { ...c2, observed: `${c2.observed} (stronger retry; first attempt: ${res.checks[i].observed})` }
+    }
+    retried = true
+  }
   const fails = res.checks.filter((c) => c.result === 'FAIL')
   if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
   if (fails.length && VERIFY) {
@@ -409,7 +448,7 @@ async function runItem(it, idx, L) {
     }
   }
   const n = (k) => res.checks.filter((c) => c.result === k).length
-  const line = `${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
+  const line =`${it.code}: pass ${n('PASS') + n('PASS_WITH_NOTE')}/${res.checks.length - n('OUT_OF_SCOPE')}, fail ${n('FAIL')}, not tested ${n('NOT_TESTED')}, out of scope ${n('OUT_OF_SCOPE')}, pending ${n('PENDING')}`
   if (it.skipClose) {
     // keep the verdicts on disk for the lead (several items can share one task; the lead publishes them together with
     // qa.ps1 finalize -Code <code> once all are in). held.json marks the item finished for the supervisor and other workers.
@@ -491,7 +530,7 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // LEARN: turn this run's outcome into signals, and recurring ones into LESSONS.md (self-improving kit).
 // learn: 'auto' runs it only when something happened worth learning from; a clean run just gets the cleanup.
 phase('Learn')
-// every finished run ends with a kit retro (orchestrate E14): the coordinator launches it once no other workflow of the session runs
+// every finished run ends with a kit retro (orchestrate E10): the coordinator launches it once no other workflow of the session runs
 const retroDue = (results) => { log('RETRO DUE: run /kit-retro (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished).map((r) => r.code), retroDue: true, next: '/kit-retro (orchestrate E10)' } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {

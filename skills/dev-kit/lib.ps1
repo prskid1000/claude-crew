@@ -231,6 +231,61 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
 
+# Holder of a seat / claim / board entry: the first ancestor of this process that is not a shell (the agent harness), plus its start
+# time (a reused pid is not the holder). Recorded as holderPid / holderStart; Test-KitHolder: $true alive, $false gone, $null unknown.
+$script:KitShells = '^(pwsh|powershell|bash|sh|zsh|dash|fish|cmd|conhost|env|timeout|sudo|python\d*(\.\d+)?|py)$'
+function Get-KitHolder {
+  $p = Get-Process -Id $PID -ErrorAction SilentlyContinue
+  for ($i = 0; $p -and $i -lt 12; $i++) {
+    $q = $p.Parent; if (-not $q) { break }
+    if ($q.ProcessName -notmatch $script:KitShells) { return [ordered]@{ holderPid = $q.Id; holderStart = $(try { $q.StartTime.ToUniversalTime().ToString('o') } catch { '' }) } }
+    $p = $q
+  }
+  [ordered]@{ holderPid = $null; holderStart = '' }
+}
+function Test-KitHolder($o) {
+  if (-not $o -or -not $o.holderPid) { return $null }
+  $p = Get-Process -Id ([int]$o.holderPid) -ErrorAction SilentlyContinue
+  if (-not $p) { return $false }
+  if ($o.holderStart) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$o.holderStart).TotalSeconds) -lt 2 } catch {} }
+  $true
+}
+
+# A native CLI under a wall clock (a lost network once hung a git-host call for minutes): { code, out, err, timedOut }.
+# A CLI defined as a function (the tests mock glab / gh / clickup that way) is called directly.
+function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
+  $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $cmd) { return [pscustomobject]@{ code = 127; out = ''; err = "$Exe is not on PATH"; timedOut = $false } }
+  if ($cmd.CommandType -ne 'Application') {
+    $o = @(& $Exe @A 2>&1); $c = [int]$LASTEXITCODE
+    return [pscustomobject]@{ code = $c; out = (@($o | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" }) -join "`n"); err = (@($o | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" }) -join "`n"); timedOut = $false }
+  }
+  $si = [Diagnostics.ProcessStartInfo]::new($cmd.Source)
+  foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) }
+  $si.RedirectStandardOutput = $true; $si.RedirectStandardError = $true; $si.UseShellExecute = $false; $si.CreateNoWindow = $true
+  $si.StandardOutputEncoding = [Text.UTF8Encoding]::new($false); $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+  $p = [Diagnostics.Process]::Start($si)
+  $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+  if (-not $p.WaitForExit($TimeoutSec * 1000)) { try { $p.Kill($true) } catch {}; return [pscustomobject]@{ code = -1; out = ''; err = "$Exe timed out after $TimeoutSec s"; timedOut = $true } }
+  $p.WaitForExit()
+  [pscustomobject]@{ code = $p.ExitCode; out = $so.Result.TrimEnd(); err = $se.Result.TrimEnd(); timedOut = $false }
+}
+# Network loss: a call that failed on a transient error is retried with backoff (2 s, 6 s). -Connect: only errors that prove the
+# request never left (writes that are not idempotent, e.g. a comment, must not be sent twice).
+$script:KitTransient = '(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests'
+$script:KitNoConnect = '(?i)could not resolve|no such host|connection refused|unreachable|dial tcp'
+function Test-KitTransient([string]$Text, [switch]$Connect) { $Text -match $(if ($Connect) { $script:KitNoConnect } else { $script:KitTransient }) }
+# per-call wall clock and tries: kit.local.json net.timeoutSec (60) / 3 tries; env KIT_NET_TIMEOUT_SEC / KIT_NET_TRIES win (supervise lowers both)
+function Get-KitNetTimeout { if ($env:KIT_NET_TIMEOUT_SEC) { [int]$env:KIT_NET_TIMEOUT_SEC } else { [int](Get-KitSetting 'net.timeoutSec' 60) } }
+function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
+  $delay = 2
+  for ($i = 1; ; $i++) {
+    $r = & $Call
+    if ($r.code -eq 0 -or $i -ge $Tries -or -not (($r.timedOut -and -not $Connect) -or (Test-KitTransient "$($r.err) $($r.out)" -Connect:$Connect))) { return $r }
+    Start-Sleep -Seconds $delay; $delay *= 3
+  }
+}
+
 function New-DirLink([string]$Path, [string]$Target) {
   if ($KitIsWindows) { cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" } }
   else { New-Item -ItemType SymbolicLink -Path $Path -Target $Target | Out-Null }
@@ -402,11 +457,14 @@ function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -
 function __TrCli([string]$Exe, [string[]]$A) {
   if ($__trDry) { Write-Host "DRYRUN: $Exe $(__TrShort (__TrQuote $A))"; return $null }
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
-  # CLIs print UTF-8; read it as UTF-8 (the console default code page turns '—' into mojibake and breaks parsers like bug-brief)
+  # CLIs print UTF-8 (read as UTF-8: the console code page turned '—' into mojibake). Reads and status sets retry any transient
+  # error; other writes (comment, create, edit) only errors that prove nothing was sent.
+  $write = "$($A[0..1] -join ' ')" -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and "$($A[0..1] -join ' ')" -notmatch '(?i)status'
   $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-  try { $out = (@(& $Exe @A 2>&1) | ForEach-Object { "$_" }) -join "`n" } finally { [Console]::OutputEncoding = $enc }
+  try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $A (Get-KitNetTimeout) } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
+  $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
   # a failing CLI (expired auth, unknown task) must not look like success; status set's alias loop reads 'no matching status'
-  if ($LASTEXITCODE -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $($A[0..1] -join ' ') failed (exit $LASTEXITCODE): $(__TrShort $out)" }
+  if ($r.code -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $($A[0..1] -join ' ') failed (exit $($r.code)): $(__TrShort $out)" }
   $out
 }
 function __TrJson([string]$Out) {
@@ -465,7 +523,8 @@ function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($FilePath) { "  file=$FilePath" })"; return $null }
   if (-not $env:JIRA_BASE_URL -or -not $env:JIRA_EMAIL -or -not $env:JIRA_API_TOKEN) { throw 'tracker (jira): set JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN' }
   $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($env:JIRA_EMAIL):$($env:JIRA_API_TOKEN)"))
-  $p = @{ Method = $Method; Uri = $uri; Headers = @{ Authorization = "Basic $auth"; Accept = 'application/json' } }
+  $p = @{ Method = $Method; Uri = $uri; Headers = @{ Authorization = "Basic $auth"; Accept = 'application/json' }; TimeoutSec = (Get-KitNetTimeout) }
+  if ($Method -eq 'GET') { $p.MaximumRetryCount = 2; $p.RetryIntervalSec = 3 }   # network loss: reads retry, writes never twice
   if ($FilePath) { $p.Headers['X-Atlassian-Token'] = 'no-check'; $p.Form = @{ file = Get-Item -LiteralPath $FilePath } }
   elseif ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 30 -Compress)); $p.ContentType = 'application/json' }
   Invoke-RestMethod @p
@@ -556,7 +615,48 @@ function __Get-TrackerTask([string]$Id) {
   }
 }
 
-function Set-TrackerStatus([string]$Id, [string]$Status) {
+# Tracker writes lost to the network go to the outbox (.state/outbox.jsonl), replayed in order by orch.ps1 supervise (Invoke-KitOutbox);
+# the caller gets "QUEUED ..." instead of a throw. Any other error still throws. KIT_NO_OUTBOX=1 turns it off.
+function Add-KitOutbox([string]$Op, [string]$Id, [string]$Arg, [string]$Why) {
+  $f = Get-KitPath outbox -Create
+  $line = [ordered]@{ at = (Get-Date).ToString('o'); op = $Op; id = $Id; arg = $Arg; tracker = $__trType; tries = 0; why = $Why } | ConvertTo-Json -Compress
+  Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
+  Write-Warning "tracker ($__trType): $Op $Id failed on the network ($Why): queued in the outbox; orch.ps1 supervise replays it"
+  "QUEUED $Op $Id (network; outbox replays it)"
+}
+function Invoke-TrackerWrite([string]$Op, [string]$Id, [string]$Arg, [scriptblock]$Call) {
+  try { & $Call }
+  catch {
+    $m = "$($_.Exception.Message)"
+    if ($__trDry -or $env:KIT_NO_OUTBOX -eq '1' -or -not (Test-KitTransient $m)) { throw }
+    Add-KitOutbox $Op $Id $Arg (__TrShort $m)
+  }
+}
+# Replay the outbox: oldest first; a write still failing on the network stays (tries + 1); a status older than 24 h, or any write
+# that failed 20 times or with a real error, is dropped and returned as GAVE UP (the coordinator does it by hand). -DryRun lists.
+function Invoke-KitOutbox([switch]$DryRun) {
+  $f = Get-KitPath outbox; if (-not (Test-Path $f)) { return }
+  Invoke-KitLocked $f {
+    $keep = [Collections.Generic.List[string]]::new()
+    foreach ($l in @(Get-Content -LiteralPath $f | Where-Object { $_.Trim() })) {
+      $e = try { $l | ConvertFrom-Json } catch { $null }; if (-not $e) { continue }
+      if ($DryRun) { "QUEUED $($e.op) $($e.id) since $($e.at) (tries $($e.tries)): $($e.why)"; $keep.Add($l); continue }
+      if ($e.op -eq 'status' -and ((Get-Date) - [datetime]$e.at).TotalHours -gt 24) { "GAVE UP $($e.op) $($e.id) -> $($e.arg): queued over 24 h ago (a person may have moved the task since)"; continue }
+      try {
+        $out = if ($e.op -eq 'status') { __Set-TrackerStatus $e.id $e.arg } else { __Add-TrackerComment $e.id $e.arg }
+        "SENT $($e.op) $($e.id) (queued $($e.at)): $(__TrShort "$out")"
+      } catch {
+        $m = "$($_.Exception.Message)"; $e.tries = [int]$e.tries + 1; $e.why = __TrShort $m
+        if ((Test-KitTransient $m) -and $e.tries -lt 20) { $keep.Add(($e | ConvertTo-Json -Compress)) }
+        else { "GAVE UP $($e.op) $($e.id) after $($e.tries) tries: $($e.why)" }
+      }
+    }
+    if ($keep.Count) { [IO.File]::WriteAllLines($f, $keep) } else { Remove-Item -LiteralPath $f -Force }
+  }
+}
+function Set-TrackerStatus([string]$Id, [string]$Status) { Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status } }
+function Add-TrackerComment([string]$Id, [string]$Text) { $t = __TrText $Text; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
+function __Set-TrackerStatus([string]$Id, [string]$Status) {
   Clear-TrackerMemo $Id
   $name = Resolve-TrackerStatus $Status
   switch ($__trType) {
@@ -599,7 +699,7 @@ function Set-TrackerStatus([string]$Id, [string]$Status) {
   }
 }
 
-function Add-TrackerComment([string]$Id, [string]$Text) {
+function __Add-TrackerComment([string]$Id, [string]$Text) {
   Clear-TrackerMemo $Id
   $Text = __TrText $Text
   switch ($__trType) {
@@ -832,7 +932,12 @@ function Get-HostProject([string]$Repo, [switch]$Raw) {
   if ($Raw) { $p } else { [uri]::EscapeDataString($p) }
 }
 function __HostJson($out) { $t = (@($out) | ForEach-Object { "$_" }) -join "`n"; if (-not $t.Trim()) { return $null }; try { $t | ConvertFrom-Json } catch { $null } }
-function __Gh([string[]]$A) { if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return $null }; $o = & gh @A 2>$null; if ($LASTEXITCODE) { return $null }; $o }
+function __Gh([string[]]$A) {
+  if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return $null }
+  $r = Invoke-KitRetry { Invoke-KitExe gh $A (Get-KitNetTimeout) } -Connect:($A[0] -ne 'api')   # api = reads here
+  if ($r.code) { if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: gh $($A[0..1] -join ' ') failed on the network: $($r.err)" }; return $null }
+  @($r.out -split "`n")
+}
 function __GhApi([string]$Path) { __HostJson (__Gh @('api', $Path)) }
 function __Query([string]$q) { $h = @{}; foreach ($kv in ($q -split '&' | Where-Object { $_ })) { $k, $v = $kv -split '=', 2; $h[[uri]::UnescapeDataString($k)] = [uri]::UnescapeDataString("$v") }; $h }
 function __GhChecks([string]$Repo, [string]$Sha) {
@@ -867,7 +972,10 @@ function __Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fi
     $a = @('api'); if ($Method -ne 'GET') { $a += @('-X', $Method) }; $a += $Path
     foreach ($k in $Fields.Keys) { $a += @('-f', "$k=$($Fields[$k])") }
     if (-not (Get-Command glab -ErrorAction SilentlyContinue)) { return $null }
-    $o = & glab @a 2>$null; if ($LASTEXITCODE) { return $null }
+    # network loss: GETs retry any transient error, writes only when nothing was sent; a hung call ends at net.timeoutSec
+    $r = Invoke-KitRetry { Invoke-KitExe glab $a (Get-KitNetTimeout) } -Connect:($Method -ne 'GET')
+    if ($r.code) { if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: glab api $Path failed on the network: $($r.err)" }; return $null }
+    $o = @($r.out -split "`n")
     if ($Path -match '/trace$') { return ((@($o) | ForEach-Object { "$_" }) -join "`n") }
     return (__HostJson $o)
   }
@@ -934,6 +1042,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $p = @($own | Where-Object { $_ -ieq $n }); if (-not $p.Count) { $p = @($own | Where-Object { @($meta[$_].Aliases) -contains $n }) }; if (-not $p.Count) { $p = @($own | Where-Object { $_ -like "$n*" }) }
       if ($p.Count -ne 1) { throw "$($Fn -replace '^Invoke-', ''): unknown or ambiguous parameter -$n" }
       $pm = $meta[$p[0]]; $i++
+      # a hashtable splatted into a script (& x.ps1 @{ Mode = 'None' }) arrives as '-Mode:' + 'None' (two tokens): the value follows
+      if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }
       if ($pm.SwitchParameter) { $named[$p[0]] = if ($null -ne $inline) { $inline -notmatch '^(\$?false|0)$' } else { $true }; continue }
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }
       while ($i -lt $Tokens.Count -and "$($Tokens[$i])" -notmatch '^-[A-Za-z][\w-]*(:.*)?$') { $vals.Add($Tokens[$i]); $i++ }

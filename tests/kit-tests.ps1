@@ -91,7 +91,13 @@ $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fiel
   $null = pwsh -NoProfile -File $D tracker status $t.id failedTesting
   $l = @(pwsh -NoProfile -File $D tracker list L1 failedTesting | ConvertFrom-Json)
   Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id)
+  $env:KIT_TRACKER_TYPE = 'clickup'; 'body text' | Set-Content "$r/c.md"
+  $out = pwsh -NoProfile -File $D tracker comment 12 -File "$r/c.md" -DryRun 6>&1 2>&1 | Out-String
+  $bad = pwsh -NoProfile -File $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
+  Expect 'tracker comment -File sends the file; an unknown option is a usage error' ($out -match 'comment add 12 "body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
   Remove-Item Env:KIT_TRACKER_TYPE
+  $kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
+  Expect 'Invoke-KitVerb: a splatted hashtable (-Mode: None) binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
   $out = pwsh -NoProfile -File $D guard -SelfTest 2>&1 | Out-String
   Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
   $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
@@ -172,6 +178,31 @@ $p = Canned @([pscustomobject]@{ iid = 8; sha = 'S0'; squash_commit_sha = 'L'; m
   $res = @(pwsh -NoProfile -File $f $Q 2>&1)
   Expect 'deployed: a squash-merged deploy MR counts as deployed' (@($res | Where-Object { "$_" -eq 'squash:True' }).Count -eq 1)
   Expect 'deployed: a deploy MR without the commit does not' (@($res | Where-Object { "$_" -eq 'other:True' }).Count -eq 1)
+  # test-and-close: a check still NOT_TESTED gets one stronger retry (models.retest, opus) before the result rule (mocked agents)
+  $wf = [IO.File]::ReadAllText((Join-Path $src 'workflows/test-and-close.js')) -replace '^export const meta', 'const meta'
+  $js = @'
+const calls = []
+const ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
+async function agent(prompt, o) {
+  calls.push({ label: o.label, model: o.model, prompt })
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED' }
+  if (/^(test|retest):/.test(o.label)) return { code: 'A1', checks: [ck('C1', 'NOT_TESTED', { cause: 'env-data' }), ck('C2', 'PASS'), ck('C3', 'PASS')], findings: [], setup_changes: [], data_created: [] }
+  if (/^retest-strong:/.test(o.label)) return { code: 'A1', checks: [ck('C1', 'PASS')], findings: [], setup_changes: [], data_created: [] }
+  if (/^close/.test(o.label)) return { ok: true, output: 'published' }
+  return { ok: true, output: '', signals: 0, lessonsChanged: [] }
+}
+const args = { runDir: 'C:/runs/R1', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A one', guideFile: 'g.md', lane: 'web', subtasks: [{ id: 'T1' }] }] }
+const run = async (args, agent, log, phase, pipeline) => { __BODY__ }
+run(args, agent, () => {}, () => {}, null).then(() => {
+  const s = calls.find((c) => c.label === 'retest-strong:A1'), cl = calls.find((c) => c.label === 'close:A1')
+  console.log(`strong:${!!s && s.model === 'opus' && /blocked by env-data/.test(s.prompt) && /ONLY these checks: C1/.test(s.prompt)}`)
+  console.log(`closed-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+}).catch((e) => console.log('error:' + e))
+'@
+  $jf = Join-Path (Split-Path $k) 'tc-retry.mjs'; [IO.File]::WriteAllText($jf, $js.Replace('__BODY__', $wf))
+  $res = @(node $jf 2>&1)
+  Expect 'test-and-close: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
+  Expect 'test-and-close: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
   Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
   Remove-TestKit $k
 }
@@ -200,7 +231,8 @@ if ($Area -in 'orch', 'all') {
   $w = pwsh -NoProfile -File $O decide wait -Id $id -MaxMinutes 1 | Out-String
   Expect 'decide: answer -> wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh -NoProfile -File $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ }).Count)
   # deploy batching (offline fixture): one batch per env from every tracked task; the window holds a second deploy
-  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }) }); deploy = @{ minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $k 'skills/dev-kit/kit.local.json')
+  $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'
+  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
   $null = New-Item -ItemType Directory -Force (Split-Path $tf); @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } | ConvertTo-Json -Depth 6 | Set-Content $tf
   $fx = Join-Path (Split-Path $k) 'deploy-fixture.json'
   @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'not on staging yet' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } | ConvertTo-Json -Depth 6 | Set-Content $fx
@@ -212,6 +244,50 @@ if ($Area -in 'orch', 'all') {
   $null = pwsh -NoProfile -File $O deploy record -Env stage -Mrs 'api!1','api!3' -By tester
   $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
   Expect 'deploy record: the window holds the next ask (WAIT), the pending request is cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
+  # deploy.trigger owner (the default): merged work is READY and waits for a person's "deploy <env>"; supervise never asks
+  @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } | ConvertTo-Json -Depth 6 | Set-Content $cfgF
+  $null = pwsh -NoProfile -File $O deploy request -Mrs 'api!3' -Run w3 -Offline $fx
+  $p = @(pwsh -NoProfile -File $O deploy plan -Offline $fx -Json | ConvertFrom-Json)
+  Expect 'deploy plan: trigger owner (default) -> READY inside the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
+  $sup = (Get-Command (Join-Path $k 'skills/orchestrate/orch.ps1')).ScriptBlock.Ast.Extent.Text -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
+  Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
+  # crash recovery: the workflow's own args record (FNV-checked) wins over a short typed record; recover prints the resume call
+  $ld = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath launches }; New-Item -ItemType Directory -Force $ld | Out-Null
+  $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
+  $af = Join-Path (Split-Path $k) 'args.json'; [IO.File]::WriteAllText($af, $full)
+  $h = & { . $O; Get-KitFnv $full }
+  $bad = pwsh -NoProfile -File $O launch -Self -Script dev-wave.js -Run wave-x -ArgsFile $af -Fnv 00000000 | Out-String; $badCode = $LASTEXITCODE
+  $ok = pwsh -NoProfile -File $O launch -Self -Script dev-wave.js -Run wave-x -ArgsFile $af -Fnv $h | Out-String
+  Expect 'launch -Self: a wrong hash is MISMATCH (exit 1), the right one RECORDED' ($badCode -eq 1 -and $bad -match 'MISMATCH' -and $ok -match 'RECORDED')
+  $null = pwsh -NoProfile -File $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/dev-wave.js') -ArgsJson '{"brief":"C:/b/wave-x.md"}' 2>&1
+  $rj = Get-Content (Join-Path $ld 'wf_t1.json') -Raw | ConvertFrom-Json; $rj.holderPid = 999999; $rj | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $ld 'wf_t1.json')   # its session is gone
+  $l = pwsh -NoProfile -File $O launch -List -Brief | Out-String
+  $rc = pwsh -NoProfile -File $O recover | Out-String
+  Expect 'launch -List / recover: the stopped run resumes with the workflow''s exact args' ($l -match 'wf_t1' -and $l -match 'self-dev-wave-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
+  # network loss: a tracker write that fails on the network is queued in the outbox, replayed once the network is back
+  $nt = @'
+. $args[0]
+$env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type clickup
+function clickup { $global:LASTEXITCODE = 1; 'Error: dial tcp: lookup api.clickup.com: no such host' }
+$q = Set-TrackerStatus 'T9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
+function clickup { $global:LASTEXITCODE = 0; "status set: $($args[2])" }
+$s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status T9' -and -not (Test-Path (Get-KitPath outbox)))"
+function clickup { $global:LASTEXITCODE = 1; 'Error: task not found' }
+try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
+'@
+  $nf = Join-Path (Split-Path $k) 'outbox-test.ps1'; Set-Content $nf $nt
+  $res = @(pwsh -NoProfile -File $nf (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
+  foreach ($x in 'queued', 'sent', 'real') { Expect "outbox: $x" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
+  # a seat / claim whose session process is gone never blocks (a dead tester's seat once blocked setup -Migrate)
+  $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath qa-seats }; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
+  @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
+  $rd = Join-Path (Split-Path $k) 'runs/S'; New-Item -ItemType Directory -Force $rd | Out-Null
+  @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999 } | ConvertTo-Json | Set-Content "$sd/claims/S__S1.json"
+  $null = pwsh -NoProfile -File (Join-Path $k 'skills/qa-kit/qa.ps1') seat status
+  $cl = pwsh -NoProfile -File (Join-Path $k 'skills/qa-kit/qa.ps1') seat acquire -Agent test:S1 -Kind api -RunDir $rd -Code S1 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String
+  Expect 'seats: a dead holder''s seat is freed, its claim taken over' (-not (Test-Path "$sd/seats/test_D1.json") -and $cl -notmatch 'ALREADY' -and (Get-Content "$sd/claims/S__S1.json" -Raw | ConvertFrom-Json).owner -eq 'w1')
+  $out = "Merge branch 'feature/long-branch-name-for-testing' into deploy/staging-longer-name" | python -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') prose --kind merge-commit - | Out-String
+  Expect 'prose: a merge commit is its own kind (no conv, no 72-char subject)' ($LASTEXITCODE -eq 0)
   # lessons: one LESSONS.md, a section per skill; an org term routes a lesson to LESSONS.local.md
   @{ orgTerms = @('Acmecorp') } | ConvertTo-Json | Set-Content (Join-Path $k 'skills/dev-kit/kit.local.json')
   $null = pwsh -NoProfile -File $O learn -Skill tech-audit -Lesson '(2×) a generic lesson'

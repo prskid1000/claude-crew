@@ -20,8 +20,9 @@ import. Edit only here. Claude Code-only mechanics (hooks, the Workflow and Skil
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,
-  human testing doc, tracker promoted (no user gate) -> batched deploy ask (a person approves; one deploy per env per window)
-  -> in test -> testers close it, or it fails testing and comes back. Bugs are reproduced locally before they are fixed.
+  human testing doc, tracker promoted (no user gate) -> merged work waits: nobody asks or proposes a deploy; a person says `deploy
+  <env>` and the coordinator deploys at once (`deploy.trigger`) -> in test -> testers close it, or it fails testing and comes
+  back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc -> all pass: closed · own check failed or
   incomplete: failedTesting (back to dev) · a new defect: one [Bug] task under the original ask.
 - **Decision pauses**: a change of business logic or behaviour the task did not ask for, or several valid paths -> the agent
@@ -34,13 +35,13 @@ the **Target**. A mixed request is split and each part routed on its own.
 | # | Conditions (all must hold) | Target | Load first |
 |---|---|---|---|
 | R0 | The request matches a row of "Org router rows" in `rules/*.local.md` (org-only skills and needs) | that org row's target | — |
-| R1 | A coordinator event: a workflow notification, a supervise flag, stopped or restarted agents or workflows, a decision request, a deploy ask or a finished deploy, QA results (failedTesting or new [Bug] tasks), the owner changing a rule mid-run, a SessionStart kit line | `orchestrate` → its Events table | — |
+| R1 | A coordinator event: a workflow notification, a supervise flag, stopped or restarted agents or workflows, a decision request, a person's `deploy <env>` or a finished deploy, QA results (failedTesting or new [Bug] tasks), the owner changing a rule mid-run, a SessionStart kit line | `orchestrate` → its Events table | — |
 | R2 | Kit friction or a kit change: a kit script, hook, rule or workflow failed, blocked wrongly or needed a workaround, or a kit part or config key is added or changed | `orchestrate` → "Change the kit" | — |
 | R3 | The owner asks to audit, review, recover or repair the whole kit, or to set it up or fix missing config | `kit-auditor` agent (one at a time) | — (the agent loads `kit-audit`) |
 | R4 | A /dev-wave or /test-and-close finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective | `/kit-retro` | `orchestrate` |
 | R5 | Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens) | `/dev-wave` | `orchestrate` |
 | R6 | Coding: one small change in one repo (one screen, file or endpoint, a quick fix, a config edit) | direct, dev-kit steps | `dev-kit` |
-| R7 | A deploy is asked for or approved, or deployed tasks are to move to in test | direct: orchestrate E5 (`orch.ps1 deploy`) | `orchestrate` |
+| R7 | A person says `deploy <env>` (or approves an ask under `deploy.trigger: ask`), or deployed tasks are to move to in test | direct: orchestrate E5 (`orch.ps1 deploy`) | `orchestrate` |
 | R8 | Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents | `/test-and-close` | `orchestrate` |
 | R9 | A person tests by hand, or you check one deployed change yourself (one screen or endpoint) | `qa-kit` → H steps / tester steps | — |
 | R10 | The local env outside a running flow: start, stop, refresh, inspect, reproduce or debug on it | `local-env` | — |
@@ -57,8 +58,9 @@ the **Target**. A mixed request is split and each part routed on its own.
 - **Autonomous:** installing this kit is the standing opt-in for its workflows: launch the routed workflow yourself, then say in
   one line what started and why. An org that wants to be asked first says so in its org rules. A request already running in a
   workflow is never launched twice: add to it through the contracts file.
-- **Deploys always need a person's yes**, and so do merges into branches that deploy (`holdMerge`). Merges into the main line
-  after review, CI and the local test loop need none.
+- **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
+  the person says `deploy <env>`, then it runs end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
+  into the main line after review, CI and the local test loop need none.
 
 ## CLIs
 Check auth before using a CLI (never log in headlessly). Windows: resolve shims (`gws`, `gh`, `npx`, ...) with `shutil.which()`.

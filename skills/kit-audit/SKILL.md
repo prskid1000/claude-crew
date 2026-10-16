@@ -22,7 +22,7 @@ argument-hint: "[focus: setup | config | recover | audit | all]"
 0. **Start:** `& $O learn -Read -Skill kit-audit`; `& $O board join -Agent kit-auditor -Run kit-audit -Area kit` (DUPLICATE ->
    stop).
    `git -C <kit> fetch`;
-   `& <kit>/skills/dev-kit/dev.ps1 wt new -Repo <kit> -Branch kit/audit-<yyyy-MM-dd> -Target main -Name kit-audit`.
+   `& <kit>/skills/dev-kit/dev.ps1 wt new -Repo <kit> -Branch kit/audit-<yyyy-MM-dd> -Target main -Name kit-audit-<yyyy-MM-dd>`.
    Busy check: `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup.
 1. **Setup:** `$A setup` (clone, git hooks, `localOnly` excludes, runtime + state folders, hooks clean and fast, ports, CLIs and
    auth: check only, never log in). `$A setup --fix` runs `kit.ps1 setup` (idempotent).
@@ -61,9 +61,9 @@ argument-hint: "[focus: setup | config | recover | audit | all]"
 
 | Flow | Hops to trace |
 |---|---|
-| dev | router -> orchestrate -> `dev-wave.js` (build + local loop, decisions, review, fix, ci, ship, track, deploy ask, learn) -> `dev-agent` -> dev-kit (`dev.ps1 wt/check/gate/stack`, `devtools.py mr/doc/merge`) -> local-env (`localenv.ps1`, `migrations.py`) -> `orch.ps1 track/deploy` |
+| dev | router -> orchestrate -> `dev-wave.js` (build + local loop, decisions, review, fix, ci, ship, track, deploy batch, learn) -> `dev-agent` -> dev-kit (`dev.ps1 wt/check/gate/stack`, `devtools.py mr/doc/merge`) -> local-env (`localenv.ps1`, `migrations.py`) -> `orch.ps1 track/deploy` |
 | test-only | router -> `test-and-close.js` (load-run, test, audit, verify, close) -> `qa-tester` / `qa-verifier` -> `qa.ps1 seat/deployed/api/ui/annotate/finalize` -> result rule -> `orch.ps1 supervise` (failedTesting, [Bug]) -> bugfix wave |
-| coordinator | `orch.ps1 supervise -AutoFix -Brief` -> board, track, deployed, deploy plan, decide, launch, report, cleanup; `swarm.ps1` leases |
+| coordinator | `orch.ps1 supervise -AutoFix -Brief` -> board, track, deployed, decide, launch, recover, outbox, report, cleanup; `swarm.ps1` leases |
 | kit | `settings.json` hooks (`dev.ps1 guard`, `kit.ps1 health/guard-sendmessage`, `orch.ps1 cleanup -IfDue`), `.githooks`, `kittool.py lint/flow/port/cost`, `kit.ps1 setup -Migrate` |
 Script pitfalls to check (pwsh 7): case-insensitive variables (`$L` = `$l`); `-File x.ps1 -List a,b` passes one string
 (`Split-KitList`); short helper names that are aliases (`r`, `rd`, `h`, `del`, `diff`: an alias beats a function and can delete

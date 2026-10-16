@@ -939,8 +939,8 @@ FLOW_VIEWS = {
             '  V -->|findings / red| C',
             '  V -->|clean, green| M[merge, producers first]',
             '  M --> H[human testing doc + tracker promoted]',
-            '  H --> DB[deploy batch: one ask per env, window]',
-            '  DB -->|a person approves| DP[deploy + record]',
+            '  H --> DB[merged work waits: nobody asks]',
+            '  DB -->|a person says deploy env| DP[deploy at once + record]',
             '  DP --> IT[tracker inTest]',
             '  IT --> HT([testers close it, or failedTesting -> back to dev])'],
     'test-only': ['flowchart LR',
@@ -965,9 +965,12 @@ FLOW_VIEWS = {
                '  MW[merged MRs from every session] --> PL[orch deploy plan]',
                '  RQ[deploy request: workflows] --> PL',
                '  CI[last deploy: CI + kit log] --> PL',
-               '  PL -->|window open| ASK[ASK the owner once per env]',
-               '  PL -->|inside the window| WT[WAIT until the window ends]',
-               '  ASK -->|yes| DO[deploy per org rules] --> RC[deploy record] --> IN[deploy intest]'],
+               '  PL -->|trigger owner| RD[READY: waits, nobody asks]',
+               '  RD -->|a person says deploy env| DO[deploy per org rules]',
+               '  PL -->|trigger ask, window open| ASK[ASK the owner once per env]',
+               '  PL -->|trigger ask, inside the window| WT[WAIT until the window ends]',
+               '  ASK -->|yes| DO',
+               '  DO --> RC[deploy record] --> IN[deploy intest]'],
 }
 
 
@@ -978,7 +981,9 @@ def readme_sections(k, g):
     nid = lambda f: re.sub(r'[^A-Za-z0-9]', '_', f)
     out = {}
     lines = ['flowchart LR', '  CLAUDE_md[CLAUDE.md] -->|import| AGENTS_md[AGENTS.md Router]']
-    tops = [f for f, n in sorted(nodes.items()) if n['kind'] in ('skill', 'workflow', 'agent')]
+    # the README is published: local-overlay parts (localOnly paths, *.local.*) never appear in it, whichever clone regenerates it
+    pub = lambda f: f in nodes and not nodes[f].get('local')
+    tops = [f for f, n in sorted(nodes.items()) if n['kind'] in ('skill', 'workflow', 'agent') and pub(f)]
     for f in tops:
         shape = {'skill': '[{}]', 'workflow': '[/{}/]', 'agent': '({})'}[nodes[f]['kind']]
         lines.append(f'  {nid(f)}' + shape.format(label(f)))
@@ -996,9 +1001,11 @@ def readme_sections(k, g):
         out[f'flow-{name}'] = body
     for s in k.skills:
         sk = f'skills/{s}/SKILL.md'
+        if not pub(sk):
+            continue
         lines = ['flowchart LR', f'  {nid(sk)}[{s}]']
         for n, when, hits in k.index.get(s, []):
-            for h in hits:
+            for h in [h for h in hits if pub(h) or h not in nodes]:
                 step = re.sub(r'[`"|\[\]{}<>]', '', when)[:48]
                 lines.append(f'  {nid(sk)} -->|{step}| {nid(h)}[{os.path.basename(h)}]')
         out[f'skill-{s}'] = lines
@@ -1010,6 +1017,9 @@ def update_readme(text, sections):
     def block(name):
         return f'<!-- kit-graph:start {name} -->\n```mermaid\n' + '\n'.join(sections[name]) + '\n```\n<!-- kit-graph:end -->'
     text = text.replace('\r\n', '\n')
+    # a section no part produces any more (a removed or local-only skill) goes, with the blank line before it
+    text = re.sub(r'\n*<!-- kit-graph:start ([\w-]+) -->.*?<!-- kit-graph:end -->',
+                  lambda m: m.group(0) if m.group(1) in sections else '', text, flags=re.S)
     for name in sections:
         rx = re.compile(r'<!-- kit-graph:start ' + re.escape(name) + r' -->.*?<!-- kit-graph:end -->', re.S)
         if rx.search(text):
@@ -2107,7 +2117,7 @@ def cmd_recover(kit, fix):
                     out('ACT', 'RECOVER-ORPHAN', os.path.join(root, d), 'worktree folder whose repo record is gone (git cannot see or clean it)',
                         'check it holds nothing unpushed, then the lead deletes the folder; run git worktree prune in its repo')
     cl = os.path.join(kit, 'skills', 'orchestrate', 'orch.ps1')
-    rc, o, e = pwsh(cl, *(['-Quiet'] if fix else ['-DryRun']), timeout=300)
+    rc, o, e = pwsh(cl, 'cleanup', *(['-Quiet'] if fix else ['-DryRun']), timeout=300)   # the verb: without it orch.ps1 printed usage (exit 2)
     if rc == 124:
         out('WARN', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', 'did not finish within 5 min (git host lookups for many branches?): run it by hand with -DryRun')
     elif rc != 0:

@@ -12,7 +12,7 @@ $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
 # ---------------------------------------------------------------- health: SessionStart hook - kit git state, gates, stopped runs, lint, ports, retro + audit nudges
-# SessionStart hook: one line when the workspace kit needs attention (orchestrate event E17), nothing otherwise. No network.
+# SessionStart hook: one line when the workspace kit needs attention (orchestrate event E13), nothing otherwise. No network.
 # The kit (the workspace's .claude folder) is a git clone of the kit repo, edited in place:
 #   - git: uncommitted kit changes, and commits behind/ahead of the LAST FETCHED upstream (git status --branch; the async
 #     -Fetch hook refreshes it for the next start); core.hooksPath must be .githooks (the pre-push gate)
@@ -62,7 +62,8 @@ $hook = $null
 if ([Console]::IsInputRedirected) { try { $hook = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch {} }
 if (-not $hook -or $hook.source -ne 'compact') {
   $stopped = @(& $KitCmd.orch launch -List -Brief 2>$null)
-  if ($stopped.Count) { $msgs += "workflow runs with no completion (stopped with the last session? resume them, orchestrate E6; finished: orch.ps1 launch -Done): $($stopped -join '; '); no heartbeat is armed in this session (E1)" }
+  # the heartbeat (a cron) and every workflow die with their session: say exactly what to re-arm and resume
+  if ($stopped.Count) { $msgs += "after a restart: $($stopped -join '; '). Do: & '$($KitCmd.orch)' recover (resume calls, resume briefs, qa.ps1 finalize lines; orchestrate E3); finished ones: orch.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: CronCreate */10 * * * * with the prompt 'Run & ''$($KitCmd.orch)'' supervise -AutoFix -Brief and act on its ACT / WATCH lines (orchestrate Events)' (E1)" }
 }
 if ($py) {
   $lint =& $py -X utf8 $KitCmd.kittool lint $kit --summary --warn --no-flow 2>$null
@@ -81,8 +82,8 @@ exit 0
 #
 function Invoke-Nudge {
 # SessionStart hook: one line, nothing otherwise (no network, well under 1 s):
-#  - E14: many learning signals piled up since the last /kit-retro -> run /kit-retro
-#  - E21: the last kit audit (kittool.py audit stamp) is older than kit.local.json kitAudit.everyDays (default 7; 0 = off) and no
+#  - E10: many learning signals piled up since the last /kit-retro -> run /kit-retro
+#  - E13: the last kit audit (kittool.py audit stamp) is older than kit.local.json kitAudit.everyDays (default 7; 0 = off) and no
 #    kit-auditor is on the board -> spawn kit-auditor
 $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
@@ -105,7 +106,7 @@ if ($every -gt 0) {
   if (-not $last -or ((Get-Date) - $last).TotalDays -ge $every) {
     $busy = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } |
         Where-Object { $_.agent -eq 'kit-auditor' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 }).Count
-    if (-not $busy) { $msgs += "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kit-auditor agent (orchestrate E21)." }
+    if (-not $busy) { $msgs += "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kit-auditor agent (orchestrate E13)." }
   }
 }
 
@@ -191,9 +192,11 @@ if ($Migrate) {
   $live = @()
   $live += @(& $KitCmd.orch launch -List -Brief 2>$null | Where-Object { $_ })
   foreach ($rt in @($oldRt, $newRt) | Where-Object { Test-Path $_ }) {
-    $live += @(Get-ChildItem (Join-Path $rt 'work/board') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 } | ForEach-Object { "board: $($_.agent) ($($_.run))" })
-    $live += @(Get-ChildItem (Join-Path $rt 'work/phones') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { "phone lease: $($_.BaseName)" })
-    $live += @(Get-ChildItem (Join-Path $rt 'work/qa-seats/seats') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { "QA seat: $($_.BaseName)" })
+    # an entry whose session process is gone (holderPid dead) never blocks: a crashed tester's seat once had to be removed by hand
+    $readLive = { param($sub) @(Get-ChildItem (Join-Path $rt $sub) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { $o = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($o) { $o | Add-Member -Force NoteProperty name $_.BaseName; $o } } | Where-Object { (Test-KitHolder $_) -ne $false }) }
+    $live += @(& $readLive 'work/board' | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 } | ForEach-Object { "board: $($_.agent) ($($_.run))" })
+    $live += @(& $readLive 'work/phones' | ForEach-Object { "phone lease: $($_.name)" })
+    $live += @(& $readLive 'work/qa-seats/seats' | Where-Object { ((Get-Date) - [datetime]$_.since).TotalHours -lt 3 } | ForEach-Object { "QA seat: $($_.name)" })
   }
   if ($live.Count) { "migrate refused: something still runs - $(($live | Select-Object -First 6) -join '; '). Run it again once nothing runs."; exit 1 }
   if ((Test-Path $oldRt) -and -not ((Get-Item $oldRt).LinkType)) {

@@ -16,8 +16,8 @@ its focus (setup / config / recover / audit / all, default all) and the owner's 
 
 Non-negotiables:
 - Never edit files of the live clone `<kit>`: runs execute its scripts. Every tracked change goes into your own worktree
-  (`dev.ps1 wt new -Repo <kit> -Branch kit/audit-<yyyy-MM-dd> -Target main -Name kit-audit`), committed with `wt commit` and
-  pushed as that branch. Never push `main`, never merge, never force-push.
+  (`dev.ps1 wt new -Repo <kit> -Branch kit/audit-<yyyy-MM-dd> -Target main -Name kit-audit-<yyyy-MM-dd>`),
+  committed with `wt commit` and pushed as that branch. Never push `main`, never merge, never force-push.
 - Only `kittool.py audit setup --fix`, `config --fill` and `recover --fix` touch the live clone, only for what they call safe;
   skip `--fix` on worktrees, board and cleanup while anything runs. Unmerged work is listed, never deleted.
 - Never log in to a CLI, never print or copy a value from a `*.local.*` file; org values you cannot derive go to the lead as ASK

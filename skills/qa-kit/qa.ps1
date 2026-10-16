@@ -270,7 +270,9 @@ function Locked([scriptblock]$b) {
 }
 function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
-function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3) { Remove-Item $_.FullName -Force } else { $o } }) }
+# a seat whose holder process is gone (crash, session restart) or older than 3 h is released here, never left blocking (setup -Migrate, capacity)
+function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$o.since).TotalHours -gt 3 -or (Test-KitHolder $o) -eq $false) { Remove-Item $_.FullName -Force } else { $o } }) }
+$holder = Get-KitHolder
 
 switch ($Action) {
   'status' {
@@ -297,9 +299,9 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code\held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         if (Test-Path $cf) {
           $c = Get-Content $cf -Raw | ConvertFrom-Json
-          if ($c.owner -ne $Owner -and ((Get-Date) - [datetime]$c.since).TotalHours -lt 6) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
+          if ($c.owner -ne $Owner -and ((Get-Date) - [datetime]$c.since).TotalHours -lt 6 -and (Test-KitHolder $c) -ne $false) { return "ALREADY: $Code is being tested by worker $($c.owner)" }   # a dead holder's claim is free
         }
-        @{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $cf
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content $cf
         $null
       }
       if ($verdict) { $verdict; exit 3 }
@@ -307,7 +309,7 @@ switch ($Action) {
     # 2. memory seat (fair FIFO among waiters)
     $me = Safe $Agent; $wf = Join-Path $wait "$me.json"
     if (Test-Path (Join-Path $seats "$me.json")) { "seat already held: $Agent"; exit 0 }
-    if (-not (Test-Path $wf)) { @{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $wf }
+    if (-not (Test-Path $wf)) { ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content $wf }
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $told = $false
     while ($true) {
       $ok = Locked {
@@ -321,7 +323,7 @@ switch ($Action) {
         $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
         $left = (FreeGB) - [double]$promised - $need
         if ($ahead.Count -eq 0 -and $left -ge $KeepFreeGB) {
-          @{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $seats "$me.json")
+          ([ordered]@{ agent = $Agent; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json | Set-Content (Join-Path $seats "$me.json")
           Remove-Item $wf -Force
           return "seat taken: $Agent ($Kind, ~$need GB); free RAM after it ~$([math]::Round($left, 1)) GB"
         }
@@ -362,7 +364,7 @@ switch ($Action) {
 # commit is an ancestor of the commit the lane APK was built from (android-swarm apk/app.json, written by swarm.ps1 build).
 # Use it before holding a QA item as "not deployed yet", and orch.ps1 supervise -AutoFix uses it to flag promoted tasks that went live.
 function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail)
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets (orch deploy plan: prod)
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
@@ -469,7 +471,7 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {   # lib.ps1
   # fast-forward merges have no merge commit: the MR head (sha) is what landed on the target
   $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
   if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
-  $deps = @($r.deploys | Where-Object { -not $Target -or $_.target -eq $Target })
+  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
   if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
   foreach ($d in $deps) {
     if ($d.laneApk) {   # app repo, no deploy pipeline: live on the test phones when the lane APK was built from a commit holding the merge
@@ -565,6 +567,9 @@ $cfgFile = Join-Path $here 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - copy targets.example.json and fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
 if (-not $Target) { $Target = $cfg.default }
+# a QA run pins its targets (test-and-close sets KIT_QA_TARGETS): a local retest once sent load to a shared staging server
+$pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
+if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
 $t = $cfg.targets.$Target
 if (-not $t) { throw "Unknown target '$Target'. Known: $($cfg.targets.PSObject.Properties.Name -join ', ')" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }

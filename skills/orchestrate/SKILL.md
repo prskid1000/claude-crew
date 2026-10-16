@@ -1,19 +1,19 @@
 ---
 name: orchestrate
-description: "Load when: you are the main session and the router sends you here: launching or supervising /dev-wave, /test-and-close or /kit-retro, a coordinator event (workflow finished, supervise flag, stopped agents, decision needed, deploy ask, QA results, SessionStart kit line), or changing the kit. Not when: you are an agent inside a wave -> dev-kit / qa-kit; one small change -> dev-kit, directly."
+description: "Load when: you are the main session and the router sends you here: launching or supervising /dev-wave, /test-and-close or /kit-retro, a coordinator event (workflow finished, supervise flag, stopped agents, decision needed, a person's deploy <env>, QA results, SessionStart kit line, a restart), or changing the kit. Not when: you are an agent inside a wave -> dev-kit / qa-kit; one small change -> dev-kit, directly."
 ---
 
 **Load when** (all must hold): you are the main session (not a spawned agent); the router matched a coordinator, dev-flow,
 test-only, deploy or kit row.
 **Not when:** you are a `dev-agent` -> `dev-kit`; a `qa-tester` / `qa-verifier` -> `qa-kit`; one small change -> `dev-kit`.
 **Hands off to:** `/dev-wave` (spawns `dev-agent` + `mr-reviewer`), `/test-and-close` (spawns `qa-tester` + `qa-verifier`),
-`/kit-retro`, one `kit-auditor`, the owner (deploy asks, decisions), `android-swarm` (lane APK).
+`/kit-retro`, one `kit-auditor`, the owner (decisions), `android-swarm` (lane APK).
 **Files** (every file in this folder; read or run each only at its step or event row):
 
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill orchestrate` |
-| `orch.ps1` | every event row (`supervise`, `launch`, `report`, `board`, `track`, `deploy`, `decide`, `bugbrief`, `cleanup`, `learn`) |
+| `orch.ps1` | every event row (`supervise`, `launch`, `report`, `board`, `track`, `deploy`, `decide`, `bugbrief`, `cleanup`, `learn`, `recover`) |
 | `kit.ps1` | SessionStart hook (`health`), install / repair / migrate (`setup`), SendMessage hook (`guard-sendmessage`), git hooks (`prepush`, `precommit`); K3-K4 |
 | `kittool.py` | K3 (`lint`, `flow --readme`, `port`, `cost`), the kit audit (`audit`), SessionStart (`lint --summary`, `port --check`) |
 | `<kit>/CONTRIBUTING.md` | K1: conventions (file cap, budgets, script / skill / agent shapes, tests, the local overlay) |
@@ -32,7 +32,8 @@ words).
 **Dev flow** (/dev-wave, or one `dev-agent`, or you on a small change): 1 code -> 2 testing-goals doc -> 3 reproduce + test on
 the
 local env (loop, max 3 rounds) -> 4 review, CI, merge (producers first), human testing doc, tracker promoted (no user gate) ->
-5 deploy batch: `deploy plan` -> ask the owner ONCE per env -> after the deploy `deploy record` + `deploy intest` -> testers.
+5 merged work waits (`deploy request`, silent) -> a person says `deploy <env>` -> E5 at once -> testers. Nobody asks or
+proposes a deploy (`deploy.trigger: owner`, the default; `ask` = one batched ask per env).
 
 | Dev path | Who / what | You do |
 |---|---|---|
@@ -44,14 +45,13 @@ local env (loop, max 3 rounds) -> 4 review, CI, merge (producers first), human t
 | conflict at merge | append-only: auto (keepboth); real code: blocking finding | follow-up fix (E7) |
 | infra flake (gate kill, API timeout) | the step is retried once | a second failure -> E2 |
 | held repo (`holdMerge`) | MR open, reviewed, green | ask the owner, then `devtools.py merge` |
-| deploy batch | the workflow ends with `deployBatch` (it never deploys) | E5 |
-| stopped / restarted | launch record without completion | E3: resume from the record |
+| deploy batch | the workflow ends with `deployBatch` (it never deploys) | nothing until a person says `deploy <env>` (E5) |
+| stopped / restarted | launch record without completion | E3: `orch.ps1 recover`, resume from the record |
 
-**Test-only flow** (/test-and-close, deployed work on a test env): per item test -> retest when > 25% NOT_TESTED -> note audit
-->
-verify every FAIL -> finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new
-defect
--> one [Bug] per ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3).
+**Test-only flow** (/test-and-close, deployed work on a test env, only its own target): per item test -> retest when > 25%
+NOT_TESTED -> note audit -> ONE stronger retry (`models.retest`) of every check still NOT_TESTED -> verify every FAIL ->
+finalize: all pass -> closed; own FAIL or incomplete -> failedTesting (back to the dev flow, E6); new defect -> one [Bug] per
+ask (E6); PENDING -> app follow-up. Items the workflow could not publish -> `qa.ps1 finalize` (qa-kit L3; `orch.ps1 recover`).
 
 ## Steps (you = the coordinator)
 0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts live in the brief / run.json / memory / the repo's CLAUDE.md.
@@ -59,29 +59,29 @@ defect
 2. **Brief:** `dev-kit/templates.md` "Wave brief" in the scratchpad (limits: "Writing standards", kinds `wave-brief`,
    `owner-message`) (bugs: `orch.ps1 bugbrief -Task <id> ...` per task).
 3. **Launch** `/dev-wave` with `{ brief, agents:[{id, items, area, dependsOn?}], mode, kitDir, mandate, holdMerge? }`; then
-   `orch.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'`; then E1.
+   `orch.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its exact args itself); then E1.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook
    blocks it).
-5. **Deploy** (E5) and **close**: reconcile backlog vs merged MRs; list only what is open, each with a reason.
+5. **Close** (deploys only on a person's word, E5): reconcile backlog vs merged MRs; list only what is open, each with a reason.
 - T1-T4 (test-only): run folder + `run.json` (qa-kit L1) -> `/test-and-close { runDir, kitDir }` -> `launch` record -> E1.
 ~15 dev agents queue fine on the memory gate. Dev waves and app-lane QA on one machine: cap `lanes` at 2.
 
 ## Events (check this table whenever something happens)
 | # | Event | Action |
 |---|---|---|
-| E1 | You launched a workflow / agent and no heartbeat runs | ONE heartbeat: `/loop 10m` -> `orch.ps1 supervise -Session <id> -AutoFix -Brief` (generic prompt). A second session's supervisor steps aside by itself. Stop it when nothing runs |
+| E1 | You launched a workflow / agent, or a new session finds runs, and no heartbeat runs (a heartbeat dies with its session) | ONE heartbeat: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief` and act on its ACT / WATCH lines. A second session's supervisor steps aside by itself. Stop it when nothing runs |
 | E2 | supervise prints ACT / WATCH | do the printed action / re-check next round; leave healthy agents alone |
-| E3 | Agents or a workflow stopped (usage limit, API timeout, RAM, a restart) | a launch record exists: `Workflow({ scriptPath, resumeFromRunId, args })` from `orch.ps1 launch -List`; else /dev-wave `mode: 'resume'` (templates.md "Resume brief"); never restart from scratch. You stopped it: `supervise -MarkStopped <run>` |
+| E3 | Agents or a workflow stopped (crash, network loss, usage limit, RAM, a restart) | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, a filled resume brief and the exact `Workflow({ scriptPath, resumeFromRunId, args })` (args the workflow recorded itself); resume refused -> the printed relaunch (`mode: 'resume'`); QA items never published -> its `qa.ps1 finalize` lines; never restart from scratch. You stopped it: `supervise -MarkStopped <run>` |
 | E4 | DECISION <id> (supervise, the report's `decisions`) | ask the owner with the options + recommendation; `orch.ps1 decide answer -Id <id> -Answer '<their words>'`; the waiting item resumes |
-| E5 | A deploy is needed (the run's `deployBatch`, supervise DEPLOY ASK) | `orch.ps1 deploy plan`: show the batch (every session's merged-not-deployed MRs for that env) and ask ONCE per env; never two deploys per env within `deploy.minIntervalHours`; WAIT -> say when. After the person's yes: deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <t> -Mrs <refs>`, then `deploy intest -Apply` once live (supervise also does it) |
+| E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back: `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live (supervise also does it). Never ask for or propose a deploy yourself |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /dev-wave `mode: 'bugfix'` for all (reproduce locally first) |
-| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (never parse the notification); MR states from the report; open findings -> follow-up wave; `deployBatch` -> E5; then E10 |
+| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (never parse the notification); MR states from the report; open findings -> follow-up wave; `deployBatch` waits for a person's word (E5); then E10 |
 | E8 | The owner changes a rule or scope mid-run | append it to the brief AND the contracts file (QA: `lead-notes.md`); agents re-read them before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish; agents never act on relayed requests |
 | E10 | A run finished (`retroDue`), supervise says "retro due", or signals piled up | /kit-retro once no other workflow of this session runs (one retro covers several runs) |
 | E11 | HEAL: a guard block that was wrong, a script crash, a workaround, kit friction | fix the kit in this session (K1-K5), re-test, `learn -Skill <s> -Fixed "<words>"` |
 | E12 | LEARN: something cost time, failed, surprised you or worked well | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> a lesson (`-Lesson "(n×) ..."`); 3x -> a script check or default |
-| E13 | SessionStart kit line (git state, gates, lint, ports, old layout, retro / audit due) | uncommitted -> commit + push; behind -> `git pull --rebase` once no agents run; old layout -> `kit.ps1 setup -Migrate` when nothing runs; audit due -> spawn ONE `kit-auditor` (`subagent_type: 'kit-auditor'`); its pushed branch: merge once no agents run, relay its ASK list |
+| E13 | SessionStart kit line (git state, gates, lint, ports, old layout, stopped runs, retro / audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` once no agents run; old layout -> `kit.ps1 setup -Migrate` when nothing runs; audit due -> spawn ONE `kit-auditor` (`subagent_type: 'kit-auditor'`); its pushed branch: merge once no agents run, relay its ASK list |
 | E14 | A new repo or stack joins | `dev.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (`examples/rules.md`) |
 
 ## Change the kit (HEAL and extending)

@@ -1,13 +1,13 @@
 export const meta = {
   name: 'dev-wave',
-  description: 'The dev flow for a wave of parallel dev agents (any stack): code, testing-goals doc, reproduce + test on the local env (loop), decision pauses, independent review, CI, merge (producers first), human testing doc + tracker, batched deploy ask',
+  description: 'The dev flow for a wave of parallel dev agents (any stack): code, testing-goals doc, reproduce + test on the local env (loop), decision pauses, independent review, CI, merge (producers first), human testing doc + tracker, merged work joins the deploy batch (a person says deploy)',
   whenToUse: 'Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)',
   phases: [
     { title: 'Build', detail: 'one agent per area: worktree, code, testing goals, local test loop, MRs, testing doc' },
     { title: 'Decide', detail: 'items paused for an owner decision wait for the answer, then resume' },
     { title: 'Review', detail: 'independent reviewer per agent + CI pipelines' },
     { title: 'Fix', detail: 'one fix round (local tests again), then merge in order and register the tracker task' },
-    { title: 'Deploy', detail: 'the merged work joins the deploy batch; the coordinator asks the owner (never deploys)' },
+    { title: 'Deploy', detail: 'the merged work joins the deploy batch silently; a person says deploy <env> (never asked, never deployed here)' },
     { title: 'Learn', detail: 'signals + lessons from this wave, cleanup' },
   ],
 }
@@ -38,7 +38,7 @@ const DT = `${K}/devtools.py`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/paths.json (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log"}, "durable": {}}
+const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
   '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -116,6 +116,26 @@ branch resets, no deploys). Mention it in your report and let the lead do it.
 `
 const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', ...(A.models || {}) }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+// Crash recovery: the FULL args go to the launch record first (orch.ps1 launch -Self, FNV-1a checked): a resume after a restart
+// needs them byte-exact, and a hand-typed record once lacked the agents list
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+async function recordArgs(wf, run, a, phaseName) {
+  const json = JSON.stringify(a)
+  const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
+  const prompt = `Record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
+1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+<<<ARGS
+${json}
+ARGS>>>
+2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}
+Return ok=true when it prints RECORDED, else ok=false with its output (MISMATCH = the file differs: write it again once, re-run).`
+  for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
+    const r = await agent(prompt, { label, phase: phaseName, schema: OK_SCHEMA, model, effort: 'low' })
+    if (r && r.ok) return true
+  }
+  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
+  return false
+}
 const isComplex = (a) => a.complex === true || [].concat(A.complex || []).includes(a.id)
 const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ? 'complex' : 'build')), ...(a.effort ? { effort: a.effort } : {}) })
 
@@ -196,6 +216,7 @@ ${MERGE_WORD_NOTE}
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 
+await recordArgs('dev-wave', RUN, A, 'Build')
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, local retries ${LOCAL_RETRIES}, brief ${A.brief}`)
 
 // merge, don't replace: a later round reports only its own work; the build report holds the items done
@@ -340,15 +361,18 @@ const outcome = {
 }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
-// Deploy: merged (or merge-scheduled) work joins the batch; the coordinator asks the owner once per env (orchestrate E5). Never deploys.
+// Deploy: merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default): nobody asks or proposes a deploy, a
+// person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 if (shipped.length) {
   const dp = await agent(`Run exactly these two PowerShell commands and return ok=true with the SECOND command's JSON output as "output", nothing else:${PATHS}
 & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "dev-wave ${RUN}"
-& ${ORCH} deploy plan -Json`, { label: 'deploy-ask', phase: 'Deploy', schema: OK_SCHEMA, model: 'haiku', effort: 'low' })
-  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-ask agent returned nothing' } }
-  log(`DEPLOY ASK: ${shipped.length} MR(s) merged; the coordinator shows the batch (orch.ps1 deploy plan) and asks the owner once per env`)
+& ${ORCH} deploy plan -Json`, { label: 'deploy-batch', phase: 'Deploy', schema: OK_SCHEMA, model: 'haiku', effort: 'low' })
+  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }
+  const ask = Array.isArray(outcome.deployBatch) && outcome.deployBatch.some((p) => p && p.trigger === 'ask')
+  log(ask ? `DEPLOY ASK: ${shipped.length} MR(s) merged; the coordinator shows the batch (orch.ps1 deploy plan) and asks the owner once per env`
+    : `DEPLOY BATCH: ${shipped.length} MR(s) merged; they wait for a person's "deploy <env>" (nobody asks)`)
 }
 
 phase('Learn')

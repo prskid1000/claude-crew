@@ -210,7 +210,7 @@ switch ($Action) {
         # (no memory pre-check here: the gate's keepFreeGB is the only floor, and the boot waits its fair turn with builds)
         $up = @($free | Where-Object { Running $_ })
         $pick = if ($up) { $up[0] } else { $free[0] }
-        $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') }; if ($Holder) { $new.holder = $Holder }
+        $new = [ordered]@{ agent = $Agent; lane = $pick.name; serial = "emulator-$($pick.port)"; since = (Get-Date).ToString('s') } + (Get-KitHolder); if ($Holder) { $new.holder = $Holder }   # holderPid: supervise frees a crashed session's lease at once
         $new | ConvertTo-Json | Set-Content (Join-Path $dir "$($pick.name).json")
         $pick
       }

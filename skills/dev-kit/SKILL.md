@@ -8,7 +8,7 @@ session on a one-small-change router row.
 **Not when:** coordinating agents -> `orchestrate`; testing deployed work -> `qa-kit`; static audit -> `tech-audit`; reviewing
 MRs -> `mr-reviewer`; running the shared local env itself -> `local-env` (you use it at step 5).
 **Hands off to:** `local-env` (steps 2 and 5: reproduce, test), the coordinator (your final report; the workflow merges after
-review; `orch.ps1 deploy` batches the deploy), testers through the human testing doc (step 6).
+review; a person's `deploy <env>` starts the deploy), testers through the human testing doc (step 6).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
@@ -45,7 +45,7 @@ python <kit>/skills/dev-kit/devtools.py finish <task> <doc url> solution.md revi
 #   7. merge: inside /dev-wave the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...                              #    promoted once all merge (automatic)
-& $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. deploy batch (a person approves; never deploy)
+& $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. joins the deploy batch silently (never deploy, never ask)
 & $O board leave -Session <token> -Status done                                 # 9. final report (templates.md "Final reports")
 ```
 - D1. **Decision pause**: about to change business logic / existing behaviour the task did not ask for, or several valid paths
@@ -77,7 +77,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
     (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
 - **Commits:** Conventional Commits + the attribution trailer your harness or org asks for; `wt commit` only; never
-  `--no-verify`, never type a hook's marker, never change shared git config, never `git stash` (WIP commit instead).
+  `--no-verify`, never type a hook's marker, never change shared git config, never `git stash`.
+  Checkpoint: a WIP commit (`chore(wip): <step>`) after each step 1-5, so a crash or restart loses no edits.
 - **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every

@@ -34,11 +34,12 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 | mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
 | commit | commit message | subject; blank line; body bullets | first:72ch 12l 100ch | conv |
+| merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
 | task-description | tracker task description | Problem, Goal, Acceptance (bullets), Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | link |
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
-| comment-deploy | the batched deploy ask / record | env, MRs (merge order), window, ask or result | 8l 120w | link |
+| comment-deploy | a deploy record (+ the batched ask, only under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |

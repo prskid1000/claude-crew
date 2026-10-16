@@ -206,7 +206,9 @@ switch ($Action) {
       else { Write-Warning "core.hooksPath=$hp does not exist in this worktree - hooks would be skipped" }
     }
     if (-not $NoStage) { git -C $Dir add -A }   # stage everything in the worktree (agents expect commit to include their changes)
-    $null = Test-KitProse -Kind commit -Text $Message
+    # a merge in progress (deploy merge, main into a branch) is a merge commit: its subject names branches, not a Conventional type
+    $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
+    $null = Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message
     git -C $Dir @c commit -m $Message
     exit $LASTEXITCODE
   }
@@ -1561,14 +1563,17 @@ exit 0
 
 # ---------------------------------------------------------------- tracker: the tracker adapter as a command (lib.ps1 section 4)
 #   dev.ps1 tracker view|status|comment|comments|create|owner|url|describe|rename|attach|list ... [-Type <backend>] [-DryRun]
+#   comment / describe text: positional, -Text "<text>" or -File <path> (an unknown -Option is a usage error, never text)
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -DryRun -Json)"; exit 2 }   # never passed on as text
     else { [void]$__trPos.Add($__a) }
   }
+  if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
   Initialize-KitTracker -Type $__trOpt.Type -DryRun:([bool]$__trOpt.DryRun)
   $ErrorActionPreference = 'Stop'
   $__v = if ($__trPos.Count) { $__trPos[0] } else { '' }

@@ -8,8 +8,8 @@ environment, deploy mechanism and issue tracker. Everything org- or product-spec
 ## The two flows
 - **Dev** (every code change, one agent or a /dev-wave of many): code -> testing-goals doc -> reproduce / debug + test on the
   **local env** (loop, bounded) -> independent review + CI -> merge (producers first), human testing doc, tracker `promoted`
-  (no user gate) -> **batched deploy ask** (one ask per env, at most one deploy per env per window, a person approves) ->
-  `inTest` -> testers close the task, or it fails testing and comes back.
+  (no user gate) -> merged work **waits for a person's `deploy <env>`** (nobody asks or proposes; `deploy.trigger`) -> the
+  coordinator deploys at once -> `inTest` -> testers close the task, or it fails testing and comes back.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc (web, API, Android lanes) -> all checks
   pass: closed · an own check failed or testing incomplete: `failedTesting` (back to dev, no new task) · a new defect: one
   `[Bug]` task under the original ask.
@@ -30,10 +30,10 @@ moves state, `kit.ps1 setup -Migrate` once nothing runs.
 ## Using it
 - Ask the main session for work; the Router in `AGENTS.md` picks the flow and launches it (`/dev-wave`, `/test-and-close`,
   `/kit-retro`). The coordinator keeps one heartbeat (`orch.ps1 supervise -AutoFix -Brief` on `/loop 10m`) and acts on its flags:
-  decisions, deploy asks, failed testing, stopped runs.
+  decisions, failed testing, stopped runs. After a crash or restart: `orch.ps1 recover` (the SessionStart line says so).
 - Commands (each prints its usage without arguments): `skills/dev-kit/dev.ps1` (worktrees, gated checks, tracker),
   `skills/local-env/localenv.ps1`, `skills/qa-kit/qa.ps1`, `skills/android-swarm/swarm.ps1`, `skills/orchestrate/orch.ps1`
-  (board, learn, track, supervise, deploy, decide), `skills/orchestrate/kit.ps1` (setup, hooks), `kittool.py` (lint, flow, port, audit, cost).
+  (board, learn, track, supervise, deploy, decide, recover), `skills/orchestrate/kit.ps1` (setup, hooks), `kittool.py` (lint, flow, port, audit, cost).
 
 ## Configuration (`skills/dev-kit/kit.local.json`; every key optional; `kit.example.json` shows each)
 | Key | Default | Meaning |
@@ -44,7 +44,9 @@ moves state, `kit.ps1 setup -Migrate` once nothing runs.
 | `reposRoot`, `worktreeRoots`, `repoAliases`, `protectedBranches` | workspace, `<repos>-wt`, `{}`, `[]` | where checkouts and worktrees live; short repo names; branches never force-pushed |
 | `trackerRepos`, `trackerLists`, `productTargets` | `[]` | repos searched for a task's MRs; tracker containers for `deploy intest`; which env a path needs |
 | `localEnv` | none | local envs (local-env skill): `envs.<env>.services[] {name, repo, dir, start, build, artifact, port, debugPort, health, dependsOn, hot, external}`, `tasks`, `smoke`, `db {snapshot, restore, rollback, applied, tag}`, `sandbox`, `migrations` rules, lease / idle limits |
-| `deploy.minIntervalHours` | `4` | one deploy per test env per window: a number or `{ "default": 4, "<target>": 24 }` |
+| `deploy.trigger` | `owner` | `owner`: nobody asks or proposes a deploy, a person says `deploy <env>` and it runs end to end; `ask`: one batched ask per env (supervise DEPLOY ASK) |
+| `deploy.minIntervalHours`, `deploy.planTimeoutSec` | `4`, `180` | `ask` only: one ask per test env per window (a number or `{ "default": 4, "<target>": 24 }`); `deploy plan`'s wall clock |
+| `net.timeoutSec` | `60` | per git-host / tracker CLI call; transient failures retry (2 s, 6 s); tracker writes lost to the network wait in `.state/outbox.jsonl` until supervise replays them |
 | `tests.<stack>.testFor` | per stack | test names `check -Touched` looks for from a changed file's `{name}` |
 | `reports.type`, `driveParent` | gdocs when `gws` exists, else markdown | QA reports and testing docs: Google Docs or files |
 | `qa.outOfScope` | `[]` | channels agent QA never tests (OUT_OF_SCOPE) |
@@ -54,15 +56,15 @@ moves state, `kit.ps1 setup -Migrate` once nothing runs.
 | `bugfixMandate`, `localOnly`, `orgTerms` | none | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
 | `localFiles` (example only) | — | `kit.ps1 setup -WriteLocal` writes `targets.local.json` and `swarm.config.json` from it |
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
-`KIT_REPORT_TYPE`, `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`, `ANDROID_HOME`, `ANDROID_SERIAL`, `CHROME_PATH`.
+`KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`, `ANDROID_HOME`, `ANDROID_SERIAL`, `CHROME_PATH`.
 A repo whose stack is detected wrongly: `.claude-stack.json` next to its build file (`{ "commands": { "test": "make test T={tests}" } }`).
 
 ## Layout, state and safety
 - Runtime output: `<kit>/.runtime/` (disposable: `work/` runs in flight, `cache/`, `logs/`); durable state: `<kit>/.state/`
-  (tracking, learning signals, deploy log, the `none` tracker, local-env secrets). Both git-ignored; every path is named in
+  (tracking, learning signals, deploy log, tracker outbox, the `none` tracker, local-env secrets). Both git-ignored; every path is named in
   `skills/dev-kit/paths.json`. `orch.ps1 cleanup` (daily) removes only kit-created leftovers.
 - Guards: the PreToolUse hook blocks `git stash`, `--no-verify`, force-pushes to shared branches, ungated heavy builds, dev
-  servers by hand and `adb kill-server`. Deploys and merges into deploying branches need a person's yes. Never production.
+  servers by hand and `adb kill-server`. Deploys start only from a person's word; merges into deploying branches need a yes. Never production.
 - Limits: one machine (the memory gate is local); the Workflow tool, hooks and the Skill tool are Claude Code-only (Codex and
   Antigravity get ported agents and manual workflow procedures).
 
@@ -79,11 +81,9 @@ flowchart LR
   agents_qa_tester_md(qa-tester)
   agents_qa_verifier_md(qa-verifier)
   skills_android_swarm_SKILL_md[android-swarm]
-  skills_databases_SKILL_md[databases]
   skills_dev_kit_SKILL_md[dev-kit]
   skills_kit_audit_SKILL_md[kit-audit]
   skills_local_env_SKILL_md[local-env]
-  skills_new_relic_SKILL_md[new-relic]
   skills_orchestrate_SKILL_md[orchestrate]
   skills_qa_kit_SKILL_md[qa-kit]
   skills_tech_audit_SKILL_md[tech-audit]
@@ -134,8 +134,8 @@ flowchart LR
   V -->|findings / red| C
   V -->|clean, green| M[merge, producers first]
   M --> H[human testing doc + tracker promoted]
-  H --> DB[deploy batch: one ask per env, window]
-  DB -->|a person approves| DP[deploy + record]
+  H --> DB[merged work waits: nobody asks]
+  DB -->|a person says deploy env| DP[deploy at once + record]
   DP --> IT[tracker inTest]
   IT --> HT([testers close it, or failedTesting -> back to dev])
 ```
@@ -175,9 +175,12 @@ flowchart LR
   MW[merged MRs from every session] --> PL[orch deploy plan]
   RQ[deploy request: workflows] --> PL
   CI[last deploy: CI + kit log] --> PL
-  PL -->|window open| ASK[ASK the owner once per env]
-  PL -->|inside the window| WT[WAIT until the window ends]
-  ASK -->|yes| DO[deploy per org rules] --> RC[deploy record] --> IN[deploy intest]
+  PL -->|trigger owner| RD[READY: waits, nobody asks]
+  RD -->|a person says deploy env| DO[deploy per org rules]
+  PL -->|trigger ask, window open| ASK[ASK the owner once per env]
+  PL -->|trigger ask, inside the window| WT[WAIT until the window ends]
+  ASK -->|yes| DO
+  DO --> RC[deploy record] --> IN[deploy intest]
 ```
 <!-- kit-graph:end -->
 
@@ -258,23 +261,6 @@ flowchart LR
 flowchart LR
   skills_tech_audit_SKILL_md[tech-audit]
   skills_tech_audit_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill tech-audit| LESSONS_md[LESSONS.md]
-  skills_tech_audit_SKILL_md -->|step 1, read fully (local overlay: one profile p| skills_tech_audit_reference_projects_magicsuite_md[magicsuite.md]
   skills_tech_audit_SKILL_md -->|step 8: validate file (must print schema problem| skills_tech_audit_tech_audit_py[tech-audit.py]
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start skill-databases -->
-```mermaid
-flowchart LR
-  skills_databases_SKILL_md[databases]
-  skills_databases_SKILL_md -->|when the router sends you here; the MCP servers | skills_databases_SKILL_md[SKILL.md]
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start skill-new-relic -->
-```mermaid
-flowchart LR
-  skills_new_relic_SKILL_md[new-relic]
-  skills_new_relic_SKILL_md -->|when the router sends you here| skills_new_relic_SKILL_md[SKILL.md]
 ```
 <!-- kit-graph:end -->
