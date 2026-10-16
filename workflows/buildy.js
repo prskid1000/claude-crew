@@ -1,6 +1,6 @@
 export const meta = {
   name: 'buildy',
-  description: 'The dev flow for any multi-item build (any stack): features, fixes, refactors, migrations, bug waves, resume, duels; devy agents: code, testing-goals doc, reproduce + test on the local env (loop), decision pauses, independent review, CI, merge (producers first), human testing doc + tracker, merged work joins the deploy batch (a person says deploy)',
+  description: 'The dev flow for any multi-item build (any stack): features, fixes, refactors, migrations, bug waves, resume, duels; devy: code, testing goals, local test loop, decision pauses; review, CI, merge (producers first), human testing doc + tracker; merged work waits for a person\'s deploy',
   whenToUse: 'Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)',
   phases: [
     { title: 'Duel', detail: "mode 'duel' only: two devy POCs of one question, revy compares, they debate (max 3 rounds), the owner judges" },
@@ -19,7 +19,7 @@ export const meta = {
   mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume' | 'duel' (2 agents, args.duel),
   duel: { question, approaches?: ['<A>', '<B>'], rounds: 3 }, review: true | false | 'auto' (skip < 40 lines, nothing sensitive),
   localRetries: 1, envFixCycles: 2, envFixWaitMinutes: 300, requireLocal: false, decisionWaitMinutes: 300,
-  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
+  roles: { '<repo>': 'producer' | 'consumer' } (repos[].role; else by name), holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
   models: { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }, complex: ['X1'],
   kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
@@ -47,6 +47,8 @@ const cyclic = (id, seen = []) => seen.includes(id) || DEPS[id].some((p) => cycl
 for (const id of Object.keys(DEPS)) if (cyclic(id)) throw new Error(`agents[].dependsOn has a cycle through ${id}`)
 const SETTLED = {}
 for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { res = r }), done: (x) => res(x) } }
+// blocking finding; REREVIEW: the fix for an empty review
+const BLOCK = (mrs, problem, fix) => ({ mr: mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem, fix }), REREVIEW = 'Re-run the review (one-off revy, kind mr), then merge.'
 const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
 const MODE = A.mode || 'feature'
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (orchestrate step 3).')
@@ -212,7 +214,7 @@ If the JSON says "done": false, run it again (at most 3 times in total) and retu
 }
 const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((h) => (m.url || '').includes(`/${h}/`))
 const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
-const isConsumer = (m) => CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
+const isConsumer = (m) => (A.roles || {})[m.repo] ? A.roles[m.repo] === 'consumer' : CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
 const toShip = (r) => { const open = r.mrs.filter((m) => !m.merged && !isHeld(m)); return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)] }
 const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONFLICT: & ${DEV} wt sync -Dir <worktree>. A rebase conflict ONLY in
 append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists): python ${DT} keepboth <file>, no conflict marker
@@ -450,7 +452,7 @@ const results = await pipeline(
     let findings = []
     if (REVIEW && !(REVIEW_AUTO && smallChange(r))) {
       const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') })
-      if (!rv) return { id: a.id, report: r, findings: [{ mr: r.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem: 'The review agent returned nothing: the MRs are unreviewed and were not merged.', fix: 'Re-run the review (one-off revy, kind mr), then merge.' }], reviewFailed: true }
+      if (!rv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The review agent returned nothing: the MRs are unreviewed and were not merged.', REREVIEW)], reviewFailed: true }
       findings = rv.findings || []
     } else if (REVIEW_AUTO) log(`${a.id}: review skipped (auto: ${r.changedLines} changed lines, nothing sensitive)`)
     let x = { id: a.id, report: r, findings }
@@ -467,7 +469,7 @@ const results = await pipeline(
       if (findings.some(mustFix)) {
         const rv2 = await agent(reviewPrompt(a, x.report) + `\nRE-REVIEW after the fix round: check that these findings are resolved and that the fix added no new problem:\n${findings.filter(mustFix).map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`,
           { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') })
-        const again = rv2 ? (rv2.findings || []).filter(mustFix) : [{ mr: x.report.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem: 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', fix: 'Re-run the review (one-off revy, kind mr), then merge.' }]
+        const again = rv2 ? (rv2.findings || []).filter(mustFix) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)]
         if (again.length) { log(`${a.id}: re-review after the fix round: ${again.length} finding(s) - not merged`); return { ...x, fixed: false, findings: [...x.findings, ...again] } }
       }
       const failures = await ciGate(a, x.report)
@@ -508,14 +510,14 @@ async function ship(a, x) {
     log(`${a.id}: waiting for producer area(s) ${DEPS[a.id].join(', ')} before merging`)
     const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
     const missing = DEPS[a.id].filter((id, i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length)
-    if (missing.length) return { ...x, shipFindings: [{ mr: x.report.mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem: `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, fix: 'Ship the producer first, then merge these.' }], mergeOrderHeld: true }
+    if (missing.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, 'Ship the producer first, then merge these.')], mergeOrderHeld: true }
     wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
   }
   const r3 = await agent(shipPrompt(a, x.report, wait), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
   if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
   const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
   const mrs = x.report.mrs.map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
-  const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => ({ mr: m.url, file: '-', severity: 'blocking', problem: `Merge conflict outside append-only files: ${r3.summary}`.slice(0, 1500), fix: 'wt sync, resolve by hand, re-check, push --force-with-lease, devtools.py merge again.' }))
+  const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => BLOCK([m], `Merge conflict outside append-only files: ${r3.summary}`.slice(0, 1500), 'wt sync, resolve by hand, re-check, push --force-with-lease, devtools.py merge again.'))
   // every merge word that is not MERGED / SCHEDULED / CONFLICT leads to its own next step for the coordinator (openFindings)
   const NEXT = { 'WAIT': 'devtools.py merge again in a few minutes (or orch.ps1 track run once the producer merged)',
     'PIPELINE_FAILED': 'reproduce the failing job locally through the gate (dev.ps1 check), fix it on the branch, push, merge again (a follow-up /buildy fix round)',

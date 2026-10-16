@@ -17,7 +17,7 @@
     "repo": "<owner/name or group/project, for github/gitlab issues>",
     "list": "<default list id / Jira project key for new tasks>",
     "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
-    "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH- / PROJ- ; default from type>",
+    "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH- / PROJ- ; default from type>", "bugPrefix": "[Bug]",
     "statuses": {
       "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
       "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]

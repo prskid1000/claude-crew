@@ -1205,7 +1205,7 @@ $cmd = [string]$in.tool_input.command
 if (-not $cmd) { exit 0 }
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
-try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
+try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
 
 function Deny($why) {
   if ($in.session_id) {   # test runs must not raise a guard WATCH

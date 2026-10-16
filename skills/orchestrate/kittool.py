@@ -15,7 +15,7 @@ Inputs: the kit folder (default: the kit this file lives in), skills/dev-kit/kit
 Outputs: text; --json files; flow writes the live clone's <runtime>/cache/kit-flow.html (from any worktree) and (--readme) the graph sections of README.md.
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error.
 
-lint checks (the graph flow draws; every problem fails, --warn only reports):
+lint checks (flow draws them; each fails, --warn only reports):
   ROUTER-MISSING / -TARGET / -UNROUTED  AGENTS.md "## Router": one target per row; every skill, workflow, agent routed
   OVERLAY-ROUTER  rules/*.local.md needs "## Org router rows"
   SKILL-DESC / SKILL-BLOCK / SKILL-FUZZY  "Load when: ... Not when: ... -> <sibling>"; the four blocks; no "read when you need it"
@@ -31,23 +31,17 @@ lint checks (the graph flow draws; every problem fails, --warn only reports):
   MANIFEST / SCHEMA  files vs _manifest and its JSON Schemas
   OLD-NAME / AGENT-TYPE / TODO-STUB  a renamed name left; a workflow agent() without a crew agentType; a scaffolding stub left  NON-CREW / DECISION-WORDING  a non-crew agent spawned in an agent, skill or workflow; a decision rule without "user-visible"
 
-audit:
-the mechanical half of the kit audit (agents/kitty.md steps 1-3, 4, 9). The agent reads and judges; this tool lists.
+audit (the mechanical half of agents/kitty.md steps 1-4, 9; the agent judges):
 
-  python -X utf8 kittool.py audit setup   [--kit <dir>] [--fix]    # install state: clone, pre-push gate, excludes, runtime, hooks, ports, CLIs
-  python -X utf8 kittool.py audit config  [--kit <dir>] [--fill]   # local config vs example, docs and the keys scripts read
-  python -X utf8 kittool.py audit recover [--kit <dir>] [--fix]    # worktrees, kit branches, launches, board, tracked local files, runtime
-  python -X utf8 kittool.py audit scan    [--kit <dir>]            # consistency + script pitfall candidates (run it on the audit worktree)
-  python -X utf8 kittool.py audit stamp   [--kit <dir>]            # record the audit time (resets the weekly SessionStart nudge)
-  python -X utf8 kittool.py audit due     [--kit <dir>]            # when the last audit ran and whether the next one is due
-  any: --json <file> (findings as JSON)
+  setup [--fix]: clone, pre-push gate, excludes, runtime, hooks, ports, CLIs · config [--fill]: local config vs example, docs and
+  the keys scripts read · recover [--fix]: worktrees, kit branches, launches, board, tracked local files, runtime · scan:
+  consistency + script pitfall candidates (the audit worktree) · stamp: record the audit time (resets the weekly nudge) · due:
+  last audit and whether the next is due. Any: --kit <dir>, --json <file> (findings as JSON).
 
---kit default: setup/config/recover/stamp/due = the LIVE clone (the main worktree of this script's kit repo, so running it from an
-audit worktree still checks the installed kit); scan = the kit this script lives in (the worktree you are changing).
-Output: one line per finding `<LEVEL> <CODE> <where>: <what> [-> <fix>]`. LEVEL: FIX (repaired now) | ACT (repair it) |
-ASK (only the lead can supply it: hosts, ids, credentials) | WARN (judge it: candidate, not proof) | INFO.
---fix / --fill repair only what is safe and reversible; everything else is listed. Never prints a config VALUE (key paths only:
-local files hold hosts, ids and passwords). Exit 1 when an ACT or ASK finding remains, else 0.
+--kit default: the LIVE clone (main worktree of this repo; scan: the kit this script lives in, the worktree you change).
+Output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`; LEVEL FIX (repaired) | ACT (repair it) | ASK (only the lead knows: hosts,
+ids, credentials) | WARN (candidate) | INFO. --fix / --fill repair only the safe and reversible; never prints a config VALUE.
+Exit 1 when an ACT or ASK remains, else 0.
 """
 import contextlib, datetime, fnmatch, hashlib, io, json, os, re, shutil, subprocess, sys, tempfile, time
 from collections import defaultdict, deque
@@ -4418,9 +4412,8 @@ def cmd_remove(a):
 
 # ---- release: SemVer tags from Conventional Commits; notes = change log
 def cmd_release(a):
-  """kittool.py release [--tag] [--publish]: the next vMAJOR.MINOR.PATCH from the Conventional Commits since the last tag, and its
-    notes (breaking changes with their Migration lines, features, fixes, retired lessons). Default: print only. --tag: an annotated
-    git tag with the notes. --publish: also a GitHub release (gh, already logged in; never logs in)."""
+  """Next vX.Y.Z + notes (breaking + Migration lines, features, fixes, retired lessons) from Conventional Commits since the last
+    tag; prints only. --tag: annotated tag with the notes; --publish: also a GitHub release (gh, never logs in)."""
   kit = KIT_DIR
   last = _git(kit, 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*').stdout.strip()
   rng = f'{last}..HEAD' if last else 'HEAD'
@@ -4435,15 +4428,10 @@ def cmd_release(a):
       bump = 3
       mig = [l.strip() for l in b.split('\n') if re.match(r'\s*(Migration|BREAKING CHANGE):', l)]
       groups['Breaking (migration notes)'].append(f'- {s} ({h})' + ''.join(f'\n  {x}' for x in mig))
-    elif m and m.group(1) == 'feat':
-      bump = max(bump, 2)
-      groups['Features'].append(f'- {m.group(3)} ({h})')
-    elif m and m.group(1) in ('fix', 'perf'):
-      bump = max(bump, 1)
-      groups['Fixes'].append(f'- {m.group(3)} ({h})')
     else:
-      bump = max(bump, 1)
-      groups['Other'].append(f'- {s} ({h})')
+      g = 'Features' if m and m.group(1) == 'feat' else 'Fixes' if m and m.group(1) in ('fix', 'perf') else 'Other'
+      bump = max(bump, 2 if g == 'Features' else 1)
+      groups[g].append(f'- {s if g == "Other" else m.group(3)} ({h})')
   if not bump:
     print(f'kittool release: nothing since {last or "the first commit"}')
     return 0
@@ -4522,8 +4510,14 @@ def prose_parts(text):
   return lines, secs
 
 
-def words(s):
-  return len(re.findall(r"[A-Za-z0-9][\w'’.-]*", re.sub(r'`[^`]*`|https?://\S+', 'x', s)))
+def words(s):   # CJK / kana / hangul: a word per character
+  s, cjk = re.sub(r'`[^`]*`|https?://\S+', 'x', s), r'[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]'
+  return len(re.findall(cjk, s)) + len(re.findall(r"[^\W_][\w'’.-]*", re.sub(cjk, ' ', s)))
+
+
+def commit_rx():   # commitStyle: conventional | free | <regex>
+  st = (load_json(os.path.join(main_clone(KIT_DIR), 'skills', 'dev-kit', 'kit.local.json'))[0] or {}).get('commitStyle', 'conventional')
+  return REQ_RX['conv'] if st == 'conventional' else r'\S' if st == 'free' else st
 
 
 def prose_check(kind, text, spec, banned):
@@ -4540,16 +4534,10 @@ def prose_check(kind, text, spec, banned):
     targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else secs if scope == 'each' else {scope: secs.get(scope, [])}
     for name, ls in targets.items():
       txt = '\n'.join(ls)
-      if u == 'w' and words(txt) > n:
-        out.append(f'{name}: {words(txt)} words (max {n})')
-      elif u == 't' and (len(txt.encode("utf-8")) + 3) // 4 > n:
-        out.append(f'{name}: {(len(txt.encode("utf-8")) + 3) // 4} tokens (max {n})')
-      elif u == 'l' and len([l for l in ls if l.strip()]) > n:
-        out.append(f'{name}: {len([l for l in ls if l.strip()])} lines (max {n})')
-      elif u == 'b':
-        nb = len([l for l in ls if re.match(r'^(?:[-*]|\d+\.)\s', l)])
-        if nb > n:
-          out.append(f'{name}: {nb} bullets (max {n})')
+      v = {'w': lambda: words(txt), 't': lambda: (len(txt.encode('utf-8')) + 3) // 4, 'l': lambda: len([l for l in ls if l.strip()]),
+        'b': lambda: len([l for l in ls if re.match(r'^(?:[-*]|\d+\.)\s', l)])}.get(u, lambda: 0)()
+      if v > n:
+        out.append(f"{name}: {v} {dict(w='words', t='tokens', l='lines', b='bullets')[u]} (max {n})")
       elif u == 'ch':
         for i, l in enumerate(ls, 1):
           if len(l) > n and not l.lstrip().startswith('|') and not re.search(r'https?://', l) and not re.fullmatch(r'\s*(?:\*\*[^*]+\*\*\s*)?`[^`]+`\s*', l):   # a lone command cannot wrap
@@ -4571,7 +4559,7 @@ def prose_check(kind, text, spec, banned):
     if not missing and order != want:
       out.append(f'sections out of order: {" > ".join(order)} (format: {" > ".join(want)})')
   for r in spec['required']:
-    rx = REQ_RX.get(r)
+    rx = commit_rx() if r == 'conv' else REQ_RX.get(r)
     if rx and not re.search(rx, text if r != 'conv' else (body[0] if body else ''), re.M):
       out.append(f'required fact missing: {r}')
   for b in banned:
