@@ -1,5 +1,5 @@
 {
-  "_readme": "Every key is optional (a missing key = the default described in README 'Configuration'). kit.ps1 setup -WriteLocal writes skills/dev-kit/kit.local.json from this file (minus localFiles) and each localFiles entry to its path; all of them are git-ignored. Fill the <...> values. Paths: forward slashes work on every OS.",
+  "_readme": "Every key is optional (a missing key = the default described in README 'Configuration'). orch.ps1 setup -WriteLocal writes skills/dev-kit/kit.local.json from this file (minus localFiles and the _-prefixed kit sections) and each localFiles entry to its path; all of them are git-ignored. Fill the <...> values. Paths: forward slashes work on every OS.",
   "gitHost": "gitlab.com",
   "gitHostType": "gitlab",
   "githubHost": "github.com",
@@ -30,7 +30,7 @@
   },
   "reports": { "_readme": "type: gdocs (Google Docs + Drive via gws; default when gws is installed) | markdown (files in the run folder, carried by the tracker comment)", "type": "markdown" },
   "driveParent": "<Google Drive folder or shared-drive id for testing docs and reports (reports.type gdocs)>",
-  "qa": { "_readme": "outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /test-and-close select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
+  "qa": { "_readme": "outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
     "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
   "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
   "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
@@ -60,7 +60,7 @@
   "protectedBranches": ["staging"],
   "cleanup": { "maxBrowserProfiles": 4 },
   "memory": { "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored); true = keep the user's own setting.", "keepDefault": false },
-  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kit-auditor run when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
+  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
   "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
   "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor.", "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } },
   "supervise": { "ramActPct": 90, "minDiskFreeGB": 30 },
@@ -78,7 +78,7 @@
       "linkPaths": ["<git-ignored file or folder every worktree needs, e.g. local credentials or local.properties>"] }
   ],
   "bugfixMandate": ["<the owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"],
-  "localOnly": ["skills/<org-only-skill>", "skills/tech-audit/reference/projects/<your-project>.md"],
+  "localOnly": ["skills/<org-only-skill>", "<another org-only path>"],
   "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
   "localFiles": {
     "skills/qa-kit/targets.local.json": {
@@ -114,6 +114,97 @@
         "localManifests": ["src/debugOptimized/AndroidManifest.xml", "src/debug/AndroidManifest.xml"], "localReverse": [8080],
         "javaHome": "", "javaVersions": [17, 21]
       }
+    }
+  },
+  "_manifest": {
+    "_readme": "The kit's registry (never copied into kit.local.json): the crew, skills, workflows, Router rows, Events rows and caps. Names live only here: kittool.py lint checks every file against it (MANIFEST, SCHEMA, OLD-NAME, AGENT-TYPE), kittool.py new / rename / remove edit it, port writes each agent's Character block and README's Crew table from it. renamed = the migration note (old -> new) orch.ps1 setup -Migrate applies to local state.",
+    "agents": {
+      "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "dev-kit", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
+        "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
+      "revy": { "job": "reviewer: reviews anything and suggests concrete changes", "kinds": ["mr", "kit", "doc", "qa", "plan", "module", "config"], "roles": [], "skill": "dev-kit", "tools": "Read, Grep, Glob, Bash", "usedIn": ["/buildy", "/testy", "R13", "R14"], "cant": "edit anything (suggests only)",
+        "character": { "traits": "sceptical, blunt", "bias": "assumes a bug until the evidence proves otherwise", "catchphrase": "Show me the test.", "never": "reports a problem without its fix, or edits the artefact itself" } },
+      "checky": { "job": "tester: tests or verifies anything, always with evidence", "kinds": ["task", "smoke", "regression", "repro", "data", "perf", "claim"], "roles": ["lead", "test", "verify"], "skill": "qa-kit", "tools": "all", "usedIn": ["/testy", "R10"], "cant": "edit code, leave its target, load shared envs",
+        "character": { "traits": "paranoid, evidence-obsessed", "bias": "a PASS is unproven until its evidence exists", "catchphrase": "Screenshot or it didn't happen.", "never": "trusts a PASS without proof or hides a defect in a note" } },
+      "kitty": { "job": "kit caretaker: the kit and the machine setup", "kinds": ["build", "fix", "audit", "retro", "setup", "env", "recover", "docs"], "roles": [], "skill": "", "tools": "Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent", "usedIn": ["/tidy", "R2", "R3"], "cant": "touch product repos",
+        "character": { "traits": "tidy and frugal", "bias": "one file, one fact, the smaller diff", "catchphrase": "Measure before and after.", "never": "adds a file, a key or a rule another one already covers" } }
+    },
+    "skills": ["android-swarm", "dev-kit", "local-env", "orchestrate", "qa-kit"],
+    "workflows": {
+      "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels", "crew": ["devy", "revy", "kitty"], "router": "R5" },
+      "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
+      "tidy": { "covers": "kit upkeep: learning signals -> lessons + rule updates, cleanup, the weekly audit kick-off", "crew": ["kitty"], "router": "R4" }
+    },
+    "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"],
+    "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14"],
+    "caps": { "content": 30, "plumbing": 8, "totalTokens": 368000 },
+    "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
+      "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",
+      "CONTRIBUTING.md": "README.md", "examples/rules.md": "README.md", "multi-agent.md": "AGENTS.md" }
+  },
+  "_paths": {
+    "_readme": "The ONE map of the kit's local state (never copied into kit.local.json). Scripts never build these paths by hand: PowerShell Get-KitPath (lib.ps1), Python kit_path (devtools.py / kittool.py), Node kitPath (spec.mjs / browser.mjs) and each workflow's rp() helper resolve names from here (kit-lint RUNTIME-RAW / RUNTIME-MAP enforce it). 'runtime' entries live under <runtime> = $CLAUDE_RUNTIME, else <kit>/.runtime: disposable (work/ = in-flight runs, cache/ = rebuilt on demand, logs/ = append-only). 'durable' entries live under <kit>/.state/ (git-ignored): knowledge and task state that must survive a runtime wipe. Folders end in '/'. orch.ps1 setup -Migrate moves the old layout (.claude-runtime, *.local.* state at the kit root) here.",
+    "runtimeDir": ".runtime",
+    "stateDir": ".state",
+    "legacy": {
+      "runtimeDir": ".claude-runtime",
+      "durable": {
+        "signals": "learning.local.jsonl",
+        "last-retro": "learning.local.stamp",
+        "last-kit-audit": "kit-audit.local.stamp",
+        "tracking": "tracking.local.json",
+        "tracker-none": "tracker-none.local/",
+        "localenv-env": "localenv.local/"
+      }
+    },
+    "runtime": {
+      "work": "work/",
+      "cache": "cache/",
+      "logs": "logs/",
+      "waves": "work/waves/",
+      "qa-runs": "work/qa-runs/",
+      "board": "work/board/",
+      "briefs": "work/briefs/",
+      "phones": "work/phones/",
+      "qa-seats": "work/qa-seats/",
+      "launches": "work/launches/",
+      "decisions": "work/decisions/",
+      "disputes": "work/disputes/",
+      "duels": "work/duels/",
+      "deploys": "work/deploys/",
+      "audits": "work/audits/",
+      "docs": "work/docs/",
+      "evidence": "work/evidence/",
+      "shots": "work/shots/",
+      "chrome-profiles": "cache/chrome-profiles/",
+      "sessions": "cache/sessions/",
+      "tokens": "cache/tokens/",
+      "tsbuild": "cache/tsbuild/",
+      "android-swarm": "cache/android-swarm/",
+      "android-tmp": "cache/android-tmp/",
+      "stopped": "cache/stopped/",
+      "kit-flow": "cache/kit-flow.html",
+      "kit-flow-cache": "cache/kit-flow-model.json",
+      "supervise-state": "cache/supervise-state.json",
+      "last-cleanup": "cache/last-cleanup.txt",
+      "guard-log": "logs/guard.log",
+      "cleanup-log": "logs/cleanup.log",
+      "tracker-log": "logs/tracker-none.log",
+      "retros": "logs/retros/",
+      "kit-audits": "logs/kit-audits/",
+      "localenv": "work/localenv/",
+      "localenv-logs": "logs/localenv/",
+      "localenv-history": "cache/localenv-history.json"
+    },
+    "durable": {
+      "signals": "learning.jsonl",
+      "last-retro": "learning.stamp",
+      "last-kit-audit": "kit-audit.stamp",
+      "tracking": "tracking.json",
+      "deploy-log": "deploys.jsonl",
+      "outbox": "outbox.jsonl",
+      "tracker-none": "tracker-none/",
+      "localenv-env": "localenv/",
+      "browser-ports": "browser-ports.json"
     }
   }
 }
