@@ -170,7 +170,8 @@ const FLOW = `THE DEV FLOW (dev-kit SKILL.md steps 0-9; local-env SKILL.md "Loca
 4. Every goal PASS: push, open the MRs (templates.md "MR body"), publish the human testing doc (devtools.py doc; link it on the task
    and in the MR), post the solution comment, tracker status review (devtools.py finish). Do NOT merge: the workflow reviews,
    waits for CI and merges after you. Report merged=false, mergeState OPEN.
-DECISION PAUSE: about to change business logic or existing behaviour your items did not ask for, or several valid paths (design,
+DECISION PAUSE: about to change existing user-visible behaviour your items did not ask for (internal logic with identical
+user-visible behaviour needs no pause), or several valid paths (design,
 data handling, migration strategy, UX)? & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .."
 -Recommend <A|B> -Contracts <brief>.contracts.md ; stop THAT item, list it in needsDecision, continue the others.`
 

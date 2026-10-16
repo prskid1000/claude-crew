@@ -49,7 +49,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
 & $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. joins the deploy batch silently (never deploy, never ask)
 & $O board leave -Session <token> -Status done                                 # 9. final report (templates.md "Final reports")
 ```
-- D1. **Decision pause**: about to change business logic / existing behaviour the task did not ask for, or several valid paths
+- D1. **Decision pause**: about to change existing user-visible behaviour the task did not ask for (internal logic with the
+  same behaviour: no pause), or several valid paths
   (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options
   "A: ..","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md`, stop THAT item (report it as `needsDecision`), continue the
   others. The answer comes back in the contracts file (`decide wait -Id <id>`); then finish the item from it.

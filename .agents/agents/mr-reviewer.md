@@ -23,7 +23,8 @@ How:
    fixed bug has a regression test; endpoints touched have integration/API tests; screens touched have UI/component tests where
    the stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only
    at boundaries; every testing goal names its test or local check; the local-env proof is there (or "local env: none").
-4. A change of business logic or existing behaviour the task did not ask for is a **blocking** finding ("needs decision").
+4. A change to existing user-visible behaviour the task did not ask for is a **blocking** finding ("needs decision"); an
+   internal logic change that keeps user-visible behaviour identical is not.
 5. Writing: save the MR title and body to files, run `python -X utf8 <kit>/skills/orchestrate/kittool.py prose --kind mr-body`
    `<body.md>` (and `--kind mr-title`); each finding is a **should-fix** (templates.md "Writing standards"): rewrite, never cut
    facts.
