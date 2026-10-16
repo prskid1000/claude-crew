@@ -48,7 +48,7 @@ function Caption($file) {
 function Pal($r) { $p = $script:Palette[[string]$r]; if ($p) { $p } else { @{ fg = '#111827'; bg = '#ffffff'; label = $(if ($r) { [string]$r } else { '(no result)' }) } } }
 function Chip($k, $n) { $p = $script:Palette[$k]; "<td style='background:$($p.bg);color:$($p.fg);padding:8px 14px;text-align:center;$script:Font;border:1px solid #ffffff'><span style='font-size:18pt;font-weight:bold'>$n</span><br><span style='font-size:8pt;font-weight:bold'>$($p.label)</span></td>" }
 function Img($map, $f, $w) {
- $src = if ($map.files[$f].id) { "https://drive.google.com/uc?export=view&amp;id=$($map.files[$f].id)" } else { $map.files[$f].link }
+ $src = if ($map.files[$f].src) { Esc $map.files[$f].src } else { $map.files[$f].link }
  "<p style='margin:4px 0 12px 0'><img src='$src' width='$w'><br><span style='font-size:9pt;color:#6b7280'>$(Esc (Caption $f)) · <a href='$($map.files[$f].link)'>$(Esc $f)</a></span></p>"
 }
 # phone shots render narrow
@@ -89,7 +89,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
  if (@($Item.subtasks).Count) { A (Fact 'Tasks' ((@($Item.subtasks) | % { "<a href='$(TaskLink $_.id)'>$(Esc $_.name)</a>$(if ($_.mrs) { " <span style='color:#6b7280'>· MRs $(Esc $_.mrs)</span>" })" }) -join '<br>')) }
  if (@($Run.envLines).Count) { A (Fact 'Environment' ((@($Run.envLines) | % { Esc $_ }) -join '<br>')) }
  A (Fact 'Tested by' "$(Esc $Tester) with Claude Code · $(Esc $Date)")
- A (Fact 'Evidence' "<a href='$($Map.folderLink)'>$(if ($Map.local) { 'Run folder' } else { 'Drive folder' })</a> · $(@($Map.files.Keys).Count) files")
+ A (Fact 'Evidence' "<a href='$($Map.folderLink)'>$($Map.label)</a> · $(@($Map.files.Keys).Count) files")
  A "</table>"
 
  # Results table
@@ -633,13 +633,12 @@ param(
  [switch]$AllowMissing,
  [int]$ExpectChecks = -1,              # truncated results.json refused
  [string]$Results = 'results.json',    # -Check: a retry renames only its own
- [ValidateSet('', 'gdocs', 'markdown')][string]$Report = '',
+ [string]$Report = '',                 # a reports.type name
  [string]$Date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 )
 $ErrorActionPreference = 'Stop'
 if ($FixNames -and -not $Check) { throw '-FixNames works only together with -Check' }
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
-if (-not $Check -and $rtype -eq 'gdocs' -and -not (Get-Command gws -ea 0)) { throw 'reports.type is gdocs but the gws CLI is not on PATH - install/auth gws or use -Report markdown' }
 $RunDir = (Resolve-Path $RunDir).Path
 $run = gc "$RunDir/run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | ? { $_.code -eq $Code } | select -First 1
@@ -763,36 +762,26 @@ $prev = if ((Test-Path $fin) -and -not $Force) { gc $fin -Raw | ConvertFrom-Json
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
 $tester = if ($run.tester) { $run.tester } else { [Environment]::UserName }
 $tr = $run.tracker
-Push-Location $RunDir; $script:qaFinPushed = $true   # gws works only inside the current directory
+Push-Location $RunDir; $script:qaFinPushed = $true   # tracker CLIs run inside the run folder
 trap { if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }; break }
-function Invoke-Gws($a) { $out = & gws @a 2>$null; (($out | ? { $_ -notmatch '^Using keyring' }) -join "`n") | ConvertFrom-Json }
-function Share($id) { $o = & gws drive permissions create --params (@{ fileId = $id; supportsAllDrives = $true } | ConvertTo-Json -Compress) --json '{"role":"reader","type":"anyone"}' 2>&1; if ($LASTEXITCODE -or -not $o) { Write-Warning "sharing $id with anyone-with-the-link failed (testers may not open the link): $(("$o" -replace '\s+', ' ').Trim())" } }
 function TaskUrl($id) { Get-TrackerUrl $id }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }
-$P = '{"fields":"id,webViewLink","supportsAllDrives":true}'
 
-# 1. Evidence: Drive (gdocs) or run folder
-$map = [ordered]@{ folderId = $null; folderLink = $null; files = [ordered]@{}; local = ($rtype -ne 'gdocs') }
-if ($map.local) {
- $map.folderLink = $D
- foreach ($x in $files) { $map.files[$x.Name] = @{ id = $null; link = "$($x.Directory.Name)/$($x.Name)"; path = $x.FullName } }
-}
-elseif ($prev -and $prev.folderId) {
- $map.folderId = $prev.folderId; $map.folderLink = $prev.folderLink
- foreach ($pf in $prev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value }   # not $p: that IS $P (--params JSON)
+# 1. Evidence: hosted by the report type (devtools evidence; gdocs: a Drive folder, a re-run adds new files) or the run folder
+$map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
+if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value } }
+$ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype)
+if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
+if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
+$ev = & (Get-Python) -X utf8 $KitCmd.devtools @ea @($files | ? { -not $map.files[$_.Name] } | % FullName)
+if ($LASTEXITCODE) { throw "evidence upload ($rtype) failed (above) - nothing was published" }
+$ev = ($ev | Out-String) | ConvertFrom-Json
+if ($ev.folderId) {
+ $map.folderId = $ev.folderId; $map.label = $ev.label; if ($ev.folderLink) { $map.folderLink = $ev.folderLink }
+ foreach ($pf in $ev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value }
 } else {
- $meta = @{ name = "$title $Code - test evidence ($Date)"; mimeType = 'application/vnd.google-apps.folder' }
- $dp = if ($run.driveParent) { [string]$run.driveParent } else { [string](Get-KitSetting 'driveParent' '') }   # run.json wins, else kit.local.json
- if ($dp) { $meta.parents = @($dp) }
- $f = Invoke-Gws @('drive', 'files', 'create', '--json', ($meta | ConvertTo-Json -Compress), '--params', $P)
- Share $f.id
- $map.folderId = $f.id; $map.folderLink = $f.webViewLink
-}
-foreach ($x in $files) {
- if ($map.local -or $map.files[$x.Name]) { continue }
- $rel = "$Code/$($x.Directory.Name)/$($x.Name)"
- $r = Invoke-Gws @('drive', 'files', 'create', '--json', (@{ name = $x.Name; parents = @($map.folderId) } | ConvertTo-Json -Compress), '--upload', $rel, '--params', $P)
- if ($r.id) { $map.files[$x.Name] = @{ id = $r.id; link = $r.webViewLink } }
+ $map = [ordered]@{ folderId = $null; folderLink = $D; files = [ordered]@{}; local = $true; label = 'Run folder' }
+ foreach ($x in $files) { $map.files[$x.Name] = @{ id = $null; link = "$($x.Directory.Name)/$($x.Name)"; path = $x.FullName } }
 }
 
 # 2. Styled report
@@ -806,18 +795,16 @@ Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $r
 # 3. Report
 $null = Test-KitProse -Kind result-note -Path "$D/results.json"
 $null = Test-KitProse -Kind qa-report -Text (Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-String)
-$reportFile = $null
-if ($map.local) {
- $reportFile = "$D/report.md"
- Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File $reportFile -Encoding utf8
- $docUrl = $reportFile
-} elseif ($prev.doc -and $prev.doc -notmatch '/d//') { $docUrl = $prev.doc   # a re-run keeps the posted report
-} else {
- $doc = Invoke-Gws @('drive', 'files', 'create', '--json', (@{ name = "$title $Code - Test Results ($Date)"; mimeType = 'application/vnd.google-apps.document'; parents = @($map.folderId) } | ConvertTo-Json -Compress), '--upload', "$Code/report.html", '--upload-content-type', 'text/html', '--params', $P)
- if ($doc.id) { Share $doc.id; $docUrl = "https://docs.google.com/document/d/$($doc.id)/edit" }
- elseif ($prev.doc -and $prev.doc -notmatch '/d//') { Write-Warning "Google Doc create failed - keeping the previous report $($prev.doc)"; $docUrl = $prev.doc }
- else { throw "Google Doc create failed and there is no previous report - fix gws auth and re-run (nothing was posted to the tracker)" }
+Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.md" -Encoding utf8
+$kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
+if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
+else {   # devtools doc (reports.type); kept-file types keep it in $D
+ $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" "$D/report.$(if ($rtype -in 'gdocs', 'html', 'pdf') { 'html' } else { 'md' })" $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype 2>&1 | % { "$_" }
+ $docUrl = if (-not $LASTEXITCODE) { @($o)[-1].Trim() } elseif ("$o" -match '(\S+) was uploaded but not shared') { Write-Warning "$o"; $Matches[1] }
+ elseif ($prev.doc -match '^https?://') { Write-Warning "report publish ($rtype) failed - keeping the previous report $($prev.doc): $o"; $prev.doc }
+ else { throw "report publish ($rtype) failed and there is no previous report (nothing was posted to the tracker): $o" }
 }
+$reportFile = if ($docUrl -notmatch '^https?://') { $docUrl }   # a kept file is attached to the task
 
 # 4. Tracker per subtask, result rule (SKILL.md step 5)
 $out = [ordered]@{ report = $rtype; folderId = $map.folderId; folderLink = $map.folderLink; files = $map.files; doc = $docUrl; subtasks = @() }

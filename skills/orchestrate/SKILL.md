@@ -55,7 +55,7 @@ held (`envFixOpen`), never failedTesting. Items the workflow could not publish -
 `orch.ps1 recover`).
 
 ## Steps (you = the coordinator)
-0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts live in the brief / run.json / memory / the repo's CLAUDE.md.
+0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
 2. **Brief:** `dev-kit/templates.md` "Wave brief" in the scratchpad (limits: "Writing standards", kinds `wave-brief`,
    `owner-message`) (bugs: `orch.ps1 bugbrief -Task <id> ...` per task).
@@ -76,7 +76,7 @@ held (`envFixOpen`), never failedTesting. Items the workflow could not publish -
 | E2 | supervise prints ACT / WATCH / ❓ ASK | do the printed action (ASK: ask the owner once, record `supervise -App <name> -Answer <keep or close>`); leave healthy agents alone |
 | E3 | Agents or a workflow stopped (crash, limits, a restart), or an agent handed off at its budget | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, a filled resume brief and the exact `Workflow({ scriptPath, resumeFromRunId, args })` (args the workflow recorded itself); resume refused -> the printed relaunch (`mode: 'resume'`); QA items never published -> its `qa.ps1 finalize` lines; never from scratch. You stopped it: `supervise -MarkStopped <run>` |
 | E4 | DECISION <id> (supervise, the report's `decisions`; a dispute still split after 2 rounds or a duel's debate record: both positions side by side) · ENV-FIX <id> (a local-env fix only kitty or you may do; `envFixes`, `envFixOpen`) | DECISION: ask the owner with the options + recommendation (the owner judges a dispute or duel); `orch.ps1 decide answer -Id <id> -Answer '<their words>'`; several valid paths that evidence would settle -> you may start a /buildy `mode: 'duel'`. ENV-FIX: spawn `kitty` (kind env) with the request: it does the fix (local-env `up`/`refresh`/`drop`, shared DB repair) and answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'` (or `'cannot: <why>'`); never ask the owner. The waiting item resumes. Held after the cycles: fix + `qa.ps1 retest` (a local item never goes to failedTesting for an env reason; no close path for NOT_TESTED) |
-| E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back: `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live (supervise also does it). Never ask for or propose a deploy yourself |
+| E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back: `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per the org's deploy rules (`deploy merge` for a deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live (supervise also does it) |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first) |
 | E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (never parse the notification); `next` (budget stop, batch, refusal) -> launch it; MR states from the report; open findings -> follow-up wave; `deployBatch` waits for a person's word (E5); then E10 |
 | E8 | The owner changes a rule or scope mid-run | append it to the brief AND the contracts file (QA: `lead-notes.md`); agents re-read them before every push / check |
@@ -94,6 +94,7 @@ held (`envFixOpen`), never failedTesting. Items the workflow could not publish -
   parts with `kittool.py new` (README "Extending"), prefers a script check over a rule, and has `revy` (kind kit) review the diff.
 - K2. Its checks (kitty step 8): `kittool.py lint` = 0 problems and 0 counted flow issues, `port` + `port --check`, parsed .ps1,
   `py_compile`, `node --check`, `tests/kit-tests.ps1`, `cost --steps` after a workflow change, `lint --org-terms`.
+  Over the kit cap: trim, else `kittool.py budget raise`.
 - K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main
   fast-forward (pre-push blocks org terms and local files) and retires the lesson the change fixes (`learn -Fixed`). You pull the
   live clone once no run uses it and relay its ASK lines.

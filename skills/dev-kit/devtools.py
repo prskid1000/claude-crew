@@ -1,36 +1,29 @@
-"""devtools.py: tracker / git-host / docs helpers for agents (dev-kit steps 6-7). Works for any repo: the host (GitLab or GitHub) and project path
-come from the worktree's `origin` remote, the MR target from the worktree's recorded target (dev.ps1 wt new).
+"""devtools.py: tracker / git-host / docs helpers for agents (dev-kit steps 6-7). Host and project come from the worktree's
+`origin` remote, the MR target from its dev.ps1 wt record.
 
-  python devtools.py task <taskId>                                  summary: name | status | url | parent
-  python devtools.py subtasks <parentId> [status ...]               id | status | name
-  python devtools.py newtask <listId|-> <parentId|-> <assignee|-> "<name>" <desc.md>
-  python devtools.py status <taskId> "<status>"                     logical (review, promoted, inTest, closed) or the tracker's own name
-  python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
-  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top + one solution comment (guide link appended if missing) + status
-  python devtools.py mr <worktree> "<title>" <body.md> [target]     open a merge/pull request from the current branch
-  python devtools.py merge <worktree> <iid>                         squash-merge now (green, or no CI) or schedule merge-when-green;
-                                                                    waits <= 90 s; last line: MERGED / SCHEDULED / WAIT / CONFLICT /
-                                                                    PIPELINE_FAILED / NOT_MERGED (read back from the host). A consumer
-                                                                    whose producer (.state/tracking.json mergeAfter) is unmerged: WAIT
-  python devtools.py doc "<title>" <file.html|.md> [driveFolderId]  publish a document (human testing doc, report); prints its URL/path
-                                                                    (.md is converted to HTML for gdocs: tables, lists, code survive)
-  python devtools.py keepboth <file> [...]                          append-only rebase conflicts: keep OURS then THEIRS
-  python devtools.py lbcheck <master.xml> [since]                   Liquibase sanity check (run by dev.ps1 check -Step migrations)
-  python devtools.py selftest                                       offline self-test
-  python devtools.py migrations classify|plan|rules|selftest ...    the local env's migration audit (run by localenv.ps1; section "migrations")
-  python devtools.py findings schema                                the 23 keys with their formats, an example, the project profile shape
-  python devtools.py findings validate <module>.json [...]          a module audit's findings: the 23-key schema (revy, kind module)
-  python devtools.py findings summary <module>.json [--sources ".."] [--out <dir>]   <module>-summary.md + .html
+ python devtools.py task <taskId>   summary: name | status | url | parent
+ python devtools.py subtasks <parentId> [status ...]   id | status | name
+ python devtools.py newtask <listId|-> <parentId|-> <assignee|-> "<name>" <desc.md>
+ python devtools.py status <taskId> "<status>"   logical (review, promoted, inTest, closed) or the tracker's own name
+ python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
+ python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top, one solution comment (+ guide link), status
+ python devtools.py mr <worktree> "<title>" <body.md> [target]   open a merge/pull request from the current branch
+ python devtools.py merge <worktree> <iid>   squash-merge now (green / no CI) or arm merge-when-green; waits <= 90 s;
+  last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
+ python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
+ python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] <file> ...   host evidence files (gdocs: Drive) -> JSON
+ python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
+ python devtools.py lbcheck <master.xml> [since]   Liquibase sanity check (run by dev.ps1 check -Step migrations)
+ python devtools.py selftest   offline self-test
+ python devtools.py migrations classify|plan|rules|selftest ...   local env migration audit (localenv.ps1)
+ python devtools.py findings schema   the 23 keys with their formats, an example, the project profile shape
+ python devtools.py findings validate <module>.json [...]   check a module audit's findings against the schema
+ python devtools.py findings summary <module>.json [--sources ".."] [--out <dir>]   <module>-summary.md + .html
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error.
 
-Defaults can be set in ..\\kit.local.json (next to this skill's SKILL.md; copy kit.example.json):
-  "tracker": { "type": "clickup|github|gitlab|jira|none", ... }   task commands go through dev.ps1 tracker (default none)
-  "reports": { "type": "gdocs|markdown" }  `doc`: gdocs = Google Doc via gws (default when gws is installed);
-                                           markdown = the file is kept under <runtime>/work/docs and its path printed
-  "driveParent": "<Drive folder id>"   default parent folder for `doc` (gdocs)
-  "gitHost": "gitlab.example.com"      self-hosted GitLab (default gitlab.com); "githubHost" likewise (default github.com)
-Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs (pwsh, glab, gh, gws) are resolved with
-shutil.which, so the same names work on every OS.
+Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
+kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
+Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
 import argparse, hashlib, html, json, os, re, shutil, subprocess, sys, tempfile, time
 from collections import Counter
@@ -42,7 +35,7 @@ def _cfg_file():
  own = os.path.join(KIT, 'kit.local.json')
  if os.path.exists(own):
   return own
- try:   # linked kit worktree: main clone's config
+ try:   # linked kit worktree: the main clone's
   cd = subprocess.run(['git', '-C', KIT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True,
        text=True, encoding='utf-8', timeout=10).stdout.strip()
   alt = os.path.join(os.path.dirname(cd), 'skills', 'dev-kit', 'kit.local.json') if cd else ''
@@ -55,11 +48,19 @@ try:
  CFG = json.load(open(_cfg_file(), encoding='utf-8'))
 except Exception:
  CFG = {}
-GLAB, GH, GWS = (shutil.which(x) for x in ('glab', 'gh', 'gws'))
-REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or (CFG.get('reports') or {}).get('type') or ('gdocs' if GWS else 'markdown')).lower()
+GWS = shutil.which('gws')
+RCFG = CFG.get('reports') or {}
+REPORT_TYPE = (os.environ.get('KIT_REPORT_TYPE') or RCFG.get('type') or ('gdocs' if GWS else 'markdown')).lower()
+ADAPTERS = {}   # kind -> name -> {verb: fn(a)}
+
+
+def _todo(verb):
+ raise SystemExit(f'adapter verb {verb} is a stub (kittool.py new adapter): implement it first')
+
+
 import contextlib
 with open(os.path.join(KIT, 'kit.example.json'), encoding='utf-8') as _f:
- MAP = json.load(_f)['_paths']   # kit path map (kit.example.json _paths)
+ MAP = json.load(_f)['_paths']
 
 
 def runtime_dir(kit=None):
@@ -67,15 +68,13 @@ def runtime_dir(kit=None):
 
 
 def kit_path(name, create=False, kit=None):
- """Absolute path of a named runtime or durable entry. kit= resolves it for another kit folder (kit-lint on a clone)."""
+ """Absolute path of a named runtime / durable entry; kit= another kit folder."""
  if name == 'runtime':
   p, is_dir = runtime_dir(kit), True
- elif name in MAP['runtime']:
-  rel = MAP['runtime'][name]
-  p, is_dir = os.path.join(runtime_dir(kit), rel.rstrip('/')), rel.endswith('/')
- elif name in MAP['durable']:
-  rel = MAP['durable'][name]
-  p, is_dir = os.path.join(kit or KIT_DIR, MAP['stateDir'], rel.rstrip('/')), rel.endswith('/')
+ elif name in MAP['runtime'] or name in MAP['durable']:
+  rt = name in MAP['runtime']
+  rel = MAP['runtime' if rt else 'durable'][name]
+  p, is_dir = os.path.join(runtime_dir(kit) if rt else os.path.join(kit or KIT_DIR, MAP['stateDir']), rel.rstrip('/')), rel.endswith('/')
  else:
   raise KeyError(f'kit_path: unknown name {name!r} (see skills/dev-kit/kit.example.json _paths)')
  p = os.path.normpath(p)
@@ -88,7 +87,7 @@ def kit_path(name, create=False, kit=None):
 def locked(path, stale=120):
  lock = path + '.lock'
  fd = None
- end = time.time() + stale + 10   # past stale: a dead writer's lock is taken over first
+ end = time.time() + stale + 10   # a dead writer's stale lock is taken over first
  while fd is None:
   try:
    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -100,7 +99,7 @@ def locked(path, stale=120):
      continue
    except OSError:
     pass
-   if time.time() > end:   # never run unlocked (lost concurrent writes)
+   if time.time() > end:   # never run unlocked
     raise TimeoutError(f'could not lock {path} within {stale + 10} s ({lock} is held)')
    time.sleep(0.1)
  try:
@@ -108,15 +107,13 @@ def locked(path, stale=120):
  finally:
   if fd is not None:
    os.close(fd)
-   try:
+   with contextlib.suppress(OSError):
     os.remove(lock)
-   except OSError:
-    pass
 
 
-# reads retry transient errors (2 s, 6 s) inside one deadline; writes never retry (a lost reply would duplicate a task / comment)
+# reads retry transient errors (2 s, 6 s) in one deadline; writes never (a lost reply would duplicate)
 TRANSIENT = re.compile(r'(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests')
-STOP_AT = [0.0]   # auto_merge sets its own end: no call outlives max_wait
+STOP_AT = [0.0]   # auto_merge's deadline
 
 
 def _is_write(cmd):
@@ -128,13 +125,13 @@ def _is_write(cmd):
 def _run(cmd, cwd=None, check=False, write=None):
  if not cmd[0]:
   raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
- sec = min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))   # net.timeoutSec = the whole deadline
+ sec = min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))   # the whole deadline
  write = _is_write(cmd) if write is None else write
  tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
  end = min(time.time() + sec, STOP_AT[0] or float('inf'))
  for i in range(1, tries + 1):
-  left = max(10 if STOP_AT[0] else 1, int((end - time.time()) / (2 if i == 1 and tries > 1 else 1)))   # a read keeps half for its one retry
-  try:   # a hung CLI must not outlive the tool timeout
+  left = max(10 if STOP_AT[0] else 1, int((end - time.time()) / (2 if i == 1 and tries > 1 else 1)))   # half kept for the retry
+  try:
    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding='utf-8', timeout=left)
    out, rc, hung = ((p.stdout or '') + (p.stderr or '')).strip(), p.returncode, False
   except subprocess.TimeoutExpired:
@@ -145,13 +142,13 @@ def _run(cmd, cwd=None, check=False, write=None):
   delay *= 3
  if check and hung:
   raise SystemExit(f'timed out after {sec} s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
- if check and rc:   # a failed write must not print 'done' / exit 0
+ if check and rc:
   raise SystemExit(f'failed (exit {rc}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
  return out
 
 
 def _json(out):
- """CLIs may print notices around the JSON; decode the first JSON value."""
+ """The first JSON value (CLIs may print notices around it)."""
  starts = [i for i in (out.find('{'), out.find('[')) if i >= 0]
  try:
   return json.JSONDecoder().raw_decode(out[min(starts):])[0] if starts else json.loads(out)
@@ -164,45 +161,42 @@ def _text(arg):
 
 
 def _body(arg):
- """Body from a file (mr, finish, newtask): a missing file is an error, never its name as the body; multi-line text passes."""
+ """A file's text, or multi-line text; a missing file is an error, never the body."""
  if os.path.isfile(arg) or '\n' in arg:
   return _text(arg)
  raise SystemExit(f'file not found: {arg} - write it first (nothing was created)')
 
 
-# --- Tracker (dev.ps1 tracker; kit.local.json "tracker")
+# --- Tracker (dev.ps1 tracker)
 DEV = os.path.join(KIT, 'dev.ps1')   # tracker adapter
 PWSH = shutil.which('pwsh') or shutil.which('powershell')
 TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {}).get('type') or 'none').lower()
 
 
 def _tracker(*args):
- """dev.ps1 tracker <verb> ...; long texts go via a temp file (it reads a file path as the content)."""
+ """dev.ps1 tracker <verb>; long texts go via a temp file."""
  tmp = []
  try:
   argv = []
   for x in args:
    x = str(x)
-   if (len(x) > 200 or '\n' in x) and (not argv or argv[-1] != '-Name'):   # free text only; a name stays an argument
+   if (len(x) > 200 or '\n' in x) and (not argv or argv[-1] != '-Name'):   # a name stays an argument
     fd, p = tempfile.mkstemp(suffix='.md')
     with os.fdopen(fd, 'w', encoding='utf-8', newline='') as fh:
      fh.write(x)
     tmp.append(p)
     x = p
    argv.append(x)
-  # reads lenient + retried (finish() handles failed lookups); writes fail loudly, never retried
   w = bool(argv) and argv[0] in ('status', 'comment', 'describe', 'create', 'rename', 'attach')
   return _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'tracker', *argv], check=w, write=w)
  finally:
   for p in tmp:
-   try:
+   with contextlib.suppress(OSError):
     os.remove(p)
-   except OSError:
-    pass
 
 
 def task(tid):
- """{ id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description }"""
+ """{id, name, status, url, parent, assignees[], subtasks[{id,name,status,url}], list, description}"""
  return _json(_tracker('view', tid))
 
 
@@ -211,17 +205,13 @@ def task_url(tid):
 
 
 def subtasks(parent, statuses=None):
- want = {s.lower() for s in statuses} if statuses else None
- out = []
- for s in task(parent).get('subtasks') or []:
-  st = s.get('status') or ''
-  if not want or st.lower() in want:
-   out.append((str(s['id']), st, s.get('name') or ''))
- return out
+ want = {s.lower() for s in statuses or ()}
+ rows = [(str(s['id']), s.get('status') or '', s.get('name') or '') for s in task(parent).get('subtasks') or []]
+ return [r for r in rows if not want or r[1].lower() in want]
 
 
 def prose(kind, text):
- """Print kittool.py prose findings (templates.md "Writing standards") for a text about to be published; never truncates."""
+ """Print kittool.py prose findings for a text about to be published; never truncates."""
  tool = os.path.join(KIT_DIR, 'skills', 'orchestrate', 'kittool.py')
  if not os.path.isfile(tool):
   return []
@@ -240,17 +230,14 @@ def new_task(list_id, parent, assignee, name, desc_md, priority='2'):
  prose('task-name', name)
  prose('task-description', desc_md)
  args = ['create', '-Name', name, '-Description', desc_md, '-Priority', priority]
- if list_id and list_id != '-':
-  args += ['-List', list_id]
- if parent and parent != '-':
-  args += ['-Parent', parent]
- if assignee and assignee != '-':
-  args += ['-Assignee', assignee]
+ for flag, v in (('-List', list_id), ('-Parent', parent), ('-Assignee', assignee)):
+  if v and v != '-':
+   args += [flag, v]
  return _json(_tracker(*args)).get('id')
 
 
 def set_status(tid, status):
- """status: logical (review, promoted, inTest, closed, ... via tracker.statuses) or the tracker's own name."""
+ """status: logical (tracker.statuses) or the tracker's own name."""
  return _tracker('status', tid, status)
 
 
@@ -260,34 +247,65 @@ def comment(tid, text, kind='comment-status'):
 
 
 def finish(tid, guide_url, solution_md, status='review'):
- if os.path.isfile(guide_url):   # guide file: publish it, link it (never a local path)
+ if os.path.isfile(guide_url):   # publish it: never link a local path
   guide_url = make_doc(os.path.splitext(os.path.basename(guide_url))[0], guide_url)
  t = task(tid)
  md = t.get('description') or ''
- # failed lookup (no id/name): describing would wipe the description
+ # failed lookup: describing would wipe the description
  if t.get('id') and t.get('name') and guide_url not in md:
   _tracker('describe', tid, f'Testing doc: {guide_url}\n\n{md}')
- # one comment: solution + guide link unless it has one
  if guide_url not in solution_md:
   solution_md = f'{solution_md.rstrip()}\n\n**Testing doc**: {guide_url}'
  comment(tid, solution_md, 'comment-solution')
  set_status(tid, status)
 
 
-# --- Git host (GitLab or GitHub, from origin)
+# --- Git host: lib.ps1 section 5 adapters via dev.ps1 host
 GITLAB_HOST = CFG.get('gitHost') or 'gitlab.com'
 GITHUB_HOST = CFG.get('githubHost') or 'github.com'
-if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # outside a checkout glab api hits gitlab.com
+if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api outside a checkout hits gitlab.com
  os.environ['GITLAB_HOST'] = CFG['gitHost']
 
 
+def host_kind(host):
+ """Adapter name of a host (as lib.ps1 Get-HostKind)."""
+ if host == GITLAB_HOST and CFG.get('gitHostType'):
+  return CFG['gitHostType']
+ if host == GITHUB_HOST:
+  return 'github'
+ return next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure\.com|visualstudio\.com'),
+               ('gitea', 'gitea|forgejo|codeberg')) if re.search(rx, host)), 'gitlab')
+
+
 def remote(worktree):
+ """(adapter, project path) of the worktree's origin (Azure: org/project/repo)."""
  url = _run(['git', '-C', worktree, 'remote', 'get-url', 'origin']).strip()
- for kind, host in (('gitlab', GITLAB_HOST), ('github', GITHUB_HOST), ('gitlab', 'gitlab.com'), ('github', 'github.com')):
-  m = re.search(re.escape(host) + r'(?::\d+)?[:/](.+?)(?:\.git)?$', url)
-  if m:
-   return kind, m.group(1)
- raise SystemExit(f'unsupported remote: {url} (set "gitHost" / "githubHost" in kit.local.json for a self-hosted server)')
+ m = re.match(r'^(?:\w+://)?(?:[^@/\s]+@)?(?:ssh\.)?([^/:\s]+)(?::\d+)?[:/](?:v3/)?(.+?)(?:\.git)?/?$', url)
+ if not m:
+  raise SystemExit(f'unsupported remote: {url}')
+ return host_kind(m.group(1)), m.group(2).replace('/_git/', '/')
+
+
+def _host(verb, **a):
+ """One git-host / ci verb via dev.ps1 host; JSON from the last line (ci.log: text); unknown = {'raw': output}."""
+ fd, p = tempfile.mkstemp(suffix='.json')
+ with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+  json.dump(a, fh)
+ try:
+  out = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'host', verb, '@' + p], write=verb in ('mr.create', 'mr.merge', 'mr.unauto'))
+ finally:
+  os.remove(p)
+ if verb == 'ci.log':
+  return out
+ try:
+  v = json.loads((out.strip().splitlines() or ['null'])[-1])
+ except ValueError:
+  v = None
+ return {'raw': out} if v is None else v
+
+
+def _mr_api(host, proj, iid):
+ return lambda verb, **a: _host(verb, **{'type': host, 'repo': proj, 'n': str(iid), **a})
 
 
 def target_of(worktree):
@@ -299,7 +317,7 @@ def target_of(worktree):
  if os.path.exists(f):
   with open(f, encoding='utf-8-sig') as fh:
    return fh.read().strip() or None
- # 1. kit.local.json repos[]: checkout = this main checkout, or name/alias = remote repo name
+ # repos[]: checkout = this main checkout, or name/alias = remote repo name
  common = _run(['git', '-C', worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
  main = os.path.normcase(os.path.dirname(os.path.normpath(common))) if os.path.isdir(common) else ''
  try:
@@ -315,7 +333,6 @@ def target_of(worktree):
   if same or (name and name in names):
    print(f"[mr] target {r['target']} (no dev.ps1 wt record; kit.local.json repos[].target of {r.get('name') or co})", file=sys.stderr)
    return r['target']
- # 2. the remote's default branch
  head = _run(['git', '-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
  if head.startswith('origin/') and '\n' not in head:
   print(f'[mr] target {head[7:]} (no dev.ps1 wt record, no kit.local.json repos[].target; origin/HEAD)', file=sys.stderr)
@@ -328,7 +345,7 @@ FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
 
 def _verified_gaps(body_md):
- """True when '## How tested' says neither what was not run nor how pure logic was proven (templates.md "MR body")."""
+ """True when '## How tested' has no 'Not run:' / 'Pure logic:' line."""
  m = re.search(r'^## How tested[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
  sec = m.group(1) if m else ''
  return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
@@ -338,7 +355,7 @@ UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/l
 
 
 def _ui_line_missing(worktree, tgt, body_md):
- """Changed UI files (templates / styles vs origin/<target>) when '## How tested' has no 'UI:' line (templates.md "MR body"), else []."""
+ """Changed UI files vs origin/<target> when the body has no 'UI:' line, else []."""
  if re.search(r'(?im)^\s*[-*]?\s*(\*\*)?UI(\*\*)?\s*:', body_md) or not tgt:
   return []
  out = _run(['git', '-C', worktree, 'diff', '--name-only', f'origin/{tgt}...HEAD'])
@@ -348,7 +365,7 @@ def _ui_line_missing(worktree, tgt, body_md):
 def mr_create(worktree, title, body_md, tgt=None):
  missing = [h for h in MR_SECTIONS if h not in body_md]
  if missing:
-  print(f'[mr] body is missing {missing} - see templates.md "MR body"', file=sys.stderr)
+  print(f'[mr] body is missing {missing} - templates.md "MR body"', file=sys.stderr)
  prose('mr-title', title)
  prose('mr-body', body_md)
  if _verified_gaps(body_md):
@@ -359,7 +376,7 @@ def mr_create(worktree, title, body_md, tgt=None):
   print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
  if FOOTER not in body_md:
   body_md = body_md.rstrip() + '\n\n' + FOOTER + '\n'
- host, _ = remote(worktree)
+ host, proj = remote(worktree)
  src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
  tgt = tgt or target_of(worktree)
  if not tgt:
@@ -368,23 +385,17 @@ def mr_create(worktree, title, body_md, tgt=None):
  ui = _ui_line_missing(worktree, tgt, body_md)
  if ui:
   print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## How tested" has no'
-       ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - see templates.md "MR body"', file=sys.stderr)
- if host == 'gitlab':
-  out = _run([GLAB, 'mr', 'create', '--source-branch', src, '--target-branch', tgt, '--title', title,
-     '--description', body_md, '--remove-source-branch', '--squash-before-merge', '--yes'], cwd=worktree)
-  m = re.findall(r'https://[^\s/]+/\S+/merge_requests/\d+', out)
-  if not m and 'already exists' in out.lower():   # retry after a timeout: report the first call's MR
-   _, proj = remote(worktree)
-   ex = _json(_run([GLAB, 'api', f"projects/{proj.replace('/', '%2F')}/merge_requests?state=opened&source_branch={src}"]))
-   m = [x['web_url'] for x in ex if isinstance(x, dict) and x.get('web_url')] if isinstance(ex, list) else []
-   if m:
-    print(f'[mr] an open MR from {src} already exists (a previous call opened it): {m[-1]} - update its description if needed', file=sys.stderr)
- else:
-  out = _run([GH, 'pr', 'create', '--head', src, '--base', tgt, '--title', title, '--body', body_md], cwd=worktree)
-  m = re.findall(r'https://[^\s/]+/\S+/pull/\d+', out)
- if not m:
-  raise SystemExit(f'MR not created: {out[:500]}')
- return m[-1]
+   ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - templates.md "MR body"', file=sys.stderr)
+ m = _host('mr.create', type=host, repo=proj, source=src, target=tgt, title=title, body=body_md)
+ url = m.get('web_url') if isinstance(m, dict) else None
+ if not url:   # a retry after a timeout: the first call's MR
+  ex = _host('mr.list', type=host, repo=proj, state='opened', source_branch=src)
+  url = next((x['web_url'] for x in ex if isinstance(x, dict) and x.get('web_url')), None) if isinstance(ex, list) else None
+  if url:
+   print(f'[mr] an open MR from {src} already exists (a previous call opened it): {url} - update its description if needed', file=sys.stderr)
+ if not url:
+  raise SystemExit(f'MR not created: {str(m)[:500]}')
+ return url
 
 
 def _remember_automerge(ref):
@@ -402,64 +413,57 @@ def _remember_automerge(ref):
    with open(path + '.tmp', 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=1)
    os.replace(path + '.tmp', path)
- except Exception as e:   # a lost intent is never re-armed: say so
+ except Exception as e:   # a lost intent is never re-armed
   print(f'[merge] could not record the merge-when-green intent for {ref} in {path}: {e}', file=sys.stderr)
 
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
+RESOLVE = 'dev.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
 
 
 def merge_word(res):
- """Status word on the last line of auto_merge's result (NOT_MERGED when none)."""
+ """auto_merge's last-line status word (NOT_MERGED when none)."""
  last = (str(res or '').strip().splitlines() or [''])[-1].strip()
  return last if last in MERGE_WORDS else 'NOT_MERGED'
 
 
 def _progress(msg):
- print(f'[merge] {msg}', flush=True)   # flushed: a watcher sees it is alive
+ print(f'[merge] {msg}', flush=True)
 
 
-def _gitlab_no_ci_config(enc, m):
- """True when the project has no CI: no required pipeline, no custom CI config path, no Auto DevOps, no .gitlab-ci.yml on
-    the MR's target branch (only a 404 counts as missing; any other error = 'has CI')."""
- p = _json(_run([GLAB, 'api', f'projects/{enc}']))
- if not p.get('id') or p.get('only_allow_merge_if_pipeline_succeeds') or p.get('ci_config_path') or p.get('auto_devops_enabled'):
-  return False
- tgt = (m.get('target_branch') or '').replace('/', '%2F')
- if not tgt:
-  return False
- f = _run([GLAB, 'api', f'projects/{enc}/repository/files/.gitlab-ci.yml?ref={tgt}'])
- return bool(re.search(r'\b404\b', f)) and 'not found' in f.lower() and 'file_name' not in f   # an HTTP 404, not any '404' text
-
-
-def _gitlab_final(enc, proj, iid, put, st):
- """Re-read the MR after the merge PUT (it can take a moment); its state -> result text + status word."""
+def _final(H, iid, put, st, proj):
+ """Re-read the MR after the merge call -> result text + status word."""
  m = {}
  for i in range(4):
-  m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
+  m = H('mr.get')
+  m = m if isinstance(m, dict) else {}
   if m.get('state') == 'merged' or m.get('merge_when_pipeline_succeeds') or i == 3:
    break
-  _progress(f're-reading !{iid} ({m.get("detailed_merge_status") or m.get("merge_status") or m.get("state")})')
+  _progress(f're-reading !{iid} ({m.get("detailed_merge_status") or m.get("state")})')
   time.sleep(3)
+ put = put if isinstance(put, dict) else {}
+ hp = (m.get('head_pipeline') or {}).get('status')
  if m.get('state') == 'merged':
   return f'merged !{iid}\nMERGED'
- if m.get('merge_when_pipeline_succeeds') or put.get('merge_when_pipeline_succeeds'):
+ if m.get('merge_when_pipeline_succeeds') or put.get('merge_when_pipeline_succeeds') or put.get('auto_merge') == 'kit':   # kit: emulated (orch.ps1 track run)
   _remember_automerge(f'{proj}!{iid}')
-  return f'scheduled: GitLab merges !{iid} automatically when the pipeline ({st}) succeeds\nSCHEDULED'
+  return f'scheduled: !{iid} merges automatically when the pipeline ({st}) succeeds\nSCHEDULED'
  if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
-  return f'conflict on !{iid}: dev.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again\nCONFLICT'
- if (m.get('head_pipeline') or {}).get('status') in ('failed', 'canceled'):
-  return f'pipeline {m["head_pipeline"]["status"]} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
- return f'not merged: !{iid} is {m.get("state")} ({m.get("detailed_merge_status") or m.get("merge_status")}); merge reply: {str(put)[:300]}\nNOT_MERGED'
+  return f'conflict on !{iid}: {RESOLVE}\nCONFLICT'
+ if hp in ('failed', 'canceled'):
+  return f'pipeline {hp} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
+ if hp in ('running', 'pending') or (not hp and st in ('running', 'pending')):   # the host merges only with required checks
+  return f'!{iid}: checks still running, no merge scheduled (no required checks?): run merge again in a few minutes\nWAIT'
+ return f'not merged: !{iid} is {m.get("state")} ({m.get("detailed_merge_status")}); merge reply: {str(put)[:300]}\nNOT_MERGED'
 
 
 def _norm_ref(ref):
- """'web!12', a quoted ref, an MR/PR URL or an alias (repoAliases) -> (repo, iid) as orch.ps1 track stores them."""
+ """'web!12', quoted ref, MR/PR URL or alias -> (repo, iid) as orch.ps1 track stores them."""
  r = str(ref or '').strip().strip('\'"')
  group = CFG.get('gitlabGroup') or ''
- m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pull)/(?P<i>\d+)', r)
+ m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(?P<i>\d+)', r)
  if m:
-  p = m.group('p')
+  p = m.group('p').replace('/_git/', '/')
   if group and p.lower().startswith(group.lower() + '/'):
    p = p[len(group) + 1:]
   r = f"{p}!{m.group('i')}"
@@ -472,22 +476,21 @@ def _norm_ref(ref):
 
 
 def _same_repo(repo, proj):
- """Does a tracking ref's repo ('web', 'group/web') name the origin project path ('group/sub/web')?"""
+ """Does a ref's repo ('web', 'group/web') name the origin path ('group/sub/web')?"""
  a, b = repo.lower().strip('/'), proj.lower().strip('/')
  return a == b or b.endswith('/' + a)
 
 
 def _host_mr_state(host, proj, repo, iid):
- """'merged'/'opened'/'closed'/'' (unknown) of <repo>!<iid>, resolved like orch.ps1 track (gitlabGroup, else the remote's group)."""
+ """State of <repo>!<iid> ('' = unknown), path resolved like orch.ps1 track."""
  if '/' in repo:
   path = repo
  else:
   group = CFG.get('gitlabGroup') if host == 'gitlab' else ''
   path = f"{group or proj.rsplit('/', 1)[0]}/{repo}"
- if host == 'gitlab':
-  return str(_json(_run([GLAB, 'api', f"projects/{path.replace('/', '%2F')}/merge_requests/{iid}"])).get('state') or '')
- s = str(_json(_run([GH, 'pr', 'view', str(iid), '--repo', path, '--json', 'state'])).get('state') or '')
- return {'MERGED': 'merged', 'OPEN': 'opened', 'CLOSED': 'closed'}.get(s, '')
+ m = _host('mr.get', type=host, repo=path, n=str(iid))
+ return str(m.get('state') or '') if isinstance(m, dict) else ''
+
 
 
 def unmerged_producers(proj, iid, state_of, tracking=None):
@@ -499,7 +502,7 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
    data = json.load(fh) if os.path.exists(path) else {}
  except FileNotFoundError:
   data = {}
- except Exception as e:   # unreadable: order unknown -> WAIT, never "no producers"
+ except Exception as e:   # order unknown -> WAIT, never "no producers"
   return [(f'(tracking file unreadable: {e})', 'unknown', '-')]
  out = []
  for tid, t in ((data or {}).get('tasks') or {}).items():
@@ -510,7 +513,7 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
    d, o = _norm_ref(dep), _norm_ref(on)
    if not sep or not d or not o or str(d[1]) != str(iid):
     continue
-   if not _same_repo(d[0], proj):   # repo not matched: a missing alias would skip the merge order
+   if not _same_repo(d[0], proj):
     print(f'[merge] mergeAfter {pair} (task {tid}) names repo {d[0]}, this remote is {proj}: not applied'
            ' - add kit.local.json repoAliases if they are the same repo', file=sys.stderr)
     continue
@@ -521,7 +524,7 @@ def unmerged_producers(proj, iid, state_of, tracking=None):
 
 
 def held(proj):
- """holdMerge: true (every repo) or repo names / aliases / paths; a held repo's MRs are never merged by a script."""
+ """holdMerge: true (all) or repo names / aliases / paths no script merges."""
  h = CFG.get('holdMerge')
  if h is True:
   return True
@@ -529,13 +532,8 @@ def held(proj):
  return any(_same_repo(n, proj) for n in names)
 
 
-def _gh_workflows(worktree):
- d = os.path.join(worktree, '.github', 'workflows')
- return os.path.isdir(d) and any(f.endswith(('.yml', '.yaml')) for f in os.listdir(d))
-
-
 def auto_merge(worktree, iid, max_wait=90):
- STOP_AT[0] = time.time() + max_wait   # every host call ends inside max_wait (10 s floor per call)
+ STOP_AT[0] = time.time() + max_wait   # 10 s floor per call
  try:
   return _auto_merge(worktree, iid, max_wait)
  finally:
@@ -556,90 +554,63 @@ def _auto_merge(worktree, iid, max_wait):
   if any(st == 'closed' for _, st, _ in waiting):
    return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (orch.ps1 track mergeAfter) with the coordinator\nNOT_MERGED'
   return '\n'.join(lines) + '\nnot merged now: orch.ps1 track run (supervise) merges it once the producer merged\nWAIT'
- if host == 'gitlab':
-  enc = proj.replace('/', '%2F')
-  m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
-  if m.get('state') == 'merged':
-   return f'already merged !{iid}\nMERGED'
-  if m.get('state') and m.get('state') != 'opened':
-   return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
-  if m.get('has_conflicts'):
-   return 'CONFLICT: dev.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again\nCONFLICT'
-  st = (m.get('head_pipeline') or {}).get('status')
-  if st in ('failed', 'canceled'):
-   return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
-  args = ['-f', 'squash=true', '-f', 'should_remove_source_branch=true'] + (['-f', f"sha={m['sha']}"] if m.get('sha') else [])   # a push after the read refuses the merge
-  # no CI: merge-when-green waits forever. No pipeline required + no CI config -> merge now; CI file + no pipeline 5 min
-  # after the MR update (not the commit date: an old commit pushed now has none YET) -> no CI; else WAIT
-  no_ci = False
-  if st is None:
-   if _gitlab_no_ci_config(enc, m):
-    no_ci = True
-    _progress(f'project has no CI (no pipeline required, no CI config on {m.get("target_branch")}): merging !{iid} now')
-   else:
-    from datetime import datetime, timezone
-    src_proj = m.get('source_project_id') or enc
-    ref = (m.get('source_branch') or '').replace('/', '%2F')
-    sha = m.get('sha') or ''
+ H = _mr_api(host, proj, iid)
+ m = H('mr.get')
+ m = m if isinstance(m, dict) else {}
+ if m.get('state') == 'merged':
+  return f'already merged !{iid}\nMERGED'
+ if not m.get('state'):
+  return f'!{iid}: the git host did not answer (auth status? network?): run merge again\nWAIT'
+ if m.get('state') != 'opened':
+  return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
+ if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
+  return f'CONFLICT: {RESOLVE}\nCONFLICT'
+ st = (m.get('head_pipeline') or {}).get('status')
+ if st in ('failed', 'canceled'):
+  return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
+ # no CI config -> merge now (merge-when-green would wait forever); CI + no pipeline 5 min after the MR update -> NOT_MERGED
+ no_ci = False
+ if st is None:
+  if H('ci.config', ref=m.get('target_branch') or '') is False:
+   no_ci = True
+   _progress(f'repo has no CI (no CI config on {m.get("target_branch")}): merging !{iid} now')
+  else:
+   from datetime import datetime, timezone
+   sha = m.get('sha') or ''
 
-    # HEAD pipelines only: an older commit's armed merge-when-green without CI or WAITed early
-    def _no_ci():
-     pls = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}/pipelines']))
-     if not isinstance(pls, list):   # query failed: unknown, never 'no CI' (-> WAIT)
-      return False, False
-     pls = [p for p in pls if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(pls, list) else []
-     refp = _json(_run([GLAB, 'api', f'projects/{src_proj}/pipelines?ref={ref}&sha={sha}&per_page=1'])) if ref else {}
-     refp = [p for p in refp if isinstance(p, dict) and (not sha or p.get('sha') == sha)] if isinstance(refp, list) else None
-     head = pls or refp or []
-     return (not head and refp is not None), bool(head)
+   def _no_ci():   # HEAD pipelines only
+    runs = H('ci.runs', repo=str(m.get('source_project_id') or proj), ref=m.get('source_branch') or '', sha=sha, per_page=5)
+    if not isinstance(runs, list):   # unknown, never 'no CI'
+     return False, False
+    head = [p for p in runs if isinstance(p, dict) and (not sha or p.get('sha') == sha)]
+    return not head, bool(head)
 
-    when = m.get('updated_at') or m.get('created_at') or ''
-    age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
+   when = m.get('updated_at') or m.get('created_at') or ''
+   age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
+   none_yet, has = _no_ci()
+   waited = 0
+   while none_yet and age + waited <= 300 and waited + 15 <= max_wait:   # progress: a tool timeout kills a silent sleep
+    _progress(f'no pipeline on !{iid} yet; checking again in 15 s ({int(300 - age - waited)} s until it counts as no CI)')
+    time.sleep(15)
+    waited += 15
     none_yet, has = _no_ci()
-    waited = 0
-    # poll 15 s with progress, <= max_wait (a tool timeout kills a silent sleep)
-    while none_yet and age + waited <= 300 and waited + 15 <= max_wait:
-     _progress(f'no pipeline on !{iid} yet; checking again in 15 s ({int(300 - age - waited)} s until it counts as no CI)')
-     time.sleep(15)
-     waited += 15
-     none_yet, has = _no_ci()
-    if has:
-     st = 'running'
-    # CI config, no head pipeline (rules skipped it / never started): never merge without CI
-    if none_yet and age + waited > 300:
-     return (f'no pipeline for the head of !{iid} although the repo has CI (rules skipped it, or it never started): '
-              f'run the pipeline, then merge again; or the coordinator merges by hand\nNOT_MERGED')
-    if not has and not no_ci:
-     left = int(max(30, 310 - age - waited)) if none_yet else 60
-     return f'WAIT: no pipeline on !{iid} yet (a pipeline is still expected); run merge again in {left} s\nWAIT'
-  if st == 'manual' or st == 'skipped':   # merge-when-green never fires: not SCHEDULED
-   return f'pipeline {st} on !{iid}: start its manual jobs (or ask the coordinator), then run merge again\nNOT_MERGED'
-  if st == 'scheduled':
-   return f'pipeline scheduled (delayed job) on !{iid}: run merge again once it runs\nWAIT'
-  if st != 'success' and not no_ci:
-   args += ['-f', 'merge_when_pipeline_succeeds=true']
-  put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge', *args]))
-  return _gitlab_final(enc, proj, iid, put, st)
- out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch', '--auto'], cwd=worktree)
- if 'clean status' in out.lower():   # no required checks: auto-merge refused; merge only on finished green CI
-  pv = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'statusCheckRollup'], cwd=worktree))
-  roll = pv.get('statusCheckRollup') if isinstance(pv, dict) else None
-  cs = [r.get('conclusion') or r.get('state') for r in roll or []]
-  if roll is None or any(c in ('FAILURE', 'CANCELLED', 'ERROR', 'TIMED_OUT') for c in cs):
-   return f'#{iid}: checks unreadable or failed: {str(pv)[:200]}\n' + ('PIPELINE_FAILED' if roll else 'WAIT')
-  if (not cs and _gh_workflows(worktree)) or any(c not in ('SUCCESS', 'NEUTRAL', 'SKIPPED') for c in cs):
-   return f'#{iid}: workflows still running (or not started yet), no required checks: run merge again in a few minutes\nWAIT'
-  out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)
- v = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state,mergeable,autoMergeRequest,statusCheckRollup'], cwd=worktree))
- concl = [r.get('conclusion') or r.get('state') for r in v.get('statusCheckRollup') or []]
- word = ('MERGED' if v.get('state') == 'MERGED' else 'SCHEDULED' if v.get('autoMergeRequest') else
-   'CONFLICT' if v.get('mergeable') == 'CONFLICTING' else
-   'PIPELINE_FAILED' if any(c in ('FAILURE', 'CANCELLED', 'ERROR', 'TIMED_OUT') for c in concl) else 'NOT_MERGED')
- return f'{out[:300] or f"#{iid}: {word.lower()}"}\n{word}'
+   if has:
+    st = 'running'
+   if none_yet and age + waited > 300:   # never merge without CI
+    return (f'no pipeline for the head of !{iid} although the repo has CI (skipped by rules or never started): '
+      f'run it, then merge again (or the coordinator merges by hand)\nNOT_MERGED')
+   if not has:
+    return f'WAIT: no pipeline on !{iid} yet (a pipeline is still expected); run merge again in {int(max(30, 310 - age - waited)) if none_yet else 60} s\nWAIT'
+ if st in ('manual', 'skipped'):   # merge-when-green never fires
+  return f'pipeline {st} on !{iid}: start its manual jobs (or ask the coordinator), then run merge again\nNOT_MERGED'
+ if st == 'scheduled':
+  return f'pipeline scheduled (delayed job) on !{iid}: run merge again once it runs\nWAIT'
+ put = H('mr.merge', sha=m.get('sha') or '', auto=st != 'success' and not no_ci)   # sha: a later push refuses it
+ return _final(H, iid, put, st, proj)
 
 
 def merge_when_green(worktree, iid, timeout_min=90):
- """Poll the pipeline; squash-merge when green, never on failure or conflict. Prefer auto_merge (no waiting)."""
+ """Poll; squash-merge when green, never on failure / conflict. Prefer auto_merge."""
  host, proj = remote(worktree)
  if held(proj):
   return f'{proj}!{iid} is held for approval (kit.local.json holdMerge)\nNOT_MERGED'
@@ -647,61 +618,55 @@ def merge_when_green(worktree, iid, timeout_min=90):
  if waiting:
   return '; '.join(f'waiting for producer {ref} ({st}; task {tid})' for ref, st, tid in waiting) + ': not merged\nWAIT'
  end = time.time() + timeout_min * 60
+ H = _mr_api(host, proj, iid)
  while time.time() < end:
-  if host == 'gitlab':
-   enc = proj.replace('/', '%2F')
-   m = _json(_run([GLAB, 'api', f'projects/{enc}/merge_requests/{iid}']))
-   state, conflict = m.get('state'), m.get('has_conflicts')
-   st = (m.get('head_pipeline') or {}).get('status')
-   ok, bad = st == 'success', st in ('failed', 'canceled')
-  else:
-   m = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state,mergeable,statusCheckRollup'], cwd=worktree))
-   state = {'MERGED': 'merged'}.get(m.get('state'), m.get('state'))
-   conflict = m.get('mergeable') == 'CONFLICTING'
-   runs = m.get('statusCheckRollup') or []
-   concl = [r.get('conclusion') or r.get('state') for r in runs]
-   bad = any(c in ('FAILURE', 'CANCELLED', 'ERROR', 'TIMED_OUT') for c in concl)
-   ok = bool(runs) and all(c in ('SUCCESS', 'NEUTRAL', 'SKIPPED') for c in concl)
-   st = 'success' if ok else ('failed' if bad else 'running')
-  if state == 'merged':
+  m = H('mr.get')
+  m = m if isinstance(m, dict) else {}
+  st = (m.get('head_pipeline') or {}).get('status')
+  if m.get('state') == 'merged':
    return 'already merged\nMERGED'
-  if conflict:
+  if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
    return 'CONFLICT: dev.ps1 wt sync, resolve (devtools.py keepboth for append-only files), re-check, push --force-with-lease to YOUR branch\nCONFLICT'
-  if bad:
+  if st in ('failed', 'canceled'):
    return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
-  if host == 'gitlab' and st is None:   # no MR CI: auto_merge() decides
+  if m.get('state') == 'opened' and st is None:   # no MR CI: auto_merge() decides
    res = auto_merge(worktree, iid)
    if merge_word(res) != 'WAIT':
     return res
-  if ok:
-   if host == 'gitlab':
-    put = _json(_run([GLAB, 'api', '-X', 'PUT', f'projects/{enc}/merge_requests/{iid}/merge',
-        '-f', 'squash=true', '-f', 'should_remove_source_branch=true', *(['-f', f"sha={m['sha']}"] if m.get('sha') else [])]))
-    return _gitlab_final(enc, proj, iid, put, st)
-   out = _run([GH, 'pr', 'merge', str(iid), '--squash', '--delete-branch'], cwd=worktree)
-   v = _json(_run([GH, 'pr', 'view', str(iid), '--json', 'state'], cwd=worktree))
-   return f"{out[:300]}\n{'MERGED' if isinstance(v, dict) and v.get('state') == 'MERGED' else 'NOT_MERGED'}"
+  if st == 'success':
+   return _final(H, iid, H('mr.merge', sha=m.get('sha') or ''), st, proj)
   time.sleep(60)
  return 'TIMEOUT waiting for pipeline\nWAIT'
 
 
-# --- Documents (reports.type: gdocs | markdown)
+# --- Documents: make_doc / make_evidence -> ADAPTERS['report'][reports.type]
 def gws(*args, params=None, body=None, upload=None):
- cmd = [GWS, *args]
- if params is not None:
-  cmd += ['--params', json.dumps(params)]
- if body is not None:
-  cmd += ['--json', json.dumps(body)]
- if upload:
-  cmd += ['--upload', upload]
- return _json(_run(cmd))
+ if not GWS:
+  raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
+ cmd = [GWS, *args] + (['--params', json.dumps(params)] if params is not None else []) + (['--json', json.dumps(body)] if body is not None else [])
+ # gws uploads only cwd files
+ return _json(_run(cmd + ['--upload', os.path.basename(upload)] if upload else cmd, cwd=upload and os.path.dirname(os.path.abspath(upload))))
+def _http(method, url, body=None, headers=None):
+ import urllib.request as u, urllib.error
+ q = u.Request(url, body and json.dumps(body).encode(), {'Content-Type': 'application/json', **(headers or {})}, method=method)
+ try:
+  with u.urlopen(q, timeout=int((CFG.get('net') or {}).get('timeoutSec') or 60)) as r:
+   return json.loads(r.read() or b'{}')
+ except urllib.error.HTTPError as e:
+  raise SystemExit(f'{method} {url}: HTTP {e.code} {e.read()[:300]}')
 
 
-def keep_doc(title, path):
- """markdown reports: keep a copy under <runtime>/work/docs (worktrees get removed); return its path."""
- d = kit_path('docs', create=True)
+
+
+_q = lambda s: subprocess.list2cmdline([str(s)]) if os.name == 'nt' else __import__('shlex').quote(str(s))
+
+
+def keep_doc(title, path, keep=None):
+ """Copy into keep (default <runtime>/work/docs); already there: in place."""
+ if keep and os.path.abspath(keep) == os.path.dirname(os.path.abspath(path)):
+  return path
  slug = re.sub(r'[^A-Za-z0-9]+', '-', title).strip('-')[:80] or 'doc'
- dst = os.path.join(d, slug + os.path.splitext(path)[1])
+ dst = os.path.join(keep or kit_path('docs', create=True), slug + os.path.splitext(path)[1])
  if os.path.abspath(dst) != os.path.abspath(path):
   shutil.copyfile(path, dst)
  return dst
@@ -713,7 +678,7 @@ def md_to_html(md, title=''):
  import html as _h
 
  def inline(t):
-  t = _h.escape(t, quote=False)
+  t = html.escape(t, quote=False)
   t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
   t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
   t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
@@ -731,7 +696,7 @@ def md_to_html(md, title=''):
    close(); j = i + 1
    while j < len(lines) and not lines[j].strip().startswith('```'):
     j += 1
-   out.append('<pre><code>' + _h.escape('\n'.join(lines[i + 1:j])) + '</code></pre>'); i = j + 1; continue
+   out.append('<pre><code>' + html.escape('\n'.join(lines[i + 1:j])) + '</code></pre>'); i = j + 1; continue
   if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?\s*$', lines[i + 1]):
    close(); cells = lambda r: [c.strip() for c in r.strip().strip('|').split('|')]
    rows = ['<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in cells(l)) + '</tr>']
@@ -755,41 +720,208 @@ def md_to_html(md, title=''):
    out.append(f'<p>{inline(l)}</p>')
   i += 1
  close()
- return f'<!doctype html><html><head><meta charset="utf-8"><title>{_h.escape(title)}</title></head><body>' + '\n'.join(out) + '</body></html>'
+ return f'<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head><body>' + '\n'.join(out) + '</body></html>'
 
 
-def make_doc(title, html_path, parent=None):
- """Publish a document. gdocs: HTML (or Markdown) as a Google Doc, anyone-with-link reader; avoid '&' in titles.
-    markdown: keep the file (.md / .html), return its path (attach: dev.ps1 tracker attach <task> <path>)."""
- if REPORT_TYPE != 'gdocs':
-  return keep_doc(title, html_path)
- if not GWS:
-  raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
- if html_path.lower().endswith(('.md', '.markdown')):   # Markdown would upload as plain text: convert first
-  conv = os.path.splitext(html_path)[0] + '.doc.html'
-  with open(html_path, encoding='utf-8') as fh:
-   text = fh.read()
-  with open(conv, 'w', encoding='utf-8') as fh:
-   fh.write(md_to_html(text, title))
-  html_path = conv
- body = {'name': title, 'mimeType': 'application/vnd.google-apps.document'}
- parent = parent or CFG.get('driveParent')
- if parent:
-  body['parents'] = [parent]
- # gws uploads only cwd files: run in the file's folder
- cwd = os.getcwd()
- os.chdir(os.path.dirname(os.path.abspath(html_path)))
- try:
-  r = gws('drive', 'files', 'create', params={'supportsAllDrives': True, 'fields': 'id,webViewLink'}, body=body, upload=os.path.basename(html_path))
- finally:
-  os.chdir(cwd)
+def _html_of(a):
+ """a's file as HTML (Markdown -> <name>.doc.html)."""
+ p = a['path']
+ if not p.lower().endswith(('.md', '.markdown')):
+  return p
+ conv = os.path.splitext(p)[0] + '.doc.html'
+ with open(p, encoding='utf-8') as fh, open(conv, 'w', encoding='utf-8') as out:
+  out.write(md_to_html(fh.read(), a['title']))
+ return conv
+
+
+def make_doc(title, path, parent=None):
+ """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in."""
+ ad = ADAPTERS['report'].get(REPORT_TYPE) or sys.exit(f'reports.type "{REPORT_TYPE}" is no report adapter ({" ".join(ADAPTERS["report"])})')
+ keep = parent if parent and os.path.isdir(parent) else None
+ return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep})
+
+
+def make_evidence(name, files, folder=None, parent=None):
+ """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder."""
+ fn = (ADAPTERS['report'].get(REPORT_TYPE) or {}).get('evidence')
+ return fn({'name': name, 'files': files, 'folder': folder, 'parent': parent}) if fn else {}
+
+
+def _gshare(fid, what, warn=False):
+ s = str(RCFG.get('share') or 'anyone')   # anyone | domain:<domain> | none
+ p = s != 'none' and gws('drive', 'permissions', 'create', params={'fileId': fid, 'supportsAllDrives': True},
+             body={'type': 'domain', 'role': 'reader', 'domain': s[7:]} if s[:7] == 'domain:' else {'type': 'anyone', 'role': 'reader'})
+ if p is not False and not (isinstance(p, dict) and p.get('id')):
+  m = f'{what} was uploaded but not shared ({s}): {str(p)[:300]} - share it by hand or fix gws auth'
+  if not warn:
+   raise SystemExit(m)
+  print('warning: ' + m, file=sys.stderr)
+
+
+def _gcreate(name, mime, parent, upload=None):
+ b = {'name': name, **({'mimeType': mime} if mime else {}), **({'parents': [parent]} if parent else {})}
+ return gws('drive', 'files', 'create', params={'supportsAllDrives': True, 'fields': 'id,webViewLink'}, body=b, upload=upload)
+
+
+R = ADAPTERS.setdefault('report', {})
+# adapter:report/gdocs: a Google Doc via gws; evidence = a Drive folder
+def _gdocs(a):
+ r = _gcreate(a['title'], 'application/vnd.google-apps.document', a.get('parent') or CFG.get('driveParent'), _html_of(a))
  if 'id' not in r:
   raise SystemExit(f'gws upload failed: {r}')
  url = f"https://docs.google.com/document/d/{r['id']}/edit"
- p = gws('drive', 'permissions', 'create', params={'fileId': r['id'], 'supportsAllDrives': True}, body={'type': 'anyone', 'role': 'reader'})
- if not (isinstance(p, dict) and p.get('id')):
-  raise SystemExit(f'{url} was uploaded but not shared (anyone with the link): {str(p)[:300]} - share it by hand or fix gws auth')
+ _gshare(r['id'], url)
  return url
+
+
+def _gdocs_evidence(a):
+ fid, link, out = a.get('folder'), None, {}
+ if not fid:
+  f = _gcreate(a['name'], 'application/vnd.google-apps.folder', a.get('parent') or CFG.get('driveParent'))
+  fid, link = f.get('id') or sys.exit(f'gws: evidence folder not created: {str(f)[:300]}'), f.get('webViewLink')
+  _gshare(fid, link, warn=True)
+ for p in a['files']:   # a failed upload is left out (the caller warns)
+  r = _gcreate(os.path.basename(p), None, fid, p)
+  if r.get('id'):
+   out[os.path.basename(p)] = {'id': r['id'], 'link': r.get('webViewLink'), 'src': 'https://drive.google.com/uc?export=view&id=' + r['id']}
+ return {'folderId': fid, 'folderLink': link, 'label': 'Drive folder', 'files': out}
+
+
+R['gdocs'] = {'publish': _gdocs, 'evidence': _gdocs_evidence}
+# adapter:report/markdown: the file, kept
+R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'])}
+# adapter:report/html: Markdown -> HTML (md_to_html), kept
+R['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'])}
+# adapter:report/pdf: the HTML printed by a headless browser (or reports.pdfCommand), kept
+def _browser():
+ b = next(filter(None, map(shutil.which, ('chrome', 'google-chrome', 'chromium', 'chromium-browser', 'msedge', r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+   r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'))), None)
+ return b and [b]
+
+
+def _pdf(a):
+ src, out, cmd, b = os.path.abspath(_html_of(a)), os.path.abspath(os.path.splitext(a['path'])[0] + '.pdf'), RCFG.get('pdfCommand'), _browser()
+ if os.path.exists(out):
+  os.remove(out)
+ r = subprocess.run(cmd.replace('{in}', _q(src)).replace('{out}', _q(out)) if cmd else (b or sys.exit('pdf: no Chrome / Chromium / Edge: install one or set reports.pdfCommand'))
+          + ['--headless', '--disable-gpu', '--no-pdf-header-footer', '--print-to-pdf=' + out, __import__('pathlib').Path(src).as_uri()],
+          shell=bool(cmd), capture_output=True, text=True, errors='replace', timeout=180)
+ return keep_doc(a['title'], out, a['keep']) if os.path.isfile(out) else sys.exit(f'reports.type pdf: {out} not written: {(r.stdout + r.stderr)[-300:]}')
+
+
+R['pdf'] = {'publish': _pdf}
+# adapter:report/confluence: a page via REST: env CONFLUENCE_URL (wiki base), CONFLUENCE_TOKEN (bearer; + CONFLUENCE_EMAIL: basic),
+#   reports.space, reports.parent (page id); readers = the space / parent page permissions
+def _confluence(a):
+ base, tok, em = (os.environ.get('CONFLUENCE_' + k, '') for k in ('URL', 'TOKEN', 'EMAIL'))
+ if not (base and tok and RCFG.get('space')):
+  raise SystemExit('confluence needs env CONFLUENCE_URL, CONFLUENCE_TOKEN and reports.space')
+ with open(_html_of(a), encoding='utf-8') as fh:   # storage format = XHTML: the body, void tags closed
+  x = re.sub(r'<(br|hr|img|meta|input|col)\b([^>]*?)/?>', r'<\1\2/>', re.sub(r'(?is)^.*?<body[^>]*>|</body>.*$', '', fh.read()))
+ par, base = a['parent'] or RCFG.get('parent'), base.rstrip('/')
+ auth = 'Basic ' + __import__('base64').b64encode(f'{em}:{tok}'.encode()).decode() if em else 'Bearer ' + tok
+ lk = _http('POST', base + '/rest/api/content', {'type': 'page', 'title': a['title'], 'space': {'key': RCFG['space']}, **({'ancestors': [{'id': str(par)}]} if par else {}),
+      'body': {'storage': {'value': x, 'representation': 'storage'}}}, {'Authorization': auth}).get('_links') or {}
+ return lk.get('base', base) + lk['webui'] if lk.get('webui') else sys.exit(f'confluence: no page link in the reply: {lk}')
+
+
+R['confluence'] = {'publish': _confluence}
+# adapter:report/notion: a child page of reports.parent via REST (env NOTION_TOKEN): heading / paragraph / bulleted / code
+#   blocks, 100 per call; readers = the parent page's sharing
+def _notion(a):
+ tok, par = os.environ.get('NOTION_TOKEN'), a['parent'] or RCFG.get('parent')
+ if not (tok and par):
+  raise SystemExit('notion needs env NOTION_TOKEN and reports.parent (a page shared with the integration)')
+ with open(a['path'], encoding='utf-8') as fh:
+  t = fh.read()
+ if not a['path'].lower().endswith(('.md', '.markdown')):   # HTML: its text lines
+  t = html.unescape(re.sub(r'<[^>]+>', '\n', re.sub(r'(?is)<(head|style|script)\b.*?</\1>', '', t)))
+ rt = lambda s: [{'type': 'text', 'text': {'content': s[i:i + 2000]}} for i in range(0, len(s), 2000)]
+ bl, code = [], None
+ for l in t.splitlines() + ['```']:   # the extra fence closes an open code block
+  if l.strip().startswith('```'):
+   if code:
+    bl.append({'type': 'code', 'code': {'language': 'plain text', 'rich_text': rt('\n'.join(code))}})
+   code = [] if code is None else None
+  elif code is not None:
+   code.append(l)
+  elif l.strip() and not re.match(r'^\s*(\|[\s:|-]+\|?|([-*_])(\s*\2){2,})\s*$', l):   # table rules and <hr> dropped
+   h, b = re.match(r'(#{1,6})\s+(.*)', l), re.match(r'\s*(?:[-*+]|\d+[.)])\s+(.*)', l)
+   k, s = (f'heading_{min(3, len(h[1]))}', h[2]) if h else ('bulleted_list_item', b[1]) if b else ('paragraph', l)
+   bl.append({'type': k, k: {'rich_text': rt(s)}})
+ hd, api = {'Authorization': 'Bearer ' + tok, 'Notion-Version': '2022-06-28'}, 'https://api.notion.com/v1/'
+ r = _http('POST', api + 'pages', {'parent': {'page_id': par}, 'properties': {'title': {'title': [{'text': {'content': a['title']}}]}}, 'children': bl[:100]}, hd)
+ if not r.get('id'):
+  raise SystemExit(f'notion: no page in the reply: {str(r)[:300]}')
+ for i in range(100, len(bl), 100):
+  _http('PATCH', f"{api}blocks/{r['id']}/children", {'children': bl[i:i + 100]}, hd)
+ return r.get('url') or 'https://www.notion.so/' + r['id'].replace('-', '')
+
+
+R['notion'] = {'publish': _notion}
+
+
+# adapter:report/command: reports.command with {title} {path} {parent}; last output word = the URL
+def _command(a):
+ c = RCFG.get('command') or sys.exit('reports.type command needs reports.command')
+ for k, v in (('title', a['title']), ('path', a['path']), ('parent', a['parent'] or a['keep'] or '')):
+  c = c.replace('{' + k + '}', _q(v))
+ r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=300)
+ u = (r.stdout.split() or [''])[-1]
+ return u if u and not r.returncode else sys.exit(f'reports.command failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}')
+
+
+R['command'] = {'publish': _command}
+# adapter-end:report
+
+
+def _report_selftest(expect):
+ """Each report backend on recorded replies (Drive via gws, Confluence / Notion via _http); no network."""
+ g, calls, env0, tmp = globals(), [], dict(os.environ), tempfile.mkdtemp()
+ saved, md, png = {k: g[k] for k in ('gws', '_http', '_browser', 'REPORT_TYPE', 'GWS', 'kit_path', 'RCFG')}, os.path.join(tmp, 'r.md'), os.path.join(tmp, 's.png')
+ PAGE = {'object': 'page', 'id': '59833787-2cf9-4fdf-8782-e53db20768a5', 'url': 'https://www.notion.so/T-598337872cf94fdf8782e53db20768a5'}
+ with open(md, 'w', encoding='utf-8') as fh:
+  fh.write('# T\n\n---\n' + ''.join(f'- b{i}\n' for i in range(151)) + '```\nx\n```\n')
+ open(png, 'wb').close()
+ FILE = {'kind': 'drive#file', 'id': '1AbC', 'webViewLink': 'https://docs.google.com/document/d/1AbC/edit?usp=drivesdk'}
+ def use(t, rcfg, reply=lambda a: {'kind': 'drive#permission', 'id': 'anyoneWithLink'} if 'permissions' in a else FILE):
+  calls.clear(); g.update(REPORT_TYPE=t, RCFG=rcfg)
+  g['_http'] = g['gws'] = lambda *a, **k: calls.append((a, k)) or reply(a)
+  return lambda: [k['body'] for a, k in calls if 'permissions' in a]
+ try:
+  g['GWS'], g['kit_path'] = 'gws', lambda n, create=False: tmp
+  perms = use('gdocs', {}); u = make_doc('T', md); anyone = perms()
+  perms = use('gdocs', {'share': 'domain:ex.com'}); make_doc('T', md); dom = perms()
+  perms = use('gdocs', {'share': 'none'}); make_doc('T', md)
+  expect('gdocs: Markdown as HTML; share anyone (default) / domain:<d> / none', u == 'https://docs.google.com/document/d/1AbC/edit'
+     and calls[0][1]['upload'].endswith('r.doc.html') and anyone == [{'type': 'anyone', 'role': 'reader'}] and dom[0]['domain'] == 'ex.com' and not perms())
+  use('gdocs', {}, lambda a: FILE if 'files' in a else {'error': 'insufficient permissions'})
+  try:
+   make_doc('t', md); expect('gdocs: an unshared doc is refused', False)
+  except SystemExit as e:
+   expect('gdocs: an unshared doc is refused', 'not shared' in str(e))
+  use('gdocs', {}); ev = make_evidence('ev', [png])
+  expect('gdocs evidence: a Drive folder, an image src per file', calls[0][1]['body']['mimeType'].endswith('folder') and ev['files']['s.png']['src'].endswith('id=1AbC'))
+  use('markdown', {})
+  expect('markdown: kept in place, else in docs; no evidence host', make_doc('T', md, tmp) == md and make_doc('My T', md) == os.path.join(tmp, 'My-T.md') and not make_evidence('e', [png]))
+  use('html', {})
+  expect('html: Markdown -> HTML, kept', '<h1>T</h1>' in open(make_doc('T', md, tmp), encoding='utf-8').read())
+  os.environ.update(CONFLUENCE_URL='https://ex.atlassian.net/wiki/', CONFLUENCE_TOKEN='tk', NOTION_TOKEN='secret_x')
+  use('confluence', {'space': 'QA', 'parent': '42'}, lambda a: {'id': '65601', 'type': 'page', '_links': {'webui': '/spaces/QA/pages/65601/T', 'base': 'https://ex.atlassian.net/wiki'}})
+  u = make_doc('T', md); _, url, b, hd = calls[0][0]
+  expect('confluence: a storage page under reports.parent, bearer auth', u == 'https://ex.atlassian.net/wiki/spaces/QA/pages/65601/T' and url.endswith('/wiki/rest/api/content')
+     and b['ancestors'] == [{'id': '42'}] and '<hr/>' in b['body']['storage']['value'] and hd['Authorization'] == 'Bearer tk')
+  use('notion', {'parent': 'p1'}, lambda a: PAGE if a[0] == 'POST' else {'object': 'list', 'results': []})
+  u = make_doc('T', md); c1, c2 = (c[0][2]['children'] for c in calls)
+  expect('notion: blocks 100 per call', u == PAGE['url'] and (len(c1), len(c2), c1[0]['type'], c2[-1]['type']) == (100, 53, 'heading_1', 'code'))
+  with open(os.path.join(tmp, 'b.py'), 'w') as fh:   # the fake browser writes --print-to-pdf=<out>
+   fh.write("import sys\nopen([x[15:] for x in sys.argv if x[:15] == '--print-to-pdf='][0], 'wb').write(b'%PDF')")
+  g['_browser'] = lambda: [sys.executable, os.path.join(tmp, 'b.py')]; use('pdf', {}); p = make_doc('T', md, tmp)
+  expect('pdf: the headless browser prints the HTML, kept', p == os.path.join(tmp, 'r.pdf') and open(p, 'rb').read() == b'%PDF')
+  use('command', {'command': _q(sys.executable) + ' -c "import sys; print(\'https://w.ex/\' + sys.argv[1])" {title}'})
+  expect('command: {title} filled, the last output = the URL', make_doc('T1', md) == 'https://w.ex/T1')
+ finally:
+  g.update(saved); os.environ.clear(); os.environ.update(env0); shutil.rmtree(tmp, ignore_errors=True)
 
 
 # --- keepboth (rebase), lbcheck, self-test
@@ -805,7 +937,7 @@ def keepboth(paths):
   text = pat.sub(lambda m: m.group(1) + m.group(2), text)
   open(path, 'w', encoding='utf-8', newline='').write(text)
   print(path, 'resolved', n, 'block(s)')
-  if re.search(r'^(<<<<<<<|>>>>>>>) ', text, re.M):   # a block the pattern missed: never report success
+  if re.search(r'^(<<<<<<<|>>>>>>>) ', text, re.M):   # a block the pattern missed
    print(path, 'STILL HAS CONFLICT MARKERS: resolve by hand', file=sys.stderr)
    left += 1
  return 1 if left else 0
@@ -879,12 +1011,13 @@ def selftest():
   print(('PASS ' if cond else 'FAIL ') + what)
   fails += 0 if cond else 1
 
- try:
-  _body('no-such-body.md')
-  expect('a missing body file is refused', False)
- except SystemExit as e:
-  expect('a missing body file is refused', 'file not found' in str(e))
- expect('multi-line body text passes as it is', _body('a\nb') == 'a\nb')
+ def refused(what, fn, text):
+  try:
+   fn(); expect(what, False)
+  except SystemExit as e:
+   expect(what, text in str(e))
+ refused('a missing body file is refused', lambda: _body('no-such-body.md'), 'file not found')
+ expect('multi-line body text passes', _body('a\nb') == 'a\nb')
 
  fd, path = tempfile.mkstemp(suffix='.json')
  with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -894,41 +1027,46 @@ def selftest():
   out = unmerged_producers('group/web', '5', lambda r, i: 'opened', tracking=path)
  os.remove(path)
  expect('the open producer is found', out == [('api!3', 'opened', 'T1')])
- expect('a pair naming another repo is reported, not silently skipped', 'names repo other' in err.getvalue())
+ expect('a pair naming another repo is reported', 'names repo other' in err.getvalue())
  expect('merge_word reads the last line', merge_word('x\nWAIT') == 'WAIT' and merge_word('x') == 'NOT_MERGED')
- # CI gate: CI + no head pipeline after 5 min -> NOT_MERGED; failed query -> WAIT; never a merge
+ # merge gate over the adapter verbs (_host faked)
  g = globals()
- saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', '_progress')}
+ saved = {k: g[k] for k in ('_host', 'remote', 'unmerged_producers', '_progress', 'kit_path')}
  old = '2020-01-01T00:00:00Z'
- puts = []
- def canned(pls):
-  def run(cmd, cwd=None, check=False):
-   s = ' '.join(str(c) for c in cmd)
-   if '-X PUT' in s:
-    puts.append(s)
-    return '{"merged":"yes"}'
-   if s.endswith('merge_requests/7'):
-    return json.dumps({'state': 'opened', 'sha': 'abc', 'source_branch': 'f/x', 'target_branch': 'main', 'updated_at': old})
-   if 'merge_requests/7/pipelines' in s:
-    return pls
-   if 'pipelines?ref=' in s:
-    return '[]'
-   if s.endswith('projects/g%2Fr'):
-    return '{"id": 1}'
-   return '{"file_name": ".gitlab-ci.yml"}'   # has a CI file
-  return run
+ calls = []
+
+ def fake(runs=(), cfg=True, hp=None, put=None):
+  st = {'merged': False}
+
+  def h(verb, **a):
+   calls.append((verb, a))
+   if verb == 'mr.merge':
+    st['merged'] = put is None and not a.get('auto')
+    return put or {}
+   if verb == 'mr.get':
+    return {'state': 'merged'} if st['merged'] else {'state': 'opened', 'sha': 'abc', 'source_branch': 'f/x', 'target_branch': 'main', 'updated_at': old, 'head_pipeline': hp}
+   return {'ci.runs': list(runs) if isinstance(runs, tuple) else runs, 'ci.config': cfg}.get(verb, {})
+  return h
+ merged = lambda: [a for v, a in calls if v == 'mr.merge']
  try:
   g['remote'] = lambda wt: ('gitlab', 'g/r'); g['unmerged_producers'] = lambda *a, **k: []; g['_progress'] = lambda m: None
-  g['_run'] = canned('[]')
-  expect('CI repo, no head pipeline after 5 min: NOT_MERGED, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'NOT_MERGED' and not puts)
-  g['_run'] = canned('error: 500 Internal Server Error')
-  expect('a failed pipeline query is WAIT, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'WAIT' and not puts)
+  g['kit_path'] = lambda n, **k: os.path.join(tempfile.mkdtemp(), 'tracking.json')
+  g['_host'] = fake()
+  expect('CI, no head pipeline after 5 min: NOT_MERGED, no merge', merge_word(auto_merge('.', '7', max_wait=0)) == 'NOT_MERGED' and not merged())
+  calls.clear(); g['_host'] = fake(runs={'raw': 'error: 500'})
+  expect('a failed pipeline query is WAIT, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'WAIT' and not merged())
+  calls.clear(); g['_host'] = fake(cfg=False)
+  expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
+  calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'state': 'opened'})
+  expect('running checks, nothing scheduled: WAIT', merge_word(auto_merge('.', '7')) == 'WAIT' and merged()[0]['auto'])
+  calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'auto_merge': 'kit'})
+  expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
  finally:
   g.update(saved)
  expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
- # batch 2: holdMerge, unreadable tracking, GitHub clean status + running workflows, share failure, lost intent
- saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'gws', 'REPORT_TYPE', 'GWS', 'kit_path')}
- cfg0 = dict(CFG)
+ # holdMerge, unreadable tracking, lost intent
+ saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'kit_path')}
+ cfg0, puts = dict(CFG), []
  try:
   g['remote'] = lambda wt: ('gitlab', 'g/web'); g['_run'] = lambda *a, **k: puts.append('called') or '{}'
   CFG['holdMerge'] = ['web']; puts.clear()
@@ -936,27 +1074,8 @@ def selftest():
   CFG.pop('holdMerge', None)
   fd, bad = tempfile.mkstemp(suffix='.json'); os.write(fd, b'{broken'); os.close(fd)
   w = saved['unmerged_producers']('g/web', '7', lambda r, i: 'merged', tracking=bad); os.remove(bad)
-  expect('an unreadable tracking file is a wait, not "no producers"', len(w) == 1 and 'unreadable' in w[0][0])
+  expect('an unreadable tracking file is a wait', len(w) == 1 and 'unreadable' in w[0][0])
   g['unmerged_producers'] = lambda *a, **k: []
-  g['remote'] = lambda wt: ('github', 'o/web')
-  def ghrun(cmd, cwd=None, check=False):
-   s = ' '.join(str(c) for c in cmd)
-   if '--auto' in s:
-    return 'Pull request #7 is in clean status'
-   if 'statusCheckRollup' in s and 'state,' not in s:
-    return '{"statusCheckRollup": [{"status": "IN_PROGRESS", "conclusion": ""}]}'
-   puts.append(s)
-   return '{}'
-  g['_run'] = ghrun; puts.clear()
-  expect('GitHub clean status with a running workflow: WAIT, no direct merge', merge_word(auto_merge('.', '7')) == 'WAIT' and not any('pr merge' in p for p in puts))
-  g['REPORT_TYPE'] = 'gdocs'; g['GWS'] = 'gws'
-  g['gws'] = lambda *a, **k: {'id': 'D1'} if 'files' in a else {'error': 'insufficient permissions'}
-  fd, md = tempfile.mkstemp(suffix='.html'); os.close(fd)
-  try:
-   make_doc('t', md); expect('a doc that could not be shared is refused', False)
-  except SystemExit as e:
-   expect('a doc that could not be shared is refused', 'not shared' in str(e))
-  os.remove(md)
   g['kit_path'] = lambda n: os.path.join(tempfile.gettempdir(), 'no-such-dir-kit', 'x', 'tracking.json')
   err = io.StringIO()
   with _c.redirect_stderr(err):
@@ -964,6 +1083,7 @@ def selftest():
   expect('a lost merge-when-green intent is reported', 'could not record' in err.getvalue())
  finally:
   g.update(saved); CFG.clear(); CFG.update(cfg0)
+ _report_selftest(expect)
  print(f'{fails} failure(s)')
  return 1 if fails else 0
 
@@ -1955,21 +2075,13 @@ Project profile (<kit>/skills/dev-kit/projects/<project>.local.md, local; one pe
 ## Review lessons
 '''
 
-# validate (exit 1 on a problem): JSON array, 23 string keys, vocab, unique ids, in-scope triage filled, out-of-scope analysis
-# empty. summary: <module>-summary.md (chat / MR) + .html (share via doc).
 def validate(argv):
-
  KEYS = ['id', 'module', 'layer', 'type', 'in_scope', 'subtype', 'title', 'area', 'severity', 'current', 'expected',
    'business_impact', 'root_cause', 'why_today', 'why_not_prod', 'customer_impact', 'db_migration', 'suggested_fix',
    'code_location', 'product_decision', 'effort', 'existing_notes', 'source']
- VOCAB = {
-  'type': {'Bug', 'Performance', 'Tech Debt', 'Functional Gap', 'UX', 'Reporting'},
-  'in_scope': {'Yes', 'No'},
-  'severity': {'Critical', 'High', 'Medium', 'Low'},
-  'db_migration': {'Yes', 'No', 'Maybe', ''},
-  'product_decision': {'Yes', 'No'},
-  'effort': {'Low', 'Medium', 'High', ''},
- }
+ VOCAB = {'type': {'Bug', 'Performance', 'Tech Debt', 'Functional Gap', 'UX', 'Reporting'}, 'in_scope': {'Yes', 'No'},
+     'severity': {'Critical', 'High', 'Medium', 'Low'}, 'db_migration': {'Yes', 'No', 'Maybe', ''},
+     'product_decision': {'Yes', 'No'}, 'effort': {'Low', 'Medium', 'High', ''}}
  IN_SCOPE = {'Bug', 'Performance', 'Tech Debt'}
  ID = re.compile(r'^[A-Z0-9]+(-[A-Z0-9]+)*-(BUG|PERF|REF|GAP|UX|RPT)-\d+$')
 
@@ -2022,7 +2134,6 @@ def validate(argv):
 
 
 def summary(argv):
-
  ap = argparse.ArgumentParser()
  ap.add_argument('file')
  ap.add_argument('--sources', default='')
@@ -2046,9 +2157,12 @@ def summary(argv):
 
  # --- Markdown
  md = [f'# Technical audit — {module}', '']
- md.append(f'**{len(ins)} in-scope findings** ({", ".join(f"{by_type[t]} {t}" for t in ("Bug", "Performance", "Tech Debt") if by_type[t])}) · '
-       f'**{len(outs)} out-of-scope** captured for product · severity: ' + ', '.join(f'{by_sev[s]} {s}' for s in SEV if by_sev[s]))
- if a.sources: md.append(f'\nSources used: {a.sources}')
+ types = ', '.join(f'{by_type[t]} {t}' for t in ('Bug', 'Performance', 'Tech Debt') if by_type[t])
+ ranked = sorted(ins, key=lambda r: (SEV.index(r['severity']), r['id']))
+ md.append(f'**{len(ins)} in-scope findings** ({types}) · '
+   f'**{len(outs)} out-of-scope** captured for product · severity: ' + ', '.join(f'{by_sev[s]} {s}' for s in SEV if by_sev[s]))
+ if a.sources:
+  md.append(f'\nSources used: {a.sources}')
  md.append(f'\n{len(unverified)} finding(s) rest on unverified inference (capped at Medium); {len(dbm)} need a DB migration.')
  if top:
   md += ['', '## Critical / High', '', '| ID | Sev | Title | Where | Fix |', '|---|---|---|---|---|']
@@ -2056,7 +2170,7 @@ def summary(argv):
  if decide:
   md += ['', '## Needs a product decision', ''] + [f"- **{r['id']}** {r['title']} — {r['expected']}" for r in decide]
  md += ['', '## All in-scope findings', '', '| ID | Type | Sev | Title | Effort |', '|---|---|---|---|---|']
- md += [f"| {r['id']} | {r['type']} | {r['severity']} | {r['title']} | {r['effort']} |" for r in sorted(ins, key=lambda r: (SEV.index(r['severity']), r['id']))]
+ md += [f"| {r['id']} | {r['type']} | {r['severity']} | {r['title']} | {r['effort']} |" for r in ranked]
  if outs:
   md += ['', '## Out of scope (captured for product)', ''] + [f"- {r['id']} ({r['type']}): {r['title']}" for r in outs]
  open(base + '.md', 'w', encoding='utf-8').write('\n'.join(md) + '\n')
@@ -2068,10 +2182,10 @@ def summary(argv):
  H = [f"<html><head><meta charset='utf-8'></head><body style='font-family:Arial,Helvetica,sans-serif;color:#111827;font-size:10.5pt'>",
   "<p style='font-size:9pt;color:#6b7280;margin:0'>TECHNICAL AUDIT</p>",
   f"<h1 style='font-size:20pt;margin:2px 0 8px 0'>{E(module)}</h1><table style='border-collapse:collapse;margin:6px 0 12px 0'><tr>"]
- for n, s, (fg, bg) in [(by_sev[s], s.upper(), COL[s]) for s in SEV] + [(len(outs), 'OUT OF SCOPE', ('#374151', '#f3f4f6'))]:
-  H.append(f"<td style='background:{bg};color:{fg};padding:8px 14px;text-align:center;border:1px solid #fff'><span style='font-size:18pt;font-weight:bold'>{n}</span><br><span style='font-size:8pt;font-weight:bold'>{s}</span></td>")
+ for (fg, bg), n, lbl in [(COL[s], by_sev[s], s.upper()) for s in SEV] + [(('#374151', '#f3f4f6'), len(outs), 'OUT OF SCOPE')]:
+  H.append(f"<td style='background:{bg};color:{fg};padding:8px 14px;text-align:center;border:1px solid #fff'><span style='font-size:18pt;font-weight:bold'>{n}</span><br><span style='font-size:8pt;font-weight:bold'>{lbl}</span></td>")
  H.append('</tr></table>')
- H.append(f"<p>{len(ins)} in-scope findings: " + ', '.join(f'{by_type[t]} {t}' for t in ('Bug', 'Performance', 'Tech Debt') if by_type[t]) +
+ H.append(f"<p>{len(ins)} in-scope findings: " + types +
    f". {len(unverified)} rest on unverified inference; {len(dbm)} need a DB migration." + (f" Sources: {E(a.sources)}." if a.sources else '') + "</p>")
 
  def table(items, cols):
@@ -2094,7 +2208,7 @@ def summary(argv):
   H.append(f"<h2 style='{h2}'>Critical and High</h2>" + table(top, [('ID', 'id'), ('Sev', 'severity'), ('Title', 'title'), ('Current', 'current'), ('Where', 'code_location'), ('Fix', 'suggested_fix')]))
  if decide:
   H.append(f"<h2 style='{h2}'>Needs a product decision</h2>" + table(decide, [('ID', 'id'), ('Title', 'title'), ('Expected', 'expected'), ('Business impact', 'business_impact')]))
- H.append(f"<h2 style='{h2}'>All in-scope findings</h2>" + table(sorted(ins, key=lambda r: (SEV.index(r['severity']), r['id'])),
+ H.append(f"<h2 style='{h2}'>All in-scope findings</h2>" + table(ranked,
    [('ID', 'id'), ('Type', 'type'), ('Sev', 'severity'), ('Title', 'title'), ('Why not visible in prod', 'why_not_prod'), ('Effort', 'effort'), ('DB', 'db_migration')]))
  if outs:
   H.append(f"<h2 style='{h2}'>Out of scope (captured for product)</h2>" + table(outs, [('ID', 'id'), ('Type', 'type'), ('Title', 'title'), ('Expected', 'expected')]))
@@ -2107,11 +2221,15 @@ if __name__ == '__main__':
  sys.stdout.reconfigure(encoding='utf-8')
  a = sys.argv[1:]
  cmd = a[0] if a else ''
- # per-command usage from the header; --help never becomes an id; unknown flags and missing args are usage errors
+ # --help never becomes an id; unknown flags and missing args are usage errors
  use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
  ARITY = {'task': 1, 'subtasks': 1, 'newtask': 5, 'status': 2, 'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'merge-wait': 2,
-   'doc': 2, 'keepboth': 1, 'lbcheck': 1, 'findings': 1, 'migrations': 1, 'selftest': 0}
- FLAGS = {'findings': {'--sources', '--out'}}
+   'doc': 2, 'evidence': 1, 'keepboth': 1, 'lbcheck': 1, 'findings': 1, 'migrations': 1, 'selftest': 0}
+ FLAGS, opt = {'findings': {'--sources', '--out'}}, {}
+ for f in ('--type', '--parent', '--folder') if cmd in ('doc', 'evidence') else ():
+  if f in a[1:-1]:
+   i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
+ REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
  if cmd in ('-h', '--help', 'help') or (use and any(x in ('-h', '--help') for x in a[1:]) and cmd != 'migrations'):
   print('\n'.join(use) if use else __doc__)
   sys.exit(0)
@@ -2141,7 +2259,7 @@ if __name__ == '__main__':
   res = auto_merge(a[1], a[2])
   print(res)
   sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1 = refused, conflict or wait
- elif cmd == 'merge-wait':     # old: poll until merged (blocks up to 90 min)
+ elif cmd == 'merge-wait':     # blocks up to 90 min
   res = merge_when_green(a[1], a[2])
   print(res)
   sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)
@@ -2167,6 +2285,8 @@ if __name__ == '__main__':
   if os.path.isfile(title) and not os.path.isfile(path):   # swapped order: doc <file> "<title>"
    title, path = path, title
   print(make_doc(title, path, *(a[3:4] or [])))
+ elif cmd == 'evidence':
+  print(json.dumps(make_evidence(a[1], a[2:], opt.get('--folder') or None, opt.get('--parent') or None)))
  else:
   print(__doc__)
   sys.exit(2)

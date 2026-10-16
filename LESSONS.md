@@ -85,4 +85,4 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 ## revy
 
 ## Decisions
-- 2026-10-16 Kit size cap: context the kit grew past 300k tokens · decision `_manifest.caps.totalTokens` 360000 (owner), cut by dense prose, one-line comments, active-only lessons, no function removed · consequences lint BUDGET fails above it.
+- 2026-10-16 Kit size cap: context the kit grew past 300k tokens · decision `_manifest.caps.totalTokens` (owner): trim first (dense prose, one-line comments, no function removed), else `kittool.py budget raise` (x1.1) · consequences lint BUDGET above it, BUDGET-CAP on other cap edits.

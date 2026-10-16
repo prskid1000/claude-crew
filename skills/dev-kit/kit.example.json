@@ -17,6 +17,8 @@
   "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it" },
  "gitHost": "gitlab.com",
  "gitHostType": "gitlab",
+ "gitHostApi": { "commands": {} },
+ "ci": { "type": "host" },
  "githubHost": "github.com",
  "gitlabGroup": "<your-gitlab-group or github owner>",
  "reposRoot": "/path/to/src",
@@ -27,10 +29,10 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | clickup | github | gitlab | jira. statuses maps the logical statuses to your board's names (a list = the first is set, all match); bugPrefix [Bug]. Examples for each backend: _examples.",
+  "_readme": "type: none (default) | clickup | github | gitlab | jira (Cloud) | jira-server | linear | azure | youtrack | command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples: _examples.",
   "type": "none",
   "repo": "<owner/name or group/project, for github/gitlab issues>",
-  "list": "<default list id / Jira project key for new tasks>",
+  "list": "<list of new tasks: ClickUp list id, Jira / YouTrack project key, Linear team key, Azure area path>",
   "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
   "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH- / PROJ- ; default from type>", "bugPrefix": "[Bug]",
   "statuses": {
@@ -40,11 +42,14 @@
   "_examples": {
    "clickup": { "type": "clickup", "list": "<list id>", "branchTag": "CU-", "statuses": { "review": "for review", "failedTesting": "failed testing", "closed": "complete" } },
    "jira": { "type": "jira", "list": "PROJ", "branchTag": "", "issueType": "Task", "subtaskType": "Subtask", "statuses": { "inProgress": "In Progress", "review": "In Review", "promoted": "Merged", "inTest": "QA", "failedTesting": "QA Failed", "closed": "Done" } },
-   "github": { "type": "github", "repo": "owner/name", "branchTag": "GH-", "statuses": { "failedTesting": "failed-testing" } }
+   "github": { "type": "github", "repo": "owner/name", "branchTag": "GH-", "statuses": { "failedTesting": "failed-testing" } },
+   "azure": { "type": "azure", "org": "<org>", "project": "<project>", "issueType": "Task", "statuses": { "inProgress": "Active", "closed": "Closed" } },
+   "linear": { "type": "linear", "org": "<workspace url slug>", "list": "<team key>" },
+   "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
- "reports": { "_readme": "type: gdocs (Google Docs + Drive via gws; default when gws is installed) | markdown (files in the run folder, carried by the tracker comment)", "type": "markdown" },
- "driveParent": "<Google Drive folder or shared-drive id for testing docs and reports (reports.type gdocs)>",
+ "reports": { "_readme": "type: gdocs (Google Doc + Drive evidence via gws; default with gws) | markdown, html, pdf (a kept file; pdf: headless Chrome / Edge or pdfCommand '{in} {out}') | confluence (env CONFLUENCE_URL, CONFLUENCE_TOKEN [+ CONFLUENCE_EMAIL]; space, parent page id) | notion (env NOTION_TOKEN; parent page id) | command (command '<cli> {title} {path} {parent}' printing the URL). share (gdocs): anyone (default) | domain:<domain> | none; confluence / notion: the space / parent page permissions", "type": "markdown" },
+ "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release).", "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
  "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
@@ -91,7 +96,7 @@
    "antigravity": { "fraction": 0.8, "source": "unverified: 0.8 x the model window" },
    "unknown": { "tokens": 160000, "source": "0.8 x 200k" } } },
  "repos": [
-  { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "migrations": { "check": "<e.g. flyway validate>" },
+  { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "ci": "host", "mergeMethod": "squash", "migrations": { "check": "<e.g. flyway validate>" },
    "deploys": [ { "target": "staging", "branch": "staging", "job": "deploy-staging" } ] },
   { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
    "deploys": [
@@ -171,6 +176,15 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$" },
   "caps": { "content": 30, "plumbing": 8, "totalTokens": 396000 },
+  "adapters": {
+   "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
+   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github gitlab jira jira-server linear azure youtrack command none" },
+   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github bitbucket azure gitea command" },
+   "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "gdocs markdown html pdf confluence notion command" },
+   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github bitbucket azure gitea jenkins command none", "values": "host" },
+    "migrations": { "config": "", "file": "skills/dev-kit/devtools.py", "table": "MIG_TOOLS", "verbs": "file", "names": "flyway prisma sqitch goose sql alembic django efcore rails knex" },
+    "db-engine": { "config": "", "file": "skills/local-env/localenv.ps1", "table": "DbPresets", "verbs": "snapshot restore", "names": "postgres mysql sqlserver sqlite oracle mongodb" }
+  },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
    "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",
    "CONTRIBUTING.md": "README.md", "examples/rules.md": "README.md", "multi-agent.md": "AGENTS.md" }

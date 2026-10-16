@@ -10,6 +10,7 @@
   python -X utf8 kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new> · remove <kind> <name>
   python -X utf8 kittool.py prose --kind <kind> <file> [--json] · prose --kinds   # a text vs templates.md "Writing standards"
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (no CHANGELOG file)
+  python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise = x1.1, only when trimming cannot make room
 
 Inputs: the kit folder (default: the kit this file lives in), skills/dev-kit/kit.example.json (_paths, _manifest), kit.local.json (org terms, localOnly).
 Outputs: text; --json files; flow writes the live clone's <runtime>/cache/kit-flow.html (from any worktree) and (--readme) the graph sections of README.md.
@@ -25,7 +26,7 @@ lint checks (flow draws them; each fails, --warn only reports):
   REF-DANGLING  a kit path in Markdown points at nothing · REACH-NONE / REACH-MENTION  not reached from the root by edges
   JUNK  runtime output or reserved names · RUNTIME-RAW / -MAP / -DURABLE  hand-built paths; a workflow KP differs from _paths
   CONFIG-UNDOC  a kit.example.json key missing from README "Configuration"
-  FILE-CAP / PLUMBING-CAP  over _manifest.caps.content / .plumbing (ports excluded) · BUDGET  a file or the kit over its tokens
+  FILE-CAP / PLUMBING-CAP  over _manifest.caps.content / .plumbing (ports excluded) · BUDGET  a file or the kit over its tokens · BUDGET-CAP  totalTokens not a budget-raise step
   SCRIPT-HEADER  no usage + "Exit codes" header · PROSE  breaks templates.md "Writing standards" · DESKTOP-OPEN  opens without --open
   LESSONS-CAP  a LESSONS.md section over 40 lines · README-GRAPH  graph sections stale · ORG-TERM  an org term (--org-terms)
   MANIFEST / SCHEMA  files vs _manifest and its JSON Schemas · LEASE-HOLDER  a lease / hold written without New-KitLease
@@ -112,9 +113,39 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
 CAPS = {'content': 30, 'plumbing': 8, 'totalTokens': 396000}   # only a fallback: kit.example.json _manifest.caps is the source (lint MANIFEST)
+CAP_BASE = 360000   # totalTokens moves only in `budget raise` steps from here: x1.1, rounded to 1k (lint BUDGET-CAP)
+TRIM_FIRST = 'trim first (dense prose, dedupe; never golf that hurts reading); if impossible: kittool.py budget raise -Reason "<why trimming cannot make room>"'
+
+
+def cap_next(c):
+ return int(round(c * 1.1 / 1000)) * 1000
+
+
+def cap_problem(kdir, cap):
+ """None, or why `cap` is not a budget-raise step (from CAP_BASE, at most one step above the last commit's cap)."""
+ c = CAP_BASE
+ while c < cap:
+  c = cap_next(c)
+ if c != cap:
+  return f'totalTokens {cap} is not a raise step ({CAP_BASE} x 1.1, rounded to 1k, per step): change it only with kittool.py budget raise'
+ try:
+  r = subprocess.run(['git', '-C', kdir, 'show', f'HEAD:{PATHS_JSON}'], capture_output=True, text=True, encoding='utf-8', timeout=30)
+  old = (json.loads(r.stdout).get('_manifest', {}).get('caps') or {}).get('totalTokens') if r.returncode == 0 else None
+ except (OSError, subprocess.TimeoutExpired, ValueError):
+  old = None
+ if isinstance(old, int) and cap > old and cap != cap_next(old):
+  return f'totalTokens {old} -> {cap} skips steps: one kittool.py budget raise per commit ({old} -> {cap_next(old)})'
+ return None
+
+
+def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count more)
+ t = read(os.path.join(kdir, f))
+ if f == 'README.md':   # generated graph blocks excluded, like ports
+  t = re.sub(r'<!-- kit-graph:start .*?<!-- kit-graph:end -->', '', t, flags=re.S)
+ return len(t.encode('utf-8')) // 4
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 15000, 'ps1': 58000, 'py': 70000, 'mjs': 8000, 'json': 6000, 'tests': 32500}
+  'workflow': 15000, 'ps1': 58000, 'py': 70000, 'mjs': 8000, 'json': 6600, 'tests': 35750}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
@@ -692,7 +723,7 @@ def lint(k, g=None, org_terms=None):
  counted = [x for x in (tracked or k.files) if not x.startswith(GENERATED) and osp.isfile(osp.join(k.dir, x))]   # a deletion not staged yet is gone
  plumbing = [x for x in counted if x.startswith(PLUMBING)]
  content = [x for x in counted if x not in plumbing]
- caps = manifest(k.dir).get('caps') or {}
+ caps = {x: v for x, v in (manifest(k.dir).get('caps') or {}).items() if not x.startswith('_')}
  if caps and caps != CAPS:
   bad('MANIFEST', PATHS_JSON, f'_manifest.caps {caps} differ from the kittool.py fallback {CAPS}: keep them equal')
  caps = {**CAPS, **caps}
@@ -704,11 +735,9 @@ def lint(k, g=None, org_terms=None):
   bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
    f'.github/*, settings.json): {", ".join(plumbing)}')
  # ---- token budgets: per file type, total
- def size_tokens(f):   # git blob size (LF: a CRLF checkout must not count more)
-  t = read(osp.join(k.dir, f))
-  if f == 'README.md':   # generated graph blocks excluded, like ports
-   t = re.sub(r'<!-- kit-graph:start .*?<!-- kit-graph:end -->', '', t, flags=re.S)
-  return len(t.encode('utf-8')) // 4
+ cap_bad = cap_problem(k.dir, caps['totalTokens'])
+ if cap_bad:
+  bad('BUDGET-CAP', PATHS_JSON, cap_bad)
  def btype(f):
   b = osp.basename(f)
   if f in ('CLAUDE.md', 'AGENTS.md'):
@@ -733,7 +762,7 @@ def lint(k, g=None, org_terms=None):
    return 'template'
   ext = osp.splitext(f)[1][1:]
   return ext if ext in BUDGETS else None
- sizes = {f: size_tokens(f) for f in counted}
+ sizes = {f: size_tokens(k.dir, f) for f in counted}
  over = [(f, n, BUDGETS[b]) for f, n in sizes.items() if (b := btype(f)) and n > BUDGETS[b]]
  always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
  if always > BUDGETS['always']:
@@ -745,7 +774,8 @@ def lint(k, g=None, org_terms=None):
  if over:
   top = ', '.join(f'{f} {n}' for f, n in sorted(sizes.items(), key=lambda x: -x[1])[:5])
   for f, n, cap in over:
-   bad('BUDGET', f, f'{n} tokens (cap {cap}); top consumers: {top}')
+   fix = TRIM_FIRST if f == 'kit total' else 'trim it (dense prose, dedupe) or move text to a file with room'
+   bad('BUDGET', f, f'{n} tokens (cap {cap}): {fix}; top consumers: {top}')
  # ---- script headers: usage + exit codes up top
  for f in counted:
   if not f.endswith(('.ps1', '.py', '.mjs')) or f.startswith(GENERATED):
@@ -976,6 +1006,8 @@ def readme_sections(k, g):
   f"{(m.get('character') or {}).get('traits', '')}: \"{(m.get('character') or {}).get('catchphrase', '')}\" |" for a, m in (man.get('agents') or {}).items()]
  out['table-workflows'] = ['| Workflow | Covers | Crew | Router row |', '|---|---|---|---|'] + [
   f"| `/{w}` | {m.get('covers', '')} | {', '.join('`' + c + '`' for c in m.get('crew', []))} | {m.get('router', '')} |" for w, m in (man.get('workflows') or {}).items()]
+ out['table-adapters'] = ['| Kind | Selected by | Interface (verbs) | Built in | Code |', '|---|---|---|---|---|'] + [
+  f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')} | {', '.join(a.get('names', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
  bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # the budget rule's per-tool defaults
  out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
  ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row
@@ -3095,8 +3127,8 @@ def cmd_setup(kit, fix):
    out('ACT', 'SETUP-CLI', exe, 'not on PATH (the kit needs it)')
  tt = (os.environ.get('KIT_TRACKER_TYPE') or get(cfg, 'tracker.type') or 'none').lower()
  need = {'clickup': ['clickup'], 'github': ['gh'], 'gitlab': ['glab'], 'jira': [], 'none': []}.get(tt, [])
- host_cli = 'gh' if 'github' in str(get(cfg, 'gitHost') or '') else 'glab'
- for exe in sorted(set(need + [host_cli])):
+ host_cli = {'github': 'gh', 'gitlab': 'glab'}.get(get(cfg, 'gitHostType') or ('github' if 'github' in str(get(cfg, 'gitHost') or '') else 'gitlab'))   # GitHub Enterprise: gitHostType
+ for exe in sorted(set(need + [host_cli] if host_cli else need)):
   if not shutil.which(exe):
    out('ASK', 'SETUP-CLI', exe, f'not on PATH (tracker.type {tt} / git host need it): install it and log in by hand')
    continue
@@ -3174,9 +3206,10 @@ def cmd_config(kit, fill):
 
 def config_rules(kit, c):
  """Values a feature in use needs and no default can supply: ASK the lead (key paths only, never values)."""
- tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'clickup').lower()
- if tt not in ('clickup', 'github', 'gitlab', 'jira', 'none'):
-  out('ACT', 'CONFIG-VALUE', 'kit.local.json tracker.type', 'not one of clickup / github / gitlab / jira / none')
+ tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
+ tn = ((manifest(kit).get('adapters') or {}).get('tracker') or {}).get('names', 'none').split()
+ if tt not in tn:
+  out('ACT', 'CONFIG-VALUE', 'kit.local.json tracker.type', 'not one of ' + ' / '.join(tn))
  if tt in ('github', 'gitlab') and not get(c, 'tracker.repo'):
   out('ASK', 'CONFIG-NEED', 'kit.local.json tracker.repo', f'tracker.type {tt} needs owner/name or group/project')
  rt = (os.environ.get('KIT_REPORT_TYPE') or get(c, 'reports.type') or ('gdocs' if shutil.which('gws') else 'markdown')).lower()
@@ -3823,12 +3856,58 @@ def old_name_rx(old):
  # bare, file or joined name (last-<old>, <old>s, <old>-x); <name>.stamp sharing the stem is no reference
  return re.compile(r'(?<![\w/.-])((?:\w+-)*)' + re.escape(old) + r'((?:s|-\w+)*)(?![\w-])(?!\.(?:local\.)?stamp\b)')
 
+
+def adapter_blocks(text, kind):
+ """{name: code} of each `adapter:<kind>/<name>` block (to the next adapter / adapter-end marker)."""
+ out = {}
+ for m in re.finditer(r'adapter:' + re.escape(kind) + r'/([\w-]+)', text):
+  nx = re.compile(r'adapter(?:-end)?:[\w-]+').search(text, m.end())
+  out[m.group(1)] = out.get(m.group(1), '') + text[m.end():nx.start() if nx else len(text)]
+ return out
+
+
+def adapter_lint(k, man, bad):
+ """ADAPTER: each registered name has every verb of its kind ('*' = all); configured names are registered."""
+ try:
+  loc = json.loads(read(os.path.join(k.dir, 'skills/dev-kit/kit.local.json')) or '{}')
+ except ValueError:
+  loc = {}
+ for kind, a in (man.get('adapters') or {}).items():
+  if not isinstance(a, dict):
+   continue
+  names, blocks, f = a['names'].split(), adapter_blocks(k.texts.get(a['file'], ''), kind), a['file']
+  if a.get('table'):   # a data table (one entry per name) instead of adapter blocks
+   m = re.search(r'(?ms)^(?:\$script:)?' + re.escape(a['table']) + r' = @?\{\s*\n(.*?)^\}', k.texts.get(f, ''))
+   rows = {}
+   for ln in (m.group(1) if m else '').split('\n'):   # a row starts at 1-space indent, continuation lines are deeper
+    r = re.match(r"^ '?([\w-]+)'?\s*[:=]\s*@?\{", ln)
+    if r:
+     cur_n = r.group(1); rows[cur_n] = ''
+    if rows:
+     rows[cur_n] += ln + '\n'
+   blocks = rows
+   if set(rows) - set(names):
+    bad('ADAPTER', f, f'{kind}: {a["table"]} entries {sorted(set(rows) - set(names))} not in _manifest.adapters.{kind}.names')
+  for n in names:
+   b = blocks.get(n)
+   miss = [] if b is None or "'*'" in b else [v for v in a['verbs'].split() if not re.search(rf"""['"]{re.escape(v)}['"]|\b{re.escape(v)}\s*=(?!=)""", b)]
+   if b is None or miss:
+    bad('ADAPTER', f, f'{kind}/{n}: {miss or "no block"} (kittool.py new adapter {kind} {n})')
+  cur = [loc] if a.get('config') else []
+  for p in (a.get('config') or '').replace('[]', '.[]').split('.'):
+   cur = [y for x in cur for y in (x if isinstance(x, list) else [x]) if isinstance(y, dict)] if p == '[]' else [x[p] for x in cur if isinstance(x, dict) and x.get(p) is not None]
+  for v in cur:
+   if isinstance(v, str) and v not in names + a.get('values', '').split():
+    bad('ADAPTER', 'skills/dev-kit/kit.local.json', f'{a["config"]} "{v}": no such {kind} adapter ({" ".join(names)})')
+
+
 def registry_lint(k, bad):
  """MANIFEST / SCHEMA / OLD-NAME / AGENT-TYPE / TODO-STUB / NON-CREW / DECISION-WORDING checks (part of lint)."""
  man = manifest(k.dir)
  if not man:
   bad('MANIFEST', PATHS_JSON, 'no _manifest section (the registry of agents, skills, workflows, Router and Events rows, caps)')
   return
+ adapter_lint(k, man, bad)
  ag, sk, wf = man.get('agents') or {}, man.get('skills') or [], man.get('workflows') or {}
  local = lambda p: '.local.' in p or any(p == x or p.startswith(x + '/') for x in k.local_only)   # the org overlay registers nothing
  pub = lambda d: {n for n, p in d.items() if not local(p)}
@@ -3933,10 +4012,20 @@ def _git(kit, *a):
 def _edit_manifest(kit, change):
  p = osp.join(kit, PATHS_JSON)
  raw = read(p)
- d = json.loads(raw)
- change(d.setdefault('_manifest', {}))
+ old = json.loads(raw).get('_manifest') or {}
+ new = json.loads(json.dumps(old))
+ change(new)
+ at = raw.index('"_manifest": {')
+ for key in [x for x in new if new[x] != old.get(x)]:   # changed keys only, one line each: the hand layout stays
+  m = re.compile(r'\n(\s*)"' + re.escape(key) + r'": ').search(raw, at)
+  if m:
+   end = json.JSONDecoder().raw_decode(raw, m.end())[1]
+   raw = raw[:m.end()] + json.dumps(new[key], ensure_ascii=False) + raw[end:]
+  else:
+   m = re.compile(r'\n(\s*)"renamed": ').search(raw, at)
+   raw = raw[:m.start()] + f'\n{m.group(1)}"{key}": {json.dumps(new[key], ensure_ascii=False)},' + raw[m.start():]
  with open(p, 'w', encoding='utf-8', newline='\n') as fh:
-  fh.write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
+  fh.write(raw)
 
 def _write_new(kit, rel, text):
  p = osp.join(kit, rel)
@@ -3982,7 +4071,7 @@ def _test_stub(kit, what):
  _sub_file(kit, 'tests/kit-tests.ps1', fn)
 
 def cmd_new(a):
- """kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>] | new adr <title>"""
+ """kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>] | new adapter <kind> <name> | new adr <title>"""
  kit = KIT_DIR
  if len(a) < 2:
   print(cmd_new.__doc__, file=sys.stderr)
@@ -4123,6 +4212,17 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
    return t.replace(last, last + f'\n| `{name}` | {TODO} | {TODO}: what it changes (today\'s behaviour is the default) |', 1)
   _sub_file(kit, 'README.md', fn)
   _test_stub(kit, f'config key {name}')
+ elif kind == 'adapter':   # new adapter <kind> <name>: every verb stubbed, before adapter-end:<kind>
+  ak, name, man = name, (a[2] if len(a) > 2 else ''), manifest(kit).get('adapters') or {}
+  ad = man.get(ak)
+  if not ad or not re.match(r'^[a-z][a-z0-9-]*$', name):
+   sys.exit(f'kittool new adapter <kind> <name>: kinds {sorted(x for x in man if x[0] != "_")}')
+  py, end = ad['file'].endswith('.py'), f'# adapter-end:{ak}'
+  body = '\n'.join((f"  '{v}': lambda a: _todo('{v}')," if py else f"  '{v}' = {{ param($a) throw '{TODO}: {v}' }}") for v in ad['verbs'].split())
+  blk = f"# adapter:{ak}/{name}: {TODO} what it talks to\n" + (f"ADAPTERS.setdefault('{ak}', {{}})['{name}'] = {{" if py else f"Register-KitAdapter '{ak}' '{name}' @{{") + f"\n{body}\n}}\n"
+  _sub_file(kit, ad['file'], lambda t: t.replace(end, blk + end, 1) if end in t else t.rstrip('\n') + '\n' + blk)
+  _edit_manifest(kit, lambda m: m['adapters'][ak].__setitem__('names', f"{m['adapters'][ak]['names']} {name}"))
+  _test_stub(kit, f'adapter {ak}/{name} against a recorded API fixture')
  else:
   print(cmd_new.__doc__, file=sys.stderr)
   return 2
@@ -4516,6 +4616,38 @@ def cmd_prose(a):
    print(f'PROSE {kind} {src}: {f}')
  return 1 if found else 0
 
+def cmd_budget(a):
+ """kittool.py budget [show] | budget raise -Reason "<why trimming cannot make room>": the kit total vs _manifest.caps.totalTokens;
+ raise (only while the total is over the cap) multiplies the cap by 1.1, rounded to 1k, in kit.example.json and the CAPS fallback,
+ and prints the commit message carrying the reason (stored nowhere else)."""
+ kit = KIT_DIR
+ r = subprocess.run(['git', '-C', kit, 'ls-files'], capture_output=True, text=True, encoding='utf-8', timeout=30)
+ files = [x for x in r.stdout.splitlines() if x and not x.startswith(GENERATED) and os.path.isfile(os.path.join(kit, x))]
+ total, cap = sum(size_tokens(kit, f) for f in files), {**CAPS, **(manifest(kit).get('caps') or {})}['totalTokens']
+ if not a or a[0] == 'show':
+  print(f'kit total {total} of cap {cap} ({total * 100 // cap}%); next raise step {cap_next(cap)}')
+  return 0
+ low = [x.lower() for x in a]
+ why = a[low.index('-reason') + 1].strip() if '-reason' in low and low.index('-reason') + 1 < len(a) else ''
+ if a[0] != 'raise' or not why:
+  print(cmd_budget.__doc__, file=sys.stderr)
+  return 2
+ if total <= cap:
+  print(f'budget raise: refused - the kit total {total} fits the cap {cap}: nothing to raise', file=sys.stderr)
+  return 1
+ bad = cap_problem(kit, cap_next(cap))
+ if bad:
+  print(f'budget raise: refused - {bad}', file=sys.stderr)
+  return 1
+ new = cap_next(cap)
+ _sub_file(kit, PATHS_JSON, lambda t: re.sub(r'("totalTokens":\s*)\d+', lambda m: m.group(1) + str(new), t, count=1))
+ _sub_file(kit, 'skills/orchestrate/kittool.py', lambda t: re.sub(r"^(CAPS = \{.*'totalTokens': )\d+", lambda m: m.group(1) + str(new), t, count=1, flags=re.M))
+ print(f'cap {cap} -> {new} (kit total {total}); commit message: chore(kit): raise the token cap to {new} - {why}')
+ if total > new:
+  print(f'still over: {total} > {new}: trim more (one raise per commit)')
+ return 0
+
+
 # ==== main
 # per subcommand: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
@@ -4525,7 +4657,7 @@ ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}
   'cost': ({'--steps', '--routes', '--json'}, set(), True),
   'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'new': (set(), {'--crew', '--skill'}, False), 'rename': (set(), set(), False), 'remove': (set(), set(), False),
-  'release': ({'--tag', '--publish'}, set(), False)}
+  'release': ({'--tag', '--publish'}, set(), False), 'budget': (set(), {'-Reason', '-reason', '--reason'}, False)}
 AUDIT_VERBS = {'setup', 'config', 'recover', 'scan', 'stamp', 'due'}
 
 def is_kit(d):
@@ -4558,7 +4690,7 @@ def check_args(cmd, rest):
   if not x.startswith('-'):
    if cmd == 'audit' and i == 0 and x in AUDIT_VERBS:
     pass
-   elif cmd in ('prose', 'new', 'rename', 'remove'):
+   elif cmd in ('prose', 'new', 'rename', 'remove', 'budget'):
     pass   # file to check / part kind + names
    elif not positional or not is_kit(x):
     print(f'kittool {cmd}: {x!r} is not a kit folder (needs skills/ and AGENTS.md or CLAUDE.md)', file=sys.stderr)
@@ -4592,5 +4724,7 @@ if __name__ == '__main__':
   sys.exit(cmd_remove(rest))
  if cmd == 'release':
   sys.exit(cmd_release(rest))
+ if cmd == 'budget':
+  sys.exit(cmd_budget(rest))
  print(__doc__)
  sys.exit(2)

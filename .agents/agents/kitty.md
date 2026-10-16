@@ -48,7 +48,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 6. **Consistency:** Files indexes vs disk; README "Configuration" vs the keys scripts read (both ways); the manifest vs agents,
    skills, workflows, Router and Events; agent tools vs what their kind runs; ports in the kit and the workspace copies
    (`kittool.py port --check`); the README graph current; no script opens the desktop without `--open` (DESKTOP-OPEN); every
-   file reached from the root with a reason on each edge; budgets and the file caps; script headers (usage, exit codes, shared
+   file reached from the root with a reason on each edge; budgets and the file caps (over: trim first; `kittool.py budget
+   raise -Reason` only when trimming cannot make room); script headers (usage, exit codes, shared
    params). Writing: lint PROSE for kit files; `kittool.py prose --kind <kind> <file>` on a sample of produced artefacts
    (latest MR bodies, tracker comments, briefs and testing docs under `<runtime>/work`, QA reports, results.json notes): each
    finding = kind, file, limit broken.

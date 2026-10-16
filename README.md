@@ -283,15 +283,17 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
 | `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField (a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk |
-| `driveParent` | &lt;Google Drive folder or shared-drive id for testing docs and reports… | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
+| `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2} | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram) |
 | `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
 | `bugfixMandate`, `localOnly`, `orgTerms` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks |
 | `findings` |  | required: the QA finding fields (default root_cause, why_today, why_not_prod, db_migration, code_location) |
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name or group/project, for… | type: none (default) / clickup / github / gitlab / jira. statuses maps the logical statuses to your board's names (a list = the first is set, all match); bugPrefix [Bug]. Examples for each backend: _examples. |
-| `reports` | {"type": "markdown"} | type: gdocs (Google Docs + Drive via gws; default when gws is installed) / markdown (files in the run folder, carried by the tracker comment) |
+| `gitHostApi` | {"commands": {}} |  |
+| `ci` | {"type": "host"} |  |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name or group/project, for… | type: none (default) / clickup / github / gitlab / jira (Cloud) / jira-server / linear / azure / youtrack / command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match). Examples: _examples. |
+| `reports` | {"type": "markdown"} | type: gdocs (Google Doc + Drive evidence via gws; default with gws) / markdown, html, pdf (a kept file; pdf: headless Chrome / Edge or pdfCommand '{in} {out}') / confluence (env CONFLUENCE_URL, CONFLUENCE_TOKEN [+ CONFLUENCE_EMAIL]; space, parent page id) / notion (env NOTION_TOKEN; parent page id) / command (command '&lt;cli&gt; {title} {path} {parent}' printing the URL). share (gdocs): anyone (default) / domain:&lt;domain&gt; / none; confluence / notion: the space / parent page permissions |
 | `qa` | {"outOfScope": ["&lt;a channel agent QA never tests, e.g. a chat app,… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). |
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them) |
@@ -306,6 +308,19 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`, `ANDROID_HOME`, `ANDROID_SERIAL`, `CHROME_PATH`.
 A repo whose stack is detected wrongly: `.claude-stack.json` next to its build file (`{ "commands": { "test": "make test T={tests}" } }`).
+
+## Adapters
+One interface per kind, chosen by config; `command` = your CLI per verb (`{placeholders}` in, JSON out); `kittool.py new adapter <kind> <name>` scaffolds one.
+<!-- kit-graph:start table-adapters -->
+| Kind | Selected by | Interface (verbs) | Built in | Code |
+|---|---|---|---|---|
+| tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | clickup, github, gitlab, jira, jira-server, linear, azure, youtrack, command, none | `skills/dev-kit/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, github, bitbucket, azure, gitea, command | `skills/dev-kit/lib.ps1` |
+| report | `reports.type` | publish | gdocs, markdown, html, pdf, confluence, notion, command | `skills/dev-kit/devtools.py` |
+| ci | `ci.type` | runs jobs log status config | gitlab, github, bitbucket, azure, gitea, jenkins, command, none | `skills/dev-kit/lib.ps1` |
+| migrations | `` | file | flyway, prisma, sqitch, goose, sql, alembic, django, efcore, rails, knex | `skills/dev-kit/devtools.py` |
+| db-engine | `` | snapshot restore | postgres, mysql, sqlserver, sqlite, oracle, mongodb | `skills/local-env/localenv.ps1` |
+<!-- kit-graph:end -->
 
 ## Layout, state and safety
 - `<kit>/.runtime/` disposable (`work/`, `cache/`, `logs/`), `<kit>/.state/` durable; both git-ignored, every path named in
@@ -338,8 +353,11 @@ refuses unfilled ones); then `port`, lint 0, tests.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 70000 · mjs 8000 · json 6000 · tests 32500 · total 396000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 70000 · mjs 8000 · json 6600 · tests 35750 · total 396000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
+  Over a budget: trim first (dense prose, dedupe, never golf that hurts reading); only when trimming cannot make room,
+  `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any
+  other change of the total].
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
 - **Generic** [ORG-TERM]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`

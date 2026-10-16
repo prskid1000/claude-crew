@@ -102,8 +102,8 @@ Check auth before using a CLI (never log in headlessly). Windows: resolve shims 
 
 | CLI | Purpose | Auth check |
 |-----|---------|------------|
-| `glab` / `gh` | git host: MRs/PRs, pipelines (kit scripts go through `dev-kit/lib.ps1` Invoke-HostApi and `devtools.py`) | `glab auth status` / `gh auth status` |
-| tracker | tasks, comments, statuses: only through `skills/dev-kit/dev.ps1 tracker` (`tracker.type`: clickup / github / gitlab / jira / none) | `dev.ps1 tracker view <id>` |
+| `glab` / `gh` | git host: MRs/PRs, pipelines (kit scripts: `lib.ps1` Invoke-HostVerb, README "Adapters") | `glab auth status` / `gh auth status` |
+| tracker | tasks, comments, statuses: only through `skills/dev-kit/dev.ps1 tracker` (`tracker.type`: README "Adapters") | `dev.ps1 tracker view <id>` |
 | `gws` (optional) | Google Docs reports and testing docs, only when `reports.type` is `gdocs` | resolve with `shutil.which()` |
 | `<your-cli>` | <purpose, e.g. logs / observability> | `<auth check>` |
 

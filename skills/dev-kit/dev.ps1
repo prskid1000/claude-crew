@@ -1,20 +1,23 @@
 <#
-dev.ps1: the dev-kit commands (dev-kit SKILL.md steps 1-8). Run from pwsh 7: & <kit>/skills/dev-kit/dev.ps1 <verb> [args]
-  wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks really run)
-  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
-  check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]   gated checks (targeted + touched tests)
-  gate -Dir <dir> -Cmd "<command>"  any heavy command through the machine-wide memory gate
-  tracker <verb> <id> ...  tracker adapter (view, status, comment, comments, create, list, ...)
-  pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
-  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
-In: kit.local.json (lib.ps1) + the verb's parameters. Out: text, or JSON with -Json.
-Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage error · gate/check pass the command's code through ·
-check 5 = typecheck or migrations UNRUN (nothing checked: say "<step> unrun" in the MR; the other steps still ran).
+dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/dev.ps1 <verb> [args]
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run)
+ stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
+ check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]  gated checks
+ gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
+ tracker <verb> <id> ...  tracker adapter (view, status, comment, create, list, ...)
+ pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
+ host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
+ guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
+In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
+Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code ·
+
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | select -Skip 1)
+# the gate mutex; an abandoned one is ours
+function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
-# ---- wt: a worktree per agent; deps linked from -LinkFrom (never install into a linked folder), hooks really run
+# ---- wt: a worktree per agent; deps linked, never installed
 function Invoke-Wt {
 param(
  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
@@ -23,13 +26,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
-# else git -C hits an enclosing repo
+# else git -C hits an outer repo
 function Resolve-Wt($d) {
  if (-not $d) { $d = (Get-Location).Path }
  if (-not (Test-Path -LiteralPath $d -PathType Container)) { throw "no such folder: $d" }
  $d = (Resolve-Path -LiteralPath $d).Path.TrimEnd('\', '/')
- $pre = git -C $d rev-parse --show-prefix 2>$null   # '' only at a worktree top (link paths compare right too)
- if ($LASTEXITCODE -or "$pre".Trim()) { throw "$d is not the top of a git worktree (git toplevel: $(git -C $d rev-parse --show-toplevel 2>$null)) - refusing; pass the worktree folder as -Dir" }
+ $pre = git -C $d rev-parse --show-prefix 2>$null   # '' only at a worktree top
+ if ($LASTEXITCODE -or "$pre".Trim()) { throw "$d is not the top of a git worktree (top: $(git -C $d rev-parse --show-toplevel 2>$null)); pass the worktree folder as -Dir" }
  $d
 }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
@@ -43,9 +46,9 @@ function Add-DepLinks($path, $src, $target) {
  foreach ($pj in (git -C $path ls-files -- 'package.json' '*/package.json' | ? { $_ -notmatch 'node_modules/' })) {
   $rel = Split-Path $pj; if (-not $rel) { $rel = "." }; $from = Join-Path $src (Join-Path $rel 'node_modules'); $to = Join-Path $path (Join-Path $rel 'node_modules')
   if ((Test-Path $from) -and -not (Test-Path $to)) {
-   $null = Set-NodeModules $to $from $src $path; $made += $to   # one junction, or a farm for workspace packages (lib.ps1)
+   $null = Set-NodeModules $to $from $src $path; $made += $to
    $a = DepHash (Join-Path $path $pj); $b = DepHash (Join-Path $src $pj)
-   if ($a -ne $b) { Write-Warning "$pj dependencies differ from $src - linked node_modules may be the wrong versions.$(if ($target) { " Use -LinkFrom <a checkout of $target with matching installs>." })" }
+   if ($a -ne $b) { Write-Warning "$pj deps differ from ${src}: linked node_modules may be wrong.$(if ($target) { " Use -LinkFrom <a $target checkout with matching installs>." })" }
   }
  }
  foreach ($py in (git -C $path ls-files -- 'pyproject.toml' '*/pyproject.toml' 'requirements.txt' '*/requirements.txt')) {
@@ -62,7 +65,7 @@ function Copy-HookDirs($path, $sources) {
   }
  }
 }
-# git sees a symlink as a file (add -A would commit it): exclude each link
+# add -A would commit a symlink
 function Exclude-Links($path, $links) {
  if (-not $links -or $KitIsWindows) { return }
  $ex = Join-Path (git -C $path rev-parse --path-format=absolute --git-common-dir).Trim() 'info/exclude'
@@ -82,8 +85,8 @@ switch ($Action) {
    $Root = if ($kcRoot) { $kcRoot } else { (Split-Path $Repo) + '-wt' }
   }
   $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
-  if (Test-Path $path) { throw "$path already exists - resume there (dev.ps1 wt status -Dir $path) or pick another -Name" }
-  # another branch's installs = wrong deps; a missing configured source is an error, no fallback
+  if (Test-Path $path) { throw "$path exists: resume there (wt status -Dir $path) or pick another -Name" }
+  # a missing configured dep source is an error, no fallback
   $r = $null
   $kc = Join-Path $PSScriptRoot 'kit.local.json'
   if (Test-Path $kc) {
@@ -93,12 +96,12 @@ switch ($Action) {
   if (-not $LinkFrom) {
    if ($r) {
     $cand = if ($r.linkFromByTarget -and $r.linkFromByTarget.$Target) { $r.linkFromByTarget.$Target } elseif ($r.linkFrom -and $Target -eq $r.target) { $r.linkFrom } else { $null }
-    if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json names $cand as the dependency source for $(Split-Path $Repo -Leaf) target $Target, but it does not exist. Create it (git worktree add --detach <path> origin/$Target + a frozen-lockfile install) or fix kit.local.json." }
+    if ($cand -and -not (Test-Path $cand)) { throw "kit.local.json dep source $cand ($(Split-Path $Repo -Leaf), target $Target) is missing: create it (git worktree add --detach <path> origin/$Target + frozen-lockfile install) or fix kit.local.json" }
     if ($cand) { $LinkFrom = $cand; "linking dependencies from $cand (kit.local.json, target $Target)" }
    }
   }
   New-Item -ItemType Directory -Force $Root | Out-Null
-  # a root inside another repo must not show there as untracked
+  # else the root shows as untracked in an outer repo
   $outer = git -C $Root rev-parse --show-toplevel 2>$null
   if ($LASTEXITCODE -eq 0 -and $outer) {
    $outer = (Resolve-Path $outer.Trim()).Path; $rootFull = (Resolve-Path $Root).Path
@@ -110,11 +113,11 @@ switch ($Action) {
    }
   }
   G -C $Repo fetch -q origin $Target | Out-Null
-  $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # a bare name matches by suffix
+  $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name: suffix match
   git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
   # reuse the local branch: -B would lose unpushed commits
-  if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch already exists - checked it out as it is$(if ($remoteBranch) { " (also on origin: compare with origin/$Branch before pushing)" })" }
-  elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch already on origin - checked it out" }
+  if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch exists: checked out as is$(if ($remoteBranch) { " (also on origin: compare before pushing)" })" }
+  elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch on origin: checked out" }
   else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
   Meta $path 'target' $Target
   $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
@@ -123,7 +126,7 @@ switch ($Action) {
   foreach ($lp in @($r.linkPaths) | ? { $_ }) {
    $from = @((Join-Path $src $lp), (Join-Path $Repo $lp)) | ? { Test-Path $_ } | select -First 1
    $to = Join-Path $path $lp
-   if (-not $from) { Write-Warning "linkPaths: $lp not found in $src or $Repo - skipped"; continue }
+   if (-not $from) { Write-Warning "linkPaths: no $lp in $src or $Repo, skipped"; continue }
    if (Test-Path $to) { continue }
    New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
    if ((Get-Item $from).PSIsContainer) { New-DirLink $to $from; $links += $to } else { Copy-Item $from $to }
@@ -138,8 +141,8 @@ switch ($Action) {
  }
  'sync' {
   $Dir = Resolve-Wt $Dir
-  $t = Meta $Dir 'target'; if (-not $t) { throw "no target recorded for $Dir - run: git -C $Dir rebase origin/<target>" }
-  if (git -C $Dir status --porcelain --untracked-files=no) { throw 'uncommitted changes - commit them first (a WIP commit is fine; never git stash, it is shared across worktrees)' }
+  $t = Meta $Dir 'target'; if (-not $t) { throw "no target for ${Dir}: git -C $Dir rebase origin/<target>" }
+  if (git -C $Dir status --porcelain --untracked-files=no) { throw 'uncommitted changes: commit first (WIP is fine; never git stash)' }
   G -C $Dir fetch -q origin $t | Out-Null
   git -C $Dir rebase "origin/$t"
   if ($LASTEXITCODE) { "REBASE CONFLICT. Append-only files (changelog masters, nav/i18n lists): $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code: resolve by hand. Then git add + git -C $Dir rebase --continue, and re-run dev.ps1 check."; exit 1 }
@@ -149,7 +152,7 @@ switch ($Action) {
   $Dir = Resolve-Wt $Dir
   if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = gc -LiteralPath $MessageFile -Raw -Encoding utf8 }
   if (-not $Message -or -not $Message.Trim()) { throw 'commit needs -Message or -MessageFile' }
-  # a worktree not made by new lacks .husky/_ and hook node_modules
+  # a worktree not made by new lacks .husky/_ and hook deps
   $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
   $cw = git --git-dir="$common" config core.worktree
   $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
@@ -162,14 +165,13 @@ switch ($Action) {
   }
   $hp = (git -C $Dir config core.hooksPath)
   $c = @()
-  # a hooksPath without hook scripts skips hooks too
   $hpFull = if ($hp -and [IO.Path]::IsPathRooted($hp)) { $hp } elseif ($hp) { Join-Path $Dir $hp }
   if ($hp -and -not (Test-Path (Join-Path $hpFull 'pre-commit')) -and -not (Test-Path (Join-Path $hpFull 'prepare-commit-msg'))) {
    if (Test-Path (Join-Path $Dir '.husky')) { $c = @('-c', 'core.hooksPath=.husky') }
-   else { Write-Warning "core.hooksPath=$hp does not exist in this worktree - hooks would be skipped" }
+   else { Write-Warning "core.hooksPath=$hp missing here: hooks would be skipped" }
   }
   if (-not $NoStage) { git -C $Dir add -A }
-  # merge subjects name branches, not a Conventional type
+  # merge subjects name branches
   $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
   $null = Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message
   git -C $Dir @c commit -m $Message
@@ -187,24 +189,23 @@ switch ($Action) {
  'remove' {
   $Dir = Resolve-Wt $Dir
   $links = @(@(@(Meta $Dir 'links') | ? { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | % { $_.FullName }) | Sort-Object -Unique)
-  # farm entries go with the farm
   $farms = @($links | ? { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })
   $links = @($links | ? { $l = $_; -not @($farms | ? { $l.StartsWith($_ + [IO.Path]::DirectorySeparatorChar) }).Count })
   if (-not $Force) {
-   # git's dirty test before any link goes; our links don't count
+   # dirty test before links go; ours don't count
    $mine = @($links | % { [IO.Path]::GetRelativePath($Dir, $_).Replace('\', '/') })
    $dirty = @(git -C $Dir status --porcelain | ? { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) })
    if ($dirty) { throw "uncommitted or untracked files in $Dir - commit/push or delete them, or pass -Force:`n$($dirty | Select-Object -First 10 | Out-String)" }
   }
   $undo = @(foreach ($l in $links) { if ($l -notin $farms) { , @($l, [string]@((Get-Item $l -Force).Target)[0]) } })
   $farmUndo = @(foreach ($f in $farms) { $m = Join-Path $f '.kit-farm.json'; if (Test-Path $m) { , @($f, ((gc $m -Raw).Trim() -split '\|')) } })
-  foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }   # links only, never their targets
+  foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }
   $main = ((git -C $Dir worktree list --porcelain | select -First 1) -replace '^worktree ', '')
   git -C $main worktree remove $(if ($Force) { '--force' }) $Dir
   if ($LASTEXITCODE) {
    foreach ($u in $undo) { if ($u[1] -and -not (Test-Path $u[0])) { New-DirLink $u[0] $u[1] } }
    foreach ($u in $farmUndo) { $src = $u[1][0]; $wtr = $u[1][1]; $null = Set-NodeModules $u[0] $src (git -C $Dir rev-parse --path-format=absolute --git-common-dir | Split-Path) $wtr }
-   throw "git worktree remove failed for $Dir (dependency links restored); fix what git reports, or pass -Force"
+   throw "git worktree remove failed for $Dir (links restored): fix what git reports, or -Force"
   }
   "removed $Dir"
  }
@@ -212,7 +213,7 @@ switch ($Action) {
 }
 }
 
-# ---- stack: commands from the nearest marker file up to the git root; .claude-stack.json overrides
+# ---- stack: nearest marker file up to the git root; .claude-stack.json overrides
 function Invoke-Stack {
 param([string]$Dir = (Get-Location).Path, [switch]$Json)
 $ErrorActionPreference = 'Stop'
@@ -224,7 +225,7 @@ function Wrapper($d, $name, $winExt, $fallback) {
  $fallback
 }
 
-function Has($d, $pattern) { [bool](gci -LiteralPath $d -Filter $pattern -File -ea 0 | select -First 1) }
+function Has($d, [string[]]$pattern) { foreach ($p in $pattern) { if (gci -LiteralPath $d -Filter $p -File -ea 0 | select -First 1) { return $true } }; $false }
 function First($d, $pattern) { gci -LiteralPath $d -Filter $pattern -File -ea 0 | select -First 1 }
 function ReadJson($f) { try { gc -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
 function ReadText($f) { if (Test-Path -LiteralPath $f) { gc -LiteralPath $f -Raw -ea 0 } else { '' } }
@@ -251,7 +252,6 @@ function TsProject($d) {
  $null
 }
 
-# no unit-test target: spec.mjs runs specs under node
 function NodeSpecCmd { "node `"$($KitCmd.spec)`" {tests}" }
 
 function Get-NodeTools($d) {
@@ -261,12 +261,12 @@ function Get-NodeTools($d) {
  $scripts = if ($pkg.scripts) { $pkg.scripts.PSObject.Properties.Name } else { @() }
  $jestCfg = @('jest-unit.config.json', 'jest.config.js', 'jest.config.ts', 'jest.config.json', 'jest.config.cjs', 'jest.config.mjs') | ? { Test-Path (Join-Path $d $_) } | select -First 1
  [pscustomobject]@{
-  Deps    = $deps; Scripts = $scripts
-  Ts      = Test-Path (Join-Path $d 'tsconfig.json')
-  Jest    = ($deps -contains 'jest') -or [bool]$jestCfg
+  Deps = $deps; Scripts = $scripts
+  Ts = Test-Path (Join-Path $d 'tsconfig.json')
+  Jest = ($deps -contains 'jest') -or [bool]$jestCfg
   JestCfg = $jestCfg
-  Vitest  = $deps -contains 'vitest'
-  Eslint  = ($deps -contains 'eslint') -or (Has $d 'eslint.config.*') -or (Has $d '.eslintrc*')
+  Vitest = $deps -contains 'vitest'
+  Eslint = ($deps -contains 'eslint') -or (Has $d 'eslint.config.*', '.eslintrc*')
  }
 }
 
@@ -277,19 +277,18 @@ function Get-Stack($d) {
  if (Test-Path (Join-Path $d 'pom.xml')) {
   $s = 'java-maven'
   $mvn = Wrapper $d 'mvnw' 'cmd' 'mvn'
-  # offline: no repo lock contention between parallel builds
+  # offline: no repo lock fights
   $off = if ((Get-KitSetting 'build.mavenOffline' $true) -ne $false -and "$(Get-KitSetting 'build.mavenOffline' $true)" -ne 'false' -and (Test-Path (Join-Path $HOME '.m2/repository'))) { '-o ' } else { '' }
   $c.compile = "$mvn $off-q compile"
   $c.test = "$mvn $off-q test -Dtest={tests} -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false"
   $c.build = "$mvn $off-q package -DskipTests"
   if ((ReadText (Join-Path $d 'pom.xml')) -match 'spring-boot') { $c.run = "$mvn $($off)spring-boot:run" }
  }
- elseif ((Has $d 'build.gradle') -or (Has $d 'build.gradle.kts') -or (Has $d 'settings.gradle*')) {
+ elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
   $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
   $android = (gci -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ea 0 | select -First 1)
   if ($android) {
    $s = 'android-gradle'
-   # productFlavors: no plain Debug tasks
    $var = [string](ReadJson (Join-Path $d '.claude-stack.json')).androidVariant
    if (-not $var) {
     $var = 'Debug'
@@ -310,13 +309,12 @@ function Get-Stack($d) {
    $c.run = if ((@(gci -LiteralPath $d -Filter 'build.gradle*' -File -ea 0 | % { ReadText $_.FullName }) -join ' ') -match 'org\.springframework\.boot') { "$gw bootRun" } else { "$gw run" }
   }
  }
- elseif ((Has $d '*.sln') -or (Has $d '*.csproj') -or (Has $d '*.fsproj') -or (Has $d '*.vbproj')) {
-  # a non-SDK project needs MSBuild
+ elseif (Has $d '*.sln', '*.csproj', '*.fsproj', '*.vbproj') {
   $projs = gci -LiteralPath $d -Recurse -Depth 3 -Include *.csproj, *.fsproj, *.vbproj -File -ea 0 | select -First 50
   $legacy = [bool]($projs | ? { -not (Select-String -LiteralPath $_.FullName -Pattern '<Project\s+Sdk=' -Quiet) } | select -First 1)
   if ($legacy) {
    $s = 'dotnet-msbuild'
-   # msbuild is on PATH only in a Developer prompt
+   # msbuild: on PATH only in a Developer prompt
    $msb = 'msbuild'; $vst = 'vstest.console.exe'
    $vswhere = if ($KitIsWindows -and ${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe' }
    if ($vswhere -and (Test-Path $vswhere)) {
@@ -332,7 +330,7 @@ function Get-Stack($d) {
    $c.test = 'dotnet test "{sln}" -nologo --filter "{tests}"'
    $c.format = 'dotnet format "{sln}" --verify-no-changes'
    $c.build = 'dotnet build "{sln}" -nologo -v q -c Release'
-   if ((Has $d '*.csproj') -or (Has $d '*.fsproj')) { $c.run = 'dotnet run --urls http://localhost:{port}' }
+   if (Has $d '*.csproj', '*.fsproj') { $c.run = 'dotnet run --urls http://localhost:{port}' }
   }
  }
  elseif (Test-Path (Join-Path $d 'angular.json')) {
@@ -372,12 +370,12 @@ function Get-Stack($d) {
   $c.run = if ($s -eq 'react-native') { if ($n.Deps -contains 'expo') { 'npx expo start --port {port}' } else { 'npx react-native start --port {port}' } }
       elseif ($n.Scripts -contains 'dev') { NodeRun $pm 'dev' '' } elseif ($n.Scripts -contains 'start') { NodeRun $pm 'start' '' } else { $null }
  }
- elseif ((Has $d 'pyproject.toml') -or (Has $d 'requirements*.txt') -or (Has $d 'setup.py') -or (Has $d 'Pipfile')) {
+ elseif (Has $d 'pyproject.toml', 'requirements*.txt', 'setup.py', 'Pipfile') {
   $s = 'python'; $deps = @('.venv')
   $py = if ($KitIsWindows -and (Test-Path (Join-Path $d '.venv\Scripts\python.exe'))) { '.venv\Scripts\python.exe' }
      elseif (-not $KitIsWindows -and (Test-Path (Join-Path $d '.venv/bin/python'))) { '.venv/bin/python' }
      elseif ($KitIsWindows -or -not (Resolve-Tool python3)) { 'python' } else { 'python3' }
-  $c.compile = "$py -m compileall -q -x `"[\\/](\.venv|venv|node_modules|\.git)[\\/]`" {files}"   # never walk a linked .venv
+  $c.compile = "$py -m compileall -q -x `"[\\/](\.venv|venv|node_modules|\.git)[\\/]`" {files}"
   $cfgText = @('pyproject.toml', 'setup.cfg', 'tox.ini') | % { ReadText (Join-Path $d $_) }
   $have = $null
   $pyExe = if ($py -match '^\.venv') { Join-Path $d $py } else { (Resolve-Tool $py) }
@@ -385,9 +383,9 @@ function Get-Stack($d) {
    $have = @(& $pyExe -c "import importlib.util as u; print(' '.join(m for m in ('ruff','flake8','pytest') if u.find_spec(m)))" 2>$null) -join ' '
    if ($LASTEXITCODE) { $have = $null }
   }
-  $ruffCfg = (Has $d 'ruff.toml') -or (Has $d '.ruff.toml') -or ("$cfgText" -match '\[tool\.ruff')
+  $ruffCfg = (Has $d 'ruff.toml', '.ruff.toml') -or ("$cfgText" -match '\[tool\.ruff')
   $flakeCfg = (Has $d '.flake8') -or ("$cfgText" -match '\[flake8\]')
-  $pytestCfg = (Has $d 'pytest.ini') -or (Has $d 'conftest.py') -or ("$cfgText" -match '\[tool\.pytest|\[pytest\]|\[tool:pytest\]')
+  $pytestCfg = (Has $d 'pytest.ini', 'conftest.py') -or ("$cfgText" -match '\[tool\.pytest|\[pytest\]|\[tool:pytest\]')
   if ($null -eq $have) { $c.lint = if ($flakeCfg -and -not $ruffCfg) { "$py -m flake8 {files}" } else { "$py -m ruff check {files}" }; $c.test = "$py -m pytest {tests} -q" }
   else {
    $c.lint = if ($have -match 'ruff' -and ($ruffCfg -or -not ($flakeCfg -and $have -match 'flake8'))) { "$py -m ruff check {files}" } elseif ($have -match 'flake8') { "$py -m flake8 {files}" } else { $null }
@@ -435,7 +433,7 @@ while ($d) {
  if (-not $parent -or $parent -eq $d) { break }
  $d = $parent
 }
-if (-not $hit) { throw "No known stack under $Dir (looked up to the git root). Add a .claude-stack.json there." }
+if (-not $hit) { throw "No known stack under $Dir (up to the git root): add a .claude-stack.json" }
 if ($Json) { $hit | ConvertTo-Json -Depth 4 }
 else {
  "stack: $($hit.stack)   dir: $($hit.dir)$(if ($hit.solution) { "   solution: $($hit.solution)" })"
@@ -443,7 +441,7 @@ else {
 }
 }
 
-# ---- gate: machine-wide memory gate so parallel builds never exhaust RAM; exit = the command's code, 3 = not started in time
+# ---- gate: machine-wide memory gate; exit = the command's code, 3 = not started in time
 function Invoke-Gate {
 param(
  [Parameter(Mandatory)][string]$Cmd,
@@ -453,7 +451,7 @@ param(
  [double]$NeedGB = 0,
  [int]$MaxParallel = 0
 )
-# dynamic heap caps override inherited flags (MAVEN_OPTS=-Xmx16g)
+# heap caps replace inherited -Xmx
 $HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
 if ($KeepFreeGB -lt 0) { $KeepFreeGB = [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
 $StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
@@ -463,23 +461,23 @@ if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = '-Dorg.gradle.workers.max=4' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 $Kinds = [ordered]@{
- 'emulator'      = @('^exit 0 #emulator', 4.5)
+ 'emulator' = @('^exit 0 #emulator', 4.5)
  'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
- 'android-test'  = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
- 'gradle'        = @('gradle(w|w\.bat)?\b', 3.5)
- 'rn-bundle'     = @('export:embed|react-native bundle|expo export', 3)
- 'e2e'           = @('cypress|playwright', 3.5)
- 'ng-test'       = @('ng test|karma', 3)
- 'web-build'     = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
- 'maven-test'    = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
- 'maven'         = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
- 'dotnet'        = @('msbuild|dotnet (build|test|publish)', 3)
- 'rust'          = @('cargo (build|test|clippy|check)', 4)
- 'native'        = @('cmake --build|\bmake\b', 3)
- 'js-test'       = @('jest|vitest', 2)
- 'tsc-lint'      = @('\btsc\b|eslint', 2)
- 'python'        = @('pytest|mypy|ruff|compileall', 1.5)
- 'go'            = @('go (build|test|vet)', 2)
+ 'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
+ 'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
+ 'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
+ 'e2e' = @('cypress|playwright', 3.5)
+ 'ng-test' = @('ng test|karma', 3)
+ 'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
+ 'maven-test' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
+ 'maven' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
+ 'dotnet' = @('msbuild|dotnet (build|test|publish)', 3)
+ 'rust' = @('cargo (build|test|clippy|check)', 4)
+ 'native' = @('cmake --build|\bmake\b', 3)
+ 'js-test' = @('jest|vitest', 2)
+ 'tsc-lint' = @('\btsc\b|eslint', 2)
+ 'python' = @('pytest|mypy|ruff|compileall', 1.5)
+ 'go' = @('go (build|test|vet)', 2)
 }
 function Get-Kind([string]$c) { foreach ($k in $Kinds.Keys) { if ($c -match $Kinds[$k][0]) { return $k } }; 'other' }
 
@@ -499,7 +497,7 @@ function ConvertTo-CmdSeparators([string]$c) {
  }
  $sb.ToString()
 }
-if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';' separator - running as: $semi"; $Cmd = $semi } }
+if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';': running $semi"; $Cmd = $semi } }
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
 $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
@@ -527,7 +525,7 @@ if ($top) {
 $histKey = "$kind|$project"
 $hist = Read-History
 $samples = @($hist[$histKey] | ? { $_ })
-$peaks = @($samples | % { [double]$_.gb })
+$peaks = @($samples | % { [double]$_.gb }); $peakMax = ($peaks | select -Last 5 | measure -Maximum).Maximum
 $secs = @($samples | % { [double]$_.sec } | Sort-Object)
 # small builds may backfill past a starving head
 function Get-MedianSec([double[]]$Secs) { $s = @($Secs | Sort-Object); if ($s.Count -lt 2) { return -1 }; $s[[int][math]::Floor($s.Count / 2)] }
@@ -546,10 +544,10 @@ $nodeKind = $kind -in @('ng-test', 'web-build', 'js-test', 'tsc-lint', 'rn-bundl
 $gradleKind = $kind -in @('android-build', 'android-test', 'gradle')
 $heap = 0
 if ($jvmKind -or $nodeKind -or $gradleKind) {
- # G1 free-ratios keep the heap at live data, so the learned peak can fall
+ # G1 free-ratios let the learned peak fall
  $startHeap = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }   # not $startGB: same variable
  $maxGB = [math]::Max($startHeap, 8)
- $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling((($peaks | select -Last 5 | measure -Maximum).Maximum) * 1.25) } else { $startHeap }
+ $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling($peakMax * 1.25) } else { $startHeap }
  $heap = [math]::Min($maxGB, [math]::Max($HeapMinGB, $heap))
  if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history: the heap can fill up
 }
@@ -570,7 +568,7 @@ $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::G
 $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
 $heapBase = $heap
 # a smaller heap thrashes in GC
-$heapFloor = if ($heap -gt 0 -and $peaks.Count -ge 2) { [math]::Min($heapBase, [math]::Max($HeapMinGB, [int][math]::Ceiling((($peaks | select -Last 5 | measure -Maximum).Maximum) * 1.1))) } else { $HeapMinGB }
+$heapFloor = if ($heap -gt 0 -and $peaks.Count -ge 2) { [math]::Min($heapBase, [math]::Max($HeapMinGB, [int][math]::Ceiling($peakMax * 1.1))) } else { $HeapMinGB }
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $startsFile = Join-Path $ledger 'starts.jsonl'
 $myTicket = Join-Path $queueDir "$PID.json"
@@ -619,7 +617,7 @@ function Get-State {
  }
  [pscustomobject]@{ Avail = (Get-AvailGB); Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
 }
-# head waited 20+ min: one small build at a time, so it waits at most one short build
+# head waited 20+ min: one small build at a time
 function Get-BackfillMode([double]$HeadNeed, [double]$HeadWaitedMin, [double]$Need, [double]$Room, [bool]$Small, [int]$SmallRunning) {
  if ($HeadNeed -le $Room -or $Need -gt $Room) { return '' }
  if ($HeadWaitedMin -lt 20) { return 'backfill' }
@@ -634,14 +632,13 @@ function Top-Users($Snap) {
 $gate = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate')
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $learned = if ($NeedGB -le 0 -and $peaks.Count -ge 2) { " (learned from $($peaks.Count) runs)" } else { '' }
-$usual = if ($secs.Count -ge 2) { " usually ~$([math]::Ceiling($secs[[int][math]::Floor($secs.Count / 2)] / 60)) min," } else { '' }
+$usual = if ($secs.Count -ge 2) { " usually ~$([math]::Ceiling((Get-MedianSec $secs) / 60)) min," } else { '' }
 Write-Host "[gate] $kind needs ~$need GB$learned,$usual keep $KeepFreeGB GB free: $Cmd"
 $proc = $null; $entry = $null; $waits = 0
 Write-Ticket
 try {
 while ((Get-Date) -lt $deadline) {
- $got = $false
- try { $got = $gate.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+ $got = Lock-Gate $gate
  if (-not $got) { continue }
  try {
   $s = Get-State
@@ -650,7 +647,7 @@ while ((Get-Date) -lt $deadline) {
    $share = [math]::Floor(($s.Avail - $s.Promised - $KeepFreeGB) / $queue.Count - 0.5)
    $h2 = [math]::Min($heapBase, [math]::Max($heapFloor, $share))
    if ($h2 -ne $heap) {
-    Write-Host "[gate] $($queue.Count) builds queued, ~$share GB each: heap $heap GB -> $h2 GB (floor $heapFloor = real usage, ceiling $heapBase)"
+    Write-Host "[gate] $($queue.Count) builds queued, ~$share GB each: heap $heap GB -> $h2 GB (floor $heapFloor, ceiling $heapBase)"
     if ($peaks.Count -lt 2) { $need = $h2 + 0.5 }; $heap = $h2; Write-Ticket
    }
   }
@@ -663,7 +660,7 @@ while ((Get-Date) -lt $deadline) {
    $headWaited = ((Get-Date) - [datetime]$head.since).TotalMinutes
    $mode = Get-BackfillMode ([double]$head.need) $headWaited $need $room (Test-SmallBuild $need $medianSec) $s.Backfills
    if ($mode -eq 'backfill') { $myTurn = $true; Write-Host "[gate] backfilling ahead of $($head.owner) (its $($head.need) GB doesn't fit yet)" }
-   elseif ($mode -eq 'small') { $myTurn = $true; $smallFill = $true; Write-Host "[gate] small build (~$([int]$medianSec) s, $need GB) backfilling ahead of $($head.owner) (waited $([int]$headWaited) min; its $($head.need) GB doesn't fit yet)" }
+   elseif ($mode -eq 'small') { $myTurn = $true; $smallFill = $true; Write-Host "[gate] small build (~$([int]$medianSec) s, $need GB) backfilling ahead of $($head.owner) (waited $([int]$headWaited) min, needs $($head.need) GB)" }
   }
   if (-not $myTurn) {
    $waits++; Add-KitMemSample $s.Avail
@@ -714,7 +711,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
  # builds finish together; an unreadable file is never reset
  $got = $false
  try {
-  try { $got = $gate.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+  $got = Lock-Gate $gate
   if ($got) {
    $txt = if (Test-Path $histFile) { gc $histFile -Raw -EA Stop } else { '' }
    $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -EA Stop } else { @{} }
@@ -729,7 +726,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
 exit $code
 }
 
-# ---- check: gated steps for the detected stack; exit = the first failing step's code (3 gate, 4 no Docker, 5 UNRUN)
+# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate, 4 no Docker, 5 UNRUN)
 function Invoke-Check {
 param(
  [string]$Dir = (Get-Location).Path,
@@ -746,13 +743,13 @@ $ErrorActionPreference = 'Stop'
 $script:anyUnrun = $false
 $K = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
+function Hash12([string]$s) { [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
 Write-Host "[check] $($st.stack) in $($st.dir)"
 
 # @{upstream} alone = the pushed branch: misses commits
 function Get-ChangedFiles {
  $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
- $gd = (git -C $st.dir rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
- $tgt = if (Test-Path (Join-Path $gd 'claude-target')) { "origin/$((Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim())" }
+ $tgt = if ($t = Get-WtTarget) { "origin/$t" }
  $refs = @($tgt, ((git -C $st.dir symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null) | select -First 1), '@{upstream}') | ? { $_ }
  $base = $null; foreach ($r in $refs) { $base = (git -C $st.dir merge-base HEAD $r 2>$null); if ($LASTEXITCODE -eq 0 -and $base) { break }; $base = $null }
  $list = @(git -C $st.dir diff --name-only --diff-filter=ACMR $(if ($base) { $base } else { 'HEAD' }) -- . 2>$null) +
@@ -760,6 +757,11 @@ function Get-ChangedFiles {
  @($list | ? { $_ } | % { [IO.Path]::GetFullPath((Join-Path $top $_)) } | ? { Test-Path -LiteralPath $_ } | select -Unique)
 }
 
+# the target wt new recorded
+function Get-WtTarget {
+ $gd = git -C $st.dir rev-parse --git-dir 2>$null; if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
+ if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (gc (Join-Path $gd 'claude-target') -TotalCount 1).Trim() }
+}
 # TS5103: one retry with a temp tsconfig; fail only on changed files + config errors
 function Invoke-Typecheck([string]$TcCmd) {
  $top = git -C $st.dir rev-parse --show-toplevel 2>$null
@@ -780,11 +782,10 @@ function Invoke-Typecheck([string]$TcCmd) {
  $raw = try { gc -LiteralPath $base -Raw } catch { '' }
  # the marker skips a doomed first run (~1 GB)
  $igd = if ($raw -match '"ignoreDeprecations"\s*:\s*"([^"]*)"') { $Matches[1] } else { '' }
- $md5 = { param($s) [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
- $flag = Join-Path (Get-KitPath tsbuild -Create) "ts5103.$(& $md5 "$($base.ToLower())|$igd|$tsVer").flag"
+ $flag = Join-Path (Get-KitPath tsbuild -Create) "ts5103.$(Hash12 "$($base.ToLower())|$igd|$tsVer").flag"
  if (Test-Path -LiteralPath $flag) {
   $out = @()
-  Write-Host "[check] TS5103 known for this project (marker $(Split-Path $flag -Leaf)): skipping the first tsc run"
+  Write-Host "[check] TS5103 known (marker $(Split-Path $flag -Leaf)): skipping the first tsc run"
  } else {
   & $KitCmd.dev gate -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
   $rc = $LASTEXITCODE
@@ -807,11 +808,11 @@ function Invoke-Typecheck([string]$TcCmd) {
   $tsCfg.include = @("$pd/**/*")
   $tsCfg.exclude = @($ex | % { if ([IO.Path]::IsPathRooted($_)) { $_ } else { "$pd/$_" } })
  }
- $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
+ $hash = Hash12 $st.dir.ToLower()
  $tmp = Join-Path (Get-KitPath cache -Create) "tsconfig.ts5103.$hash.$PID.json"
  $tsb = Join-Path (Get-KitPath tsbuild -Create) "$hash.ts5103.tsbuildinfo"
  $tsc = if ($bin) { "`"$bin`"" } else { 'npx tsc' }
- Write-Host "[check] typecheck TS5103 (ignoreDeprecations) fallback: running with a temp tsconfig (ignoreDeprecations $ver) and $(if ($bin) { $bin } else { 'npx tsc' })"
+ Write-Host "[check] typecheck TS5103 fallback: temp tsconfig (ignoreDeprecations $ver), $(if ($bin) { $bin } else { 'npx tsc' })"
  $fbCmd = "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
  $fbStart = [DateTimeOffset]::Now
  try {
@@ -840,13 +841,12 @@ function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
   if ($cur -eq 'mine') { $mine.Add($l) }
  }
  $mine | % { Write-Host $_ }
- Write-Host "BASELINE: $baseN errors outside your changes (in $($baseFiles.Count) files; not failing this check; full log: $log)"
- if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or in the config)"; return 1 }
+ Write-Host "BASELINE: $baseN errors outside your changes ($($baseFiles.Count) files; not failing; log: $log)"
+ if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or config)"; return 1 }
  if ($rc -and -not $blocks) { $out2 | select -Last 30 | % { Write-Host $_ }; return $rc }
  if ($baseN -gt $script:TypecheckUnrunAbove) {
-  $gd = (git -C $st.dir rev-parse --git-dir 2>$null); if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
-  $tgt = if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (gc (Join-Path $gd 'claude-target') -TotalCount 1).Trim() } else { '<target>' }
-  Write-Host "[check] typecheck UNRUN: $baseN baseline errors (> $script:TypecheckUnrunAbove) - the linked node_modules do not match this branch, so real errors hide in the baseline. Say 'typecheck unrun' in the MR; the lead can set kit.local.json linkFromByTarget.$tgt to a checkout whose node_modules match $tgt (dev-kit reference/configuration.md)."
+  $tgt = Get-WtTarget; if (-not $tgt) { $tgt = '<target>' }
+  Write-Host "[check] typecheck UNRUN: $baseN baseline errors (> $script:TypecheckUnrunAbove): the linked node_modules do not match this branch, real errors hide there. Say 'typecheck unrun' in the MR; the lead sets kit.local.json linkFromByTarget.$tgt to a checkout with matching node_modules."
   return 'unrun'
  }
  if ($rc -and $GateCmd) { Set-GateSampleOk $GateCmd $Since }
@@ -861,7 +861,7 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
  $fromUtc = $Since.UtcDateTime.AddSeconds(-2)
  $mx = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate'); $got = $false
  try {
-  try { $got = $mx.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+  $got = Lock-Gate $mx
   if (-not $got) { return }
   $h = gc -LiteralPath $hf -Raw -EA Stop | ConvertFrom-Json -AsHashtable -EA Stop
   if ($h -isnot [hashtable]) { return }
@@ -940,7 +940,7 @@ foreach ($s in $steps) {
  $cmd = $st.commands.$s
  if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
  if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
- if ($s -eq 'test' -and $cmd -match 'spec\.mjs') { Write-Host '[check] no unit-test target: running spec.mjs (specs under node; DOM specs under the project''s jsdom if it has one; TestBed/fakeAsync specs are reported NOT RUN)' }
+ if ($s -eq 'test' -and $cmd -match 'spec\.mjs') { Write-Host '[check] no unit-test target: spec.mjs runs specs under node (DOM: the project''s jsdom if any; TestBed/fakeAsync: NOT RUN)' }
  if ($Touched -and $s -eq 'test') {
   # CI may skip tests
   $chg = @(Get-ChangedFiles)
@@ -956,10 +956,10 @@ foreach ($s in $steps) {
   $sel = @($found | ? { $_ } | % { if ($byName) { [IO.Path]::GetFileNameWithoutExtension($_) } else { [IO.Path]::GetRelativePath($st.dir, $_) -replace '\\', '/' } } | select -Unique)
   Write-Host "[check] -Touched: $($sel.Count) test(s) for $($chg.Count) changed file(s)$(if ($sel.Count) { ': ' + ($sel -join ', ') })"
   if ($sel.Count) { $Tests = (@(@($Tests -split '[,\s]+' | ? { $_ }) + $sel) | select -Unique) -join ',' }
-  elseif (-not $Tests) { Write-Host '[check] -Touched: no test file matches the changed files - add tests (dev-kit Rules > Tests) or pass -Tests'; exit 1 }
+  elseif (-not $Tests) { Write-Host '[check] -Touched: no test file matches the changes: add tests (dev-kit Rules > Tests) or pass -Tests'; exit 1 }
  }
  if ($cmd -match '\{tests\}') {
-  if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests for the whole suite)" }
+  if (-not $Tests -and -not $AllTests) { throw "-Step test needs -Tests '<names or paths>' (or -AllTests)" }
   # commas reached runners as one name, spaces broke -Dtest
   $tl = @($Tests -split '[,\s]+' | ? { $_ })
   $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
@@ -967,7 +967,7 @@ foreach ($s in $steps) {
   $scripts = if ($pyRun -and $tl.Count) { @($tl | ? { $_ -match '\.py$' -and (Test-Path -LiteralPath (Join-Path $st.dir $_) -PathType Leaf) -and -not (Select-String -LiteralPath (Join-Path $st.dir $_) -Pattern '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)' -Quiet) }) } else { @() }
   if ($scripts.Count -and $scripts.Count -eq $tl.Count) {
    $cmd = ($scripts | % { "$pyRun `"$_`"" }) -join ' && '
-   Write-Host "[check] $($scripts.Count) script-style check file(s) without test cases: running each with python (exit code = the script's)"
+   Write-Host "[check] $($scripts.Count) file(s) without test cases: running each with python (exit = the script's)"
   } else {
    $joined = if ($cmd -match '-Dtest=\{tests\}') { $tl -join ',' } elseif ($cmd -match '--tests \{tests\}') { $tl -join ' --tests ' } elseif ($cmd -match '--include \{tests\}') { $tl -join ' --include ' } elseif ($cmd -match '(-run|-R) "\{tests\}"') { $tl -join '|' } else { $tl -join ' ' }
    $cmd = $cmd.Replace('{tests}', $joined)
@@ -990,7 +990,7 @@ foreach ($s in $steps) {
  if ($cmd -match '\{sln\}') {
   $sln = @(gci -LiteralPath $st.dir -Filter *.sln -File -ea 0)
   if (-not $sln.Count) { $sln = @(gci -LiteralPath $st.dir -File -ea 0 | ? { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
-  if ($sln.Count -ne 1) { throw "[check] $($st.dir): expected one .sln (or one project file), found $($sln.Count) - pass -Dir to the folder that has it" }
+  if ($sln.Count -ne 1) { throw "[check] $($st.dir): expected one .sln (or project file), found $($sln.Count): -Dir to its folder" }
   $cmd = $cmd.Replace('{sln}', $sln[0].FullName)
  }
  if ($cmd -match '\{files\}') {
@@ -1021,7 +1021,7 @@ foreach ($s in $steps) {
  if ($st.solution) { $cmd = $cmd -replace '\{sln\}', $st.solution }
  if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ea 0)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
  if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {
-  $hash = [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($st.dir.ToLower()))).Replace('-', '').Substring(0, 12)
+  $hash = Hash12 $st.dir.ToLower()
   $tsb = Get-KitPath tsbuild -Create
   $cmd += " --incremental --tsBuildInfoFile `"$(Join-Path $tsb "$hash.tsbuildinfo")`""
  }
@@ -1036,7 +1036,7 @@ foreach ($s in $steps) {
  if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
 }
 if (-not $Show -and -not $ran) { Write-Host "[check] nothing to run for $Step" }
-if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (an unchecked run is not a pass)'; exit 5 }
+if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (not a pass)'; exit 5 }
 exit 0
 }
 
@@ -1045,49 +1045,21 @@ function Invoke-Pipes {
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | ? { $_ })
-function GhState($url) {
- $pr = gh pr view $url --json state,statusCheckRollup 2>$null | ConvertFrom-Json
- if (-not $pr) { return [ordered]@{ mr = $url; status = 'unknown' } }
- if ($pr.state -eq 'MERGED') { return [ordered]@{ mr = $url; status = 'merged' } }
- $checks = @($pr.statusCheckRollup)
- if (-not $checks.Count) {
-  $repo = $url -replace '^https?://[^/]+/([^/]+/[^/]+)/pull/.*$', '$1'
-  $wf = gh api "repos/$repo/contents/.github/workflows" 2>&1 | Out-String
-  return [ordered]@{ mr = $url; status = $(if ($LASTEXITCODE -and $wf -match '\b404\b|Not Found') { 'no-ci' } else { 'no-pipeline' }) }
- }
- $res = @($checks | % { if ($_.conclusion) { $_.conclusion } elseif ($_.state) { $_.state } else { $_.status } } | % { "$_".ToUpper() })
- $bad = @($checks | ? { "$($_.conclusion)$($_.state)".ToUpper() -match 'FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE' })
- $o = [ordered]@{ mr = $url; status = $(if ($bad.Count) { 'failed' } elseif ($res | ? { $_ -match 'PENDING|QUEUED|IN_PROGRESS|EXPECTED|WAITING|REQUESTED' }) { 'running' } else { 'success' }) }
- if ($bad.Count) {
-  $o.job = $(if ($bad[0].name) { $bad[0].name } else { $bad[0].context })
-  $link = if ($bad[0].detailsUrl) { $bad[0].detailsUrl } else { $bad[0].targetUrl }
-  if ($link -match '/runs/(\d+)') { $o.error = ((gh run view $Matches[1] --repo ($url -replace '^https?://[^/]+/([^/]+/[^/]+)/pull/.*$', '$1') --log-failed 2>$null) -split "`n" | ? { $_ -match '(?i)error|fail|exception' } | select -Last 8) -join "`n" }
-  if (-not $o.error) { $o.error = "see $link" }
- }
- $o
-}
-function Test-NoCi($proj, $m) {
- $pj = Invoke-HostApi "projects/$proj"
- if (-not $pj -or $pj.only_allow_merge_if_pipeline_succeeds -or $pj.ci_config_path -or $pj.auto_devops_enabled -or -not $m.target_branch) { return $false }
- $f = glab api "projects/$proj/repository/files/.gitlab-ci.yml?ref=$([uri]::EscapeDataString($m.target_branch))" 2>&1 | Out-String
- [bool]($LASTEXITCODE -and $f -match '\b404\b' -and $f -notmatch 'file_name')
-}
+# any host (lib.ps1 section 5): no head pipeline -> no-ci (the repo's CI adapter finds no CI config) or no-pipeline (one may start)
 function State($url) {
- if ($url -match '^https?://[^/]+/[^/]+/[^/]+/pull/\d+') { return GhState $url }
- if ($url -notmatch '^https?://(?<h>[^/]+)/(?<p>.+?)/-/merge_requests/(?<i>\d+)') { return [ordered]@{ mr = $url; status = 'bad-url' } }
- $proj = $Matches.p -replace '/', '%2F'; $iid = $Matches.i
- $env:GITLAB_HOST = $Matches.h; $script:HostType = 'gitlab'   # else glab asks gitlab.com
- $m = Invoke-HostApi "projects/$proj/merge_requests/$iid" -NoMemo
+ $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
+ if ($u.type -eq 'gitlab' -and $url -match '^https?://([^/]+)/') { $env:GITLAB_HOST = $Matches[1] }   # else glab asks gitlab.com
+ $m = Invoke-HostVerb 'mr.get' $u -NoMemo
  if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
  if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }
  $p = $m.head_pipeline
- if (-not $p) { return [ordered]@{ mr = $url; status = $(if (Test-NoCi $proj $m) { 'no-ci' } else { 'no-pipeline' }) } }
+ if (-not $p) { return [ordered]@{ mr = $url; status = $(if ((Invoke-HostVerb 'ci.config' @{ repo = $u.repo; ref = $m.target_branch; type = $u.type }) -eq $false) { 'no-ci' } else { 'no-pipeline' }) } }
  $o = [ordered]@{ mr = $url; status = $p.status }
- if ($p.status -eq 'failed') {
-  $job = @(Invoke-HostApi "projects/$proj/pipelines/$($p.id)/jobs" | ? status -eq 'failed')[0]
+ if ($p.status -eq 'failed' -and $p.id) {
+  $job = @(Invoke-HostVerb 'ci.jobs' @{ repo = $u.repo; id = $p.id; type = $u.type } | ? status -eq 'failed')[0]
   if ($job) {
    $o.job = $job.name
-   $trace = ([string](Invoke-HostApi "projects/$proj/jobs/$($job.id)/trace")) -split "`n" | % { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
+   $trace = ([string](Invoke-HostVerb 'ci.log' @{ repo = $u.repo; id = $job.id; type = $u.type })) -split "`n" | % { $_ -replace '\x1b\[[0-9;]*m', '' -replace '^\S+Z \d+O ', '' }
    $o.error = (@($trace | ? { $_ -match '(?i)error|fail|invalid|exception|\[ERROR\]' } | select -Last 8) -join "`n")
   }
  }
@@ -1104,89 +1076,91 @@ do {
 [ordered]@{ done = (-not $busy); mrs = $states } | ConvertTo-Json -Depth 4 -Compress
 }
 
-# ---- guard: PreToolUse hook for the kit's hard rules; prints a deny or nothing; tests: guard -SelfTest
+# ---- guard: PreToolUse hook for the hard rules; prints a deny or nothing
 function Invoke-Guard {
 param([switch]$SelfTest)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
+ $da = 'default desktop app'; $rp = 'holds runs in progress'; $le = 'local env'; $hk = 'Hooks must run'
  $cases = @(
-  @('PowerShell', 'git stash', $true),
-  @('PowerShell', 'git -C x stash pop', $true),
-  @('PowerShell', '& "C:\Program Files\Git\bin\git.exe" stash list', $true),
-  @('PowerShell', '$s = $(git stash list); $s', $true),
-  @('PowerShell', 'pwsh -NoProfile -Command "git stash"', $true),
-  @('Bash', 'git stash', $true),
-  @('Bash', 'cd repo && git -C x stash pop', $true),
-  @('Bash', 'FOO=1 git --no-pager stash show', $true),
-  @('Bash', "bash -c 'git stash'", $true),
-  @('PowerShell', 'git commit -m "fix: never git stash here"', $false),
-  @('PowerShell', 'git commit -m "say `"git stash`" never"', $false),
-  @('PowerShell', "`$m = @'`nnever run git stash`n'@`ngit commit -m `$m", $false),
-  @('PowerShell', "Write-Output 'git stash is blocked'", $false),
-  @('Bash', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
-  @('Bash', "cat > note.md <<EOF`ngit stash is shared`nEOF", $false),
-  @('Bash', 'git checkout fix/stash-list', $false),
-  @('Bash', 'echo done # not git stash', $false),
-  @('PowerShell', '& D:\kit\skills\dev-kit\LESSONS.md', $true, 'default desktop app'),
-  @('PowerShell', '& "C:\x y\notes.txt"', $true, 'default desktop app'),
-  @('PowerShell', 'Invoke-Item .\report.html', $true, 'default desktop app'),
-@('PowerShell', 'Start-Process .\out\kit-flow.html', $true, 'default desktop app'),
-@('PowerShell', 'Start-Process https://example.com', $true, 'default desktop app'),
-@('Bash', 'xdg-open out/report.html', $true, 'default desktop app'),
-@('Bash', 'cmd /c start "" report.pdf', $true, 'default desktop app'),
-@('PowerShell', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
-  @('PowerShell', 'cd x; ii "out.pdf"', $true, 'default desktop app'),
-  @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, 'default desktop app'),
-  @('PowerShell', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, 'default desktop app'),
-  @('PowerShell', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, 'default desktop app'),
-  @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text "X2 (a b): fixed via helper buildX plus unit test; MR merged on first run, no retries" -Ref B-1 -Source workflow', $false, 'default desktop app'),
-  @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind friction -Text `"Stopped agent left a commit; merge reported via devtools.py 'merged' but not verified`" -Ref repo!1 -Source workflow`n& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"recovery worked`" -Ref repo!1", $false, 'default desktop app'),
-  @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, 'default desktop app'),
-  @('PowerShell', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, 'default desktop app'),
-  @('Bash', "cd /d/x/{RT}/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, 'holds runs in progress'),
-  @('Bash', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, 'holds runs in progress'),
-  @('PowerShell', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the {RT}/work folder" -Source workflow', $false, 'holds runs in progress'),
-  @('Bash', 'rm -rf /d/x/{RT}/work', $true, 'holds runs in progress'),
-  @('PowerShell', 'Remove-Item -Recurse -Force "D:\x y\{RT}\work"', $true, 'holds runs in progress'),
-  @('Bash', "python -c `"import shutil; shutil.rmtree('/d/x/{RT}/work')`"", $true, 'holds runs in progress'),
-  @('Bash', 'cd /d/x/{RT} && rm -rf work', $true, 'holds runs in progress'),
-  @('PowerShell', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
-  @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
-  @('Bash', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
-  @('PowerShell', 'git -C x push origin localenv/shop', $true, 'local env'),
-  @('Bash', 'git push -u origin HEAD:localenv/shop', $true, 'local env'),
-  @('PowerShell', 'git push -u origin f/CU-1-x', $false, 'local env'),
-  @('PowerShell', 'cd api; .\mvnw.cmd spring-boot:run', $true, 'local env'),
-  @('Bash', 'npx ng serve --port 4200', $true, 'local env'),
-  @('Bash', 'yarn start', $true, 'local env'),
-  @('PowerShell', 'dotnet watch run', $true, 'local env'),
-  @('PowerShell', '& D:/kit/skills/local-env/localenv.ps1 up -Env shop', $false, 'local env'),
-  @('PowerShell', 'git commit -m "fix: ng serve proxy"', $false, 'local env'),
-  @('Bash', 'rg "ng serve" src', $false, 'local env'),
-  @('Bash', 'git log -S bootRun --oneline', $false, 'local env'),
-  @('Bash', 'npm run dev:build', $false, 'local env'),
-  @('PowerShell', 'dotnet run -- migrate', $false, 'local env'),
-  @('Bash', 'cd web && yarn start', $true, 'local env'),
-  @('Bash', 'git push origin --delete localenv/shop', $false, 'local env'),
-  @('Bash', 'git push origin +HEAD:main', $true, 'force-push'),
-  @('PowerShell', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
-  @('Bash', 'git push origin HEAD:main', $false, 'force-push'),
-  @('Bash', 'git commit -n -m "x"', $true, 'Hooks must run'),
-  @('PowerShell', 'git -C x commit -nm "x"', $true, 'Hooks must run'),
-  @('Bash', 'git -c core.hooksPath=/dev/null commit -m x', $true, 'Hooks must run'),
-  @('Bash', 'git commit --no-edit --amend', $false, 'Hooks must run'),
-  @('PowerShell', 'git commit -m "use -n for a dry run"', $false, 'Hooks must run'),
-  @('Bash', 'git log -n 3; git commit -m x', $false, 'Hooks must run')
+ @('P', 'git stash', $true),
+ @('P', 'git -C x stash pop', $true),
+ @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $true),
+ @('P', '$s = $(git stash list); $s', $true),
+ @('P', 'pwsh -NoProfile -Command "git stash"', $true),
+ @('B', 'git stash', $true),
+ @('B', 'cd repo && git -C x stash pop', $true),
+ @('B', 'FOO=1 git --no-pager stash show', $true),
+ @('B', "bash -c 'git stash'", $true),
+ @('P', 'git commit -m "fix: never git stash here"', $false),
+ @('P', 'git commit -m "say `"git stash`" never"', $false),
+ @('P', "`$m = @'`nnever run git stash`n'@`ngit commit -m `$m", $false),
+ @('P', "Write-Output 'git stash is blocked'", $false),
+ @('B', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
+ @('B', "cat > note.md <<EOF`ngit stash is shared`nEOF", $false),
+ @('B', 'git checkout fix/stash-list', $false),
+ @('B', 'echo done # not git stash', $false),
+ @('P', '& D:\kit\skills\dev-kit\LESSONS.md', $true, $da),
+ @('P', '& "C:\x y\notes.txt"', $true, $da),
+ @('P', 'Invoke-Item .\report.html', $true, $da),
+ @('P', 'Start-Process .\out\kit-flow.html', $true, $da),
+ @('P', 'Start-Process https://example.com', $true, $da),
+ @('B', 'xdg-open out/report.html', $true, $da),
+ @('B', 'cmd /c start "" report.pdf', $true, $da),
+ @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
+ @('P', 'cd x; ii "out.pdf"', $true, $da),
+ @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, $da),
+ @('P', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, $da),
+ @('P', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, $da),
+ @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text "X2 (a b): fixed via helper buildX plus unit test; MR merged on first run, no retries" -Ref B-1 -Source workflow', $false, $da),
+ @('P', "& D:/kit/learn.ps1 -Skill dev-kit -Kind friction -Text `"Stopped agent left a commit; merge reported via devtools.py 'merged' but not verified`" -Ref repo!1 -Source workflow`n& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"recovery worked`" -Ref repo!1", $false, $da),
+ @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, $da),
+ @('P', "& D:/kit/learn.ps1 -Skill dev-kit -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/dev-kit/LESSONS.md | Out-Null", $true, $da),
+ @('B', "cd /d/x/{RT}/work/qa-runs; mkdir -p 2026-01-01-run && cd 2026-01-01-run; GWS=`$(python -c `"import shutil;print(shutil.which('gws'))`"); for p in A:1 B:2; do c=`${p%%:*}; `"`$GWS`" drive files export -o `$c.txt >/dev/null 2>&1; done", $false, $rp),
+ @('B', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
+ @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
+ @('B', 'rm -rf /d/x/{RT}/work', $true, $rp),
+ @('P', 'Remove-Item -Recurse -Force "D:\x y\{RT}\work"', $true, $rp),
+ @('B', "python -c `"import shutil; shutil.rmtree('/d/x/{RT}/work')`"", $true, $rp),
+ @('B', 'cd /d/x/{RT} && rm -rf work', $true, $rp),
+ @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
+ @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
+ @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
+ @('P', 'git -C x push origin localenv/shop', $true, $le),
+ @('B', 'git push -u origin HEAD:localenv/shop', $true, $le),
+ @('P', 'git push -u origin f/CU-1-x', $false, $le),
+ @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true, $le),
+ @('B', 'npx ng serve --port 4200', $true, $le),
+ @('B', 'yarn start', $true, $le),
+ @('P', 'dotnet watch run', $true, $le),
+ @('P', '& D:/kit/skills/local-env/localenv.ps1 up -Env shop', $false, $le),
+ @('P', 'git commit -m "fix: ng serve proxy"', $false, $le),
+ @('B', 'rg "ng serve" src', $false, $le),
+ @('B', 'git log -S bootRun --oneline', $false, $le),
+ @('B', 'npm run dev:build', $false, $le),
+ @('P', 'dotnet run -- migrate', $false, $le),
+ @('B', 'cd web && yarn start', $true, $le),
+ @('B', 'git push origin --delete localenv/shop', $false, $le),
+ @('B', 'git push origin +HEAD:main', $true, 'force-push'),
+ @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
+ @('B', 'git push origin HEAD:main', $false, 'force-push'),
+ @('B', 'git commit -n -m "x"', $true, $hk),
+ @('P', 'git -C x commit -nm "x"', $true, $hk),
+ @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
+ @('B', 'git commit --no-edit --amend', $false, $hk),
+ @('P', 'git commit -m "use -n for a dry run"', $false, $hk),
+ @('B', 'git log -n 3; git commit -m x', $false, $hk)
  )
  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'
  $fail = 0
  foreach ($c in $cases) {
-  $json = @{ tool_name = $c[0]; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime') } } | ConvertTo-Json -Compress -Depth 4
+  $tool = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]
+  $json = @{ tool_name = $tool; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime') } } | ConvertTo-Json -Compress -Depth 4
   $out = ($json | pwsh -NoProfile -NonInteractive -File $PSCommandPath guard) -join ''
   $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
   $ok = $denied -eq $c[2]
   if (-not $ok) { $fail++ }
-  '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $c[0], $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
+  '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
  }
  "$($cases.Count - $fail)/$($cases.Count) passed"
  exit [int]($fail -gt 0)
@@ -1196,7 +1170,7 @@ if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -EA Stop } catch {
  $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
  "$((Get-Date).ToString('s'))`t-`tmalformed hook input`t$one" | Add-Content (Get-KitPath guard-log -Create)
- @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: the hook input was not JSON (logged to guard.log); retry the command' } } | ConvertTo-Json -Compress -Depth 4
+ @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged to guard.log); retry' } } | ConvertTo-Json -Compress -Depth 4
  exit 0
 }
 $cmd = [string]$in.tool_input.command
@@ -1217,11 +1191,18 @@ function Deny($why) {
 
 # quoted text, heredocs and here-strings are data
 $raw = $cmd
-function StripData([string]$t) {
+function StripDocs([string]$t) {
  $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
    param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
- $t = [regex]::Replace($t, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
- [regex]::Replace($t, '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
+ [regex]::Replace($t, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
+}
+function StripData([string]$t) { [regex]::Replace((StripDocs $t), '"(?:[^"\\]|\\.)*"|''[^'']*''', '""') }
+# PowerShell command ASTs; $null = parse error
+function CmdAsts([string]$t) {
+ $tk = $null; $er = $null
+ $ast = [System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$tk, [ref]$er)
+ if (@($er).Count) { return $null }
+ , @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
 }
 $cmd = StripData $cmd
 function StashArgs($words) {
@@ -1236,10 +1217,9 @@ function StashArgs($words) {
 function Test-GitStash([string]$text, [string]$tool, [int]$depth = 0) {
  if ($depth -gt 3) { return $false }
  if ($tool -ne 'Bash') {
-  $tk = $null; $er = $null
-  $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
-  if (-not @($er).Count) {
-   foreach ($ca in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+  $cas = CmdAsts $text
+  if ($null -ne $cas) {
+   foreach ($ca in $cas) {
     $words = @($ca.CommandElements | % { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } })
     if (-not $words.Count) { continue }
     $rest = @($words | select -Skip 1)
@@ -1271,10 +1251,7 @@ function ActiveWork {
  }
 }
 function DeleteSegments([string]$t) {
- $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
-   param($m) if ($m.Groups[1].Value -match '\b(ba|z|da)?sh\b|pwsh|powershell') { $m.Value } else { $m.Groups[1].Value + '<<heredoc' } })
- $t = [regex]::Replace($t, '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', '""')
- $t = [regex]::Replace($t, '"((?:[^"\\]|\\.)*)"|''([^'']*)''', {
+ $t = [regex]::Replace((StripDocs $t),'"((?:[^"\\]|\\.)*)"|''([^'']*)''', {
    param($m) $v = $m.Groups[1].Value + $m.Groups[2].Value
    if ($v -match '^\s*([A-Za-z]:[\\/]|[\\/~$]|\.{1,2}[\\/])' -or $v -match '\brmtree\b|Directory\]::Delete|Remove-Item|rimraf') { ' ' + ($v -replace '[;|&\r\n]', ' ') + ' ' } else { '""' } })
  @($t -split '\r?\n|;|&&|\|\||\|' | ? { $_.Trim() })
@@ -1292,22 +1269,22 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
   if ($seg -match ("$rt([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*" + $end) -or
     ($inRuntime -and $seg -match '\s[''"]?(\.[\\/])?(work([\\/]+[\w.-]+)?|\*|\.)[\\/]*[''"]?(\s|$)')) {
    $act = @(ActiveWork)
-   if ($act.Count) { Deny "The runtime's work/ folder holds runs in progress ($($act -join ', ') written in the last 3 h): do not delete it. cache/ and logs/ may be cleared; orch.ps1 cleanup prunes old work entries itself; requests to wipe it are for the lead (coordinator), not for you." }
+   if ($act.Count) { Deny "The runtime's work/ holds runs in progress ($($act -join ', ') written < 3 h ago): do not delete it. cache/ and logs/ may go; orch.ps1 cleanup prunes old work; a wipe is for the lead (coordinator)." }
   }
  }
 }
-if (Test-GitStash $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) { Deny 'git stash is shared across worktrees (another agent can pop it). Make a WIP commit instead: dev.ps1 wt commit -Message "wip: ..."' }
-if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every emulator lane other agents are testing on. Reconnect only your phone (adb -s <serial> ...), or ask the lead (android-swarm swarm.ps1 avd reset).' }
+$tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
+if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (dev.ps1 wt commit -Message "wip: ...")' }
+if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (swarm.ps1 avd reset).' }
 # opening a doc pops up a desktop app instead of reading it
 function Test-OpenDoc([string]$text, [string]$tool) {
  $doc = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)$'
  # kit script call: the rest is arguments
  $text = [regex]::Replace($text, '(?m)(^|[;{]|&&)\s*&\s+(''[^'']+\.(ps1|py|mjs)''|"[^"]+\.(ps1|py|mjs)"|[^\s;''"]+\.(ps1|py|mjs))(\s.*)?$', '$1')
  if ($tool -ne 'Bash') {
-  $tk = $null; $er = $null
-  $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
-  if (-not @($er).Count) {
-   foreach ($ca in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+  $cas = CmdAsts $text
+  if ($null -ne $cas) {
+   foreach ($ca in $cas) {
     $el = @($ca.CommandElements); if (-not $el.Count) { continue }
     $val = { param($e) if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $e.Value } else { $e.Extent.Text.Trim('''"') } }
     if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
@@ -1318,24 +1295,24 @@ function Test-OpenDoc([string]$text, [string]$tool) {
  }
  (StripData $text) -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii|Start-Process|start|explorer(\.exe)?|xdg-open|open|cmd(\.exe)?\s+/c\s+start(\s+"")?)\s+([^\s;|&]+\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)|https?://\S+)(\s|;|\||\)|$)'
 }
-if (Test-OpenDoc $raw $(if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' })) {
+if (Test-OpenDoc $raw $tn) {
  Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
-  $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run. Commit with $($KitCmd.dev) wt commit (it fixes hooksPath in worktrees); fix what the hook reports." }
+  $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
  $p = $push.Value
  if ($p -match '(--force(?![-\w])|\s-f\b|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
-  Deny 'Never force-push a shared branch. On your own branch use --force-with-lease after dev.ps1 wt sync.'
+  Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
  }
 }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
- if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { Deny 'localenv/<env> is a local env branch (a merge of every agent''s layer): never push it. Push your own branch; the local env takes it with localenv.ps1 deploy -Dir <worktree>.' }
+ if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { Deny 'localenv/<env> is a local env branch (all agents'' layers merged): never push it. Push your branch; localenv.ps1 deploy -Dir <worktree> takes it.' }
 }
 if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatch 'localenv\.ps1') {
  $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\s*$'
  foreach ($seg in @($cmd -split '\r?\n|;|&&|\|\||\|' | % { $_.Trim() } | ? { $_ })) {
   if ($seg -match $server) {
-   Deny "Dev servers run in the shared local env (one instance per env, RAM-checked), not by hand: & $($KitCmd.local) use|up -Env <env> (envs: localenv.ps1 envs). Logs: localenv.ps1 logs -Env <env> -Service <s>."
+   Deny "Dev servers run in the shared local env, not by hand: & $($KitCmd.local) use|up -Env <env> (list: envs; logs: logs -Env <env> -Service <s>)."
   }
  }
 }
@@ -1345,12 +1322,12 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
     $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
     $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)'
 if ($heavy -and -not $gated) {
- Deny "Heavy builds/tests go through the machine-wide memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], or $($KitCmd.dev) gate -Dir <dir> -Cmd '<cmd>' for anything else."
+ Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else dev.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
 exit 0
 }
 
-# ---- tracker: the tracker adapter (lib.ps1 section 4)
+# ---- tracker: lib.ps1 section 4
 function Invoke-Tracker {
  $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
  for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
@@ -1383,6 +1360,14 @@ function Invoke-Tracker {
  }
 }
 
+# ---- host: the git-host / ci adapters (lib.ps1 section 5) for devtools.py: host <verb> '<args JSON>' | @<json file> -> JSON
+function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}') {
+ $a = $(if ($ArgJson -like '@*') { gc -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable
+ $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | ? { $null -ne $_ })   # one JSON line; a failed call = null (unknown)
+ if (-not $r.Count -and $global:KitHostFailed) { 'null' } elseif ($Verb -in 'mr.list', 'ci.runs', 'ci.jobs') { ConvertTo-Json -InputObject $r -Depth 8 -Compress }
+ elseif ($r.Count -eq 1 -and $r[0] -is [string]) { $r[0] } else { ConvertTo-Json -InputObject $(if ($r.Count) { $r[0] } else { $null }) -Depth 8 -Compress }
+}
+
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
  switch ($__verb) {
   'wt' { Invoke-KitVerb Invoke-Wt $__rest }
@@ -1392,7 +1377,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
   'pipes' { Invoke-KitVerb Invoke-Pipes $__rest }
   'guard' { Invoke-KitVerb Invoke-Guard $__rest }
   'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
-  { $_ -in '-h', '--help', 'help', '-?' } { gc $PSCommandPath -TotalCount 15 | select -Skip 1; exit 0 }
-  default { gc $PSCommandPath -TotalCount 15 | select -Skip 1; exit 2 }
+  'host' { Invoke-KitVerb Invoke-Host $__rest }
+  default { gc $PSCommandPath -TotalCount 15 | select -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
  }
 }

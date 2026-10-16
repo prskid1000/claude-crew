@@ -458,7 +458,7 @@ $alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PS
 function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($group) { "$group/$repo" } else { $null } }
 function NormRef($r) {
  $r = "$r".Trim().Trim("'", '"')  # with the quotes
- if ($r -match "://[^/]+/$groupRx(?<repo>[\w./-]+?)/-/merge_requests/(?<iid>\d+)") { $r = "$($Matches.repo)!$($Matches.iid)" }
+ if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo -replace "^(?i)$groupRx", '')!$($u.n)" }
  if ($r -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$' -and $alias[$Matches.repo]) { $r = "$($alias[$Matches.repo])!$($Matches.iid)" }
  $r
 }
@@ -518,7 +518,7 @@ function Save($o) {
 }
 function InFlight($ref) {
  if ($ref -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $null }
- $pat = "/$([regex]::Escape($Matches.r))/-/merge_requests/$($Matches.i)(\D|$)"
+ $pat = "/$([regex]::Escape($Matches.r))/$MrSegRx/$($Matches.i)(\D|$)"
  foreach ($f in Get-ChildItem $wavesDir -Filter '*.json' -ea 0 | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-12) }) {
   $w = Get-Content $f.FullName -Raw | ConvertFrom-Json
   if (-not @($w.running).Count) { continue }
@@ -654,7 +654,7 @@ switch ($Action) {
     # no head pipeline: GitLab would merge at once
     if (-not $m.head_pipeline) { continue }
     if ((ProducerOpen $amProj $iid) -or (InFlight "$(($amProj -split '/')[-1])!$iid")) { continue }
-    $fl = @{ squash = 'true'; should_remove_source_branch = 'true' }
+    $fl = @{}   # merge method + branch delete: repos[] mergeMethod / deleteBranch
     if ($m.head_pipeline.status -ne 'success') { $fl.merge_when_pipeline_succeeds = 'true' }
     $r = Invoke-HostApi "projects/$enc/merge_requests/$iid/merge" -Method PUT -Fields $fl
     "re-armed merge-when-green for $ref (it was dropped, probably by a push after scheduling): $(if ($r.state -eq 'merged') { 'merged' } elseif ($r.merge_when_pipeline_succeeds) { 'scheduled' } else { 'FAILED - check the MR' })"
@@ -703,7 +703,7 @@ switch ($Action) {
    $held = @(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
      $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
      if (@($w.running).Count) { & $KitCmd.orch report -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }
-     if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and $_.mr -match '/(?<r>[\w.-]+)/-/merge_requests/(?<i>\d+)' -and $o.mrs -contains "$($Matches.r)!$($Matches.i)" } } })
+     if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and (ConvertTo-MrRef $_.mr) -in @($o.mrs | ForEach-Object { ($_ -split '/')[-1] }) } } })
    if ($held) { Hold "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))"; continue }
    # a follow-up MR may come
    if ($o.wave) {
@@ -721,8 +721,7 @@ switch ($Action) {
    $setFailed = $false
    foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
    if ($setFailed) { continue }
-   $gitHost = if ($KitConf.GitHost) { $KitConf.GitHost } else { 'gitlab.com' }
-   $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?:(?<g>[\w./-]+)/)?(?<r>[\w.-]+)!(?<i>\d+)$') { "https://$gitHost/$(if ($Matches.g) { $Matches.g } else { $group })/$($Matches.r)/-/merge_requests/$($Matches.i)" } })
+   $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?<r>[\w./-]+)!(?<i>\d+)$' -and ($pp = ProjPath $Matches.r)) { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.i } } })
    # a run killed before Save would post again
    $allC = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
    if (-not $o.mergedCommentAt -and -not @($allC | Where-Object { $_ -match '^All MRs merged' }).Count) {
@@ -1368,12 +1367,9 @@ foreach ($x in $results) {
 $addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.agent].fixedRound })
 $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
 # "merged" is a snapshot
-foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and $m.url -match '://[^/]+/(?<p>.+?)/-/merge_requests/(?<i>\d+)') {
- $h = Invoke-HostApi "projects/$($Matches.p -replace '/', '%2F')/merge_requests/$($Matches.i)"
- if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } }
- elseif (-not $m.merged -and $m.url -match '://[^/]+/[^/]+/[^/]+/pull/\d+') {
- $gr = Invoke-KitExe 'gh' @('pr', 'view', $m.url, '--json', 'state,autoMergeRequest') (Get-KitNetTimeout); $h = if ($gr.code -eq 0) { try { $gr.out | ConvertFrom-Json } catch { $null } } else { $null }
- if ($h.state -eq 'MERGED') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.autoMergeRequest) { $m.mergeState = 'SCHEDULED' } } } }
+foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and ($u = ConvertFrom-MrUrl $m.url)) {
+ $h = Invoke-HostVerb 'mr.get' $u
+ if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } } } }
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
 $wavesDir = Get-KitPath waves -Create
 $wvf = Join-Path $wavesDir "$Run.json"; $wvt = "$wvf.$PID.tmp"; $out | ConvertTo-Json -Depth 8 | Set-Content $wvt; Move-Item -LiteralPath $wvt -Destination $wvf -Force
@@ -1594,10 +1590,10 @@ foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-
 function MergedTip($repo, $br) {
  $url = "$(git -C $repo remote get-url origin 2>$null)".Trim()
  if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return $null }
- $hostName = $Matches.host; $path = $Matches.path
- $script:HostType = if ($hostName -match 'github') { 'github' } else { 'gitlab' }
- if ($script:HostType -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
- $mrs = Invoke-HostApi "projects/$([uri]::EscapeDataString($path))/merge_requests?source_branch=$([uri]::EscapeDataString($br))&state=merged&per_page=20"
+ $hostName = $Matches.host; $path = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''
+ $type = if ($hostName -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $hostName }
+ if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
+ $mrs = Invoke-HostVerb 'mr.list' @{ repo = $path; type = $type; source_branch = $br; state = 'merged'; per_page = 20 }
  return @($mrs | ForEach-Object sha)
 }
 $repos = @{}
@@ -1699,7 +1695,7 @@ foreach ($id in $cand.Keys) {
  if (-not $mrs.Count -and $KitConf.TrackerRepos) {
   $tag = "$($KitConf.TrackerTag)$id"
   foreach ($r in @($KitConf.TrackerRepos)) {
-   $res = Invoke-HostApi "projects/$(Get-HostProject $r)/merge_requests?search=$tag&state=merged&per_page=20"
+   $res = Invoke-HostApi "projects/$(Get-HostProject $r)/merge_requests?search=$([uri]::EscapeDataString($tag))&state=merged&per_page=20"
    foreach ($m in @($res)) { if ($m.iid -and ("$($m.title) $($m.source_branch)" -match [regex]::Escape($tag))) { $mrs += "$r!$($m.iid)" } }
   }
   $mrs = @($mrs | select -Unique)
@@ -1960,7 +1956,7 @@ function Invoke-Decide {
 # not a test env: deploys[].production, else productionPattern on the name; -Lanes: + laneApk
 function Get-NoTestRx([switch]$Lanes) { $rx = Get-KitSetting 'deploy.productionPattern' '(?i)prod|critical'; $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # MR / PR URL -> <repo>!<iid>
-function ConvertTo-MrRef([string]$m) { if ($m -match '://[^/]+/(?<p>[\w./-]+?)/(?:-/merge_requests|pull)/(?<i>\d+)') { "$(($Matches.p -split '/')[-1])!$($Matches.i)" } else { $m.Trim() } }
+function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() } }
 # <alias>!<iid> -> <repo name>!<iid>
 function Get-CanonMr([string]$m) {
  if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }

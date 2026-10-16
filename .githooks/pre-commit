@@ -1,6 +1,6 @@
 #!/bin/sh
 # Kit pre-commit gate (enabled by orch.ps1 setup): regenerates the README graph sections (kittool.py flow --readme) and the ports
-# (kittool.py port, deployed to the workspace when installed), stages them, blocks while port --check differs and blocks the commit while kittool.py lint finds problems (unreached files, budgets, file cap,
+# (kittool.py port, deployed to the workspace when installed), stages them, blocks while port --check differs and blocks the commit while kittool.py lint finds problems (unreached files, budgets: trim first, then kittool.py budget raise, file cap,
 # conventions). Logic: skills/orchestrate/orch.ps1 precommit. Exit 1 = blocked.
 root="$(git rev-parse --show-toplevel)"
 if command -v pwsh >/dev/null 2>&1; then
