@@ -779,15 +779,18 @@ function Format-KitReport($d, [switch]$Ascii, [int]$Width = 160, [switch]$Agents
   $x = & $dt $as; if ($Agents) { $L.Add("| $($script:KitTypeIcon[$t]) $($as.Count) × $t$(if ($x.Count) { " ($(& $kd ($x | Measure-Object -Average).Average))" }) | $doing |") }
  }
  if ($Agents -and -not $all.Count) { $L.Add('| — | nothing running |') }
- # 2. RAM: 4 buckets + free (Available), 20 squares; top apps; resources (two halves when wide)
+ # 2. RAM: 7 categories + free (Available) as exactly 20 squares (largest remainder); legend on two lines; top apps; resources
  $m = $d.mem; $used = $m.TotalGB - $m.AvailGB; $rs = @($d.resources | Sort-Object { -[double]$_.gb }); $low = $m.AvailGB -lt $d.keepFree
- $rk = $d.ram
- $bs = @(@('kit', '🟦', 'K', '🟦 kit'), @('browsers', '🟨', 'B', '🟨 your browsers'), @('apps', '🟧', 'A', '🟧 your apps'), @('servers', '🟩', 'S', '🟩 servers'), @('vms', '🟪', 'V', '🟪 WSL / VMs'), @('windows', '🟫', 'W', '🟫 Windows'), @('unknown', '⬛', 'U', '⬛ unknown'))
-  $sb = ''; $cum = 0.0; $n0 = 0
- foreach ($b in $bs) { $cum += [double]$rk.($b[0]); $n = [math]::Min(20, [int][math]::Round(20 * $cum / $m.TotalGB)) - $n0; if ($n -gt 0) { $sb += $(if ($Ascii) { $b[2] } else { $b[1] }) * $n; $n0 += $n } }
- $sb += $(if ($Ascii) { '.' } elseif ($low) { '🟥' } else { '⬜' }) * (20 - $n0); if ($Ascii) { $sb = "[$sb]" }
+ $rk = $d.ram; $fc = if ($low) { '🟥' } else { '⬜' }
+ $bs = @(@('kit', '🟦', 'K', 'Kit'), @('browsers', '🟨', 'B', 'Your browsers'), @('apps', '🟧', 'A', 'Your apps'), @('servers', '🟩', 'S', 'Servers'),
+  @('vms', '🟪', 'V', 'WSL'), @('windows', '🟫', 'W', 'Windows'), @('unknown', '⬛', 'U', 'Unknown'), @('free', $fc, '.', 'Free'))
+ $val = @($bs | ForEach-Object { if ($_[0] -eq 'free') { [double]$m.AvailGB } else { [math]::Max(0, [double]$rk.($_[0])) } }); $tot = [math]::Max(0.1, ($val | Measure-Object -Sum).Sum)
+ $q = @($val | ForEach-Object { 20 * $_ / $tot }); $cnt = @($q | ForEach-Object { [int][math]::Floor($_) })
+ foreach ($i in @(0..($q.Count - 1) | Sort-Object { -($q[$_] - $cnt[$_]) } | Select-Object -First (20 - ($cnt | Measure-Object -Sum).Sum))) { $cnt[$i]++ }
+ $sb = (@(0..($bs.Count - 1) | ForEach-Object { $(if ($Ascii) { $bs[$_][2] } else { $bs[$_][1] }) * $cnt[$_] })) -join ''; if ($Ascii) { $sb = "[$sb]" }
  if ($L.Count) { $L.Add('') }; $L.Add("🖥️ **RAM** $sb **$(& $g1 $used) / $(& $g1 $m.TotalGB) GB**")
- $L.Add("$((@($bs | ForEach-Object { "$($_[3]) $(& $g1 $rk.($_[0]))$(if ($_[0] -eq 'unknown' -and @($d.unknown).Count) { " ($(@($d.unknown) -join ', '))" })" })) -join ' · ') · $(if ($low) { '🟥' } else { '⬜' }) free $(& $g1 $m.AvailGB)$(if ($d.avgFree) { " (avg $(& $g1 $d.avgFree))" }) · 🛡️ floor $($d.keepFree) · 💽 disk $($d.disk)")
+ $lg = { param($i) "$($bs[$i][1]) $($bs[$i][3]) $(& $g1 $val[$i])$(if ($bs[$i][0] -eq 'unknown' -and @($d.unknown).Count) { " ($(@($d.unknown) -join ', '))" })" }
+ $L.Add((@(0..3 | ForEach-Object { & $lg $_ })) -join ' · '); $L.Add("$((@(4..7 | ForEach-Object { & $lg $_ })) -join ' · ') · 🛡️ Floor $($d.keepFree)")
  if (@($d.top).Count) { $L.Add("top apps: $((@($d.top | ForEach-Object { "$($_.name) $(& $g1 $_.gb)$(if ($_.mark) { " $($_.mark)" })" })) -join ' · ') (💤 idle · 📈 +1 GB)") }
  if ($rs.Count -gt 10) { $rs = @($rs | select -First 9) + [pscustomobject]@{ name = "…$($rs.Count - 9) more"; type = 'more'; by = '—'; gb = (@($rs | select -Skip 9 | ForEach-Object { [double]$_.gb }) | Measure-Object -Sum).Sum } }
  $cell = { param($r) if ($r) { "$($r.name) | $(if ($r.by) { $r.by } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' })" } else { ' | | ' } }
