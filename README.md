@@ -2,8 +2,8 @@
 
 **[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built by `kittool.py flow --public` on each push)
 
-- **Total kit tokens**: 401,476 of 436,000 budget cap (92% utilization)
-- **Average tokens per file**: ~10,565 tokens across 38 tracked files
+- **Total kit tokens**: 401,643 of 436,000 budget cap (92% utilization)
+- **Average tokens per file**: ~10,570 tokens across 38 tracked files
 - **Token efficiency target**: progressive 50% token reduction roadmap without feature loss
 
 A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
