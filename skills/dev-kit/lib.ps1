@@ -224,7 +224,16 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if (-not $Tool) { $Tool = if ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' } elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' } }
+  if (-not $Tool) {
+    $Tool = if ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' }
+    elseif ($Model -match '^gpt') { 'codex' }
+    elseif ($Model -match '^gemini') { 'antigravity' }
+    elseif ($v = $env:KIT_TOOL) { $v }
+    elseif ($env:CLAUDECODE) { 'claude' }
+    elseif ($envs -like 'CODEX_*') { 'codex' }
+    elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' }
+    else { 'unknown' }
+  }
   $n = 'unknown'; $tok = 0; $src = ''
   if ($Tool -eq 'claude') {
     if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }

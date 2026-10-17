@@ -214,11 +214,11 @@ switch ($Action) {
 }
 
 # ---- budget: this agent's budget (the tool's default compaction point), a plan's run cap, a run's spend
-function Get-KitPlanCap([string]$Plan) {   # 'role/model:n,...' (role without /model: an estimate unit, no budget)
+function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,...' (role without /model: an estimate unit, no budget)
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).budget; $cap = 0; $est = 0; $memo = @{}
   foreach ($p in @("$Plan" -split ',' | Where-Object { $_ -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$' })) {
     $null = $p -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$'; $role = $Matches[1]; $m = $Matches[2]; $n = [int]$Matches[3]; $hasM = $p -match '/'
-    if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Model $m).budget }; $cap += $n * $memo[$m] }
+    if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
     $est += $n * [double](Get-KitSetting "budget.estimate.$role" $ex.estimate.$role)
   }
   [pscustomobject]@{ cap = [int]$cap; estimate = [int]$est; perModel = $memo }
@@ -235,7 +235,7 @@ if ($Run) {   # a workflow run: the sum of its agents' spend vs the cap its laun
   if ($Json) { $o | ConvertTo-Json -Compress } else { "run $Run`: spent $($o.spent) of the cap $($o.cap) ($($o.agents) agents; stop at $([int]($o.stopAt * 100))%)" }; exit 0
 }
 $b = Get-KitBudget -Tool $Tool -Model $Model -Window $Window
-if ($Plan) { $c = Get-KitPlanCap $Plan; $b | Add-Member -Force NoteProperty cap $c.cap; $b | Add-Member -Force NoteProperty estimate $c.estimate }
+if ($Plan) { $c = Get-KitPlanCap $Plan $Tool; $b | Add-Member -Force NoteProperty cap $c.cap; $b | Add-Member -Force NoteProperty estimate $c.estimate }
 if ($Json) { $b | ConvertTo-Json -Compress; exit 0 }
 "budget: $($b.tool) $(if ($b.model) { $b.model } else { '(default model)' }): $($b.budget) tokens, handoff at $($b.handoff) ($($b.row): $($b.source))"
 if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([int]($b.cap * $b.runStopAt))$(if ($b.estimate -gt $b.cap * $b.runStopAt) { ' - OVER: split the run (batch)' })" }
@@ -2345,7 +2345,7 @@ else {
 }
 
 $py3 = Get-Python
-if ($py3) { $pc = & $py3 -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE) { $hits += "PORTS       stale generated ports: $("$pc".Trim()) - run kittool.py port and commit" } }
+if ($py3) { $pc = & $py3 -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE) { Write-Host "pre-push: warning: ports differ (optional; run kittool.py port if deploying to codex/gemini)" } }
 
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
@@ -2356,24 +2356,18 @@ if ($hits.Count) {
 exit 0
 }
 
-# ---- precommit: regenerate + stage README graph and ports
+# ---- precommit: regenerate + stage README graph and run lint
 # never stage the user's changes
 function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
 function Invoke-PreCommit {
   $root = $KitConf.Kit
   $py = Get-Python
-  if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow / port cannot run)' -ForegroundColor Red; exit 1 }
+  if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow cannot run)' -ForegroundColor Red; exit 1 }
   $userEdits = Test-UnstagedEdits $root 'README.md'
   & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
   elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
-  # port: optional step — disabled in pre-commit; run manually with kittool.py port when needed
-  # $portOut = & $py -X utf8 $KitCmd.kittool port 2>&1
-  # $gen = @('.codex', '.agents', 'GEMINI.md') | Where-Object { Test-Path (Join-Path $root $_) }
-  # if (@(git -C $root status --porcelain -- @gen).Count) { git -C $root add -A -- @gen; Write-Host 'pre-commit: ports regenerated and staged' }
-  # $chk = & $py -X utf8 $KitCmd.kittool port --check 2>&1
-  # if ($LASTEXITCODE) { Write-Host "pre-commit: WARNING - ports differ after regeneration: $chk" -ForegroundColor Yellow }
   $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
   if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
