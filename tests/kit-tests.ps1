@@ -30,6 +30,8 @@ const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
 const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
 '@
 function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]::WriteAllText($f, ($jsLib + "`n" + $js).Replace('__BODY__', $wf)); @(node $f 2>&1) }
+function Invoke-PsTest([string]$Name, [string]$Script, $ArgsToPass = @()) { $f = Join-Path (Kd) "$Name.ps1"; Set-Content $f $Script -Encoding utf8; @(pwsh @np $f @ArgsToPass 2>&1) }
+function Set-JsonFile([string]$Path, $Obj, [int]$Depth = 8) { $d = Split-Path $Path; if ($d -and -not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }; $Obj | ConvertTo-Json -Depth $Depth | Set-Content $Path -Encoding utf8 }
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
   foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
@@ -204,8 +206,7 @@ Run youtrack ([ordered]@{ 'GET https://yt.test/api/issues/D-1\?' = '{"idReadable
 Run command ([ordered]@{ '^view T1' = '{"id":"T1","name":"Bug","status":"In Progress","subtasks":[{"name":"Sub"}]}'; '^status T1 in test' = 'ok'; '^comment T1 two words' = 'ok'; '^create B New one' = '{"id":"T9"}'
  '^list B in test' = '[{"id":"T3","name":"A","assignees":[{"id":"ann"}]}]' }) T1 B { param($r, $l) & $v $r ann T9 }
 '@
-  $f = Join-Path (Kd) 'tracker-test.ps1'; Set-Content $f $tb
-  $res = @(pwsh @np $f (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
+  $res = Invoke-PsTest 'tracker-test' $tb @(Join-Path $k 'skills/dev-kit/lib.ps1')
   Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'clickup', 'github', 'gitlab', 'jira', 'jira-server', 'linear', 'azure', 'youtrack', 'command'
   $kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
   Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
@@ -235,8 +236,7 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 "no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
 "unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
 '@
-  $f = Join-Path (Kd) 'pipes-test.ps1'; Set-Content $f $pt
-  $res = @(pwsh @np $f (Join-Path $k 'skills/dev-kit/lib.ps1') $D 2>&1)
+  $res = Invoke-PsTest 'pipes-test' $pt @((Join-Path $k 'skills/dev-kit/lib.ps1'), $D)
   Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
   # > 200 baseline errors = UNRUN
   $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
@@ -925,12 +925,10 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) { [psc
 $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
 "unknown:$(@($p | Where-Object status -eq 'UNKNOWN').Count -ge 1 -and -not @($p | Where-Object status -eq 'NOTHING').Count)"
 '@
-  $ttf = Join-Path (Kd) 'track-test.ps1'; Set-Content $ttf $tt
-  $res = @(pwsh @np $ttf $O 2>&1)
-  foreach ($x in 'skip', 'once', 'hold', 'unknown', 'throttle', 'keep') { Expect "track/deploy: $x (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)" (@($res | Where-Object { "$_" -eq "${x}:True" }).Count -eq 1) }
-  if (@($res | Where-Object { "$_" -match ':True$' }).Count -ne 6) { $res | Select-Object -Last 8 }
+  $res = Invoke-PsTest 'track-test' $tt @($O)
+  Expect-Each $res 'track/deploy: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)' @('skip', 'once', 'hold', 'unknown', 'throttle', 'keep') 8
   $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
-  @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 } | ConvertTo-Json | Set-Content $lkf
+  Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
   $sv = pwsh @np $O supervise -Brief -Session me | Out-String
   Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, no .lock left' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-Path "$lkf.lock"))
   $lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
@@ -965,13 +963,12 @@ $s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status T9' -and -not (Test-
 function clickup { $global:LASTEXITCODE = 1; 'Error: task not found' }
 try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
 '@
-  $nf = Join-Path (Kd) 'outbox-test.ps1'; Set-Content $nf $nt
-  $res = @(pwsh @np $nf (Join-Path $k 'skills/dev-kit/lib.ps1') 2>&1)
-  Expect-Each $res 'outbox: #' 'queued', 'sent', 'real'
+  $res = Invoke-PsTest 'outbox-test' $nt @(Join-Path $k 'skills/dev-kit/lib.ps1')
+  Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
   $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
-  @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } | ConvertTo-Json | Set-Content "$sd/seats/test_D1.json"
+  Set-JsonFile "$sd/seats/test_D1.json" @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' }
   $rd = Join-Path (Kd) 'runs/S'; New-Item -ItemType Directory -Force $rd | Out-Null
-  @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } | ConvertTo-Json | Set-Content "$sd/claims/S__S1.json"
+  Set-JsonFile "$sd/claims/S__S1.json" @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' }
   $null = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat status
   $cl = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat acquire -Agent test:S1 -Kind api -RunDir $rd -Code S1 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String
   Expect 'seats: a dead holder''s seat is freed, its claim taken over' (-not (Test-Path "$sd/seats/test_D1.json") -and $cl -notmatch 'ALREADY' -and (Get-Content "$sd/claims/S__S1.json" -Raw | ConvertFrom-Json).owner -eq 'w1')
@@ -1184,8 +1181,7 @@ console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m
   $strip = { param($n) [IO.File]::ReadAllText((Join-Path $src "workflows/$n")) -replace '(?m)^export const meta', 'const meta' }
   $bsf = Join-Path (Kd) 'b.js'; $tsf = Join-Path (Kd) 't.js'; [IO.File]::WriteAllText($bsf, (& $strip 'buildy.js')); [IO.File]::WriteAllText($tsf, (& $strip 'testy.js'))
   $res = @(node $wsf $bsf $tsf 2>&1)
-  foreach ($x in 'refuse', 'handoff', 'stop-next') { Expect "workflow budget: $x" (@($res) -contains "${x}:true") }
-  if (@($res | Where-Object { "$_" -match ':true$' }).Count -ne 3) { $res | Select-Object -First 5 }
+  Expect-Each $res 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
   Remove-TestKit $k
 }
 
@@ -1231,8 +1227,7 @@ $mt = Get-MigClass 't' $r $tl; $pt = Get-MigRevertPlan 't' 'api' @(@{ branch = '
 "missing-sha:$(HasMigrations $repo 'main' 'deadbeef')"
 Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
 '@
-  $f = Join-Path (Kd) 'revert-test.ps1'; Set-Content $f $t
-  $res = @(Px $f $L (Join-Path (Kd) 'le') 2>&1)
+  $res = Invoke-PsTest 'revert-test' $t @($L, (Join-Path (Kd) 'le'))
   foreach ($x in 'light', 'heavy', 'plan', 'revert', 'applied', 'nohook', 'tool', 'missing-sha') { Expect "local env: $x" ($res -contains "${x}:True") }
   $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') migrations selftest 2>&1 | Out-String
   Expect 'devtools.py migrations selftest' ($LASTEXITCODE -eq 0)

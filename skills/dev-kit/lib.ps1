@@ -618,6 +618,7 @@ function __TrPrioName([string]$p, [string]$Names) { if ($p -match '^[1-4]$') { (
 function __TrWho($id, $u) { [pscustomobject]@{ id = "$id"; username = "$u" } }
 function __TrSub($i, $n, $s, $u) { [pscustomobject]@{ id = $i; name = $n; status = $s; url = $u } }
 function __TrRow($i, $n, $s, $who) { [pscustomobject]@{ id = $i; name = $n; status = $s; assignees = $who } }
+function __TrComment($u, $d, $t) { [pscustomobject]@{ user = [string]$u; date = (__TrDate $d); text = [string]$t } }
 function __TrTask($i, $n, $s, $u, $p, $who, $l, $subs, $d) { [pscustomobject]@{ id = $i; name = $n; status = $s; url = $u; parent = $p; assignees = $who; list = $l; subtasks = $subs; description = $d } }
 function __TrPartOf($a) { if ($a.parent) { "Part of #$($a.parent -replace '^.*#', '')`n`n" } }
 function __TrNote($a) { if ($a.text) { Add-TrackerComment $a.id "$($a.text) (attached: $($a.leaf))" } }
@@ -730,7 +731,7 @@ Register-KitAdapter 'tracker' 'clickup' @{
     if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (set tracker.statuses.$($a.logical) in kit.local.json)" }
   }
   'comment' = { param($a) __TrCli 'clickup' @('comment', 'add', $a.id, $a.text) }
-  'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.user.username; date = (__TrDate $_.date); text = [string]$_.comment_text } } }
+  'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.username $_.date $_.comment_text } }
   'create' = { param($a)
     $c = @('task', 'create', '--list-id', $a.list, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
     if ($a.priority) { $c += @('--priority', $a.priority) }
@@ -781,7 +782,7 @@ Register-KitAdapter 'tracker' 'github' @{
     __TrCli 'gh' ($edit + @('--add-label', "$__trLp$name"))
   }
   'comment' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'comment', $n, '-R', $r) $a.text }
-  'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.author.login; date = (__TrDate $_.createdAt); text = [string]$_.body } } }
+  'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__TrCli 'gh' @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.createdAt $_.body } }
   'create' = { param($a)
     $r = __TrRepoOf $a.list; $c = @('issue', 'create', '-R', $r, '--title', $a.name)
     if ($a.assignee) { $c += @('--assignee', $a.assignee) }
@@ -820,7 +821,7 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     $res = __TrGl 'PUT' $p $b; if ($res) { "status of #$($res.iid): $name" }
   }
   'comment' = { param($a) $res = __TrGl 'POST' (__TrGlPath $a.id '/notes') @{ body = $a.text }; if ($res) { "commented on #$((__TrRef $a.id)[1])" } }
-  'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { [pscustomobject]@{ user = [string]$_.author.username; date = (__TrDate $_.created_at); text = [string]$_.body } } }
+  'comments' = { param($a) @(__TrGl 'GET' (__TrGlPath $a.id '/notes?sort=asc&per_page=100') $null) | Where-Object { $_ -and -not $_.system } | ForEach-Object { __TrComment $_.author.username $_.created_at $_.body } }
   'create' = { param($a)
     $r = __TrRepoOf $a.list; $b = @{ title = $a.name; description = (__TrPartOf $a) + $a.description }
     if ($a.priority) { $b.labels = "priority:$(__TrPrio $a.priority)" }
@@ -854,7 +855,7 @@ Register-KitAdapter 'tracker' 'jira' @{
     $null = __TrJira 'POST' "issue/$id/transitions" @{ transition = @{ id = $(if ($tr) { $tr.id } else { "<id of '$name'>" }) } }; "status of $id`: $name"
   }
   'comment' = { param($a) $res = __TrJira 'POST' "issue/$($a.id)/comment" @{ body = (__TrJDoc $a.text) }; if ($res) { "commented on $($a.id)" } }
-  'comments' = { param($a) @((__TrJira 'GET' "issue/$($a.id)/comment?maxResults=200" $null).comments) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.author.displayName; date = (__TrDate $_.created); text = (__TrAdfText $_.body).Trim() } } }
+  'comments' = { param($a) @((__TrJira 'GET' "issue/$($a.id)/comment?maxResults=200" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.displayName $_.created ((__TrAdfText $_.body).Trim()) } }
   'create' = { param($a)
     $f = @{ project = @{ key = $a.list }; summary = $a.name; description = (__TrJDoc $a.description)
       issuetype = @{ name = $(if ($a.parent) { Get-KitSetting 'tracker.subtaskType' 'Subtask' } else { Get-KitSetting 'tracker.issueType' 'Task' }) } }
@@ -903,7 +904,7 @@ Register-KitAdapter 'tracker' 'linear' @{
     __TrLinSet $a.id @{ stateId = $s.id }; "status of $($a.id): $($a.status)"
   }
   'comment' = { param($a) $null = __TrLin 'mutation($id: String!, $b: String!) { commentCreate(input: { issueId: $id, body: $b }) { success } }' @{ id = $a.id; b = $a.text }; "commented on $($a.id)" }
-  'comments' = { param($a) @((__TrLin 'query($id: String!) { issue(id: $id) { comments(first: 200) { nodes { body createdAt user { name } } } } }' @{ id = $a.id }).issue.comments.nodes) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.user.name; date = (__TrDate $_.createdAt); text = [string]$_.body } } }
+  'comments' = { param($a) @((__TrLin 'query($id: String!) { issue(id: $id) { comments(first: 200) { nodes { body createdAt user { name } } } } }' @{ id = $a.id }).issue.comments.nodes) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.name $_.createdAt $_.body } }
   'create' = { param($a)
     $in = @{ teamId = @((__TrLin 'query($k: String!) { teams(filter: { key: { eq: $k } }) { nodes { id } } }' @{ k = $a.list }).teams.nodes.id)[0]; title = $a.name; description = $a.description }
     if ($a.parent) { $in.parentId = (__TrLin 'query($id: String!) { issue(id: $id) { id } }' @{ id = $a.parent }).issue.id }
@@ -941,7 +942,7 @@ Register-KitAdapter 'tracker' 'azure' @{
   }
   'status' = { param($a) $null = __TrAzSet $a.id @{ 'System.State' = $a.status }; "status of $($a.id): $($a.status)" }
   'comment' = { param($a) $null = __TrAz 'POST' "wit/workItems/$($a.id)/comments" @{ text = (__TrHtml $a.text) }; "commented on $($a.id)" }
-  'comments' = { param($a) @((__TrAz 'GET' "wit/workItems/$($a.id)/comments" $null).comments) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.createdBy.displayName; date = (__TrDate $_.createdDate); text = (__TrUnHtml $_.text) } } }
+  'comments' = { param($a) @((__TrAz 'GET' "wit/workItems/$($a.id)/comments" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.createdBy.displayName $_.createdDate (__TrUnHtml $_.text) } }
   'create' = { param($a)
     $o = @(foreach ($kv in ([ordered]@{ 'System.Title' = $a.name; 'System.Description' = (__TrHtml $a.description); 'System.AreaPath' = $a.list; 'System.AssignedTo' = $a.assignee; 'Microsoft.VSTS.Common.Priority' = $(if ($a.priority -match '^[1-4]$') { [int]$a.priority }) }).GetEnumerator()) { if ($kv.Value) { @{ op = 'add'; path = "/fields/$($kv.Key)"; value = $kv.Value } } })
     if ($a.parent) { $o += @{ op = 'add'; path = '/relations/-'; value = @{ rel = 'System.LinkTypes.Hierarchy-Reverse'; url = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '')/_apis/wit/workItems/$($a.parent)" } } }
@@ -979,7 +980,7 @@ Register-KitAdapter 'tracker' 'youtrack' @{
   }
   'status' = { param($a) __TrYtCmd $a.id "State {$($a.status)}"; "status of $($a.id): $($a.status)" }
   'comment' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/comments?fields=id" @{ text = $a.text }; "commented on $($a.id)" }
-  'comments' = { param($a) @(__TrYt 'GET' "issues/$($a.id)/comments?fields=text,created,author(login)&`$top=200" $null) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ user = [string]$_.author.login; date = (__TrDate $_.created); text = [string]$_.text } } }
+  'comments' = { param($a) @(__TrYt 'GET' "issues/$($a.id)/comments?fields=text,created,author(login)&`$top=200" $null) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.created $_.text } }
   'create' = { param($a)
     $p = @(__TrYt 'GET' 'admin/projects?fields=id,shortName&$top=500' $null | Where-Object { $_.shortName -eq $a.list })[0]
     if (-not $p -and -not $__trDry) { throw "tracker (youtrack): no project '$($a.list)' (tracker.list = a project short name)" }
@@ -1173,6 +1174,11 @@ function __CiWord([string]$w) {
     '^(fail|failure|failed|error|errored|broken|infrastructure_fail|timed_out|action_required|startup_failure|unstable|partiallysucceeded)$' { 'failed' } '^(manual|paused|blocked|waiting)$' { 'manual' } '^scheduled$' { 'scheduled' } '^(pending|queued|created|notstarted|postponed)$' { 'pending' } default { 'running' } }
 }
 function __CiRoll([string[]]$s) { $s = @($s | Where-Object { $_ }); if (-not $s.Count) { return $null }; foreach ($w in 'failed', 'canceled', 'running', 'pending', 'manual', 'scheduled') { if ($s -contains $w) { return $w } }; if ($s -contains 'success') { 'success' } else { 'skipped' } }
+function __CiRun($Id, $Sha, $Status, $CreatedAt = $null, $UpdatedAt = $null, $Url = $null) { $o = [ordered]@{ id = $Id; sha = $Sha; created_at = $CreatedAt; updated_at = $(if ($UpdatedAt) { $UpdatedAt } else { $CreatedAt }); status = $Status }; if ($Url) { $o.url = $Url }; [pscustomobject]$o }
+function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id = $Id; name = $Name; status = $Status }; if ($FinishedAt) { $o.finished_at = $FinishedAt }; [pscustomobject]$o }
+function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
+function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
+function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 # emulated merge-when-green: the intent in tracking.automerge; orch.ps1 track run merges once green
 function __KitAuto([string]$Repo, [string]$N, [switch]$Drop) { Update-KitTracking { param($t) if ($Drop) { $t.automerge.Remove("$Repo!$N") } else { $t.automerge["$Repo!$N"] = (Get-Date).ToString('s') } } }
 
@@ -1224,8 +1230,8 @@ Register-KitAdapter 'git-host' 'github' @{
   }
   'mr.unauto' = { param($a) $null = __Gh @('pr', 'merge', $a.n, '-R', $a.repo, '--disable-auto'); __GhPr $a }
   'mr.url' = { param($a) "https://$(__GhHost)/$($a.repo)/pull/$($a.n)" }
-  'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; if ($c.merge_base_commit.sha) { [pscustomobject]@{ id = $c.merge_base_commit.sha } } }
-  'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; if ($c.sha) { [pscustomobject]@{ id = $c.sha; committed_date = $c.commit.committer.date } } }
+  'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; __CommitObj $c.merge_base_commit.sha }
+  'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; __CommitObj $c.sha $c.commit.committer.date }
   'repo.compare' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.from)...$(__Enc $a.to)"; if ($c) { [pscustomobject]@{ diffs = (__Files $c.files) } } }
 }
 # adapter:git-host/bitbucket: Bitbucket Cloud REST 2.0; env BITBUCKET_TOKEN ("user:app-password" = basic, else bearer); no native merge-when-green
@@ -1250,9 +1256,9 @@ Register-KitAdapter 'git-host' 'bitbucket' @{
   }
   'mr.unauto' = { param($a) __KitAuto $a.repo $a.n -Drop; __BbMr (__Bb "repositories/$($a.repo)/pullrequests/$($a.n)") }
   'mr.url' = { param($a) "https://bitbucket.org/$($a.repo)/pull-requests/$($a.n)" }
-  'repo.base' = { param($a) $c = __Bb "repositories/$($a.repo)/merge-base/$(__Enc $a.a)..$(__Enc $a.b)"; if ($c.hash) { [pscustomobject]@{ id = $c.hash } } }
-  'repo.commit' = { param($a) $c = __Bb "repositories/$($a.repo)/commit/$(__Enc $a.ref)"; if ($c.hash) { [pscustomobject]@{ id = $c.hash; committed_date = $c.date } } }
-  'repo.compare' = { param($a) $c = __Bb "repositories/$($a.repo)/diffstat/$(__Enc $a.to)..$(__Enc $a.from)?pagelen=100"; if ($c) { [pscustomobject]@{ diffs = @($c.values | ForEach-Object { [pscustomobject]@{ new_path = "$($_.new.path)$(if (-not $_.new) { $_.old.path })"; old_path = "$($_.old.path)$(if (-not $_.old) { $_.new.path })" } }) } } }
+  'repo.base' = { param($a) $c = __Bb "repositories/$($a.repo)/merge-base/$(__Enc $a.a)..$(__Enc $a.b)"; __CommitObj $c.hash }
+  'repo.commit' = { param($a) $c = __Bb "repositories/$($a.repo)/commit/$(__Enc $a.ref)"; __CommitObj $c.hash $c.date }
+  'repo.compare' = { param($a) $c = __Bb "repositories/$($a.repo)/diffstat/$(__Enc $a.to)..$(__Enc $a.from)?pagelen=100"; if ($c) { [pscustomobject]@{ diffs = @($c.values | ForEach-Object { __DiffFile "$($_.new.path)$(if (-not $_.new) { $_.old.path })" "$($_.old.path)$(if (-not $_.old) { $_.new.path })" }) } } }
 }
 # adapter:git-host/azure: Azure DevOps Repos REST 7.1; repo = org/project/repo; env AZURE_DEVOPS_EXT_PAT (basic); auto-complete = merge-when-green
 function __Az([string]$Repo, [string]$Path, [string]$Method = 'GET', $Body) {
@@ -1285,11 +1291,11 @@ Register-KitAdapter 'git-host' 'azure' @{
   }
   'mr.unauto' = { param($a) __AzMr (__Az $a.repo "git/repositories/{repo}/pullrequests/$($a.n)" 'PATCH' @{ autoCompleteSetBy = @{ id = '00000000-0000-0000-0000-000000000000' } }) }
   'mr.url' = { param($a) $o, $p, $r = "$($a.repo)" -split '/', 3; "$(__HostSet 'url' 'https://dev.azure.com')/$o/$p/_git/$r/pullrequest/$($a.n)" }
-  'repo.base' = { param($a) $c = @((__Az $a.repo "git/repositories/{repo}/commits/$(__AzSha $a.repo $a.a)/mergebases?otherCommitId=$(__AzSha $a.repo $a.b)").value)[0]; if ($c.commitId) { [pscustomobject]@{ id = $c.commitId } } }
-  'repo.commit' = { param($a) $s = __AzSha $a.repo $a.ref; $c = if ($s) { __Az $a.repo "git/repositories/{repo}/commits/$s" }; if ($c.commitId) { [pscustomobject]@{ id = $c.commitId; committed_date = $c.committer.date } } }
+  'repo.base' = { param($a) $c = @((__Az $a.repo "git/repositories/{repo}/commits/$(__AzSha $a.repo $a.a)/mergebases?otherCommitId=$(__AzSha $a.repo $a.b)").value)[0]; __CommitObj $c.commitId }
+  'repo.commit' = { param($a) $s = __AzSha $a.repo $a.ref; $c = if ($s) { __Az $a.repo "git/repositories/{repo}/commits/$s" }; __CommitObj $c.commitId $c.committer.date }
   'repo.compare' = { param($a) $t = { param($r) if ($r -match '^[0-9a-f]{40}$') { 'commit' } else { 'branch' } }
     $c = __Az $a.repo "git/repositories/{repo}/diffs/commits?baseVersion=$(__Enc $a.from)&baseVersionType=$(& $t $a.from)&targetVersion=$(__Enc $a.to)&targetVersionType=$(& $t $a.to)"
-    if ($c) { [pscustomobject]@{ diffs = @($c.changes | Where-Object { $_.item.gitObjectType -ne 'tree' } | ForEach-Object { [pscustomobject]@{ new_path = "$($_.item.path)".TrimStart('/'); old_path = "$(if ($_.sourceServerItem) { $_.sourceServerItem } else { $_.item.path })".TrimStart('/') } }) } } }
+    if ($c) { [pscustomobject]@{ diffs = @($c.changes | Where-Object { $_.item.gitObjectType -ne 'tree' } | ForEach-Object { __DiffFile "$($_.item.path)".TrimStart('/') "$(if ($_.sourceServerItem) { $_.sourceServerItem } else { $_.item.path })".TrimStart('/') }) } } }
 }
 # adapter:git-host/gitea: Gitea / Forgejo REST v1 (url default https://<gitHost>/api/v1); env GITEA_TOKEN
 function __Gt([string]$Path, [string]$Method = 'GET', $Body, [switch]$Probe) { __Rest "https://$($KitConf.GitHost)/api/v1" 'GITEA_TOKEN' 'token' $Method $Path $Body -Probe:$Probe }
@@ -1307,8 +1313,8 @@ Register-KitAdapter 'git-host' 'gitea' @{
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/pulls/$($a.n)" }
   # no merge-base API: b...a lists a's commits missing from b; none = a is the base, else the oldest one's parent
   'repo.base' = { param($a) $c = __Gt "repos/$($a.repo)/compare/$(__Enc $a.b)...$(__Enc $a.a)"; if ($null -eq $c) { return $null }
-    [pscustomobject]@{ id = $(if (-not $c.total_commits) { $a.a } else { @(@($c.commits) | Sort-Object { $_.created })[0].parents[0].sha }) } }
-  'repo.commit' = { param($a) $c = @(__Gt "repos/$($a.repo)/commits?sha=$(__Enc $a.ref)&limit=1&stat=false")[0]; if ($c.sha) { [pscustomobject]@{ id = $c.sha; committed_date = $c.commit.committer.date } } }
+    __CommitObj $(if (-not $c.total_commits) { $a.a } else { @(@($c.commits) | Sort-Object { $_.created })[0].parents[0].sha }) }
+  'repo.commit' = { param($a) $c = @(__Gt "repos/$($a.repo)/commits?sha=$(__Enc $a.ref)&limit=1&stat=false")[0]; __CommitObj $c.sha $c.commit.committer.date }
   'repo.compare' = { param($a) $c = __Gt "repos/$($a.repo)/compare/$(__Enc $a.from)...$(__Enc $a.to)"; if ($c) { [pscustomobject]@{ diffs = (__Files $c.files) } } }
 }
 # adapter:git-host/command: gitHostApi.commands.<verb>
@@ -1321,48 +1327,48 @@ Register-KitAdapter 'ci' 'gitlab' @{
   'runs' = { param($a) @(__Gp $a "/pipelines?ref=$(__Enc $a.ref)$(if ($a.sha) { "&sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)") }
   'jobs' = { param($a) @(__Gp $a "/pipelines/$($a.id)/jobs?per_page=100") }
   'log' = { param($a) __Gp $a "/jobs/$($a.id)/trace" }
-  'status' = { param($a) $p = @(__Gp $a "/pipelines?sha=$($a.sha)&per_page=1")[0]; if ($p.id) { [pscustomobject]@{ id = $p.id; status = $p.status } } }
+  'status' = { param($a) $p = @(__Gp $a "/pipelines?sha=$($a.sha)&per_page=1")[0]; if ($p.id) { __CiStat $p.id $p.status } }
   'config' = { param($a) $p = __Gp $a ''; if (-not $p.id) { return $null }; if ($p.only_allow_merge_if_pipeline_succeeds -or $p.ci_config_path -or $p.auto_devops_enabled) { return $true }
     $r = __Gp $a "/repository/files/.gitlab-ci.yml?ref=$(__Enc $a.ref)" -Res; if (-not $r.code) { $true } elseif ("$($r.out)$($r.err)" -match '\b404\b' -and "$($r.out)$($r.err)" -notmatch 'file_name') { $false } else { $null } }
 }
 # adapter:ci/github: Actions runs, check runs + commit statuses (external CI)
 Register-KitAdapter 'ci' 'github' @{
-  'runs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs?branch=$(__Enc $a.ref)$(if ($a.sha) { "&head_sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)").workflow_runs) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.id; sha = $_.head_sha; created_at = $_.created_at; updated_at = $_.updated_at; status = (__CiWord ($_.conclusion ?? $_.status)) } }) }
-  'jobs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs/$($a.id)/jobs?per_page=100").jobs) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.id; name = $_.name; status = (__CiWord ($_.conclusion ?? $_.status)); finished_at = $_.completed_at } }) }
+  'runs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs?branch=$(__Enc $a.ref)$(if ($a.sha) { "&head_sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)").workflow_runs) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord ($_.conclusion ?? $_.status)) $_.created_at $_.updated_at }) }
+  'jobs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs/$($a.id)/jobs?per_page=100").jobs) | Where-Object { $_ } | ForEach-Object { __CiJob $_.id $_.name (__CiWord ($_.conclusion ?? $_.status)) $_.completed_at }) }
   'log' = { param($a) __GhApi "repos/$($a.repo)/actions/jobs/$($a.id)/logs" }
   'status' = { param($a) if (-not $a.sha) { return $null }
     $cr = @((__GhApi "repos/$($a.repo)/commits/$($a.sha)/check-runs?per_page=100").check_runs | Where-Object { $_ }); $cs = @((__GhApi "repos/$($a.repo)/commits/$($a.sha)/status").statuses | Where-Object { $_ })
     $st = __CiRoll (@($cr | ForEach-Object { if ($_.status -ne 'completed') { 'running' } else { __CiWord $_.conclusion } }) + @($cs | ForEach-Object { __CiWord $_.state })); if (-not $st) { return $null }
-    [pscustomobject]@{ id = @($cr | ForEach-Object { if ("$($_.details_url)" -match '/runs/(\d+)') { $Matches[1] } })[0]; status = $st } }
+    __CiStat @($cr | ForEach-Object { if ("$($_.details_url)" -match '/runs/(\d+)') { $Matches[1] } })[0] $st }
   'config' = { param($a) $r = __Cli gh "repos/$($a.repo)/contents/.github/workflows?ref=$(__Enc $a.ref)" -Res; if ($null -eq $r) { $null } elseif (-not $r.code) { $true } elseif ("$($r.out)$($r.err)" -match '\b404\b|Not Found') { $false } else { $null } }
 }
 # adapter:ci/bitbucket: Bitbucket Pipelines (job id = <pipeline uuid>/<step uuid>)
-function __BbRun($p) { [pscustomobject]@{ id = $p.uuid; sha = $p.target.commit.hash; created_at = $p.created_on; updated_at = $(if ($p.completed_on) { $p.completed_on } else { $p.created_on }); status = $(if ($p.state.result.name) { __CiWord $p.state.result.name } elseif ($p.state.stage.name -eq 'PAUSED') { 'manual' } else { __CiWord $p.state.name }) } }
+function __BbRun($p) { __CiRun $p.uuid $p.target.commit.hash $(if ($p.state.result.name) { __CiWord $p.state.result.name } elseif ($p.state.stage.name -eq 'PAUSED') { 'manual' } else { __CiWord $p.state.name }) $p.created_on $(if ($p.completed_on) { $p.completed_on } else { $p.created_on }) }
 Register-KitAdapter 'ci' 'bitbucket' @{
   'runs' = { param($a) @(@((__Bb "repositories/$($a.repo)/pipelines?target.branch=$(__Enc $a.ref)&sort=-created_on&pagelen=$($a.per_page ?? 20)").values) | Where-Object { $_ } | ForEach-Object { __BbRun $_ } | Where-Object { -not $a.sha -or $_.sha -like "$($a.sha.Substring(0, [Math]::Min(12, $a.sha.Length)))*" }) }
-  'jobs' = { param($a) @(@((__Bb "repositories/$($a.repo)/pipelines/$(__Enc $a.id)/steps?pagelen=100").values) | Where-Object { $_ } | ForEach-Object { $s = __BbRun $_; [pscustomobject]@{ id = "$($a.id)/$($_.uuid)"; name = $_.name; status = $s.status; finished_at = $_.completed_on } }) }
+  'jobs' = { param($a) @(@((__Bb "repositories/$($a.repo)/pipelines/$(__Enc $a.id)/steps?pagelen=100").values) | Where-Object { $_ } | ForEach-Object { __CiJob "$($a.id)/$($_.uuid)" $_.name (__BbRun $_).status $_.completed_on }) }
   'log' = { param($a) $p, $s = "$($a.id)" -split '/', 2; __Bb "repositories/$($a.repo)/pipelines/$(__Enc $p)/steps/$(__Enc $s)/log" }
-  'status' = { param($a) if (-not $a.sha) { return $null }; $v = @((__Bb "repositories/$($a.repo)/commit/$($a.sha)/statuses?pagelen=100").values | Where-Object { $_ }); $st = __CiRoll @($v | ForEach-Object { __CiWord $_.state }); if ($st) { [pscustomobject]@{ id = @($v | ForEach-Object { if ("$($_.url)" -match '/pipelines/results/(\d+)') { $Matches[1] } })[0]; status = $st } } }
+  'status' = { param($a) if (-not $a.sha) { return $null }; $v = @((__Bb "repositories/$($a.repo)/commit/$($a.sha)/statuses?pagelen=100").values | Where-Object { $_ }); $st = __CiRoll @($v | ForEach-Object { __CiWord $_.state }); if ($st) { __CiStat @($v | ForEach-Object { if ("$($_.url)" -match '/pipelines/results/(\d+)') { $Matches[1] } })[0] $st } }
   'config' = { param($a) __Bb "repositories/$($a.repo)/src/$(__Enc $a.ref)/bitbucket-pipelines.yml" -Probe }
 }
 # adapter:ci/azure: Azure Pipelines builds (job id = <build id>/<log id>)
 Register-KitAdapter 'ci' 'azure' @{
   'runs' = { param($a) $rid = (__Az $a.repo 'git/repositories/{repo}').id
-    @(@((__Az $a.repo "build/builds?repositoryId=$rid&repositoryType=TfsGit&branchName=refs/heads/$(__Enc $a.ref)&`$top=$($a.per_page ?? 20)").value) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.id; sha = $_.sourceVersion; created_at = $_.queueTime; updated_at = $(if ($_.finishTime) { $_.finishTime } else { $_.queueTime }); status = (__CiWord $(if ($_.status -eq 'completed') { $_.result } else { $_.status })) } } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
-  'jobs' = { param($a) @(@((__Az $a.repo "build/builds/$($a.id)/timeline").records) | Where-Object { $_ -and $_.type -eq 'Job' } | ForEach-Object { [pscustomobject]@{ id = "$($a.id)/$($_.log.id)"; name = $_.name; status = (__CiWord $(if ($_.state -eq 'completed') { $_.result } else { $_.state })); finished_at = $_.finishTime } }) }
+    @(@((__Az $a.repo "build/builds?repositoryId=$rid&repositoryType=TfsGit&branchName=refs/heads/$(__Enc $a.ref)&`$top=$($a.per_page ?? 20)").value) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.sourceVersion (__CiWord $(if ($_.status -eq 'completed') { $_.result } else { $_.status })) $_.queueTime $(if ($_.finishTime) { $_.finishTime } else { $_.queueTime }) } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
+  'jobs' = { param($a) @(@((__Az $a.repo "build/builds/$($a.id)/timeline").records) | Where-Object { $_ -and $_.type -eq 'Job' } | ForEach-Object { __CiJob "$($a.id)/$($_.log.id)" $_.name (__CiWord $(if ($_.state -eq 'completed') { $_.result } else { $_.state })) $_.finishTime }) }
   'log' = { param($a) $b, $l = "$($a.id)" -split '/', 2; __Az $a.repo "build/builds/$b/logs/$l" }
   # a PR's builds run on refs/pull/<n>/merge; a plain commit: its commit statuses
   'status' = { param($a) $b = if ($a.n) { @((__Az $a.repo "build/builds?branchName=refs/pull/$($a.n)/merge&`$top=1").value)[0] }
-    if ($b.id) { return [pscustomobject]@{ id = $b.id; status = (__CiWord $(if ($b.status -eq 'completed') { $b.result } else { $b.status })) } }
-    if ($a.sha) { $st = __CiRoll @(@((__Az $a.repo "git/repositories/{repo}/commits/$($a.sha)/statuses").value) | Where-Object { $_ } | ForEach-Object { __CiWord $_.state }); if ($st) { [pscustomobject]@{ id = $null; status = $st } } } }
+    if ($b.id) { return __CiStat $b.id (__CiWord $(if ($b.status -eq 'completed') { $b.result } else { $b.status })) }
+    if ($a.sha) { $st = __CiRoll @(@((__Az $a.repo "git/repositories/{repo}/commits/$($a.sha)/statuses").value) | Where-Object { $_ } | ForEach-Object { __CiWord $_.state }); if ($st) { __CiStat $null $st } } }
   'config' = { param($a) $d = __Az $a.repo "build/definitions?repositoryId=$((__Az $a.repo 'git/repositories/{repo}').id)&repositoryType=TfsGit"; if ($null -eq $d) { $null } else { [bool]$d.count } }
 }
 # adapter:ci/gitea: Gitea Actions tasks + commit statuses (no job log API: the log is the run link)
 Register-KitAdapter 'ci' 'gitea' @{
-  'runs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { $_ -and $_.head_branch -eq $a.ref -and (-not $a.sha -or $_.head_sha -eq $a.sha) } | ForEach-Object { [pscustomobject]@{ id = $_.id; sha = $_.head_sha; created_at = $_.created_at; updated_at = $_.updated_at; status = (__CiWord $_.status); url = $_.url } }) }
-  'jobs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { "$($_.id)" -eq "$($a.id)" } | ForEach-Object { [pscustomobject]@{ id = $_.id; name = $_.name; status = (__CiWord $_.status); finished_at = $_.updated_at } }) }
+  'runs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { $_ -and $_.head_branch -eq $a.ref -and (-not $a.sha -or $_.head_sha -eq $a.sha) } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord $_.status) $_.created_at $_.updated_at $_.url }) }
+  'jobs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { "$($_.id)" -eq "$($a.id)" } | ForEach-Object { __CiJob $_.id $_.name (__CiWord $_.status) $_.updated_at }) }
   'log' = { param($a) "no log API on Gitea: see https://$($KitConf.GitHost)/$($a.repo)/actions/runs/$($a.id)" }
-  'status' = { param($a) if (-not $a.sha) { return $null }; $s = __Gt "repos/$($a.repo)/commits/$($a.sha)/status"; $st = __CiRoll @(@($s.statuses) | ForEach-Object { __CiWord $_.status }); if ($st) { [pscustomobject]@{ id = $null; status = $st } } }
+  'status' = { param($a) if (-not $a.sha) { return $null }; $s = __Gt "repos/$($a.repo)/commits/$($a.sha)/status"; $st = __CiRoll @(@($s.statuses) | ForEach-Object { __CiWord $_.status }); if ($st) { __CiStat $null $st } }
   'config' = { param($a) $r = @('.gitea/workflows', '.github/workflows') | ForEach-Object { __Gt "repos/$($a.repo)/contents/$_`?ref=$(__Enc $a.ref)" -Probe }; if ($r -contains $true) { $true } elseif ($r -contains $null) { $null } else { $false } }
 }
 # adapter:ci/jenkins: Jenkins REST (ci.url, ci.job = the multibranch job path, default "job/{repo}"; env ci.tokenEnv = JENKINS_TOKEN "user:api-token"); run id = <branch>#<build>
@@ -1370,13 +1376,12 @@ function __Jk([string]$Repo, [string]$Ref, [string]$Tail) {
   $job = ([string](Get-KitSetting 'ci.job' 'job/{repo}')) -replace '\{repo\}', (("$Repo" -split '/')[-1])
   Invoke-KitHttp 'GET' "$(([string](Get-KitSetting 'ci.url' '')).TrimEnd('/'))/$job/job/$(__Enc (__Enc $Ref))/$Tail" $null (Get-KitAuth ([string](Get-KitSetting 'ci.tokenEnv' 'JENKINS_TOKEN')) 'basic')
 }
-function __JkRun($b, [string]$Ref) { [pscustomobject]@{ id = "$Ref#$($b.number)"; sha = @($b.actions.lastBuiltRevision.SHA1 | Where-Object { $_ })[0]; created_at = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp).UtcDateTime.ToString('o')
-  updated_at = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp + [long]$b.duration).UtcDateTime.ToString('o'); status = $(if ($b.building) { 'running' } else { __CiWord $b.result }) } }
+function __JkRun($b, [string]$Ref) { __CiRun "$Ref#$($b.number)" @($b.actions.lastBuiltRevision.SHA1 | Where-Object { $_ })[0] $(if ($b.building) { 'running' } else { __CiWord $b.result }) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp).UtcDateTime.ToString('o')) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp + [long]$b.duration).UtcDateTime.ToString('o')) }
 Register-KitAdapter 'ci' 'jenkins' @{
   'runs' = { param($a) @(@((__Jk $a.repo $a.ref "api/json?tree=builds[number,result,building,timestamp,duration,actions[lastBuiltRevision[SHA1]]]{0,$($a.per_page ?? 20)}").builds) | Where-Object { $_ } | ForEach-Object { __JkRun $_ $a.ref } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
-  'jobs' = { param($a) $r, $n = "$($a.id)" -split '#', 2; @(@((__Jk $a.repo $r "$n/wfapi/describe").stages) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $a.id; name = $_.name; status = (__CiWord $_.status); finished_at = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$_.startTimeMillis + [long]$_.durationMillis).UtcDateTime.ToString('o') } }) }
+  'jobs' = { param($a) $r, $n = "$($a.id)" -split '#', 2; @(@((__Jk $a.repo $r "$n/wfapi/describe").stages) | Where-Object { $_ } | ForEach-Object { __CiJob $a.id $_.name (__CiWord $_.status) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$_.startTimeMillis + [long]$_.durationMillis).UtcDateTime.ToString('o')) }) }
   'log' = { param($a) $r, $n = "$($a.id)" -split '#', 2; __Jk $a.repo $r "$n/consoleText" }
-  'status' = { param($a) if (-not $a.ref -or -not $a.sha) { return $null }; $b = @(Invoke-KitAdapter 'ci' 'jenkins' 'runs' $a)[0]; if ($b) { [pscustomobject]@{ id = $b.id; status = $b.status } } }
+  'status' = { param($a) if (-not $a.ref -or -not $a.sha) { return $null }; $b = @(Invoke-KitAdapter 'ci' 'jenkins' 'runs' $a)[0]; if ($b) { __CiStat $b.id $b.status } }
   'config' = { param($a) [bool](Get-KitSetting 'ci.url' '') }
 }
 # adapter:ci/command: ci.commands.<verb>
