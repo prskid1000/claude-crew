@@ -732,14 +732,14 @@ param(
   [string]$Tests = '',
   [string]$Files = '',
   [switch]$AllTests,
-  [string]$Since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),
+  [string]$since = (Get-Date).AddDays(-14).ToString('yyyyMMdd000000'),
   [switch]$Show,
   [switch]$Touched,
   [switch]$RealAngular
 )
 $ErrorActionPreference = 'Stop'
 $script:anyUnrun = $false
-$K = $PSScriptRoot
+$k = $PSScriptRoot
 $st = & $KitCmd.dev stack -Dir $Dir -Json | ConvertFrom-Json
 function Hash12([string]$s) { [BitConverter]::ToString([Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))).Replace('-', '').Substring(0, 12) }
 Write-Host "[check] $($st.stack) in $($st.dir)"
@@ -764,8 +764,8 @@ function Get-WtTarget {
 function Invoke-Typecheck([string]$TcCmd) {
   $top = git -C $st.dir rev-parse --show-toplevel 2>$null
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
-  $repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
-  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+  $Repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
+  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
   $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
   $bin = $null; $d = $st.dir

@@ -768,16 +768,16 @@ function Get-KitLabelType([string]$Label) {
 }
 function Format-KitReport($d, [switch]$Ascii, [int]$Width = 160, [switch]$Agents) {   # -Agents: the coordinator's agent table first
   $g1 = { param($x) [math]::Round([double]$x, 1) }; $kd = { param($x) "+$([int]([double]$x / 1000))kT" }
-  $L = [Collections.Generic.List[string]]::new()
+  $reportLines = [Collections.Generic.List[string]]::new()
   # 1. agents: one row per crew type; tokens = spend added since the last report
-  if ($Agents) { $L.Add('| Agent | Doing |'); $L.Add('|---|---|') }
+  if ($Agents) { $reportLines.Add('| Agent | Doing |'); $reportLines.Add('|---|---|') }
   $all = @($d.agents); $dt = { param($as) @($as | Where-Object { $null -ne $_.spend } | ForEach-Object { [math]::Max(0, [double]$_.spend - [double]$_.prevSpend) }) }
   foreach ($t in @('devy', 'revy', 'checky', 'kitty', 'other')) {
     $as = @($all | Where-Object { $_.type -eq $t }); if (-not $as.Count) { continue }
     $doing = (@($as | Group-Object mode | ForEach-Object { "$(if (@($_.Group | Where-Object wait).Count -eq $_.Count) { '⏸ ' })$($_.Name) $($_.Count) ($((@($_.Group | ForEach-Object name) -join ', ')))" }) -join ' · ')
-    $x = & $dt $as; if ($Agents) { $L.Add("| $($script:KitTypeIcon[$t]) $($as.Count) × $t$(if ($x.Count) { " ($(& $kd ($x | Measure-Object -Average).Average))" }) | $doing |") }
+    $x = & $dt $as; if ($Agents) { $reportLines.Add("| $($script:KitTypeIcon[$t]) $($as.Count) × $t$(if ($x.Count) { " ($(& $kd ($x | Measure-Object -Average).Average))" }) | $doing |") }
   }
-  if ($Agents -and -not $all.Count) { $L.Add('| — | nothing running |') }
+  if ($Agents -and -not $all.Count) { $reportLines.Add('| — | nothing running |') }
   # 2. RAM: 7 categories + free (Available) as exactly 20 squares (largest remainder); legend on two lines; top apps; resources
   $m = $d.mem; $used = $m.TotalGB - $m.AvailGB; $rs = @($d.resources | Sort-Object { -[double]$_.gb }); $low = $m.AvailGB -lt $d.keepFree
   $rk = $d.ram; $fc = if ($low) { '🟥' } else { '⬜' }
@@ -787,22 +787,22 @@ function Format-KitReport($d, [switch]$Ascii, [int]$Width = 160, [switch]$Agents
   $q = @($val | ForEach-Object { 20 * $_ / $tot }); $cnt = @($q | ForEach-Object { [int][math]::Floor($_) })
   foreach ($i in @(0..($q.Count - 1) | Sort-Object { -($q[$_] - $cnt[$_]) } | Select-Object -First (20 - ($cnt | Measure-Object -Sum).Sum))) { $cnt[$i]++ }
   $sb = (@(0..($bs.Count - 1) | ForEach-Object { $(if ($Ascii) { $bs[$_][2] } else { $bs[$_][1] }) * $cnt[$_] })) -join ''; if ($Ascii) { $sb = "[$sb]" }
-  if ($L.Count) { $L.Add('') }; $L.Add("🖥️ **RAM** $sb **$(& $g1 $used) / $(& $g1 $m.TotalGB) GB**")
+  if ($reportLines.Count) { $reportLines.Add('') }; $reportLines.Add("🖥️ **RAM** $sb **$(& $g1 $used) / $(& $g1 $m.TotalGB) GB**")
   $lg = { param($i) "$($bs[$i][1]) $($bs[$i][3]) $(& $g1 $val[$i])$(if ($bs[$i][0] -eq 'unknown' -and @($d.unknown).Count) { " ($(@($d.unknown) -join ', '))" })" }
   $sh = { param($r) @($r | Where-Object { (& $g1 $val[$_]) -gt 0 } | ForEach-Object { & $lg $_ }) }   # only categories above 0.0; line 1 your side, line 2 the system
-  $L.Add((& $sh (0..3)) -join ' · '); $L.Add((& $sh (4..7)) -join ' · ')   # below the floor: red Free squares + its flag
-  if (@($d.top).Count) { $L.Add("top apps: $((@($d.top | ForEach-Object { "$($_.name) $(& $g1 $_.gb)$(if ($_.mark) { " $($_.mark)" })" })) -join ' · ') (💤 idle · 📈 +1 GB)") }
+  $reportLines.Add((& $sh (0..3)) -join ' · '); $reportLines.Add((& $sh (4..7)) -join ' · ')   # below the floor: red Free squares + its flag
+  if (@($d.top).Count) { $reportLines.Add("top apps: $((@($d.top | ForEach-Object { "$($_.name) $(& $g1 $_.gb)$(if ($_.mark) { " $($_.mark)" })" })) -join ' · ') (💤 idle · 📈 +1 GB)") }
   if ($rs.Count -gt 10) { $rs = @($rs | Select-Object -First 9) + [pscustomobject]@{ name = "…$($rs.Count - 9) more"; type = 'more'; by = '—'; gb = (@($rs | Select-Object -Skip 9 | ForEach-Object { [double]$_.gb }) | Measure-Object -Sum).Sum } }
   $cell = { param($r) if ($r) { "$($r.name) | $(if ($r.by) { $r.by } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' })" } else { ' | | ' } }
   if ($rs.Count) {
     $two = $Width -ge 120 -and $rs.Count -gt 1; $h = if ($two) { [math]::Ceiling($rs.Count / 2) } else { $rs.Count }
-    $L.Add(''); $L.Add("| Resource | Used by | RAM$(if ($two) { ' | Resource | Used by | RAM' }) |"); $L.Add("|---|---|---$(if ($two) { '|---|---|---' })|")
-    for ($i = 0; $i -lt $h; $i++) { $L.Add("| $(& $cell $rs[$i])$(if ($two) { " | $(& $cell $(if ($i + $h -lt $rs.Count) { $rs[$i + $h] }))" }) |") }
+    $reportLines.Add(''); $reportLines.Add("| Resource | Used by | RAM$(if ($two) { ' | Resource | Used by | RAM' }) |"); $reportLines.Add("|---|---|---$(if ($two) { '|---|---|---' })|")
+    for ($i = 0; $i -lt $h; $i++) { $reportLines.Add("| $(& $cell $rs[$i])$(if ($two) { " | $(& $cell $(if ($i + $h -lt $rs.Count) { $rs[$i + $h] }))" }) |") }
   }  # 3. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs)
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1; ASK = 2 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
-  $L.Add(''); $L.Add("🚩 **Flags**$(if (-not $fl.Count) { ': none' })")
-  foreach ($f in $fl | Select-Object -First 8) { $L.Add("- $(if ($f.level -eq 'ASK') { '❓ ' })**$($f.level)** $(if ($f.level -eq 'ASK') { '· ' })$($f.what)$(if ($f.action) { " -> $($f.action)" })") }; if ($fl.Count -gt 8) { $L.Add("- …$($fl.Count - 8) more: $($d.detailFile)") }
-  $out = @($L)
+  $reportLines.Add(''); $reportLines.Add("🚩 **Flags**$(if (-not $fl.Count) { ': none' })")
+  foreach ($f in $fl | Select-Object -First 8) { $reportLines.Add("- $(if ($f.level -eq 'ASK') { '❓ ' })**$($f.level)** $(if ($f.level -eq 'ASK') { '· ' })$($f.what)$(if ($f.action) { " -> $($f.action)" })") }; if ($fl.Count -gt 8) { $reportLines.Add("- …$($fl.Count - 8) more: $($d.detailFile)") }
+  $out = @($reportLines)
   if ($Ascii) { $out = @($out | ForEach-Object { ($_ -replace '→', '->' -replace '·', '-' -replace '…', '...' -replace '×', 'x' -replace '—', '-' -replace '[^\x00-\x7F]+ ?', '').Trim() }) }
   $out
 }
@@ -1081,7 +1081,6 @@ $blocks = @(Get-Content $gl | Where-Object { $_ -match '^(\S+)\t' -and ($now - [
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: read guard.log; add a contracts note or a lesson so they stop.' }
 
 if ($AutoFix -and (Within 'tracker + deploy checks')) {
-  $S = $PSScriptRoot
   function OwnerOf($repo, $iid) {
     $proj = if ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $repo }
     $src = (Invoke-HostApi "projects/$([uri]::EscapeDataString($proj))/merge_requests/$iid").source_branch
@@ -1106,7 +1105,6 @@ if ($AutoFix -and (Within 'tracker + deploy checks')) {
     elseif ($l -match '^ATTENTION') { Flag 'ACT' $l 'A tracked MR failed its pipeline, was closed or conflicts (a sibling changed the same lines): get it fixed or rebased (resume its agent with RESUME_BRIEF).' }
   }
   foreach ($l in @(Invoke-KitOutbox)) { Flag $(if ($l -match '^GAVE UP') { 'ACT' } else { 'INFO' }) $(if ($l -match '^SENT') { "auto-fixed: outbox $l" } else { "outbox: $l" }) 'A tracker write lost to the network: do it by hand (dev.ps1 tracker).' }
-  $D = ({ & $KitCmd.qa deployed @args })
   foreach ($o in @((Read-KitTracking).tasks.Values)) {
     if (-not (Within 'deploy checks')) { break }
     # a repo may deploy to several test envs

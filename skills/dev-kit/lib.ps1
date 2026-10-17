@@ -467,10 +467,10 @@ function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool p
 
 # `kittool.py prose` findings as warnings + strings; never cuts
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
-  $tool = $KitCmd.kittool; if (-not $tool -or -not (Test-Path $tool)) { return @() }
+  $kt = $KitCmd.kittool; if (-not $kt -or -not (Test-Path $kt)) { return @() }
   $tmp = $null
   if (-not $Path) { $tmp = Join-Path (Get-KitTemp) "kit-prose-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 6)).md"; [IO.File]::WriteAllText($tmp, $Text); $Path = $tmp }
-  try { $r = & (Get-Python) -X utf8 $tool prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
+  try { $r = & (Get-Python) -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
   $found = @(if ($r) { $r.findings })
   foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
   $found
@@ -508,15 +508,15 @@ function Get-AndroidSdk {
 # ----- adapters (README "Adapters"): kind -> name -> verb -> { param($a, $verb) }; '*' = any verb
 if (-not $global:KitAdapters) { $global:KitAdapters = @{} }
 function Register-KitAdapter([string]$Kind, [string]$Name, [hashtable]$Verbs) { if (-not $KitAdapters[$Kind]) { $KitAdapters[$Kind] = @{} }; $KitAdapters[$Kind][$Name] = $Verbs }
-function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtable]$A = @{}) {
+function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtable]$a = @{}) {
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
-  & $f $A $Verb
+  & $f $a $Verb
 }
 # $Commands.<verb> = a command line; {key} = one argv token (never re-split); stdout JSON, else text
-function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$A) {
+function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
   $line = [string]$(if ($Commands) { $Commands.$Verb }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
-  $t = @([regex]::Matches($line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$A[$m.Groups[1].Value] }) })
+  $t = @([regex]::Matches($line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) })
   $r = Invoke-KitRetry { Invoke-KitExe $t[0] @($t | Select-Object -Skip 1) (Get-KitNetTimeout) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
   if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
   $o = "$($r.out)".Trim(); if ($o -match '^[\[{]') { try { return ($o | ConvertFrom-Json) } catch {} }; $o
@@ -872,9 +872,9 @@ Register-KitAdapter 'tracker' 'jira' @{
 # adapter:tracker/jira-server: Server / Data Center = jira verbs on REST v2 (JIRA_TOKEN bearer or email + token)
 Register-KitAdapter 'tracker' 'jira-server' @{ '*' = { param($a, $v) & $KitAdapters.tracker.jira[$v] $a $v } }
 # adapter:tracker/linear: GraphQL (LINEAR_API_KEY); ids = identifiers (ENG-12), list = team key, status = workflow state name
-function __TrLin([string]$Q, [hashtable]$V = @{}) {
+function __TrLin([string]$Q, [hashtable]$v = @{}) {
   if (-not $__trDry -and -not $env:LINEAR_API_KEY) { throw 'tracker (linear): set LINEAR_API_KEY' }
-  $r = __TrHttp 'POST' 'https://api.linear.app/graphql' @{ query = $Q; variables = $V } @{ Authorization = "$env:LINEAR_API_KEY" }
+  $r = __TrHttp 'POST' 'https://api.linear.app/graphql' @{ query = $Q; variables = $v } @{ Authorization = "$env:LINEAR_API_KEY" }
   if ($r.errors) { throw "tracker (linear): $($r.errors[0].message)" }; $r.data
 }
 function __TrLinSet([string]$Id, [hashtable]$In) { $null = __TrLin 'mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }' @{ id = $Id; in = $In } }
@@ -1162,7 +1162,7 @@ function __CiWord([string]$w) {
   switch -Regex ($w) { '^(success|successful|succeeded|neutral|passed)$' { 'success' } '^(skipped|not_built|not_executed)$' { 'skipped' } '^(cancel+ed|aborted|stopped)$' { 'canceled' }
     '^(fail|failure|failed|error|errored|broken|infrastructure_fail|timed_out|action_required|startup_failure|unstable|partiallysucceeded)$' { 'failed' } '^(manual|paused|blocked|waiting)$' { 'manual' } '^scheduled$' { 'scheduled' } '^(pending|queued|created|notstarted|postponed)$' { 'pending' } default { 'running' } }
 }
-function __CiRoll([string[]]$S) { $S = @($S | Where-Object { $_ }); if (-not $S.Count) { return $null }; foreach ($w in 'failed', 'canceled', 'running', 'pending', 'manual', 'scheduled') { if ($S -contains $w) { return $w } }; if ($S -contains 'success') { 'success' } else { 'skipped' } }
+function __CiRoll([string[]]$s) { $s = @($s | Where-Object { $_ }); if (-not $s.Count) { return $null }; foreach ($w in 'failed', 'canceled', 'running', 'pending', 'manual', 'scheduled') { if ($s -contains $w) { return $w } }; if ($s -contains 'success') { 'success' } else { 'skipped' } }
 # emulated merge-when-green: the intent in tracking.automerge; orch.ps1 track run merges once green
 function __KitAuto([string]$Repo, [string]$N, [switch]$Drop) { Update-KitTracking { param($t) if ($Drop) { $t.automerge.Remove("$Repo!$N") } else { $t.automerge["$Repo!$N"] = (Get-Date).ToString('s') } } }
 
