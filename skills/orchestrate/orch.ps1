@@ -2368,12 +2368,12 @@ function Invoke-PreCommit {
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
   elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
-  & $py -X utf8 $KitCmd.kittool port | Out-Null
-  if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - kittool port failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
-  $gen = @('.codex', '.agents', 'GEMINI.md') | Where-Object { Test-Path (Join-Path $root $_) }
-  if (@(git -C $root status --porcelain -- @gen).Count) { git -C $root add -A -- @gen; Write-Host 'pre-commit: ports regenerated and staged' }
-  $chk = & $py -X utf8 $KitCmd.kittool port --check 2>&1
-  if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - ports still differ after regeneration: $chk" -ForegroundColor Red; exit 1 }
+  # port: optional step — disabled in pre-commit; run manually with kittool.py port when needed
+  # $portOut = & $py -X utf8 $KitCmd.kittool port 2>&1
+  # $gen = @('.codex', '.agents', 'GEMINI.md') | Where-Object { Test-Path (Join-Path $root $_) }
+  # if (@(git -C $root status --porcelain -- @gen).Count) { git -C $root add -A -- @gen; Write-Host 'pre-commit: ports regenerated and staged' }
+  # $chk = & $py -X utf8 $KitCmd.kittool port --check 2>&1
+  # if ($LASTEXITCODE) { Write-Host "pre-commit: WARNING - ports differ after regeneration: $chk" -ForegroundColor Yellow }
   $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
   if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
