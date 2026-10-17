@@ -55,8 +55,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 5. Sandboxed (deploy said SANDBOX): test the `sb<k>-*` instances, then `promote` moves the branch into the main env.
 
 ## Local testing (dev flow step 5)
-1. The testing-goals doc (`dev-kit/templates.md`) lists every goal with its check, Expected and proof. Deploy your branch (step
-   2).
+1. The testing-goals doc (`skills/dev-kit/templates.md`) lists every goal with its check, Expected and proof.
+   Deploy your branch (step 2).
 2. Data: reuse the env's baseline fixtures (the org's baseline file / seeded test tenant or account named in org rules or the
    brief); verify by id before creating anything; create only what is missing through the env's API (`qa.ps1 api -Target <local
    target>`), never SQL; prefix it with your agent id; note what you created in the goals doc.

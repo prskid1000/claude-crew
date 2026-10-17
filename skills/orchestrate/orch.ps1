@@ -438,6 +438,14 @@ function Get-OrphanQaItems([int]$Hours = 48) {
   }
 }
 
+# task '0' broke every promote
+function NormTask($id) {
+  $id = "$id".Trim().Trim("'", '"').Trim()
+  if ($KitConf.TrackerTag) { $id = $id -replace "^(?i)$([regex]::Escape($KitConf.TrackerTag))", '' }
+  if ($id -match '^(0+|-+|none|null|undefined|n/?a|tbd|task|id)?$') { return '' }
+  $id
+}
+
 # ---- track: task <-> MRs; promoted once all merge
 function Invoke-Track {
 param([Parameter(Position = 0)][ValidateSet('add', 'remove', 'show', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
@@ -461,13 +469,6 @@ function NormRef($r) {
   $r
 }
 function Load($t) { (Read-KitTracking).tasks[$t] }
-# task '0' broke every promote
-function NormTask($id) {
-  $id = "$id".Trim().Trim("'", '"').Trim()
-  if ($KitConf.TrackerTag) { $id = $id -replace "^(?i)$([regex]::Escape($KitConf.TrackerTag))", '' }
-  if ($id -match '^(0+|-+|none|null|undefined|n/?a|tbd|task|id)?$') { return '' }
-  $id
-}
 function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
@@ -1927,38 +1928,55 @@ function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'get', 'wait')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json,
-    [ValidateSet('decision', 'envfix')][string]$Kind = 'decision')
+    [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
+    [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale)
   $dir = Get-KitPath decisions -Create
+  $durableLog = Join-Path (Get-KitPath tracking -ErrorAction SilentlyContinue | Split-Path) 'decisions.jsonl'
   $get = { param($i) $f = Join-Path $dir "$i.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
-  $save = { param($o) $f = Join-Path $dir "$($o.id).json"; Invoke-KitLocked $f { $o | ConvertTo-Json -Depth 5 | Set-Content $f -Encoding utf8 } }
+  $save = {
+    param($o)
+    $f = Join-Path $dir "$($o.id).json"
+    Invoke-KitLocked $f { $o | ConvertTo-Json -Depth 5 | Set-Content $f -Encoding utf8 }
+    if ($durableLog -and (Test-Path (Split-Path $durableLog))) {
+      Invoke-KitLocked $durableLog { Add-Content -LiteralPath $durableLog ($o | ConvertTo-Json -Compress) -Encoding utf8 }
+    }
+  }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
   switch ($Action) {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." [-Recommend A] [-Contracts <file>]'; exit 2 }
       $opts = @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"; kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
-        options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('s') }
+      $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
+      $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
+      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+        kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
+        options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('s')
+        task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId }
       & $save ([pscustomobject]$o)
+      if ($resolvedTask) {
+        Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } }
+      }
       if ($Kind -eq 'envfix') {
-        & $note $Contracts "## ENV-FIX NEEDED $($o.id) ($Agent, item $Item)`n$Question`nDone: pending (the coordinator appends it below)"
+        & $note $Contracts "## ENV-FIX NEEDED $($o.id) ($Agent, item $Item)$(if ($resolvedTask) { " [Task: $resolvedTask]" })`n$Question`nDone: pending (the coordinator appends it below)"
         "ENV-FIX $($o.id) pending: the coordinator fixes the local env; item $Item waits. Wait: orch.ps1 decide wait -Id $($o.id)"; return
       }
       $null = Test-KitProse -Kind decision-request -Text ("$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $Recommend")
-      & $note $Contracts ("## DECISION NEEDED $($o.id) ($Agent, item $Item)`n$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $(if ($Recommend) { $Recommend } else { 'none' })`nAnswer: pending (the coordinator appends it below)")
+      & $note $Contracts ("## DECISION NEEDED $($o.id) ($Agent, item $Item)$(if ($resolvedTask) { " [Task: $resolvedTask]" })$(if ($mrsClean.Count) { " [MRs: $($mrsClean -join ', ')]" })`n$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $(if ($Recommend) { $Recommend } else { 'none' })`nAnswer: pending (the coordinator appends it below)")
       "DECISION $($o.id) pending: item $Item stops (needs decision); continue your other items. Wait: orch.ps1 decide wait -Id $($o.id)"
     }
     'list' {
       $all = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not $Pending -or $_.status -eq 'pending' })
       if ($Json) { ConvertTo-Json @($all) -Depth 5; return }
-      foreach ($d in $all) { "$($d.status.ToUpper()) $($d.id) $($d.run)/$($d.agent) item $($d.item): $($d.question) | options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { " | recommended: $($d.recommend)" })$(if ($d.answer) { " | answer: $($d.answer)" })" }
+      foreach ($d in $all) { "$($d.status.ToUpper()) $($d.id) $($d.run)/$($d.agent) item $($d.item)$(if ($d.task) { " [Task: $($d.task)]" }): $($d.question) | options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { " | recommended: $($d.recommend)" })$(if ($d.answer) { " | answer: $($d.answer)" })$(if ($d.rationale) { " | rationale: $($d.rationale)" })" }
       if (-not $all.Count) { 'no decisions' }
     }
     'answer' {
       $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
       if (-not $Answer) { 'usage: decide answer -Id <id> -Answer "<words>"'; exit 2 }
       $o.status = 'answered'; $o | Add-Member -Force answer $Answer; $o | Add-Member -Force by $By; $o | Add-Member -Force answeredAt (Get-Date).ToString('s')
+      if ($Rationale) { $o | Add-Member -Force rationale $Rationale }
       & $save $o
-      & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer"
+      & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
     }
     'get' { $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }; $o | ConvertTo-Json -Depth 5 }
@@ -1966,7 +1984,7 @@ function Invoke-Decide {
       $until = (Get-Date).AddMinutes($MaxMinutes)
       while ($true) {
         $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
-        if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)"; return }
+        if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)$(if ($o.rationale) { " [Rationale: $($o.rationale)]" })"; return }
         if ((Get-Date) -ge $until) { "PENDING $Id (no answer within $MaxMinutes min; wait again)"; exit 1 }
         Start-Sleep -Seconds 30
       }
@@ -2368,6 +2386,11 @@ function Invoke-PreCommit {
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
   elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
+  & $py -X utf8 $KitCmd.kittool port | Out-Null
+  if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
+    git -C $root add -- .codex .agents GEMINI.md
+    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
+  }
   $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
   if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }

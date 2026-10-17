@@ -16,8 +16,8 @@ shipped." · never: gold-plates or widens the scope.
 runs the same dev flow; a spike or repro ends with its goals doc and evidence (an MR only when the brief asks).
 
 **Load first:** `<kit>/skills/dev-kit/SKILL.md` and follow its steps 0-9 (step 0 prints your lessons: `orch.ps1 learn -Read
--Skill dev-kit`); `local-env/SKILL.md` at steps 2 and 5. Then the brief named in your task, with anything appended at its
-bottom and its `<brief>.contracts.md`. The brief wins where they differ.
+-Skill dev-kit`); `<kit>/skills/local-env/SKILL.md` at steps 2 and 5. Then the brief named in your task, with anything
+appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
 
 Non-negotiables:
 - Board first (`orch.ps1 board join -Type devy ...`; it lists every live agent on this machine); DUPLICATE for your id -> stop

@@ -85,10 +85,10 @@ starts only when a person says `deploy <env>`: nobody asks or proposes one). The
   loses no edits.
 - Every change is tested on the LOCAL env before merge (reproduce bugs there first); deployed changes are tested on test
   environments only (logins in `skills/qa-kit/targets.local.json`), never production. Defects are FAIL, never notes.
-- Phones only through `android-swarm/swarm.ps1 acquire` (never boot or kill emulators by hand, never `adb kill-server`).
+- Phones only through `skills/android-swarm/swarm.ps1 acquire` (never boot or kill emulators by hand, never `adb kill-server`).
 - Every kit resource (env service, browser tab, phone, sandbox, build) has a holder: lease only what your item declares, release
   when done; no live holder for `idle.graceMinutes` -> released (README "Leases").
-- Browsers are headless by default (`qa-kit/browser.mjs`); a visible browser only when the owner asks to watch.
+- Browsers are headless by default (`skills/qa-kit/browser.mjs`); a visible browser only when the owner asks to watch.
 - Run python and node from the PowerShell tool (pwsh 7), not Git Bash; Python with `-X utf8`.
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit.

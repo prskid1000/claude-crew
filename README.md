@@ -2,8 +2,8 @@
 
 **[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built by `kittool.py flow --public` on each push)
 
-- **Total kit tokens**: 401,643 of 436,000 budget cap (92% utilization)
-- **Average tokens per file**: ~10,570 tokens across 38 tracked files
+- **Total kit tokens**: 402,392 of 436,000 budget cap (92% utilization)
+- **Average tokens per file**: ~10,589 tokens across 38 tracked files
 - **Token efficiency target**: progressive 50% token reduction roadmap without feature loss
 
 A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
@@ -353,7 +353,7 @@ refuses unfilled ones); then `port`, lint 0, tests.
 ### Hard rules
 - **30 content + 8 plumbing files** [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports; plumbing = LICENSE, .gitignore,
   .gitattributes, .githooks/*, .github/*, settings.json; git-ignored local files never count). One script per area; templates
-  fold into a SKILL.md, an agent or `dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
+  fold into a SKILL.md, an agent or `skills/dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->

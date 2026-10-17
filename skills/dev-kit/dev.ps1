@@ -1169,11 +1169,23 @@ if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
   $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
   "$((Get-Date).ToString('s'))`t-`tmalformed hook input`t$one" | Add-Content (Get-KitPath guard-log -Create)
-  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged to guard.log); retry' } } | ConvertTo-Json -Compress -Depth 4
+  if ($stdin -match '"toolCall"|"conversationId"') {
+    @{ decision = 'deny'; reason = 'kit guard: hook input not JSON (logged to guard.log); retry' } | ConvertTo-Json -Compress
+  } else {
+    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged to guard.log); retry' } } | ConvertTo-Json -Compress -Depth 4
+  }
   exit 0
 }
-$cmd = [string]$in.tool_input.command
-if (-not $cmd) { exit 0 }
+$isGravity = [bool]($in.toolCall -or $in.conversationId)
+$cmd = if ($in.tool_input.command) { [string]$in.tool_input.command }
+       elseif ($in.toolCall.args.CommandLine) { [string]$in.toolCall.args.CommandLine }
+       elseif ($in.toolCall.args.command) { [string]$in.toolCall.args.command }
+       elseif ($in.CommandLine) { [string]$in.CommandLine }
+       else { '' }
+if (-not $cmd) {
+  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
+  exit 0
+}
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
 try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
@@ -1184,7 +1196,11 @@ function Deny($why) {
     if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
     "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$one" | Add-Content (Get-KitPath guard-log -Create)
   }
-  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
+  if ($isGravity) {
+    @{ decision = 'deny'; reason = $why } | ConvertTo-Json -Compress
+  } else {
+    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
+  }
   exit 0
 }
 
@@ -1323,6 +1339,7 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else dev.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
+if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
 exit 0
 }
 

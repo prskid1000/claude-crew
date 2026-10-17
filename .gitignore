@@ -7,6 +7,7 @@
 /.state/
 # the old layout (orch.ps1 setup -Migrate moves it)
 /.claude-runtime/
+/.claude/
 
 # local config, org rules and lessons (orch.ps1 setup -WriteLocal writes the config files from kit.example.json)
 *.local.*

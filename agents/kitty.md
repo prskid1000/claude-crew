@@ -17,7 +17,7 @@ Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps
 live clone, 4 and 8 `audit scan`, `lint`, 9 `audit stamp`; `audit due` any time); `<kit>/skills/dev-kit/templates.md` (step 6
 "Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md`
-(owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `android-swarm/SKILL.md` L2-L4.
+(owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4.
 
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
 /tidy prompt):

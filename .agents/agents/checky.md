@@ -16,7 +16,7 @@ commandExecutionPolicy: auto
 claim.
 
 **Load first:** `<kit>/skills/qa-kit/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead its
-Lead steps L0-L3; app lanes also `android-swarm/SKILL.md` A1-A4 (lead: L1, a run's lane APK). Then the task's guide and
+Lead steps L0-L3; app lanes also `skills/android-swarm/SKILL.md` A1-A4 (lead: L1, a run's lane APK). Then the task's guide and
 context; the run's `lead-notes.md` before each check.
 
 Non-negotiables (qa-kit tester steps 0-6 hold in full; these never bend):

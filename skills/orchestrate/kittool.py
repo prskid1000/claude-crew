@@ -2711,8 +2711,7 @@ def port_hooks():
           "hooks": [
            {
             "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass "
-            "-File .claude/skills/dev-kit/dev.ps1 guard",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/dev-kit/dev.ps1 guard",
             "timeout": 10,
            }
           ],
@@ -2721,7 +2720,6 @@ def port_hooks():
        },
        "kit-health": {
         "enabled": True,
-                    # handlers directly under the event, no matcher wrapper (antigravity.google/docs/hooks)
         "SessionStart": [
          {
           "type": "command",
@@ -2834,6 +2832,12 @@ def port_deploy():
         dst = WORKSPACE / name
         shutil.copyfile(KIT / name, dst)
         deployed.append(dst)
+    # relative hook forwarders so .claude/skills/... resolves when CWD is .agents
+    for sub in ((WORKSPACE / ".agents"), (KIT)):
+        (sub / ".claude" / "skills" / "dev-kit").mkdir(parents=True, exist_ok=True)
+        (sub / ".claude" / "skills" / "orchestrate").mkdir(parents=True, exist_ok=True)
+        (sub / ".claude" / "skills" / "dev-kit" / "dev.ps1").write_text(f"& '{(KIT / 'skills/dev-kit/dev.ps1').as_posix()}' @args\n", encoding="utf-8")
+        (sub / ".claude" / "skills" / "orchestrate" / "orch.ps1").write_text(f"& '{(KIT / 'skills/orchestrate/orch.ps1').as_posix()}' @args\n", encoding="utf-8")
     print(f"deployed -> {', '.join(str(p) for p in deployed)}")
 
 def stale_generated(src, dst):
