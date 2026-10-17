@@ -125,19 +125,29 @@ function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
 if (-not $env:GIT_TERMINAL_PROMPT) { $env:GIT_TERMINAL_PROMPT = '0' }
 if (-not $env:GIT_HTTP_LOW_SPEED_LIMIT) { $env:GIT_HTTP_LOW_SPEED_LIMIT = '1000'; $env:GIT_HTTP_LOW_SPEED_TIME = '30' }
 if (-not $env:GIT_SSH_COMMAND) { $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o ConnectTimeout=15' }
+# unified memo helper: key -> @{ at = Get-Date; v = $val; ok = $val } with TTL in seconds
+function Get-KitMemo([hashtable]$Cache, [string]$Key, [int]$TtlSec, [scriptblock]$Getter) {
+  if ($Cache.ContainsKey($Key) -and ((Get-Date) - $Cache[$Key].at).TotalSeconds -lt $TtlSec) {
+    if ($null -ne $Cache[$Key].v) { return $Cache[$Key].v }
+    return $Cache[$Key].ok
+  }
+  $res = & $Getter
+  if ($null -ne $res) { $Cache[$Key] = @{ at = Get-Date; v = $res; ok = $res } }
+  $res
+}
 if (-not $global:KitFetched) { $global:KitFetched = @{} }
 # once per repo per process per 10 min (worktrees share it); $false = failed/timed out
 function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = @()) {
   $common = "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $common) { return $false }
   $key = "$common|$($Refs -join ',')"
-  if ($global:KitFetched.ContainsKey($key) -and ((Get-Date) - $global:KitFetched[$key].at).TotalMinutes -lt 10) { return $global:KitFetched[$key].ok }
-  $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
-  # one argv entry per argument (spaces broke Start-Process)
-  $r = Invoke-KitExe git $a $TimeoutSec
-  if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
-  elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
-  $ok = -not $r.timedOut -and $r.code -eq 0
-  $global:KitFetched[$key] = @{ at = Get-Date; ok = $ok }; $ok
+  Get-KitMemo $global:KitFetched $key 600 {
+    $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
+    # one argv entry per argument (spaces broke Start-Process)
+    $r = Invoke-KitExe git $a $TimeoutSec
+    if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
+    elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
+    [bool](-not $r.timedOut -and $r.code -eq 0)
+  }
 }
 # ===== 3. OS helpers (Windows, Linux, macOS) =====
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
@@ -1025,11 +1035,11 @@ function Get-TrackerUrl([string]$Id) { __TrA 'url' @{ id = $Id } }
 # reads memoised 90 s; writes drop the entry
 if (-not $global:KitTrackerMemo) { $global:KitTrackerMemo = @{} }
 function Get-TrackerTask([string]$Id) {
-  $mk = "$($__trType)|$Id"
-  if ($global:KitTrackerMemo.ContainsKey($mk) -and ((Get-Date) - $global:KitTrackerMemo[$mk].at).TotalSeconds -lt 90) { return $global:KitTrackerMemo[$mk].v }
-  $v = __Get-TrackerTask $Id
-  if ($v -and $v.name) { $global:KitTrackerMemo[$mk] = @{ at = Get-Date; v = $v } }
-  $v
+  $res = Get-KitMemo $global:KitTrackerMemo "$($__trType)|$Id" 90 {
+    $v = __Get-TrackerTask $Id
+    if ($v -and $v.name) { $v } else { $null }
+  }
+  if ($null -ne $res) { $res } else { __Get-TrackerTask $Id }
 }
 function Clear-TrackerMemo([string]$Id) { $global:KitTrackerMemo.Remove("$($__trType)|$Id") }
 function __Get-TrackerTask([string]$Id) { $v = __TrA 'view' @{ id = $Id }; if ($v.id) { $v } else { __TrStub $Id } }
@@ -1189,9 +1199,9 @@ function __Mr([hashtable]$H) {
 }
 function __GhMr($p) {
   if (-not $p -or -not $p.number) { return $null }
-  [pscustomobject]@{ iid = $p.number; title = $p.title; state = $(if ($p.merged_at -or $p.merged) { 'merged' } elseif ($p.state -eq 'open') { 'opened' } else { 'closed' }); source_branch = $p.head.ref; target_branch = $p.base.ref
+  __Mr @{ iid = $p.number; title = $p.title; state = $(if ($p.merged_at -or $p.merged) { 'merged' } elseif ($p.state -eq 'open') { 'opened' } else { 'closed' }); source_branch = $p.head.ref; target_branch = $p.base.ref
     sha = $p.head.sha; merge_commit_sha = $p.merge_commit_sha; merged_at = $p.merged_at; updated_at = $p.updated_at; draft = [bool]$p.draft; has_conflicts = ($p.mergeable -eq $false)
-    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url; squash_commit_sha = $null; head_pipeline = $null }
+    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url }
 }
 Register-KitAdapter 'git-host' 'github' @{
   'mr.get' = { param($a) __GhPr $a }
@@ -1384,10 +1394,13 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $kind, $name, $v2 = if ($Verb -like 'ci.*') { 'ci', $ci, $Verb.Substring(3) } else { 'git-host', $t, $Verb }
   $mk = "$name|$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"
   if ($Verb -in 'mr.create', 'mr.merge', 'mr.unauto') { $global:KitHostMemo.Clear() }
-  elseif (-not $NoMemo -and $global:KitHostMemo.ContainsKey($mk) -and ((Get-Date) - $global:KitHostMemo[$mk].at).TotalSeconds -lt 90) { return $global:KitHostMemo[$mk].v }
+  elseif (-not $NoMemo) {
+    $cached = Get-KitMemo $global:KitHostMemo $mk 90 { $null }
+    if ($null -ne $cached) { return $cached }
+  }
   $v = Invoke-KitAdapter $kind $name $v2 $A
   if ($Verb -eq 'mr.get' -and $v.state -eq 'opened' -and ($t -ne 'gitlab' -or $ci -ne 'gitlab')) { $v | Add-Member -Force head_pipeline (Invoke-HostVerb 'ci.status' @{ type = $t; repo = $A.repo; sha = $v.sha; ref = $v.source_branch; n = $A.n } -NoMemo:$NoMemo) }
-  if ($Verb -notin 'mr.create', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v } }
+  if ($Verb -notin 'mr.create', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
   $v
 }
 # GitLab REST paths (older callers) -> verbs
