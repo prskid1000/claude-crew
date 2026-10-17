@@ -62,9 +62,10 @@ the **Target**. A mixed request is split and each part routed on its own.
   agent reads the board (who is alive on this machine); a disagreement goes to `orch.ps1 board dispute` (two rounds, then the
   owner judges through `decide ask`). Codex / Antigravity: the same agents are ported to `.codex/agents/*.toml` /
   `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` / `.agents/workflows/*.md` by hand.
-- **Autonomous:** installing this kit is the standing opt-in for its workflows: launch the routed workflow yourself, then say in
-  one line what started and why. An org that wants to be asked first says so in its org rules. A request already running in a
-  workflow is never launched twice: add to it through the contracts file.
+- **Autonomous:** user invocation is the only action needed: installing this kit is the standing opt-in for its workflows. The
+  coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI
+  verification, and merging) without pausing for confirmation or approvals. An org that wants to be asked first says so in its
+  org rules. A request already running in a workflow is never launched twice: add to it through the contracts file.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then it runs end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
   into the main line after review, CI and the local test loop need none.
