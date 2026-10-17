@@ -2294,8 +2294,10 @@ $id = $Matches.id
 $meta = Get-ChildItem (Join-Path $HOME ".claude/projects/*/*/subagents/workflows/*/agent-$id.meta.json") | Select-Object -First 1
 if (-not $meta) { exit 0 }
 $label = (Get-Content $meta.FullName -Raw | ConvertFrom-Json).description
-[Console]::Error.WriteLine("Blocked: '$to' ($label) is an agent inside workflow $($meta.Directory.Name). SendMessage would resume a SECOND copy of it that writes the same worktree. Relay through the wave's <brief>.contracts.md (agents re-read it before every push) and, if needed, let the running agent's report come back to you.")
-exit 2
+$why = "Blocked: '$to' ($label) is an agent inside workflow $($meta.Directory.Name). SendMessage would resume a SECOND copy of it that writes the same worktree. Relay through the wave's <brief>.contracts.md (agents re-read it before every push) and, if needed, let the running agent's report come back to you."
+[Console]::Error.WriteLine($why)
+@{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
+exit 0
 }
 
 # ---- prepush: block local files, org terms, stale ports
