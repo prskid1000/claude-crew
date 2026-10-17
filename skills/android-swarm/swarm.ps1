@@ -340,7 +340,8 @@ if (-not $NoUpdate -and $branch -ne 'HEAD') {
     git -C $AppDir merge -q --ff-only "origin/$branch" 2>&1 | Out-Null
     if ($LASTEXITCODE) { Write-Warning "cannot fast-forward $branch to origin/$branch (local commits?): building the local branch" }
     else {
-      "updated $branch $($before.Substring(0, 9)) -> $((git -C $AppDir rev-parse --short HEAD).Trim())"
+      $b9 = if ($before.Length -ge 9) { $before.Substring(0, 9) } else { $before }
+      "updated $branch $b9 -> $((git -C $AppDir rev-parse --short HEAD).Trim())"
       $lockChanged = git -C $AppDir diff --name-only $before HEAD | Where-Object { $_ -match '(^|/)(yarn\.lock|package-lock\.json|package\.json)$' }
       if ($lockChanged -and $c.app.kind -eq 'react-native') {
         $pkgDir = (Get-Item $AppDir).FullName; while ($pkgDir -and -not (Test-Path (Join-Path $pkgDir 'package.json'))) { $pkgDir = Split-Path $pkgDir }

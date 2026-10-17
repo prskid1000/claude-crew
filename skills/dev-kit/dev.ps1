@@ -290,9 +290,9 @@ function Get-Stack($d) {
         $var = 'Debug'
         foreach ($bf in @(Get-ChildItem -LiteralPath $d -Recurse -Depth 2 -Include build.gradle, build.gradle.kts -File -ErrorAction SilentlyContinue)) {
           $bt = ReadText $bf.FullName
-          if ($bt -match '(?s)productFlavors\s*\{\s*(?:create\(\s*"|register\(\s*"|maybeCreate\(\s*")?([A-Za-z]\w*)') { $var = $Matches[1].Substring(0, 1).ToUpper() + $Matches[1].Substring(1) + 'Debug'; break }
+          if ($bt -match '(?s)productFlavors\s*\{\s*(?:create\(\s*"|register\(\s*"|maybeCreate\(\s*")?([A-Za-z]\w*)') { $m1 = $Matches[1]; $var = $(if ($m1.Length -ge 1) { $m1.Substring(0, 1).ToUpper() + $m1.Substring(1) } else { $m1 }) + 'Debug'; break }
         }
-      } else { $var = $var.Substring(0, 1).ToUpper() + $var.Substring(1) }
+      } else { $var = if ($var.Length -ge 1) { $var.Substring(0, 1).ToUpper() + $var.Substring(1) } else { $var } }
       $c.compile = "$gw compile${var}Sources -q"
       $c.test = "$gw test${var}UnitTest --tests {tests}"
       $c.lint = "$gw lint$var"

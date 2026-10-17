@@ -919,7 +919,7 @@ def _report_selftest(expect):
         use('notion', {'parent': 'p1'}, lambda a: PAGE if a[0] == 'POST' else {'object': 'list', 'results': []})
         u = make_doc('T', md); c1, c2 = (c[0][2]['children'] for c in calls)
         expect('notion: blocks 100 per call', u == PAGE['url'] and (len(c1), len(c2), c1[0]['type'], c2[-1]['type']) == (100, 53, 'heading_1', 'code'))
-        with open(os.path.join(tmp, 'b.py'), 'w') as fh:   # the fake browser writes --print-to-pdf=<out>
+        with open(os.path.join(tmp, 'b.py'), 'w', encoding='utf-8') as fh:   # the fake browser writes --print-to-pdf=<out>
             fh.write("import sys\nopen([x[15:] for x in sys.argv if x[:15] == '--print-to-pdf='][0], 'wb').write(b'%PDF')")
         g['_browser'] = lambda: [sys.executable, os.path.join(tmp, 'b.py')]; use('pdf', {}); p = make_doc('T', md, tmp)
         expect('pdf: the headless browser prints the HTML, kept', p == os.path.join(tmp, 'r.pdf') and open(p, 'rb').read() == b'%PDF')

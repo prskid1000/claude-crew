@@ -337,7 +337,9 @@ function Invoke-MigPy([string]$e, [string[]]$a) {
 function Get-MigClass([string]$e, $r, [string]$sha) {
   try {
     $cf = MigCfgFile $e
-    $d = Join-Path (MigRoot $e) "$($r.name)/$($sha.Substring(0, 12))-$([IO.Path]::GetFileNameWithoutExtension($cf).Substring(7))"
+    $s12 = if ($sha.Length -ge 12) { $sha.Substring(0, 12) } else { $sha }
+    $cfBase = [IO.Path]::GetFileNameWithoutExtension($cf); $cf7 = if ($cfBase.Length -ge 7) { $cfBase.Substring(7) } else { $cfBase }
+    $d = Join-Path (MigRoot $e) "$($r.name)/$s12-$cf7"
     $m = Join-Path $d 'manifest.json'
     if (-not (Test-Path $m)) {
       $a = @('classify', '--repo', $r.cfg.checkout, '--base', "origin/$($r.target)", '--head', $sha, '--config', $cf, '--save', $d)
@@ -1303,7 +1305,7 @@ switch ($Action) {
       if ($mig[$rn]) { $mcls[$rn] = Get-MigClass $e $envRepos[$rn] $sha; if (-not $mcls[$rn]) { $mig[$rn] = $false; $mcls.Remove($rn) } }
     }
     $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = $shas; migrations = $mig; mclass = $mcls }
-    "[$e] deploy $Branch ($(($shas.Keys | ForEach-Object { "$_ @ $($shas[$_].Substring(0, 9))" }) -join ', ')) queued as request $rid"
+    "[$e] deploy $Branch ($(($shas.Keys | ForEach-Object { $s = $shas[$_]; "$_ @ $(if ($s.Length -ge 9) { $s.Substring(0, 9) } else { $s })" }) -join ', ')) queued as request $rid"
     foreach ($rn in $mcls.Keys) {
       $mc = $mcls[$rn]
       "[$e]   $rn $(MigText $mc) - they change the shared local DB"
@@ -1425,7 +1427,8 @@ switch ($Action) {
     if (-not @($items).Count) { "[$e] no migration layers$(if ($Branch) { " in $Branch" })"; return }
     foreach ($it in $items) {
       $l = $it.layer; $mc = $l.mclass
-      "== $($it.rn) $($l.branch) @ $("$($l.sha)".Substring(0, 9)): $(if ($mc) { MigText $mc } else { 'MIGRATIONS HEAVY (deployed before classification)' })"
+      $lsha = "$($l.sha)"; $s9 = if ($lsha.Length -ge 9) { $lsha.Substring(0, 9) } else { $lsha }
+      "== $($it.rn) $($l.branch) @ $($s9): $(if ($mc) { MigText $mc } else { 'MIGRATIONS HEAVY (deployed before classification)' })"
       if ($mc.manifest -and (Test-Path $mc.manifest)) {
         $mf = Get-Content $mc.manifest -Raw | ConvertFrom-Json
         foreach ($c in @($mf.changesets)) { '   {0,-5} {1}::{2}{3}{4}' -f "$($c.class)".ToUpper(), $c.file, $c.id, $(if ($c.why) { "  [$($c.rule)] $($c.why)" }), $(if ($c.guarded) { '  (precondition may MARK_RAN)' }) }

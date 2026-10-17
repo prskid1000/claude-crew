@@ -40,7 +40,7 @@ function Caption($file) {
   if ($file -match '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify)?(_\d{2}m?)?_(.+)\.\w+$') {
     $c = ($Matches[3] -replace '[-_]', ' ').Trim(); $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }
     if (-not $c) { return $file }   # one odd name never crashes the publish
-    return ($c.Substring(0, 1).ToUpper() + $c.Substring(1)) + $v
+    return (if ($c.Length -ge 1) { $c.Substring(0, 1).ToUpper() + $c.Substring(1) } else { $c }) + $v
   }
   return $file
 }

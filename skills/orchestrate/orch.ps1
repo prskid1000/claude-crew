@@ -81,10 +81,10 @@ switch ($Action) {
   'join' {
     if (-not $Agent) { throw 'join needs -Agent' }
     $now = Get-Date
-    $myClaims = @($Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
+    $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
     $notes = @()
-    $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@($_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
+    $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
     if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
     else { $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
@@ -92,7 +92,7 @@ switch ($Action) {
     foreach ($o in @($same | Where-Object { $_.session -ne $tok })) {
       $alive = $o.pid -and [bool](Get-Process -Id ([int]$o.pid) -ErrorAction SilentlyContinue)
       $age = ($now - [datetime]$o.beat).TotalMinutes
-      $shared = @(@($o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
+      $shared = @(@(Split-KitList $o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
       $why = if ((Test-KitHolder $o) -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and $shared.Count) { "-Resume on $($shared -join ', ')" } else { $null }
       if (-not $why) { continue }
       try {
@@ -100,7 +100,7 @@ switch ($Action) {
         $notes += "TAKEOVER: replaced session $($o.session) ($why; joined $(([datetime]$o.joined).ToString('HH:mm')), last beat $(([datetime]$o.beat).ToString('HH:mm')))"
       } catch { $notes += "could not take over session $($o.session): $_" }
     }
-    $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; area = $Area; items = $Items; worktrees = @($Worktrees); contracts = $Contracts
+    $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; area = $Area; items = $Items; worktrees = @(Split-KitList $Worktrees); contracts = $Contracts
                       status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID } + (Get-KitHolder)
     $bg = Get-KitBudget -Model $Model; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; spend = 0 }
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { $me | ConvertTo-Json | Set-Content $mf }
@@ -323,7 +323,7 @@ function Get-SelfLaunchFile([string]$Leaf, [string]$Run, [string]$Fnv = '') { Jo
 function Get-LaunchRunName($a) {
   if (-not $a) { return '' }
   if ($a.run) { return [string]$a.run }
-  if ($a.brief) { return "$([IO.Path]::GetFileName([string]$a.brief) -replace '\.md$', '')-$((Get-KitFnv ([string]$a.brief)).Substring(0, 4))" }
+  if ($a.brief) { $fnv = Get-KitFnv ([string]$a.brief); return "$([IO.Path]::GetFileName([string]$a.brief) -replace '\.md$', '')-$(if ($fnv.Length -ge 4) { $fnv.Substring(0, 4) } else { $fnv })" }
   if ($a.runDir) { return (Split-Path ([string]$a.runDir) -Leaf) }
   if ($a.select) { return "select-$(if ($a.name) { $a.name } elseif ($a.target) { $a.target } else { 'run' })" }
   ''
@@ -1072,7 +1072,7 @@ $mem = Get-SysMem; $tot = $mem.TotalGB; $avail = $mem.AvailGB
 $pct = [int](100 * (1 - $avail / $tot)); L "memory: $pct% used, $([math]::Round($avail,1)) GB available"
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90); $diskMin = [double](Get-KitSetting 'supervise.minDiskFreeGB' 30)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run orch.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
-$drive = if ($KitIsWindows) { $KitConf.Workspace.Substring(0, 1) } else { $KitConf.Workspace }
+$drive = if ($KitIsWindows -and $KitConf.Workspace.Length -gt 0) { $KitConf.Workspace.Substring(0, 1) } else { $KitConf.Workspace }
 $freeGB = try { [math]::Round([IO.DriveInfo]::new($(if ($KitIsWindows) { "${drive}:\" } else { $drive })).AvailableFreeSpace / 1GB) } catch { 999 }
 L "disk ${drive}: $freeGB GB free"
 if ($freeGB -lt $diskMin) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Run orch.ps1 cleanup; remove finished worktrees.' }
