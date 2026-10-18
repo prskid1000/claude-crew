@@ -41,18 +41,15 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    (below); `$A scan` and `python -X utf8 <wt>/skills/orchestrate/kittool.py lint --warn` add candidates. Keep only proven
    findings (`file:line`, the input that breaks it, the effect). Large: up to 6 `revy` (kind kit, read-only) agents, one per
    area; verify each.
-5. **Generic and project-agnostic:** `kittool.py lint --org-terms <kit>/skills/dev-kit/kit.local.json` = 0 ORG-TERM; no hard-coded
-   product, tenant, status name, list id, host, person, absolute path, stack, migration tool, app trio or DB; each such value -> a
-   config key with today's default, the org's value in the report's "kit.local.json additions". Any stack, migration tool, local
-   env shape, deploy mechanism and tracker must work through config.
-6. **Consistency:** Files indexes vs disk; README "Configuration" vs the keys scripts read (both ways); the manifest vs agents,
-   skills, workflows, Router and Events; agent tools vs what their kind runs; ports in the kit and the workspace copies
-   (`kittool.py port --check`); the README graph current; no script opens the desktop without `--open` (DESKTOP-OPEN); every
-   file reached from the root with a reason on each edge; budgets and the file caps (over: trim first; `kittool.py budget
-   raise -Reason` only when trimming cannot make room); script headers (usage, exit codes, shared
-   params). Writing: lint PROSE for kit files; `kittool.py prose --kind <kind> <file>` on a sample of produced artefacts
-   (latest MR bodies, tracker comments, briefs and testing docs under `<runtime>/work`, QA reports, results.json notes): each
-   finding = kind, file, limit broken.
+5. **Generic & agnostic:** `kittool.py lint --org-terms <kit>/skills/dev-kit/kit.local.json` = 0 ORG-TERM; no hard-coded
+   product, tenant, status, list id, host, path, stack, DB; each such value -> config key with default, org value in report
+   additions. Any stack, local env shape, deploy mechanism and tracker must work through config.
+6. **Consistency:** Files indexes vs disk; README "Configuration" vs script keys; manifest vs agents, skills, workflows,
+   Router and Events; ports in sync (`kittool.py port --check`); README graph current;
+   no desktop open without `--open` (DESKTOP-OPEN); every file reached from root; budgets and file caps (over: trim first;
+   `kittool.py budget raise -Reason` only when trimming cannot make room); script headers (usage, exit codes).
+   Writing: lint PROSE for kit files; `kittool.py prose --kind <kind> <file>` on sample artefacts (latest MR bodies,
+   tracker comments, briefs, testing docs, QA reports).
 7. **Improve:** `& $O learn -Stats`, `-Show -Last 300`, `-History`, the newest `<runtime>/logs/retros/*.md`,
    `<runtime>/logs/guard.log`; a retired lesson ("(fixed in kit)") seen again = a regression finding. Each pattern -> the
    smallest durable change.

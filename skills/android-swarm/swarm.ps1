@@ -11,6 +11,7 @@ ios (Simulators, macOS) | none (verbs refuse; app checks NOT_TESTED).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
+Sections: L20 cfg · L101 phone · L297 build · L446 install · L487 avd · L574 up · L664 down · L694 slim · L721 arrange
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)

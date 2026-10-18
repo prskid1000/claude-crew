@@ -20,7 +20,7 @@
  python devtools.py findings validate <module>.json [...]   check a module audit's findings against the schema
  python devtools.py findings summary <module>.json [--sources ".."] [--out <dir>]   <module>-summary.md + .html
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error.
-
+Sections: L70 path/lock · L213 prose · L312 target · L370 MR · L680 html · L1008 selftest · L1209 mig · L1566 classify · L1667 plan · L2098 findings
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.

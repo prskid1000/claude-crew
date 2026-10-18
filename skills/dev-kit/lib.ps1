@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: 1 paths  2 config  3 OS  4 tracker  5 git host  6 entry scripts.
+Sections: L8 paths · L50 config · L130 OS · L547 tracker · L1185 git-host · L1459 entry-scripts
 #>
 # ===== 1. paths (kit.example.json _paths) =====
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
@@ -68,7 +68,6 @@ $__kit = Split-Path (Split-Path $__devkit)
 $__ws = Split-Path $__kit
 $__cfg = $null
 $__cfgFile = Join-Path $__devkit 'kit.local.json'
-# kit worktree: the main clone's kit.local.json
 if (-not (Test-Path $__cfgFile)) {
   $__cd = "$(git -C $__devkit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
   if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/dev-kit/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
@@ -87,7 +86,6 @@ function Get-KitSetting([string]$Path, $Default) {
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })
 $__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # github / gitlab status labels
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
-# task tag in branches (fix/<tag><id>-slug) and MR titles
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' $(switch ($__trType) { 'clickup' { 'CU-' } 'github' { 'GH-' } 'gitlab' { 'GL-' } default { '' } }))
 $__repos = Get-KitValue 'reposRoot' $__ws
 $__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
@@ -107,11 +105,9 @@ $KitConf = [pscustomobject]@{
   TrackerTag = $__trTag
   ReportType = $__reportType.ToLower()
   MaxBrowserProfiles = [int](Get-KitSetting 'cleanup.maxBrowserProfiles' 4)
-  # session journals
   ClaudeProjectDir = (Join-Path (Join-Path $HOME '.claude/projects') ($__ws -replace '[^A-Za-z0-9]', '-'))
 }
 
-# pwsh -File passes `'T1','T2'` as ONE string; quoted items stay whole
 function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
   @(foreach ($v in @($Values)) {
       $v = "$v"
@@ -125,7 +121,6 @@ function Split-KitList([object[]]$Values, [string]$Sep = '[\s,]+') {
 if (-not $env:GIT_TERMINAL_PROMPT) { $env:GIT_TERMINAL_PROMPT = '0' }
 if (-not $env:GIT_HTTP_LOW_SPEED_LIMIT) { $env:GIT_HTTP_LOW_SPEED_LIMIT = '1000'; $env:GIT_HTTP_LOW_SPEED_TIME = '30' }
 if (-not $env:GIT_SSH_COMMAND) { $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=yes -o ConnectTimeout=15' }
-# unified memo helper: key -> @{ at = Get-Date; v = $val; ok = $val } with TTL in seconds
 function Get-KitMemo([hashtable]$Cache, [string]$Key, [int]$TtlSec, [scriptblock]$Getter) {
   if ($Cache.ContainsKey($Key) -and ((Get-Date) - $Cache[$Key].at).TotalSeconds -lt $TtlSec) {
     if ($null -ne $Cache[$Key].v) { return $Cache[$Key].v }
@@ -136,13 +131,11 @@ function Get-KitMemo([hashtable]$Cache, [string]$Key, [int]$TtlSec, [scriptblock
   $res
 }
 if (-not $global:KitFetched) { $global:KitFetched = @{} }
-# once per repo per process per 10 min (worktrees share it); $false = failed/timed out
 function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = @()) {
   $common = "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $common) { return $false }
   $key = "$common|$($Refs -join ',')"
   Get-KitMemo $global:KitFetched $key 600 {
     $a = @('-C', $Dir, 'fetch', '-q', '--prune', 'origin') + @($Refs | Where-Object { $_ })
-    # one argv entry per argument (spaces broke Start-Process)
     $r = Invoke-KitExe git $a $TimeoutSec
     if ($r.timedOut) { Write-Warning "git fetch in $Dir timed out after $TimeoutSec s (skipped)" }
     elseif ($r.code) { Write-Warning "git fetch in $Dir failed (exit $($r.code)): $("$($r.err)".Trim() -split "`n" | Select-Object -Last 1)" }
@@ -184,7 +177,6 @@ function Get-SysMem {
   [pscustomobject](@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) } + $mx)
 }
 
-# Linux/macOS: available, as the page cache keeps MemFree ~0
 function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
 
 function Get-SysCpu {
@@ -214,7 +206,6 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
     }
   }
   else {
-    # comm has spaces on macOS, 15 chars max on Linux: prefer the args exe it prefixes
     $names = @{}
     foreach ($l in (ps -A -o pid= -o comm= 2>$null)) { if ($l -match '^\s*(\d+)\s+(.*)$') { $names[[int]$Matches[1]] = Split-Path $Matches[2].Trim() -Leaf } }
     foreach ($l in (ps -A -o pid= -o ppid= -o rss= -o etime= -o args= 2>$null)) {
@@ -229,7 +220,6 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 }
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
-# the tool's default compaction point; the kit sets none (README "Configuration" budget)
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
@@ -248,7 +238,6 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   if ($Tool -eq 'claude') {
     if (-not $Model) { $Model = "$env:ANTHROPIC_MODEL" }
     $m = $Model.ToLower(); $big = $m -match '\[1m\]|fable|^(opus|sonnet|haiku|inherit|default)?$'
-    # 1M: Opus 4.7+, Sonnet 5+, Haiku 5.5+, Fable, bare aliases; else 200k unless [1m]
     if ($m -match '(opus|sonnet|haiku)-(\d+)(?:-(\d)(?!\d))?') { $big = $big -or ([double]$Matches[2] + [double]"0$($Matches[3])" / 10) -ge @{ opus = 4.7; sonnet = 5; haiku = 5.5 }[$Matches[1]] }
     if ($big -or $m -match 'claude|opus|sonnet|haiku') {
       if ($env:CLAUDE_CODE_DISABLE_1M_CONTEXT -eq '1') { $big = $false }
@@ -273,9 +262,7 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   $h = [double](Get-KitSetting 'budget.handoffAt' $ex.handoffAt)
   [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
 }
-# free-RAM samples, 1/min, for the report's mean
 function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
-# spend = last transcript usage (input + cache + output): what the tool compacts on
 function Get-KitSpend([string]$File) {
   if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
   $t = @(Get-Content -LiteralPath $File -Tail 300)
@@ -285,7 +272,6 @@ function Get-KitSpend([string]$File) {
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
   }
 }
-# marker: board SESSION token or launch -Self line; this session first
 function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl') {
   $root = if ($v = $env:KIT_TRANSCRIPTS) { $v } else { $KitConf.ClaudeProjectDir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
   foreach ($f in @(Get-ChildItem $root -Recurse -Filter $Filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) } | Sort-Object { -not $sid -or $_.FullName -notmatch [regex]::Escape($sid) }, { -$_.LastWriteTime.Ticks })) {
@@ -293,7 +279,6 @@ function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl') {
   }
 }
 
-# holder = first non-shell ancestor + start time (pid reuse); Test-KitHolder: alive $true, gone $false, unknown $null
 $script:KitShells = '^(pwsh|powershell|bash|sh|zsh|dash|fish|cmd|conhost|env|timeout|sudo|python\d*(\.\d+)?|py)$'
 function Get-KitHolder {
   $p = Get-Process -Id $PID -ErrorAction SilentlyContinue
@@ -320,8 +305,6 @@ function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes 
 }
 $script:KitLiveCache = @{}
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
-# live: owner hold before until | pid | running workflow step (live-steps) | board beat (session, else agent) < idle.beatMinutes
-# | coordinator: heartbeat < idle.beatMinutes | holder process
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitSetting 'idle.beatMinutes' 20); $a = "$($l.agent)"
   if ($l.owner -or ($l.until -and -not $a -and -not $l.holderPid)) { return [datetime]$l.until -gt $now }   # a pre-lease hold keeps its minutes
@@ -336,7 +319,6 @@ function Test-KitLive($l) {
   if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt $bm) { return $true } }
   (Test-KitHolder $l) -eq $true
 }
-# keep? live: seen = now; else kept idle.graceMinutes past seen (graceLeft)
 function Update-KitLease($l) {
   $now = Get-Date
   if (Test-KitLive $l) { Set-KitProp $l seen $now.ToString('o'); Set-KitProp $l graceLeft $null; return $true }
@@ -346,7 +328,6 @@ function Update-KitLease($l) {
   Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left))); $left -gt 0
 }
 
-# wall-clocked; functions (test mocks) run directly
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -367,10 +348,8 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
   $p.WaitForExit()
   & $res $p.ExitCode $so.Result.TrimEnd() $se.Result.TrimEnd()
 }
-# transient errors retry (2 s, 6 s); -Connect: only errors proving nothing was sent
 $script:KitNoConnect = '(?i)could not resolve|no such host|connection refused|unreachable|dial tcp'
 $script:KitTransient = $script:KitNoConnect + '|timed? ?out|connection (reset|closed|aborted)|\bEOF\b|TLS handshake|temporar|\b(429|50[0234])\b|bad gateway|service unavailable|too many requests'
-# an ErrorRecord: exception types / HTTP codes (any OS language) first
 function Test-KitTransient($Text, [switch]$Connect) {
   for ($x = $Text.Exception; $x; $x = $x.InnerException) {
     $c = "$($x.SocketErrorCode)$($x.HttpRequestError)"
@@ -379,7 +358,6 @@ function Test-KitTransient($Text, [switch]$Connect) {
   }
   "$(if ($Text.Exception) { $Text.Exception.Message } else { $Text })" -match $(if ($Connect) { $script:KitNoConnect } else { $script:KitTransient })
 }
-# net.timeoutSec (60) / 3 tries; KIT_NET_TIMEOUT_SEC / KIT_NET_TRIES win (supervise lowers)
 function Get-KitNetTimeout { if ($env:KIT_NET_TIMEOUT_SEC) { [int]$env:KIT_NET_TIMEOUT_SEC } else { [int](Get-KitSetting 'net.timeoutSec' 60) } }
 function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
   $delay = 2
@@ -396,12 +374,10 @@ function New-DirLink([string]$Path, [string]$Target) {
 }
 
 function Remove-DirLink([string]$Path) {
-  # both remove only the link (rm: no trailing slash, no -r)
   if ($KitIsWindows) { cmd /c rmdir "$Path" | Out-Null }
   else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }
 }
 
-# never install; workspace links re-point to $WtRoot (Metro rejects outside files)
 function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
   $norm = { param($x) [IO.Path]::GetFullPath($x).TrimEnd('\', '/') }   # a\.\x == a\x
   $To = & $norm $To; $From = & $norm $From; $SrcRoot = & $norm $SrcRoot; $WtRoot = & $norm $WtRoot
@@ -443,9 +419,7 @@ function Remove-NodeModules([string]$Path) {
   $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
   if (-not $item) { return }
   if ($item.LinkType) { Remove-DirLink $Path; return }
-  # Directory.Delete on a link removes only the link (fast)
   $unlink = { param($x) if ($KitIsWindows) { [IO.Directory]::Delete($x) } else { Remove-DirLink $x } }
-  # farm = only links, files, @scope folders of links; else refuse before deleting
   $kids = @(Get-ChildItem -LiteralPath $Path -Force)
   $no = { param($x, $why) throw "Remove-NodeModules: $x $why - $Path is not a link farm, nothing deleted" }
   foreach ($c in $kids) {
@@ -472,10 +446,8 @@ function Resolve-Tool {
   $null
 }
 
-# python3 may be the Windows Store stub
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
-# `kittool.py prose` findings as warnings + strings; never cuts
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $kt = $KitCmd.kittool; if (-not $kt -or -not (Test-Path $kt)) { return @() }
   $tmp = $null
@@ -485,7 +457,6 @@ function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
   $found
 }
-# survives shell / tool timeouts
 function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {
   if ($KitIsWindows) { $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden; return }
   if (-not $Log) { $Log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log" }
@@ -523,7 +494,6 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
   & $f $a $Verb
 }
-# $Commands.<verb> = a command line; {key} = one argv token (never re-split); stdout JSON, else text
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
   $line = [string]$(if ($Commands) { $Commands.$Verb }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
   $t = @([regex]::Matches($line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) })
@@ -531,14 +501,12 @@ function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$
   if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
   $o = "$($r.out)".Trim(); if ($o -match '^[\[{]') { try { return ($o | ConvertFrom-Json) } catch {} }; $o
 }
-# GETs retry, writes never twice; failures warn + $null (= unknown)
 function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) {
   $p = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = (Get-KitNetTimeout) }
   if ($Method -eq 'GET') { $p.MaximumRetryCount = 2; $p.RetryIntervalSec = 3 }
   if ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)); $p.ContentType = 'application/json' }
   try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
 }
-# Authorization from env var $Env (bearer | basic: "user:secret" or ":pat" | token); never printed
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
@@ -546,7 +514,6 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
 
 # ===== 4. tracker adapter (a Register-KitAdapter block per tracker.type) =====
 
-# -Type / -DryRun, else env KIT_TRACKER_TYPE / KIT_TRACKER_DRYRUN, else config
 function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
   $script:__trType = ([string]$(if ($Type) { $Type } elseif ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { $KitConf.TrackerType })).ToLower()
   $script:__trDry = [bool]($DryRun -or $env:KIT_TRACKER_DRYRUN -eq '1')
@@ -564,7 +531,6 @@ $__trCfgSt = Get-KitSetting 'tracker.statuses' $null
 if ($__trCfgSt) { foreach ($__p in $__trCfgSt.PSObject.Properties) { $__trStatus[$__p.Name] = @($__p.Value | ForEach-Object { [string]$_ }) } }
 
 function Resolve-TrackerStatus([string]$Status) {
-  # logical (review, inTest, ...) -> tracker name
   foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { return @($__trStatus[$k])[0] } }
   $Status
 }
@@ -581,13 +547,11 @@ function __TrShort([string]$s) { $s = $s -replace "`r?`n", '\n'; if ($s.Length -
 function __TrCli([string]$Exe, [string[]]$A) {
   if ($__trDry) { Write-Host "DRYRUN: $Exe $(__TrShort (__TrQuote $A))"; return $null }
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { throw "tracker ($__trType): the '$Exe' CLI is not on PATH" }
-  # UTF-8 output; reads + status sets retry transient errors, other writes only unsent ones
   $h2 = "$($A[0..1] -join ' ')"; $all = "$($A -join ' ')"
   $write = ($h2 -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and $h2 -notmatch '(?i)status') -or ($all -match '(?i)(^|\s)(-X|--method)\s+(POST|PUT|PATCH|DELETE)\b' -and $all -notmatch '(?i)status')
   $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
   try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $A (Get-KitNetTimeout) } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
   $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
-  # a failing CLI (auth, unknown task) is no success; alias loop needs 'no matching status'
   if ($r.code -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $h2 failed (exit $($r.code)): $(__TrShort $out)" }
   $out
 }
@@ -597,7 +561,6 @@ function __TrJson([string]$Out) {
   if ($null -eq $i) { return $null }
   try { $Out.Substring($i) | ConvertFrom-Json } catch { $null }
 }
-# a failure throws its cause (the outbox queues network losses); $File/$CType: upload or own body type
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
   if (-not ($File -or $CType)) {
@@ -622,14 +585,12 @@ function __TrComment($u, $d, $t) { [pscustomobject]@{ user = [string]$u; date = 
 function __TrTask($i, $n, $s, $u, $p, $who, $l, $subs, $d) { [pscustomobject]@{ id = $i; name = $n; status = $s; url = $u; parent = $p; assignees = $who; list = $l; subtasks = $subs; description = $d } }
 function __TrPartOf($a) { if ($a.parent) { "Part of #$($a.parent -replace '^.*#', '')`n`n" } }
 function __TrNote($a) { if ($a.text) { Add-TrackerComment $a.id "$($a.text) (attached: $($a.leaf))" } }
-# no attachments: the file's text as a comment
 function __TrAttachText($a) {
   $b = Get-Content -LiteralPath $a.file -Raw -Encoding utf8
   if ($b.Length -gt 60000) { $b = $b.Substring(0, 60000) + "`n`n_(truncated: the full $($a.leaf) is in the QA run folder)_" }
   Add-TrackerComment $a.id ($(if ($a.text) { "$($a.text)`n`n" }) + $b)
 }
 
-# github/gitlab ids: "12", "#12", "owner/name#12"
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 function __TrRef([string]$Id) {
   if ($Id -match '^(?<r>[^#\s]+)#(?<n>\S+)$') { return @($Matches.r, $Matches.n) }
@@ -644,11 +605,9 @@ function __TrLabelStatus($labels, [bool]$closed) {
   @($__trStatus.open)[0]
 }
 function __TrIsClosed([string]$name) { Test-TrackerStatus $name 'closed' }
-# parent from "Part of #n", subtasks from task-list lines "- [ ] #n" ($Sub maps each)
 function __TrIssue($Num, $Name, $St, $Url, $Who, $Repo, [string]$Body, [scriptblock]$Sub) {
   __TrTask "$Num" $Name $St $Url $(if ($Body -match '(?m)^Part of #(\d+)') { $Matches[1] }) $Who $Repo @([regex]::Matches($Body, '(?m)^\s*[-*] \[[ xX]\] #(\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | ForEach-Object $Sub) $Body
 }
-# --body-file: no argv length / quoting limits
 function __TrGhBody([string[]]$A, [string]$Text) {
   if ($__trDry) { return (__TrCli 'gh' ($A + @('--body', $Text))) }
   $f = __TrTemp $Text; try { __TrCli 'gh' ($A + @('--body-file', $f)) } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
@@ -664,7 +623,6 @@ function __TrGl([string]$Method, [string]$Path, $Body) {
 }
 function __TrGlPath([string]$Id, [string]$Sub = '') { $r, $n = __TrRef $Id; "projects/$([uri]::EscapeDataString($r))/issues/$n$Sub" }
 
-# jira: Cloud = REST v3 + ADF; jira-server = v2 + plain text
 function __TrAdf([string]$Text) {
   $paras = @(("$Text" -replace "`r", '') -split "`n" | Where-Object { $_ -ne '' } | ForEach-Object { @{ type = 'paragraph'; content = @(@{ type = 'text'; text = $_ }) } })
   if (-not $paras.Count) { $paras = @(@{ type = 'paragraph'; content = @() }) }
@@ -685,7 +643,6 @@ function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
   __TrHttp $Method "$(__TrBase JIRA_BASE_URL)/rest/api/$(if ($__trType -eq 'jira') { 3 } else { 2 })/$Path" $Body $h $FilePath
 }
 
-# none: local log + store
 function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
   $d = Get-KitPath tracker-none -Create
   Add-Content (Get-KitPath tracker-log -Create) ("{0} {1} {2}" -f (Get-Date -Format s), $Id, (__TrShort $What)) -Encoding utf8
@@ -698,7 +655,6 @@ function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
 function __TrNoneAll { Get-ChildItem $__trNoneDir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
 function __TrNoneNote($o, [string]$t) { $o.comments = @(@($o.comments) + [pscustomobject]@{ user = [Environment]::UserName; date = (Get-Date).ToUniversalTime().ToString('s'); text = $t }) }
 
-# owner = tracker.owner, else the OS user's full name among members, else the CLI user
 function __TrOsFullName {
   $n = ''
   if ($IsWindows -or $env:OS -eq 'Windows_NT') {
@@ -708,7 +664,6 @@ function __TrOsFullName {
   if (-not $n) { try { $n = git config --global user.name } catch {} }
   ([string]$n).Trim()
 }
-# read-only, so it runs under -DryRun
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }
   $__trDry = $false
@@ -725,7 +680,6 @@ Register-KitAdapter 'tracker' 'clickup' @{
     __TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | ForEach-Object { __TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))
   }
   'status' = { param($a)
-    # per-list status names: try each alias; none fits = fail
     $names = @($a.status); foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $a.logical) { $names = @($__trStatus[$k]) } }
     foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $a.id); if ("$out" -notmatch 'no matching status') { return $out } }
     if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (set tracker.statuses.$($a.logical) in kit.local.json)" }
@@ -735,14 +689,12 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'create' = { param($a)
     $c = @('task', 'create', '--list-id', $a.list, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
     if ($a.priority) { $c += @('--priority', $a.priority) }
-    # ClickUp needs a member id
     if ($as -and $as -notmatch '^\d+$') {
       $as = try { __TrClickupMemberId $as } catch { Write-Warning "tracker: member lookup failed ($($_.Exception.Message))"; $null }
       if (-not $as) { [Console]::Error.WriteLine("WARNING: tracker: no ClickUp member '$($a.assignee)' (clickup member list): task unassigned (assigned=false)") }
     }
     if ($as) { $c += @('--assignee', $as) }
     if ($__trDry) { $null = __TrCli 'clickup' ($c + @(if ($a.parent) { '--parent', $a.parent })); return [pscustomobject]@{ id = '<new>'; url = ''; assigned = [bool]$as } }
-    # ClickUp rejects cross-list parents: link by comment
     $t = if ($a.parent) { try { __TrJson (__TrCli 'clickup' ($c + @('--parent', $a.parent))) } catch { $null } }
     $dropped = $a.parent -and -not $t.id; if (-not $t.id) { $t = __TrJson (__TrCli 'clickup' $c) }
     if (-not $t.id) { return }
@@ -1033,7 +985,6 @@ Initialize-KitTracker
 function __TrA([string]$Verb, [hashtable]$A) { Invoke-KitAdapter 'tracker' $__trType $Verb $A }
 function Get-TrackerUrl([string]$Id) { __TrA 'url' @{ id = $Id } }
 
-# reads memoised 90 s; writes drop the entry
 if (-not $global:KitTrackerMemo) { $global:KitTrackerMemo = @{} }
 function Get-TrackerTask([string]$Id) {
   $res = Get-KitMemo $global:KitTrackerMemo "$($__trType)|$Id" 90 {
@@ -1045,7 +996,6 @@ function Get-TrackerTask([string]$Id) {
 function Clear-TrackerMemo([string]$Id) { $global:KitTrackerMemo.Remove("$($__trType)|$Id") }
 function __Get-TrackerTask([string]$Id) { $v = __TrA 'view' @{ id = $Id }; if ($v.id) { $v } else { __TrStub $Id } }
 
-# network-lost writes -> outbox ("QUEUED ..."), replayed by supervise; KIT_NO_OUTBOX=1: off
 function Add-KitOutbox([string]$Op, [string]$Id, [string]$Arg, [string]$Why) {
   $f = Get-KitPath outbox -Create
   $line = [ordered]@{ at = (Get-Date).ToString('o'); op = $Op; id = $Id; arg = $Arg; tracker = $__trType; tries = 0; why = $Why } | ConvertTo-Json -Compress
@@ -1061,7 +1011,6 @@ function Invoke-TrackerWrite([string]$Op, [string]$Id, [string]$Arg, [scriptbloc
     Add-KitOutbox $Op $Id $Arg (__TrShort $m)
   }
 }
-# network failures stay (tries + 1); GAVE UP (by hand): status > 24 h, 20 fails or a real error
 function Invoke-KitOutbox([switch]$DryRun) {
   $f = Get-KitPath outbox; if (-not (Test-Path $f)) { return }
   Invoke-KitLocked $f {
@@ -1109,21 +1058,17 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "tracker: no such file $File" }
   __TrA 'attach' @{ id = $Id; file = $File; text = $Text; leaf = (Split-Path $File -Leaf) }
 }
-# <List>: ClickUp list id, GitHub owner/name, GitLab group/project, Jira project key
 function Get-TrackerTasks([string]$List, [string]$Status) {
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
   __TrA 'list' @{ list = $List; status = (Resolve-TrackerStatus $Status); logical = $Status }
 }
 
 # ===== 5. git-host + ci adapters (README "Adapters"): Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... } =====
-# MRs are GitLab-shaped (__GhMr: iid, state opened|merged|closed, ..., head_pipeline { id, status }); CI words: __CiWord.
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
-# gitHost unset: the origin host of the first repos[] checkout
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
 $script:HostType = [string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))
 if ($script:HostType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (__GhHost) -ne 'github.com') { $env:GH_HOST = [string](__GhHost) }
-# MR/PR URL of any host -> @{ repo; n; type } (Azure: org/project/repo)
 $script:MrSegRx = '(?:-/merge_requests|pulls?|pull-requests|pullrequest)'
 function ConvertFrom-MrUrl([string]$Url) {
   if ($Url -notmatch '^https?://(?<h>[^/\s]+)/(?<p>[^\s?#]+?)/(?<s>-/merge_requests|pulls?|pull-requests|pullrequest)/(?<n>\d+)') { return $null }
@@ -1134,7 +1079,6 @@ function Get-HostProject([string]$Repo, [switch]$Raw) {
   $p = if ($Repo -match '/') { $Repo } elseif ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$Repo" } else { $Repo }
   if ($Raw) { $p } else { [uri]::EscapeDataString($p) }
 }
-# repos[] (name, alias or last path segment) key: mergeMethod, deleteBranch, ci
 function Get-RepoConf([string]$Repo, [string]$Key, $Default) {
   $n = ("$Repo" -split '/')[-1]
   foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$($r.$Key)" -ne '') { return $r.$Key } }
@@ -1146,7 +1090,6 @@ function __Enc([string]$s) { [uri]::EscapeDataString($s) }
 function __Del($a) { [bool](Get-RepoConf $a.repo 'deleteBranch' $true) }
 function __Query([string]$q) { $h = @{}; foreach ($kv in ($q -split '&' | Where-Object { $_ })) { $k, $v = $kv -split '=', 2; $h[[uri]::UnescapeDataString($k)] = [uri]::UnescapeDataString("$v") }; $h }
 function __HostSet([string]$Key, $Default) { Get-KitSetting "gitHostApi.$Key" $Default }
-# glab / gh api: -Fields as -f k=v or -Json; -Res = { code, out, err }
 function __Cli([string]$Exe, [string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json, [switch]$Res) {
   if (-not (Get-Command $Exe -ErrorAction SilentlyContinue)) { return $null }
   $a = @('api'); if ($Method -ne 'GET') { $a += @('-X', $Method) }; $a += $Path; $f = $null
@@ -1162,7 +1105,6 @@ function __Gp($a, [string]$Rest, [string]$Method = 'GET', [hashtable]$Fields = @
 function __Gl([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json, [switch]$Res) { __Cli glab $Path $Method $Fields -Json:$Json -Res:$Res }
 function __GhApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json) { __Cli gh $Path $Method $Fields -Json:$Json }
 function __Gh([string[]]$A) { $r = Invoke-KitRetry { Invoke-KitExe gh $A (Get-KitNetTimeout) } -Connect; if ($r.code) { Write-Warning "githost: gh $($A[0..1] -join ' ') failed: $($r.err)" }; $r }
-# REST: gitHostApi.url, token env gitHostApi.tokenEnv (never printed); -Probe: 2xx $true, 404 $false, else $null
 function __Rest([string]$Base, [string]$Env, [string]$Auth, [string]$Method, [string]$Path, $Body, [switch]$Probe) {
   $u = "$(__HostSet 'url' $Base)/$Path"; $h = Get-KitAuth ([string](__HostSet 'tokenEnv' $Env)) $(if ($Auth -eq 'auto') { if ("$([Environment]::GetEnvironmentVariable([string](__HostSet 'tokenEnv' $Env)))" -match ':') { 'basic' } else { 'bearer' } } else { $Auth })
   if (-not $Probe) { return (Invoke-KitHttp $Method $u $Body $h) }
@@ -1179,7 +1121,6 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
-# emulated merge-when-green: the intent in tracking.automerge; orch.ps1 track run merges once green
 function __KitAuto([string]$Repo, [string]$N, [switch]$Drop) { Update-KitTracking { param($t) if ($Drop) { $t.automerge.Remove("$Repo!$N") } else { $t.automerge["$Repo!$N"] = (Get-Date).ToString('s') } } }
 
 # adapter:git-host/gitlab: glab api
@@ -1197,7 +1138,6 @@ Register-KitAdapter 'git-host' 'gitlab' @{
 }
 # adapter:git-host/github: gh (GH_HOST = githubHost); fork PR source = owner:branch
 function __GhPr($a) { __GhMr (__GhApi "repos/$($a.repo)/pulls/$($a.n)") }
-# the kit's MR shape (host fields mapped in)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null
     updated_at = $null; draft = $false; has_conflicts = $false; detailed_merge_status = ''; merge_when_pipeline_succeeds = $false; web_url = ''; head_pipeline = $null }
@@ -1224,7 +1164,6 @@ Register-KitAdapter 'git-host' 'github' @{
   'mr.create' = { param($a) __GhMr (__GhApi "repos/$($a.repo)/pulls" 'POST' @{ head = $a.source; base = $a.target; title = $a.title; body = $a.body } -Json) }
   'mr.merge' = { param($a)
     $x = @('pr', 'merge', $a.n, '-R', $a.repo, "--$(if ($a.method -in 'merge', 'rebase') { $a.method } else { 'squash' })"); if (__Del $a) { $x += '--delete-branch' }; if ($a.sha) { $x += @('--match-head-commit', $a.sha) }
-    # no required checks: --auto refused ("clean status"): merge now only when green
     if (-not $a.auto -or ("$((__Gh ($x + '--auto')).err)" -match 'clean status' -and (Invoke-HostVerb 'ci.status' @{ repo = $a.repo; sha = $(if ($a.sha) { $a.sha } else { (__GhPr $a).sha }) } -NoMemo).status -eq 'success')) { $null = __Gh $x }
     __GhPr $a
   }
@@ -1311,7 +1250,6 @@ Register-KitAdapter 'git-host' 'gitea' @{
     $m = __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)"); if ($m -and $a.auto -and $m.state -eq 'opened') { $m.merge_when_pipeline_succeeds = $true }; $m }
   'mr.unauto' = { param($a) $null = __Gt "repos/$($a.repo)/pulls/$($a.n)/merge" 'DELETE'; __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)") }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/pulls/$($a.n)" }
-  # no merge-base API: b...a lists a's commits missing from b; none = a is the base, else the oldest one's parent
   'repo.base' = { param($a) $c = __Gt "repos/$($a.repo)/compare/$(__Enc $a.b)...$(__Enc $a.a)"; if ($null -eq $c) { return $null }
     __CommitObj $(if (-not $c.total_commits) { $a.a } else { @(@($c.commits) | Sort-Object { $_.created })[0].parents[0].sha }) }
   'repo.commit' = { param($a) $c = @(__Gt "repos/$($a.repo)/commits?sha=$(__Enc $a.ref)&limit=1&stat=false")[0]; __CommitObj $c.sha $c.commit.committer.date }
@@ -1321,7 +1259,6 @@ Register-KitAdapter 'git-host' 'gitea' @{
 Register-KitAdapter 'git-host' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'git-host' (__HostSet 'commands' $null) $v $a } }
 # adapter-end:git-host
 
-# CI (repos[].ci: host (default) | none | external = ci.type | a name): status = { id, status } of a sha; config = has CI (true/false/$null)
 # adapter:ci/gitlab
 Register-KitAdapter 'ci' 'gitlab' @{
   'runs' = { param($a) @(__Gp $a "/pipelines?ref=$(__Enc $a.ref)$(if ($a.sha) { "&sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)") }
@@ -1357,7 +1294,6 @@ Register-KitAdapter 'ci' 'azure' @{
     @(@((__Az $a.repo "build/builds?repositoryId=$rid&repositoryType=TfsGit&branchName=refs/heads/$(__Enc $a.ref)&`$top=$($a.per_page ?? 20)").value) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.sourceVersion (__CiWord $(if ($_.status -eq 'completed') { $_.result } else { $_.status })) $_.queueTime $(if ($_.finishTime) { $_.finishTime } else { $_.queueTime }) } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
   'jobs' = { param($a) @(@((__Az $a.repo "build/builds/$($a.id)/timeline").records) | Where-Object { $_ -and $_.type -eq 'Job' } | ForEach-Object { __CiJob "$($a.id)/$($_.log.id)" $_.name (__CiWord $(if ($_.state -eq 'completed') { $_.result } else { $_.state })) $_.finishTime }) }
   'log' = { param($a) $b, $l = "$($a.id)" -split '/', 2; __Az $a.repo "build/builds/$b/logs/$l" }
-  # a PR's builds run on refs/pull/<n>/merge; a plain commit: its commit statuses
   'status' = { param($a) $b = if ($a.n) { @((__Az $a.repo "build/builds?branchName=refs/pull/$($a.n)/merge&`$top=1").value)[0] }
     if ($b.id) { return __CiStat $b.id (__CiWord $(if ($b.status -eq 'completed') { $b.result } else { $b.status })) }
     if ($a.sha) { $st = __CiRoll @(@((__Az $a.repo "git/repositories/{repo}/commits/$($a.sha)/statuses").value) | Where-Object { $_ } | ForEach-Object { __CiWord $_.state }); if ($st) { __CiStat $null $st } } }
@@ -1390,7 +1326,6 @@ Register-KitAdapter 'ci' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'c
 Register-KitAdapter 'ci' 'none' @{ 'runs' = { @() }; 'jobs' = { @() }; 'log' = { '' }; 'status' = { $null }; 'config' = { $false } }
 # adapter-end:ci
 
-# reads memoised 90 s (-NoMemo: polls), writes clear it; an open MR's head_pipeline = its repo's CI adapter
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $t = if ($A.type) { $A.type } else { $script:HostType }
@@ -1408,7 +1343,6 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   if ($Verb -notin 'mr.create', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
   $v
 }
-# GitLab REST paths (older callers) -> verbs
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {
   if ($Path -notmatch '^projects/(?<p>[^/?]+)/?(?<rest>[^?]*)\??(?<q>.*)$') { Write-Warning "githost: no verb for $Path"; return $null }
   $a = __Query $Matches.q; $a.repo = [uri]::UnescapeDataString($Matches.p); $v = $null
@@ -1427,10 +1361,8 @@ function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fiel
   Invoke-HostVerb $v $a -NoMemo:$NoMemo
 }
 
-# pwsh -File splits `-List 'a b','c d'`; switches take no value
 function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
-  # --help / -h / -? (not a value): header, exit 0; other --flags: unknown option
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
   $meta = (Get-Command $Fn).Parameters
@@ -1446,7 +1378,6 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $p = @($own | Where-Object { $_ -ieq $n }); if (-not $p.Count) { $p = @($own | Where-Object { @($meta[$_].Aliases) -contains $n }) }; if (-not $p.Count) { $p = @($own | Where-Object { $_ -like "$n*" }) }
       if ($p.Count -ne 1) { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): unknown or ambiguous parameter -$n"); exit 2 }
       $pm = $meta[$p[0]]; $i++
-      # a splatted @{ Mode = 'None' } arrives as -Mode: then the value
       if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }
       if ($pm.SwitchParameter) { $named[$p[0]] = if ($null -ne $inline) { $inline -notmatch '^(\$?false|0)$' } else { $true }; continue }
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }

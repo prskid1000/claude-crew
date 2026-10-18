@@ -8,6 +8,7 @@ export const meta = {
  ],
 }
 
+// Sections: L77 analyse · L79 fnv · L94 analysts · L119 apply
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
  kitDir: 'C:/work/.claude',  // absolute (recommended); default '.claude' under workspace root

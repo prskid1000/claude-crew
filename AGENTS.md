@@ -62,10 +62,7 @@ the **Target**. A mixed request is split and each part routed on its own.
   agent reads the board (who is alive on this machine); a disagreement goes to `orch.ps1 board dispute` (two rounds, then the
   owner judges through `decide ask`). Codex / Antigravity: the same agents are ported to `.codex/agents/*.toml` /
   `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` / `.agents/workflows/*.md` by hand.
-- **Autonomous:** user invocation is the only action needed: installing this kit is the standing opt-in for its workflows. The
-  coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI
-  verification, and merging) without pausing for confirmation or approvals. An org that wants to be asked first says so in its
-  org rules. A request already running in a workflow is never launched twice: add to it through the contracts file.
+- **Autonomous:** user invocation is the standing opt-in. The coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI, and merging) without pausing for approvals. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then it runs end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
   into the main line after review, CI and the local test loop need none.
@@ -75,6 +72,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 **What to load or launch:** the Router above (first matching row wins; workflows launch autonomously; a deploy
 starts only when a person says `deploy <env>`: nobody asks or proposes one). These rules hold whatever the route:
 
+- File inspection: check top 40 lines for the Section/Function line map, then jump directly to the target line range using slicing (`view_file` StartLine/EndLine, sed, or awk) rather than loading entire files.
 - Builds and tests go through `<kit>/skills/dev-kit/dev.ps1 check` (stack auto-detected; the machine-wide memory gate queues
   them; the guard hook blocks ungated builds). Targeted tests plus the tests of touched files (`-Touched`).
 - Parallel work happens in worktrees (`dev.ps1 wt`); commit with `dev.ps1 wt commit` (hooks run). Never `git stash`, never
@@ -116,9 +114,8 @@ Check auth before using a CLI (never log in headlessly). Windows: resolve shims 
 - Code and test conventions: path-scoped rules in `rules/` (examples: README "Rule examples"); org-only skills under
   `skills/<name>/` listed in `kit.local.json` `localOnly`. How to add any part: README "Extending".
 
-## Not portable to Codex/Antigravity (stays Claude Code-only)
-- The SendMessage guard hook (`orch.ps1 guard-sendmessage`): neither tool has a SendMessage tool to match.
-- The agent board, `orch.ps1 learn` signals and decision pauses are not wired into Codex `spawn_agent` / Antigravity
-  `invoke_subagent`; the ported procedure docs tell a human coordinator to use them.
-- The Skill tool's name-triggered loading and `kittool.py lint`'s router/graph checks run only against this kit's own files.
-- Antigravity's `tools:` allow-list stays unset: its tool names do not map 1:1 from Claude's.
+## Not portable to Codex/Antigravity (Claude Code-only)
+- SendMessage guard hook: neither tool has matching SendMessage tool.
+- Board, learn signals, and decision pauses: procedure docs guide human coordinator.
+- Skill name-triggered loading and kittool router/graph checks run against kit files.
+- Antigravity tools allow-list stays unset: tool names differ from Claude.

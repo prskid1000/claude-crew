@@ -10,6 +10,7 @@ qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer) · 2 usage ·
   3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
+Sections: L58 report · L209 seat · L325 deployed · L504 api · L633 finalize · L978 annotate · L1034 retest · L1074 ui
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)

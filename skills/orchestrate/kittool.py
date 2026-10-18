@@ -2121,7 +2121,6 @@ select.b{max-width:100%}</style></head><body>
 <script>
 const D = __DATA__, $ = s => document.querySelector(s), cv = $('#c'), X = cv.getContext('2d'), tip = $('#tip');
 const LS = {get(k, d) { try { const v = localStorage.getItem('kf.' + k); return v == null ? d : JSON.parse(v) } catch (e) { return d } }, set(k, v) { try { localStorage.setItem('kf.' + k, JSON.stringify(v)) } catch (e) {} }};
-// icons (24x24 stroke paths) and six colour families
 const IC = {bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', person: 'M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c1-5 15-5 16 0', clock: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7v5l3 2',
  table: 'M3 5h18v14H3zM3 10h18M9 5v14', slash: 'M15 4l-6 16', puzzle: 'M4 7h4a2 2 0 1 1 4 0h4v4a2 2 0 1 1 0 4v4h-4a2 2 0 1 0-4 0H4v-4a2 2 0 1 0 0-4z',
  robot: 'M6 8h12v11H6zM12 4v4M9.5 13h.01M14.5 13h.01M9 16h6M4 12v3M20 12v3', flow: 'M4 5h5v5H4zM15 14h5v5h-5zM9 7.5h3a3 3 0 0 1 3 3v3.5',
@@ -2149,7 +2148,6 @@ const G = D.files.map((f, i) => ({i, id: f.id, kind: f.kind, m: N.filter(n => n.
 G.forEach(g => g.fn = g.m.find(n => n.k === 'file'));
 N.forEach(n => { n.kk = n.k === 'file' ? 'file-' + (G[n.g].kind || 'doc') : n.k; if (!KD[n.kk]) n.kk = 'file-doc'; n.fam = KD[n.kk][0]; n.col = FAM[n.fam][1];
  n.r = n.k === 'file' ? 11 : 5 + Math.min(7, Math.sqrt(n.out.length + n.in.length)) });
-// progressive levels: 0 = the crew (crew files, events, router rows), 1 = parts of files and commands, 2 = internals
 const LV0 = n => (n.k === 'file' && n.fam === 'crew') || n.k === 'event' || /^AGENTS\.md#§Router\?$/.test(n.id);
 const lvOf = n => LV0(n) ? 0 : n.k === 'decision' ? (/\.md#|^workflows\//.test(n.id) ? 1 : 2) : (n.k === 'file' || /slash|phase|call|step|section|cmd|timer|human|row/.test(n.k)) ? 1 : 2;
 N.forEach(n => n.lv = lvOf(n));
@@ -2157,7 +2155,6 @@ const bad = new Map(); D.issues.forEach(it => it.node != null && bad.set(it.node
 const famOn = Object.fromEntries(Object.keys(FAM).map(k => [k, true])), ekOn = Object.fromEntries(Object.keys(EK).map(k => [k, k !== 'has']));
 const coll = new Set();
 let LVL = 0, VN = [], VE = [], focus = null, fE = null, sel = null, force = new Set(), trace = null, tIdx = -1, hover = null, fitSc = 1;
-// layout seed: files on a spiral by size, parts inside
 let ang = 0, rad = 0;
 [...G].sort((a, b) => b.m.length - a.m.length).forEach(g => { const R = 10 * Math.sqrt(g.m.length) + 30; rad += R * .55; ang += 2.4; const gx = Math.cos(ang) * rad, gy = Math.sin(ang) * rad;
  g.m.forEach(n => { const a = Math.random() * 6.28, d = Math.random() * R * .6; n.x = gx + Math.cos(a) * d; n.y = gy + Math.sin(a) * d }) });
@@ -2170,7 +2167,6 @@ function rebuild() {
   const key = a.i + ',' + b.i + ',' + e.k; if (seen.has(key)) { seen.get(key).n++; continue } const v = {a, b, e, n: 1}; seen.set(key, v); VE.push(v) }
  $('#lv').querySelectorAll('.b').forEach((b, i) => b.classList.toggle('on', i === LVL)); heat(.15)
 }
-// force simulation: grid-binned repulsion + collision, springs, cohesion to the file's centroid (file hub sits on it), file-vs-file repulsion
 let alpha = 1, raf = 0;
 const heat = a => { alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(frame) };
 function tick() {
@@ -2196,7 +2192,6 @@ function tick() {
   if (n.fx != null) { n.x = n.fx; n.y = n.fy; n.vx = n.vy = 0; continue } n.vx *= .55; n.vy *= .55; n.x += n.vx; n.y += n.vy }
  alpha *= .99
 }
-// view + semantic zoom (zoom level picks the detail level)
 let tx = 0, ty = 0, sc = .3, W = 0, H = 0, dpr = 1;
 const size = () => { const r = $('#main').getBoundingClientRect(), ow = W; W = r.width; H = r.height; dpr = devicePixelRatio || 1; cv.width = W * dpr; cv.height = H * dpr; if (ow) tx += (W - ow) / 2; draw() };
 const s2w = (x, y) => [(x - tx) / sc, (y - ty) / sc];
@@ -2252,7 +2247,6 @@ function fitTo(ns) { ns = ns && ns.length ? ns : VN; if (!ns.length) return; con
  sc = Math.min((W - 60) / (b - a + 120), (H - 90) / (d - c + 120), 2.5); tx = W / 2 - (a + b) / 2 * sc; ty = 30 + (H - 30) / 2 - (c + d) / 2 * sc; draw() }
 const center = n => { tx = W / 2 - n.x * sc; ty = H / 2 - n.y * sc; draw() };
 function setLevel(L) { const cx = (W / 2 - tx) / sc, cy = (H / 2 - ty) / sc; sc = fitSc * [1, 2.4, 5][L]; tx = W / 2 - cx * sc; ty = H / 2 - cy * sc; LVL = L; rebuild() }
-// focus: click = a node's direct neighbours (both ways); click a highlighted neighbour (or shift) = extend from it
 function neigh(n, extend) {
  if (!extend || !focus) { focus = new Set([n]); fE = new Set() }
  if (!fE) fE = new Set()
@@ -2260,7 +2254,6 @@ function neigh(n, extend) {
 }
 function select(n, extend) { sel = n; if (n) { neigh(n, extend); openSide('code') } else { focus = fE = null; draw() } }
 function show(nodes, edgesToo) { force = new Set(nodes); rebuild(); focus = new Set(nodes.map(rep).filter(Boolean)); fE = new Set(VE.filter(v => focus.has(v.a) && focus.has(v.b))); draw() }
-// trace: ordered walk from an entry; decisions follow the chosen outcome; loops shown once (cost: internals count double)
 const PRI = {routes: 0, runs: 1, impl: 1, spawns: 2, branch: 3, triggers: 4, has: 5, calls: 6, writes: 7, loads: 8, next: 9, loop: 10}, COST = {calls: 2, has: 2, loads: 2, writes: 2}, choice = {};
 function walk(start) {
  const steps = [], seen = new Set();
@@ -2275,7 +2268,6 @@ function walk(start) {
 function runTrace(start) { trace = walk(start); tIdx = 0; show(trace.map(s => s.n)); const ids = new Set(trace.map(s => s.via).filter(Boolean)); fE = new Set(VE.filter(v => [...ids].some(e => rep(N[e.s]) === v.a && rep(N[e.t]) === v.b)));
  fitTo([...focus]); tab('trace') }
 function stepTo(i) { if (!trace) return; tIdx = Math.max(0, Math.min(trace.length - 1, i)); sel = trace[tIdx].n; center(rep(sel) || sel); if (curTab === 'trace') tab('trace'); else draw() }
-// sidebar: rail tabs (Code, Trace, Loops, Issues), resizable, remembered
 const side = $('#side'), sb = $('#sb'), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
 const svgI = (name, col, s = 16) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name]}"/></svg>`;
 const TABS = {code: ['code', 'Code'], trace: ['route', 'Trace'], loops: ['loop', 'Loops'], issues: ['warn', 'Issues']};
@@ -2321,7 +2313,6 @@ function tab(t) {
     by[c].forEach(it => { const n = it.node != null ? N[it.node] : null; list.append(row(n, esc(it.text), '', 'bad', () => { if (n) { trace = null; show([n]); sel = n; neigh(n, true); center(n); openSide('code') } })) }) } } };
  filterBox(t === 'loops' ? 'filter loops…' : 'filter issues…', fill); sb.append(list); fill('')
 }
-// code view: the node's span from the sidecar source (loaded on first use), highlighted, its own line marked
 const HL = {ps1: [/#.*$/, /\b(function|param|if|elseif|else|foreach|for|while|do|until|switch|return|break|continue|throw|try|catch|finally|exit|in)\b/, /\$[\w:]+/],
  py: [/#.*$/, /\b(def|class|if|elif|else|for|while|return|break|continue|raise|try|except|finally|with|as|import|from|in|not|and|or|lambda|yield|None|True|False)\b/, /\bself\b/],
  js: [/\/\/.*$/, /\b(const|let|var|function|async|await|if|else|for|while|do|return|break|continue|throw|try|catch|new|of|in|export|import|from|true|false|null)\b/, /\$\{[^}]*\}/],
@@ -2348,11 +2339,9 @@ function code(n) {
  sb.append(pre); if (end > cap) { const b = document.createElement('div'); b.className = 'empty'; b.innerHTML = `<span class="lnk">show more (${end - cap} lines)</span>`; b.onclick = () => { more += 80; code(n) }; sb.append(b) }
  const me = pre.querySelector('.me'); if (me) me.scrollIntoView({block: 'center'})
 }
-// resize the sidebar: drag its left edge (280 px .. 70 %), double-click resets
 $('#grip').onpointerdown = e => { e.preventDefault(); side.classList.add('drag'); const mv = ev => { sideW = Math.max(280, Math.min(innerWidth * .7, innerWidth - 44 - ev.clientX)); side.style.width = sideW + 'px'; size(); if (sel) center(rep(sel) || sel) };
  const up = () => { side.classList.remove('drag'); LS.set('w', sideW); removeEventListener('pointermove', mv); removeEventListener('pointerup', up) }; addEventListener('pointermove', mv); addEventListener('pointerup', up) };
 $('#grip').ondblclick = () => { sideW = 420; side.style.width = sideW + 'px'; LS.set('w', sideW); setTimeout(size, 200) };
-// top bar: level, Show (families), Edges (kinds), search, legend key
 ['Overview', 'Detail', 'Everything'].forEach((t, i) => { const b = document.createElement('span'); b.className = 'b'; b.textContent = t; b.onclick = () => setLevel(i); $('#lv').append(b) });
 function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector('.menu'); dd.firstElementChild.onclick = e => { e.stopPropagation(); document.querySelectorAll('.dd').forEach(x => x !== dd && x.classList.remove('open')); dd.classList.toggle('open') };
  m.onclick = e => e.stopPropagation();
@@ -2368,7 +2357,6 @@ addEventListener('click', () => { leg.classList.remove('open'); document.querySe
 $('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); trace = null; if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) };
 $('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; select(n); center(n) } };
 $('#fit').onclick = () => { fitTo(); fitSc = sc; LVL = 0; rebuild() };
-// pointer: pan, drag a node (pins it; right-click unpins), click = neighbours (+code), click a highlighted node or shift = extend, double-click = collapse its file
 let drag = null;
 const hit = (sx, sy) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, d = Math.hypot(n.x - x, n.y - y); if (d < r + 4 / sc && d < bd) { bd = d; best = n } } return best };
 const pt = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] };
@@ -3643,12 +3631,7 @@ def audit_main(a):
     sys.exit(1 if n['ACT'] or n['ASK'] else 0)
 
 # ==== 7. cost: tokens per agent type + workflow prompts
-COST_MJS = r'''// Renders every prompt a kit workflow builds, by running the workflow with mock agents and sample args.
-// Used by kittool.py cost (token budget per agent type); also a cheap behaviour check: the label/model/agentType of every
-// step is printed, so a prompt refactor can be diffed against the previous version.
-//   node kit-cost.mjs <kitDir> [--prompts] [--clean] [--set <wf>.<arg>=<json>]...  -> JSON { calls: [{ wf, label, agentType, model, effort, bytes }], logs }
-//   --clean: reviews find nothing and every QA check passes (exercises learn: 'auto'); --set buildy.review='"auto"' overrides a sample arg
-import { readFileSync } from 'node:fs'
+COST_MJS = r'''import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const kit = (process.argv[2] || '.claude').replace(/[\\/]+$/, '')

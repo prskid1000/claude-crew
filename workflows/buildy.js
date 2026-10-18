@@ -13,6 +13,7 @@ export const meta = {
  ],
 }
 
+// Sections: L129 args · L182 build-prompt · L227 ship-prompt · L362 local-loop · L509 ship
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
  agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],

@@ -20,6 +20,7 @@ orch.ps1: the coordinator + kit commands in one file (orchestrate SKILL.md). Run
   prepush · precommit  git hooks' logic (.githooks/pre-push, pre-commit)
 Inputs: kit.local.json (lib.ps1), runtime state (board, launches, decisions, deploys, waves), .state/tracking.json, kit clone.
 Output: text (-Json where offered). Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
+Sections: L29 board · L227 budget · L247 launch · L358 recover · L451 track · L877 supervise · L1347 report · L1432 bugbrief · L1533 cleanup · L1819 learn · L1929 decide · L2008 deploy · L2188 setup
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -883,7 +884,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 if ($App) { $af = Get-KitPath owner-apps -Create; Invoke-KitLocked $af { $o = try { Get-Content $af -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $o) { $o = @{} }; $o[$App] = $Answer; $o | ConvertTo-Json | Set-Content $af }; "owner answer for ${App}: $(if ($Answer) { $Answer } else { 'cleared' })"; return }
 $skills = Split-Path $PSScriptRoot
 $swarm = Join-Path $skills 'android-swarm'
-$wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $runsNow = @(); $toolErr = 0; $errRun = ''; $now = Get-Date; $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
+$wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $runsNow = @(); $toolErr = 0; $errRun = ''; $now = Get-Date; $t0 = $now; $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList; $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 # a timed-out sweep still shows them
 function Flag($lvl, $what, $action) { [void]$flags.Add([pscustomobject]@{ level = $lvl; what = $what; action = $action }) }
 function L($s) { [void]$lines.Add($s) }
@@ -896,7 +897,8 @@ Invoke-KitLocked $lk {
   @{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json | Set-Content $lk
 }
 if ($script:aside) { $script:aside; return }
-if ($BudgetSeconds -le 0) { $BudgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 } }   # a heartbeat round stays under ~30 s; skipped parts run next round $script:skipped = @()
+if ($BudgetSeconds -le 0) { $BudgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 } }
+$script:skipped = @(); $deadline = (Get-Date).AddSeconds($BudgetSeconds)
 function Within($name) { if ((Get-Date) -lt $deadline) { $true } else { if ($name -notin $script:skipped) { $script:skipped += $name }; $false } }
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
 function Left { [math]::Max(5, [int]($deadline - (Get-Date)).TotalSeconds) }

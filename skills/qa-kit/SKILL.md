@@ -41,23 +41,15 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `qa.ps1 annotate`).
 5. **Verdict per check — defects are never notes:**
-   - **PASS**: the expected behaviour was seen. **PASS_WITH_NOTE** only for (a) guide text out of date because later intended
-     work
-     changed the flow and the intent holds, (b) a purely cosmetic difference, (c) the Expected cannot be met for a reason
-     outside the
-     change (platform limit, imprecise wording the code shows was never intended): check the code or ask the lead, quote both
-     readings, (d) a check the guide makes conditional whose condition is false here ("not applicable: <condition>", with
-     evidence).
-   - **FAIL**: any defect: 5xx or unexpected 4xx, crash, stuck flow, data wrong or not saved, wrong records, broken navigation,
-     a
-     missing screen; a silent 200 with empty data; a wrong answer stated as fact (LLM checks: compare with the DB); errors in
-     the
-     first turns after a restart. Set **`defect`**: `own` = this task's expected behaviour failed (the task goes to
-     failedTesting
-     and back to its developer); `new` = a defect outside what the task changed (a regression elsewhere, found on the way: extra
-     checks `X1`, `X2`...; it becomes the ask's [Bug] task).
-   - **Retests of a fix** fail on the sibling path: run the whole reported flow end to end and every screen that reads the same
-     record or rule; date/shift fixes also cross midnight.
+   - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
+     (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
+     (d) false conditional ("not applicable: <condition>", with evidence).
+   - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
+     silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
+     behaviour failed (failedTesting -> back to dev);
+     `new` = regression outside change (extra checks `X1`, `X2`... -> [Bug] task).
+   - **Retests of a fix** fail on the sibling path: run whole reported flow end to end and every screen reading
+     same record/rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
      NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still

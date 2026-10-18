@@ -11,6 +11,7 @@ export const meta = {
  ],
 }
 
+// Sections: L39 args · L200 local · L240 app · L264 test-prompt · L293 audit · L322 verify · L371 run-item · L547 pool
 /* args, one of:
 1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
