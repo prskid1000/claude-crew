@@ -411,7 +411,8 @@ param(
 )
 # heap caps replace inherited -Xmx
 $HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
-if ($KeepFreeGB -lt 0) { $KeepFreeGB = Get-KitKeepFreeGB }
+$keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
+if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
 $StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
 $mavenKeep = ([string]$env:MAVEN_OPTS -replace '-Xm[xs]\S+|-XX:\+Use\w+GC|-XX:MaxMetaspaceSize=\S+', '' -replace '\s+', ' ').Trim()
 $nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -replace '\s+', ' ').Trim()
@@ -545,6 +546,12 @@ function Get-Queue {
   @($q | Sort-Object @{ e = { [int]$recent[$_.owner] } }, @{ e = { [datetime]$_.since } })
 }
 
+# Windows keeps the system file cache resident until something needs RAM, which the gate never allows: half of it counts
+function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
+# the head of the queue starts after 20 min when the build still leaves a hard floor (5% of RAM, at least 3 GB)
+function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
+  $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
+}
 function Get-State {
   $Snap = Get-KitProcSnap
 
@@ -556,7 +563,8 @@ function Get-State {
     if ($e.backfill) { $backfills++ }
     $promised += [math]::Max(0, [double]$e.need - (Get-KitTreeGB ([int]$e.pid) $Snap))
   }
-  [pscustomobject]@{ Avail = (Get-SysMem).AvailGB; Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
+  $mem = Get-SysMem
+  [pscustomobject]@{ Avail = (Get-GateAvailGB $mem); Total = $mem.TotalGB; Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
 }
 # head waited 20+ min: one small build at a time
 function Get-BackfillMode([double]$HeadNeed, [double]$HeadWaitedMin, [double]$Need, [double]$Room, [bool]$Small, [int]$SmallRunning) {
@@ -583,6 +591,7 @@ while ((Get-Date) -lt $deadline) {
   if (-not $got) { continue }
   try {
     $s = Get-State
+    if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
     $queue = Get-Queue
     if ($heapBase -gt 0 -and $NeedGB -le 0 -and $queue.Count -ge 2) {
       $share = [math]::Floor(($s.Avail - $s.Promised - $KeepFreeGB) / $queue.Count - 0.5)
@@ -616,7 +625,7 @@ while ((Get-Date) -lt $deadline) {
         $left = $s.Avail - $s.Promised - $need
       }
     }
-    if ($left -ge $KeepFreeGB -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
+    if ((Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = Set-HeapEnv $heap $Cmd }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
@@ -857,7 +866,7 @@ if ($Step -eq 'migrations') {
   $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
   $masters = @($all | Where-Object { $_ -match '\.xml$' })
   # migrations of another tool (Flyway, Alembic, Prisma, ...): no kit check
-  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(db/)?(migrations?|migrate|flyway|alembic|prisma)/[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$' })
+  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(migrations?|migrate|flyway|alembic|prisma)/(.+/)?[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$|\.Designer\.cs$|ModelSnapshot\.cs$' })
   $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
