@@ -105,6 +105,14 @@ $s1 = & $ex extra sync; $s2 = & $ex extra sync
 "x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; & $gt $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
 $s3 = & $ex extra sync
 Expect 'extra sync: installs what config or the kit needs, one line each; then silent; a branch change updates it' ($s1.code -eq 0 -and @($s1.out.Trim() -split "`n").Count -eq 3 -and $s1.out -match 'extra duo: installed' -and $s1.out -match 'extra own: installed' -and -not $s2.out.Trim() -and $s3.out.Trim() -match '^extra demo: updated 1 file' -and (Get-Content $demo -Raw) -match 'x = 1' -and -not (git -C $kc status --porcelain))
+# an extra whose earlier version listed other files (its exclude block) is updated, not refused; two syncs at once never collide
+$xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
+(Get-Content $xf -Raw) -replace '(?m)^/notes/own\.txt\r?$', "/notes/own.txt`n/notes/own-old.txt" | Set-Content $xf -NoNewline
+'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; & $gt $xw commit -qam 'fix: own'; git -C $xw push -q $og extras 2>&1 | Out-Null
+Remove-Item (Join-Path $kc 'notes/duo.txt')
+$jobs = 1..2 | ForEach-Object { Start-Job -ArgumentList $py, $KT2 { param($py, $kt) & $py -X utf8 $kt extra sync 2>&1 | Out-String } }
+$both = (Receive-Job $jobs -Wait -AutoRemoveJob) -join "`n"
+Expect "extra sync: its own old file list is updated, not refused; two syncs at once never collide ($($both.Trim() -replace '\s+', ' '))" ($both -notmatch 'refused' -and (Get-Content (Join-Path $kc 'notes/own.txt') -Raw) -match 'own v2' -and (Test-Path (Join-Path $kc 'notes/duo.txt')))
 $kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
 Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
 Expect 'extra add lists it in kit.local.json extras (a fresh clone''s sync reinstalls it), remove unlists it; a prose need never installs' ($a1.code -eq 0 -and 'never' -in $l1 -and $s4.out -match 'extra never: installed' -and 'never' -notin $l2 -and $s1.out -notmatch 'extra never')

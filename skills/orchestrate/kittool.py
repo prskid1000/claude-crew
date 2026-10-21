@@ -1696,13 +1696,16 @@ def add_extra(kit, name, installed, verb='installed'):
     if not files:
         print(f'kittool extra add: no extra "{name}" on origin/extras (kittool.py extra list)', file=sys.stderr)
         return 2
-    mine, tracked_files = set(installed.get(name, [])), set(tracked(kit))   # re-adding updates it; anything else is never overwritten
+    # its own files (installed, or listed in its .git/info/exclude block even when a later version changed the list) are updated;
+    # anything else is never overwritten
+    mine, tracked_files = set(installed.get(name, [])) | set(exclude_blocks(kit).get(name, [])), set(tracked(kit))
     clash = sorted(rel for _, rel in files if rel in tracked_files or (osp.exists(osp.join(kit, rel)) and rel not in mine))
     if clash:
         print(f'kittool extra add {name}: refused - it would overwrite {clash}', file=sys.stderr)
         return 1
     for rel in mine - {rel for _, rel in files}:   # a file the new version dropped
-        os.remove(osp.join(kit, rel))
+        if osp.isfile(osp.join(kit, rel)) and rel not in tracked_files:
+            os.remove(osp.join(kit, rel))
     for src, rel in files:
         blob = subprocess.run(['git', '-C', kit, 'show', f'{EXTRAS_REF}:{src}'], capture_output=True, timeout=60).stdout   # bytes as stored
         os.makedirs(osp.dirname(osp.join(kit, rel)), exist_ok=True)
@@ -1765,38 +1768,11 @@ def extra_test(kit, names):
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
-def cmd_extra(a):
-    """kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]"""
-    kit = KIT_DIR
-    verb, names = (a[0] if a else 'list'), a[1:]
-    want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
-    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want:
-        print(cmd_extra.__doc__, file=sys.stderr)
-        return 2
-    installed = installed_extras(kit)
-    # offline: the last fetched branch answers; check and test fetch only when it never did (check runs at SessionStart)
-    if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
-        git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
+def extra_write(kit, verb, names):
+    """extra sync | add <name> | remove <name>, under the caller's lock."""
     if verb == 'sync':
         return extra_sync(kit)
-    if verb == 'test':
-        return extra_test(kit, names or sorted(installed))
-    if verb == 'check':
-        need = extras_needed(kit)
-        for name, feature in need:
-            print(f'{feature} is an extra: run kittool.py extra add {name}')
-        return 1 if need else 0
-    if verb == 'list':
-        rc, o, err = git(kit, 'ls-tree', '-d', '--name-only', EXTRAS_REF, 'extras/')
-        if rc:
-            print(f'kittool extra: no extras branch on origin ({err})', file=sys.stderr)
-            return 1
-        for path in o.split('\n'):
-            name = path.split('/')[-1]
-            text = git(kit, 'show', f'{EXTRAS_REF}:{path}/EXTRA.md')[1]
-            what = next((x.strip() for x in text.split('\n') if x.strip() and not x.startswith('#')), '')
-            print(f"{'*' if name in installed else ' '} {name:20} {what[:100]}")
-        return 0
+    installed = installed_extras(kit)
     name = names[0]
     if verb == 'add':
         rc = add_extra(kit, name, installed)
@@ -1821,6 +1797,41 @@ def cmd_extra(a):
         set_exclude(kit, name, None)
     print(f'extra {name}: removed {len(here)} file(s)' + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
     return 0
+
+
+def cmd_extra(a):
+    """kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]"""
+    kit = KIT_DIR
+    verb, names = (a[0] if a else 'list'), a[1:]
+    want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
+    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want:
+        print(cmd_extra.__doc__, file=sys.stderr)
+        return 2
+    installed = installed_extras(kit)
+    # offline: the last fetched branch answers; check and test fetch only when it never did (check runs at SessionStart)
+    if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
+        git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
+    if verb in ('sync', 'add', 'remove'):   # one writer at a time: the post-merge hook's background sync races a manual one
+        with locked(exclude_path(kit) or osp.join(kit, '.git-extras')):
+            return extra_write(kit, verb, names)
+    if verb == 'test':
+        return extra_test(kit, names or sorted(installed))
+    if verb == 'check':
+        need = extras_needed(kit)
+        for name, feature in need:
+            print(f'{feature} is an extra: run kittool.py extra add {name}')
+        return 1 if need else 0
+    if verb == 'list':
+        rc, o, err = git(kit, 'ls-tree', '-d', '--name-only', EXTRAS_REF, 'extras/')
+        if rc:
+            print(f'kittool extra: no extras branch on origin ({err})', file=sys.stderr)
+            return 1
+        for path in o.split('\n'):
+            name = path.split('/')[-1]
+            text = git(kit, 'show', f'{EXTRAS_REF}:{path}/EXTRA.md')[1]
+            what = next((x.strip() for x in text.split('\n') if x.strip() and not x.startswith('#')), '')
+            print(f"{'*' if name in installed else ' '} {name:20} {what[:100]}")
+        return 0
 
 def load_plugins():
     """Load installed kittool extras: each sees this module's names, adds COMMANDS, AUDIT_VERBS, ARGS and a lint_hook."""
