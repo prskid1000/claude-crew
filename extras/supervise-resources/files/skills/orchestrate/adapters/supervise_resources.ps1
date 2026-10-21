@@ -6,7 +6,9 @@ supervise report, seats and leases in board show and recover.
 Its hooks run inside the orch.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Exit codes: none (functions only).
+Sections: L11 builds · L40 supervise · L129 lines · L145 cleanup
 #>
+# ---- builds: repeated failures, cache flush
 # gate history keys whose last 3 builds failed; old failures (a path since fixed) are no news: the last one must be < 24 h old
 function Get-KitBuildFailures($Hist, [datetime]$Now) {
   if (-not $Hist) { return }   # no gate history yet
@@ -35,6 +37,7 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
   [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: file cache flush: available $([math]::Round($Mem.AvailGB, 1)) -> $([math]::Round($after, 1)) GB"; action = 'Nothing to do.' }
 }
 
+# ---- supervise: resource flags and report rows
 # supervise: flags, sweep lines, report rows and the largest waiting build (orch.ps1 supervise section 3: before the slow sections)
 function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }
@@ -123,6 +126,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($need) { [pscustomobject]@{ ramNeed = $need } }   # orch.ps1 names the biggest rows of every extra
 }
 
+# ---- lines: board show and recover
 # board show: QA seats and local-env leases
 function Get-KitBoardLinesResources {
   foreach ($o in @(Read-KitJsonFiles (Join-Path (Get-KitPath qa-seats) 'seats'))) { "  seat: $($o.agent) $($o.kind) $($o.need) GB since $($o.since)$(if ((Test-KitHolder $o) -eq $false) { ' (holder gone)' })" }
@@ -138,6 +142,7 @@ function Get-KitRecoverLinesResources {
   }
 }
 
+# ---- cleanup: idle resources
 # cleanup: test browsers with no live tab holder, idle or surplus browser profiles, idle Gradle / Kotlin daemons
 function Invoke-KitCleanupResources {
   $profiles = Get-KitPath chrome-profiles

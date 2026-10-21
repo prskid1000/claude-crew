@@ -10,6 +10,7 @@
 // project's jsdom (no layout: sizes 0); no jsdom -> NOT RUN.
 // <spec>: paths (relative to --dir, default cwd; space/comma-separated) or a path part ("price-calc"); none = all (slow).
 // Exit codes: 0 all passed · 1 a failure / bundle error / NOT RUN spec · 2 no esbuild, no spec found or usage error.
+// Sections: L21 kit paths · L26 spec shim · L162 registry · L223 runner · L270 angular · L327 jsdom · L369 main
 import Module, { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve, relative } from 'node:path'
@@ -17,12 +18,12 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-// --- kit paths: bundles go to <runtime>/cache (kit.example.json _paths; runtime = $CLAUDE_RUNTIME, else <kit>/.runtime)
+// ---- kit paths: bundles go to <runtime>/cache (kit.example.json _paths; runtime = $CLAUDE_RUNTIME, else <kit>/.runtime)
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const MAP = JSON.parse(readFileSync(join(KIT, 'skills', 'dev-kit', 'kit.example.json'), 'utf8'))._paths
 const cacheDir = join(process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir), MAP.runtime.cache.replace(/\/$/, ''))
 
-// --- spec shim: jasmine / jest-style globals for pure logic (no TestBed, DOM or fakeAsync): install() sets them, run() runs the
+// ---- spec shim: jasmine / jest-style globals for pure logic (no TestBed, DOM or fakeAsync): install() sets them, run() runs the
 // registered specs. Every matcher has .not; spies answer both jasmine (.and.*, .calls.*) and jest (.mock*) calls.
 
 const ASYM = Symbol('asymmetric')
@@ -158,7 +159,7 @@ function expect(actual) {
 }
 expect.any = any; expect.anything = anything; expect.objectContaining = objectContaining; expect.arrayContaining = arrayContaining; expect.stringMatching = stringMatching
 
-// ---- registry
+// ---- registry: describe / it tree
 const mkSuite = (name, parent, mode) => ({ name, parent, mode, children: [], before: [], after: [], beforeAll: [], afterAll: [] })
 let root = mkSuite('', null, 'run'), cur = root, focused = false
 const describe = (mode) => (name, fn) => { const s = mkSuite(name, cur, mode); if (mode === 'only') focused = true; cur.children.push(s); const p = cur; cur = s; try { fn() } finally { cur = p } }
@@ -219,7 +220,7 @@ export async function run({ log = console.log } = {}) {
  return r
 }
 
-// --- runner
+// ---- runner: hooks, timeouts, results
 const args = process.argv.slice(2)
 let dir = process.cwd(), tsconfig = null, realAngular = false
 const wanted = []
@@ -266,6 +267,7 @@ for (const w of wanted) {
 if (!wanted.length) specs.push(...walk(dir))
 const uniq = [...new Set(specs)]
 if (!uniq.length) { say(`no spec files found under ${dir}`); process.exit(2) }
+// ---- angular: the @angular/core stub
 // the @angular/core stub breaks @angular/forms: such a run gets the real one
 const formsSpec = realAngular ? null : uniq.find((f) => /['"]@angular\/forms['"]/.test(readFileSync(f, 'utf8')))
 if (formsSpec) { realAngular = true; say(`real @angular/core (${relative(dir, formsSpec)} imports @angular/forms)`) }
@@ -322,6 +324,7 @@ mkdirSync(outRoot, { recursive: true })
 say(`no unit-test target: running ${uniq.length} spec file(s) under node (esbuild ${esbuild.version}${tsconfig ? ', ' + relative(dir, tsconfig) : ''}${realAngular ? '' : ', @angular/core stubbed'})`)
 install()
 const req = createRequire(join(dir, 'package.json'))
+// ---- jsdom: DOM specs
 // jsdom: the project's own (never installed), resolved on the first DOM spec
 let jsdomMod, jsdomWhy = ''
 function getJsdom() {
@@ -363,6 +366,7 @@ function domOn({ JSDOM }) {
   win.close()
  }
 }
+// ---- main: bundle and run each spec
 const total = { passed: 0, failed: 0, skipped: 0, notRun: 0, errors: 0 }
 for (const spec of uniq) {
  const rel = relative(dir, spec).replace(/\\/g, '/')

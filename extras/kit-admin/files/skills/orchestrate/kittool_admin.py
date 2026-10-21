@@ -8,11 +8,13 @@ releases and the budget raise.
 
 Installed by `kittool.py extra add kit-admin` (or `extra sync`); kittool.py loads it and shares its own names (out, run, git,
 load_json, key_paths, manifest, cap_next, _sub_file).
+Sections: L17 helpers · L59 setup · L168 config · L320 recover · L465 release · L516 budget-raise · L538 cost · L653 registry
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
 import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
 import os.path as osp
 
+# ---- helpers: example config, pwsh, the live kit
 OWN = KIT_DIR
 # (example file or localFiles entry, local file, what it holds)
 PAIRS = [('skills/dev-kit/kit.example.json', 'skills/dev-kit/kit.local.json', 'org settings (tracker, repos, reports, ...)'),
@@ -54,7 +56,7 @@ def get(d, dotted):
         cur = cur[part]
     return cur
 
-# ---- setup
+# ---- setup: audit setup, the install checks
 def cmd_setup(kit, fix):
     if not osp.isdir(osp.join(kit, '.git')) and not osp.isfile(osp.join(kit, '.git')):
         out('ACT', 'SETUP-CLONE', kit, 'not a git clone of the kit repo', 'README "Install": git clone <kit repo> <workspace>/.claude')
@@ -163,7 +165,7 @@ def cmd_setup(kit, fix):
     if rt == 'gdocs' and not shutil.which('gws'):
         out('ASK', 'SETUP-CLI', 'gws', 'reports.type gdocs needs the gws CLI on PATH, logged in')
 
-# ---- config
+# ---- config: audit config, missing org values
 def cmd_config(kit, fill):
     doc, documented = config_doc_keys(OWN)
     for ex_rel, loc_rel, what in PAIRS:
@@ -315,7 +317,7 @@ def swarm_rules(s):
     if get(s, 'app.appDir') and not osp.isdir(osp.expanduser(str(get(s, 'app.appDir')))):
         out('ACT', 'CONFIG-VALUE', 'swarm.config.json app.appDir', 'folder does not exist on this machine')
 
-# ---- recover
+# ---- recover: audit recover, stopped work and leftovers
 def cmd_recover(kit, fix):
     rc, _, _ = git(kit, 'fetch', '--quiet', '--prune', timeout=120)
     if rc:
@@ -511,7 +513,7 @@ def cmd_release(a):
             return rc
     return 0
 
-# ---- budget raise
+# ---- budget-raise: the token cap x1.1, only over it
 def budget_raise(kit, total, cap, flags):
     """budget raise -Reason "<why trimming cannot make room>" (kittool.py budget hands over): only while the total is over the
     cap, multiplies the cap by 1.1, rounded to 1k, and prints the commit message carrying the reason (stored nowhere else)."""
@@ -648,6 +650,7 @@ def cmd_cost(a):
         print(f"| {row['agent']} | {row['always']} | {row['files']} | {row['total']} |")
     return 0
 
+# ---- registry: audit verbs, commands, args for kittool.py
 def aread(kit, rel):
     return read(osp.join(kit, rel))
 

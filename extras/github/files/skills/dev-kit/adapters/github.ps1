@@ -1,5 +1,7 @@
 # github (extra): GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
+# Sections: L4 gh · L15 tracker · L60 git-host · L94 ci
+# ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
 function __GhEnv { if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (__GhHost) -ne 'github.com') { $env:GH_HOST = [string](__GhHost) } }
@@ -10,6 +12,7 @@ function __TrGhBody([string[]]$A, [string]$Text) {
   if ($__trDry) { return (__GhCli ($A + @('--body', $Text))) }
   $f = __TrTemp $Text; try { __GhCli ($A + @('--body-file', $f)) } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 }
+# ---- tracker: GitHub issues
 # adapter:tracker/github: gh CLI; status = a <tracker.statusLabelPrefix><name> label (closed = closed issue)
 Register-KitAdapter 'tracker' 'github' @{
   'url' = { param($a) $r, $n = __TrRef $a.id; "https://$(__GhHost)/$r/issues/$n" }
@@ -54,6 +57,7 @@ Register-KitAdapter 'tracker' 'github' @{
   }
   'owner' = { param($a) [string](__GhCli @('api', 'user', '--jq', '.login')) }
 }
+# ---- git-host: pull requests, repos, branch protection
 # adapter:git-host/github: gh (GH_HOST = githubHost); fork PR source = owner:branch
 function __GhPr($a) { __GhMr (__GhApi "repos/$($a.repo)/pulls/$($a.n)") }
 Register-KitAdapter 'git-host' 'github' @{
@@ -87,6 +91,7 @@ Register-KitAdapter 'git-host' 'github' @{
     $s = __Cli gh $p 'PUT' @{ required_status_checks = $null; enforce_admins = $true; required_pull_request_reviews = $null; restrictions = $null; allow_force_pushes = $false; allow_deletions = $false } -Json -Res
     if (-not $s.code) { 'set' } elseif ("$($s.err)" -match 'HTTP 40[34]') { $no } else { "failed: $("$($s.err)".Trim())" } }
 }
+# ---- ci: Actions runs, check runs, statuses
 # adapter:ci/github: Actions runs, check runs + commit statuses (external CI)
 Register-KitAdapter 'ci' 'github' @{
   'runs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs?branch=$(__Enc $a.ref)$(if ($a.sha) { "&head_sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)").workflow_runs) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord ($_.conclusion ?? $_.status)) $_.created_at $_.updated_at }) }

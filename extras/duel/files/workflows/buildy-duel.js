@@ -13,7 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L129 args · L182 build-prompt · L227 ship-prompt · L362 local-loop · L509 ship
+// Sections: L30 args · L129 record-args · L149 budget · L165 build-prompt · L224 ship-prompt · L246 plan · L258 reports ·
+//   L284 duel · L364 local-loop · L398 stages · L512 ship · L573 deploy · L588 learn
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
  agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],
@@ -26,6 +27,7 @@ export const meta = {
 }
 Returns { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, duel?, budget, next?, retroDue } or { refused, batch, next }.
 */
+// ---- args: the run's input, batch, kit paths, models
 const A0 = args || {}   // recorded as given (resume); A = this run's batch (args.batch areas; the rest -> next)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
 const IN = BATCH ? A0.agents.slice(0, BATCH) : A0.agents || []
@@ -124,6 +126,7 @@ const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, v
 `
 const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high', ...(A.models || {}) }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
+// ---- record-args: the launch record (a resume needs it byte-exact)
 // full args go to the launch record first (orch.ps1 launch -Self, FNV-1a): resumes need them byte-exact
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
 async function recordArgs(wf, run, a, phaseName, plan) {
@@ -143,6 +146,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
+// ---- budget: the plan cap and the stop line
 // BUDGET (README "Configuration" budget): cap = the plan's budgets; over it -> refused + split; at stopAt no new round, rest -> next
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
 function takeBudget(out, units) {
@@ -158,6 +162,7 @@ async function gate(phaseName) {   // before a new round; measures only near the
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running rounds finish, no new one starts; the rest -> next`) }
  return !BUD.stop
 }
+// ---- build-prompt: devy, revy, fix and CI prompts
 const isComplex = (a) => a.complex === true || [].concat(A.complex || []).includes(a.id)
 const modelOf = (a) => ({ ...(a.model ? { model: a.model } : pick(isComplex(a) ? 'complex' : 'build')), ...(a.effort ? { effort: a.effort } : {}) })
 
@@ -216,6 +221,7 @@ function ciPrompt(r, a) {
 $env:CLAUDE_AGENT='ci-${a.id}'; & ${DEV} pipes -Mrs ${r.mrs.filter((m) => !m.merged).map((m) => m.url).join(',')} -MaxMinutes 8
 If the JSON says "done": false, run it again (at most 3 times in total) and return the last JSON.`
 }
+// ---- ship-prompt: merge order and holds
 const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((h) => (m.url || '').includes(`/${h}/`))
 const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
 const isConsumer = (m) => (A.roles || {})[m.repo] ? A.roles[m.repo] === 'consumer' : CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
@@ -237,6 +243,7 @@ ${MERGE_WORD_NOTE}
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
 
+// ---- plan: the budget gate before any agent
 const PLAN = [...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
 takeBudget(await recordArgs('buildy-duel', RUN, A0, MODE === 'duel' ? 'Duel' : 'Build', PLAN), A.agents.length)
@@ -248,6 +255,7 @@ if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
 }
 log(`wave: ${A.agents.length} agents, mode ${MODE}, review ${REVIEW_AUTO ? 'auto' : REVIEW ? 'on' : 'off'}, local retries ${LOCAL_RETRIES}, brief ${A.brief}`)
 
+// ---- reports: report merges, decision waits
 // merge, don't replace: a later round reports only its own work
 const uniq = (x) => [...new Set(x)]
 const byId = (x) => [...new Map(x.map((d) => [d.id, d])).values()]
@@ -273,6 +281,7 @@ function mergeReports(x, r2, note) {
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
 const decisions = []
 const envFixes = []
+// ---- duel: two POCs, compare, debate, the owner judges
 // DUEL: 2 devy build it two ways, revy (kind plan) compares + fact-checks, owner judges (decide ask); winner continues, loser's branch closes, findings kept
 const DUEL_SCHEMA = { type: 'object', properties: { approach: { type: 'string' }, summary: { type: 'string', description: '<= 120 words: what the POC does, what it proved' },
  evidence: { type: 'array', items: { type: 'string' }, description: 'files / runs / numbers that back each claim' }, worktrees: { type: 'array', items: { type: 'string' } },
@@ -352,6 +361,7 @@ RECORD>>>`, { label: 'duel-ask', phase: 'Duel', schema: OK_SCHEMA, agentType: 'd
   log(`duel: the owner chose POC ${side(w)} (${A.agents[w].id}); it continues the dev flow, ${L.id}'s branch is closed`)
  }
 }
+// ---- local-loop: the local test loop
 // BLOCKED stands only for an owner decision or a remote-only dependency; any other BLOCKED (an env reason) is a FAIL to fix
 function normLocal(r) {
  const lt = r && r.localTest
@@ -385,6 +395,7 @@ fix (THE DEV FLOW step 3), never a reason to stop.`), { label: `local-strong:${a
  return r
 }
 
+// ---- stages: build -> review -> fix per area
 const results = await pipeline(
  AGENTS,
  // Build: code + testing goals + local loop; an agent that died (API timeout, usage limit) is retried once (infra flake)
@@ -498,6 +509,7 @@ Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', s
  },
 )
 
+// ---- ship: CI gate, merge, outcome
 async function ciGate(a, r) {
  if (!r.mrs.some((m) => !m.merged)) return []
  const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'devy', ...pick('ci'), effort: 'low' })
@@ -558,6 +570,7 @@ const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.fin
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
+// ---- deploy: merged work joins the deploy batch
 // Deploy: merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default): nobody asks or proposes a deploy, a
 // person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
@@ -572,6 +585,7 @@ if (shipped.length) {
   : `DEPLOY BATCH: ${shipped.length} MR(s) merged; they wait for a person's "deploy <env>" (nobody asks)`)
 }
 
+// ---- learn: signals for /tidy
 phase('Learn')
 const retroDue = (o) => { log('RETRO DUE: run /tidy once no other workflow of this session runs'); return { ...o, retroDue: true } }
 const eventful = out.some((x) => x.error || x.blocked || x.fixed !== undefined || (x.findings || []).length || (x.report && x.report.deferred.length)) || outcome.openFindings.length > 0 || decisions.length > 0 || envFixes.length > 0

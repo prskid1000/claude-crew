@@ -5,9 +5,11 @@ deploys.ps1 (extra deploys): the deploy batch of orchestrate E5, dot-sourced by 
   orch.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   orch.ps1 deploy merge ...   extra deploy-merge
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
+Sections: L12 helpers · L22 intest · L100 deploy · L196 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 
+# ---- helpers: test-env filter, MR refs
 # not a test env: deploys[].production, else productionPattern on the name; -Lanes: + laneApk
 function Get-NoTestRx([switch]$Lanes) { $rx = Get-KitSetting 'deploy.productionPattern' '(?i)prod|critical'; $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
@@ -17,6 +19,7 @@ function Get-CanonMr([string]$m) {
   if ($rp) { "$($rp.name)!$($Matches.i)" } else { $m }
 }
 
+# ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @())
@@ -94,6 +97,7 @@ foreach ($id in $cand.Keys) {
 if (-not $Quiet) { "mark-in-test: $($cand.Count) candidate(s), $marked marked, $wait waiting on a deploy" }
 }
 
+# ---- deploy: plan, request, record
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
@@ -189,6 +193,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   if ($hostErr) { "last deploy unknown: $hostErr" }   # once, not per target
 }
 
+# ---- supervise: inTest moves, the cached plan
 # supervise (called from Invoke-Supervise: $now, Within and Invoke-Bounded are its own): -AutoFix moves a done task that is live on a
 # test env to inTest (never before); the deploy plan is cached 1 h: READY envs are report info, DEPLOY ASK only under trigger ask
 function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {

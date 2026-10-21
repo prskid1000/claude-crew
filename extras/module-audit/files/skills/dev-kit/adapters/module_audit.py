@@ -2,9 +2,11 @@
 [--out <dir>]` for revy's module audits (agents/revy.md kind module). Loaded by devtools.py from skills/dev-kit/adapters/."""
 import argparse, json, os, re
 from collections import Counter
+# Sections: L9 schema · L51 validate · L110 summary · L154 entry
 
 CFG = {}   # devtools.py's kit.local.json, set by register
 
+# ---- schema: the finding format and the project profile
 # ===== findings (revy module audits)
 FINDINGS_SCHEMA = r'''A finding: exactly these 23 string keys ("" when unknown).
 
@@ -46,6 +48,7 @@ Project profile (<kit>/skills/dev-kit/projects/<project>.local.md, local; one pe
 ## Review lessons
 '''
 
+# ---- validate: findings files against the schema
 def validate(argv):
     KEYS = ['id', 'module', 'layer', 'type', 'in_scope', 'subtype', 'title', 'area', 'severity', 'current', 'expected',
       'business_impact', 'root_cause', 'why_today', 'why_not_prod', 'customer_impact', 'db_migration', 'suggested_fix',
@@ -104,6 +107,7 @@ def validate(argv):
     return (1 if problems else 0)
 
 
+# ---- summary: counts and the report
 def summary(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument('file')
@@ -147,6 +151,7 @@ def summary(argv):
     print(base + '.md')
 
 
+# ---- entry: devtools.py findings verb
 def findings(argv):
     """findings schema | validate <file> ... | summary <file> [--sources ..] [--out <dir>]"""
     sub = argv[0] if argv else ''

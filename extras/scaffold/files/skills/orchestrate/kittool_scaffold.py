@@ -6,12 +6,14 @@
 
 Installed by `kittool.py extra add scaffold`; kittool.py loads it and shares its own names (read, manifest, section, port).
 Exit codes: 0 ok · 1 references left after rename / remove · 2 usage error.
+Sections: L16 helpers · L72 new · L237 shared · L265 rename · L386 remove
 """
 import contextlib, datetime, io, json, os, re, shutil, subprocess, sys
 import os.path as osp
 
 TODO = 'TODO(new)'
 
+# ---- helpers: git, manifest edits, stubs
 def _git(kit, *a):
     return subprocess.run(['git', '-C', kit, *a], capture_output=True, text=True, encoding='utf-8', errors='replace')
 
@@ -67,6 +69,7 @@ def _test_stub(kit, what):
         return t.rstrip('\n') + '\n' + TEST_MARK + '\n' + line
     _sub_file(kit, 'tests/kit-tests.ps1', fn)
 
+# ---- new: a part from its template
 def cmd_new(a):
     """kittool.py new agent|skill|workflow|rule|event|config-key <name> [--crew <agent>] [--skill <skill>] | new adapter <kind> <name> | new adr <title>"""
     kit = KIT_DIR
@@ -231,6 +234,7 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
     print(f'{kind} {name}: fill every {TODO}, then kittool.py port, lint (0 problems), tests/kit-tests.ps1')
     return 0
 
+# ---- shared: regenerate, find references
 def _regen(kit):
     """After new / rename / remove: the ports and README's generated sections follow the registry at once."""
     with contextlib.redirect_stdout(io.StringIO()):
@@ -258,6 +262,7 @@ def _references(kit, word, skip=()):
 
 PART_PATH = {'agent': 'agents/{}.md', 'skill': 'skills/{}', 'workflow': 'workflows/{}.js', 'rule': 'rules/{}.md'}
 
+# ---- rename: ids and names
 def _rename_id(kit, kind, old, new):
     """rename event E<n> E<m> | config-key a.b.old a.b.new (same parent): the row / key, the registry and every reference."""
     if kind == 'event':
@@ -378,6 +383,7 @@ def cmd_rename(a):
     print(f'renamed {kind} {old} -> {new}' + (f'; references left: {", ".join(left[:10])}' if left else '; no reference left'))
     return 1 if left else 0
 
+# ---- remove: a part and its rows
 def cmd_remove(a):
     """kittool.py remove agent|skill|workflow|rule|event|config-key <name>: deletes the part, its registry entry and its Router /
     Events row; lists every reference left (exit 1 until none)."""

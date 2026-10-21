@@ -10,7 +10,9 @@ defaults to $env:CLAUDE_AGENT, else main. State: <state>/runtimes/<name>.json. C
 Dot-sourced by lib.ps1 (adapters/*.ps1): dev.ps1 gets the verb and the guard rule, orch.ps1 supervise its sweep
 (Get-KitSuperviseGuardRuntimes: a lease with no live holder for idle.graceMinutes -> released; kit-started + no lease -> down).
 Exit codes: 0 ok · 1 problem (not configured, up or down failed) · 2 usage.
+Sections: L15 state · L44 leases · L89 verb · L135 supervise
 #>
+# ---- state: names, state file, probes
 function Get-KitRuntimeNames { $r = Get-KitSetting 'runtimes' $null; if ($r) { @($r.PSObject.Properties.Name | Where-Object { $_ -notlike '_*' -and $r.$_.isUp }) } }
 function Get-KitRuntimeFile([string]$Name) { Join-Path (Get-KitPath runtimes -Create) "$Name.json" }
 function Get-KitRuntimeState([string]$Name) {
@@ -39,6 +41,7 @@ function Test-KitRuntimeLease($l) {
   if ($l.auto) { return ((Get-Date) - [datetime]$l.used).TotalMinutes -lt [double](Get-KitSetting 'idle.beatMinutes' 20) -and (Test-KitHolder $l) -ne $false }
   Test-KitLive $l
 }
+# ---- leases: use, release, stop
 # under the state lock; a failed down keeps startedByKit (supervise retries after idle.graceMinutes)
 function Stop-KitRuntime([string]$Name, [hashtable]$St) {
   $down = Get-KitSetting "runtimes.$Name.down" ''
@@ -83,6 +86,7 @@ function Remove-KitRuntimeLease([string]$Name, [scriptblock]$Which, [string]$Why
   $script:rtMsg
 }
 
+# ---- verb: dev.ps1 runtime
 function Invoke-Runtime {
 param([Parameter(Mandatory, Position = 0)][ValidateSet('use', 'release', 'status')][string]$Action, [string]$Name, [string]$Agent, [string]$Session, [switch]$Json)
 $ErrorActionPreference = 'Stop'
@@ -128,6 +132,7 @@ Register-KitAdapter 'guard' 'runtimes' @{ check = { param($a)
     if ($notes) { @{ note = ($notes -join "`n") } }
   } }
 
+# ---- supervise: idle leases, kit-started runtimes
 # orch.ps1 supervise (section 3): lease liveness, -AutoFix releases dead leases and stops a kit-started runtime nobody holds
 function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
   $grace = [double](Get-KitSetting 'idle.graceMinutes' 10)

@@ -1,6 +1,9 @@
 # api-auth (extra): qa.ps1 api with auth types basic, query, cookie (+ CSRF), token, command (HMAC / SigV4 signer), client cert,
 # refresh tokens. qa.ps1 api hands every call to Invoke-ApiExtra when this file is present (dot-sourced from adapters/).
+# Sections: L4 shell · L6 request · L46 helpers · L50 login · L81 call
+# ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
+# ---- request: target, user, URL, client cert
 function Invoke-ApiExtra {
 param(
   [string]$Method = 'GET',
@@ -40,9 +43,11 @@ $a = $t.auth
 if ($a.type -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
 $tls = if ($a.cert) { @{ Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([string]$a.cert, [string]$a.certPass) } } else { @{} }
 
+# ---- helpers: placeholders and JSON paths
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
 function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k }; $o }
 
+# ---- login: token cache, login and refresh
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
 # cache: token (cookie type: Cookie header) + refresh token
@@ -73,6 +78,7 @@ $tok = $null; $login = $a.type -in 'login', 'cookie'
 if ($login) { $tok, $script:rt = if (Test-Path $cache) { @(Get-Content $cache) + '' }; if (-not "$tok".Trim()) { $tok = Login } }   # empty cache file: log in again
 elseif ($a.type -eq 'token') { $tok = if ($a.token) { $a.token } else { [string]$u[1] } }
 
+# ---- call: the request with auth headers
 function Call($tk) {
   $h = AuthHeaders $tk; foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
   if ($Tenant -and $t.tenantHeader) { $h[$t.tenantHeader] = $Tenant }

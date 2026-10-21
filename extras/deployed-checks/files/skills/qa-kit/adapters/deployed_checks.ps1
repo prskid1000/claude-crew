@@ -1,6 +1,9 @@
 # deployed-checks (extra): qa.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
+# Sections: L4 shell · L6 probe · L54 kinds · L86 deployed
+# ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
+# ---- probe: version probe, memoised ssh state
 # probeField: JSON path in the answer
 function Probe($d, $r) {
   if ($d.tag) { git -C $r.checkout fetch -q --tags 2>$null; return @(git -C $r.checkout tag --sort=-creatordate 2>$null | Where-Object { $_ -match $d.tag })[0] }
@@ -48,6 +51,7 @@ function SshState($s, $sha) {
   }
   $memo[$k] = $r; $r
 }
+# ---- kinds: ssh, awsStack, probe, tag, manual
 function Test-DeployedExtra($d) {
   if ($d.ssh) {   # host HEAD holds the merge AND files match
     $s = $d.ssh; $st = SshState $s $sha
@@ -79,6 +83,7 @@ function Test-DeployedExtra($d) {
   }
 }
 
+# ---- deployed: qa.ps1 deployed, an MR live per test env
 # qa.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: extra
 # android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 function Invoke-Deployed {

@@ -4,6 +4,7 @@
   python -X utf8 skills/orchestrate/kittool.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kittool.py extra add flow-map`; kittool.py loads it and shares its own names (read, load, graph, lint, kit_path).
+Sections: L16 rules · L72 parts · L157 control · L330 parse · L590 link · L819 cycles · L895 pack · L1022 page · L1336 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -12,6 +13,7 @@ from collections import defaultdict, deque
 
 ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 
+# ---- rules: patterns for refs, control flow, loops, outcomes
 # ==== the flow model
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
@@ -67,6 +69,7 @@ DSUBJ = {'mode', 'trigger', 'status', 'verdict', 'class', 'mclass', 'result', 'o
 SUBVAR = ('Action', 'Sub', '__v', 'Verb', 'Op')
 FLOW = {'calls', 'runs', 'impl', 'next', 'spawns', 'loads', 'routes', 'branch', 'loop', 'writes', 'reads', 'triggers', 'has'}
 
+# ---- parts: the part model, text helpers
 def short(s, n=44):
     s = re.sub(r'[`*]+', '', re.sub(r'\s+', ' ', s or '')).strip()
     return s if len(s) <= n else s[:n].rsplit(' ', 1)[0] + '…'
@@ -151,6 +154,7 @@ def strip_code(text, lg, keep_tpl=False, keep_str=False):
         i = max(j, i + 1)
     return ''.join(out)
 
+# ---- control: control flow and refs in code and docs
 def code_control(p, src, raw, live, ln, lg, fname='', lns=None):
     """Control-flow points in one code block: loops with their bound (or none), schedules, parallel, waits, errors, locks, exits."""
     def at(pos):
@@ -323,6 +327,7 @@ def spans_of(lines, lg):
         out.append((i, min(j, len(lines) - 1), next(g for g in m.groups() if g)))
     return out
 
+# ---- parse: parts per file kind
 def parse_code(p, f, text):
     lg, base = lang(f), osp.basename(f)
     lines = text.split('\n')
@@ -582,6 +587,7 @@ def parse(f, text):
         parse_json(p, f, text)
     return {'parts': p.parts, 'refs': p.refs}
 
+# ---- link: the model, edges, issues
 def model(k, problems, cache_path=None):
     """The page data: files, nodes, edges (with back-edge / loop flags), cycles, issues."""
     cache = {}
@@ -810,6 +816,7 @@ def link(k, parsed, problems):
         issues.append({'code': c, 'node': w if w in N else None, 'text': f'{w}: {m}'})
     return pack(k, N, E, issues, named)
 
+# ---- cycles: named flows, hops, branch targets
 # the crew's named cycles: each hop (<= 4 edges) must exist; a missing hop is a GAP, never drawn
 NAMED = [('heartbeat', [('timer', r'(?i)^cron |every \d+ ?min'), ('cmd', r'orch\.ps1 supervise$'), ('outcome|decision', r'^ACT\b'),
       ('row', r'^E\d+'), ('timer', r'(?i)^cron |every \d+ ?min')]),
@@ -885,6 +892,7 @@ def branch_target(text, f, cmds, kc, N, steps=None, skills=None, wfs=None):
     m = OUT_RX.search(text[:80])
     return '@outcome/' + m.group(1) if m else None
 
+# ---- pack: page data, shortest paths, loops
 def pack(k, N, E, issues, named=()):
     ids = list(N)
     ix = {i: n for n, i in enumerate(ids)}
@@ -1011,6 +1019,7 @@ def tarjan(n, out):
                     comps.append(comp)
     return comps
 
+# ---- page: the HTML page and its sidecar
 def html(data, src_name=''):
     data = dict(data, src=src_name)
     return PAGE.replace('__DATA__', json.dumps(data, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/'))
@@ -1324,6 +1333,7 @@ window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, s
 
 
 # ==== the page command and the lint hook
+# ---- command: flow, its output path, the lint hook
 def live_root(kit):
     """The live clone (main worktree): a worktree's lint refreshes the page the owner opens."""
     main = main_clone(kit)

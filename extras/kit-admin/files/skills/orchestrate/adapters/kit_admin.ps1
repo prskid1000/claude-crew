@@ -5,8 +5,10 @@ kit_admin.ps1 (extra kit-admin): kitty's tools in orch.ps1, dot-sourced by orch.
   learn -Skill <s> -Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
+Sections: L11 learn · L99 health · L108 prepush · L167 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
+# ---- learn: lesson tools, -Stats, -History
 function Invoke-LearnAdmin {
   param(
     [string]$Skill, [string]$Kind, [string]$Text, [string]$Ref, [string]$Source,
@@ -94,6 +96,7 @@ function Invoke-LearnAdmin {
   }
   if ($script:learnRc) { exit $script:learnRc }
 }
+# ---- health: the weekly audit nudge
 # health: the weekly kitty audit nudge (kitAudit.everyDays, default 7; 0 = off), quiet while a kitty works
 function Get-KitHealthLinesAudit {
   $every = [double](Get-KitSetting 'kitAudit.everyDays' 7); if ($every -le 0) { return }
@@ -102,6 +105,7 @@ function Get-KitHealthLinesAudit {
   $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (orchestrate E13)." }
 }
+# ---- prepush: local files, org terms, ports
 # the kit's git pre-push hook (.githooks/pre-push): blocks local files, org terms; warns on stale ports
 function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
@@ -160,6 +164,7 @@ if ($hits.Count) {
 exit 0
 }
 
+# ---- precommit: graph, ports, section maps, lint
 # the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph, section maps and ports, runs lint
 # never stage the user's changes
 function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }

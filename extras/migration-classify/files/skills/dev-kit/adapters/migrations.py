@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 #   why, guarded, creates, refs, x (tool vars) ], reasons, tools }. plan -> { revert (newest first), kept, blocked, commands, hook (count
 #   left to db.rollback) }; --out: revert.json, files/, localenv-revert.xml. Rules: DEFAULT_RULES ("rules" replaces, "extraRules" first;
 #   first match decides); SQL lists per "dialect". Parsers: Liquibase, MIG_TOOLS, config "parsers" [ { match, parser | cmd } ].
+# Sections: L76 config · L115 parse · L373 rules · L440 classify · L552 plan · L640 cli · L673 selftest · L978 entry
 KNOWN = {'createTable', 'dropTable', 'addColumn', 'dropColumn', 'renameColumn', 'renameTable', 'modifyDataType', 'createIndex',
   'dropIndex', 'addForeignKeyConstraint', 'dropForeignKeyConstraint', 'addUniqueConstraint', 'dropUniqueConstraint',
   'addPrimaryKey', 'dropPrimaryKey', 'addNotNullConstraint', 'dropNotNullConstraint', 'addDefaultValue', 'dropDefaultValue',
@@ -72,6 +73,7 @@ DEFAULT_RULES = [
 FILE_RULES = {'unparsed': 'cannot be audited: {why}', 'raw-sql-file': 'raw SQL file outside a formatted changelog: no changeSet ids or rollback'}
 
 
+# ---- config: rules config, git, small helpers
 def load_cfg(path):
     cfg = dict(DEFAULTS)
     if path:
@@ -110,6 +112,7 @@ def split_names(v):
 
 
 # --- normalized changes
+# ---- parse: changeSets from Liquibase XML / YAML / SQL and other tools
 def change_from(t, attrs, cols, where, text):
     """t: change type; attrs: dict; cols: column names; where: WHERE text or None; text: SQL body."""
     tbl = (attrs.get('tableName') or attrs.get('baseTableName') or attrs.get('viewName') or '').strip('`"').lower()
@@ -367,6 +370,7 @@ def run_parser(name, path, text):
 
 
 # --- rules
+# ---- rules: the LIGHT / HEAVY judgement
 def setting(v, cfg):
     return cfg.get(v[1:]) if isinstance(v, str) and v.startswith('@') else v
 
@@ -433,6 +437,7 @@ def judge(cs, created, cfg):
 
 
 # --- classify
+# ---- classify: the classify verb
 def logical(path, cfg):
     return re.sub(cfg['logicalRoot'], '', path)
 
@@ -544,6 +549,7 @@ def classify(a, cfg):
 
 
 # --- plan
+# ---- plan: the exact revert plan
 def key(c):
     return f"{c['file']}::{c['id']}::{c['author']}"
 
@@ -631,6 +637,7 @@ def plan(a, cfg):
     return res
 
 
+# ---- cli: arguments and the JSON result
 def mig_main(argv):
     print(json.dumps(mig_result(argv), indent=1))
 
@@ -663,6 +670,7 @@ def mig_result(argv):
 
 
 
+# ---- selftest: temp-repo cases (python -X utf8 devtools.py migrations selftest)
 # --- selftest (git, temp repos): python -X utf8 devtools.py migrations selftest; exit 0 = all pass
 SELFTEST = r'''import json, os, shutil, subprocess, sys, tempfile, unittest
 
@@ -967,6 +975,7 @@ def mig_selftest():
     return 1 if bad else 0
 
 
+# ---- entry: devtools.py verb
 def main(argv):
     return mig_selftest() if argv[:1] == ['selftest'] else (mig_main(argv) or 0)
 

@@ -7,6 +7,7 @@ them to the workspace root, where codex / agy look. --check compares a fresh gen
 prepush, kitty audit) and also writes each agent's Character block from the manifest. kittool.py loads this file and shares
 its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
+Sections: L29 characters · L64 agents · L111 hooks · L129 workflows · L166 deploy · L248 command
 """
 import contextlib, io, json, re, shutil, tempfile
 from pathlib import Path
@@ -25,6 +26,7 @@ PWSH = "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/sk
 GUARD = (PWSH + "dev-kit/dev.ps1 guard", 10)
 SESSION_START = [(PWSH + "orchestrate/orch.ps1 health", 15), (PWSH + "orchestrate/orch.ps1 cleanup -IfDue -Quiet", 600)]
 
+# ---- characters: Character blocks from the manifest
 def character_block(ch, width=128):
     """The Character paragraph port writes into agents/<name>.md from the manifest (one fixed shape for every agent)."""
     words = f'**Character:** traits: {ch["traits"]} · bias: {ch["bias"]} · catchphrase: "{ch["catchphrase"]}" · never: {ch["never"]}.'.split(' ')
@@ -59,6 +61,7 @@ def write_characters(kit=None):
     if n:
         print(f'Character blocks written from the manifest: {n}')
 
+# ---- agents: Codex / Antigravity agent files
 def write_port(path, text):
     path.write_text(text, encoding="utf-8", newline="\n")
 
@@ -105,6 +108,7 @@ def port_agents():
     prune(GRAVITY_AGENTS, '.md', made)
     print(f"ported {len(made)} agent(s) -> .codex/agents/*.toml, .agents/agents/*.md")
 
+# ---- hooks: hook wiring
 def port_hooks():
     """Each tool's hook config runs the same scripts as settings.json (no SendMessage guard: no such tool there)."""
     CODEX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +126,7 @@ def port_hooks():
       "kit-health": {"enabled": True, "SessionStart": [hook(*x) for x in SESSION_START]}}, indent=2) + "\n")
     print("hook wiring written -> .claude/.codex/config.toml, .claude/.agents/hooks.json")
 
+# ---- workflows: a manual procedure per workflow
 def workflow_meta(text):
     """name, description, whenToUse and phases [(title, detail)] of a workflow's `export const meta`."""
     m = re.search(r"export const meta\s*=\s*\{(.*?)\n\}", text, re.S)
@@ -158,6 +163,7 @@ def port_workflows():
     prune(GRAVITY_WORKFLOWS, '.md', made)
     print(f"ported {len(made)} workflow procedure doc(s) -> .codex/workflows/*.md, .agents/workflows/*.md")
 
+# ---- deploy: copy to the workspace root, staleness
 def port_deploy():
     """Copy .codex, .agents, AGENTS.md and GEMINI.md to the workspace root (the CLIs read the session cwd, never .claude)."""
     if KIT.name != '.claude':
@@ -239,6 +245,7 @@ def check_stale():
     stale += [f'{x} (workspace copy)' for x in deployed_stale()]
     return sorted(set(stale))
 
+# ---- command: port [--check]
 def cmd_port(a):
     if '--check' in a:
         stale = check_stale()

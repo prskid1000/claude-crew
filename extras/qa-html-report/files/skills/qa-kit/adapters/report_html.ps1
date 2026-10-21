@@ -1,5 +1,7 @@
 # qa-html-report (extra): the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. qa.ps1 finalize
 # writes report.html with Build-QaReport and publishes it instead of report.md when this file is present (dot-sourced).
+# Sections: L4 helpers · L28 build
+# ---- helpers: HTML escape, palette, chips, images
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 
 $script:Palette = @{
@@ -23,6 +25,7 @@ function Img($map, $f, $w) {
 # phone shots render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
 
+# ---- build: Build-QaReport, the report page
 function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl, $DocNote) {
   $checks = @($Res.checks)
   $n = @{}; foreach ($k in $script:Palette.Keys) { $n[$k] = @($checks | Where-Object result -eq $k).Count }
