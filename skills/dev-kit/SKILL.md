@@ -79,7 +79,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
     boundaries; no network unless tagged integration.
   - Place: next to the repo's existing tests (its convention wins; `dev.ps1 stack` shows the runner; a web project without a
     unit-test target: extra `node-spec`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
-    `-Touched`).
+    `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
+    move the logic into a pure helper the component calls, spec that helper (never a local copy), list the wiring as a live check.
   - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
     (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + the attribution trailer your harness or org asks
@@ -89,6 +90,9 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
   caller; overrides opt-in; key shared formatters by field; a round-trip test; list the callers in the MR and the testing goals.
+  A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
+  every render path of the field) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
+  endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
   never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;

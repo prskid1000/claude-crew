@@ -45,6 +45,9 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed (failedTesting -> back to dev);
      `new` = regression outside change (extra checks `X1`, `X2`... -> [Bug] task).
+   - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
+     health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
+     a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
    - **Retests of a fix** fail on the sibling path: run whole reported flow end to end and every screen reading
      same record/rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |

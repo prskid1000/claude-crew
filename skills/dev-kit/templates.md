@@ -124,8 +124,8 @@ Published at dev-kit step 6 (`devtools.py doc`), linked on the task and in the M
 ## Checks
 ### T1 — <screen / area>
 **Steps:** 1. <step> 2. <step>
-**Expected:** <exact result>
-**Proven locally:** <screenshot / JSON from the local loop>
+**Expected:** <exact result, read from the shipped code (final diff), never the brief or bug text; a timing from a measurement>
+**Proven locally:** <screenshot / JSON from the local loop, or "not provable locally: <why>" (needsLiveCheck); never claim a pass>
 ### R1 — <unchanged behaviour> (regression)
 ## Out of scope
 - <not to test, why> · a step that only exercises a channel in qa.outOfScope: "(out of scope for agent QA: <channel>)"
