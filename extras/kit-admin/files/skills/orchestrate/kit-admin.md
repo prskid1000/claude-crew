@@ -112,6 +112,7 @@ Exit codes: 0 ok · 1 problem found · 2 usage error.
 Sections: L<n> <name> · ... (kittool.py sections --fix writes it)
 #>
 ```
+Extras' scripts too: lint checks installed ones, `kittool.py extra test` the branch's (fix maps on the extras branch).
 Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`. No silent failures: a failed call is
 UNKNOWN, never a state. Idempotent where possible. `learn` signals for surprises.
 
