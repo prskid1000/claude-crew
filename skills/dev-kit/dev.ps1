@@ -11,7 +11,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1166 tracker · L1199 host
+Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1167 tracker · L1200 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -906,6 +906,7 @@ if ($SelfTest) {
   @('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
   @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
   @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/a.txt; cp AGENTS.md ../a.md', $false, $lk),
+  @('B', 'cd {LIVE}; grep -c ">" README.md; git clean -n', $false, $lk),
   @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk)
   )
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
@@ -1111,18 +1112,18 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
 # shell writes into the live clone: file verbs, redirects and git verbs that change the work tree (the cd / -C target, else cwd)
 if ($live -and -not $liveOk) {
   $cur = $here
-  foreach ($seg in (StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))) -split '\r?\n|;|&&|\|\||\|') {
+  foreach ($seg in (StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&>]*)"|''([^''\s;|&>]*)''', '$1$2'))) -split '\r?\n|;|&&|\|\||\|') {
     $tk = @(-split $seg); if (-not $tk.Count) { continue }
     $w = $tk[0] -replace '^&$', '' ; if (-not $w -and $tk.Count -gt 1) { $tk = @($tk | Select-Object -Skip 1); $w = $tk[0] }
     $pa = @($tk | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^-' })
     if ($w -match '^(cd|chdir|sl|Set-Location|pushd|Push-Location)$') { $cur = if ($pa) { $(if ([IO.Path]::IsPathRooted($pa[0])) { $pa[0] } elseif ($cur -and $pa[0] -notmatch '\$') { Join-Path $cur $pa[0] }) } ; continue }
-    $hits = @([regex]::Matches($seg, '(?<![\d&*])>>?\s*([^\s>&]+)') | ForEach-Object { $_.Groups[1].Value })
+    $hits = @([regex]::Matches($seg, '(?<![\d&*=-])>>?\s*([^\s>&]+)') | ForEach-Object { $_.Groups[1].Value })
     if ($w -match '(^|[\\/])git(\.exe)?$') {
       $gd = $cur
       for ($i = 1; $i -lt $tk.Count; $i++) {
         if ($tk[$i] -eq '-C') { $i++; $gd = if ([IO.Path]::IsPathRooted($tk[$i])) { $tk[$i] } elseif ($gd) { Join-Path $gd $tk[$i] }; continue }
         if ($tk[$i] -match '^-') { if ($tk[$i] -eq '-c') { $i++ }; continue }
-        if ($tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and (InLive $gd '')) { Deny $liveWhy }
+        if ($tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and $seg -notmatch '\s(-n|--dry-run|--check|-h|--help)(\s|$)' -and (InLive $gd '')) { Deny $liveWhy }
         break
       }
     }
