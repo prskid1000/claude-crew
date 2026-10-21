@@ -120,8 +120,9 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
 Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
 skills listed in `localOnly`.
-Not ported to Codex / Antigravity: the SendMessage guard hook, the Workflow and Skill tools, the Antigravity tools allow-list; the
-board, learn signals and decision pauses run by hand from the ported procedures.
+Not ported to Codex / Antigravity: the SendMessage guard hook, the live-kit edit guard on Antigravity file edits, the Workflow
+and Skill tools, the Antigravity tools allow-list; the board, learn signals and decision pauses run by hand from the ported
+procedures.
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`orch.ps1 supervise -AutoFix -Brief`, every 10 min)
@@ -210,8 +211,9 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 - `<kit>/.runtime/` disposable (`work/`, `cache/`, `logs/`), `<kit>/.state/` durable; both git-ignored, every path named in
   `kit.example.json` `_paths`; `orch.ps1 cleanup` removes only kit-created leftovers.
 - The PreToolUse guard blocks `git stash`, `--no-verify`, force-pushes to shared branches, ungated builds, hand-started dev
-  servers and `adb kill-server`. Deploys start only from a person's word. Never production. One machine (the memory gate is
-  local); workflows, hooks and skills are Claude Code-only (Codex / Antigravity get ported agents and procedures).
+  servers, `adb kill-server` and edits to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live
+  edit: `KIT_LIVE_EDIT=1` in the session env or the command). Deploys start only from a person's word. Never production. One
+  machine (the memory gate is local); workflows, hooks and skills are Claude Code-only (Codex / Antigravity get ported agents and procedures).
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main; an optional feature goes to the `extras` branch, not the core.

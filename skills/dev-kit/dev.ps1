@@ -11,7 +11,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1114 tracker · L1147 host
+Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1166 tracker · L1199 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -834,7 +834,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'
+  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -896,13 +896,25 @@ if ($SelfTest) {
   @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
   @('B', 'git commit --no-edit --amend', $false, $hk),
   @('P', 'git commit -m "use -n for a dry run"', $false, $hk),
-  @('B', 'git log -n 3; git commit -m x', $false, $hk)
+  @('B', 'git log -n 3; git commit -m x', $false, $hk),
+  @('E', '{LIVE}/skills/dev-kit/dev.ps1', $true, $lk),
+  @('E', '{LIVE}/{RT}/logs/x.md', $false, $lk),
+  @('E', '{LIVE}/.git/info/exclude', $false, $lk),
+  @('E', '{LIVE}/../wt/skills/dev-kit/dev.ps1', $false, $lk),
+  @('A', "*** Begin Patch`n*** Update File: {LIVE}/AGENTS.md", $true, $lk),
+  @('P', 'Set-Content {LIVE}/AGENTS.md x', $true, $lk),
+  @('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
+  @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
+  @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/a.txt; cp AGENTS.md ../a.md', $false, $lk),
+  @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk)
   )
-  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'
+  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
+  $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $fail = 0
   foreach ($c in $cases) {
-    $tool = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]
-    $json = @{ tool_name = $tool; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))) } } | ConvertTo-Json -Compress -Depth 4
+    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch' }[$c[0]]
+    $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live)
+    $json = @{ tool_name = $tool; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
@@ -930,10 +942,6 @@ $cmd = if ($in.tool_input.command) { [string]$in.tool_input.command }
        elseif ($in.toolCall.args.command) { [string]$in.toolCall.args.command }
        elseif ($in.CommandLine) { [string]$in.CommandLine }
        else { '' }
-if (-not $cmd) {
-  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
-  exit 0
-}
 $K = $PSScriptRoot
 $protected = @('main', 'master', 'develop', 'release/\S+')
 try { $kc = Get-Content (Join-Path $K 'kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($kc.protectedBranchesMode -eq 'replace') { $protected = @() }; $protected += @($kc.protectedBranches | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) } catch {}
@@ -949,6 +957,35 @@ function Deny($why) {
   } else {
     @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   }
+  exit 0
+}
+function GitCommon([string]$d) {
+  for (; $d; $d = Split-Path $d) {
+    $g = Join-Path $d '.git'
+    if (Test-Path -LiteralPath $g -PathType Container) { return [IO.Path]::GetFullPath($g) }
+    if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }
+  }
+}
+# the live kit clone (main worktree) runs every agent: its tracked or new non-ignored files change only through a kit worktree
+$live = if (($lg = GitCommon (Split-Path (Split-Path $K)))) { Split-Path $lg }
+$here = if ($in.cwd) { [string]$in.cwd } else { (Get-Location).Path }
+$liveOk = $env:KIT_LIVE_EDIT -eq '1' -or $cmd -match '(^|[\s;])(\$env:)?KIT_LIVE_EDIT\s*=\s*[''"]?1'
+function InLive([string]$p, [string]$base) {
+  if (-not $live -or -not $p -or $p -match '[$*?<>|`]') { return $null }
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return $null }; $p = Join-Path $base $p }
+  $p = $p -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'   # Git Bash /d/x
+  $rel = [IO.Path]::GetRelativePath($live, [IO.Path]::GetFullPath($p))
+  if ($rel -notmatch '^\.\.([\\/]|$)|^\.git([\\/]|$)' -and -not [IO.Path]::IsPathRooted($rel)) { $rel }
+}
+function LiveFile([string]$p, [string]$base) {
+  $own = '^(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + '|' + [regex]::Escape($script:KitPathMap.stateDir.Trim('/\')) + ')([\\/]|$)'
+  if (($rel = InLive $p $base) -and $rel -ne '.' -and $rel -notmatch $own) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 1 }
+}
+$liveWhy = 'the live kit runs every agent: edit your kit worktree (dev.ps1 wt) and push; the coordinator pulls'
+$edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
+foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
+if (-not $cmd) {
+  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
   exit 0
 }
 
@@ -1071,16 +1108,31 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
   }
 }
-# the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and extras never forced, deleted or moved
-function GitCommon([string]$d) {
-  for (; $d; $d = Split-Path $d) {
-    $g = Join-Path $d '.git'
-    if (Test-Path -LiteralPath $g -PathType Container) { return [IO.Path]::GetFullPath($g) }
-    if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }
+# shell writes into the live clone: file verbs, redirects and git verbs that change the work tree (the cd / -C target, else cwd)
+if ($live -and -not $liveOk) {
+  $cur = $here
+  foreach ($seg in (StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))) -split '\r?\n|;|&&|\|\||\|') {
+    $tk = @(-split $seg); if (-not $tk.Count) { continue }
+    $w = $tk[0] -replace '^&$', '' ; if (-not $w -and $tk.Count -gt 1) { $tk = @($tk | Select-Object -Skip 1); $w = $tk[0] }
+    $pa = @($tk | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^-' })
+    if ($w -match '^(cd|chdir|sl|Set-Location|pushd|Push-Location)$') { $cur = if ($pa) { $(if ([IO.Path]::IsPathRooted($pa[0])) { $pa[0] } elseif ($cur -and $pa[0] -notmatch '\$') { Join-Path $cur $pa[0] }) } ; continue }
+    $hits = @([regex]::Matches($seg, '(?<![\d&*])>>?\s*([^\s>&]+)') | ForEach-Object { $_.Groups[1].Value })
+    if ($w -match '(^|[\\/])git(\.exe)?$') {
+      $gd = $cur
+      for ($i = 1; $i -lt $tk.Count; $i++) {
+        if ($tk[$i] -eq '-C') { $i++; $gd = if ([IO.Path]::IsPathRooted($tk[$i])) { $tk[$i] } elseif ($gd) { Join-Path $gd $tk[$i] }; continue }
+        if ($tk[$i] -match '^-') { if ($tk[$i] -eq '-c') { $i++ }; continue }
+        if ($tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and (InLive $gd '')) { Deny $liveWhy }
+        break
+      }
+    }
+    elseif ($w -match '^(Copy-Item|cpi|cp|copy)$') { $hits += @($pa | Select-Object -Last 1) }
+    elseif ($w -match '^(Set-Content|sc|Add-Content|ac|Out-File|Clear-Content|clc|Remove-Item|ri|rm|del|erase|rmdir|rd|Move-Item|mi|mv|move|Rename-Item|rni|ren|New-Item|ni|tee|Tee-Object|touch)$' -or ($w -eq 'sed' -and $seg -match '\s(-i|--in-place)')) { $hits += @($pa | Select-Object -Skip ([int]($w -eq 'sed'))) }
+    foreach ($h in $hits) { if ($h -match '[\\/]|\.\w{1,8}$' -and (LiveFile $h $cur)) { Deny $liveWhy } }
   }
 }
+# the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and extras never forced, deleted or moved
 if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitCommon (Split-Path (Split-Path $K)))) {
-  $here = if ($in.cwd) { [string]$in.cwd } else { (Get-Location).Path }
   $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
   if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
     $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
