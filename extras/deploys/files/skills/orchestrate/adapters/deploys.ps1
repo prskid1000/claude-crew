@@ -224,4 +224,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     }
     foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }
   }
+  # what waits for a person's deploy <env> (the cached plan): INFO lines of the supervise report
+  $ready = try { (Get-Content (Join-Path (Get-KitPath deploys) 'plan-cache.json') -Raw | ConvertFrom-Json).ready } catch { @() }
+  foreach ($r in @($ready | Where-Object { $_ })) { [pscustomobject]@{ info = "deploy ready: $r (waits for a person's deploy <env>)" } }
 }

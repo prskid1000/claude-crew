@@ -97,6 +97,10 @@ $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . 
 Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
 $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
 Expect 'supervise anomalies: only new log error lines count; level words case-sensitive (WARN ... Error while is none)' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 4)
+$st = TkPath $k localenv -Create; Set-JsonFile (Join-Path $st 'shop.json') @{ services = @{ api = @{ restarts = @(@((Get-Date).ToString('o')) * 3) } } }
+$hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[]}]' } }
+  @(Get-KitSuperviseFlagsLocalEnv) | ForEach-Object { "$($_.what)$($_.name)" } }) -join "`n"
+Expect 'supervise hook: env row, RESTART LOOP (3 in 30 min), UNKNOWN port owner' ($hk -match 'shop · web' -and $hk -match 'RESTART LOOP: shop api restarted 3 times' -and $hk -match 'UNKNOWN: shop web port 4200')
 # guard rules (adapters/guard_localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/dev-kit/adapters') | Out-Null
 Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/dev-kit/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/dev-kit/adapters')

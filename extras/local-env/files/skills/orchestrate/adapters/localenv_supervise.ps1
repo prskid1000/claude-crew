@@ -1,6 +1,6 @@
 <#
-localenv_supervise.ps1 (extra local-env): the local env's rows and log errors in orch.ps1 supervise, dot-sourced by orch.ps1
-(skills/orchestrate/adapters/). Without it supervise shows no env rows and no ERROR SPIKE.
+localenv_supervise.ps1 (extra local-env): the local env in orch.ps1 supervise, dot-sourced by orch.ps1 (skills/orchestrate/adapters/):
+env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left).
 Exit codes: none (functions only).
 #>
 # new error lines per log since its last size (ERROR SPIKE); level words case-sensitive: "WARN ... Error while" is no error
@@ -31,4 +31,27 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }
   [pscustomobject]@{ rows = @($rows); flags = @($fl); owner = @($own) }
+}
+# supervise section 7: env rows and flags, owner holds (info), restart loops, unknown port owners, new log errors (sizes cached per round)
+function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
+  if (-not (Test-Path $KitCmd.local)) { return }
+  $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
+  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
+  $envs = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
+  $er = Get-KitEnvRows $envs $now
+  $er.rows; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
+  foreach ($sf in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue)) {
+    $x = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $x) { continue }
+    foreach ($sn in @($x.services.Keys)) {
+      $n = @($x.services[$sn].restarts | Where-Object { $_ -and ($now - [datetime]$_).TotalMinutes -lt 30 }).Count
+      if ($n -gt 2) { & $watch "RESTART LOOP: $($sf.BaseName) $sn restarted $n times in 30 min" "evidence localenv.ps1 logs -Env $($sf.BaseName) -Service $sn" }
+    }
+  }
+  foreach ($ev in $envs) { foreach ($s in @($ev.services | Where-Object state -eq 'up (adopted)')) { & $watch "UNKNOWN: $($ev.env) $($s.service) port $($s.port) is served by a process the kit did not start" "stop it or change the port (localenv.ps1 status -Env $($ev.env))" } }
+  $sizesFile = Join-Path (Get-KitPath cache -Create) 'localenv-log-sizes.json'
+  $sizes = try { Get-Content $sizesFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sizes) { $sizes = @{} }
+  $logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-2) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
+  $seen = @{}
+  foreach ($l in @(Get-KitLogErrors $logs $sizes)) { $seen[$l.path] = $l.size; if ($l.errors -gt 0) { & $watch "ERROR SPIKE: $($l.errors) new error line(s) in $($l.path)" "first: $($l.first)" } }
+  $seen | ConvertTo-Json | Set-Content $sizesFile
 }

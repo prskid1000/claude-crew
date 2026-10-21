@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests.ps1 (extra kit-admin): recover --fix keeps unmerged worktrees; release tags SemVer; budget raise steps x1.1 only over the
-cap; cost lists every crew agent.
+cap; cost lists every crew agent; learn lesson tools (-Lesson, -Bump, -Fixed, -History, -Stats).
 Usage: pwsh -NoProfile -File extras/kit-admin/tests.ps1 -Kit <kit>   (the plugin comes from files/ beside this file)
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -45,6 +45,21 @@ $emitted = [regex]::Matches((Get-Content (Join-Path $Kit 'skills/orchestrate/kit
 $named = [regex]::Matches($doc, '\[([A-Z][A-Z, *-]+)\]') | ForEach-Object { $_.Groups[1].Value -split ',\s*' } | Where-Object { $_ -notmatch '\*' -and $_ -ne 'CODE' }
 $stale = @($named | Where-Object { $_ -notin $emitted })
 Expect "kit-admin: kit-admin.md names only lint codes kittool.py emits (stale: $($stale -join ', '))" ($named.Count -gt 5 -and -not $stale.Count)
+# learn lesson tools and the audit nudge (adapters/kit_admin.ps1): -Bump miss frees the lock; org terms go local; -Fixed shows in -History
+$ad = New-Item -ItemType Directory -Force (Join-Path $kc 'skills/orchestrate/adapters'); Copy-Item (Join-Path $PSScriptRoot 'files/skills/orchestrate/adapters/kit_admin.ps1') $ad
+$O = Join-Path $kc 'skills/orchestrate/orch.ps1'; $lo = { pwsh -NoProfile -File $O learn @args 2>&1 | Out-String }
+$au = & { . $O; Get-KitHealthLinesAudit }; $st = & { . (Join-Path $kc 'skills/dev-kit/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
+Expect 'kit-admin: health nudges a never-run kitty audit, quiet right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $au2)
+$null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
+Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-Path (Join-Path $kc 'LESSONS.md.lock')))
+'{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')
+$null = & $lo -Skill revy -Lesson '(2×) a generic lesson'; $null = & $lo -Skill revy -Lesson 'an Acmecorp lesson'
+$r1 = & $lo -Read -Skill revy
+Expect 'kit-admin: learn -Lesson generic -> LESSONS.md, org term -> LESSONS.local.md' ($r1 -match 'a generic lesson' -and $r1 -match '\(local\)' -and (Get-Content (Join-Path $kc 'LESSONS.local.md') -Raw) -match 'Acmecorp' -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'Acmecorp')
+$null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
+Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) \(2×\) a generic lesson' -and $st -match 'signals since last retro')
+Remove-Item $ad -Recurse -Force; $nx = & $lo -Stats; $nc = $LASTEXITCODE
+Expect 'kit-admin: without the adapter learn -Stats prints the extra line, exit 1' ($nc -eq 1 -and $nx.Trim() -eq 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim is an extra: run kittool.py extra add kit-admin')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 "$script:fails failure(s)"
 exit [int]($script:fails -gt 0)
