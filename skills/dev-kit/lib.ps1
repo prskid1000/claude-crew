@@ -1369,8 +1369,9 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $meta = (Get-Command $Fn).Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
   # a crash exits 1 (2 = bad parameters), never 0: a statement error alone lets `pwsh -File` exit 0, a throw keeps a caller's stale $LASTEXITCODE
-  $run = { param([object[]]$pa, [hashtable]$nm) try { & $Fn @pa @nm } catch [Management.Automation.ParameterBindingException] { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
-    catch { if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }
+  $run = { param([object[]]$pa, [hashtable]$nm) try { & $Fn @pa @nm } catch {
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
+    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {

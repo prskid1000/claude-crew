@@ -627,7 +627,7 @@ function Top-Users($Snap) {
     Sort-Object gb -Descending | Select-Object -First 5 | ForEach-Object { '{0} {1:N1} GB' -f $_.n, $_.gb }) -join ', '
 }
 
-$gate = [Threading.Mutex]::new($false, 'Global\claude-build-gate-' + ($ledger.ToLower() -replace '[^a-z0-9]', ''))   # one per ledger: a test run's own temp never waits on the machine's
+$gate = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate')
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $learned = if ($NeedGB -le 0 -and $peaks.Count -ge 2) { " (learned from $($peaks.Count) runs)" } else { '' }
 $usual = if ($secs.Count -ge 2) { " usually ~$([math]::Ceiling((Get-MedianSec $secs) / 60)) min," } else { '' }
@@ -1109,6 +1109,7 @@ if ($SelfTest) {
   @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
   @('P', 'Start-Process pwsh -ArgumentList x.ps1 -PassThru -RedirectStandardOutput o.txt', $false, $da),
   @('P', 'Start-Process -FilePath .\r.html', $true, $da),
+  @('P', 'Start-Process -Wait .\r.html', $true, $da),
   @('P', 'cd x; ii "out.pdf"', $true, $da),
   @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, $da),
   @('P', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, $da),
@@ -1308,7 +1309,7 @@ function Test-OpenDoc([string]$text, [string]$tool) {
         if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
         # only the opened target counts (first argument or -FilePath / -Path): Start-Process pwsh -RedirectStandardOutput o.txt reads nothing
         $fp = [array]::FindIndex([object[]]$el, [Predicate[object]] { param($x) $x -is [System.Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -match '^(FilePath|Path|LiteralPath)$' })
-        $tg = if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } elseif ($el.Count -gt 1 -and $el[1] -isnot [System.Management.Automation.Language.CommandParameterAst]) { $el[1] }
+        $tg = if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } else { $el | Select-Object -Skip 1 | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] } | Select-Object -First 1 }
         if ((& $val $el[0]) -match '^(Invoke-Item|ii|Start-Process|start|saps|explorer(\.exe)?|xdg-open|open)$' -and $tg -and (& $val $tg) -match "$doc|^https?://") { return $true }
       }
       return $false
