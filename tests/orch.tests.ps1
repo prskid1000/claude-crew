@@ -1,30 +1,12 @@
 #Requires -Version 7
 <#
-orch.tests.ps1: orch.ps1 deploy, track, decide, launch, board, supervise, learn, budget, setup.
+orch.tests.ps1: orch.ps1 track, decide, deploy, launch, board, supervise, learn, budget, setup (deploy merge: extra deploy-merge).
 Usage: pwsh -NoProfile -File <kit>/tests/orch.tests.ps1 (or tests/kit-tests.ps1 -Area orch).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit orch; $O = Join-Path $k 'skills/orchestrate/orch.ps1'; $tf = Join-Path $k '.state/tracking.json'
-$r = Join-Path (Kd) 'git'; New-Item -ItemType Directory -Force "$r/outer/inner" | Out-Null
-$env:CLAUDE_WT_ROOT = "$r/wt"; foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }
-try {
-  git init -q --bare "$r/origin.git"; git clone -q "$r/origin.git" "$r/repo" 2>$null
-  'a' | Set-Content "$r/repo/a.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m init; git -C "$r/repo" branch -M main
-  git -C "$r/repo" push -q origin main 2>$null; git -C "$r/repo" push -q origin main:staging 2>$null
-  New-Item -ItemType Directory -Force "$r/repo/.githooks" | Out-Null
-  [IO.File]::WriteAllText("$r/repo/.githooks/pre-commit", "#!/bin/sh`necho hooked > `"`$(git rev-parse --git-dir)/hook-ran`"`n")
-  git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m hooks; git -C "$r/repo" config core.hooksPath .githooks
-  'b' | Set-Content "$r/repo/b.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m 'feat: b'; git -C "$r/repo" push -q origin main 2>$null
-  $out = Px $O deploy merge -Repo "$r/repo" -To staging -From main 2>&1 | Out-String
-  $wt = if ($out -match 'worktree: (.+)') { $Matches[1].Trim() }
-  $gd = if ($wt) { (git -C $wt rev-parse --absolute-git-dir).Trim() }
-  Expect 'deploy merge is a merge commit' ($wt -and @((git -C $wt log -1 --format=%p) -split ' ').Count -eq 2)
-  Expect 'deploy merge ran the pre-commit hook' ($gd -and (Test-Path (Join-Path $gd 'hook-ran')))
-  $kl = "$k/skills/dev-kit/kit.local.json"; & $J @{ repos = @(@{ checkout = "$r/repo"; target = 'main'; deploys = @(@{ target = 'live'; tag = 'rel-{date}' }) }) } $kl 5
-  $dm = { Px $O deploy merge -Repo "$r/repo" @args 2>&1 | Out-String }; $o1 = & $dm -To main; $o2 = & $dm -To live -Push; Remove-Item $kl
-  Expect 'deploy merge: trunk = no merge; tag deploy pushes a tag' ($o1 -match 'trunk' -and $o2 -match 'pushed rel-' -and (git -C "$r/origin.git" tag) -match '^rel-')
-} finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
+foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }
 $KP = Join-Path $k 'skills/orchestrate/orch.ps1'
 $null = pwsh @np $KP --help; $h0 = $LASTEXITCODE; $null = pwsh @np $KP bogus-verb; $h2 = $LASTEXITCODE
 $mk = Join-Path (Kd) 'kit main'; New-Item -ItemType Directory -Force "$mk/skills/dev-kit", "$mk/skills/orchestrate" | Out-Null
@@ -43,10 +25,12 @@ Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -mat
 $out = pwsh @np $O track add -Task 'CU-abc123' -Mrs 'web!1,web!2' -MergeAfter 'web!2>api!7' 2>&1 | Out-String
 $tasks = (Get-Content $tf -Raw | ConvertFrom-Json -AsHashtable).tasks
 Expect 'track: tag stripped, merge order echoed' ($tasks.ContainsKey('abc123') -and $out -match 'merge-after: web!2>api!7')
-$null = pwsh @np $O track remove -Task abc123 -Mrs 'web!2' 2>&1
-$tasks = (Get-Content $tf -Raw | ConvertFrom-Json -AsHashtable).tasks
-Expect 'track: remove drops the MR and its pair' ((@($tasks.abc123.mrs) -join ',') -eq 'web!1' -and -not @($tasks.abc123.mergeAfter).Count)
-Remove-Item Env:KIT_TRACKER_TYPE
+$null = pwsh @np $O track add -Task zero1 2>&1; $zr = pwsh @np $O track run -Detail 2>&1 | Out-String
+Expect 'track run: a task with 0 MRs is held, never promoted' (-not (Get-Content $tf -Raw | ConvertFrom-Json -AsHashtable).tasks.zero1.done -and $zr -match 'HOLD zero1: no MR')
+$saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
+$ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" })
+$env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
+Expect 'supervise: without -Session the lock owner is the session, the same every round (no step-aside from itself)' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1')Remove-Item Env:KIT_TRACKER_TYPE
 $cf = Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
 $out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'A: keep','B: recompute' -Recommend A -Contracts $cf | Out-String
 $id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
@@ -64,7 +48,7 @@ Expect 'decide envfix: pending for the coordinator, contracts note, answer retur
 $i1, $i2 = 'A1', 'A2' | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -Item $_ -Question "q$_" -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
 $null = Px $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
 $hp = Px (Join-Path $k 'skills/orchestrate/orch.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
-Expect 'decide ids unique within a second; board check without -Worktree exit 2; orch.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'commands in one file' -and $hp -notmatch 'setup:')
+Expect 'decide ids unique within a second; board check without -Worktree exit 2; orch.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
 # deploy batching
 $cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'; $dep = { Px $O deploy @args }
 & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
@@ -167,8 +151,11 @@ $sv = pwsh @np $O supervise -Brief -Session me | Out-String
 Expect 'supervise: another session''s fresh lock -> steps aside, lock file kept, no .lock left' ($sv -match 'steps aside' -and (Get-Content $lkf -Raw) -match 'other' -and -not (Test-Path "$lkf.lock"))
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
+$qs = TkPath $k qa-seats -Create; foreach ($x in 'seats/s1', 'claims/r1__A1', 'claims/r1__A2') { Set-JsonFile (Join-Path $qs "$x.json") @{ agent = 'test:Q9'; holderPid = $dp.Id } }
 $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String
+$sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Get-Content $gb -Raw | ConvertFrom-Json).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
+Expect 'supervise -AutoFix: a gone session''s QA seat + claims freed in ONE line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count)
 $lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
 $lw = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
@@ -213,39 +200,17 @@ $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'
 $ib = pwsh @np $O board inbox -Agent X7 | Out-String
-$dp = pwsh @np $O board dispute -Agent X7 -With R7 -Item A1 -Claim 'no null check needed' -Evidence 'a.ts:3' -Propose 'drop it' | Out-String
-$did = if ($dp -match 'DISPUTE (p-\S+) open') { $Matches[1] }
-$null = pwsh @np $O board dispute -Id $did -Agent R7 -Answer disagree -Evidence 'b.ts:9'
-$null = pwsh @np $O board dispute -Id $did -Agent X7 -Claim 'b.ts is dead' -Evidence 'git grep: no caller'
-$esc = pwsh @np $O board dispute -Id $did -Agent R7 -Answer disagree -Evidence 'router.ts:12' | Out-String
-$dl = pwsh @np $O decide list -Pending | Out-String
-Expect 'board: join -Type shown; msg in inbox; dispute split after 2 rounds -> decision' ($j2 -match 'X7\s+devy' -and
-  $ib -match 'from R7: I need a\.ts' -and $did -and $esc -match 'escalated: DECISION d-' -and $dl -match "Dispute $did")
-$dp2 = pwsh @np $O board dispute -Agent X7 -With R7 -Item A2 -Claim 'cache is safe' -Evidence 'c.ts:4' -Propose 'keep' | Out-String
-$did2 = if ($dp2 -match 'DISPUTE (p-\S+) open') { $Matches[1] }; $df2 = Join-Path (TkPath $k disputes) "$did2.json"
-(Get-Item $df2).LastWriteTime = (Get-Date).AddHours(-3)
-$ex = & { . $O; Invoke-DisputeExpiry } | Out-String
-(Get-Item $df2).LastWriteTime = (Get-Date).AddHours(-3); $ex2 = & { . $O; Invoke-DisputeExpiry } | Out-String
-Expect 'board: dispute silent 2 h escalates once (re-read under lock)' (-not $ex2.Trim() -and $ex -match "dispute $did2 .*escalated, DECISION d-" -and (Get-Content $df2 -Raw | ConvertFrom-Json).status -eq 'escalated' -and (pwsh @np $O decide list -Pending | Out-String) -match "Dispute $did2")
+Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'X7\s+devy' -and $ib -match 'from R7: I need a\.ts')
+$dx = Invoke-TestScript $O board dispute -Agent X7 -With R7
+$ad = Join-Path $k 'skills/orchestrate/adapters'; New-Item -ItemType Directory -Force $ad | Out-Null
+'function Invoke-TrackRebuild { "fake rebuild $Force" }' | Set-Content (Join-Path $ad 'fake.ps1'); 'this is { not powershell' | Set-Content (Join-Path $ad 'broken.ps1')
+$ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item $ad -Recurse -Force
+Expect 'extras: a missing one = its one line, exit 1; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 1 -and $dx.out.Trim() -eq 'board dispute is an extra: run kittool.py extra add board-disputes' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
 $sd = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath qa-seats -Create) 'seats' }; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
 '{"leases":{"devy-A1":{"services":["api"],"repos":[],"until":"2026-10-16T12:00:00"}}}' | Set-Content (Join-Path (& { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath localenv -Create }) 'shop.json')
 $bs = pwsh @np $O board show | Out-String
 Expect 'board show: lists QA seats and local-env leases' ($bs -match 'seat: test:Q1 web 2 GB' -and $bs -match 'lease: shop devy-A1 on api')
-$km = New-TestKit mig; $Om = Join-Path $km 'skills/orchestrate/orch.ps1'
-$oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
-$ldm = TkPath $km launches -Create
-[IO.File]::WriteAllText((Join-Path $ldm 'm1.json'), "{`"script`": `"C:/kit/workflows/$oldWf.js`", `"completed`": `"2026-10-16T10:00:00`"}")
-Add-Content (TkPath $km signals -Create) "{`"at`":`"2026-10-16T10:00:00`",`"skill`":`"$oldSk`",`"kind`":`"idea`",`"text`":`"x`"}" -Encoding utf8
-$oa = Join-Path (TkPath $km logs -Create) ('kit' + '-audits'); New-Item -ItemType Directory -Force $oa | Out-Null; 'r' | Set-Content "$oa/audit-1.md"
-'2026-10-01' | Set-Content (Join-Path $km ".state/$('kit' + '-audit').stamp")
-$hm = '{}' | pwsh @np $Om health 2>&1 | Out-String
-Expect 'health: state under a renamed name nudges setup -Migrate' ($hm -match 'renamed state under its old name')
-$mg = pwsh @np $Om setup -Migrate 2>&1 | Out-String
-Expect 'setup -Migrate: launch records, signals follow renames' ((Get-Content (Join-Path $ldm 'm1.json') -Raw) -match 'workflows/buildy\.js' -and
-  (Get-Content (TkPath $km signals) -Raw) -match '"skill":"revy"')
-Expect 'setup -Migrate: renamed runtime / state paths move' (-not (Test-Path $oa) -and (Test-Path (Join-Path (TkPath $km kitty-audits) 'audit-1.md')) -and (Test-Path (TkPath $km last-kitty-audit)))
-Remove-TestKit $km
 $bj = { param([string[]]$a) Px $O budget @a -Json | ConvertFrom-Json }
 $cx = Join-Path (Kd) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
 '{"models":[{"slug":"gpt-5.5","context_window":272000,"effective_context_window_percent":95}]}' | Set-Content "$cx/models_cache.json"; 'model = "gpt-5.5"' | Set-Content "$cx/config.toml"
@@ -261,34 +226,29 @@ $null = Px $O board leave -Session $ht -Handoff $hf; $hr = Px $O recover | Out-S
 $h2 = Px $O board join -Agent H1 -Run hr | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
 Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
 $rd = @{ agents = @(@{ type = 'checky'; name = 'W1'; mode = 'test'; spend = 50000; prevSpend = 30000 }, @{ type = 'checky'; name = 'J1'; mode = 'env-fix'; wait = $true }, @{ type = 'devy'; name = 'P1'; mode = 'build'; spend = 10000; prevSpend = 0 })
-  mem = @{ TotalGB = 64; AvailGB = 16 }; ram = @{ kit = 5; browsers = 4; apps = 3; servers = 1; vms = 2; windows = 13; unknown = 20 }; unknown = @('foo 0.6'); top = @(@{ name = 'Teams'; gb = 2.4; mark = '💤' }); keepFree = 8; avgFree = 15; disk = 'D: 100 GB free'; info = @('deploy ready: stage (2 MR(s))')
-  resources = @(@{ name = '🟢 rm · api'; type = 'local env'; by = 'W1'; gb = 3 }, @{ name = '🌐 rm·acme·admin'; type = 'test browser'; by = 'W1'; gb = 2 }, @{ name = '🔴 hm · api'; type = 'local env'; by = 'down: memory'; gb = 0 })
-  flags = @(@{ level = 'ASK'; what = 'Teams 2.4 GB 💤 — close it?'; action = 'ask' }, @{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }); detailFile = 'r.md' }
-$r1 = (& { . $O; Format-KitReport $rd -Width 160 -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd -Ascii -Width 80 }) -join "`n"
-$want1 = @('| Agent | Doing |', '|---|---|', '| 🛠️ 1 × devy (+10kT) | build 1 (P1) |', '| 🧪 2 × checky (+20kT) | ⏸ env-fix 1 (J1) · test 1 (W1) |', '',
-  "🖥️ **RAM** $('🟦' * 2)🟨🟧🟪$('🟫' * 4)$('⬛' * 6)$('⬜' * 5) **48 / 64 GB**", '🟦 Kit 5 · 🟨 Your browsers 4 · 🟧 Your apps 3 · 🟩 Servers 1', '🟪 WSL 2 · 🟫 Windows 13 · ⬛ Unknown 20 (foo 0.6) · ⬜ Free 16', 'top apps: Teams 2.4 💤 (💤 idle · 📈 +1 GB)', '',
-  '| Resource | Used by | RAM | Resource | Used by | RAM |', '|---|---|---|---|---|---|', '| 🟢 rm · api | W1 | 3 | 🔴 hm · api | down: memory | — |', '| 🌐 rm·acme·admin | W1 | 2 |  | |  |', '',
-  '🚩 **Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- ❓ **ASK** · Teams 2.4 GB 💤 — close it? -> ask', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
-Expect 'supervise report snapshot (-Agents, wide)' ($r1 -eq $want1)
-Expect 'supervise report: below the floor red, -Ascii, narrow, no agents by default' ($r2 -match '\*\*RAM\*\* \[KKBBAVW{5}U{7}\.\.\] \*\*58 / 64 GB\*\*' -and $r2 -match '\| Resource \| Used by \| RAM \|\r?\n\|---\|---\|---\|\r?\n\| rm - api \| W1 \| 3 \|' -and (& { . $O; Format-KitReport $rd }) -join '' -match '(🟥){2}' -and ((& { . $O; Format-KitReport $rd }) -join '') -notmatch 'Agent')
-$rd.ram.servers = 0; $r3 = (& { . $O; Format-KitReport $rd }) -join "`n"
-Expect 'supervise report: a 0.0 category leaves the legend' ($r3 -notmatch 'Servers' -and $r3 -match 'Unknown 20')
-$rn = (Get-Content (Join-Path $k 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json)._manifest.ram; $pr = { param($i, $n, $p, $g) [pscustomobject]@{ Id = $i; Name = $n; Path = $p; WorkingSet = $g * 1GB; Private = $g * 1GB; Cpu = 0 } }
-$rb = & { . $O; Get-KitRamBuckets @((& $pr 1 'svchost.exe' 'C:\Windows\System32\svchost.exe' 1), (& $pr 2 'vtool.exe' 'C:\Program Files\Realtek\vtool.exe' 1), (& $pr 3 'wslhost.exe' 'C:\x\wslhost.exe' 1), (& $pr 4 'mystery.exe' 'D:\x.exe' 2)) @{} $rn ([pscustomobject]@{ TotalGB = 16; AvailGB = 6 }) }
-Expect 'supervise RAM: Windows paths + RAM no process owns = Windows, wsl* = WSL (first match), the rest unknown' ($rb.bk.windows -eq 7 -and $rb.bk.vms -eq 1 -and $rb.bk.unknown -eq 2)
-$an = & { . $O; $n = Get-Date; $c = @{ usedGB = 40; cpu = 95; runs = @(@{ id = 'wf1'; at = $n.AddMinutes(-25).ToString('o'); path = 'j.jsonl' }); trains = @(@{ env = 'shop'; key = 't1 build' })
-    logs = @(@{ path = 'api.log'; errors = 2; first = 'ERROR boom' }); restarts = @(@{ env = 'shop'; svc = 'api'; n = 3 }); outbox = 4; toolErrors = 2; errorRun = 'wf1'; lint = '2 problem(s)'
-    adopted = @(@{ env = 'shop'; svc = 'web'; port = 4200 }); stray = @('junk.txt') }
-  $p = @{ usedGB = 36; outbox = 1; toolErrors = 1; cpuHighSince = $n.AddMinutes(-11).ToString('o'); trains = @{ shop = @{ key = 't1 build'; since = $n.AddMinutes(-21).ToString('o') } } }
-  "$((Get-KitAnomalies $c $p $n).flags.what -join "`n")`n$((Get-KitAnomalies @{ usedGB = 1; cpu = 5 } @{} $n).flags.Count)" }
-$want = 'STALL: run wf1', 'STALL: shop train', 'ERROR SPIKE: 2', 'RESTART LOOP: shop api', 'RAM \+4', 'CPU 95%', 'outbox grew to 4', '1 new agent', 'main lint red', 'shop web port 4200', 'UNKNOWN: junk.txt', '\n0$'
+  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('deploy ready: stage (2 MR(s))'); detailFile = 'r.md'
+  resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }, @{ name = 'browser rm·acme·admin'; by = 'W1'; gb = 2 }, @{ name = 'hm · api (down)'; by = 'memory'; gb = 0 })
+  flags = @(@{ level = 'WATCH'; what = 'gate: 6 builds queued'; action = 'wait' }, @{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }) }
+$r1 = (& { . $O; Format-KitReport $rd -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
+$want1 = @('| Agent | Doing |', '|---|---|', '| 1 × devy (+10kT) | build 1 (P1) |', '| 2 × checky (+20kT) | waiting: env-fix 1 (J1) · test 1 (W1) |', '',
+  '**RAM** 48 / 64 GB used, 16 GB free', '', '| Resource | Used by | RAM |', '|---|---|---|', '| rm · api | W1 | 3 |', '| browser rm·acme·admin | W1 | 2 |', '| hm · api (down) | memory | — |', '',
+  '**Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- **WATCH** gate: 6 builds queued -> wait', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
+Expect 'supervise report snapshot (-Agents)' ($r1 -eq $want1)
+Expect 'supervise report: below the floor named, no agents by default' ($r2 -match '\*\*RAM\*\* 58 / 64 GB used, 6 GB free \(below the floor 8 GB\)' -and $r2 -notmatch 'Agent')
+$an = & { . $O; $c = @{ logs = @(@{ path = 'api.log'; errors = 2; first = 'ERROR boom' }); restarts = @(@{ env = 'shop'; svc = 'api'; n = 3 }); outbox = 4; toolErrors = 2; errorRun = 'wf1'; adopted = @(@{ env = 'shop'; svc = 'web'; port = 4200 }) }
+  "$((Get-KitAnomalies $c @{ outbox = 1; toolErrors = 1 }).flags.what -join "`n")`n$((Get-KitAnomalies @{ outbox = 0 } @{}).flags.Count)" }
+$want = 'ERROR SPIKE: 2', 'RESTART LOOP: shop api', 'outbox grew to 4', '1 new agent', 'shop web port 4200', '\n0$'
 Expect "supervise anomalies: every flag from its fixture, none on a quiet round" (-not @($want | Where-Object { $an -notmatch $_ }).Count)
-$lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} }); Add-Content $lg "ERROR one`nTraceback (most recent call last)`nfine"
+$lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} })
+Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
 $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
-$oc = & { . $O; $o = (Get-Date).AddMinutes(-40); $mk = { param($i, $pp, $n, $c) [pscustomobject]@{ Id = $i; ParentId = $pp; Name = $n; Cpu = $c; Created = $o } }
-  $pr = @((& $mk 10 1 'cmd.exe' 1), (& $mk 11 10 'conhost.exe' 1), (& $mk 12 99 'pwsh.exe' 5), (& $mk 13 98 'pwsh.exe' 1), (& $mk 14 97 'python.exe' 1), (& $mk 99 0 'x' 1), (& $mk 98 0 'claude' 1), (& $mk 97 0 'y' 1))
-  @(Get-KitOrphanConsoles $pr @{ 10 = 1; 11 = 1; 12 = 1; 13 = 1 } @{ '10' = 1; '11' = 1; '12' = 1; '13' = 1; '14' = 1 } 10 @{ 13 = 1 }).Id -join ',' }
-Expect "supervise: orphan kit consoles = parent gone / idle, never busy, tool-shell or owner ones ($oc)" ($oc -eq '10')
-Expect 'supervise anomalies: only new log error lines count' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 2)
+Expect 'supervise anomalies: only new log error lines count; level words case-sensitive (WARN ... Error while is none)' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 4)
+$hr = & { . $O; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddHours(-$h).ToString('o') } }
+  $q = @{}; $a = Get-KitSilentRun 'wf1' 60 $q $n; $b = Get-KitSilentRun 'wf1' 61 $q $n; $c = Get-KitSilentRun 'wf2' 3 $q $n; $null = Get-KitSilentRun 'wf1' 2 $q $n; $d = Get-KitSilentRun 'wf1' 50 $q $n
+  $fails = Get-KitBuildFailures @{ old = @((& $f 150 $false), (& $f 149 $false), (& $f 148 $false)); new = @((& $f 3 $false), (& $f 2 $false), (& $f 1 $false)); mixed = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n
+  "$($a.skip -and $a.flag.what -match 'silent 2 days')|$($b.skip -and -not $b.flag)|$(-not $c.skip)|$([bool]$d.flag)|$(@($fails) -join ',')" }
+Expect 'supervise: a run silent 2+ days is flagged once, then skipped; 3 failed builds flag only when the last is < 24 h old' ($hr -eq 'True|True|True|True|new')
+$jr = & { . $O; $s = @(@{ agentId = 'a1'; label = 'build:X1' }, @{ agentId = 'a2'; label = 'build:X1' }, @{ agentId = 'a3'; label = 'review:X1' }, @{ agentId = 'a4'; label = 'test:Q1@2' }, @{ agentId = 'a5'; label = 'test:Q1' }, @{ agentId = 'a6'; label = 'test:Q1' }); (@(Get-JournalRunning $s @('a3')) | ForEach-Object agentId) -join ',' }
+Expect 'journal: running = no result, not superseded by a later finished start of the item or a restart of the label' ($jr -eq 'a4,a6')
 Remove-TestKit $k
 Complete-Tests

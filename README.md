@@ -345,13 +345,13 @@ flowchart LR
 flowchart LR
   skills_orchestrate_SKILL_md[orchestrate]
   skills_orchestrate_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill orchestrate| LESSONS_md[LESSONS.md]
-  skills_orchestrate_SKILL_md -->|every event row (supervise, launch, report, boar| skills_orchestrate_orch_ps1[orch.ps1]
-  skills_orchestrate_SKILL_md -->|K2 (lint, flow --readme: the kit-flow page's par| skills_orchestrate_kittool_py[kittool.py]
-  skills_orchestrate_SKILL_md -->|K1: Extending (file caps, budgets, part shapes, | README_md[README.md]
-  skills_orchestrate_SKILL_md -->|K2: pwsh -File kit/tests/kit-tests.ps1 -Area are| tests_kit_tests_ps1[kit-tests.ps1]
+  skills_orchestrate_SKILL_md -->|every event row (verbs: its header); hooks: Sess| skills_orchestrate_orch_ps1[orch.ps1]
   skills_orchestrate_SKILL_md -->|K3: run by git (orch.ps1 setup sets core.hooksPa| _githooks_pre_commit[pre-commit]
   skills_orchestrate_SKILL_md -->|K3: run by git (orch.ps1 setup sets core.hooksPa| _githooks_pre_push[pre-push]
   skills_orchestrate_SKILL_md -->|K3: run by git (orch.ps1 setup sets core.hooksPa| _githooks_post_merge[post-merge]
+  skills_orchestrate_SKILL_md -->|K1-K3 (the kitty agent runs them); E14: README R| skills_orchestrate_kittool_py[kittool.py]
+  skills_orchestrate_SKILL_md -->|K1-K3 (the kitty agent runs them); E14: README R| README_md[README.md]
+  skills_orchestrate_SKILL_md -->|K1-K3 (the kitty agent runs them); E14: README R| tests_kit_tests_ps1[kit-tests.ps1]
 ```
 <!-- kit-graph:end -->
 
