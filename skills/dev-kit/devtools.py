@@ -13,7 +13,7 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
  lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L73 run · L118 tracker · L193 git host · L300 MR · L484 merge · L562 docs · L679 plugins · L692 keepboth · L711 selftest · L849 CLI
+Sections: L73 run · L118 tracker · L193 git host · L300 MR · L485 merge · L563 docs · L680 plugins · L693 keepboth · L712 selftest · L853 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -366,7 +366,8 @@ def _progress(msg):
     print(f'[merge] {msg}', flush=True)
 
 
-INFRA = ('ci_quota_exceeded', 'runner_system_failure', 'stuck_or_timeout_failure', 'scheduler_failure', 'api_failure',
+# no stuck_or_timeout_failure: a hanging test produces it too, a retry would hide it
+INFRA = ('ci_quota_exceeded', 'runner_system_failure', 'scheduler_failure', 'api_failure',
          'runner_unsupported', 'no_matching_runner')
 
 
@@ -776,6 +777,9 @@ def selftest():
         expect('infra-only job failures: INFRA retry, no merge', r.startswith('INFRA ci_quota_exceeded') and merge_word(r) == 'PIPELINE_FAILED' and not merged())
         calls.clear(); g['_host'] = lambda v, **a: [{'status': 'failed', 'failure_reason': 'script_failure'}] if v == 'ci.jobs' else fake(hp={'status': 'failed', 'id': 9})(v, **a)
         expect('a script failure: fix it', 'fix it' in auto_merge('.', '7'))
+        calls.clear(); g['_host'] = lambda v, **a: [{'status': 'failed', 'failure_reason': 'stuck_or_timeout_failure'}] if v == 'ci.jobs' else fake(hp={'status': 'failed', 'id': 9})(v, **a)
+        r = auto_merge('.', '7')
+        expect('a timeout: fix it, not INFRA', 'INFRA' not in r and 'fix it' in r)
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'auto_merge': 'kit'})
         expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
     finally:
