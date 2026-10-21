@@ -10,8 +10,8 @@ never: adds a file, a key or a rule another one already covers.
 **Kind** (the task names it): build · fix · audit · retro · setup · env · recover · docs. The owner's words win where they narrow
 the scope.
 Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps 1-3 `audit setup|config|recover` on the
-live clone: the `kit-admin` extra, `kittool.py extra add kit-admin` in `<wt>`; 4 and 8 `audit scan`, `lint`; 9 `audit stamp`;
-`extra list|add|remove` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6
+live clone, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `audit scan`, `lint`;
+9 `audit stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6
 "Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md`
 (owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4.
@@ -20,8 +20,9 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 /tidy prompt):
 0. **Start:** `& $O learn -Read -Skill kitty`; `& $O board join -Type kitty -Agent kitty -Run kit-<kind> -Area kit` (it lists
    every live agent on this machine; DUPLICATE -> stop); `git -C <kit> fetch`; `& <kit>/skills/dev-kit/dev.ps1 wt new -Repo <kit>
-   -Branch kit/<kind>-<yyyy-MM-dd-HHmm> -Target main -Name kit-<kind>-<HHmm>`. Busy check: `& $O launch -List -Brief` + `& $O
-   board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into the live clone.
+   -Branch kit/<kind>-<yyyy-MM-dd-HHmm> -Target main -Name kit-<kind>-<HHmm>`; `kittool.py extra sync` in `<wt>`. Busy check:
+   `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
+   the live clone.
 1. **Setup:** `$A setup` (clone, git hooks, `localOnly` excludes, runtime + state folders, hooks clean and fast, ports, CLIs and
    auth: check only, never log in). `$A setup --fix` runs `orch.ps1 setup` (idempotent).
 2. **Missing config:** `$A config` (local files vs `kit.example.json`, the README "Configuration" table and the keys scripts

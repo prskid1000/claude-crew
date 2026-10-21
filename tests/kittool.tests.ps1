@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-kittool.tests.ps1: kittool.py prose, lint, port, extras, release, budget; kit-wide script checks.
+kittool.tests.ps1: kittool.py prose, lint, extras, budget; kit-wide script checks (port, cost, release: their extras' tests).
 Usage: pwsh -NoProfile -File <kit>/tests/kittool.tests.ps1 (or tests/kit-tests.ps1 -Area kittool).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -45,39 +45,17 @@ import importlib.util, json, os, sys, tempfile, tomllib
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('kittool', sys.argv[1]); kt = importlib.util.module_from_spec(spec); spec.loader.exec_module(kt)
 tmp = Path(tempfile.mkdtemp())
-# TOML / YAML: a quote and a backslash in a description stay valid
-kt.CODEX_AGENTS = tmp / 'c'; kt.GRAVITY_AGENTS = tmp / 'g'; kt.CODEX_AGENTS.mkdir(); kt.GRAVITY_AGENTS.mkdir()
-d = 'say "hi" C:\\x'
-kt.write_codex('a', {'description': d}, 'body'); kt.write_gravity('a', {'description': d}, 'body')
-ok_toml = tomllib.loads((tmp / 'c' / 'a.toml').read_text(encoding='utf-8'))['description'] == d
-ok_lf = b'\r\n' not in (tmp / 'c' / 'a.toml').read_bytes()
-# port_deploy keeps user files, removes only stale generated ports
-kit = tmp / 'ws' / '.claude'
-for p in ('.codex/agents/a.toml', '.agents/agents/a.md', 'AGENTS.md', 'GEMINI.md'):
-    (kit / p).parent.mkdir(parents=True, exist_ok=True); (kit / p).write_text('x', encoding='utf-8')
-ws = kit.parent
-for p in ('.codex/config.local.toml', '.codex/agents/old.toml', '.agents/agents/mine.txt'):
-    (ws / p).parent.mkdir(parents=True, exist_ok=True); (ws / p).write_text('user', encoding='utf-8')
-kt.KIT, kt.WORKSPACE = kit, ws
-import contextlib, io
-with contextlib.redirect_stdout(io.StringIO()):
-    kt.port_deploy()
-ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents/mine.txt').exists() and not (ws / '.codex/agents/old.toml').exists() \
-    and (ws / '.codex/agents/a.toml').read_text(encoding='utf-8') == 'x' and kt.deployed_stale() == []
 # a linked worktree reads localOnly from the main clone; a non-repo folder is its own main clone
 ok_main = kt.main_clone(str(tmp)) == str(tmp)
 # lint measures PROSE against the linted kit's templates.md (k.dir), not the script's kit
 src = open(sys.argv[1], encoding='utf-8').read()
-ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src \
-    and 'the workflow render failed' in src
-print(f'kittool-ports:{ok_toml and ok_lf}')
-print(f'kittool-deploy:{ok_deploy}')
+ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src
 print(f'kittool-misc:{ok_main and ok_prose}')
 '@
 $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
 $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
-Expect-Each $res 'kittool: #' 'kittool-ports', 'kittool-deploy', 'kittool-misc'
-# a throw-away git copy of the kit with a local origin: extras, lint codes, release, budget raise
+Expect-Each $res 'kittool: #' 'kittool-misc'
+# a throw-away git copy of the kit with a local origin: extras, lint codes, budget
 $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
 foreach ($f in @(git -C $src ls-files)) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
 $gt = { git -C $args[0] -c user.name=t -c user.email=t@t @($args | Select-Object -Skip 1) }
@@ -120,22 +98,16 @@ Expect 'extra sync: installs what config or the kit needs, one line each; then s
 $kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
 Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
 Expect 'extra add lists it in kit.local.json extras (a fresh clone''s sync reinstalls it), remove unlists it; a prose need never installs' ($a1.code -eq 0 -and 'never' -in $l1 -and $s4.out -match 'extra never: installed' -and 'never' -notin $l2 -and $s1.out -notmatch 'extra never')
-# lint codes and release on the copy
+# lint codes on the copy
 $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
 Add-Content (Join-Path $kc 'skills/dev-kit/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-$rel = & $py -X utf8 $KT2 release 2>&1 | Out-String
-Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s); release: SemVer tag' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and $rel -match '^# v\d+\.\d+\.\d+')
-# budget raise: steps of x1.1 from 200000
-$bj = Join-Path $kc 'skills/dev-kit/kit.example.json'; $bt = { & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String }
-$capTo = { param($v) (Get-Content $bj -Raw) -replace '("totalTokens":\s*)\d+', "`${1}$v" | Set-Content $bj -NoNewline; & $gt $kc commit -qam cap }
-& $capTo 518000; $b1 = & $bt; $c1 = $LASTEXITCODE   # a cap step above the kit: refused
-('x' * 1000000) | Set-Content (Join-Path $kc 'pad.dat'); git -C $kc add pad.dat;   # not a text file: lint does not scan it
- & $capTo 200000
-$b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 220000'
+Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s)' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk")
+# budget raise is in kit-admin (its tests); a manual cap edit is lint BUDGET-CAP
+$bj = Join-Path $kc 'skills/dev-kit/kit.example.json'; $b1 = & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String; $c1 = $LASTEXITCODE
 (Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect 'budget raise: refused under the cap, x1.1 over it; a manual cap edit = BUDGET-CAP' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '200000 -> 220000' -and $c2 -and $l3 -match 'BUDGET-CAP')
+Expect 'budget raise without kit-admin: exit 2 + the extra line; a manual cap edit = BUDGET-CAP' ($c1 -eq 2 -and $b1 -match 'extra add kit-admin' -and $l3 -match 'BUDGET-CAP')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

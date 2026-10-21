@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""kittool.py: the kit's own tooling in one file - lint, README graph, ports, audit scan, cost, prose, budget, extras.
+"""kittool.py: the kit's own tooling in one file - lint, README graph, audit scan, prose, budget, extras (and their commands).
 
   python -X utf8 kittool.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kittool.py flow --readme [<kit>]       # README graph sections (the interactive page: extra flow-map)
-  python -X utf8 kittool.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows
+  python -X utf8 kittool.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (extra ports)
   python -X utf8 kittool.py audit scan|stamp [--kit <dir>] [--json <file>]   # kitty audit candidates; stamp resets the nudge
-  python -X utf8 kittool.py cost  [<kit>] [--steps] [--json]
+  python -X utf8 kittool.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (extra kit-admin)
   python -X utf8 kittool.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
-  python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits
-  python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap (x1.1 per raise)
+  python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (extra kit-admin)
+  python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: extra kit-admin
   python -X utf8 kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]   # optional parts (origin `extras`)
 
 lint problem codes: each message says what is wrong and the fix; README "Extending" lists them.
@@ -16,8 +16,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: 1 paths · 2 load, graph, lint · 3 README graph · 4 lint command · 5 port · 6 audit scan · 7 cost · 8 registry,
-release · 9 prose · 10 budget · 11 extras · 12 main
+Sections: 1 paths · 2 load, graph, lint · 3 README graph · 4 lint command · 5 audit scan · 6 registry · 7 prose · 8 budget ·
+9 extras · 10 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -921,216 +921,7 @@ def cmd_lint(a):
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
     return 1 if problems and '--warn' not in flags else 0
 
-# ==== 5. port: Codex / Antigravity agents, hooks, workflows
-# Ports are written under KIT (this file's kit, pushed); port_deploy copies them to WORKSPACE, where codex / agy look.
-KIT = Path(__file__).resolve().parents[2]
-WORKSPACE = KIT.parent
-CODEX_AGENTS = KIT / ".codex" / "agents"
-GRAVITY_AGENTS = KIT / ".agents" / "agents"
-CODEX_CONFIG = KIT / ".codex" / "config.toml"
-GRAVITY_HOOKS = KIT / ".agents" / "hooks.json"
-CODEX_WORKFLOWS = KIT / ".codex" / "workflows"
-GRAVITY_WORKFLOWS = KIT / ".agents" / "workflows"
-GEMINI_MD = "@AGENTS.md\n"
-PWSH = "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/"
-GUARD = (PWSH + "dev-kit/dev.ps1 guard", 10)
-SESSION_START = [(PWSH + "orchestrate/orch.ps1 health", 15), (PWSH + "orchestrate/orch.ps1 cleanup -IfDue -Quiet", 600)]
-
-def write_port(path, text):
-    path.write_text(text, encoding="utf-8", newline="\n")
-
-def agent_parts(text):
-    """(front matter fields, body) of an agent file."""
-    m = re.match(r"^---\n.*?\n---\n(.*)$", text, re.S)
-    if not m:
-        raise ValueError("no frontmatter")
-    return frontmatter(text), m.group(1).lstrip("\n")
-
-def write_codex(name, fields, body):
-    # Codex has no tools list: an agent without Edit / Write runs read-only
-    tools = fields.get("tools", "")
-    sandbox = 'sandbox_mode = "read-only"\n' if tools and "Edit" not in tools and "Write" not in tools else ""
-    body = body.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-    write_port(CODEX_AGENTS / f"{name}.toml", f'name = "{name}"\ndescription = {json.dumps(fields["description"], ensure_ascii=False)}\n'
-      f'{sandbox}developer_instructions = """\n{body}\n"""\n')
-
-def write_gravity(name, fields, body):
-    # Antigravity names its tools differently (a mismapped one hangs): leave tools unset and say so
-    head = [f"name: {name}", f'description: {json.dumps(fields["description"], ensure_ascii=False)}', "subagent: true",
-      "mainAgent: false", "model: inherit", "commandExecutionPolicy: auto"]
-    note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}`; map them to Antigravity's tool "
-      "names by hand if you need the same restriction.\n") if fields.get("tools") else ""
-    write_port(GRAVITY_AGENTS / f"{name}.md", "---\n" + "\n".join(head) + "\n---\n" + note + "\n" + body.strip() + "\n")
-
-def prune(folder, suffix, keep):
-    """Drop a port the kit no longer generates (a removed or renamed agent / workflow)."""
-    for p in folder.glob('*' + suffix) if folder.exists() else []:
-        if p.stem not in keep:
-            p.unlink()
-
-def port_agents():
-    CODEX_AGENTS.mkdir(parents=True, exist_ok=True)
-    GRAVITY_AGENTS.mkdir(parents=True, exist_ok=True)
-    made = set()
-    for src in sorted((KIT / "agents").glob("*.md")):
-        fields, body = agent_parts(src.read_text(encoding="utf-8").replace("\r\n", "\n"))
-        name = fields.get("name", src.stem)
-        write_codex(name, fields, body)
-        write_gravity(name, fields, body)
-        made.add(name)
-    prune(CODEX_AGENTS, '.toml', made)
-    prune(GRAVITY_AGENTS, '.md', made)
-    print(f"ported {len(made)} agent(s) -> .codex/agents/*.toml, .agents/agents/*.md")
-
-def port_hooks():
-    """Each tool's hook config runs the same scripts as settings.json (no SendMessage guard: no such tool there)."""
-    CODEX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    toml = ["# Generated by kittool.py port from settings.json; the logic lives in dev.ps1 / orch.ps1.", "",
-      "[[hooks.PreToolUse]]", 'matcher = "^(Bash|apply_patch)$"', "", "[[hooks.PreToolUse.hooks]]", 'type = "command"',
-      f"command = '''{GUARD[0]}'''", f"timeout = {GUARD[1]}"]
-    for cmd, timeout in SESSION_START:
-        toml += ["", "[[hooks.SessionStart]]", 'matcher = "*"', "", "[[hooks.SessionStart.hooks]]", 'type = "command"',
-          f"command = '''{cmd}'''", f"timeout = {timeout}"]
-    write_port(CODEX_CONFIG, "\n".join(toml) + "\n")
-    GRAVITY_HOOKS.parent.mkdir(parents=True, exist_ok=True)
-    hook = lambda cmd, timeout: {"type": "command", "command": cmd, "timeout": timeout}
-    write_port(GRAVITY_HOOKS, json.dumps({
-      "guard": {"enabled": True, "PreToolUse": [{"matcher": "run_command", "hooks": [hook(*GUARD)]}]},
-      "kit-health": {"enabled": True, "SessionStart": [hook(*x) for x in SESSION_START]}}, indent=2) + "\n")
-    print("hook wiring written -> .claude/.codex/config.toml, .claude/.agents/hooks.json")
-
-def workflow_meta(text):
-    """name, description, whenToUse and phases [(title, detail)] of a workflow's `export const meta`."""
-    m = re.search(r"export const meta\s*=\s*\{(.*?)\n\}", text, re.S)
-    if not m:
-        return None
-    fields = dict(re.findall(r"(\w+):\s*'((?:[^'\\]|\\.)*)'", m.group(1)))
-    phases = re.search(r"phases:\s*\[(.*?)\n\s*\],", m.group(1), re.S)
-    fields["phases"] = re.findall(r"\{\s*title:\s*'([^']*)'\s*,\s*detail:\s*'((?:[^'\\]|\\.)*)'\s*\}", phases.group(1)) if phases else []
-    return fields
-
-def workflow_procedure_doc(fields, tool, how):
-    lines = [f"# {fields['name']} (ported procedure, not a native {tool} workflow)", "", f"> {fields['description']}", "",
-      f"**When to run it:** {fields.get('whenToUse', '(see the workflow source)')}", "",
-      f"{tool} has no workflow engine: you are the coordinator. {how}", "", "## Phases", ""]
-    lines += [f"{i}. **{title}** -- {detail}" for i, (title, detail) in enumerate(fields["phases"], 1)]
-    lines += ["", f"Arguments and step details: `.claude/workflows/{fields['name']}.js` (its header comment) and the `orchestrate` skill."]
-    return "\n".join(lines) + "\n"
-
-def port_workflows():
-    CODEX_WORKFLOWS.mkdir(parents=True, exist_ok=True)
-    GRAVITY_WORKFLOWS.mkdir(parents=True, exist_ok=True)
-    made = set()
-    for src in sorted((KIT / "workflows").glob("*.js")):
-        fields = workflow_meta(src.read_text(encoding="utf-8"))
-        if not fields or "name" not in fields:
-            continue
-        write_port(CODEX_WORKFLOWS / f"{fields['name']}.md", workflow_procedure_doc(fields, "Codex",
-          "Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency "
-          "limit), `wait_agent` for them, then the next phase."))
-        write_port(GRAVITY_WORKFLOWS / f"{fields['name']}.md", workflow_procedure_doc(fields, "Antigravity",
-          "Per phase, in order: delegate it to the matching subagent in `.agents/agents/*.md`."))
-        made.add(fields['name'])
-    prune(CODEX_WORKFLOWS, '.md', made)
-    prune(GRAVITY_WORKFLOWS, '.md', made)
-    print(f"ported {len(made)} workflow procedure doc(s) -> .codex/workflows/*.md, .agents/workflows/*.md")
-
-def port_deploy():
-    """Copy .codex, .agents, AGENTS.md and GEMINI.md to the workspace root (the CLIs read the session cwd, never .claude)."""
-    if KIT.name != '.claude':
-        print(f"not deployed: {KIT} is not a workspace's .claude folder (the ports inside the kit are updated)")
-        return
-    deployed = []
-    for name in (".codex", ".agents"):
-        src_dir, dst_dir = KIT / name, WORKSPACE / name
-        for p in stale_generated(src_dir, dst_dir):
-            p.unlink()
-        for p in src_dir.rglob('*'):
-            if p.is_file():
-                t = dst_dir / p.relative_to(src_dir)
-                t.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(p, t)
-        deployed.append(dst_dir)
-    for name in ("AGENTS.md", "GEMINI.md"):
-        shutil.copyfile(KIT / name, WORKSPACE / name)
-        deployed.append(WORKSPACE / name)
-    for base in (WORKSPACE / ".agents", KIT):   # forwarders: .claude/skills/... resolves when the cwd is .agents
-        for script in ("dev-kit/dev.ps1", "orchestrate/orch.ps1"):
-            fwd = base / ".claude" / "skills" / script
-            fwd.parent.mkdir(parents=True, exist_ok=True)
-            fwd.write_text(f"& '{(KIT / 'skills' / script).as_posix()}' @args\n", encoding="utf-8")
-    print(f"deployed -> {', '.join(str(p) for p in deployed)}")
-
-def stale_generated(src, dst):
-    """Workspace ports in dst/agents or dst/workflows with no kit counterpart (a removed agent / workflow)."""
-    if not dst.exists():
-        return []
-    have = {p.relative_to(src).as_posix() for p in src.rglob('*') if p.is_file()} if src.exists() else set()
-    return [p for p in dst.rglob('*') if p.is_file() and p.relative_to(dst).parts[0] in ('agents', 'workflows')
-      and p.suffix in ('.toml', '.md') and p.relative_to(dst).as_posix() not in have]
-
-def deployed_stale():
-    """Workspace copies that differ from the kit; [] when the kit is no installed <workspace>/.claude."""
-    if KIT.name != '.claude':
-        return []
-    bad = []
-    for name in ('.codex', '.agents'):
-        src, dst = KIT / name, WORKSPACE / name
-        a = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob('*') if p.is_file()} if src.exists() else {}
-        b = {r: (dst / r).read_bytes() for r in a if (dst / r).is_file()}
-        if a != b or stale_generated(src, dst):
-            bad.append(name + '/')
-    for name in ('AGENTS.md', 'GEMINI.md'):
-        if not (WORKSPACE / name).exists() or (WORKSPACE / name).read_bytes() != (KIT / name).read_bytes():
-            bad.append(name)
-    return bad
-
-def check_stale():
-    """Stale port paths: every port is generated into a temp copy and compared by content."""
-    g = globals()
-    outs = ("CODEX_AGENTS", "GRAVITY_AGENTS", "CODEX_CONFIG", "GRAVITY_HOOKS", "CODEX_WORKFLOWS", "GRAVITY_WORKFLOWS")
-    real = {name: g[name] for name in outs}
-    stale = []
-    with tempfile.TemporaryDirectory() as tmp:
-        g.update({name: Path(tmp) / real[name].relative_to(KIT) for name in outs})
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                port_agents()
-                port_hooks()
-                port_workflows()
-        finally:
-            g.update(real)
-        made = set()
-        for f in Path(tmp).rglob("*"):
-            if f.is_file():
-                rel = f.relative_to(tmp).as_posix()
-                made.add(rel)
-                if not (KIT / rel).exists() or (KIT / rel).read_text(encoding="utf-8") != f.read_text(encoding="utf-8"):
-                    stale.append(rel)
-        for d in (CODEX_AGENTS, GRAVITY_AGENTS, CODEX_WORKFLOWS, GRAVITY_WORKFLOWS):
-            stale += [p.relative_to(KIT).as_posix() + ' (no source)' for p in (d.glob('*') if d.exists() else [])
-              if p.is_file() and p.relative_to(KIT).as_posix() not in made]
-    gm = KIT / 'GEMINI.md'
-    if not gm.exists() or gm.read_text(encoding='utf-8') != GEMINI_MD:
-        stale.append('GEMINI.md')
-    stale += [f'{x} (workspace copy)' for x in deployed_stale()]
-    return sorted(set(stale))
-
-def cmd_port(a):
-    if '--check' in a:
-        stale = check_stale()
-        if stale:
-            print(f"kittool port: stale or missing ports: {stale}; run 'python -X utf8 skills/orchestrate/kittool.py port'")
-        return 1 if stale else 0
-    write_characters(str(KIT))
-    port_agents()
-    port_hooks()
-    port_workflows()
-    write_port(KIT / 'GEMINI.md', GEMINI_MD)
-    port_deploy()
-    return 0
-
-# ==== 6. audit scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each)
+# ==== 5. audit scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
   'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets')
@@ -1220,10 +1011,11 @@ def cmd_scan(kit):
     terms = (load_json(local)[0] or {}).get('orgTerms') if osp.isfile(local) else None
     for code, where, problem in lint(k, graph(k), terms):
         out('ACT', ('GENERIC-' if code == 'ORG-TERM' else 'LINT-') + code, where, problem)
-    if osp.samefile(kit, KIT):   # ports are checked for the kit this file lives in
-        stale = check_stale()
+    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (extra ports) are checked for the kit this file lives in
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            stale = PLUGINS['port'](['--check'])
         if stale:
-            out('ACT', 'PORT-DRIFT', 'kittool.py port --check', ', '.join(stale)[:300], 'python -X utf8 skills/orchestrate/kittool.py port')
+            out('ACT', 'PORT-DRIFT', 'kittool.py port --check', said.getvalue().strip()[:300], 'python -X utf8 skills/orchestrate/kittool.py port')
     texts = {f: read(osp.join(kit, f)) for f in files}
     for f in files:
         if re.match(r'agents/[^/]+\.md$', f):
@@ -1339,122 +1131,7 @@ def audit_main(a):
             json.dump(findings, f, indent=1)
     return 1 if n['ACT'] or n['ASK'] else 0
 
-# ==== 7. cost: tokens per agent type + workflow prompts
-# Runs every workflow under node with mock agents (one canned result per step label) and records each prompt's size.
-COST_MJS = r'''import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-const kit = (process.argv[2] || '.claude').replace(/[\\/]+$/, '')
-const MR = (repo, n) => ({ url: `https://git.example.com/acme/${repo}/-/merge_requests/${n}`, repo, merged: false })
-const report = (id) => ({ mrs: [MR('api', id === 'X2' ? 2 : 1)], worktrees: [`${id.toLowerCase()}-api`], done: ['A1'], deferred: [], needsLiveCheck: ['open the form and save'], seed: [], foreignHooks: [], summary: 'implemented, checks green', needsDecision: [], localTest: { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'goals.md' }, testerGuide: 'doc',
- changedLines: id === 'X2' ? 12 : 30, changedFiles: id === 'X2' ? ['src/auth/LoginService.java'] : ['web/src/order-form.ts'] })
-
-function mock(label) {
- const [kind, rest = ''] = label.split(':'); const id = rest.split('@')[0]
- switch (kind) {
-  case 'build': case 'fix': case 'ship': return report(id)
-  case 'review': return { findings: id === 'X2' ? [{ mr: MR('api', 2).url, file: 'src/Order.java', line: 10, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] : [] }
-  case 'ci': return { done: true, mrs: [{ mr: MR('api', 1).url, status: 'success' }] }
-  case 'learn': return { signals: 1, lessonsChanged: [] }
-  case 'test': case 'retest': return { code: id, checks: [
-   { id: 'T1', subtask_id: 't1', screen: 'Orders', result: 'PASS', what_was_done: 'saved', observed: 'saved', evidence: [`${id}-T1_01_saved.jpeg`] },
-   { id: 'T2', subtask_id: 't1', screen: 'Orders', result: 'PASS_WITH_NOTE', what_was_done: 'opened', observed: 'label differs', evidence: [] },
-   { id: 'T3', subtask_id: 't1', screen: 'Orders', result: 'FAIL', what_was_done: 'cancelled', observed: 'PUT /api/orders -> 500', evidence: [] }],
-   findings: ['seed data was old'], setup_changes: [], data_created: [] }
-  case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
-  case 'verify': return { verdicts: [{ id: 'T3', confirmed: true, observed: '500 again', evidence: [] }] }
-  case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
-  case 'prepare': return { runDir: SAMPLE['testy'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
-  case 'load-run': return { json: JSON.stringify(SAMPLE['testy']) }
-  case 'analyse': return { proposals: [{ file: `${kit}/skills/dev-kit/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
-  case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
-  default: return 'ok'
- }
-}
-
-const SAMPLE = {
- 'buildy': { brief: '/ws/.claude/<runtime>/work/briefs/wave-brief.md', kitDir: kit, mandate: ['Fix the order form bugs from the QA run and ship them.'],
-  agents: [{ id: 'X1', items: 'A1, A2', area: 'order form' }, { id: 'X2', items: 'A3', area: 'order list', complex: true }] },
- 'testy': { runDir: '/ws/.claude/<runtime>/work/qa-runs/2026-01-01-sample', kitDir: kit, title: 'Sample epic', target: 'my-staging', tester: 'QA',
-  mandate: ['Test the deployed epic tasks and close them.'], context: 'Use tenant acme.', tracker: { list: 'L1', parent: 'P1' },
-  lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1' }],
-  items: [{ code: 'W1', title: 'Order form', guideFile: '/ws/guides/W1.md', lane: 'web', subtasks: [{ id: 't1', name: 'Order form', mrs: 'api!1' }] },
-   { code: 'P1', title: 'Order app', guideFile: '/ws/guides/P1.md', lane: 'app', subtasks: [{ id: 't2', name: 'Order app', mrs: 'app!3' }] }] },
- 'tidy': { kitDir: kit },
- 'testy#select': { select: { statuses: ['promoted', 'inTest'] }, target: 'local', kitDir: kit, mandate: ['Test everything promoted or in test on local.'] },
-}
-
-const calls = []
-for (const wf of Object.keys(SAMPLE)) {
- const src = readFileSync(join(kit, 'workflows', `${wf.split('#')[0]}.js`), 'utf8').replace(/^export const meta/m, 'const meta')
- const body = new Function('args', 'agent', 'pipeline', 'parallel', 'log', 'phase', `return (async () => {\n${src}\n})()`)
- const agent = async (prompt, opts = {}) => {
-  calls.push({ wf, label: opts.label || '?', agentType: opts.agentType || '', model: opts.model || '', effort: opts.effort || '', bytes: Buffer.byteLength(prompt, 'utf8') })
-  return mock(opts.label || '')
- }
- const pipeline = async (items, ...stages) => Promise.all(items.map(async (it) => { let r = it; for (const [i, s] of stages.entries()) r = i === 0 ? await s(it) : await s(r, it); return r }))
- const parallel = async (fns) => Promise.all(fns.map((f) => f()))
- await body(JSON.parse(JSON.stringify(SAMPLE[wf])), agent, pipeline, parallel, () => {}, () => {})
-}
-console.log(JSON.stringify({ calls }))
-'''
-
-def workflow_calls(kit):
-    """Every agent() call of the sample workflow runs: {wf, label, agentType, model, effort, tokens}; [] without node."""
-    node = shutil.which('node')
-    if not node:
-        return []
-    with tempfile.TemporaryDirectory() as tmp:
-        src = osp.join(tmp, 'cost.mjs')
-        with open(src, 'w', encoding='utf-8') as fh:
-            fh.write(COST_MJS)
-        rc, o, e = run([node, src, kit], timeout=120)
-    try:
-        calls = json.loads(o).get('calls', [])
-    except ValueError:
-        print(f'kittool cost: the workflow render failed (exit {rc}): {(e or o)[:300]}', file=sys.stderr)
-        return []
-    for c in calls:
-        c['tokens'] = (c['bytes'] + 3) // 4
-    return calls
-
-def cmd_cost(a):
-    """Start tokens (UTF-8 bytes / 4) per agent type (always-loaded files, agent definition, its skill, its LESSONS.md sections)
-    plus each workflow run's prompts."""
-    flags, rest = parse_opts(a)
-    kit = osp.abspath(rest[0] if rest else KIT_DIR)
-    tok = lambda s: (len(s.encode('utf-8')) + 3) // 4
-    ftok = lambda rel: tok(read(osp.join(kit, rel)))
-    k = load(kit)
-    rules = [f for f in k.files if re.match(r'rules/[^/]+\.md$', f) and not f.endswith('.local.md') and 'paths' not in frontmatter(k.texts[f])]
-    always = ftok('CLAUDE.md') + ftok('AGENTS.md') + sum(ftok(r) for r in rules)
-    always += sum(tok(frontmatter(k.texts.get(f'skills/{s}/SKILL.md', '')).get('description', '')) for s in k.skills)
-    lessons = read(osp.join(kit, 'LESSONS.md'))
-    lesson_tokens = lambda name: tok((re.search(r'^## ' + re.escape(name) + r'\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0])
-    calls = workflow_calls(kit)
-    if '--steps' in flags:
-        for c in calls:
-            print(f"{c['wf']:15} {c['label']:18} {c['agentType']:12} {c['model']:7} {c['effort']:6} {c['tokens']:6}")
-        return 0
-    rows = []
-    for agent, m in (manifest(kit).get('agents') or {}).items():   # an agent reads its skill and the lessons of both
-        skill = m.get('skill') or ''
-        files = ftok(f'agents/{agent}.md') + (ftok(f'skills/{skill}/SKILL.md') if skill else 0)
-        rows.append({'agent': f'{agent} (start)', 'always': always, 'files': files + sum(lesson_tokens(x) for x in {agent, skill} if x)})
-    for wf in sorted({c['wf'] for c in calls}):
-        cs = [c for c in calls if c['wf'] == wf]
-        rows.append({'agent': f'run: {wf} ({len(cs)} steps)', 'always': always * len(cs), 'files': sum(c['tokens'] for c in cs)})
-    for row in rows:
-        row['total'] = row['always'] + row['files']
-    if '--json' in flags:
-        print(json.dumps(rows, indent=1))
-        return 0
-    print('| Agent / run | always-loaded | start files / prompts | total |\n|---|---:|---:|---:|')
-    for row in rows:
-        print(f"| {row['agent']} | {row['always']} | {row['files']} | {row['total']} |")
-    return 0
-
-# ==== 8. registry, release: _manifest registers every crew part and cap, lint checks the files against it; front matter
+# ==== 6. registry: _manifest registers every crew part and cap, lint checks the files against it; front matter
 # validates against a small JSON Schema subset
 TODO = 'TODO(new)'   # a stub the scaffold extra leaves; lint TODO-STUB refuses it
 SCHEMAS = {
@@ -1522,18 +1199,6 @@ def character_of(text):
     flat = re.sub(r'\s+', ' ', m.group(1)).strip()
     mm = re.match(r'^traits: (.+?) · bias: (.+?) · catchphrase: "(.+?)" · never: (.+?)\.?$', flat)
     return dict(zip(('traits', 'bias', 'catchphrase', 'never'), mm.groups())) if mm else {'_raw': flat}
-
-def character_block(ch, width=128):
-    """The Character paragraph port writes into agents/<name>.md from the manifest (one fixed shape for every agent)."""
-    words = f'**Character:** traits: {ch["traits"]} · bias: {ch["bias"]} · catchphrase: "{ch["catchphrase"]}" · never: {ch["never"]}.'.split(' ')
-    lines, cur = [], ''
-    for w in words:
-        if cur and len(cur) + 1 + len(w) > width:
-            lines.append(cur)
-            cur = w
-        else:
-            cur = f'{cur} {w}' if cur else w
-    return '\n'.join(lines + [cur])
 
 def old_name_rx(old):
     # bare, file or joined name (last-<old>, <old>s, <old>-x); <name>.stamp sharing the stem is no reference
@@ -1686,29 +1351,7 @@ def registry_lint(k, bad):
         if m:
             bad('NON-CREW', ln(m), f'"{m.group(0)}": only crew agents ({", ".join(sorted(crew))}) are spawned')
 
-def write_characters(kit=None):
-    """port: every agent's Character block from the manifest (one shape, one source)."""
-    kd = kit or KIT_DIR
-    n = 0
-    for a, m in (manifest(kd).get('agents') or {}).items():
-        p = osp.join(kd, 'agents', f'{a}.md')
-        ch = m.get('character') or {}
-        if not osp.isfile(p) or schema_errors(ch, SCHEMAS['character']) or TODO in json.dumps(ch):
-            continue
-        with open(p, encoding='utf-8', newline='') as fh:
-            raw = fh.read()
-        eol = '\r\n' if '\r\n' in raw else '\n'
-        t = raw.replace('\r\n', '\n')
-        blk = character_block(ch)
-        t2 = CHAR_RX.sub(lambda _: blk, t, count=1) if CHAR_RX.search(t) else t
-        if t2 != t:
-            with open(p, 'w', encoding='utf-8', newline='') as fh:
-                fh.write(t2.replace('\n', eol))
-            n += 1
-    if n:
-        print(f'Character blocks written from the manifest: {n}')
-
-def _sub_file(kit, rel, fn):
+def _sub_file(kit, rel, fn):   # extras (scaffold, kit-admin) edit kit files with it, keeping each file's line endings
     p = osp.join(kit, rel)
     with open(p, encoding='utf-8', newline='') as fh:
         raw = fh.read()
@@ -1717,57 +1360,7 @@ def _sub_file(kit, rel, fn):
     with open(p, 'w', encoding='utf-8', newline='') as fh:
         fh.write(t.replace('\n', eol))
 
-def cmd_release(a):
-    """Next vX.Y.Z + notes (breaking + Migration lines, features, fixes, retired lessons) from Conventional Commits since the last
-    tag; prints only. --tag: annotated tag with the notes; --publish: also a GitHub release (gh, never logs in)."""
-    kit = KIT_DIR
-    last = git(kit, 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*')[1]
-    rng = f'{last}..HEAD' if last else 'HEAD'
-    log = git(kit, 'log', rng, '--no-merges', '--format=%h%x1f%s%x1f%b%x1e')[1]
-    major, minor, patch = (int(x) for x in re.findall(r'\d+', last)[:3]) if last else (0, 0, 0)
-    groups = {'Breaking (migration notes)': [], 'Features': [], 'Fixes': [], 'Other': []}
-    bump = 0
-    for c in [x for x in log.split('\x1e') if x.strip()]:
-        h, s, b = (c.strip('\n').split('\x1f') + ['', ''])[:3]
-        m = re.match(r'^(\w+)(?:\([^)]*\))?(!)?:\s*(.+)$', s)
-        if m and (m.group(2) or 'BREAKING CHANGE' in b):
-            bump = 3
-            mig = [l.strip() for l in b.split('\n') if re.match(r'\s*(Migration|BREAKING CHANGE):', l)]
-            groups['Breaking (migration notes)'].append(f'- {s} ({h})' + ''.join(f'\n  {x}' for x in mig))
-        else:
-            g = 'Features' if m and m.group(1) == 'feat' else 'Fixes' if m and m.group(1) in ('fix', 'perf') else 'Other'
-            bump = max(bump, 2 if g == 'Features' else 1)
-            groups[g].append(f'- {s if g == "Other" else m.group(3)} ({h})')
-    if not bump:
-        print(f'kittool release: nothing since {last or "the first commit"}')
-        return 0
-    ver = f'v{major + 1}.0.0' if bump == 3 else f'v{major}.{minor + 1}.0' if bump == 2 else f'v{major}.{minor}.{patch + 1}'
-    retired = [l[1:] for l in git(kit, 'log', rng, '-p', '--unified=0', '--format=', '--', 'LESSONS.md')[1].split('\n') if l.startswith('-- ')]
-    notes = [f'# {ver} ({datetime.date.today().isoformat()})', '']
-    for g, items in groups.items():
-        if items:
-            notes += [f'## {g}', *items, '']
-    if retired:
-        notes += ['## Retired lessons (orch.ps1 learn -History)', *[f'- {x[2:]}' for x in retired[:200]], '']
-    text = '\n'.join(notes)
-    print(text)
-    if '--tag' in a or '--publish' in a:
-        nf = osp.join(kit_path('cache', create=True, kit=kit), f'release-{ver}.md')
-        with open(nf, 'w', encoding='utf-8') as fh:
-            fh.write(text)
-        rc, _, err = git(kit, 'tag', '-a', ver, '-F', nf)
-        print(f'tag {ver}: ' + (f'created (push it: git push origin {ver})' if not rc else err))
-        if '--publish' in a and not rc:
-            gh = shutil.which('gh')
-            if not gh:
-                print('kittool release: gh not on PATH: the GitHub release was not published')
-                return 1
-            rc, o, err = run([gh, 'release', 'create', ver, '-F', nf, '--title', ver], cwd=kit)
-            print(o or err)
-            return rc
-    return 0
-
-# ==== 9. prose: check a text against templates.md "Writing standards"
+# ==== 7. prose: check a text against templates.md "Writing standards"
 REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
   'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\b[A-Z]{2,}-[A-Za-z0-9]+',   # any tracker tag + id
   'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
@@ -1910,11 +1503,10 @@ def cmd_prose(a):
             print(f'PROSE {kind} {src}: {f}')
     return 1 if found else 0
 
-# ==== 10. budget
+# ==== 8. budget
 def cmd_budget(a):
-    """kittool.py budget [show] | budget raise -Reason "<why trimming cannot make room>": the kit total vs
-    _manifest.caps.totalTokens; raise (only while the total is over the cap) multiplies the cap by 1.1, rounded to 1k, and
-    prints the commit message carrying the reason (stored nowhere else)."""
+    """kittool.py budget [show]: the kit total vs _manifest.caps.totalTokens. budget raise -Reason "<why trimming cannot make
+    room>" (x1.1 per step, only while over the cap) is in the kit-admin extra."""
     kit = KIT_DIR
     flags, rest = parse_opts(a, {'-Reason', '-reason', '--reason'})
     total = sum(size_tokens(kit, f) for f in counted_files(kit))
@@ -1922,30 +1514,18 @@ def cmd_budget(a):
     if not rest or rest[0] == 'show':
         print(f'kit total {total} of cap {cap} ({total * 100 // cap}%); next raise step {cap_next(cap)}')
         return 0
-    why = next((str(v).strip() for f, v in flags.items() if f.lower().lstrip('-') == 'reason'), '')
-    if rest[0] != 'raise' or not why:
-        print(cmd_budget.__doc__, file=sys.stderr)
-        return 2
-    if total <= cap:
-        print(f'budget raise: refused - the kit total {total} fits the cap {cap}: nothing to raise', file=sys.stderr)
-        return 1
-    new = cap_next(cap)
-    bad = cap_problem(kit, new)
-    if bad:
-        print(f'budget raise: refused - {bad}', file=sys.stderr)
-        return 1
-    _sub_file(kit, PATHS_JSON, lambda t: re.sub(r'("totalTokens":\s*)\d+', lambda m: m.group(1) + str(new), t, count=1))
-    print(f'cap {cap} -> {new} (kit total {total}); commit message: chore(kit): raise the token cap to {new} - {why}')
-    if total > new:
-        print(f'still over: {total} > {new}: trim more (one raise per commit)')
-    return 0
+    if rest[0] == 'raise':
+        raise_cap = PLUGINS.get('budget raise')
+        return raise_cap(kit, total, cap, flags) if raise_cap else need_extra('kittool.py budget raise', 'kit-admin')
+    print(cmd_budget.__doc__, file=sys.stderr)
+    return 2
 
-# ==== 11. extras: optional parts on the origin's `extras` branch, installed local-only (README "Extras")
+# ==== 9. extras: optional parts on the origin's `extras` branch, installed local-only (README "Extras")
 # extras/<name>/EXTRA.md says what it is and "Needed when: `<config key>` = `<value>`"; extras/<name>/files/<kit path> are its files.
 EXTRAS_REF = 'refs/remotes/origin/extras'
 EXCLUDE_MARK = '# kittool extra '
-EXTRA_OF = {'flow': 'flow-map', 'new': 'scaffold', 'rename': 'scaffold', 'remove': 'scaffold',
-  'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
+EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'scaffold', 'rename': 'scaffold', 'remove': 'scaffold', 'cost': 'kit-admin',
+  'release': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
 PLUGINS = {}      # command -> handler, from installed kittool extras (skills/orchestrate/kittool_<name>.py)
 LINT_HOOKS = []   # (kit, problems, flags) -> None: adds problems
 
@@ -2071,7 +1651,8 @@ def extras_needed(kit):
             hit = next((w for w in wants if (w == '*' and values) or w.lower() in values), None)
             if hit:
                 need.append((name, f'{key} "{hit}"'))
-        need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule) if osp.exists(osp.join(kit, p))]
+        need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule)   # a worktree: the main clone answers
+                 if any(osp.exists(osp.join(base, p)) for base in (kit, main_clone(kit)))]
     return sorted(set(need))
 
 def stale_extras(kit, installed):
@@ -2230,16 +1811,13 @@ def load_plugins():
         if 'lint_hook' in own:
             LINT_HOOKS.append(own['lint_hook'])
 
-# ==== 12. main
+# ==== 10. main
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
-  'flow': ({'--readme'}, set(), True), 'port': ({'--check'}, set(), False), 'audit': (set(), {'--kit', '--json'}, False),
-  'cost': ({'--steps', '--json'}, set(), True), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'release': ({'--tag', '--publish'}, set(), False), 'budget': (set(), {'-Reason', '-reason', '--reason'}, False),
-  'extra': (set(), set(), False)}
+  'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
+  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'extra': (set(), set(), False)}
 NAMED_ARGS = ('prose', 'budget', 'extra', 'new', 'rename', 'remove')   # positionals are files, verbs or names, not a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'port': cmd_port, 'audit': audit_main, 'cost': cmd_cost, 'prose': cmd_prose,
-  'release': cmd_release, 'budget': cmd_budget, 'extra': cmd_extra}
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'extra': cmd_extra}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""

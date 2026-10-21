@@ -1862,7 +1862,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
 if ($py) {
   $lint =& $py -X utf8 $KitCmd.kittool lint $kit --summary --warn --no-flow 2>$null
   if ($lint) { $msgs += ($lint -join ' ') }
-  & $py -X utf8 $KitCmd.kittool port --check 2>$null | ForEach-Object { $msgs += $_ }
+  & $py -X utf8 $KitCmd.kittool port --check 2>$null | ForEach-Object { $msgs += $_ }   # silent without the ports extra
   & $py -X utf8 $KitCmd.kittool extra check 2>$null | ForEach-Object { $msgs += $_ }   # config that needs an extra not installed
 }
 foreach ($n in @(& $KitCmd.orch nudge | ForEach-Object { try { ($_ | ConvertFrom-Json).systemMessage } catch { } } | Where-Object { $_ })) { $msgs += $n }
@@ -2035,7 +2035,7 @@ else {
 }
 
 $py = Get-Python
-if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE) { Write-Host "pre-push: warning: ports differ (optional; run kittool.py port if deploying to codex/gemini)" } }
+if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kittool.py port if deploying to codex/gemini)" } }   # 2: the ports extra is not installed
 
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
