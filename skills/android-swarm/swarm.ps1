@@ -191,7 +191,7 @@ switch ($Action) {
       if (-not $got) {
         if ((Get-Date) -gt $deadline) { Remove-Item $wf -Force -ErrorAction SilentlyContinue; throw "no phone free within $WaitMinutes min (swarm.ps1 status shows who holds them)" }
         if (-not $told) { "all $(if ($Lane) { "$Lane is" } else { 'lanes are' }) leased; waiting for a release or memory (fair queue) ..."; $told = $true }
-        Start-Sleep 20
+        Wait-KitPoll 20
       }
     }
     $memQueued = $false

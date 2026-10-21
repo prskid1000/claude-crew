@@ -1988,7 +1988,7 @@ function Invoke-Decide {
         $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
         if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)$(if ($o.rationale) { " [Rationale: $($o.rationale)]" })"; return }
         if ((Get-Date) -ge $until) { "PENDING $Id (no answer within $MaxMinutes min; wait again)"; exit 1 }
-        Start-Sleep -Seconds 30
+        Wait-KitPoll 30
       }
     }
   }

@@ -315,7 +315,7 @@ switch ($Action) {
       if ($ok) { $ok; exit 0 }
       if (-not $told) { "waiting for a seat: $script:why"; $told = $true }
       if ((Get-Date) -gt $deadline) { "STILL WAITING ($script:why): run the same command again"; exit 4 }
-      Start-Sleep 15
+      Wait-KitPoll 15
     }
   }
 }

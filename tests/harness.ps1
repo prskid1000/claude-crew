@@ -10,6 +10,29 @@ $script:fails = 0
 Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
+$env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM
+$env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # own temp: never the machine's build-gate queue
+# `pwsh -NoProfile -File <kit script>` from a test runs in this process (0.07 s, not a 0.7 s start): streams, exit code, cwd, env and
+# globals as a child sees them; stdin readers and gate / check (console writers) stay processes; KIT_TESTS_SPAWN=1: always processes
+$pwshExe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+function pwsh {
+  $a = @($args); $in = @($input)
+  if ($env:KIT_TESTS_SPAWN -or $in.Count -or $a.Count -lt 3 -or $a[0] -ne '-NoProfile' -or $a[1] -ne '-File' -or "$($a[2])" -notmatch '\.ps1$' -or "$($a[3])" -in 'gate', 'check', 'guard' -or
+    "$((Get-PSCallStack)[1].ScriptName)" -notlike "$PSScriptRoot*") { $in | & $pwshExe @a; return }
+  $ErrorActionPreference = 'Continue'; $here = Get-Location; $envs = [Environment]::GetEnvironmentVariables(); $g0 = @((Get-Variable -Scope Global).Name)
+  $ew = [IO.StringWriter]::new(); $e0 = [Console]::Error; [Console]::SetError($ew); $i0 = [Console]::In; [Console]::SetIn([IO.StringReader]::new('')); $global:LASTEXITCODE = 0
+  $rest = @($a | Select-Object -Skip 3)
+  try { & $a[2] @rest *>&1 | ForEach-Object { if ($_ -is [Management.Automation.ErrorRecord]) { Write-Error -ErrorRecord $_ } else { "$_" } } }
+  catch { Write-Error -ErrorRecord $_; $global:LASTEXITCODE = 1 }
+  finally {
+    $code = $global:LASTEXITCODE; [Console]::SetError($e0); [Console]::SetIn($i0); Set-Location $here
+    Get-Variable -Scope Global | Where-Object Name -NotIn $g0 | Remove-Variable -Scope Global -Force -ErrorAction SilentlyContinue   # memos ($KitTrackerMemo, ...) die with a process
+    $now = [Environment]::GetEnvironmentVariables(); foreach ($n in $now.Keys) { if (-not $envs.Contains($n)) { [Environment]::SetEnvironmentVariable($n, $null) } }
+    foreach ($n in $envs.Keys) { if ($now[$n] -ne $envs[$n]) { [Environment]::SetEnvironmentVariable($n, $envs[$n]) } }
+    if ("$ew") { Write-Error "$ew".TrimEnd() }
+    $global:LASTEXITCODE = $code
+  }
+}
 
 function Kd { Split-Path $k }
 function Px { $input | pwsh -NoProfile -File @args }
