@@ -234,7 +234,7 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
 def _regen(kit):
     """After new / rename / remove: the ports and README's generated sections follow the registry at once."""
     with contextlib.redirect_stdout(io.StringIO()):
-        cmd_port([])
+        PLUGINS.get('port', lambda a: 0)([])   # the ports extra, when installed
     k2 = load(kit)
     p = osp.join(kit, 'README.md')
     old = read(p)

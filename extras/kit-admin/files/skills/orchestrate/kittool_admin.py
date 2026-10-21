@@ -1,11 +1,16 @@
-"""kittool extra kit-admin: `audit setup | config | recover`, the install, config and recovery checks of agents/kitty.md steps 1-3.
+"""kittool extra kit-admin: kitty's tools - the install, config and recovery checks of agents/kitty.md steps 1-3, token cost,
+releases and the budget raise.
 
   python -X utf8 skills/orchestrate/kittool.py audit setup [--fix] | config [--fill] | recover [--fix] [--kit <dir>] [--json <file>]
+  python -X utf8 skills/orchestrate/kittool.py cost [<kit>] [--steps] [--json]   # start tokens per agent type, workflow prompts
+  python -X utf8 skills/orchestrate/kittool.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
+  python -X utf8 skills/orchestrate/kittool.py budget raise -Reason "<why>"     # the token cap x1.1, only while over it
 
-Installed by `kittool.py extra add kit-admin`; kittool.py loads it and shares its own names (out, run, git, load_json, key_paths).
-Exit codes: 0 ok · 1 an ACT or ASK finding remains · 2 usage error.
+Installed by `kittool.py extra add kit-admin` (or `extra sync`); kittool.py loads it and shares its own names (out, run, git,
+load_json, key_paths, manifest, cap_next, _sub_file).
+Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
-import json, os, re, shutil, subprocess, sys, time
+import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
 import os.path as osp
 
 OWN = KIT_DIR
@@ -450,9 +455,199 @@ def cmd_recover(kit, fix):
         out('WARN', 'RECOVER-RUNTIME', rt, f'runtime holds {size / 1024 ** 3:.1f} GB', 'find the folder that grows; add a prune rule to orch.ps1 cleanup')
 
 
+# ---- release: next SemVer + notes from Conventional Commits
+def cmd_release(a):
+    """Next vX.Y.Z + notes (breaking + Migration lines, features, fixes, retired lessons) from Conventional Commits since the last
+    tag; prints only. --tag: annotated tag with the notes; --publish: also a GitHub release (gh, never logs in)."""
+    kit = KIT_DIR
+    last = git(kit, 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*')[1]
+    rng = f'{last}..HEAD' if last else 'HEAD'
+    log = git(kit, 'log', rng, '--no-merges', '--format=%h%x1f%s%x1f%b%x1e')[1]
+    major, minor, patch = (int(x) for x in re.findall(r'\d+', last)[:3]) if last else (0, 0, 0)
+    groups = {'Breaking (migration notes)': [], 'Features': [], 'Fixes': [], 'Other': []}
+    bump = 0
+    for c in [x for x in log.split('\x1e') if x.strip()]:
+        h, s, b = (c.strip('\n').split('\x1f') + ['', ''])[:3]
+        m = re.match(r'^(\w+)(?:\([^)]*\))?(!)?:\s*(.+)$', s)
+        if m and (m.group(2) or 'BREAKING CHANGE' in b):
+            bump = 3
+            mig = [l.strip() for l in b.split('\n') if re.match(r'\s*(Migration|BREAKING CHANGE):', l)]
+            groups['Breaking (migration notes)'].append(f'- {s} ({h})' + ''.join(f'\n  {x}' for x in mig))
+        else:
+            g = 'Features' if m and m.group(1) == 'feat' else 'Fixes' if m and m.group(1) in ('fix', 'perf') else 'Other'
+            bump = max(bump, 2 if g == 'Features' else 1)
+            groups[g].append(f'- {s if g == "Other" else m.group(3)} ({h})')
+    if not bump:
+        print(f'kittool release: nothing since {last or "the first commit"}')
+        return 0
+    ver = f'v{major + 1}.0.0' if bump == 3 else f'v{major}.{minor + 1}.0' if bump == 2 else f'v{major}.{minor}.{patch + 1}'
+    retired = [l[1:] for l in git(kit, 'log', rng, '-p', '--unified=0', '--format=', '--', 'LESSONS.md')[1].split('\n') if l.startswith('-- ')]
+    notes = [f'# {ver} ({datetime.date.today().isoformat()})', '']
+    for g, items in groups.items():
+        if items:
+            notes += [f'## {g}', *items, '']
+    if retired:
+        notes += ['## Retired lessons (orch.ps1 learn -History)', *[f'- {x[2:]}' for x in retired[:200]], '']
+    text = '\n'.join(notes)
+    print(text)
+    if '--tag' in a or '--publish' in a:
+        nf = osp.join(kit_path('cache', create=True, kit=kit), f'release-{ver}.md')
+        with open(nf, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+        rc, _, err = git(kit, 'tag', '-a', ver, '-F', nf)
+        print(f'tag {ver}: ' + (f'created (push it: git push origin {ver})' if not rc else err))
+        if '--publish' in a and not rc:
+            gh = shutil.which('gh')
+            if not gh:
+                print('kittool release: gh not on PATH: the GitHub release was not published')
+                return 1
+            rc, o, err = run([gh, 'release', 'create', ver, '-F', nf, '--title', ver], cwd=kit)
+            print(o or err)
+            return rc
+    return 0
+
+# ---- budget raise
+def budget_raise(kit, total, cap, flags):
+    """budget raise -Reason "<why trimming cannot make room>" (kittool.py budget hands over): only while the total is over the
+    cap, multiplies the cap by 1.1, rounded to 1k, and prints the commit message carrying the reason (stored nowhere else)."""
+    why = next((str(v).strip() for f, v in flags.items() if f.lower().lstrip('-') == 'reason'), '')
+    if not why:
+        print('budget raise: -Reason "<why trimming cannot make room>" is required', file=sys.stderr)
+        return 2
+    if total <= cap:
+        print(f'budget raise: refused - the kit total {total} fits the cap {cap}: nothing to raise', file=sys.stderr)
+        return 1
+    new = cap_next(cap)
+    bad = cap_problem(kit, new)
+    if bad:
+        print(f'budget raise: refused - {bad}', file=sys.stderr)
+        return 1
+    _sub_file(kit, PATHS_JSON, lambda t: re.sub(r'("totalTokens":\s*)\d+', lambda m: m.group(1) + str(new), t, count=1))
+    print(f'cap {cap} -> {new} (kit total {total}); commit message: chore(kit): raise the token cap to {new} - {why}')
+    if total > new:
+        print(f'still over: {total} > {new}: trim more (one raise per commit)')
+    return 0
+
+# ---- cost: start tokens per agent type + workflow prompts (kitty step 8 after a workflow change)
+# Runs every workflow under node with mock agents (one canned result per step label) and records each prompt's size.
+COST_MJS = r'''import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const kit = (process.argv[2] || '.claude').replace(/[\\/]+$/, '')
+const MR = (repo, n) => ({ url: `https://git.example.com/acme/${repo}/-/merge_requests/${n}`, repo, merged: false })
+const report = (id) => ({ mrs: [MR('api', id === 'X2' ? 2 : 1)], worktrees: [`${id.toLowerCase()}-api`], done: ['A1'], deferred: [], needsLiveCheck: ['open the form and save'], seed: [], foreignHooks: [], summary: 'implemented, checks green', needsDecision: [], localTest: { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'goals.md' }, testerGuide: 'doc',
+ changedLines: id === 'X2' ? 12 : 30, changedFiles: id === 'X2' ? ['src/auth/LoginService.java'] : ['web/src/order-form.ts'] })
+
+function mock(label) {
+ const [kind, rest = ''] = label.split(':'); const id = rest.split('@')[0]
+ switch (kind) {
+  case 'build': case 'fix': case 'ship': return report(id)
+  case 'review': return { findings: id === 'X2' ? [{ mr: MR('api', 2).url, file: 'src/Order.java', line: 10, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] : [] }
+  case 'ci': return { done: true, mrs: [{ mr: MR('api', 1).url, status: 'success' }] }
+  case 'learn': return { signals: 1, lessonsChanged: [] }
+  case 'test': case 'retest': return { code: id, checks: [
+   { id: 'T1', subtask_id: 't1', screen: 'Orders', result: 'PASS', what_was_done: 'saved', observed: 'saved', evidence: [`${id}-T1_01_saved.jpeg`] },
+   { id: 'T2', subtask_id: 't1', screen: 'Orders', result: 'PASS_WITH_NOTE', what_was_done: 'opened', observed: 'label differs', evidence: [] },
+   { id: 'T3', subtask_id: 't1', screen: 'Orders', result: 'FAIL', what_was_done: 'cancelled', observed: 'PUT /api/orders -> 500', evidence: [] }],
+   findings: ['seed data was old'], setup_changes: [], data_created: [] }
+  case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
+  case 'verify': return { verdicts: [{ id: 'T3', confirmed: true, observed: '500 again', evidence: [] }] }
+  case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
+  case 'prepare': return { runDir: SAMPLE['testy'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
+  case 'load-run': return { json: JSON.stringify(SAMPLE['testy']) }
+  case 'analyse': return { proposals: [{ file: `${kit}/skills/dev-kit/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
+  case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
+  default: return 'ok'
+ }
+}
+
+const SAMPLE = {
+ 'buildy': { brief: '/ws/.claude/<runtime>/work/briefs/wave-brief.md', kitDir: kit, mandate: ['Fix the order form bugs from the QA run and ship them.'],
+  agents: [{ id: 'X1', items: 'A1, A2', area: 'order form' }, { id: 'X2', items: 'A3', area: 'order list', complex: true }] },
+ 'testy': { runDir: '/ws/.claude/<runtime>/work/qa-runs/2026-01-01-sample', kitDir: kit, title: 'Sample epic', target: 'my-staging', tester: 'QA',
+  mandate: ['Test the deployed epic tasks and close them.'], context: 'Use tenant acme.', tracker: { list: 'L1', parent: 'P1' },
+  lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1' }],
+  items: [{ code: 'W1', title: 'Order form', guideFile: '/ws/guides/W1.md', lane: 'web', subtasks: [{ id: 't1', name: 'Order form', mrs: 'api!1' }] },
+   { code: 'P1', title: 'Order app', guideFile: '/ws/guides/P1.md', lane: 'app', subtasks: [{ id: 't2', name: 'Order app', mrs: 'app!3' }] }] },
+ 'tidy': { kitDir: kit },
+ 'testy#select': { select: { statuses: ['promoted', 'inTest'] }, target: 'local', kitDir: kit, mandate: ['Test everything promoted or in test on local.'] },
+}
+
+const calls = []
+for (const wf of Object.keys(SAMPLE)) {
+ const src = readFileSync(join(kit, 'workflows', `${wf.split('#')[0]}.js`), 'utf8').replace(/^export const meta/m, 'const meta')
+ const body = new Function('args', 'agent', 'pipeline', 'parallel', 'log', 'phase', `return (async () => {\n${src}\n})()`)
+ const agent = async (prompt, opts = {}) => {
+  calls.push({ wf, label: opts.label || '?', agentType: opts.agentType || '', model: opts.model || '', effort: opts.effort || '', bytes: Buffer.byteLength(prompt, 'utf8') })
+  return mock(opts.label || '')
+ }
+ const pipeline = async (items, ...stages) => Promise.all(items.map(async (it) => { let r = it; for (const [i, s] of stages.entries()) r = i === 0 ? await s(it) : await s(r, it); return r }))
+ const parallel = async (fns) => Promise.all(fns.map((f) => f()))
+ await body(JSON.parse(JSON.stringify(SAMPLE[wf])), agent, pipeline, parallel, () => {}, () => {})
+}
+console.log(JSON.stringify({ calls }))
+'''
+
+def workflow_calls(kit):
+    """Every agent() call of the sample workflow runs: {wf, label, agentType, model, effort, tokens}; [] without node."""
+    node = shutil.which('node')
+    if not node:
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        src = osp.join(tmp, 'cost.mjs')
+        with open(src, 'w', encoding='utf-8') as fh:
+            fh.write(COST_MJS)
+        rc, o, e = run([node, src, kit], timeout=120)
+    try:
+        calls = json.loads(o).get('calls', [])
+    except ValueError:
+        print(f'kittool cost: the workflow render failed (exit {rc}): {(e or o)[:300]}', file=sys.stderr)
+        return []
+    for c in calls:
+        c['tokens'] = (c['bytes'] + 3) // 4
+    return calls
+
+def cmd_cost(a):
+    """Start tokens (UTF-8 bytes / 4) per agent type (always-loaded files, agent definition, its skill, its LESSONS.md sections)
+    plus each workflow run's prompts."""
+    flags, rest = parse_opts(a)
+    kit = osp.abspath(rest[0] if rest else KIT_DIR)
+    tok = lambda s: (len(s.encode('utf-8')) + 3) // 4
+    ftok = lambda rel: tok(read(osp.join(kit, rel)))
+    k = load(kit)
+    rules = [f for f in k.files if re.match(r'rules/[^/]+\.md$', f) and not f.endswith('.local.md') and 'paths' not in frontmatter(k.texts[f])]
+    always = ftok('CLAUDE.md') + ftok('AGENTS.md') + sum(ftok(r) for r in rules)
+    always += sum(tok(frontmatter(k.texts.get(f'skills/{s}/SKILL.md', '')).get('description', '')) for s in k.skills)
+    lessons = read(osp.join(kit, 'LESSONS.md'))
+    lesson_tokens = lambda name: tok((re.search(r'^## ' + re.escape(name) + r'\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0])
+    calls = workflow_calls(kit)
+    if '--steps' in flags:
+        for c in calls:
+            print(f"{c['wf']:15} {c['label']:18} {c['agentType']:12} {c['model']:7} {c['effort']:6} {c['tokens']:6}")
+        return 0
+    rows = []
+    for agent, m in (manifest(kit).get('agents') or {}).items():   # an agent reads its skill and the lessons of both
+        skill = m.get('skill') or ''
+        files = ftok(f'agents/{agent}.md') + (ftok(f'skills/{skill}/SKILL.md') if skill else 0)
+        rows.append({'agent': f'{agent} (start)', 'always': always, 'files': files + sum(lesson_tokens(x) for x in {agent, skill} if x)})
+    for wf in sorted({c['wf'] for c in calls}):
+        cs = [c for c in calls if c['wf'] == wf]
+        rows.append({'agent': f'run: {wf} ({len(cs)} steps)', 'always': always * len(cs), 'files': sum(c['tokens'] for c in cs)})
+    for row in rows:
+        row['total'] = row['always'] + row['files']
+    if '--json' in flags:
+        print(json.dumps(rows, indent=1))
+        return 0
+    print('| Agent / run | always-loaded | start files / prompts | total |\n|---|---:|---:|---:|')
+    for row in rows:
+        print(f"| {row['agent']} | {row['always']} | {row['files']} | {row['total']} |")
+    return 0
+
 def aread(kit, rel):
     return read(osp.join(kit, rel))
 
 AUDIT_VERBS = {'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
-ARGS = {'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False)}
+COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'budget raise': budget_raise}   # 'budget raise': called by kittool.py budget
+ARGS = {'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
+  'release': ({'--tag', '--publish'}, set(), False)}
