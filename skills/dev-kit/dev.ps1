@@ -874,7 +874,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $rp = 'holds runs in progress'; $le = 'local env'; $hk = 'Hooks must run'
+  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $true),
@@ -912,20 +912,6 @@ if ($SelfTest) {
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
-  @('P', 'git -C x push origin localenv/shop', $true, $le),
-  @('P', 'git push -u origin f/CU-1-x', $false, $le),
-  @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true, $le),
-  @('B', 'npx ng serve --port 4200', $true, $le),
-  @('P', '& D:/kit/skills/local-env/localenv.ps1 up -Env shop', $false, $le),
-  @('B', 'yarn start', $true, $le),
-  @('P', 'dotnet watch run', $true, $le),
-  @('B', 'rg "ng serve" src', $false, $le),
-  @('B', 'git log -S bootRun --oneline', $false, $le),
-  @('P', 'git commit -m "fix: ng serve proxy"', $false, $le),
-  @('B', 'npm run dev:build', $false, $le),
-  @('P', 'dotnet run -- migrate', $false, $le),
-  @('B', 'cd web && yarn start', $true, $le),
-  @('B', 'git push origin --delete localenv/shop', $false, $le),
   @('B', 'git push origin +HEAD:main', $true, 'force-push'),
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
   @('B', 'git push origin HEAD:main', $false, 'force-push'),
@@ -1109,17 +1095,8 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
   }
 }
-foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
-  if ($push.Value -match '(^|[\s:/])localenv/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:localenv/') { Deny 'localenv/<env> is a local env branch (all agents'' layers merged): never push it. Push your branch; localenv.ps1 deploy -Dir <worktree> takes it.' }
-}
-if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatch 'localenv\.ps1') {
-  $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\s*$'
-  foreach ($seg in @($cmd -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-    if ($seg -match $server) {
-      Deny "Dev servers run in the shared local env, not by hand: & $($KitCmd.local) use|up -Env <env> (list: envs; logs: logs -Env <env> -Service <s>; extra local-env: kittool.py extra sync if missing)."
-    }
-  }
-}
+# installed extras add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason or nothing> } } ($a: cmd, config)
+foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; config = $kc }; if ($why) { Deny $why } }
 $gated = $cmd -match 'dev\.ps1["'']?\s+(gate|check)\b|swarm\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
 $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
