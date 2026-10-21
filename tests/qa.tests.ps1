@@ -40,6 +40,14 @@ Expect 'failed check in the bug-brief format' (@((Task 'T2').comments | Where-Ob
 $c = New-Run 'C' @(@{ code = 'C1'; task = 'T4'; checks = @(@('C1', 'PASS'), @('C2', 'OUT_OF_SCOPE')) })
 $null = Fin $c 'C1'
 Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 'C1').outOfScope -eq 1 -and (Get-Content "$c/C1/report.md" -Raw) -match 'OUT OF SCOPE 1')
+$rb = Get-Content "$b/B1/report.md" -Raw; $rc1 = Get-Content "$c/C1/report.md" -Raw
+Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observed only in the table' ($rb -match '\| \[details\]\(#c2--s\) \|' -and ([regex]::Matches($rb, 'o C2')).Count -eq 1 -and
+  $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
+Copy-Item (Join-Path $src 'skills/dev-kit/templates.md') (Join-Path $k 'skills/dev-kit/')   # the prose limits
+$pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') })
+$rj = Get-Content "$pl/P1/results.json" -Raw | ConvertFrom-Json; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; & $J $rj "$pl/P1/results.json"
+$po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
+Expect "finalize -Check: a 60-word observed fails the prose check ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word')
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
@@ -78,6 +86,15 @@ foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long
 $null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $lrc = $LASTEXITCODE
 $rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue); Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
 Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
+# an uploader that hosts a folder but drops a cited file: nothing is published
+Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
+Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy`nif sys.argv[1:2] == ['evidence']: print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')`nelse: sys.argv[0] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'devtools_real.py'); runpy.run_path(sys.argv[0], run_name='__main__')"
+$ur = New-Run 'U' @(@{ code = 'U1'; task = 'TU'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$ur/U1/shots" | Out-Null
+[IO.File]::WriteAllBytes("$ur/U1/shots/U1-C1_01_screen.png", [byte[]](1, 2, 3))
+$rj = Get-Content "$ur/U1/results.json" -Raw | ConvertFrom-Json; $rj.checks[0].evidence = @('U1-C1_01_screen.png'); & $J $rj "$ur/U1/results.json"
+$uo = pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String; $urc = $LASTEXITCODE
+Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
+Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 # ---- review batch 2: qa.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null

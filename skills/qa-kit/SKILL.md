@@ -63,7 +63,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
-6. **Leave:** write `results.json` (each `note`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
+6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
    "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
    (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
    `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession`, never log out); return the results.

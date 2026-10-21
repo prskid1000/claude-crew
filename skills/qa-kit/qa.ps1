@@ -57,7 +57,10 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o.Add("| Tested by | $(MdEsc $Tester) with Claude Code · $Date |")
   $o.Add("| Evidence | $(MdEsc $Map.folderLink) · $(@($Map.files.Keys).Count) files |"); $o.Add('')
   $o.Add('## Results'); $o.Add(''); $o.Add('| Check | Screen / area | Result | What was done | What we saw |'); $o.Add('|---|---|---|---|---|')
-  foreach ($c in $checks) { $o.Add("| **$(MdEsc $c.id)** | $(MdEsc $c.screen) | $($label[[string]$c.result])$(if ($c.verify) { " (re-test: $(MdEsc $c.verify))" }) | $(MdEsc $c.what_was_done) | $(MdEsc $c.observed) |") }
+  foreach ($c in $checks) {   # a FAIL's steps and saw live once, in "Failures in detail"
+    $did, $saw = if ($c.result -eq 'FAIL') { $a = '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')'; $a, $a } else { (MdEsc $c.what_was_done), (MdEsc $c.observed) }
+    $o.Add("| **$(MdEsc $c.id)** | $(MdEsc $c.screen) | $($label[[string]$c.result])$(if ($c.verify) { " (re-test: $(MdEsc $c.verify))" }) | $did | $saw |")
+  }
   if ($fails.Count) {
     $o.Add(''); $o.Add('## Failures in detail')
     foreach ($c in $fails) {
@@ -67,10 +70,8 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
       foreach ($f in @($ev | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { $o.Add(''); $o.Add((MdImg $f)) }
     }
   }
-  $notes = @($checks | Where-Object { $_.result -in 'PASS_WITH_NOTE', 'NOT_TESTED', 'OUT_OF_SCOPE' })
-  if ($notes.Count -or @($Res.findings).Count) {
+  if (@($Res.findings).Count) {   # a note's observed is in the Results table already
     $o.Add(''); $o.Add('## Notes'); $o.Add('')
-    foreach ($c in $notes) { $o.Add("- **$($c.id)** ($($label[[string]$c.result])): $(MdEsc $c.observed)") }
     foreach ($f in @($Res.findings)) { $o.Add("- $(MdEsc $f)") }
   }
   $setup = @($Res.setup_changes) + @($Res.data_created) | Where-Object { $_ }
@@ -400,8 +401,13 @@ if ($Check) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
   }
+  # finalize's prose limits, before anything is published
+  $lm = @{ folderLink = $D; files = @{} }; foreach ($x in $files) { $lm.files[$x.Name] = @{ link = $x.Name } }
+  $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
+  $pr = @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
+  if ($pr.Count) { $fail = $true; "$Code prose check: shorten observed / what_was_done in $Results (dev-kit/templates.md ""Writing standards""):"; $pr | ForEach-Object { "  $_" } }
   if ($fail) { exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids)"; exit 0
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, prose)"; exit 0
 }
 if ($lostList.Count) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run."
@@ -438,14 +444,14 @@ if ($ev.folderId) {
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
-$missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] } | ForEach-Object { "$($c.id): $_" } })
-if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
+$missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] -and [IO.Path]::GetExtension([string]$_) -match $script:EvidenceExt } | ForEach-Object { "$($c.id): $_" } })
+if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited but not uploaded - nothing was published: $($missing -join '; '). Check the upload output above, then re-run." }
 $html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # extra qa-html-report: the styled HTML goes to gdocs
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
 $null = Test-KitProse -Kind result-note -Path "$D/results.json"
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl
-$null = Test-KitProse -Kind qa-report -Text $md
+$null = Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0]
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report

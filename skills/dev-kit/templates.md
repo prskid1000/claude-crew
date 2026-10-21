@@ -29,7 +29,7 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 | testing-goals | what must be true before merge | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
 | testing-doc | the human testing doc a tester follows | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected evidence |
 | qa-report | the QA run report | header table, a verdict line per check, defects, not tested | 900w each:15b 25sw | id verdict evidence |
-| result-note | a results.json `note` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
+| result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
 | mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
 | commit | commit message | subject; blank line; body bullets | first:72ch 12l 100ch | conv |
