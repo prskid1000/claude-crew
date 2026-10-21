@@ -5,7 +5,8 @@ Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file als
 Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|orch|devkit|qa|kittool|workflows|extras[,...]] [-Slow]
 (extras: each installed extra's tests.ps1 from the extras branch, kittool.py extra test; none installed = 0 checks)
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
-Outputs: each area's PASS / FAIL lines, its time, then a total. Exit codes: 0 pass · 1 a check failed · 2 usage error.
+Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), then a total.
+Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>
 param([string[]]$Area = 'all', [switch]$Slow)
 $ErrorActionPreference = 'Stop'
@@ -33,5 +34,9 @@ foreach ($r in $results | Sort-Object { [array]::IndexOf($areas, $_.area) }) {
   if ($r.out -match '(?m)^(\d+) failure\(s\)\s*\z') { $fails += [int]$Matches[1] }
   elseif ($r.code) { $fails += [Math]::Max(1, ([regex]::Matches($r.out, '(?m)^FAIL ')).Count) }
 }
+# TEST-DUP: one behaviour, one case: a case name (its PASS / FAIL line, case and spaces ignored) twice fails the run
+$cases = foreach ($r in $results) { $at = $r.area; foreach ($l in $r.out -split '\r?\n') {
+  if ($l -match '^== extra (\S+)') { $at = "extra $($Matches[1])" } elseif ($l -match '^(?:PASS|FAIL) (.+)') { [pscustomobject]@{ name = $Matches[1].Trim().ToLower() -replace '\s+', ' '; at = $at } } } }
+foreach ($d in $cases | Group-Object name | Where-Object Count -gt 1) { "TEST-DUP $($d.Name): $($d.Group.at -join ', ')"; $fails++ }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"
 exit [int]($fails -gt 0)

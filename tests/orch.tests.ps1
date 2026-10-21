@@ -6,19 +6,10 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit orch; $O = Join-Path $k 'skills/orchestrate/orch.ps1'; $tf = Join-Path $k '.state/tracking.json'
-foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }
-$KP = Join-Path $k 'skills/orchestrate/orch.ps1'
-$null = pwsh @np $KP --help; $h0 = $LASTEXITCODE; $null = pwsh @np $KP bogus-verb; $h2 = $LASTEXITCODE
-$mk = Join-Path (Kd) 'kit main'; New-Item -ItemType Directory -Force "$mk/skills/dev-kit", "$mk/skills/orchestrate" | Out-Null
-Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/kit.example.json') "$mk/skills/dev-kit/"; Copy-Item $KP "$mk/skills/orchestrate/"
-'readme' | Set-Content "$mk/README.md"
-git -C $mk init -q; git -C $mk add -A; git -C $mk -c user.name=t -c user.email=t@t commit -q -m init
-& $J @{ localOnly = @('secret.txt') } "$mk/skills/dev-kit/kit.local.json"
-$lw = Join-Path (Kd) 'kit wt'; git -C $mk worktree add -q --detach $lw 2>$null
-'edited' | Set-Content "$lw/README.md"
+$lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/orchestrate/orch.ps1'
 $kx = (pwsh @np "$lw/skills/orchestrate/orch.ps1" setup -Exclude 2>&1 | Out-String)
-Expect 'orch.ps1: --help 0, bad verb 2; worktree: excludes to main clone, no memory' ($h0 -eq 0 -and $h2 -eq 2 -and
-  (Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+$mk = "$(Kd)/kit main"
+Expect 'setup -Exclude in a kit worktree: excludes to the main clone, no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
 git -C $mk remote add origin https://github.com/o/r.git; foreach ($b in 'main', 'extras') { git -C $mk update-ref "refs/remotes/origin/$b" HEAD }
 $po = Invoke-PsTest kit-protect @'
 $null = . $args[0] 6>$null; $global:seen = @()
@@ -72,7 +63,7 @@ $bad = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv
 $ok = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv $h | Out-String
 Expect 'launch -Self: wrong hash MISMATCH (exit 1), right one RECORDED' ($badCode -eq 1 -and $bad -match 'MISMATCH' -and $ok -match 'RECORDED')
 $null = pwsh @np $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/wave-x.md"}' 2>&1
-$rj = Get-Content (Join-Path $ld 'wf_t1.json') -Raw | ConvertFrom-Json; $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
+$rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
 $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
 Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
@@ -86,9 +77,6 @@ $sr | Add-Member -Force holderPid 999999; & $J $sr $sf.FullName 10   # its sessi
 $sl0 = pwsh @np $O launch -List -Brief | Out-String
 $dn = pwsh @np $O launch -Done -Run select-stg 2>&1 | Out-String; $sl1 = pwsh @np $O launch -List -Brief | Out-String
 Expect 'launch -Done -Run: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $dn -match 'marked completed: self-testy' -and $sl1 -notmatch 'select-stg')
-# orch batch 2: board TAKEOVER under lock; self records per args hash; promotion hold; passed statuses
-# never re-applied; "All MRs merged" once; supervise step-aside;
-# LESSONS.md lock freed on a failed -Bump; top-level --help; MergedTip on a submodule
 $bwt = Join-Path (Kd) 'bwt'
 $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
 $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
@@ -147,7 +135,7 @@ $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/orchestrate/adap
 'function Get-KitSuperviseFlagsFake([switch]$AutoFix) { "fake line $AutoFix $($null -ne $now -and $null -ne $mem -and $null -ne $keepFree)"; [pscustomobject]@{ ramNeed = 9999 }; [pscustomobject]@{ level = "WATCH"; what = "fake flag"; action = "x" }; [pscustomobject]@{ name = "fake row"; by = "me"; gb = 1 }; [pscustomobject]@{ info = "fake info" } }' | Set-Content (Join-Path $ad 'fake.ps1')
 $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String
 $sr = Get-Content (TkPath $k supervise-report) -Raw
-Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Get-Content $gb -Raw | ConvertFrom-Json).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
+Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: an extra''s hook sees the sweep''s variables, adds a sweep line, a flag, a report row, an owner line, a RAM need' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: fake row 1 GB' -and $sr -match '\*\*WATCH\*\* fake flag' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\*\*INFO\*\* fake info'); Remove-Item $ad -Recurse -Force
 $lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }

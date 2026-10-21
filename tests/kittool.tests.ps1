@@ -20,6 +20,7 @@ Expect "dev.ps1 / qa.ps1 --help exit 0 ($($hx -join ','))" (($hx -join ',') -eq 
 $out = "Merge branch 'feature/long-branch-name-for-testing' into deploy/staging-longer-name" | python -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') prose --kind merge-commit - | Out-String
 Expect 'prose: merge-commit kind (no conv, no 72-char subject)' ($LASTEXITCODE -eq 0)
 $KT = Join-Path $src 'skills/orchestrate/kittool.py'; $pf = Join-Path $k 'mr.md'
+function KtPy($code) { python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; $code" }   # kittool internals
 "## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- none`n## Links`n- doc" | Set-Content $pf
 $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-shaped MR body passes' ($LASTEXITCODE -eq 0)
 "Hi, I hope this is basically fine`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
@@ -27,11 +28,11 @@ $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler, missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')
 $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
-$wc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
+$wc = KtPy "k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
 Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
-$yq = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('qa-kit').search('see skills/qa-kit/qa.ps1') is not None)"
+$yq = KtPy "print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('qa-kit').search('see skills/qa-kit/qa.ps1') is not None)"
 Expect 'lint YAML: an unquoted ": " in a workflow fails, quoted / block scalars pass; old names after a /' ("$yq" -eq 'True [] True')
-$pc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; print(k.ps_case('function A {\n  `$s = \'{\'\n  `$o = 1\n}\nfunction B {\n  `$O = 2\n}\n'), k.ps_case('function A {\n  `$o = 1\n  if (`$x) { `$O = 2 }\n}\n'))"
+$pc = KtPy "print(k.ps_case('function A {\n  `$s = \'{\'\n  `$o = 1\n}\nfunction B {\n  `$O = 2\n}\n'), k.ps_case('function A {\n  `$o = 1\n  if (`$x) { `$O = 2 }\n}\n'))"
 Expect "PS-CASE: per function, a brace in a string ignored ($pc)" ("$pc" -eq "[] [(3, 'O', 'o', 2)]")
 $mp = Join-Path $k 'mermaid.py'; @'
 import sys, re; sys.path.insert(0, sys.argv[1]); import kittool as t
@@ -68,17 +69,12 @@ $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $k
 $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
 Expect-Each $res 'kittool: #' 'kittool-misc'
 # a throw-away git copy of the kit with a local origin: extras, lint codes, budget
-$kc = Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
-foreach ($f in @(git -C $src ls-files)) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
-$gt = { git -C $args[0] -c user.name=t -c user.email=t@t @($args | Select-Object -Skip 1) }
-git -C $kc init -q -b main; git -C $kc add -A; & $gt $kc commit -q -m 'feat: base'
-$KT2 = Join-Path $kc 'skills/orchestrate/kittool.py'
-$og = Join-Path (Split-Path $kc) 'origin.git'; git init -q --bare $og; git -C $kc remote add origin $og
+$kc = New-GitKitCopy (Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID"); $KT2 = Join-Path $kc 'skills/orchestrate/kittool.py'; $og = Join-Path (Split-Path $kc) 'origin.git'
 $xw = Join-Path (Split-Path $kc) 'xw'; git init -q -b extras $xw
 $xd = Join-Path $xw 'extras/demo'; New-Item -ItemType Directory -Force "$xd/files/skills/orchestrate" | Out-Null
 "# demo`n`nA demo command.`nNeeded when: ``tracker.type`` = ``demo```n" | Set-Content "$xd/EXTRA.md"
 "COMMANDS = {'demo': lambda a: print('demo ran') or 0}`nARGS = {'demo': (set(), set(), False)}`n" | Set-Content "$xd/files/skills/orchestrate/kittool_demo.py"
-git -C $xw add -A; & $gt $xw commit -q -m 'feat: demo extra'; git -C $xw push -q $og extras 2>&1 | Out-Null
+Save-GitRepo $xw 'feat: demo extra'; git -C $xw push -q $og extras 2>&1 | Out-Null
 $ex = { $o = & $py -X utf8 $KT2 @args 2>&1 | Out-String; [pscustomobject]@{ out = $o; code = $LASTEXITCODE } }
 '{ "tracker": { "type": "demo" } }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')
 $demo = Join-Path $kc 'skills/orchestrate/kittool_demo.py'
@@ -101,22 +97,22 @@ foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by qa.ps1): 
   New-Item -ItemType Directory -Force "$xw/extras/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/extras/$($x[0])/EXTRA.md"; "$($x[0])" | Set-Content "$xw/extras/$($x[0])/files/notes/$($x[0]).txt"
 }
 New-Item -ItemType Directory -Force "$xw/extras/duo/files/notes/__pycache__" | Out-Null; 'x' | Set-Content "$xw/extras/duo/files/notes/__pycache__/d.pyc"   # a stray build file is never installed or compared
-git -C $xw add -A -f; & $gt $xw commit -q -m 'feat: duo, own, never'; git -C $xw push -q $og extras 2>&1 | Out-Null
+git -C $xw add -A -f; git -C $xw commit -q -m 'feat: duo, own, never'; git -C $xw push -q $og extras 2>&1 | Out-Null
 '{ "targets": { "t1": { "auth": { "type": "token" } } } }' | Set-Content (Join-Path $kc 'skills/qa-kit/targets.local.json'); git -C $kc push -q origin main 2>&1 | Out-Null; git -C $kc fetch -q origin
 $s1 = & $ex extra sync; $s2 = & $ex extra sync
-"x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; & $gt $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
+"x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; git -C $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
 $s3 = & $ex extra sync
 Expect 'extra sync: installs what config or the kit needs, one line each; then silent; a branch change updates it' ($s1.code -eq 0 -and @($s1.out.Trim() -split "`n").Count -eq 3 -and $s1.out -match 'extra duo: installed' -and $s1.out -match 'extra own: installed' -and -not $s2.out.Trim() -and $s3.out.Trim() -match '^extra demo: updated 1 file' -and (Get-Content $demo -Raw) -match 'x = 1' -and -not (git -C $kc status --porcelain))
 # an extra whose earlier version listed other files (its exclude block) is updated, not refused; two syncs at once never collide
 $xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
 (Get-Content $xf -Raw) -replace '(?m)^/notes/own\.txt\r?$', "/notes/own.txt`n/notes/own-old.txt" | Set-Content $xf -NoNewline
-'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; & $gt $xw commit -qam 'fix: own'; git -C $xw push -q $og extras 2>&1 | Out-Null
+'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; git -C $xw commit -qam 'fix: own'; git -C $xw push -q $og extras 2>&1 | Out-Null
 Remove-Item (Join-Path $kc 'notes/duo.txt')
 $jobs = 1..2 | ForEach-Object { Start-Job -ArgumentList $py, $KT2 { param($py, $kt) & $py -X utf8 $kt extra sync 2>&1 | Out-String } }
 $both = (Receive-Job $jobs -Wait -AutoRemoveJob) -join "`n"
 Expect "extra sync: its own old file list is updated, not refused; two syncs at once never collide ($($both.Trim() -replace '\s+', ' '))" ($both -notmatch 'refused' -and (Get-Content (Join-Path $kc 'notes/own.txt') -Raw) -match 'own v2' -and (Test-Path (Join-Path $kc 'notes/duo.txt')))
-$kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
-Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Get-Content $kl -Raw | ConvertFrom-Json).extras
+$kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Read-Json $kl).extras
+Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Read-Json $kl).extras
 Expect 'extra add lists it in kit.local.json extras (a fresh clone''s sync reinstalls it), remove unlists it; a prose need never installs' ($a1.code -eq 0 -and 'never' -in $l1 -and $s4.out -match 'extra never: installed' -and 'never' -notin $l2 -and $s1.out -notmatch 'extra never')
 # extra sync on a config like a real install: tracker clickup, gdocs reports, a local env whose db commands run liquibase, a node
 # web service -> exactly those four (decoys: another tracker, another report type, a listed-only extra)
@@ -129,7 +125,7 @@ $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup
   'os-here' = 'Needed when: `windows` OS, `linux` OS, `macos` OS'; 'os-none' = 'Needed when: `beos` OS' }
 $wr = Join-Path (Kd) 'web repo'; New-Item -ItemType Directory -Force "$wr/app" | Out-Null; '{}' | Set-Content "$wr/app/tsconfig.json"; git -C $wr init -q; git -C $wr add -A
 foreach ($n in $needs.Keys) { New-Item -ItemType Directory -Force "$xw/extras/$n/files/notes" | Out-Null; "# $n`n`n$($needs[$n])" | Set-Content "$xw/extras/$n/EXTRA.md"; $n | Set-Content "$xw/extras/$n/files/notes/$n.txt" }
-git -C $xw add -A; & $gt $xw commit -q -m 'feat: real-like extras'; git -C $xw push -q $og extras 2>&1 | Out-Null
+Save-GitRepo $xw 'feat: real-like extras'; git -C $xw push -q $og extras 2>&1 | Out-Null
 & $J @{ tracker = @{ type = 'clickup' }; reports = @{ type = 'gdocs' }; localEnv = @{ envs = @{ e1 = @{ db = @{ applied = 'mvn liquibase:status'; rollback = 'mvn liquibase:rollback' }
   services = @(@{ name = 'api'; start = 'java -jar api.jar' }, @{ name = 'web'; start = 'yarn ng serve --port 4200' }) } } }; repos = @(@{ name = 'web'; checkout = $wr }) } $kl
 $s5 = & $ex extra sync; $got = @([regex]::Matches($s5.out, '(?m)^extra (\S+): installed') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
@@ -171,6 +167,10 @@ Expect "sections: map from markers (wrapped: lines shift), function / verb outsi
 $sf = Join-Path $k 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 $null = & $py -X utf8 $KT sections $sf (Join-Path $k 'none.ps1') 2>$null; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
 Expect 'sections: a shifted map or a missing file exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
+$td = Join-Path (Kd) 'dup/tests'; New-Item -ItemType Directory -Force $td | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1') $td
+foreach ($a in 'orch', 'devkit') { "'PASS same  Case'; 'PASS own $a'; '0 failure(s)'" | Set-Content "$td/$a.tests.ps1" }
+$tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area orch,devkit
+Expect 'kit-tests: one case name in two areas = TEST-DUP, exit 1' ($tdr.code -eq 1 -and $tdr.out -match 'TEST-DUP same case: orch, devkit' -and $tdr.out -notmatch 'TEST-DUP own')
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)

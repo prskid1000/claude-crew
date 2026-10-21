@@ -224,6 +224,9 @@ what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) becaus
 always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 200000 · all tests 33000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
 
+One behaviour, one test case: core in `tests/`, an extra's in `extras/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
+(its PASS / FAIL line) seen twice fails `tests/kit-tests.ps1` (TEST-DUP).
+
 ## Rule examples
 Path-scoped rule templates to copy into `rules/` (database migrations, any tool):
 `skills/orchestrate/kit-admin.md` "Rule examples" (extra `kit-admin`).

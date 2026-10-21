@@ -17,8 +17,8 @@ function New-Run($name, $items) {
   $d
 }
 function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c 2>&1 | Out-String }
-function Rec($d, $c) { (Get-Content "$d/$c/finalize.json" -Raw | ConvertFrom-Json).subtasks[0] }
-function Task($id) { Get-Content (Join-Path $store "$id.json") -Raw | ConvertFrom-Json }
+function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
+function Task($id) { Read-Json (Join-Path $store "$id.json") }
 function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.name -like '`[Bug`]*' }) }
 New-Item -ItemType Directory -Force $store | Out-Null
 foreach ($x in @(@('PA', 'Ask A', $null), @('PQ', 'Ask Q', $null), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) {
@@ -30,7 +30,7 @@ Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec
 Expect 'the comment lists the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '## Untested checks' -and $_.text -match '### C2' }).Count -eq 1)
 Expect 'no task created for untested checks' (-not @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count)
 $lo = New-Run 'LO' @(@{ code = 'L1'; task = 'TL'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
-$rj = Get-Content "$lo/run.json" -Raw | ConvertFrom-Json; $rj | Add-Member localEnv 'shop'; & $J $rj "$lo/run.json"
+$rj = Read-Json "$lo/run.json"; $rj | Add-Member localEnv 'shop'; & $J $rj "$lo/run.json"
 $null = Fin $lo 'L1'; $rl = Rec $lo 'L1'
 Expect 'local env: NOT_TESTED keeps the task open, not failedTesting' (-not $rl.failedTesting -and -not $rl.closed -and $rl.keptOpen -match 'ENV-FIX' -and (Task 'TL').status -ne 'failed testing')
 $b = New-Run 'B' @(@{ code = 'B1'; task = 'T2'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
@@ -45,7 +45,7 @@ Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observe
   $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
 Copy-Item (Join-Path $src 'skills/dev-kit/templates.md') (Join-Path $k 'skills/dev-kit/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') })
-$rj = Get-Content "$pl/P1/results.json" -Raw | ConvertFrom-Json; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; & $J $rj "$pl/P1/results.json"
+$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; & $J $rj "$pl/P1/results.json"
 $po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
 Expect "finalize -Check: a 60-word observed fails the prose check ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word')
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
@@ -66,34 +66,32 @@ Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -j
 # run with & after -Check's exit 0: a crashing publish must still exit 1
 $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
 Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
-# 300 long evidence paths: a fake uploader records the command-line length and the files it got
-$dt = Join-Path $k 'skills/dev-kit'; Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
-Set-Content "$dt/devtools.py" -Encoding utf8 @'
-import sys, os, runpy, ctypes
-here = os.path.dirname(os.path.abspath(__file__)); a = sys.argv
-if a[1:2] == ['evidence']:
+# finalize with a fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest the real one
+$dt = Join-Path $k 'skills/dev-kit'
+function Use-FakeUploader([string]$Evidence, [scriptblock]$Run) {
+  Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
+  Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy, ctypes`nhere = os.path.dirname(os.path.abspath(__file__)); a = sys.argv`nif a[1:2] == ['evidence']:`n$Evidence`nelse:`n    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')"
+  try { & $Run } finally { Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py" }
+}
+# 300 long evidence paths: the uploader records the command-line length and the files it got
+$lr = New-Run 'L' @(@{ code = 'L1'; task = 'T20'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$lr/L1/shots" | Out-Null
+foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long-evidence-name-' * 7)$i.png", [byte[]](1, 2, 3)) }
+$lrc = Use-FakeUploader @'
     ff = a[a.index('--files-from') + 1] if '--files-from' in a else None
     n = len([x for x in open(ff, encoding='utf-8-sig').read().splitlines() if x.strip()]) if ff else 0
     gl = ctypes.windll.kernel32.GetCommandLineW if os.name == 'nt' else None
     if gl: gl.restype = ctypes.c_wchar_p
     open(os.path.join(here, 'ev-rec.txt'), 'a').write(f'{len(gl() if gl else " ".join(a))} {n + len([x for x in a[2:] if x.endswith(".png")])}\n')
     print('{}')
-else:
-    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')
-'@
-$lr = New-Run 'L' @(@{ code = 'L1'; task = 'T20'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$lr/L1/shots" | Out-Null
-foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long-evidence-name-' * 7)$i.png", [byte[]](1, 2, 3)) }
-$null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $lrc = $LASTEXITCODE
-$rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue); Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
+'@ { $null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $LASTEXITCODE }
+$rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue)
 Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
 # an uploader that hosts a folder but drops a cited file: nothing is published
-Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
-Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy`nif sys.argv[1:2] == ['evidence']: print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')`nelse: sys.argv[0] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'devtools_real.py'); runpy.run_path(sys.argv[0], run_name='__main__')"
 $ur = New-Run 'U' @(@{ code = 'U1'; task = 'TU'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$ur/U1/shots" | Out-Null
 [IO.File]::WriteAllBytes("$ur/U1/shots/U1-C1_01_screen.png", [byte[]](1, 2, 3))
-$rj = Get-Content "$ur/U1/results.json" -Raw | ConvertFrom-Json; $rj.checks[0].evidence = @('U1-C1_01_screen.png'); & $J $rj "$ur/U1/results.json"
-$uo = pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String; $urc = $LASTEXITCODE
-Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
+$rj = Read-Json "$ur/U1/results.json"; $rj.checks[0].evidence = @('U1-C1_01_screen.png'); & $J $rj "$ur/U1/results.json"
+$uo = Use-FakeUploader "    print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String; "rc=$LASTEXITCODE" }
+$urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 # ---- review batch 2: qa.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
@@ -101,12 +99,11 @@ $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-
 $me = Get-Process -Id $PID
 & $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s'); holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') } "$sd/claims/CL__C1.json"
 & $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s') } "$sd/claims/CL__C2.json"
-$o1 = pwsh @np $Q seat acquire -Agent test:C1 -Kind api -RunDir $crd -Code C1 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String; $c1 = $LASTEXITCODE
-$o2 = pwsh @np $Q seat acquire -Agent test:C2 -Kind api -RunDir $crd -Code C2 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String
-$null = pwsh @np $Q seat release -Agent test:C2
-$null = pwsh @np $Q seat acquire -Agent test:C3 -Kind api -KeepFreeGB 100000 -WaitMinutes 0; $c3 = $LASTEXITCODE
-$null = pwsh @np $Q seat release -Agent test:C3
-Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; still waiting exits 4' ($c1 -eq 3 -and $o1 -match 'ALREADY' -and $o2 -notmatch 'ALREADY' -and $c3 -eq 4)
+& $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } "$sd/claims/CL__C4.json"
+$sq = { param($c, [double]$gb = 0.1) pwsh @np $Q seat acquire -Agent "test:$c" -Kind api -RunDir $crd -Code $c -Owner w1 -KeepFreeGB $gb -WaitMinutes 0 | Out-String; "rc=$LASTEXITCODE"; $null = pwsh @np $Q seat release -Agent "test:$c" }
+$o1, $o2, $o4, $o3 = ('C1', 'C2', 'C4' | ForEach-Object { "$(& $sq $_)" }) + "$(& $sq C3 100000)"
+Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; a dead holder''s is taken over; still waiting exits 4' ($o1 -match 'ALREADY' -and $o1 -match 'rc=3' -and $o2 -notmatch 'ALREADY' -and
+  $o4 -notmatch 'ALREADY' -and (Read-Json "$sd/claims/CL__C4.json").owner -eq 'w1' -and $o3 -match 'rc=4')
 New-Item -ItemType Directory -Force "$sd/seats" | Out-Null
 $sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) "$sd/seats/$n.json" }
 & $sw L1 @{ holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
@@ -158,28 +155,17 @@ $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are t
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deployed-checks' -and $xo[1] -match '(?s)^2 .*extra add annotate' -and $wo -match 'no api URL')
-$sv = "$(Kd)/s.cjs"; $P = 18000 + $PID % 1000
-Set-Content $sv @'
-require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
-  const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
-  if (u === '/login') return /R1/.test(b) ? j({ access_token: 'A2' }) : j({ access_token: 'A1', refresh_token: 'R1' }, 200, { 'set-cookie': ['sid=1', 'XSRF-TOKEN=x1'] })
-  const ok = { '/l': h.authorization === 'Bearer A1', '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
-  j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
-'@
-$srv = Start-Process node -ArgumentList $sv, $P -PassThru -NoNewWindow; Start-Sleep 1
+$api = Start-TestApi; $P = $api.port
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 $xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
 Expect "api auth login + none; other kinds name their extra ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is an extra: run kittool\.py extra add api-auth')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
-$srv.Kill()
+$api.proc.Kill()
 # browser.mjs: mocks, then local fixture servers
-$nm = "$src/skills/qa-kit/node_modules"; $qk = "$k/skills/qa-kit"
-if (Test-Path "$nm/puppeteer-core") {
-  Copy-Item "$src/skills/qa-kit/browser.mjs" $qk
-  New-Item -ItemType Junction -Path "$qk/node_modules" -Value (Resolve-Path $nm).Path | Out-Null
-  function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = 'file:///$("$qk/browser.mjs" -replace '\\', '/')', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
+$qk = "$k/skills/qa-kit"
+if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
     "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
   Expect 'browser.mjs pick: bad nth / hidden element errors' ("$res" -eq 'true true')
@@ -222,43 +208,22 @@ await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs
   foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x" (@($res) -contains "${x}:true") }
   Expect 'browser.mjs: never logs out' ((Get-Content "$qk/browser.mjs" -Raw) -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
   # fixture app: form login, relogin (Chrome); sso-steps / other engines name their extra
-  $res = NodeT auth @'
-import http from 'node:http'
-import { writeFileSync } from 'node:fs'
-const [TF, SLOW] = process.argv.slice(2), U = { admin: ['qa', '', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'] }, F = { '#u': '{user}', '#c': '123456' }
-let posts = 0, gen = 1
-const form = (to) => `<html><form method="post" action="${to}"><input id="u" name="u"><input id="c" name="c"><button>Go</button>`
-const app = http.createServer((q, s) => {
-  const go = (l, c) => { s.writeHead(302, { location: l, ...(c && { 'set-cookie': `sid=${gen}; HttpOnly` }) }); s.end() }
-  if (q.method === 'POST') { posts++; let d = ''; q.on('data', (x) => (d += x)); return q.on('end', () => (/u=qa&c=\d{6}/.test(d) ? go(web + '/', 1) : go(q.url))) }
-  if (/^\/(login|idp)$/.test(q.url)) return s.end(form(q.url === '/idp' ? web + '/sso' : '/login'))
-  if (q.headers.cookie === `sid=${gen}`) return s.end('<html>home')
-  go(q.url === '/sso-app' ? web.replace('127.0.0.1', 'localhost') + '/idp' : '/login')
-})
-await new Promise((r) => app.listen(0, r))
-const web = `http://127.0.0.1:${app.address().port}`, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
+  $res = NodeT auth ($LoginApp + @'
+const [TF, SLOW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '123456' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
   sso: { web, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
-const b = await import(BM + '?a'), home = async (s) => (await b.text(s.page)).includes('home'), out = async (k, f) => console.log(k + ':' + await f().catch((e) => e.message))
+const { b, home, out } = await login()
 await out('extras', async () => /extra add browser-engines/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
 process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
 // a real headless Chrome only with KIT_TESTS_SLOW (seconds each)
 if (SLOW) await out('webext', async () => /extra add web-login-types/.test(await b.session({ target: 'sso' }).then(() => '', (e) => e.message)))
 if (SLOW) await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 process.exit(0)
-'@ "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
+'@) "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
   foreach ($x in @('extras', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' })) { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") }
-  [IO.Directory]::Delete("$qk/node_modules")   # the junction only
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/qa-kit)' }
-$sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
-Set-JsonFile "$sd/seats/test_D1.json" @{ agent = 'test:D1'; kind = 'web'; need = 1.5; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' }
-$rd = Join-Path (Kd) 'runs/S'; New-Item -ItemType Directory -Force $rd | Out-Null
-Set-JsonFile "$sd/claims/S__S1.json" @{ run = 'S'; code = 'S1'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' }
-$null = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat status
-$cl = pwsh @np (Join-Path $k 'skills/qa-kit/qa.ps1') seat acquire -Agent test:S1 -Kind api -RunDir $rd -Code S1 -Owner w1 -KeepFreeGB 0.1 -WaitMinutes 0 | Out-String
-Expect 'seats: a dead holder''s seat is freed, its claim taken over' (-not (Test-Path "$sd/seats/test_D1.json") -and $cl -notmatch 'ALREADY' -and (Get-Content "$sd/claims/S__S1.json" -Raw | ConvertFrom-Json).owner -eq 'w1')
 $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
-$rk = Get-Content "$fk/K1/results.json" -Raw | ConvertFrom-Json; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
+$rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
 Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PQ' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE

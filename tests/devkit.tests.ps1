@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit dev; $D = Join-Path $k 'skills/dev-kit/dev.ps1'; $O = Join-Path $k 'skills/orchestrate/orch.ps1'
 $r = Join-Path (Kd) 'git'; New-Item -ItemType Directory -Force "$r/outer/inner" | Out-Null
-$env:CLAUDE_WT_ROOT = "$r/wt"; foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }
+$env:CLAUDE_WT_ROOT = "$r/wt"
 try {
   git -C "$r/outer" init -q; git -C "$r/outer" commit -q --allow-empty -m init
   'x' | Set-Content "$r/outer/stray.txt"; 'y' | Set-Content "$r/outer/inner/a.txt"
@@ -119,23 +119,22 @@ Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
 # migrations: the repo's own check, Liquibase (extra), any other tool UNRUN
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
-git -C $ud init -q; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m init
-$env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # the test builds need no free-RAM reserve: a busy machine must not stall them
+Save-GitRepo $ud init
 New-Item -ItemType Directory -Force "$ud/db/migrate", "$ud/database/migrations" | Out-Null; 'def change; end' | Set-Content "$ud/db/migrate/20240101000000_x.rb"
-'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m rb
+'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; Save-GitRepo $ud rb
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $out -match '000000_x\.php' -and $out -notmatch 'CHANGELOG')
 $tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
-'x' | Set-Content "$tr/src/Audit.spec.ts"; git -C $tr init -q; git -C $tr add -A; git -C $tr -c user.name=t -c user.email=t@t commit -q -m i; 'x' | Set-Content "$tr/src/Audit.ts"
+'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
 $out = pwsh @np $D check -Dir $tr -Step test -Touched 2>&1 | Out-String
 Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its spec runs' ($out -match '-Touched: 1 test\(s\) for 1 changed file\(s\): src/Audit\.spec\.ts')
 New-Item -ItemType Directory -Force "$ud/alembic/versions", "$ud/prisma/migrations/1_x", "$ud/db/migration" | Out-Null
 'x' | Set-Content "$ud/alembic/versions/a1_x.py"; 'x' | Set-Content "$ud/prisma/migrations/1_x/migration.sql"; 'x' | Set-Content "$ud/db/migration/V1__x.sql"
-git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m tools
+Save-GitRepo $ud tools
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: Flyway, Alembic and Prisma files are UNRUN too' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 5 migration file\(s\) of another tool')
 New-Item -ItemType Directory -Force "$ud/config/liquibase" | Out-Null; '<databaseChangeLog/>' | Set-Content "$ud/config/liquibase/master.xml"
-git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m lb
+Save-GitRepo $ud lb
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: Liquibase without the extra is UNRUN with the extra line' ($LASTEXITCODE -eq 5 -and $out -match 'extra add liquibase')
 $wd = Join-Path (Kd) 'web-no-tests'; New-Item -ItemType Directory -Force $wd | Out-Null
@@ -145,7 +144,7 @@ Expect 'check: no test target and no extra node-spec = UNRUN with the extra line
 $sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
 $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
-$out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
+$out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
 Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 # gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor
 $gt = @'
@@ -165,12 +164,8 @@ $na = Join-Path $k 'skills/dev-kit/adapters/note_test.ps1'; New-Item -ItemType D
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
 $rt = Invoke-TestScript $D runtime status
 Expect "guard: an extra's note is context, no decision; runtime without its extra exits 1 ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision' -and $rt.code -eq 1 -and $rt.out -match 'extra add runtimes')
-$mk = Join-Path (Kd) 'main kit'; New-Item -ItemType Directory -Force "$mk/skills/dev-kit" | Out-Null
-Copy-Item (Join-Path $k 'skills/dev-kit/lib.ps1'), (Join-Path $k 'skills/dev-kit/kit.example.json') "$mk/skills/dev-kit/"
-git -C $mk init -q; git -C $mk add -A; git -C $mk -c user.name=t -c user.email=t@t commit -q -m init
-& $J @{ tracker = @{ type = 'jira' } } "$mk/skills/dev-kit/kit.local.json"
-$lw = Join-Path (Kd) 'wt kit'; git -C $mk worktree add -q --detach $lw 2>$null
+$lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' } }
 $tt = pwsh -NoProfile -Command ". '$lw/skills/dev-kit/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
-Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*wt kit failed' -and $tt -match '(?m)^False')
+Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 Remove-TestKit $k
 Complete-Tests
