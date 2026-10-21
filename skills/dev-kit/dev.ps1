@@ -368,10 +368,9 @@ function Get-Stack($d) {
   }
   # installed extras (stack-presets): .NET, Go, Rust, CMake, Make
   foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
-  if (-not $s -and (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile')) { throw (Get-KitExtraLine 'stack' 'presets') }
-  if (-not $s) { return $null }
-
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
+  if (-not $s -and -not $ovr.stack -and (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile')) { throw (Get-KitExtraLine 'stack' 'presets') }
+  if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone is a stack (the "add a .claude-stack.json" advice)
 
   if ($ovr) {
     if ($ovr.stack) { $s = $ovr.stack }

@@ -158,6 +158,9 @@ New-Item -ItemType Directory -Force "$ud/config/liquibase" | Out-Null; '<databas
 git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m lb
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: Liquibase without the extra is UNRUN with the extra line' ($LASTEXITCODE -eq 5 -and $out -match 'extra add liquibase')
+$sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
+$out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
+Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
 Expect 'gate: gradle gets the heap cap' ($out -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
 # gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor
