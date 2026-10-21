@@ -20,7 +20,8 @@ feature goes to the `extras` branch, not the core.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps` (the README "Extending" table). Over a budget: trim first (dense prose, dedupe, never golf that
   hurts reading); only when trimming cannot make room, `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason
-  goes in the commit message) [BUDGET-CAP refuses any other change of the total].
+  goes in the commit message) [BUDGET-CAP refuses any other change of the total]. The total counts what agents load; `tests/`
+  has its own cap `_manifest.caps.testTokens` [BUDGET-TESTS].
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
 - **Generic** [ORG-TERM]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`
