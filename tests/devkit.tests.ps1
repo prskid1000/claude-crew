@@ -72,6 +72,8 @@ $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd')
   $e = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
   if ($LASTEXITCODE -ne $r[2] -or $e.Trim() -notmatch $r[3]) { "$($r[0]) -> $LASTEXITCODE $($e.Trim())" } }
 Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
+$mw = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
+Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
 Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
 $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
@@ -109,6 +111,10 @@ New-Item -ItemType Directory -Force "$ud/db/migrate", "$ud/database/migrations" 
 'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m rb
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $out -match '000000_x\.php' -and $out -notmatch 'CHANGELOG')
+$tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
+'x' | Set-Content "$tr/src/Audit.spec.ts"; git -C $tr init -q; git -C $tr add -A; git -C $tr -c user.name=t -c user.email=t@t commit -q -m i; 'x' | Set-Content "$tr/src/Audit.ts"
+$out = pwsh @np $D check -Dir $tr -Step test -Touched 2>&1 | Out-String
+Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its spec runs' ($out -match '-Touched: 1 test\(s\) for 1 changed file\(s\): src/Audit\.spec\.ts')
 New-Item -ItemType Directory -Force "$ud/alembic/versions", "$ud/prisma/migrations/1_x", "$ud/db/migration" | Out-Null
 'x' | Set-Content "$ud/alembic/versions/a1_x.py"; 'x' | Set-Content "$ud/prisma/migrations/1_x/migration.sql"; 'x' | Set-Content "$ud/db/migration/V1__x.sql"
 git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m tools

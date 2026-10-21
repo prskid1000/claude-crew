@@ -153,4 +153,6 @@ Expect "budget: +35000 test tokens leave the kit total as is, add to tests; over
   $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap 33000\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 8000\)')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 Remove-TestKit $k
+$null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
+Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 Complete-Tests

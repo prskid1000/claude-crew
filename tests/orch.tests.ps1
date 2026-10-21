@@ -84,6 +84,8 @@ $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
 $bt = pwsh @np $O board beat -Session $s1 | Out-String; $btc = $LASTEXITCODE
 $bd = TkPath $k board
 Expect 'board: beat after TAKEOVER exit 1, no lock left' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
+$lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String
+Expect 'board leave: an unknown session exits 1, records no handoff' ($LASTEXITCODE -eq 1 -and $lv -match 'unknown session')
 $a2 = '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'; $af2 = Join-Path (Kd) 'args2.json'; [IO.File]::WriteAllText($af2, $a2)
 $h2 = & { . $O; Get-KitFnv $a2 }
 $null = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af2 -Fnv $h2

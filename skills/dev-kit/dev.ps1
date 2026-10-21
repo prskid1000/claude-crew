@@ -720,7 +720,7 @@ foreach ($s in $steps) {
     $tracked = @(git -C $st.dir ls-files 2>$null)
     $found = foreach ($cf in $chg) {
       $n = [IO.Path]::GetFileNameWithoutExtension($cf) -replace '\.(spec|test)$', ''
-      if ($cf -match '\.(spec|test)\.\w+$' -or $n -match '(Test|Tests|IT|_test)$' -or $n -match '^test_') { $cf; continue }
+      if ($cf -match '\.(spec|test)\.\w+$' -or $n -cmatch '(Test|Tests|IT|_test)$' -or $n -match '^test_') { $cf; continue }
       foreach ($p in $pat) { $w = $p.Replace('{name}', $n); @($tracked | Where-Object { $b = [IO.Path]::GetFileName($_); $b -like "$w.*" }) | ForEach-Object { Join-Path $st.dir $_ } }
     }
     $byName = $st.stack -match 'maven|gradle|android|kotlin|java|dotnet|msbuild'

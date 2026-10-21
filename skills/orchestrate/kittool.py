@@ -908,6 +908,8 @@ def cmd_flow(a):
 # ==== 4. lint command
 def org_terms_of(value):
     """--org-terms: a kit.local.json (its orgTerms) or a comma list."""
+    if value.lower().endswith('.json') and not osp.isfile(value):   # a mistyped path as a "term" passes every file
+        print(f'kittool lint: --org-terms {value}: no such file', file=sys.stderr); sys.exit(2)
     if not osp.isfile(value):
         return [x for x in value.split(',') if x.strip()]
     data, err = load_json(value)
