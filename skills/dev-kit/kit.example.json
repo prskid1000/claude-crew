@@ -13,7 +13,8 @@
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: browser profiles kept",
   "bugfixMandate, localOnly, orgTerms, extras": "words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it)",
-  "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it" },
+  "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json from it",
+  "localEnv": "local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example)" },
  "gitHost": "gitlab.com",
  "gitHostType": "gitlab",
  "gitHostApi": { "commands": {} },
@@ -51,32 +52,13 @@
  "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
  "tests": { "_readme": "Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
- "localEnv": {
-  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db.snapshot / restore: commands ({snapshot} = the name) run around migration layers. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
-  "maxLeaseMinutes": 120,
-  "idle": { "minMinutes": 15, "maxMinutes": 60 },
-  "envs": {
-   "shop": {
-    "description": "API + web of the shop",
-    "services": [
-     { "name": "db", "external": true, "port": 5432 },
-     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://localhost:8080/health", "dependsOn": ["db"],
-      "build": "mvn -q package -DskipTests", "artifact": "target/api-*.jar",
-      "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
-     { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
-    ],
-    "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
-    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>" }
-   }
-  }
- },
  "protectedBranches": ["staging"],
  "cleanup": { "maxBrowserProfiles": 4 },
  "memory": { "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored); true = keep the user's own setting.", "keepDefault": false },
  "devices": { "type": "android" },
  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
- "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min).", "heapMinGB": 4, "startHeapGB": { "gradle": 12, "maven": 8, "node": 4 } },
+ "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: extra build-heap; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min)." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 25 },
  "idle": { "graceMinutes": 10, "beatMinutes": 20 },
  "budget": { "_readme": "An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item",
@@ -116,23 +98,6 @@
      "users": { "admin": ["qa-admin", "<password>"], "qa-user-1": ["qa-user-1", "<password>"] }
     },
     "local": { "web": "http://localhost:4200", "api": "http://localhost:8080", "auth": { "type": "login", "path": "/api/authenticate", "contentType": "json", "body": { "username": "{user}", "password": "{pass}" }, "tokenField": "id_token", "header": "Authorization: Bearer {token}" }, "users": { "admin": ["qa-admin", "<password>"] } }
-   }
-  },
-  "skills/android-swarm/swarm.config.json": {
-   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp; flutter, maui, capacitor: extra app-kinds. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
-   "avdDir": "",
-   "outDir": "",
-   "headless": false,
-   "lanes": [
-    { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
-    { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }
-   ],
-   "app": {
-    "kind": "react-native", "package": "com.example.app", "appDir": "/path/to/example-app/app", "branch": "main",
-    "buildTask": "assembleRelease", "buildArgs": "-PreactNativeArchitectures=x86_64 -Dorg.gradle.workers.max=4",
-    "apkGlob": "app/build/outputs/apk/release/*.apk", "permissions": ["CAMERA", "ACCESS_FINE_LOCATION"],
-    "localManifests": ["src/debugOptimized/AndroidManifest.xml", "src/debug/AndroidManifest.xml"], "localReverse": [8080],
-    "javaHome": "", "javaVersions": [17, 21]
    }
   }
  },

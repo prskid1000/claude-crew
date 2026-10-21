@@ -115,7 +115,7 @@ git clone https://github.com/prskid1000/claude-crew <workspace>/.claude
 pwsh -File <workspace>/.claude/skills/orchestrate/orch.ps1 setup -WriteLocal   # git hooks, excludes, .runtime/.state, local config stubs
 ```
 Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker CLI, `gws`, the Android SDK. Fill
-`skills/dev-kit/kit.local.json`, `skills/qa-kit/targets.local.json` (the only place for passwords), `swarm.config.json` (phones);
+`skills/dev-kit/kit.local.json`, `skills/qa-kit/targets.local.json` (the only place for passwords), phones: `swarm.config.json` (extra android-swarm);
 `npm install` in `skills/qa-kit`. Update: `git pull` once nothing runs.
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
 Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
@@ -154,7 +154,8 @@ needs a missing extra stops with `<feature> is an extra: run kittool.py extra ad
 | `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
 | `bugfixMandate`, `localOnly`, `orgTerms`, `extras` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it) |
-| `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
+| `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json from it |
+| `localEnv` |  | local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example) |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
 | `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
@@ -163,11 +164,10 @@ needs a missing extra stops with `<feature> is an extra: run kittool.py extra ad
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them) |
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
-| `localEnv` | {"maxLeaseMinutes": 120, "idle": {"minMinutes": 15, "maxMinutes":… | Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.&lt;env&gt;.db.snapshot / restore: commands ({snapshot} = the name) run around migration layers. Secrets: &lt;kit&gt;/.state/localenv/&lt;env&gt;.env (dotenv), never here. |
 | `memory` | {"keepDefault": false} | keepDefault: false = Claude Code auto memory lives in &lt;kit&gt;/memory/ (git-ignored); true = keep the user's own setting. |
 | `kitAudit` | {"everyDays": 7} | everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off). |
 | `build` | {"mavenOffline": true} | mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true). |
-| `gate` | {"heapMinGB": 4, "startHeapGB": {"gradle": 12, "maven": 8, "node": 4}} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB = first heap for a project with no history; heapMinGB = the floor; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min). |
+| `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: extra build-heap; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min). |
 | `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
