@@ -69,7 +69,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   directly; waiting is normal, a killed build is not a code failure. Tool timeout 600000 ms (or `run_in_background`). A gate
   still queued when you must stop: push, open the MR as Draft with `Not run: <gate>`, report NOT_MERGED. No dev servers by hand
   (the local env runs them), at most one headless browser; phones only through
-  `swarm.ps1 acquire` (never `up`/`down`; extra `android-swarm`).
+  `swarm.ps1 acquire` (never `up`/`down`; extra `android-swarm`); Docker / WSL / VMs: `dev.ps1 runtime use -Name <r>` first,
+  `release` when done (extra `runtimes`; the guard leases for an agent that forgets).
 - **Tests** (stack-agnostic; reviewers check them, the dev loop is the guard because CI may skip tests):
   - Ship: unit tests for new/changed logic; a regression test per fixed bug (red before, green after); integration/API tests
     for endpoints touched; UI/component tests for screens touched where the stack supports it.

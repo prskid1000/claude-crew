@@ -24,7 +24,8 @@ Non-negotiables:
   `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
 - Your own worktree (`dev.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
 - Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
-  `swarm.ps1 acquire` (extra `android-swarm`).
+  `swarm.ps1 acquire` (extra `android-swarm`); Docker / WSL: `dev.ps1 runtime use -Name <r>` before, `release` after
+  (extra `runtimes`).
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
 - The local env is ours: never stop for an env reason (local-env "Unblock yourself"); a fix only kitty or the coordinator may

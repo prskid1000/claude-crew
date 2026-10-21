@@ -106,8 +106,8 @@ The rule: "Configuration" `budget`; per-tool defaults in the table.
 <!-- kit-graph:end -->
 
 ## Leases
-One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds; only owner
-holds (`localenv.ps1 up -Owner`, phone `manual`; extra `local-env`, extra `android-swarm`) keep minutes, with a reminder.
+One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (extra `runtimes`);
+only owner holds (`localenv.ps1 up -Owner`, phone `manual`; extra `local-env`, extra `android-swarm`) keep minutes, with a reminder.
 
 ## Install
 ```powershell
@@ -156,6 +156,7 @@ needs a missing extra stops with `<feature> is an extra: run kittool.py extra ad
 | `bugfixMandate`, `localOnly`, `orgTerms`, `extras` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it) |
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json from it |
 | `localEnv` |  | local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example) |
+| `runtimes` |  | machine runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match (extra runtimes: its EXTRA.md has the shape) |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
 | `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |

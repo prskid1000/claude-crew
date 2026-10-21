@@ -27,6 +27,7 @@ Non-negotiables (qa-kit tester steps 0-6 hold in full; these never bend):
 - PASS only for behaviour you saw, with its evidence; any defect is FAIL (`defect: own` | `new`), never a note; NOT_TESTED only
   when truly impossible, with `cause` (never "no time"); a local item: unblock the env yourself, a kitty / coordinator fix ->
   NOT_TESTED with `env_fix`.
+- Docker / WSL: `dev.ps1 runtime use -Name <r>` before, `release` after (extra `runtimes`).
 - Only the run's target env; load, stress and perf runs only on the local env, never on a shared one; never production.
 - **verify** (re-test every FAIL, audit every note): its rules are in the /testy prompts. Read-only.
 - A disagreement with another agent's result (own vs new, a refutation) -> `board msg` it; still split -> `decide ask`.

@@ -8,6 +8,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
+ runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L20 wt · L212 stack · L387 gate · L637 check · L789 pipes · L825 guard · L1065 tracker · L1098 host
@@ -1059,8 +1060,6 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
   }
 }
-# installed extras add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason or nothing> } } ($a: cmd, config)
-foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; config = $kc }; if ($why) { Deny $why } }
 $gated = $cmd -match 'dev\.ps1["'']?\s+(gate|check)\b|swarm\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
 $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
@@ -1069,7 +1068,11 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else dev.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
+# installed extras add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason, @{ note = '<line for the agent>' } or nothing> } }
+# ($a: cmd without quoted data, raw, config, hook input); last, so a note's side effect only follows a command that runs
+$notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
+elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
 exit 0
 }
 
@@ -1124,6 +1127,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'guard' { Invoke-KitVerb Invoke-Guard $__rest }
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
     'host' { Invoke-KitVerb Invoke-Host $__rest }
+    'runtime' { if (Get-Command Invoke-Runtime -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Runtime $__rest } else { [Console]::Error.WriteLine('dev.ps1 runtime is an extra: run kittool.py extra add runtimes'); exit 1 } }
     default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
   }
 }

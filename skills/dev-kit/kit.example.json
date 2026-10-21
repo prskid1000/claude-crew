@@ -14,7 +14,8 @@
   "cleanup": "maxBrowserProfiles: browser profiles kept",
   "bugfixMandate, localOnly, orgTerms, extras": "words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it)",
   "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json from it",
-  "localEnv": "local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example)" },
+  "localEnv": "local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example)",
+  "runtimes": "machine runtimes agents lease (container engine, WSL distro, VM): <name>: isUp, up, down, match (extra runtimes: its EXTRA.md has the shape)" },
  "gitHost": "gitlab.com",
  "gitHostType": "gitlab",
  "gitHostApi": { "commands": {} },
@@ -204,7 +205,7 @@
    "outbox": "outbox.jsonl",
    "tracker-none": "tracker-none/",
    "localenv-env": "localenv/",
-   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json"
+   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/"
   }
  }
 }
