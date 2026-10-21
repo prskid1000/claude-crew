@@ -1750,8 +1750,9 @@ def extra_test(kit, names):
             o = 'FAIL timed out after 300 s\n'
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        fails += len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
-        print(f'== extra {name}\n{o.rstrip()}')
+        failed = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
+        fails += failed
+        print(f'== extra {name}\n{o.rstrip()}\n-- extra {name}: {len(re.findall(r"(?m)^PASS ", o))} pass, {failed} fail')   # its own count: never read as the next one's
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 

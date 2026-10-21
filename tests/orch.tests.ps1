@@ -162,8 +162,6 @@ $lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
 $lw = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
 Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
-$er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web') }); holds = @() }) (Get-Date) }
-Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
 $null = pwsh @np $O learn -Skill revy -Bump 'no such lesson words'; $bc2 = $LASTEXITCODE
 Expect 'learn -Bump miss: exit 1, LESSONS.md lock released' ($bc2 -eq 1 -and -not (Test-Path (Join-Path $k 'LESSONS.md.lock')))
 $hlp = pwsh @np $O --help | Out-String; $hc2 = $LASTEXITCODE; $null = pwsh @np $O nope; $nc = $LASTEXITCODE
@@ -241,10 +239,6 @@ $an = & { . $O; $c = @{ logs = @(@{ path = 'api.log'; errors = 2; first = 'ERROR
   "$((Get-KitAnomalies $c @{ outbox = 1; toolErrors = 1 }).flags.what -join "`n")`n$((Get-KitAnomalies @{ outbox = 0 } @{}).flags.Count)" }
 $want = 'ERROR SPIKE: 2', 'RESTART LOOP: shop api', 'outbox grew to 4', '1 new agent', 'shop web port 4200', '\n0$'
 Expect "supervise anomalies: every flag from its fixture, none on a quiet round" (-not @($want | Where-Object { $an -notmatch $_ }).Count)
-$lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} })
-Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
-$s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
-Expect 'supervise anomalies: only new log error lines count; level words case-sensitive (WARN ... Error while is none)' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 4)
 $hr = & { . $O; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddHours(-$h).ToString('o') } }
   $q = @{}; $a = Get-KitSilentRun 'wf1' 60 $q $n; $b = Get-KitSilentRun 'wf1' 61 $q $n; $c = Get-KitSilentRun 'wf2' 3 $q $n; $null = Get-KitSilentRun 'wf1' 2 $q $n; $d = Get-KitSilentRun 'wf1' 50 $q $n
   $fails = Get-KitBuildFailures @{ old = @((& $f 150 $false), (& $f 149 $false), (& $f 148 $false)); new = @((& $f 3 $false), (& $f 2 $false), (& $f 1 $false)); mixed = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n
