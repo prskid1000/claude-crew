@@ -797,23 +797,26 @@ def readme_sections(k, g):
     nodes, edges = g['nodes'], g['edges']
     label = lambda f: skill_of(f) if nodes[f]['kind'] == 'skill' else osp.basename(f).rsplit('.', 1)[0]
     nid = lambda f: re.sub(r'[^A-Za-z0-9]', '_', f)
+    cut = lambda s, n: s if len(s) <= n else s[:n].rsplit(' ', 1)[0] + '…'   # at a word
+    # Mermaid text: always quoted (unquoted ( ) ; : parse as shape tokens); entity-escape what ends or opens a token
+    mq = lambda s: '"' + re.sub(r'["#<>`|]', lambda m: {'"': '#quot;', '#': '#35;', '<': '#lt;', '>': '#gt;', '`': '#96;', '|': '#124;'}[m.group(0)], re.sub(r'\s+', ' ', str(s)).strip()) + '"'
     out = {}
-    lines = ['flowchart LR', '  CLAUDE_md[CLAUDE.md] -->|import| AGENTS_md[AGENTS.md Router]']
+    lines = ['flowchart LR', f'  CLAUDE_md[{mq("CLAUDE.md")}] -->|{mq("import")}| AGENTS_md[{mq("AGENTS.md Router")}]']
     # the README is published: local-overlay parts (localOnly, *.local.*) never appear
     pub = lambda f: f in nodes and not nodes[f].get('local')
     tops = [f for f, n in sorted(nodes.items()) if n['kind'] in ('skill', 'workflow', 'agent') and pub(f)]
     for f in tops:
         shape = {'skill': '[{}]', 'workflow': '[/{}/]', 'agent': '({})'}[nodes[f]['kind']]
-        lines.append(f'  {nid(f)}' + shape.format(label(f)))
+        lines.append(f'  {nid(f)}' + shape.format(mq(label(f))))
     for (a, b), typ in sorted(edges.items()):
         if a in ('AGENTS.md',) and b in tops and typ == 'route':
             lines.append(f'  AGENTS_md --> {nid(b)}')
         elif a in tops and b in tops and typ == 'spawn' and nodes[a]['kind'] == 'workflow':
-            lines.append(f'  {nid(a)} -->|spawns| {nid(b)}')
+            lines.append(f'  {nid(a)} -->|{mq("spawns")}| {nid(b)}')
     for a, p in sorted(k.agents.items()):   # the skill on its "Load first" line
         m = re.search(r'Load first:\*\*\s*`[^`]*skills/([\w-]+)/SKILL\.md', k.texts.get(p, ''))
         if m and f'skills/{m.group(1)}/SKILL.md' in nodes:
-            lines.append(f'  {nid(p)} -->|loads| {nid(f"skills/{m.group(1)}/SKILL.md")}')
+            lines.append(f'  {nid(p)} -->|{mq("loads")}| {nid(f"skills/{m.group(1)}/SKILL.md")}')
     out['map'] = lines
     man = manifest(k.dir)
     out['table-crew'] = ['| Agent | Job | Kinds / roles | Used in | Can\'t | Character |', '|---|---|---|---|---|---|'] + [
@@ -826,7 +829,6 @@ def readme_sections(k, g):
     bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # the budget rule's per-tool defaults
     out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
     ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row
-    cut = lambda s, n: s if len(s) <= n else s[:n].rsplit(' ', 1)[0] + '…'   # at a word
     cell = lambda v, n=70: cut(re.sub(r'\s+', ' ', json.dumps(v, ensure_ascii=False) if not isinstance(v, str) else v).replace('|', '/'), n).replace('<', '&lt;').replace('>', '&gt;')
     rows, done = [], set()
     for key, txt in (ex.get('_doc') or {}).items():
@@ -840,22 +842,21 @@ def readme_sections(k, g):
     caps = man.get('caps') or {}
     out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · total {caps.get('totalTokens')} · files: {caps.get('content')} content + {caps.get('plumbing')} plumbing"]
     ma, mw = man.get('agents') or {}, man.get('workflows') or {}   # crew hero: who starts whom
-    out['crew'] = ['flowchart LR', '  OW([owner]) -->|asks, says deploy env| CO[coordinator: Router + Events]'] + [
-     x for w, m in mw.items() for x in [f"  CO -->|{m.get('router', '')}| W_{w}[/{w}/]"] + [f'  W_{w} -->|spawns| A_{c}({c})' for c in m.get('crew', [])]] + [
-     f"  CO -->|{', '.join(u for u in m.get('usedIn', []) if u.startswith('R'))}| A_{a}({a})" for a, m in ma.items() if any(u.startswith('R') for u in m.get('usedIn', []))]
+    out['crew'] = ['flowchart LR', f'  OW([{mq("owner")}]) -->|{mq("asks, says deploy env")}| CO[{mq("coordinator: Router + Events")}]'] + [
+     x for w, m in mw.items() for x in [f"  CO -->|{mq(m.get('router', ''))}| W_{w}[/{mq(w)}/]"] + [f'  W_{w} -->|{mq("spawns")}| A_{c}({mq(c)})' for c in m.get('crew', [])]] + [
+     f"  CO -->|{mq(', '.join(u for u in m.get('usedIn', []) if u.startswith('R')))}| A_{a}({mq(a)})" for a, m in ma.items() if any(u.startswith('R') for u in m.get('usedIn', []))]
     rr = [r for r in table_rows(k.texts.get('AGENTS.md', '')) if len(r) > 2 and re.match(r'R\d+$', r[0])]   # Router: first match wins
     sh = lambda s, n: cut(re.sub(r'\s+([,.])', r'\1', re.sub(r'\s+', ' ', re.sub(r'[`"\[\]{}()<>|#;]', '', re.sub(r'\([^)]*\)', '', s)))).strip(), n)
-    out['router'] = ['flowchart TD', '  Q([request]) --> R0'] + [
-     x for i, r in enumerate(rr) for x in [f'  {r[0]}{{"{r[0]}: {sh(r[1], 40)}"}} -->|yes| T{i}["{sh(r[2], 32)}"]'] + ([f'  {r[0]} -->|no| {rr[i + 1][0]}'] if i + 1 < len(rr) else [])]
+    out['router'] = ['flowchart TD', f'  Q([{mq("request")}]) --> R0'] + [
+     x for i, r in enumerate(rr) for x in [f'  {r[0]}{{{mq(r[0] + ": " + sh(r[1], 40))}}} -->|{mq("yes")}| T{i}[{mq(sh(r[2], 32))}]'] + ([f'  {r[0]} -->|{mq("no")}| {rr[i + 1][0]}'] if i + 1 < len(rr) else [])]
     for s in k.skills:
         sk = f'skills/{s}/SKILL.md'
         if not pub(sk):
             continue
-        lines = ['flowchart LR', f'  {nid(sk)}[{s}]']
+        lines = ['flowchart LR', f'  {nid(sk)}[{mq(s)}]']
         for n, when, hits in k.index.get(s, []):
             for h in [h for h in hits if pub(h) or h not in nodes]:
-                step = re.sub(r'[`"|\[\]{}<>]', '', when)[:48]
-                lines.append(f'  {nid(sk)} -->|{step}| {nid(h)}[{osp.basename(h)}]')
+                lines.append(f'  {nid(sk)} -->|{mq(cut(re.sub(r"[`]", "", when), 48))}| {nid(h)}[{mq(osp.basename(h))}]')
         out[f'skill-{s}'] = lines
     return out
 
