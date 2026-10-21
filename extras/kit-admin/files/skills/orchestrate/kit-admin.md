@@ -28,8 +28,8 @@ feature goes to the `extras` branch, not the core.
   (today's behaviour as default), org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
 
 ## Shapes
-- **Script** [SCRIPT-HEADER, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN]: one entry file per area with verbs; header with usage and
-  `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`; a
+- **Script** [SCRIPT-HEADER, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with
+  verbs, each function in a `---- <name>:` section (README "Extending"); header with usage, `Sections:` and `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`; a
   failed call is UNKNOWN, never a state; paths via `Get-KitPath` / `kit_path` / `kitPath` / `rp()`; bounded network calls; no
   desktop opens without `--open` / `-Open` ("Script header" below).
 - **Skill** [SKILL-DESC, SKILL-BLOCK, FILES-*]: `description: "Load when: ... Not when: ... -> <sibling>."`; blocks Load when,
@@ -45,7 +45,7 @@ feature goes to the `extras` branch, not the core.
 ## Before every push
 `agents/kitty.md` step 8: `kittool.py lint` (0 problems, 0 counted flow issues), `port` + `port --check` (extra ports),
 `tests/kit-tests.ps1 [-Area <area>]` (areas in parallel), `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow
-change. pre-commit regenerates README graph sections and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
+change. pre-commit regenerates README graph sections, staged scripts' `Sections:` maps and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `dev.ps1 wt commit`.
 
 ## kitty steps 1-3 (`$A` = `python -X utf8 <wt>/skills/orchestrate/kittool.py audit`)
@@ -109,6 +109,7 @@ paths: ["**/liquibase/**", "**/db/migration/**", "**/Migrations/**", "**/migrati
 Verbs: <verb> <params> — <what>
 Inputs: <config keys, files, env>. Outputs: <text / JSON with -Json / files>.
 Exit codes: 0 ok · 1 problem found · 2 usage error.
+Sections: L<n> <name> · ... (kittool.py sections --fix writes it)
 #>
 ```
 Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`. No silent failures: a failed call is

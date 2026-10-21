@@ -12,7 +12,7 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs an extra) · 2 usage error.
 Extras (adapters/): app-kinds (flutter, maui, capacitor, Expo prebuild), emulator-windows (arrange), ios-simulator.
-Sections: L21 cfg · L101 phone · L299 build · L438 install · L464 launch · L476 avd · L562 up · L649 down · L678 slim
+Sections: L21 config · L101 phone · L299 build · L438 install · L464 launch · L476 avd · L562 up · L649 down · L678 slim
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -98,7 +98,7 @@ vm.heapSize=2048
 hw.audioOutput=no
 "@
 
-# ---- acquire | ensure | release | status: phone leases (gate boots; offline lanes keep their lease)
+# ---- phone: acquire | ensure | release | status, phone leases (gate boots; offline lanes keep their lease)
 function Invoke-Phone {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
@@ -473,7 +473,7 @@ if (-not $NoForceStop) { & $adb -s $Serial shell am force-stop $pkg }
 "$Serial : app launched"
 }
 
-# ---- avd list | create | reset: lane emulators from the template (qa.ps1 ui assumes its resolution)
+# ---- avd: list | create | reset, lane emulators from the template (qa.ps1 ui assumes its resolution)
 function Invoke-Avd {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('list', 'create', 'reset')][string]$Action,

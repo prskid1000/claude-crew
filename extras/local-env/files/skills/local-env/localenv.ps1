@@ -8,11 +8,12 @@ In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; sta
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L18 config · L46 sandbox · L174 state · L211 leases · L233 code · L265 mig · L412 hooks · L521 processes · L674 daemon/train · L1092 verbs
+Sections: L19 config · L47 sandbox · L175 state · L212 leases · L234 code · L266 migrations · L413 hooks · L522 processes ·
+  L682 daemon · L1100 verbs
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
-# ---- library (dot-sourced by the CLI and _daemon); state per env: Get-KitPath localenv /<env>.json (Update-State)
+# library (dot-sourced by the CLI and _daemon); state per env: Get-KitPath localenv /<env>.json (Update-State)
 $ErrorActionPreference = 'Stop'
 
 # ---- config
@@ -43,7 +44,7 @@ function Svc([string]$e, [string]$n) {
   if ($n -match '^sb(\d+)-(.+)$') { return (SandboxSvc $e ([int]$Matches[1]) $Matches[2]) }
   $s = EnvServices $e | Where-Object name -eq $n; if (-not $s) { throw "env $e has no service '$n' ($((EnvServices $e).name -join ', '))" }; $s
 }
-# ---- migration sandboxes (envs.<env>.sandbox): migrating branch -> sandbox k, own build + DB copy, instances sb<k>-<svc>
+# ---- sandbox: migration sandboxes (envs.<env>.sandbox), migrating branch -> sandbox k, own build + DB copy, instances sb<k>-<svc>
 function SandboxCfg([string]$e) { (Get-EnvCfg $e).sandbox }
 function SbOff($sb) { [int]$(if ($sb.portOffset) { $sb.portOffset } else { 100 }) }
 function SbMax($sb) { [int]$(if ($sb.max) { $sb.max } else { 2 }) }
@@ -171,7 +172,7 @@ function Event([string]$e, [string]$kind, [hashtable]$data = @{}) {
   try { ($data | ConvertTo-Json -Compress -Depth 6) | Add-Content (Join-Path (Get-KitPath localenv-logs -Create) "$e-events.jsonl") } catch { }
 }
 
-# ---- state (one JSON per env, locked writes)
+# ---- state: one JSON per env, locked writes
 function StateFile([string]$e) { Join-Path (Get-KitPath localenv -Create) "$e.json" }
 # readers take the file's lock too (Update-State already holds it): an open reader made the writer's rename fail
 function Read-State([string]$e) {
@@ -208,7 +209,7 @@ function EnvProcess([int]$p, [string]$e) {
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
 
-# ---- leases, holds, demand: a lease ends at its time, or with no live holder past the grace (Update-KitLease)
+# ---- leases: holds, demand; a lease ends at its time, or with no live holder past the grace (Update-KitLease)
 function Prune($st) {
   foreach ($a in @($st.leases.Keys)) { if (-not (Update-KitLease $st.leases[$a])) { $st.leases.Remove($a) } }
   foreach ($a in @($st.holds.Keys)) { if (-not (Update-KitLease $st.holds[$a])) { $st.holds.Remove($a) } }
@@ -262,7 +263,7 @@ function Resolve-Ref([string]$d, [string]$b) {
 }
 function HasMigrations([string]$checkout, [string]$target, [string]$sha) { $d = @(git -C $checkout diff --name-only "origin/$target...$sha" 2>$null); if ($LASTEXITCODE) { return $true }; [bool]($d -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' -or $d -match $script:MigPattern) }
 
-# ---- migration classes: LIGHT = exact revert (needs db.rollback), HEAVY = sandbox / snapshot
+# ---- migrations: migration classes, LIGHT = exact revert (needs db.rollback), HEAVY = sandbox / snapshot
 function MigCfg([string]$e) {
   $m = [ordered]@{ pattern = $script:MigPattern }
   $db = (Get-EnvCfg $e).db; if ($db.engine) { $m.dialect = "$($db.engine)".ToLower() }; if ($db.exec) { $m.exec = $db.exec }
@@ -409,7 +410,7 @@ function Invoke-Shell([string]$cmd, [string]$log, $vars) {
   With-Env $(if ($vars) { $vars } else { @{} }) { if ($KitIsWindows) { & cmd.exe /d /c $cmd *>> $log } else { & /bin/sh -c $cmd *>> $log } }
   $LASTEXITCODE
 }
-# ---- hooks (db snapshot / restore) and smoke checks
+# ---- hooks: db snapshot / restore, smoke checks
 function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $db = (Get-EnvCfg $e).db
   $cmd = @($(if ($db.$name -and ($name -ne 'rollback' -or $vars.hook -ne 0)) { Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }),
@@ -678,7 +679,7 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
-# ---- _daemon (this script only): -Env = loop, -Train = worker; logs <logs>/<env>-loop.log, -train.log, -events.jsonl
+# ---- daemon: this script only; -Env = loop, -Train = worker; logs <logs>/<env>-loop.log, -train.log, -events.jsonl
 function Invoke-Daemon {
 param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train)
 $e = $EnvName
@@ -1096,7 +1097,7 @@ function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
-# ---- commands (owner / brief asks); calls return within -Wait min (8)
+# ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'down', 'drop', 'refresh', '_exec')][string]$Action,

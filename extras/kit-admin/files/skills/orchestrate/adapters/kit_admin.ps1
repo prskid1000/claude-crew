@@ -160,7 +160,7 @@ if ($hits.Count) {
 exit 0
 }
 
-# the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph and ports, runs lint
+# the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph, section maps and ports, runs lint
 # never stage the user's changes
 function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
 function Invoke-PreCommit {
@@ -172,6 +172,12 @@ function Invoke-PreCommit {
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
   elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
+  # staged scripts' Sections: maps (kittool.py sections --fix); a file with unstaged edits is left to lint
+  $sec = @(git -C $root diff --cached --name-only --diff-filter=ACMR -- '*.ps1' '*.py' '*.js' '*.mjs' | Where-Object { -not (Test-UnstagedEdits $root $_) })
+  if ($sec.Count) {
+    & $py -X utf8 $KitCmd.kittool sections --fix @($sec | ForEach-Object { Join-Path $root $_ }) | Out-Null
+    foreach ($f in $sec) { if (Test-UnstagedEdits $root $f) { git -C $root add -- $f; Write-Host "pre-commit: Sections: map of $f regenerated and staged" } }
+  }
   & $py -X utf8 $KitCmd.kittool port 2>$null | Out-Null   # silent without the ports extra
   if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
     git -C $root add -- .codex .agents GEMINI.md

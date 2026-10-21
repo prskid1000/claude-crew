@@ -41,7 +41,7 @@ $b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 220000'
 Expect 'kit-admin: budget raise refused under the cap, x1.1 over it' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '200000 -> 220000' -and $c2)
 # kit-admin.md: every [CODE] it names is a lint code kittool.py emits (no stale rule names)
 $doc = Get-Content (Join-Path $PSScriptRoot 'files/skills/orchestrate/kit-admin.md') -Raw
-$emitted = [regex]::Matches((Get-Content (Join-Path $Kit 'skills/orchestrate/kittool.py') -Raw), "bad\('([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
+$emitted = [regex]::Matches((Get-Content (Join-Path $Kit 'skills/orchestrate/kittool.py') -Raw), "(?:bad\(|\()'([A-Z][A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
 $named = [regex]::Matches($doc, '\[([A-Z][A-Z, *-]+)\]') | ForEach-Object { $_.Groups[1].Value -split ',\s*' } | Where-Object { $_ -notmatch '\*' -and $_ -ne 'CODE' }
 $stale = @($named | Where-Object { $_ -notin $emitted })
 Expect "kit-admin: kit-admin.md names only lint codes kittool.py emits (stale: $($stale -join ', '))" ($named.Count -gt 5 -and -not $stale.Count)
@@ -53,6 +53,8 @@ Expect 'kit-admin: health nudges a never-run kitty audit, quiet right after one'
 'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
 $pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String
 Expect 'kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them)' ($ue -and $pc -notmatch 'is an extra' -and $pc -match 'pre-commit')
+$sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | Set-Content $sx -NoNewline; git -C $kc add -- skills/sx.ps1; $null = pwsh -NoProfile -File $O precommit 2>&1
+Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
 Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-Path (Join-Path $kc 'LESSONS.md.lock')))
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')
