@@ -151,13 +151,11 @@ function Get-KitTemp { [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/') }
 function Get-ExeName([string]$Name) { if ($KitIsWindows) { "$Name.exe" } else { $Name } }
 
 function Get-SysMem {
-  $mx = @{}
   $kv = { param($lines, $re) $h = @{}; foreach ($l in $lines) { if ($l -match $re) { $h[$Matches[1]] = [double]$Matches[2] } }; $h }
   if ($KitIsWindows) {
     $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
-    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, PoolPagedResidentBytes, PoolNonpagedBytes, CommittedBytes, CommitLimit
+    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes
     $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
-    $mx = @{ PoolGB = [math]::Round(($pm.PoolPagedResidentBytes + $pm.PoolNonpagedBytes) / 1GB, 1); CommitGB = [math]::Round($pm.CommittedBytes / 1GB, 1); CommitLimitGB = [math]::Round($pm.CommitLimit / 1GB, 1) }
     $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
   }
   elseif ($KitIsMac) {
@@ -174,11 +172,34 @@ function Get-SysMem {
     $free = $m['MemFree'] / 1MB
     $avail = $(if ($m.ContainsKey('MemAvailable')) { $m['MemAvailable'] } else { $m['MemFree'] + $m['Cached'] + $m['Buffers'] }) / 1MB
   }
-  [pscustomobject](@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) } + $mx)
+  [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1) }
 }
 
 function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
-
+# RAM every build, phone and QA seat leaves free: env, gate.keepFreeGB, else 15% of RAM (at least 6 GB)
+function Get-KitKeepFreeGB {
+  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
+  [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
+}
+# one process snapshot (working set, children, name per pid) for many Get-KitTreeGB calls
+function Get-KitProcSnap {
+  $snap = @{ procs = @{}; kids = @{}; names = @{} }
+  foreach ($p in Get-SysProcs -NoCommandLine) {
+    $snap.procs[$p.Id] = $p.WorkingSet; $snap.names[$p.Id] = $p.Name
+    if (-not $snap.kids.ContainsKey($p.ParentId)) { $snap.kids[$p.ParentId] = [Collections.ArrayList]::new() }
+    [void]$snap.kids[$p.ParentId].Add($p.Id)
+  }
+  $snap
+}
+function Get-KitTreeGB([int]$Root, $Snap = $(Get-KitProcSnap)) {
+  $sum = 0; $stack = [Collections.Stack]::new(); $stack.Push($Root)
+  while ($stack.Count) {
+    $node = $stack.Pop()
+    if ($Snap.procs.ContainsKey($node)) { $sum += $Snap.procs[$node] }
+    if ($Snap.kids.ContainsKey($node)) { foreach ($k in $Snap.kids[$node]) { $stack.Push($k) } }
+  }
+  $sum / 1GB
+}
 function Get-SysCpu {
   if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
   if (Test-Path /proc/stat) {

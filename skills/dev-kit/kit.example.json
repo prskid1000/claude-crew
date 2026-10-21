@@ -4,10 +4,10 @@
   "gitHost, gitHostType, githubHost, gitlabGroup": "the git host (type from the host) and the group / owner for short refs <repo>!<iid>",
   "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop)",
   "commitStyle, locale.cosmeticPattern, locale.testCommentPattern, locale.proseTerms": "subject rule conventional (free / a regex); English defaults: small QA check, testing comment, prose required words ({expected: regex, ...})",
-  "devices": "type: android (default) / ios (Simulators, macOS) / none (verbs refuse, app checks NOT_TESTED)",
+  "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: extra ios-simulator",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
-  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), tag ({date}), probe + probeField / probeRegex (first group; a URL or command printing the live sha), awsStack + region, ssh {host, key, repoDir, appDir, subdir, exclude, service}, manual, laneApk",
+  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deployed-checks",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
   "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
@@ -29,26 +29,23 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | clickup | github | gitlab | jira (Cloud) | jira-server | linear | azure | youtrack | command. Env: jira JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN (jira-server or JIRA_TOKEN), linear LINEAR_API_KEY, azure AZURE_DEVOPS_EXT_PAT, youtrack YOUTRACK_URL + YOUTRACK_TOKEN. statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github / gitlab status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
+  "_readme": "type: none (default) | clickup | github | command; gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
   "type": "none",
-  "repo": "<owner/name or group/project, for github/gitlab issues>",
-  "list": "<list of new tasks: ClickUp list id, Jira / YouTrack project key, Linear team key, Azure area path>",
+  "repo": "<owner/name, for github issues>",
+  "list": "<container of new tasks, e.g. a ClickUp list id>",
   "owner": "<optional: assignee of new tasks; empty = your OS full name matched to a tracker member>",
-  "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH- / PROJ- ; default from type>", "bugPrefix": "[Bug]",
+  "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH-; default from type>", "bugPrefix": "[Bug]",
   "statuses": {
    "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
    "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]
   },
   "_examples": {
    "clickup": { "type": "clickup", "list": "<list id>", "branchTag": "CU-", "statuses": { "review": "for review", "failedTesting": "failed testing", "closed": "complete" } },
-   "jira": { "type": "jira", "list": "PROJ", "branchTag": "", "issueType": "Task", "subtaskType": "Subtask", "statuses": { "inProgress": "In Progress", "review": "In Review", "promoted": "Merged", "inTest": "QA", "failedTesting": "QA Failed", "closed": "Done" } },
    "github": { "type": "github", "repo": "owner/name", "branchTag": "GH-", "statuses": { "failedTesting": "failed-testing" } },
-   "azure": { "type": "azure", "org": "<org>", "project": "<project>", "issueType": "Task", "statuses": { "inProgress": "Active", "closed": "Closed" } },
-   "linear": { "type": "linear", "org": "<workspace url slug>", "list": "<team key>" },
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
- "reports": { "_readme": "type: gdocs (Google Doc + Drive evidence via gws; default with gws) | markdown, html, pdf (a kept file; pdf: headless Chrome / Edge or pdfCommand '{in} {out}') | confluence (env CONFLUENCE_URL, CONFLUENCE_TOKEN [+ CONFLUENCE_EMAIL]; space, parent page id) | notion (env NOTION_TOKEN; parent page id) | command (command '<cli> {title} {path} {parent}' printing the URL). share (gdocs): anyone (default) | domain:<domain> | none; confluence / notion: the space / parent page permissions", "type": "markdown" },
+ "reports": { "_readme": "type: gdocs (Google Doc + Drive evidence via gws; default with gws) | markdown, html (a kept file) | command (command '<cli> {title} {path} {parent}' printing the URL); pdf, confluence, notion: extras. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
@@ -56,7 +53,7 @@
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
  "tests": { "_readme": "Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "localEnv": {
-  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db.engine (postgres, mysql, mariadb, sqlserver, sqlite, oracle, mongodb) + name / user fill the DB hooks. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
+  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db.snapshot / restore: commands ({snapshot} = the name) run around migration layers. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
   "maxLeaseMinutes": 120,
   "idle": { "minMinutes": 15, "maxMinutes": 60 },
   "envs": {
@@ -69,11 +66,8 @@
       "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
      { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
     ],
-    "tasks": { "seed": { "repo": "backend", "cmd": "<command that loads the baseline fixtures>", "gated": true } },
     "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
-    "db": { "engine": "postgres", "name": "shop", "user": "shop", "_readme": "engine presets: postgres mysql mariadb sqlserver sqlite oracle mongodb; any hook set here wins" },
-    "sandbox": { "services": ["api"], "max": 2, "portOffset": 100, "env": { "DB_PORT": "{+5432}" },
-     "db": { "clone": "<script: a DB server on {+5432} with a copy of the test data>", "drop": "<script: stop it, delete its data>", "sweep": "<script: remove copies not in {keep}>" } }
+    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>" }
    }
   }
  },
@@ -101,10 +95,6 @@
   { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
    "deploys": [
     { "target": "staging", "branch": "staging", "job": "deploy-staging" },
-    { "target": "<env deployed by hand onto a host>", "ssh": { "host": "<user>@<host>", "key": "<path to the ssh key file>", "repoDir": "<repo checkout on the host>", "appDir": "<installed app dir>", "exclude": ["data"], "sudo": true } },
-    { "target": "<env>", "probe": "<URL or command (kubectl, helm, PaaS CLI, GitOps repo) printing the live sha>", "probeField": "<JSON path>" },
-    { "target": "<env deployed by a tag>", "tag": "^v\\d+" },
-    { "target": "<env deployed by hand, no way to check>", "manual": true },
     { "target": "<test phones of an app repo>", "laneApk": true }
    ],
    "linkFromByTarget": { "<other target branch>": "<a checkout of that branch with its own install>" },
@@ -115,7 +105,7 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/qa-kit/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | cookie (csrfCookie, csrfHeader) | token | basic | query (param) | command (cmd {method} {url} prints Name: value headers) | none; cert + certPass: mTLS; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: extra api-auth; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000 },
    "targets": {
@@ -125,13 +115,11 @@
      "webLogin": { "path": "/login", "fields": { "#username": "{user}", "#password": "{pass}" }, "rememberMeLabel": "Remember me", "submit": "button[type=submit]", "tokenKeys": ["access_token"] },
      "users": { "admin": ["qa-admin", "<password>"], "qa-user-1": ["qa-user-1", "<password>"] }
     },
-    "local": { "web": "http://localhost:4200", "api": "http://localhost:8080", "auth": { "type": "login", "path": "/api/authenticate", "contentType": "json", "body": { "username": "{user}", "password": "{pass}" }, "tokenField": "id_token", "header": "Authorization: Bearer {token}" }, "users": { "admin": ["qa-admin", "<password>"] } },
-    "static-token-api": { "api": "https://api.staging.example.com", "auth": { "type": "token", "header": "X-Api-Key: {token}" }, "users": { "admin": ["", "<api key>"] } },
-    "basic-auth-api": { "api": "https://legacy.staging.example.com", "auth": { "type": "basic" }, "users": { "admin": ["qa-user", "<password>"] } }
+    "local": { "web": "http://localhost:4200", "api": "http://localhost:8080", "auth": { "type": "login", "path": "/api/authenticate", "contentType": "json", "body": { "username": "{user}", "password": "{pass}" }, "tokenField": "id_token", "header": "Authorization: Bearer {token}" }, "users": { "admin": ["qa-admin", "<password>"] } }
    }
   },
   "skills/android-swarm/swarm.config.json": {
-   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp | flutter | maui | capacitor | ios. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp; flutter, maui, capacitor: extra app-kinds. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,
@@ -181,8 +169,7 @@
    "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github command none" },
    "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github command" },
    "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "gdocs markdown html command" },
-   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github command none", "values": "host" },
-    "db-engine": { "config": "", "file": "skills/local-env/localenv.ps1", "table": "DbPresets", "verbs": "snapshot restore", "names": "postgres mysql sqlserver sqlite oracle mongodb" }
+   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github command none", "values": "host" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
    "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",

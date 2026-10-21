@@ -582,6 +582,9 @@ def md_to_html(md, title=''):
         t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
+        # images before links: ![alt](url "width px"), default 600 px
+        t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)',
+                   lambda m: f'<p><img src="{m[2]}" width="{m[3] or m[4] or 600}"><br><i>{m[1]}</i></p>', t)
         return re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
 
     out, lines, i, lst = [], md.splitlines(), 0, None
@@ -832,6 +835,9 @@ def selftest():
             expect(what, text in str(e))
     refused('a missing body file is refused', lambda: _body('no-such-body.md'), 'file not found')
     expect('multi-line body text passes', _body('a\nb') == 'a\nb')
+    page = md_to_html('![shot 1](https://x/a.png "260") [link](https://y)\n![b](c.png)')
+    expect('md_to_html: images with width (default 600) and captions, links stay links', '<img src="https://x/a.png" width="260"><br><i>shot 1</i>' in page
+           and '<img src="c.png" width="600">' in page and '<a href="https://y">link</a>' in page)
 
     fd, path = tempfile.mkstemp(suffix='.json')
     with os.fdopen(fd, 'w', encoding='utf-8') as f:

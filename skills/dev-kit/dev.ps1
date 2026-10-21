@@ -405,13 +405,13 @@ param(
   [Parameter(Mandatory)][string]$Cmd,
   [string]$Dir = (Get-Location).Path,
   [int]$WaitMinutes = 90,
-  [double]$KeepFreeGB = $(if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { -1 }),   # -1 = 15% of RAM, min 6 GB
+  [double]$KeepFreeGB = -1,   # -1 = Get-KitKeepFreeGB
   [double]$NeedGB = 0,
   [int]$MaxParallel = 0
 )
 # heap caps replace inherited -Xmx
 $HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
-if ($KeepFreeGB -lt 0) { $KeepFreeGB = [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
+if ($KeepFreeGB -lt 0) { $KeepFreeGB = Get-KitKeepFreeGB }
 $StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
 $mavenKeep = ([string]$env:MAVEN_OPTS -replace '-Xm[xs]\S+|-XX:\+Use\w+GC|-XX:MaxMetaspaceSize=\S+', '' -replace '\s+', ' ').Trim()
 $nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -replace '\s+', ' ').Trim()
@@ -545,37 +545,18 @@ function Get-Queue {
   @($q | Sort-Object @{ e = { [int]$recent[$_.owner] } }, @{ e = { [datetime]$_.since } })
 }
 
-function Get-Procs {
-  $procs = @{}; $kids = @{}; $names = @{}
-  foreach ($p in Get-SysProcs -NoCommandLine) {
-    $procs[$p.Id] = $p.WorkingSet; $names[$p.Id] = $p.Name
-    $pp = $p.ParentId
-    if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }
-    [void]$kids[$pp].Add($p.Id)
-  }
-  @{ procs = $procs; kids = $kids; names = $names }
-}
-function Get-TreeGB([int]$rootPid, $Snap) {
-  $sum = 0; $stack = New-Object System.Collections.Stack; $stack.Push($rootPid)
-  while ($stack.Count) {
-    $node = $stack.Pop()
-    if ($Snap.procs.ContainsKey($node)) { $sum += $Snap.procs[$node] }
-    if ($Snap.kids.ContainsKey($node)) { foreach ($k in $Snap.kids[$node]) { $stack.Push($k) } }
-  }
-  return $sum / 1GB
-}
-function Get-AvailGB { (Get-SysMem).AvailGB }
 function Get-State {
-  $Snap = Get-Procs
+  $Snap = Get-KitProcSnap
+
   $promised = 0; $running = 0; $backfills = 0
   foreach ($f in Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json') {
     try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
     if (-not $Snap.procs.ContainsKey([int]$e.pid)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
     $running++
     if ($e.backfill) { $backfills++ }
-    $promised += [math]::Max(0, [double]$e.need - (Get-TreeGB ([int]$e.pid) $Snap))
+    $promised += [math]::Max(0, [double]$e.need - (Get-KitTreeGB ([int]$e.pid) $Snap))
   }
-  [pscustomobject]@{ Avail = (Get-AvailGB); Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
+  [pscustomobject]@{ Avail = (Get-SysMem).AvailGB; Promised = [math]::Round($promised, 1); Running = $running; Backfills = $backfills; Snap = $Snap }
 }
 # head waited 20+ min: one small build at a time
 function Get-BackfillMode([double]$HeadNeed, [double]$HeadWaitedMin, [double]$Need, [double]$Room, [bool]$Small, [int]$SmallRunning) {
@@ -664,7 +645,7 @@ if (-not $proc) { Write-Host "[gate] could not start within $WaitMinutes min"; e
 $sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, double) would truncate
 try {
   $null = $proc.Handle   # keeps ExitCode readable
-  while (-not $proc.HasExited) { $peak = [math]::Max($peak, (Get-TreeGB $proc.Id (Get-Procs))); Start-Sleep -Seconds 5 }
+  while (-not $proc.HasExited) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
   $proc.WaitForExit(); $code = $proc.ExitCode
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
