@@ -19,7 +19,7 @@ $lw = Join-Path (Kd) 'kit wt'; git -C $mk worktree add -q --detach $lw 2>$null
 $kx = (pwsh @np "$lw/skills/orchestrate/orch.ps1" setup -Exclude 2>&1 | Out-String) + (pwsh -NoProfile -Command ". '$lw/skills/orchestrate/orch.ps1'; 'unstaged:' + (Test-UnstagedEdits '$lw' 'README.md')" 2>&1 | Out-String)
 Expect 'orch.ps1: --help 0, bad verb 2; worktree: excludes to main clone, no memory, unstaged README seen' ($h0 -eq 0 -and $h2 -eq 2 -and
   (Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory") -and $kx -match 'unstaged:True')
-$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU-
+$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (the type alone: no clickup call, so the extra tracker-clickup is not needed)
 $out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
 Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -match 'needs a real -Task id')
 $out = pwsh @np $O track add -Task 'CU-abc123' -Mrs 'web!1,web!2' -MergeAfter 'web!2>api!7' 2>&1 | Out-String
@@ -178,13 +178,13 @@ $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | 
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
 $nt = @'
 . $args[0]
-$env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type clickup
-function clickup { $global:LASTEXITCODE = 1; 'Error: dial tcp: lookup api.clickup.com: no such host' }
-$q = Set-TrackerStatus 'T9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
-function clickup { $global:LASTEXITCODE = 0; "status set: $($args[2])" }
-$s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status T9' -and -not (Test-Path (Get-KitPath outbox)))"
-function clickup { $global:LASTEXITCODE = 1; 'Error: task not found' }
-try { $null = Set-TrackerStatus 'T9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
+$env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type github
+function gh { $global:LASTEXITCODE = 1; 'error connecting to api.github.com: dial tcp: lookup api.github.com: no such host' }
+$q = Set-TrackerStatus 'o/r#9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
+function gh { $global:LASTEXITCODE = 0; '{"state":"OPEN","labels":[]}' }
+$s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status o/r#9' -and -not (Test-Path (Get-KitPath outbox)))"
+function gh { $global:LASTEXITCODE = 1; 'GraphQL: no issue 9 in o/r (HTTP 404)' }
+try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
 '@
 $res = Invoke-PsTest 'outbox-test' $nt @(Join-Path $k 'skills/dev-kit/lib.ps1')
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')

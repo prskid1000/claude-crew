@@ -71,10 +71,10 @@ $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | Conver
 $null = pwsh @np $D tracker status $t.id failedTesting
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id)
-$env:KIT_TRACKER_TYPE = 'clickup'; 'body text' | Set-Content "$r/c.md"
-$out = pwsh @np $D tracker comment 12 -File "$r/c.md" -DryRun 6>&1 2>&1 | Out-String
+$env:KIT_TRACKER_TYPE = 'github'; 'body text' | Set-Content "$r/c.md"
+$out = pwsh @np $D tracker comment o/r#12 -File "$r/c.md" -DryRun 6>&1 2>&1 | Out-String
 $bad = pwsh @np $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
-Expect 'tracker comment -File sends it; unknown option = usage error' ($out -match 'comment add 12 "body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
+Expect 'tracker comment -File sends it; unknown option = usage error' ($out -match 'issue comment 12 -R o/r --body "body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
 Remove-Item Env:KIT_TRACKER_TYPE
 # tracker backends on recorded answers (CLIs, Invoke-RestMethod mocked; an unknown call fails)
 $tb = @'
@@ -83,16 +83,13 @@ $__cfg = '{"tracker":{"org":"acme","project":"Shop","commands":{"view":"mytr vie
 function Fx($call) { $global:log.Add($call); foreach ($k in $global:fx.Keys) { if ($call -match $k) { return $global:fx[$k] } }; throw "404 no fixture: $call" }
 function Invoke-RestMethod($Method, $Uri, $Headers, $TimeoutSec, $MaximumRetryCount, $RetryIntervalSec, $Body, $ContentType, $Form, $InFile) {
  $j = Fx "$Method $Uri $ContentType $($Headers.Authorization) $(if ($Body) { [Text.Encoding]::UTF8.GetString($Body) })"; if ($j) { $j | ConvertFrom-Json } }
-foreach ($c in 'clickup', 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = [array]::IndexOf($args, '--input'); $global:LASTEXITCODE = 0; Fx "$($args -join ' ') $(if ($i -ge 0) { gc $args[$i + 1] -Raw })" } }
+foreach ($c in 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = [array]::IndexOf($args, '--input'); $global:LASTEXITCODE = 0; Fx "$($args -join ' ') $(if ($i -ge 0) { gc $args[$i + 1] -Raw })" } }
 function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear()
  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id inTest; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description 'd' -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }
  "${type}:$(& $ok $r ($global:log -join "`n"))"
 }
 $v = { param($r, $s, $n) $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq $n -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq $s }
-Run clickup ([ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"status":"In Progress"},"list":{"id":"L9"},"subtasks":[{"id":"C2","name":"Sub"}]}'
- 'status set in test C1' = 'Status set'; 'comment add C1 two words' = '{"id":"90"}'; 'member list' = '[{"id":7,"username":"Ann Lee"}]'
- 'task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }) C1 L9 { param($r, $l) (& $v $r 7 C5) -and $l -match '--priority 2' }
 Run github ([ordered]@{ 'assignees,body' = '{"number":5,"title":"Bug","state":"OPEN","labels":[{"name":"status:In Progress"}],"body":"Part of #1\n- [ ] #6"}'
  'view 6 ' = '{"number":6,"title":"Sub","state":"CLOSED","labels":[]}'; 'view 5 .*state,labels' = '{"state":"OPEN","labels":[{"name":"status:In Progress"}]}'; 'view 5 .*json body' = '{"body":"x"}'
  '^label create' = ''; 'edit 5 -R o/r --remove-label status:In Progress --add-label status:in test' = 'ok'; 'comment 5 -R o/r --body-file' = 'https://github.com/o/r/issues/5#c1'
@@ -101,7 +98,7 @@ Run command ([ordered]@{ '^view T1' = '{"id":"T1","name":"Bug","status":"In Prog
  '^list B in test' = '[{"id":"T3","name":"A","assignees":[{"id":"ann"}]}]' }) T1 B { param($r, $l) & $v $r ann T9 }
 '@
 $res = Invoke-PsTest 'tracker-test' $tb @(Join-Path $k 'skills/dev-kit/lib.ps1')
-Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'clickup', 'github', 'command'
+Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'github', 'command'
 $kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
 # a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr

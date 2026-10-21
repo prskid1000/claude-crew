@@ -147,16 +147,6 @@ Expect 'finalize: failed results comment keeps the task open; next run posts + c
 $here0 = (Get-Location).Path
 $wd = pwsh -NoProfile -Command "Set-Location '$($env:TEMP)'; . '$Q'; `$null = Invoke-Finalize -RunDir '$ex' -Code E1 -NoTracker *>&1; (Get-Location).Path" | Select-Object -Last 1
 Expect 'finalize: the caller''s directory is restored' ($wd.TrimEnd('\') -eq $env:TEMP.TrimEnd('\') -and (Get-Location).Path -eq $here0)
-$gb = Join-Path (Kd) 'fakebin'; New-Item -ItemType Directory -Force $gb | Out-Null; $glog = Join-Path $gb 'gws.log'
-"@echo off`r`necho %* >> `"$glog`"`r`necho %* | findstr /c:`"permissions`" >nul && (echo 403 forbidden & exit /b 1)`r`necho {`"id`":`"D1`",`"webViewLink`":`"https://x.example/D1`"}" | Set-Content (Join-Path $gb 'gws.cmd') -Encoding ascii
-$gd = New-Run 'GD' @(@{ code = 'G1'; task = 'TG'; checks = , @('C1', 'PASS') }, @{ code = 'G2'; task = 'TG'; checks = , @('C2', 'PASS') })
-$oldPath = $env:PATH; $env:PATH = "$gb;$env:PATH"
-$g1 = pwsh @np $Q finalize -RunDir $gd -Code G1 -Report gdocs 2>&1 | Out-String
-$docs1 = @(Get-Content $glog | Where-Object { $_ -match 'google-apps.document' }).Count
-$null = pwsh @np $Q finalize -RunDir $gd -Code G1 -Report gdocs 2>&1
-$docs2 = @(Get-Content $glog | Where-Object { $_ -match 'google-apps.document' }).Count
-$env:PATH = $oldPath
-Expect 'finalize gdocs: re-run reuses the doc; failed share warns' ($docs1 -eq 1 -and $docs2 -eq 1 -and $g1 -match 'uploaded but not shared \(anyone\)' -and (Rec $gd 'G1').waitingFor -contains 'G2')
 $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') })
 & $J @{ id = 'TZ'; name = 'Task Z'; status = 'open'; parent = $null; list = 'L1'; assignees = @(); description = '### C1 — s'; comments = @() } (Join-Path $store 'TZ.json')
 $null = Fin $rt 'Z1'

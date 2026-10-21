@@ -28,7 +28,7 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | clickup | github | command; gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
+  "_readme": "type: none (default) | github | command; clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
@@ -44,7 +44,7 @@
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
- "reports": { "_readme": "type: gdocs (Google Doc + Drive evidence via gws; default with gws) | markdown, html (a kept file) | command (command '<cli> {title} {path} {parent}' printing the URL); pdf, confluence, notion: extras. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
+ "reports": { "_readme": "type: markdown, html (a kept file) | command (command '<cli> {title} {path} {parent}' printing the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: extras. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
@@ -166,9 +166,9 @@
   "caps": { "content": 30, "plumbing": 8, "totalTokens": 428000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github command none" },
+   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "github command none" },
    "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github command" },
-   "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "gdocs markdown html command" },
+   "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "markdown html command" },
    "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github command none", "values": "host" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
