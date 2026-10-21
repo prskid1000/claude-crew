@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L852 entry-scripts
+Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L859 entry-scripts
 #>
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)

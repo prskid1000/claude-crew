@@ -11,7 +11,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1076 tracker · L1109 host
+Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1114 tracker · L1147 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
