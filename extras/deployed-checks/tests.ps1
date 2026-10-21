@@ -24,6 +24,7 @@ function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
 '{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"}]}]}' | Set-Content $kl
+$srv = Start-Process node -ArgumentList $sv, $P, $s1 -PassThru -NoNewWindow; Start-Sleep 1   # the url probe's server
 $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
