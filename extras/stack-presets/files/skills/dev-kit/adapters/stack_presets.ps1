@@ -1,11 +1,28 @@
-# Extra stack-presets: dev.ps1 stack presets for .NET (SDK and legacy MSBuild), Go, Rust, CMake and Make.
+# Extra stack-presets: dev.ps1 stack presets for Android Gradle, .NET (SDK and legacy MSBuild), Go, Rust, CMake and Make.
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add stack-presets); dev.ps1 stack calls 'detect'
-# when no core stack (maven, gradle, android, angular, node, python) matches: $a.dir, $a.commands (filled) -> the stack name.
+# when no core stack (maven, gradle, angular, node, python) matches: $a.dir, $a.commands (filled) -> the stack name.
 Register-KitAdapter 'stack' 'presets' @{ 'detect' = { param($a)
   $d = $a.dir; $c = $a.commands; $s = $null
   function Has($d, [string[]]$pattern) { foreach ($p in $pattern) { if (Get-ChildItem -LiteralPath $d -Filter $p -File -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true } }; $false }
   function ReadText($f) { if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue } else { '' } }
-  if (Has $d '*.sln', '*.csproj', '*.fsproj', '*.vbproj') {
+  # Android: a Gradle module with an AndroidManifest.xml; the variant: .claude-stack.json androidVariant, else the first flavor + Debug
+  if ((Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') -and (Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+    $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
+    $s = 'android-gradle'
+    $var = [string](ReadJson (Join-Path $d '.claude-stack.json')).androidVariant
+    if (-not $var) {
+      $var = 'Debug'
+      foreach ($bf in @(Get-ChildItem -LiteralPath $d -Recurse -Depth 2 -Include build.gradle, build.gradle.kts -File -ErrorAction SilentlyContinue)) {
+        $bt = ReadText $bf.FullName
+        if ($bt -match '(?s)productFlavors\s*\{\s*(?:create\(\s*"|register\(\s*"|maybeCreate\(\s*")?([A-Za-z]\w*)') { $m1 = $Matches[1]; $var = $(if ($m1.Length -ge 1) { $m1.Substring(0, 1).ToUpper() + $m1.Substring(1) } else { $m1 }) + 'Debug'; break }
+      }
+    } else { $var = if ($var.Length -ge 1) { $var.Substring(0, 1).ToUpper() + $var.Substring(1) } else { $var } }
+    $c.compile = "$gw compile${var}Sources -q"
+    $c.test = "$gw test${var}UnitTest --tests {tests}"
+    $c.lint = "$gw lint$var"
+    $c.build = "$gw assemble$var"
+  }
+  elseif (Has $d '*.sln', '*.csproj', '*.fsproj', '*.vbproj') {
     $projs = Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Include *.csproj, *.fsproj, *.vbproj -File -ErrorAction SilentlyContinue | Select-Object -First 50
     $legacy = [bool]($projs | Where-Object { -not (Select-String -LiteralPath $_.FullName -Pattern '<Project\s+Sdk=' -Quiet) } | Select-Object -First 1)
     if ($legacy) {
@@ -28,6 +45,10 @@ Register-KitAdapter 'stack' 'presets' @{ 'detect' = { param($a)
       $c.build = 'dotnet build "{sln}" -nologo -v q -c Release'
       if (Has $d '*.csproj', '*.fsproj') { $c.run = 'dotnet run --urls http://localhost:{port}' }
     }
+    $sln = @(Get-ChildItem -LiteralPath $d -Filter *.sln -File -ErrorAction SilentlyContinue)
+    if (-not $sln.Count) { $sln = @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
+    if ($sln.Count -ne 1) { throw "[stack] ${d}: expected one .sln (or project file), found $($sln.Count): -Dir to its folder" }
+    foreach ($k in @($c.Keys)) { if ($c[$k]) { $c[$k] = ([string]$c[$k]).Replace('{sln}', $sln[0].FullName) } }
   }
   elseif (Test-Path (Join-Path $d 'go.mod')) {
     $s = 'go'
