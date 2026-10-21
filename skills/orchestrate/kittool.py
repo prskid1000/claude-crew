@@ -1531,6 +1531,7 @@ def cmd_budget(a):
 # extras/<name>/EXTRA.md says what it is and "Needed when: `<config key>` = `<value>`"; extras/<name>/files/<kit path> are its files.
 EXTRAS_REF = 'refs/remotes/origin/extras'
 EXCLUDE_MARK = '# kittool extra '
+OS_NAME = {'win32': 'windows', 'darwin': 'macos'}.get(sys.platform, 'linux')   # `<os>` OS in a Needed when line
 EXTRA_NOTE = re.compile(r'\bextra `([\w-]+)`')   # core text citing an extra's part names it: lint skips that line's paths
 EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'scaffold', 'rename': 'scaffold', 'remove': 'scaffold', 'cost': 'kit-admin',
   'release': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
@@ -1647,8 +1648,8 @@ def set_listed(kit, name, on):
 def extras_needed(kit):
     """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
     `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
-    the value contains it), `<path>` exists (a kit file, the kit's own need) or `<glob>` in a repo (a repos[].checkout tracks
-    such a file); prose-only lines never install."""
+    the value contains it), `<path>` exists (a kit file, the kit's own need), `<glob>` in a repo (a repos[].checkout tracks
+    such a file) or `<os>` OS (windows, linux, macos); prose-only lines never install."""
     have = set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
     need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
@@ -1670,6 +1671,7 @@ def extras_needed(kit):
         need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule)   # a worktree: the main clone answers
                  if any(osp.exists(osp.join(base, p)) for base in (kit, main_clone(kit)))]
         need += [(name, f'{p} in a repo') for p in re.findall(r'`([^`\s]+)`\s+in a repo', rule) if repo_tracks(configs['kit.local.json'], p)]
+        need += [(name, f'{x} OS') for x in re.findall(r'`(\w+)`\s+OS\b', rule) if x == OS_NAME]
     return sorted(set(need))
 
 def repo_tracks(cfg, pattern):

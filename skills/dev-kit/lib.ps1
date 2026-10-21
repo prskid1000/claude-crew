@@ -142,41 +142,25 @@ function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = 
     [bool](-not $r.timedOut -and $r.code -eq 0)
   }
 }
-# ===== 3. OS helpers (Windows, Linux, macOS) =====
+# ===== 3. OS helpers (Windows; on Linux / macOS the extra posix replaces them) =====
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $KitIsMac = (-not $KitIsWindows) -and ($PSVersionTable.OS -match 'Darwin' -or ((Test-Path variable:IsMacOS) -and $IsMacOS))
+if (-not $KitIsWindows -and -not (Test-Path (Join-Path $PSScriptRoot 'adapters/os_posix.ps1'))) { Write-Warning 'Linux / macOS support is an extra: run kittool.py extra add posix' }
 
 function Get-KitTemp { [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/') }
 
 function Get-ExeName([string]$Name) { if ($KitIsWindows) { "$Name.exe" } else { $Name } }
 
 function Get-SysMem {
-  $kv = { param($lines, $re) $h = @{}; foreach ($l in $lines) { if ($l -match $re) { $h[$Matches[1]] = [double]$Matches[2] } }; $h }
-  if ($KitIsWindows) {
-    $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
-    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, CacheBytes
-    $cache = $pm.CacheBytes / 1GB   # system file cache: resident, trimmed only under pressure
-    $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
-    $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
-  }
-  elseif ($KitIsMac) {
-    $total = [double](sysctl -n hw.memsize) / 1GB
-    $vm = vm_stat
-    $page = if (($vm | Select-Object -First 1) -match 'page size of (\d+)') { [double]$Matches[1] } else { 4096 }
-    $n = & $kv $vm '^(Pages [^:]+):\s+(\d+)'
-    $free = ($n['Pages free'] + $n['Pages speculative']) * $page / 1GB
-    $avail = $free + ($n['Pages inactive'] + $n['Pages purgeable']) * $page / 1GB
-  }
-  else {
-    $m = & $kv (Get-Content /proc/meminfo) '^(\w+):\s+(\d+)'
-    $total = $m['MemTotal'] / 1MB
-    $free = $m['MemFree'] / 1MB
-    $avail = $(if ($m.ContainsKey('MemAvailable')) { $m['MemAvailable'] } else { $m['MemFree'] + $m['Cached'] + $m['Buffers'] }) / 1MB
-  }
-  [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1); CacheGB = [math]::Round([double]$cache, 1) }
+  $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
+  $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, CacheBytes
+  $cache = $pm.CacheBytes / 1GB   # system file cache: resident, trimmed only under pressure
+  $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
+  $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
+  [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1); CacheGB = [math]::Round($cache, 1) }
 }
 
-function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
+function Get-FreeGB { (Get-SysMem).FreeGB }
 # RAM every build, phone and QA seat leaves free: env, gate.keepFreeGB, else 15% of RAM (at least 6 GB)
 function Get-KitKeepFreeGB {
   if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
@@ -201,30 +185,10 @@ function Get-KitTreeGB([int]$Root, $Snap = $(Get-KitProcSnap)) {
   }
   $sum / 1GB
 }
-function ConvertFrom-PsElapsed([string]$e) {
-  if ($e -notmatch '^(\d+-)?(\d+:){1,2}\d+$') { return $null }
-  $d = 0; if ($e -match '^(\d+)-(.*)$') { $d = [int]$Matches[1]; $e = $Matches[2] }
-  $s = 0; foreach ($x in $e -split ':') { $s = $s * 60 + [int]$x }
-  (Get-Date).AddSeconds(-($s + 86400 * $d))
-}
-
-function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows, no CommandLine/Created
-  $all = if ($KitIsWindows) {
-    $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
-    foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
-      [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; Path = $p.ExecutablePath; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
-    }
-  }
-  else {
-    $names = @{}
-    foreach ($l in (ps -A -o pid= -o comm= 2>$null)) { if ($l -match '^\s*(\d+)\s+(.*)$') { $names[[int]$Matches[1]] = Split-Path $Matches[2].Trim() -Leaf } }
-    foreach ($l in (ps -A -o pid= -o ppid= -o rss= -o etime= -o args= 2>$null)) {
-      if ($l -notmatch '^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s?(.*)$') { continue }
-      $id = [int]$Matches[1]; $cl = $Matches[5]; $n = [string]$names[$id]
-      $exe = Split-Path (($cl -split '\s+')[0]) -Leaf
-      if ($n.Length -ge 15 -and $exe.StartsWith($n)) { $n = $exe }
-      [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; Path = ($cl -split '\s+')[0]; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
-    }
+function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster, no CommandLine/Created
+  $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
+  $all = foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
+    [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; Path = $p.ExecutablePath; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
   }
   if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }
 }
@@ -380,14 +344,10 @@ function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TR
 }
 
 function New-DirLink([string]$Path, [string]$Target) {
-  if ($KitIsWindows) { cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" } }
-  else { New-Item -ItemType SymbolicLink -Path $Path -Value $Target | Out-Null }
+  cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" }
 }
 
-function Remove-DirLink([string]$Path) {
-  if ($KitIsWindows) { cmd /c rmdir "$Path" | Out-Null }
-  else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }
-}
+function Remove-DirLink([string]$Path) { cmd /c rmdir "$Path" | Out-Null }
 
 function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
   $norm = { param($x) [IO.Path]::GetFullPath($x).TrimEnd('\', '/') }   # a\.\x == a\x
@@ -447,17 +407,14 @@ function Remove-NodeModules([string]$Path) {
   }
   Remove-Item -LiteralPath $Path -Force
 }
-function Get-DirLinks([string]$Dir, [int]$Depth = 4) {
-  if ($KitIsWindows) { Get-ChildItem $Dir -Recurse -Depth $Depth -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue }
-  else { Get-ChildItem $Dir -Recurse -Depth $Depth -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType -eq 'SymbolicLink' -and (Test-Path -PathType Container $_.FullName) } }
-}
+function Get-DirLinks([string]$Dir, [int]$Depth = 4) { Get-ChildItem $Dir -Recurse -Depth $Depth -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue }
 
 function Resolve-Tool {
   foreach ($n in $args) { $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { return $c.Source } }
   $null
 }
 
-function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
+function Get-Python { 'python' }
 
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $kt = $KitCmd.kittool; if (-not $kt -or -not (Test-Path $kt)) { return @() }
@@ -469,19 +426,7 @@ function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $found
 }
 function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {
-  if ($KitIsWindows) { $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden; return }
-  if (-not $Log) { $Log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log" }
-  $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.UseShellExecute = $false
-  $script = 'cd "$1" || exit 1; log=$2; shift 2; s=; command -v setsid >/dev/null 2>&1 && s=setsid; $s nohup "$@" >"$log" 2>&1 </dev/null &'
-  foreach ($a in @('-c', $script, 'sh', $WorkingDirectory, $Log, $FilePath) + @($ArgumentList)) { $psi.ArgumentList.Add([string]$a) }
-  ([Diagnostics.Process]::Start($psi)).WaitForExit()
-}
-
-function Get-AndroidSdk {
-  foreach ($e in $env:ANDROID_HOME, $env:ANDROID_SDK_ROOT) { if ($e) { return $e } }
-  if ($KitIsWindows) { Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
-  elseif ($KitIsMac) { Join-Path $HOME 'Library/Android/sdk' }
-  else { Join-Path $HOME 'Android/Sdk' }
+  $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden
 }
 
 # ----- adapters (README "Adapters"): kind -> name -> verb -> { param($a, $verb) }; '*' = any verb

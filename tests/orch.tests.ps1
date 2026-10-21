@@ -154,12 +154,13 @@ $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | 
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
 $nt = @'
 . $args[0]
-$env:KIT_NET_TRIES = '1'; Initialize-KitTracker -Type github
-function gh { $global:LASTEXITCODE = 1; 'error connecting to api.github.com: dial tcp: lookup api.github.com: no such host' }
+$env:KIT_NET_TRIES = '1'   # a tracker whose CLI fails as $global:trFails says: network, then fine, then a real error
+Register-KitAdapter 'tracker' 'fake' @{ status = { param($a) if ($global:trFails) { throw $global:trFails }; 'ok' } }; Initialize-KitTracker -Type fake
+$global:trFails = 'dial tcp: lookup api.example: no such host'
 $q = Set-TrackerStatus 'o/r#9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
-function gh { $global:LASTEXITCODE = 0; '{"state":"OPEN","labels":[]}' }
+$global:trFails = ''
 $s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status o/r#9' -and -not (Test-Path (Get-KitPath outbox)))"
-function gh { $global:LASTEXITCODE = 1; 'GraphQL: no issue 9 in o/r (HTTP 404)' }
+$global:trFails = 'no issue 9 in o/r (HTTP 404)'
 try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
 '@
 $res = Invoke-PsTest 'outbox-test' $nt @(Join-Path $k 'skills/dev-kit/lib.ps1')

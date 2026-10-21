@@ -115,14 +115,15 @@ $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup
   'liquibase' = 'Needed when: `localEnv.envs.*.db.applied` ~ `liquibase`, `localEnv.envs.*.db.rollback` ~ `liquibase`, or listed in kit.local.json `extras`'
   'node-spec' = 'Needed when: `localEnv.envs.*.services.*.start` ~ `ng serve` | `npm` | `yarn` | `pnpm`, or listed in kit.local.json `extras`'
   'module-audit' = 'Needed when: listed in kit.local.json extras (extra add does it)'
-  'ts-typecheck' = 'Needed when: `tsconfig.json` in a repo'; 'cargo-x' = 'Needed when: `Cargo.toml` in a repo' }
+  'ts-typecheck' = 'Needed when: `tsconfig.json` in a repo'; 'cargo-x' = 'Needed when: `Cargo.toml` in a repo'
+  'os-here' = 'Needed when: `windows` OS, `linux` OS, `macos` OS'; 'os-none' = 'Needed when: `beos` OS' }
 $wr = Join-Path (Kd) 'web repo'; New-Item -ItemType Directory -Force "$wr/app" | Out-Null; '{}' | Set-Content "$wr/app/tsconfig.json"; git -C $wr init -q; git -C $wr add -A
 foreach ($n in $needs.Keys) { New-Item -ItemType Directory -Force "$xw/extras/$n/files/notes" | Out-Null; "# $n`n`n$($needs[$n])" | Set-Content "$xw/extras/$n/EXTRA.md"; $n | Set-Content "$xw/extras/$n/files/notes/$n.txt" }
 git -C $xw add -A; & $gt $xw commit -q -m 'feat: real-like extras'; git -C $xw push -q $og extras 2>&1 | Out-Null
 & $J @{ tracker = @{ type = 'clickup' }; reports = @{ type = 'gdocs' }; localEnv = @{ envs = @{ e1 = @{ db = @{ applied = 'mvn liquibase:status'; rollback = 'mvn liquibase:rollback' }
   services = @(@{ name = 'api'; start = 'java -jar api.jar' }, @{ name = 'web'; start = 'yarn ng serve --port 4200' }) } } }; repos = @(@{ name = 'web'; checkout = $wr }) } $kl
 $s5 = & $ex extra sync; $got = @([regex]::Matches($s5.out, '(?m)^extra (\S+): installed') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
-Expect "extra sync: a real-like config installs exactly tracker-clickup, report-gdocs, liquibase, node-spec, ts-typecheck (a repo file) ($($got -join ','))" ($s5.code -eq 0 -and ($got -join ',') -eq 'liquibase,node-spec,report-gdocs,tracker-clickup,ts-typecheck')
+Expect "extra sync: a real-like config installs exactly tracker-clickup, report-gdocs, liquibase, node-spec, ts-typecheck (a repo file), os-here (this OS) ($($got -join ','))" ($s5.code -eq 0 -and ($got -join ',') -eq 'liquibase,node-spec,os-here,report-gdocs,tracker-clickup,ts-typecheck')
 # lint codes on the copy
 $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8

@@ -776,8 +776,9 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin' -and (Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue)) {   # extra container-tests
-    $rc = Test-DockerForContainerTests
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # extra container-tests
+  if ($ct) {
+    $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }
   }
   if ($cmd -match '\{sln\}') {
@@ -821,7 +822,8 @@ foreach ($s in $steps) {
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
   $unrun = $false   # 'unrun' (not a pass, exit 5): extra ts-typecheck's verdict on a huge tsc baseline
-  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b' -and (Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue)) { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
+  $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }   # extra ts-typecheck
+  if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
