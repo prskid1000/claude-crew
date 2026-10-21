@@ -201,7 +201,7 @@ function localBlock(it) {
  const e = LOCALENV(it)
  if (!e) return ''
  return `
-LOCAL ENV "${e}": ours, so NOT_TESTED is not final: unblock it yourself (qa-kit / local-env "Unblock yourself"; config in
+LOCAL ENV "${e}" (extra local-env): ours, so NOT_TESTED is not final: unblock it yourself (qa-kit / local-env "Unblock yourself"; config in
  ${KIT}/.state/localenv/${e}.env; services: & ${KIT}/skills/local-env/localenv.ps1 use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'}
  -Session <board token>, release when done). A fix only kitty / the coordinator may do (up/down/refresh/drop, shared DB repair):
  NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.`
@@ -229,7 +229,7 @@ const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) 
 const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
-PHONE (${SWARM}/SKILL.md A1-A4): lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
+PHONE (extra android-swarm; ${SWARM}/SKILL.md A1-A4): lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
 - FIRST: & ${SWARM}/swarm.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}; every command starts with $env:ANDROID_SERIAL='${L.serial}';
 - UI: & ${Q} ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log. Relaunch: & ${SWARM}/swarm.ps1 launch -Serial ${L.serial} [-Clear]
 - > 10 min of non-phone work: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)} (acquire again later); the workflow releases it after the lane's last item.
