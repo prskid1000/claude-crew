@@ -351,9 +351,9 @@ refuses unfilled ones); then `port`, lint 0, tests.
   test, flow node, README row, ports; lint refuses a half-added part.
 
 ### Hard rules
-- **30 content + 8 plumbing files** [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports; plumbing = LICENSE, .gitignore,
+- **30 content + 8 plumbing files** [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports and `tests/`; plumbing = LICENSE, .gitignore,
   .gitattributes, .githooks/*, .github/*, settings.json; git-ignored local files never count). One script per area; templates
-  fold into a SKILL.md, an agent or `skills/dev-kit/templates.md`; tests in `tests/kit-tests.ps1`.
+  fold into a SKILL.md, an agent or `skills/dev-kit/templates.md`; tests in `tests/<area>.tests.ps1` (shared helpers: `tests/harness.ps1`).
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->
@@ -384,7 +384,7 @@ always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · template
 
 ### Before every push
 `agents/kitty.md` step 8: `kittool.py lint` (0 problems, 0 counted flow issues), `port` + `port --check`, `tests/kit-tests.ps1
-[-Area dev|qa|orch|local]`, `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow change.
+[-Area <area>]` (areas in parallel), `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow change.
 pre-commit regenerates README graph sections and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `dev.ps1 wt commit`.
 ### Rule examples

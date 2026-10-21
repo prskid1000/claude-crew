@@ -722,14 +722,14 @@ def lint(k, g=None, org_terms=None):
         pass
     counted = [x for x in (tracked or k.files) if not x.startswith(GENERATED) and osp.isfile(osp.join(k.dir, x))]   # a deletion not staged yet is gone
     plumbing = [x for x in counted if x.startswith(PLUMBING)]
-    content = [x for x in counted if x not in plumbing]
+    content = [x for x in counted if x not in plumbing and not x.startswith('tests/')]   # tests: one file per area, bounded by the tests budget
     caps = {x: v for x, v in (manifest(k.dir).get('caps') or {}).items() if not x.startswith('_')}
     if caps and caps != CAPS:
         bad('MANIFEST', PATHS_JSON, f'_manifest.caps {caps} differ from the kittool.py fallback {CAPS}: keep them equal')
     caps = {**CAPS, **caps}
     cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
-        bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples, tests; '
+        bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples; '
          'ports excluded): merge files (README "Extending")')
     if len(plumbing) > cap_p:
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
