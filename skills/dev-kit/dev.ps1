@@ -10,7 +10,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 wt · L212 stack · L402 gate · L670 check · L986 pipes · L1022 guard · L1274 tracker · L1307 host
+Sections: L20 wt · L212 stack · L402 gate · L679 check · L991 pipes · L1027 guard · L1290 tracker · L1323 host
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -870,7 +870,7 @@ if ($Step -eq 'migrations') {
   $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  if (-not (Test-Path -LiteralPath (Join-Path $k 'adapters/liquibase.py'))) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit 5 }
+  if (-not $Show -and -not (Test-Path -LiteralPath (Join-Path $k 'adapters/liquibase.py'))) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit 5 }
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
   $env:LBCHECK_CHANGED = (@(git -C $top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
   $rc = 0
@@ -895,7 +895,7 @@ foreach ($s in $steps) {
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and -not $Show) {
     # no unit-test target: the node spec runner (pure-logic specs) is the extra node-spec
-    if (-not (Test-Path -LiteralPath $KitCmd.spec)) { Write-Host '[check] node spec runner is an extra: run kittool.py extra add node-spec'; exit 2 }
+    if (-not (Test-Path -LiteralPath $KitCmd.spec)) { Write-Host '[check] test UNRUN: the node spec runner is an extra: run kittool.py extra add node-spec'; exit 5 }
     if ($RealAngular) { $cmd += ' --real-angular' }
   }
   if ($Touched -and $s -eq 'test') {

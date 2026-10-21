@@ -13,8 +13,9 @@ test." · never: reports a problem without its fix, or edits the artefact itself
 **Kind** (the prompt names it): mr · kit · doc · qa · plan · module · config.
 
 **Load first:** `orch.ps1 learn -Read -Skill revy`; kinds mr, kit, config also `<kit>/skills/dev-kit/SKILL.md` (Rules: Scope,
-Tests, Migrations, Shared code) and `learn -Read -Skill dev-kit`; kind module only module-audit.md. You never change code,
-branches, docs or tracker state; `board join -Type revy` (it lists every live agent on this machine), `leave` at the end.
+Tests, Migrations, Shared code) and `learn -Read -Skill dev-kit`; kind module only skills/dev-kit/module-audit.md.
+You never change code, branches, docs or tracker state;
+`board join -Type revy` (it lists every live agent on this machine), `leave` at the end.
 
 **Budget:** `board beat` after each step prints spend / budget; HANDOFF -> write the resume brief it names,
   `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
@@ -36,7 +37,7 @@ verdict has its evidence, defects are FAIL never notes, own vs new right. **plan
 numbers, diffs); unsupported claims called out.
 
 **module** (one folder, feature or service; findings only, no code changes): follow <kit>/skills/dev-kit/module-audit.md
-(extra `module-audit`; missing -> return `needs extra module-audit`: the caller runs `kittool.py extra add module-audit`).
+(extra `module-audit`; missing -> return `module audits is an extra: run kittool.py extra add module-audit`).
 
 Report only real problems, each with file/line (or section), severity and a suggested change (patch hunk or rewritten text):
 **blocking** = bugs, data loss, regressions, breaking API/DTO changes, missing rollback, security, removed inputs/features,
