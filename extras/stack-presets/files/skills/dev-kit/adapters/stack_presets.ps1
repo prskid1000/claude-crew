@@ -47,8 +47,8 @@ Register-KitAdapter 'stack' 'presets' @{ 'detect' = { param($a)
     }
     $sln = @(Get-ChildItem -LiteralPath $d -Filter *.sln -File -ErrorAction SilentlyContinue)
     if (-not $sln.Count) { $sln = @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
-    if ($sln.Count -ne 1) { throw "[stack] ${d}: expected one .sln (or project file), found $($sln.Count): -Dir to its folder" }
-    foreach ($k in @($c.Keys)) { if ($c[$k]) { $c[$k] = ([string]$c[$k]).Replace('{sln}', $sln[0].FullName) } }
+    if ($sln.Count -ne 1) { Write-Warning "[stack] ${d}: $($sln.Count) .sln / project files: {sln} stays unresolved; check -Dir the folder of one" }
+    else { foreach ($k in @($c.Keys)) { if ($c[$k]) { $c[$k] = ([string]$c[$k]).Replace('{sln}', $sln[0].FullName) } } }
   }
   elseif (Test-Path (Join-Path $d 'go.mod')) {
     $s = 'go'
