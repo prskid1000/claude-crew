@@ -95,14 +95,11 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 '@
 $res = Invoke-PsTest 'pipes-test' $pt @((Join-Path $k 'skills/dev-kit/lib.ps1'), $D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
-# > 200 baseline errors = UNRUN
+# migrations: the repo's own check, Liquibase (extra), any other tool UNRUN
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
-'for (let i = 0; i < 250; i++) console.log(`src/old${i}.ts(1,1): error TS2322: x`); process.exit(2)' | Set-Content "$ud/tsc.js"
 git -C $ud init -q; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m init
 $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # the test builds need no free-RAM reserve: a busy machine must not stall them
-$out = pwsh @np $D check -Dir $ud -Step typecheck 2>&1 | Out-String
-Expect 'check: a typecheck UNRUN exits 5' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN')
 New-Item -ItemType Directory -Force "$ud/db/migrate", "$ud/database/migrations" | Out-Null; 'def change; end' | Set-Content "$ud/db/migrate/20240101000000_x.rb"
 'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m rb
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String

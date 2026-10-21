@@ -676,7 +676,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
 exit $code
 }
 
-# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate, 4 no Docker, 5 UNRUN)
+# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate, 4 no container engine, 5 UNRUN)
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -712,151 +712,6 @@ function Get-WtTarget {
   $gd = git -C $st.dir rev-parse --git-dir 2>$null; if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
   if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim() }
 }
-# TS5103: one retry with a temp tsconfig; fail only on changed files + config errors
-function Invoke-Typecheck([string]$TcCmd) {
-  $top = git -C $st.dir rev-parse --show-toplevel 2>$null
-  $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
-  $Repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
-  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(Get-Date -Format yyyyMMdd-HHmmss).log"
-  $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
-  $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
-  $bin = $null; $d = $st.dir
-  while ($d) {
-    $p = Join-Path $d "node_modules/.bin/$(if ($KitIsWindows) { 'tsc.cmd' } else { 'tsc' })"
-    if (Test-Path -LiteralPath $p) { $bin = $p; break }
-    if (-not $top -or $d -eq $top) { break }
-    $parent = Split-Path $d; if (-not $parent -or $parent -eq $d) { break }; $d = $parent
-  }
-  $ver = '5.0'; $tsVer = ''
-  if ($bin) { try { $tsVer = [string](Get-Content -LiteralPath (Join-Path (Split-Path (Split-Path $bin)) 'typescript/package.json') -Raw | ConvertFrom-Json).version; if ([int](($tsVer -split '\.')[0]) -ge 6) { $ver = '6.0' } } catch {} }
-  $raw = try { Get-Content -LiteralPath $base -Raw } catch { '' }
-  # the marker skips a doomed first run (~1 GB)
-  $igd = if ($raw -match '"ignoreDeprecations"\s*:\s*"([^"]*)"') { $Matches[1] } else { '' }
-  $flag = Join-Path (Get-KitPath tsbuild -Create) "ts5103.$(Hash12 "$($base.ToLower())|$igd|$tsVer").flag"
-  if (Test-Path -LiteralPath $flag) {
-    $out = @()
-    Write-Host "[check] TS5103 known (marker $(Split-Path $flag -Leaf)): skipping the first tsc run"
-  } else {
-    & $KitCmd.dev gate -Dir $st.dir -Cmd "$TcCmd > `"$log`" 2>&1"
-    $rc = $LASTEXITCODE
-    $out = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log })
-    $nErr = @($out -match '^(.+?\(\d+,\d+\): )?error TS\d+').Count
-    if (-not @($out -match 'error TS5103').Count) {
-      if ($rc -and $nErr -gt $script:TypecheckUnrunAbove) { return (Split-TypecheckErrors $out $rc $null $null) }
-      $out | ForEach-Object { Write-Host $_ }
-      if ($rc -and $out.Count) { Write-Host "[check] typecheck log: $log" }
-      return $rc
-    }
-    Set-Content -LiteralPath $flag -Value "$base | ignoreDeprecations '$igd' | typescript $tsVer"
-  }
-  $tsCfg = [ordered]@{ extends = $base.Replace('\', '/'); compilerOptions = @{ ignoreDeprecations = $ver } }
-  # else tsc includes the temp config's folder
-  if ($raw -notmatch '"(files|include)"\s*:') {
-    $pd = (Split-Path $base).Replace('\', '/')
-    $ex = @('node_modules', 'bower_components', 'jspm_packages')
-    try { $j = $raw | ConvertFrom-Json; if ($j.exclude) { $ex = @($j.exclude) } } catch {}
-    $tsCfg.include = @("$pd/**/*")
-    $tsCfg.exclude = @($ex | ForEach-Object { if ([IO.Path]::IsPathRooted($_)) { $_ } else { "$pd/$_" } })
-  }
-  $hash = Hash12 $st.dir.ToLower()
-  $tmp = Join-Path (Get-KitPath cache -Create) "tsconfig.ts5103.$hash.$PID.json"
-  $tsb = Join-Path (Get-KitPath tsbuild -Create) "$hash.ts5103.tsbuildinfo"
-  $tsc = if ($bin) { "`"$bin`"" } else { 'npx tsc' }
-  Write-Host "[check] typecheck TS5103 fallback: temp tsconfig (ignoreDeprecations $ver), $(if ($bin) { $bin } else { 'npx tsc' })"
-  $fbCmd = "$tsc -p `"$tmp`" --noEmit --pretty false --incremental --tsBuildInfoFile `"$tsb`" >> `"$log`" 2>&1"
-  $fbStart = [DateTimeOffset]::Now
-  try {
-    $tsCfg | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $tmp -Encoding utf8
-    & $KitCmd.dev gate -Dir $st.dir -Cmd $fbCmd
-    $rc = $LASTEXITCODE
-  } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
-  $out2 = @(if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Skip $out.Count })
-  if ($rc -eq 3 -and -not $out2.Count) { return 3 }
-  if (@($out2 -match 'error TS5103').Count) { Remove-Item -LiteralPath $flag -ErrorAction SilentlyContinue }   # no cure: next run starts over
-  return (Split-TypecheckErrors $out2 $rc $fbCmd $fbStart)
-}
-
-# a huge baseline (node_modules mismatch) is UNRUN, not a pass
-function Split-TypecheckErrors($out2, [int]$rc, [string]$GateCmd, $Since) {
-  $changed = @(Get-ChangedFiles | ForEach-Object { $_.ToLower() })
-  $mine = [Collections.Generic.List[string]]::new(); $mineN = 0; $baseN = 0; $baseFiles = @{}; $cur = $null; $blocks = 0
-  foreach ($l in $out2) {
-    if ($l -match '^(?<f>.+?)\(\d+,\d+\): error TS(?<code>\d+)' -or $l -match '^error TS(?<code>\d+)') {
-      $blocks++
-      $f = $Matches.f; $isCfg = (-not $f) -or $Matches.code -match '^[56]\d{3}$' -or $Matches.code -eq '18003'
-      $full = if ($f) { [IO.Path]::GetFullPath((Join-Path $st.dir $f)).ToLower() } else { $null }
-      if ($isCfg -or $changed -contains $full) { $cur = 'mine'; $mineN++ } else { $cur = 'base'; $baseN++; $baseFiles[$full] = 1 }
-    }
-    elseif (-not ($cur -and $l -match '^\s')) { $cur = $null }
-    if ($cur -eq 'mine') { $mine.Add($l) }
-  }
-  $mine | ForEach-Object { Write-Host $_ }
-  Write-Host "BASELINE: $baseN errors outside your changes ($($baseFiles.Count) files; not failing; log: $log)"
-  if ($mineN) { Write-Host "[check] typecheck: $mineN errors in your changed files (or config)"; return 1 }
-  if ($rc -and -not $blocks) { $out2 | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }; return $rc }
-  if ($baseN -gt $script:TypecheckUnrunAbove) {
-    $tgt = Get-WtTarget; if (-not $tgt) { $tgt = '<target>' }
-    Write-Host "[check] typecheck UNRUN: $baseN baseline errors (> $script:TypecheckUnrunAbove): the linked node_modules do not match this branch, real errors hide there. Say 'typecheck unrun' in the MR; the lead sets kit.local.json linkFromByTarget.$tgt to a checkout with matching node_modules."
-    return 'unrun'
-  }
-  if ($rc -and $GateCmd) { Set-GateSampleOk $GateCmd $Since }
-  return 0
-}
-$script:TypecheckUnrunAbove = 200
-
-function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
-  $hf = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'history.json'
-  if (-not (Test-Path -LiteralPath $hf)) { return }
-  $pre = if ($GateCmd.Length -gt 60) { $GateCmd.Substring(0, 60) } else { $GateCmd }
-  $fromUtc = $Since.UtcDateTime.AddSeconds(-2)
-  $mx = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate'); $got = $false
-  try {
-    $got = Lock-Gate $mx
-    if (-not $got) { return }
-    $h = Get-Content -LiteralPath $hf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -ErrorAction Stop
-    if ($h -isnot [hashtable]) { return }
-    $best = $null; $bestAt = [datetime]::MinValue
-    foreach ($k in @($h.Keys)) { foreach ($s in @($h[$k])) {
-      if (-not $s -or $s.ok -or -not $s.at -or -not ([string]$s.cmd).StartsWith($pre)) { continue }
-      $at = ([datetime]$s.at).ToUniversalTime()
-      if ($at -ge $fromUtc -and $at -gt $bestAt) { $best = $s; $bestAt = $at } } }
-    if (-not $best) { return }
-    $best.ok = $true; $best.baseline = $true
-    $h | ConvertTo-Json -Depth 3 | Set-Content "$hf.tmp" -ErrorAction Stop
-    Move-Item "$hf.tmp" $hf -Force -ErrorAction Stop
-  } catch {} finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
-}
-
-# without Docker, container tests burn minutes, then fail like a code bug
-function Test-DockerForContainerTests {
-  $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
-  $need = @($names | Where-Object { $_ -match '(Container|IT)(Test)?$' }).Count -gt 0
-  if (-not $need) {
-    $bf = @(@('pom.xml', 'build.gradle', 'build.gradle.kts', 'package.json', 'pyproject.toml', 'requirements.txt', 'go.mod') | ForEach-Object { Join-Path $st.dir $_ }) + @(Get-ChildItem -LiteralPath $st.dir -Filter *.csproj -File -ErrorAction SilentlyContinue | ForEach-Object FullName) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if ($bf -and (Get-Content -LiteralPath $bf -Raw) -match 'testcontainers') {
-      if ($AllTests -and -not $names.Count) { $need = $true }
-      else {
-        $roots = @('src/test', 'src/integrationTest', 'test', 'tests', '__tests__') | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { Test-Path -LiteralPath $_ }
-        foreach ($n in $names) {
-          $inc = @('.java', '.kt', '.py', '.ts', '.js', '.go', '.cs') | ForEach-Object { "$n$_"; "$n.*$_" }
-          $src = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Include $inc -ErrorAction SilentlyContinue } | Select-Object -First 1)
-          if ($src.Count -and (Get-Content -LiteralPath $src[0].FullName -Raw) -match '(?i)@Testcontainers|@Container\b|testcontainers|extends\s+\w*Container\w*Test\b') { $need = $true; break }
-        }
-      }
-    }
-  }
-  if (-not $need) { return 0 }
-  $why = 'neither docker nor podman is on PATH'   # Colima: the docker CLI; Podman for Testcontainers: DOCKER_HOST = its socket
-  foreach ($x in 'docker', 'podman') {
-    if (-not (Get-Command $x -ErrorAction SilentlyContinue)) { continue }
-    $r = Invoke-KitExe $x @('info') 5; if (-not $r.code) { Write-Host "[check] container tests: $x is running"; return 0 }
-    $why = "$x info failed: $(@("$($r.err)" -split "`n" | Where-Object { $_.Trim() })[0])"
-  }
-  Write-Host "[check] container tests need a container engine, and none answers ($why)."
-  Write-Host "[check] Start it (Docker Desktop / docker service / podman machine start / colima start), wait until '<engine> info' answers, re-run; a test failing on a down engine is no code failure."
-  return 4
-}
-
 # repos[].migrations.check runs (in the worktree); else Liquibase XML -> lbcheck (extra liquibase); any other tool or changelog format = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
@@ -870,20 +725,10 @@ if ($Step -eq 'migrations') {
   $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  if (-not $Show -and -not (Test-Path -LiteralPath (Join-Path $k 'adapters/liquibase.py'))) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit 5 }
-  $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
-  $env:LBCHECK_CHANGED = (@(git -C $top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
-  $rc = 0
-  $mine = @($masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) })
-  $under = @($mine | Where-Object { $_.StartsWith($st.dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) })
-  if ($under.Count) { $mine = $under }
-  foreach ($full in $mine) {
-    $a = @($KitCmd.devtools, 'lbcheck', $full, $Since)
-    $py = Get-Python
-    if ($Show) { "$py $($a -join ' ')"; continue }
-    Write-Host "[check] liquibase: $full (files since $Since)"
-    & $py @a; if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
-  }
+  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue
+  if (-not $lb) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit $(if ($Show) { 0 } else { 5 }) }
+  if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
+  $rc = & $lb -Top $top -Masters $masters -Since $Since
   exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
 }
 
@@ -931,7 +776,7 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') {
+  if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin' -and (Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue)) {   # extra container-tests
     $rc = Test-DockerForContainerTests
     if ($rc -and -not $Show) { exit $rc }
   }
@@ -975,8 +820,8 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
-  $unrun = $false
-  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
+  $unrun = $false   # 'unrun' (not a pass, exit 5): extra ts-typecheck's verdict on a huge tsc baseline
+  if ($s -eq 'typecheck' -and $cmd -match '\btsc\b' -and (Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue)) { $r = @(Invoke-Typecheck $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
