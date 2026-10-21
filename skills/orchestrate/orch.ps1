@@ -1038,7 +1038,7 @@ $seen = @{}; $tree = { param($r) $g = 0.0; $st = [Collections.Stack]::new(); $st
 $res = [Collections.Generic.List[object]]::new()
 $le = if (Test-Path $KitCmd.local) { Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))) }   # the local-env extra
 $envStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
-$er = if (Get-Command Get-KitEnvRows -ErrorAction SilentlyContinue) { Get-KitEnvRows $envStatus $now } else { [pscustomobject]@{ rows = @(); flags = @(); owner = @() } }   # extra local-env
+$er = if ($envRowsFn = Get-Command Get-KitEnvRows -ErrorAction SilentlyContinue) { & $envRowsFn $envStatus $now } else { [pscustomobject]@{ rows = @(); flags = @(); owner = @() } }   # extra local-env
 foreach ($x in $er.rows) { $res.Add($x) }; foreach ($x in $er.flags) { Flag $x.level $x.what $x.action }
 $ports = try { Get-Content (Get-KitPath browser-ports) -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; $keyOf = @{}; foreach ($k in $ports.Keys) { $keyOf["$($ports[$k])"] = $k }
 $isBr = { param($p) $p.Name -match '^(chrome|msedge|chromium)(\.exe)?$' }
@@ -1077,7 +1077,7 @@ foreach ($sf in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAc
 $logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-2) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
 $pa = $state.anom
 $cur = @{ restarts = $restarts; toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count
-  logs = @(if (Get-Command Get-KitLogErrors -ErrorAction SilentlyContinue) { Get-KitLogErrors $logs $(if ($pa.logSizes) { $pa.logSizes } else { @{} }) })
+  logs = @(if ($logErrorsFn = Get-Command Get-KitLogErrors -ErrorAction SilentlyContinue) { & $logErrorsFn $logs $(if ($pa.logSizes) { $pa.logSizes } else { @{} }) })
   adopted = @($envStatus | ForEach-Object { $ev = $_; @($ev.services | Where-Object state -eq 'up (adopted)' | ForEach-Object { [pscustomobject]@{ env = $ev.env; svc = $_.service; port = $_.port } }) }) }
 $an = Get-KitAnomalies $cur $pa; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }
 $an.state.logSizes = @{}; foreach ($x in $cur.logs) { $an.state.logSizes[$x.path] = $x.size }; $state.anom = $an.state
