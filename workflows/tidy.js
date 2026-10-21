@@ -8,7 +8,8 @@ export const meta = {
  ],
 }
 
-// Sections: L12 args · L73 analyse · L76 record-args · L90 analysts · L115 apply
+// Sections: L12 args · L26 analyse · L76 record-args · L93 analysts · L119 apply
+// ---- args: all optional
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
  kitDir: 'C:/work/.claude',  // absolute (recommended); default '.claude' under workspace root
@@ -22,6 +23,7 @@ const KP = {"runtime": {"guard-log": "logs/guard.log", "qa-runs": "work/qa-runs/
 const rp = (n) => (n in KP.durable ? `${C}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
+// ---- analyse: sources, proposal and result shapes, lenses
 const SOURCES = `${PATHS}
 Data sources (agents/kitty.md step 7; missing files = no data yet):
 - signals ${rp('signals')}: only those after the time in ${rp('last-retro')} are new (& ${C}/skills/orchestrate/orch.ps1 learn -Show -Last 500; -Stats)
@@ -71,6 +73,7 @@ const LENSES = [
 ]
 
 phase('Analyse')
+// ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record (orch.ps1 launch -Self, FNV-1a): a resume needs the args byte-exact
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`, BUD = { cap: 0, stopAt: 0.8 }   // BUDGET (README "Configuration")
@@ -87,6 +90,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
 }
 await agent(`STEP: write the current local time (ISO, e.g. 2026-10-01T10:15:00) to ${rp('last-retro')}.start (create the folder), nothing else. Return ok=true.`,
  { label: 'stamp-start', phase: 'Analyse', agentType: 'kitty', model: 'haiku', effort: 'low' })
+// ---- analysts: one kitty per lens
 const found = await parallel(LENSES.map((l) => () => agent(`Kind retro (analyst): you analyse the multi-agent dev/QA kit. Lens: ${l.focus}.
 ${SOURCES}
 
@@ -112,6 +116,7 @@ if (!all.length) {
  return { applied: [], proposedForApproval: [], rejected: [], report: dead ? `no proposals; ${dead} analyst(s) failed - re-run the retro` : 'nothing to change' }
 }
 
+// ---- apply: one kitty applies the retro
 phase('Apply')
 if (BUD.cap) {   // the last new agent: not past the stop line
  const m = await agent(`STEP: run exactly this in PowerShell and return ok=true with its output line:${PATHS}\n& ${C}/skills/orchestrate/orch.ps1 budget -Run 'tidy' -Json`, { label: 'budget', phase: 'Apply', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model: 'haiku', effort: 'low' })

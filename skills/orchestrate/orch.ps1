@@ -12,10 +12,11 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L46 board · L186 budget · L214 launch · L306 recover · L396 track · L666 supervise report · L707 anomalies
-  L736 supervise · L994 report · L1071 bugbrief · L1179 cleanup · L1293 learn · L1324 decide · L1392 health · L1448 retro due
-  L1458 setup · L1522 guard-sendmessage
+Sections: L19 init · L47 board · L188 budget · L216 launch · L308 recover · L398 track · L668 supervise report · L709 anomalies ·
+  L738 supervise · L996 report · L1073 bugbrief · L1183 cleanup · L1297 learn · L1328 decide · L1396 health · L1452 retro due ·
+  L1462 setup · L1526 guard-sendmessage
 #>
+# ---- init: verb arguments, lib.ps1, adapters, shared helpers
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
@@ -705,7 +706,7 @@ function Format-KitReport($d, [switch]$Agents) {   # -Agents: the coordinator's 
   if ($fl.Count -gt 8) { $reportLines.Add("- …$($fl.Count - 8) more: $($d.detailFile)") }
   @($reportLines)
 }
-# ---- anomalies (pure: $c this round, $p last round's state.anom) -> WATCH flags + next state
+# ---- anomalies: pure ($c this round, $p last round's state.anom) -> WATCH flags + next state
 function Get-KitAnomalies($c, $p) {
   $f = [Collections.Generic.List[object]]::new(); $AddF = { param($w, $a) $f.Add([pscustomobject]@{ level = 'WATCH'; what = $w; action = $a }) }; if (-not $p) { $p = @{} }
   if ($null -ne $p.outbox -and $c.outbox -gt [int]$p.outbox) { & $AddF "SILENT FAILURE: tracker outbox grew to $($c.outbox) write(s)" 'evidence .state/outbox.jsonl: tracker auth / network' }

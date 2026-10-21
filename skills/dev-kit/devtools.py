@@ -13,7 +13,8 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
  lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L73 run · L118 tracker · L193 git host · L300 MR · L485 merge · L563 docs · L680 plugins · L693 keepboth · L712 selftest · L853 CLI
+Sections: L30 config · L64 run · L121 tracker · L196 git host · L277 MR · L340 merge · L568 docs · L685 plugins · L699 keepboth ·
+  L718 selftest · L860 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -26,6 +27,7 @@ sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'orchestrate'))
 from kittool import kit_path, locked   # one path map and lock for every kit script
 
 
+# ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
 def _cfg_file():
     own = os.path.join(KIT, 'kit.local.json')
     if os.path.exists(own):
@@ -59,6 +61,7 @@ def extra_missing(feature, name):
     print(f'{feature} is an extra: run kittool.py extra add {name}', file=sys.stderr)
     sys.exit(3)
 
+# ---- run: CLI calls and their arguments
 # reads retry transient errors (2 s, 6 s) in one deadline; writes never (a lost reply would duplicate)
 TRANSIENT = re.compile(r'(?i)timed? ?out|connection (reset|refused|closed|aborted)|could not resolve|no such host|unreachable|dial tcp|\bEOF\b|TLS handshake|temporar|\b(429|500|502|503|504)\b|bad gateway|service unavailable|too many requests')
 STOP_AT = [0.0]   # auto_merge's deadline
@@ -115,7 +118,7 @@ def _body(arg):
     raise SystemExit(f'file not found: {arg} - write it first (nothing was created)')
 
 
-# --- Tracker (dev.ps1 tracker)
+# ---- tracker: dev.ps1 tracker
 DEV = os.path.join(KIT, 'dev.ps1')   # tracker adapter
 PWSH = shutil.which('pwsh') or shutil.which('powershell')
 TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {}).get('type') or 'none').lower()
@@ -190,7 +193,7 @@ def finish(tid, guide_url, solution_md, status='review'):
     set_status(tid, status)
 
 
-# --- Git host: lib.ps1 section 5 adapters via dev.ps1 host
+# ---- git host: lib.ps1 git-host adapters via dev.ps1 host
 GITLAB_HOST = CFG.get('gitHost') or 'gitlab.com'
 GITHUB_HOST = CFG.get('githubHost') or 'github.com'
 if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api outside a checkout hits gitlab.com
@@ -271,6 +274,7 @@ def target_of(worktree):
     return None
 
 
+# ---- MR: open a merge / pull request
 MR_SECTIONS = ('## Summary', '## Changes', '## How tested', '## Risks', '## Links')  # templates.md "MR body"
 FOOTER = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
 
@@ -333,6 +337,7 @@ def mr_create(worktree, title, body_md, tgt=None):
     return url
 
 
+# ---- merge: merge now or arm merge-when-green; producers first
 def _remember_automerge(ref):
     """GitLab drops merge-when-green on a new push (e.g. a rebase): record the intent in the durable tracking file ("automerge");
     orch.ps1 track run re-arms it every supervise round until the MR merges."""
@@ -560,7 +565,7 @@ def _auto_merge(worktree, iid, max_wait):
 
 
 
-# --- Documents: make_doc / make_evidence -> ADAPTERS['report'][reports.type]
+# ---- docs: make_doc / make_evidence -> ADAPTERS['report'][reports.type]
 _q = lambda s: subprocess.list2cmdline([str(s)]) if os.name == 'nt' else __import__('shlex').quote(str(s))
 
 
@@ -677,6 +682,7 @@ R['command'] = {'publish': _command}
 # adapter-end:report
 
 
+# ---- plugins: skills/dev-kit/adapters/*.py (installed extras)
 def load_plugins(folder=os.path.join(KIT, 'adapters')):
     """Each skills/dev-kit/adapters/*.py (an installed extra) gets this module in register(dt) and adds adapters or verbs."""
     this = sys.modules[__name__]
@@ -690,7 +696,7 @@ def load_plugins(folder=os.path.join(KIT, 'adapters')):
 load_plugins()
 
 
-# --- keepboth (rebase), self-test
+# ---- keepboth: append-only rebase conflicts
 def keepboth(paths):
     """Resolve conflict blocks as OURS then THEIRS; append-only files only (changelog includes, route/nav lists, i18n keys,
     DI registrations, barrel exports, requirements.txt), never real code."""
@@ -709,6 +715,7 @@ def keepboth(paths):
     return 1 if left else 0
 
 
+# ---- selftest: offline checks
 def selftest():
     """Offline checks (missing body file refused; mergeAfter finds producers, warns on an unmatched repo name; merge_word).
     Exit 0 = all pass."""
@@ -850,6 +857,7 @@ def _report_selftest(expect):
         g.update(saved); shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---- CLI: argument checks, verb dispatch
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     a = sys.argv[1:]

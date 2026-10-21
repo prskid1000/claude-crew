@@ -11,8 +11,9 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 wt · L212 stack · L387 gate · L637 check · L789 pipes · L825 guard · L1065 tracker · L1098 host
+Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1076 tracker · L1109 host
 #>
+# ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 # the gate mutex; an abandoned one is ours
@@ -797,7 +798,7 @@ function Invoke-Pipes {
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
-# any host (lib.ps1 section 5): no head pipeline -> no-ci (the repo's CI adapter finds no CI config) or no-pipeline (one may start)
+# any host (lib.ps1 git-host): no head pipeline -> no-ci (the repo's CI adapter finds no CI config) or no-pipeline (one may start)
 function State($url) {
   $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
   if ($u.type -eq 'gitlab' -and $url -match '^https?://([^/]+)/') { $env:GITLAB_HOST = $Matches[1] }   # else glab asks gitlab.com
@@ -1110,7 +1111,7 @@ elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; addit
 exit 0
 }
 
-# ---- tracker: lib.ps1 section 4
+# ---- tracker: lib.ps1 tracker adapters
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
@@ -1143,7 +1144,7 @@ function Invoke-Tracker {
   }
 }
 
-# ---- host: the git-host / ci adapters (lib.ps1 section 5) for devtools.py: host <verb> '<args JSON>' | @<json file> -> JSON
+# ---- host: the git-host / ci adapters (lib.ps1 git-host) for devtools.py: host <verb> '<args JSON>' | @<json file> -> JSON
 function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}') {
   $a = $(if ($ArgJson -like '@*') { Get-Content -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable
   $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # one JSON line; a failed call = null (unknown)

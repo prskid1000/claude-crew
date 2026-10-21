@@ -3,9 +3,9 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L65 config · L145 OS · L467 tracker · L687 git-host · L845 entry-scripts
+Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L852 entry-scripts
 #>
-# ===== 1. paths (kit.example.json _paths) =====
+# ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitPathMap = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths
 function Get-KitRuntime { if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir } }
@@ -63,7 +63,7 @@ function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Manda
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
 }
 
-# ===== 2. config (kit.local.json) =====
+# ---- config: kit.local.json
 $__devkit = $PSScriptRoot
 $__kit = Split-Path (Split-Path $__devkit)
 $__ws = Split-Path $__kit
@@ -143,7 +143,7 @@ function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = 
     [bool](-not $r.timedOut -and $r.code -eq 0)
   }
 }
-# ===== 3. OS helpers (Windows; on Linux / macOS the extra posix replaces them) =====
+# ---- OS: helpers (Windows; on Linux / macOS the extra posix replaces them)
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $KitIsMac = (-not $KitIsWindows) -and ($PSVersionTable.OS -match 'Darwin' -or ((Test-Path variable:IsMacOS) -and $IsMacOS))
 if (-not $KitIsWindows -and -not (Test-Path (Join-Path $PSScriptRoot 'adapters/os_posix.ps1'))) { Write-Warning 'Linux / macOS support is an extra: run kittool.py extra add posix' }
@@ -277,7 +277,7 @@ function Test-KitHolder($o) {
   if ($o.holderStart) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$o.holderStart).TotalSeconds) -lt 2 } catch {} }
   $true
 }
-# ---- liveness leases (README "Leases"): ONE rule for env services, test browsers, phones, sandboxes, builds
+# ---- leases: liveness leases (README "Leases"), ONE rule for env services, test browsers, phones, sandboxes, builds
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
   $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder)
@@ -471,7 +471,7 @@ function Get-KitExtraLine([string]$Kind, [string]$Name) {
   "$Kind $Name is an extra: run kittool.py extra add $extra"
 }
 
-# ===== 4. tracker adapter (a Register-KitAdapter block per tracker.type) =====
+# ---- tracker: adapter (a Register-KitAdapter block per tracker.type)
 
 function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
   $script:__trType = ([string]$(if ($Type) { $Type } elseif ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { $KitConf.TrackerType })).ToLower()
@@ -691,7 +691,7 @@ function Get-TrackerTasks([string]$List, [string]$Status) {
   __TrA 'list' @{ list = $List; status = (Resolve-TrackerStatus $Status); logical = $Status }
 }
 
-# ===== 5. git-host + ci adapters (README "Adapters"): Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... } =====
+# ---- git-host: git-host + ci adapters (README "Adapters"), Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
 $script:HostType = ([string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))).ToLower()
@@ -856,7 +856,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   }
   & $run $pos.ToArray() $named
 }
-# ===== 6. entry scripts (one per area) =====
+# ---- entry-scripts: one per area
 $KitCmd = [pscustomobject]@{
   dev = Join-Path $KitConf.Kit 'skills/dev-kit/dev.ps1'
   devtools = Join-Path $KitConf.Kit 'skills/dev-kit/devtools.py'

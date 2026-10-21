@@ -8,6 +8,7 @@
   python -X utf8 kittool.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (extra kit-admin)
   python -X utf8 kittool.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (extra kit-admin)
+  python -X utf8 kittool.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: extra kit-admin
   python -X utf8 kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]   # optional parts (origin `extras`)
 
@@ -16,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: 1 paths · 2 load, graph, lint · 3 README graph · 4 lint command · 5 audit scan · 6 registry · 7 prose · 8 budget ·
-9 extras · 10 main
+Sections: L31 paths · L82 load · L458 lint · L814 README graph · L920 lint command · L953 audit scan · L1188 registry ·
+  L1417 prose · L1560 sections · L1680 budget · L1698 extras · L2034 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -27,7 +28,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 KIT_DIR = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))   # 3 levels up: <kit>
 
-# ==== 1. paths (kit.example.json _paths)
+# ---- paths: kit.example.json _paths
 with open(osp.join(KIT_DIR, 'skills', 'dev-kit', 'kit.example.json'), encoding='utf-8') as _f:
     MAP = json.load(_f)['_paths']
 
@@ -78,7 +79,7 @@ def locked(path, stale=120):
         except OSError:
             pass
 
-# ==== 2. load, graph, lint
+# ---- load: kit files, the reach graph
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}
 # outside the graph: generated ports, git / legal files
 REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents', '.github')
@@ -454,6 +455,7 @@ def graph(k):
         n['reach'] = 'entry' if f in entries else 'structural' if f in structural else 'mention-only' if f in anyhow else 'none'
     return {'nodes': nodes, 'edges': edges}
 
+# ---- lint: the checks (problem codes: kit-admin.md, extra kit-admin)
 def js_code(src):
     """Workflow source with comments and string/template literals removed (to look at code only)."""
     out, i, n, st = [], 0, len(src), None
@@ -683,6 +685,10 @@ def lint(k, g=None, org_terms=None):
         head = '\n'.join(k.texts.get(f, '').splitlines()[:40])
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
             bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header", extra kit-admin)')
+    # ---- section maps: the "Sections:" line vs the markers; every function and verb in a section
+    for f in sec_files(counted):
+        for c, w, m in sec_check(f, read(osp.join(k.dir, f)))[0]:
+            bad(c, w, m)
     # ---- nothing opens on the desktop without --open / -Open
     rx_open = {'.py': r'os\.startfile\(|webbrowser\.open|\[\s*[\'"](?:xdg-open|open)[\'"]',
        '.ps1': r'^\s*(?:Invoke-Item|ii)\s|Start-Process\s+(?:-FilePath\s+)?[\'"]?(?:https?://|[^\s\'"]+\.(?:html?|md|pdf|png|jpe?g|txt|csv|log)\b)|\bcmd(?:\.exe)?\s+/c\s+start\b|^\s*(?:start|explorer(?:\.exe)?)\s+\S',
@@ -805,7 +811,7 @@ def lint(k, g=None, org_terms=None):
                     bad('ORG-TERM', where, f'contains org term "{t}"')
     return probs
 
-# ==== 3. README graph sections (Mermaid and tables; pre-commit keeps them current)
+# ---- README graph: Mermaid and tables; pre-commit keeps them current
 def readme_sections(k, g):
     """The README's generated sections: the map (root -> router -> skills / workflows / agents), tables, one per skill."""
     nodes, edges = g['nodes'], g['edges']
@@ -911,7 +917,7 @@ def cmd_flow(a):
     write_readme(osp.abspath(rest[0] if rest else KIT_DIR))
     return 0
 
-# ==== 4. lint command
+# ---- lint command: print, --json, exit code
 def org_terms_of(value):
     """--org-terms: a kit.local.json (its orgTerms) or a comma list."""
     if value.lower().endswith('.json') and not osp.isfile(value):   # a mistyped path as a "term" passes every file
@@ -944,7 +950,7 @@ def cmd_lint(a):
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
     return 1 if problems and '--warn' not in flags else 0
 
-# ==== 5. audit scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each)
+# ---- audit scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
   'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets')
@@ -1040,6 +1046,9 @@ def cmd_scan(kit):
         if stale:
             out('ACT', 'PORT-DRIFT', 'kittool.py port --check', said.getvalue().strip()[:300], 'python -X utf8 skills/orchestrate/kittool.py port')
     texts = {f: read(osp.join(kit, f)) for f in files}
+    for f in sec_files(files):
+        for ln, nm, n in sec_sizes(f, texts[f]):
+            out('WARN', 'SECTION-BIG', f'{f}:{ln}', f'section "{nm}" is {n} lines (> {SEC_BIG})', 'split it with another ---- marker')
     for f in files:
         if re.match(r'agents/[^/]+\.md$', f):
             tools = re.search(r'^tools:\s*(.+)$', texts[f], re.M)
@@ -1176,7 +1185,7 @@ def audit_main(a):
             json.dump(findings, f, indent=1)
     return 1 if n['ACT'] or n['ASK'] else 0
 
-# ==== 6. registry: _manifest registers every crew part and cap, lint checks the files against it; front matter
+# ---- registry: _manifest registers every crew part and cap, lint checks the files against it; front matter
 # validates against a small JSON Schema subset
 TODO = 'TODO(new)'   # a stub the scaffold extra leaves; lint TODO-STUB refuses it
 SCHEMAS = {
@@ -1405,7 +1414,7 @@ def _sub_file(kit, rel, fn):   # extras (scaffold, kit-admin) edit kit files wit
     with open(p, 'w', encoding='utf-8', newline='') as fh:
         fh.write(t.replace('\n', eol))
 
-# ==== 7. prose: check a text against templates.md "Writing standards"
+# ---- prose: check a text against templates.md "Writing standards"
 REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
   'id': r'\b[A-Z][A-Z0-9]*-\d+\b|#\d+\b|\b[A-Z]\d+\b|\b[0-9a-z]{7,}\b|\b[A-Z]{2,}-[A-Za-z0-9]+',   # any tracker tag + id
   'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
@@ -1548,7 +1557,127 @@ def cmd_prose(a):
             print(f'PROSE {kind} {src}: {f}')
     return 1 if found else 0
 
-# ==== 8. budget
+# ---- sections: the "Sections:" map in a script's first 40 lines vs its `<comment> ---- <name>: <what>` markers
+SEC_MIN, SEC_BIG, SEC_WIDTH = 8000, 600, 130   # bytes (~2,000 tokens) that need a map; lines of a big section (audit WARN); map width
+SEC_CM = {'.ps1': '#', '.py': '#', '.js': '//', '.mjs': '//'}
+SEC_FN = {'.ps1': r'function\s+([\w-]+)', '.py': r'(?:async\s+)?(?:def|class)\s+(\w+)',
+  '.js': r'(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)|(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>'}   # column 0 only
+SEC_EXTRA = re.compile(r'Assert-KitExtra|Get-Command|extra_missing|need_extra')   # a verb an installed extra handles
+
+def sec_files(files):
+    return [f for f in files if osp.splitext(f)[1] in SEC_CM and not f.startswith(('tests/',) + GENERATED)]
+
+def sec_marks(lines, cm):
+    return [(i + 1, m.group(1).strip()) for i, l in enumerate(lines) if (m := re.match(re.escape(cm) + r' ---- ([^:]+)', l))]
+
+def sec_parse(lines):
+    """(first, last index, prefix, [(line, name)]) of the map; a continuation line ends the previous with ' ·' or starts with L<n>."""
+    for i, l in enumerate(lines[:40]):
+        m = re.match(r'((?:#|//)?\s*)Sections:(.*)$', l)
+        if not m:
+            continue
+        pre, body, j = m.group(1), m.group(2), i
+        def strip(s):
+            return s[len(pre):] if s.startswith(pre) else s
+        while j + 1 < len(lines) and (body.rstrip().endswith('·') or re.match(r'\s*L\d+ \S', strip(lines[j + 1]))):
+            j += 1
+            body += ' ' + strip(lines[j]).strip()
+        ents = [x.strip() for x in re.split(r'·|\s(?=L\d+ )', body) if x.strip()]
+        return i, j, pre, [(int(e.group(1)), e.group(2)) if (e := re.match(r'L(\d+) (.+)$', x)) else (0, x) for x in ents]
+    return None
+
+def sec_render(pre, ents):
+    out = [pre + 'Sections:']
+    for n, (ln, name) in enumerate(ents):
+        item = f'L{ln} {name}' + (' ·' if n + 1 < len(ents) else '')
+        if len(out[-1]) + 1 + len(item) > SEC_WIDTH and out[-1] != out[0][:len(pre) + 9]:
+            out.append(pre + '  ' + item)
+        else:
+            out[-1] += ' ' + item
+    return out
+
+def sec_verbs(ext, lines):
+    """[(verb, its dispatch code, line)]: arms of the last `switch ($__verb)` (ps1); COMMANDS or `cmd == '<verb>':` arms (py)."""
+    arms = []
+    if ext == '.ps1':
+        top = max([i for i, l in enumerate(lines) if re.match(r'\s*switch \(\$__verb\)', l)], default=-1)
+        arms = [(i, m.group(1), m.group(0)[:-len(m.group(0).lstrip())]) for i, l in enumerate(lines)
+                if top >= 0 and i > top and (m := re.match(r"\s+'([\w-]+)'\s*\{", l))]
+        arms = [(i, v) for i, v, ind in arms if ind == arms[0][2]]
+    elif ext == '.py':
+        for i, l in enumerate(lines):
+            if l.startswith('COMMANDS = {'):
+                return [(v, h, i + 1) for v, h in re.findall(r"'([\w-]+)': (\w+)", l)]
+        arms = [(i, m.group(1)) for i, l in enumerate(lines) if (m := re.match(r"\s+(?:el)?if cmd == '([\w-]+)':", l))]
+    return [(v, '\n'.join(lines[i:arms[n + 1][0] if n + 1 < len(arms) else len(lines)]), i + 1) for n, (i, v) in enumerate(arms)]
+
+def sec_check(f, text):
+    """([(code, where, problem)], text with a current map or None) of one script: lint SECTION-MAP, SECTION-UNMAPPED."""
+    ext = osp.splitext(f)[1]
+    cm, nl = SEC_CM.get(ext), '\r\n' if '\r\n' in text else '\n'
+    lines = text.split(nl)
+    mp = sec_parse(lines) if cm else None
+    if not cm or (not mp and len(text.encode('utf-8')) < SEC_MIN):
+        return [], None
+    marks = sec_marks(lines, cm)
+    if not marks:
+        return [('SECTION-MAP', f, f'no section markers: a `{cm} ---- <name>: <what>` line opens each part (README "Extending")')], None
+    if not mp:
+        return [('SECTION-MAP', f, 'no "Sections:" line in the first 40 lines: add one to the header, then kittool.py sections --fix')], None
+    i, j, pre, have = mp
+    at, named = {nm: ln for ln, nm in have}, {nm for _, nm in marks}
+    probs = [('SECTION-UNMAPPED', f'{f}:{ln}', f'section "{nm}" is missing from the Sections: map -> kittool.py sections --fix')
+             for ln, nm in marks if nm not in at]
+    probs += [('SECTION-MAP', f, f'L{at[nm]} {nm} is off: its marker is at L{ln} -> kittool.py sections --fix')
+              for ln, nm in marks if nm in at and at[nm] != ln]
+    probs += [('SECTION-MAP', f, f'map entry "{(f"L{ln} " if ln else "") + nm}" has no marker -> kittool.py sections --fix')
+              for ln, nm in have if nm not in named]
+    rows = n = j - i + 1
+    for _ in range(4):   # the map's own length shifts every line below it
+        want = sec_render(pre, [(ln + rows - n if ln > j + 1 else ln, nm) for ln, nm in marks])
+        if len(want) == rows:
+            break
+        rows = len(want)
+    if want != lines[i:j + 1] and not probs:
+        probs.append(('SECTION-MAP', f, 'the map differs from its markers (order, wrapping) -> kittool.py sections --fix'))
+    fns = {}
+    for ln, l in enumerate(lines, 1):
+        if m := re.match(SEC_FN.get(ext, SEC_FN['.js']), l):
+            fns.setdefault(next(g for g in m.groups() if g), ln)
+    probs += [('SECTION-UNMAPPED', f'{f}:{ln}', f'{nm} sits before the first section marker: move it into a section or add a marker above it')
+              for nm, ln in fns.items() if ln < marks[0][0]]
+    for verb, body, ln in sec_verbs(ext, lines):
+        if not SEC_EXTRA.search(body) and not any(re.search(r'(?<![\w-])' + re.escape(fn) + r'(?![\w-])', body) for fn in fns):
+            probs.append(('SECTION-UNMAPPED', f'{f}:{ln}', f'verb "{verb}" calls no function of this file: give it a handler in a section'))
+    return probs, (nl.join(lines[:i] + want + lines[j + 1:]) if want != lines[i:j + 1] else None)
+
+def sec_sizes(f, text):
+    """[(line, name, lines)] of each section over SEC_BIG lines (audit WARN SECTION-BIG)."""
+    lines = text.split('\n')
+    marks = sec_marks(lines, SEC_CM[osp.splitext(f)[1]]) + [(len(lines) + 1, '')]
+    return [(ln, nm, nxt - ln) for (ln, nm), (nxt, _) in zip(marks, marks[1:]) if nxt - ln > SEC_BIG]
+
+def cmd_sections(a):
+    """kittool.py sections [--fix] [<file> ...]: the Sections: map of each file (default: every counted script); --fix rewrites it."""
+    flags, rest = parse_opts(a)
+    left = 0
+    for p in [osp.abspath(x) for x in rest] or [osp.join(KIT_DIR, f) for f in sec_files(counted_files(KIT_DIR))]:
+        rel = (osp.relpath(p, KIT_DIR) if osp.splitdrive(p)[0].lower() == osp.splitdrive(KIT_DIR)[0].lower() else p).replace('\\', '/')
+        if not sec_files([rel]):
+            continue
+        text = read(p, raw=True)
+        probs, fixed = sec_check(rel, text)
+        if fixed and '--fix' in flags:
+            with open(p, 'w', encoding='utf-8', newline='') as fh:
+                fh.write(fixed)
+            print(f'fixed {rel}')
+            probs = sec_check(rel, fixed)[0]
+        for c, w, m in probs:
+            print(f'{c:16} {w}: {m}')
+        left += len(probs)
+    return 1 if left else 0
+
+# ---- budget: the kit total vs its cap
 def cmd_budget(a):
     """kittool.py budget [show]: the kit total (agent-loaded files) vs _manifest.caps.totalTokens, tests/ vs caps.testTokens.
     budget raise -Reason "<why trimming cannot make room>" (x1.1 per step, only while over the cap) is in the kit-admin extra."""
@@ -1566,7 +1695,7 @@ def cmd_budget(a):
     print(cmd_budget.__doc__, file=sys.stderr)
     return 2
 
-# ==== 9. extras: optional parts on the origin's `extras` branch, installed local-only (README "Extras")
+# ---- extras: optional parts on the origin's `extras` branch, installed local-only (README "Extras")
 # extras/<name>/EXTRA.md says what it is and "Needed when: `<config key>` = `<value>`"; extras/<name>/files/<kit path> are its files.
 EXTRAS_REF = 'refs/remotes/origin/extras'
 EXCLUDE_MARK = '# kittool extra '
@@ -1902,13 +2031,13 @@ def load_plugins():
         if 'lint_hook' in own:
             LINT_HOOKS.append(own['lint_hook'])
 
-# ==== 10. main
+# ---- main: argument checks, command dispatch
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'extra': (set(), set(), False)}
-NAMED_ARGS = ('prose', 'budget', 'extra', 'new', 'rename', 'remove')   # positionals are files, verbs or names, not a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'extra': cmd_extra}
+  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'extra': (set(), set(), False), 'sections': ({'--fix'}, set(), False)}
+NAMED_ARGS = ('prose', 'budget', 'extra', 'sections', 'new', 'rename', 'remove')   # positionals are files, verbs or names, not a kit dir
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'extra': cmd_extra, 'sections': cmd_sections}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""

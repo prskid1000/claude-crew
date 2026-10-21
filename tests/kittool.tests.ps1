@@ -154,6 +154,21 @@ $m2 = [regex]::Match($b2, $rb); $m3 = [regex]::Match($b3, $rb)
 Expect "budget: +35000 test tokens leave the kit total as is, add to tests; over testTokens = BUDGET-TESTS, one file over 8000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
   $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap 33000\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 8000\)')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
+# section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
+$sp = Join-Path $k 'sec.py'; @'
+import sys; sys.path.insert(0, sys.argv[1]); import kittool as t
+ps = "<#\nSections: L9 old\n#>\n\n# ---- a: one\nfunction A { }\n\n\n# ---- b: two\nswitch ($__verb) {\n  'go' { Invoke-KitVerb A $r }\n  'no' { Write-Host x }\n  'ex' { Assert-KitExtra X }\n}\n"
+p, fx = t.sec_check('x.ps1', ps)
+lg = '"""\nSections:\n"""\n' + ''.join(f'# ---- section-name-{n}: x\n' for n in range(15))
+lf = t.sec_check('y.py', lg)[1]
+print(sorted({c for c, _, _ in p}), fx.split('\n')[1], [w for _, w, _ in t.sec_check('x.ps1', fx)[0]], len(lf.split('\n')) - len(lg.split('\n')),
+  t.sec_check('y.py', lf)[0], [w for _, w, _ in t.sec_check('z.py', '"""\nSections: L5 a\n"""\ndef f(): pass\n# ---- a: x\n')[0]],
+  t.sec_check('w.py', 'x = 1\n' * 2000)[0][0][2][:19], [x[:2] for x in t.sec_sizes('v.py', '# ---- a: x\n' + 'y\n' * 700)])
+'@ | Set-Content $sp; $r = (& $py -X utf8 $sp (Split-Path $KT) | Out-String).Trim()
+Expect "sections: map from markers (wrapped: lines shift), function / verb outside a section, no markers, big section ($r)" ($r -eq "['SECTION-MAP', 'SECTION-UNMAPPED'] Sections: L5 a · L9 b ['x.ps1:12'] 2 [] ['z.py:4'] no section markers: [(1, 'a')]")
+$sf = Join-Path $k 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a`r`n#>`r`n`r`n# ---- a: x`r`n")
+$null = & $py -X utf8 $KT sections $sf; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
+Expect 'sections: a shifted map exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)

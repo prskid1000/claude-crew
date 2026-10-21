@@ -11,7 +11,9 @@ export const meta = {
  ],
 }
 
-// Sections: L15 args · L38 record-args · L55 prepare · L207 local · L237 app · L257 test-prompt · L283 audit · L312 verify · L368 run-item · L526 pool · L546 budget · L604 learn
+// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L212 local · L240 app · L263 test-prompt ·
+//   L317 verify · L361 run-item · L538 pool · L560 budget · L583 run · L619 learn
+// ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
@@ -32,6 +34,7 @@ const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/lau
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
+// ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record first (orch.ps1 launch -Self, FNV-1a); runDir rides along once known
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : `select-${R.name || R.target || 'run'}`) + (R.instance ? `-${R.instance}` : '')
@@ -52,6 +55,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  return ''
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
+// ---- prepare: args.select builds the run
 // PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
  phase('Prepare')
@@ -83,6 +87,7 @@ if (R.runDir && !Array.isArray(R.items)) {
  if (!file) throw new Error(`could not read a valid ${R.runDir}/run.json (items[] missing after retry) - pass the full run.json object as args instead`)
  R = { ...file, ...R, items: file.items, lanes: R.lanes || file.lanes }
 }
+// ---- config: items, kit paths, lanes, env-fix limits
 if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.includes(it.code)) }
 // run-level skipClose holds every item
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
@@ -117,6 +122,7 @@ const LOCALENV = (it) => (it && it.localEnv) || R.localEnv || ''
 const ENV_FIX_CYCLES = Number.isFinite(R.envFixCycles) ? R.envFixCycles : 2
 const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 9))   // 9 min slices: the tool timeout is 10
 const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run'
+// ---- prompts: seats, models, schemas
 // qa.ps1 seat: parallel counts are caps; free memory sets concurrency
 function seatBlock(it, label) {
  const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
@@ -203,6 +209,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
   { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
 
+// ---- local: env and web / API blocks
 // an item may name its own env (it.target)
 const tgt = (it) => (it && it.target) || R.target || ''
 function localBlock(it) {
@@ -230,6 +237,7 @@ BROWSER (web): ${QA}/browser.mjs (read its header), scripts in <outDir>/scripts:
  const s = await session({ target: '${tgt(it)}', tenant, as }): your own tab in the SHARED logged-in Chrome of that user; a 401
  mid-script: await relogin(s), retry the step; end with await s.done().`
 
+// ---- app: phone lanes
 // one lease id per worker: a shared lease let two workers drive one phone
 const LEASE = (L) => `qa-${OWNER}-${L.name}`
 // extra workers start on another lane (w2 -> lane 2)
@@ -252,6 +260,7 @@ function laneBlock(it, L) {
  if (it.lane === 'api') return API
  return WEB(it)
 }
+// ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
 const CHECK_FAILS = 'Exit 1 = evidence named in it is missing, a name it could not fix, or duplicate check ids'
@@ -305,6 +314,7 @@ Findings:
 ${finds || '(none)'}`
 }
 
+// ---- verify: retries, verify and final prompts
 // the tester's own count, else 5 for flaky-looking FAILs: one warm re-run is inconclusive
 const INTERMITTENT = /time[d ]?out|took too long|\b50[234]\b|cold[- ]start|stall|intermittent|flak|busy|rate[- ]limit|LLM|assistant/i
 function attemptsNeeded(c) {
@@ -348,6 +358,7 @@ ${JSON.stringify(res)}
 Return ok=true/false and the script's output.`
 }
 
+// ---- run-item: one guide end to end
 // NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
 const CAUSE_NEXT = {
  'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
@@ -524,6 +535,7 @@ Replace <now> with the current UTC time (ISO 8601) when you write it (workflow s
  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 
+// ---- pool: one worker per slot
 // web and API pools run in parallel; app guides run one per phone
 async function pool(list, size, offset, laneOf) {
  const out = []
@@ -545,6 +557,7 @@ async function pool(list, size, offset, laneOf) {
  return out
 }
 
+// ---- budget: batch, plan cap, stop line
 // BUDGET (README "Configuration" budget): cap = the plan's budgets; over it -> refused + split; at stopAt no new item, rest -> next
 const BATCH = R.batch > 0 && R.items.length > R.batch ? R.batch : 0
 const LATER = BATCH ? R.items.slice(BATCH).map((it) => it.code) : [], STOPPED = []
@@ -567,6 +580,7 @@ async function gate(phaseName) {   // before a new item; measures only near the 
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running items finish, no new one starts; the rest -> next`) }
  return !BUD.stop
 }
+// ---- run: web, API and app pools; follow-ups
 const web = R.items.filter((it) => (it.lane || 'web') === 'web')
 const api = R.items.filter((it) => it.lane === 'api')
 const app = R.items.filter((it) => it.lane === 'app')
@@ -602,6 +616,7 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
 }
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
+// ---- learn: signals for /tidy
 // LEARN 'auto': only after something eventful; a clean run gets the cleanup
 phase('Learn')
 // every finished run ends with a retro (orchestrate E10)

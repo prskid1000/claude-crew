@@ -6,6 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/qa-kit/browser.mjs'
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
+// Sections: L17 config · L41 login · L125 browsers · L168 tabs · L232 session · L271 actions · L365 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -13,6 +14,7 @@ import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 
+// ---- config: targets.local.json, kit paths, the browser binary
 const TF = new globalThis.URL('./targets.local.json', import.meta.url)
 const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }
 const __HERE = dirname(fileURLToPath(import.meta.url))
@@ -36,6 +38,7 @@ const CHROME = BROWSERS.find(existsSync)
 const browserOpts = (t) => ({ engine: 'chrome', lang: Intl.DateTimeFormat().resolvedOptions().locale, width: 1600, height: 1000, ...(CFG.browser || {}), ...((t && t.browser) || {}) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// ---- login: targets, network watch, login steps, saved logins
 export const targetOf = (name) => CFG.targets[name || CFG.default] || (() => { throw new Error(`unknown target "${name}" (known: ${Object.keys(CFG.targets).join(', ')})`) })()
 let BASE = ''   // the last session's web: a fallback for pages without a session
 export const url = (p, base = BASE) => (/^https?:/.test(p) ? p : base + p)
@@ -119,6 +122,7 @@ async function restoreLogin(page, t, tenant, as) {
   return loggedIn(page, t)
 }
 
+// ---- browsers: one shared browser per key, its port and lock
 const PROTO_MS = 60000
 
 const MAX_TABS = 8, TAB_WAIT_MS = 300000   // per shared browser; a 9th caller waits <= 5 min
@@ -161,6 +165,7 @@ async function ensureLogin(page, t, tenant, as, key) {
     if (!(await restoreLogin(page, t, tenant, as).catch(() => false))) await login(page, t, tenant, as)
   }, { waitMs: 120000 })
 }
+// ---- tabs: a tab per caller, holders, sweeps
 // tab registry <sessions>/tabs-<key>.json { tabId: { agent, pid, at } }
 const tabsFile = (key) => `${kitPath('sessions', { create: true })}/tabs-${keyFile(key)}.json`
 const readJson = (f, d) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return d } }
@@ -224,6 +229,7 @@ export async function sweepAll() {
   return closed
 }
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
+// ---- session: your logged-in tab
 // your own logged-in tab
 export async function session({ target, tenant, as = 'admin' } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
@@ -262,6 +268,7 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
 }
 export const killSession = (port) => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }).then((b) => b.close()).catch(() => {})
 
+// ---- actions: settle, go, clicks, inputs
 // quiet XHR <= 8 s (polling pages never idle), not past 100 JS errors
 export async function settle(page, ms = 1200) {
   let errs = 0, tick
@@ -355,6 +362,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
+// ---- evidence: marks, network logs, screenshots, token
 // evidence names (qa-kit SKILL.md "Evidence"); same literal as qa.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {

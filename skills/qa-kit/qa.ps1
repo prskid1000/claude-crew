@@ -12,7 +12,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
   api-auth, qa-html-report, ios-simulator.
-Sections: L21 report · L92 seat · L160 api · L279 finalize · L619 retest
+Sections: L21 report · L93 seat · L161 api · L280 finalize · L625 retest
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
