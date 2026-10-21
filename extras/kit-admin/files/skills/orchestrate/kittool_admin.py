@@ -347,8 +347,9 @@ def cmd_recover(kit, fix):
             continue
         in_wt.add(br)
         _, wd, _ = git(path, 'status', '--porcelain')
-        rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', br or 'HEAD', 'origin/main')
-        _, ahead, _ = git(kit, 'rev-list', '--count', f'origin/main..{br}') if br else (0, '?', '')
+        tip = br or str(w.get('HEAD', ''))   # a detached worktree: its own HEAD commit, never the main clone's
+        rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', tip, 'origin/main') if tip else (1, '', '')
+        _, ahead, _ = git(kit, 'rev-list', '--count', f'origin/main..{tip}') if tip else (0, '?', '')
         _, remote, _ = git(kit, 'ls-remote', '--heads', 'origin', br, timeout=60) if br else (0, '', '')
         idle_h = (time.time() - max((osp.getmtime(osp.join(path, f)) for f in os.listdir(path)), default=0)) / 3600 if osp.isdir(path) else 99
         if rc_m == 0 and not wd.strip():

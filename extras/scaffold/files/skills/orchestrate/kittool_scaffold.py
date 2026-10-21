@@ -312,10 +312,17 @@ def _rename_id(kit, kind, old, new):
     print(f'renamed {kind} {old} -> {new}')
     return 0
 
+NAME_RX = re.compile(r'^[A-Za-z0-9][\w.-]*$')   # an empty or path-like name would match whole folders (remove skill '')
+
+def bad_names(names):
+    return [n for n in names if not NAME_RX.match(n)]
+
 def cmd_rename(a):
     """kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new>: moves the part, rewrites every reference, updates
     the manifest (a part's old -> new joins _manifest.renamed; a config key also moves in kit.local.json), regenerates the ports."""
     kit = KIT_DIR
+    if bad_names(a[1:3]):
+        sys.exit(f'kittool rename: not a part name: {bad_names(a[1:3])}')
     if len(a) >= 3 and a[0] in ('event', 'config-key'):
         return _rename_id(kit, *a[:3])
     if len(a) < 3 or a[0] not in PART_PATH:
@@ -378,6 +385,8 @@ def cmd_remove(a):
     if len(a) < 2:
         print(cmd_remove.__doc__, file=sys.stderr)
         return 2
+    if bad_names(a[1:2]):
+        sys.exit(f'kittool remove: not a part name: {bad_names(a[1:2])}')
     kind, name = a[0], a[1]
     if kind in PART_PATH:
         r = _git(kit, 'rm', '-rqf', PART_PATH[kind].format(name))

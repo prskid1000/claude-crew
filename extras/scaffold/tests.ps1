@@ -30,10 +30,13 @@ $null = & $py -X utf8 $KT new adr Budget per agent 2>&1
 $sk = Get-Content (Join-Path $kc 'skills/orchestrate/SKILL.md') -Raw
 $okId = (& $mf).events -contains $e2 -and -not ((& $mf).events -contains $e1) -and $sk -match "\|\s*$e2\s*\|" -and
   (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match '## Decisions\r?\n(?:.*\r?\n)*- \d{4}-\d\d-\d\d Budget per agent: context TODO\(new\)'
+$nskill = @(Get-ChildItem (Join-Path $kc 'skills') -Recurse -File).Count
+$null = & $py -X utf8 $KT remove skill '' 2>&1; $rc = $LASTEXITCODE
+$okEmpty = $rc -ne 0 -and @(Get-ChildItem (Join-Path $kc 'skills') -Recurse -File).Count -eq $nskill
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 $fails = 0
 foreach ($c in @(@('new agent: file, manifest, Router stub, TODO-STUB lint', $okNew), @('rename agent: file, references, manifest renamed, ports', $okRen),
-    @('remove agent: file, manifest, Router row', $okRem), @('rename event + new adr', $okId))) {
+    @('remove agent: file, manifest, Router row', $okRem), @('rename event + new adr', $okId), @('remove skill "": refused, no skill touched', $okEmpty))) {
   if ($c[1]) { "PASS scaffold: $($c[0])" } else { "FAIL scaffold: $($c[0])"; $fails++ }
 }
 exit [int]($fails -gt 0)
