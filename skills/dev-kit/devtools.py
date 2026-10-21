@@ -1053,6 +1053,7 @@ def selftest():
             return {'ci.runs': list(runs) if isinstance(runs, tuple) else runs, 'ci.config': cfg}.get(verb, {})
         return h
     merged = lambda: [a for v, a in calls if v == 'mr.merge']
+    sleep0, time.sleep = time.sleep, lambda s: None   # fake clock: re-read waits cost nothing
     try:
         g['remote'] = lambda wt: ('gitlab', 'g/r'); g['unmerged_producers'] = lambda *a, **k: []; g['_progress'] = lambda m: None
         g['kit_path'] = lambda n, **k: os.path.join(tempfile.mkdtemp(), 'tracking.json')
@@ -1067,7 +1068,7 @@ def selftest():
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'auto_merge': 'kit'})
         expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
     finally:
-        g.update(saved)
+        g.update(saved); time.sleep = sleep0
     expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
     # holdMerge, unreadable tracking, lost intent
     saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'kit_path')}
@@ -1728,6 +1729,10 @@ def plan(a, cfg):
 
 
 def mig_main(argv):
+    print(json.dumps(mig_result(argv), indent=1))
+
+
+def mig_result(argv):
     ap = argparse.ArgumentParser(prog='devtools.py migrations')
     ap.add_argument('cmd', choices=['classify', 'plan', 'rules', 'detect'])
     for o in ('--repo', '--base', '--head', '--config', '--under', '--save', '--leaving', '--staying', '--out'): ap.add_argument(o)
@@ -1751,7 +1756,7 @@ def mig_main(argv):
     elif a.cmd == 'classify': res = classify(a, cfg)
     else:
         res = plan(a, cfg)
-    print(json.dumps(res, indent=1))
+    return res
 
 
 
@@ -1779,11 +1784,8 @@ DROP = lambda c: f'<dropColumn tableName="orders" columnName="{c}"/>'
 SEL, MK, DT = '<sql>SELECT 1</sql>', '<sql>CREATE TABLE orders (id BIGINT)</sql>', '<dropTable tableName="orders"/>'
 
 
-def run(*a):
- p = subprocess.run([sys.executable, '-X', 'utf8', SCRIPT, 'migrations', *a], capture_output=True, text=True, encoding='utf-8')
- if p.returncode:
-  raise AssertionError(p.stderr)
- return json.loads(p.stdout)
+def run(*a):   # in-process: a python start per call made the selftest 30 s
+ return json.loads(json.dumps(mig_result(list(a))))
 
 
 class Repo:
@@ -2048,10 +2050,18 @@ class Tools(unittest.TestCase):
 
 def mig_selftest():
     import unittest
-    ns = {'__file__': os.path.abspath(__file__), '__name__': 'migrations_selftest'}
+    ns = {'__file__': os.path.abspath(__file__), '__name__': 'migrations_selftest', 'mig_result': mig_result}
     exec(compile(SELFTEST, 'migrations-selftest', 'exec'), ns)
-    suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(v) for v in ns.values() if isinstance(v, type) and issubclass(v, unittest.TestCase))
-    return 0 if unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful() else 1
+    from concurrent.futures import ThreadPoolExecutor   # tests are git-bound and independent: run them side by side
+    cases = [unittest.defaultTestLoader.loadTestsFromTestCase(v) for v in ns.values() if isinstance(v, type) and issubclass(v, unittest.TestCase)]   # one suite per class: class fixtures run
+    def one(t):
+        r = unittest.TestResult(); t.run(r); return [(c.id(), e) for c, e in r.failures + r.errors]
+    with ThreadPoolExecutor(len(cases)) as ex:
+        bad = [x for xs in ex.map(one, cases) for x in xs]
+    for i, e in bad:
+        print(f'FAIL {i}\n{e}')
+    print(f'{sum(s.countTestCases() for s in cases)} tests, {len(bad)} failed')
+    return 1 if bad else 0
 
 
 # ===== findings (revy module audits)
