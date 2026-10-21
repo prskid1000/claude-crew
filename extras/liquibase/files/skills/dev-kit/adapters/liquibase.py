@@ -24,6 +24,9 @@ def lbcheck(argv):
     """Liquibase sanity check (dev.ps1 check): replays master.xml's includes; flags create / add of an existing table / column
 without <preConditions>, schema changeSets without <rollback> (beyond auto-rollback types), not-reversible ones with an empty one.
 Reports files named >= since (yyyyMMddHHmmss) or listed in env LBCHECK_CHANGED ('|'); prints issues + 'ISSUES <n>', exit 1 if n."""
+    if not argv or argv[0] in ('-h', '--help'):
+        print('python devtools.py lbcheck <master.xml> [since]   Liquibase sanity check (run by dev.ps1 check -Step migrations)')
+        return 0 if argv else 2
     sys.stdout.reconfigure(encoding='utf-8')
     master, since = os.path.abspath(argv[0]), argv[1] if len(argv) > 1 else '0'
     m = re.search(r'^(.*?)[\\/]config[\\/]liquibase[\\/]', master) or re.search(r'^(.*[\\/]resources)[\\/]', master)

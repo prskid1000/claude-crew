@@ -13,10 +13,10 @@ $proj = Join-Path ([IO.Path]::GetTempPath()) "node-spec-test-$PID"
 New-Item -ItemType Directory -Force (Join-Path $proj 'src') | Out-Null
 '{ "name": "p", "devDependencies": { "typescript": "5" } }' | Set-Content (Join-Path $proj 'package.json')
 '{ "compilerOptions": {} }' | Set-Content (Join-Path $proj 'tsconfig.json')
-"import { FormControl } from '@angular/forms'`ndescribe('a', () => it('b', () => expect(1).toBe(1)))" | Set-Content (Join-Path $proj 'src/a.spec.ts')
+"describe('a', () => it('b', () => expect(1).toBe(1)))" | Set-Content (Join-Path $proj 'src/a.spec.ts')
 $out = node $spec --dir $proj a.spec 2>&1 | Out-String
 Expect 'spec.mjs: no esbuild -> exit 2 with the reason' ($LASTEXITCODE -eq 2 -and $out -match 'no esbuild')
 $out = node $spec --help 2>&1 | Out-String
-Expect 'spec.mjs --help prints its header' ($LASTEXITCODE -eq 0 -and $out -match '@angular/forms')
+Expect 'spec.mjs --help prints its header' ($LASTEXITCODE -eq 0 -and $out -match 'Exit codes')
 Remove-Item $proj -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 Complete-Tests

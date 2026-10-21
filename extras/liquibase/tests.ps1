@@ -35,6 +35,8 @@ Expect 'lbcheck: re-added column, missing rollback, empty "not reversible" rollb
   $out -match 'b2: dropColumn without a <rollback>' -and $out -match 'b3: marked not reversible' -and $out -match 'ISSUES 3')
 $out = & $py -X utf8 $DT lbcheck "$lb/master.xml" 20250101000000 2>&1 | Out-String
 Expect 'lbcheck: older files are replayed, not reported' ($LASTEXITCODE -eq 0 -and $out -match 'ISSUES 0')
+$out = & $py -X utf8 $DT lbcheck 2>&1 | Out-String
+Expect 'lbcheck without a master: usage, exit 2' ($LASTEXITCODE -eq 2 -and $out -match 'lbcheck <master.xml>')
 '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$repo/.claude-stack.json"
 git -C $repo init -q; git -C $repo -c core.autocrlf=false add -A; git -C $repo -c user.name=t -c user.email=t@t commit -q -m lb
 $out = pwsh -NoProfile -File (Join-Path $k 'skills/dev-kit/dev.ps1') check -Dir $repo -Step migrations -Since 20240102000000 2>&1 | Out-String

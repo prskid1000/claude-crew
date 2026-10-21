@@ -4,5 +4,5 @@
   image src per file (qa.ps1 finalize evidence).
 - Config: `reports.type: "gdocs"` (also the default while gws is on PATH and reports.type is unset); `driveParent` = the Drive
   folder or shared drive.
-Needed when: `reports.type` = `gdocs`
+Needed when: `reports.type` = `gdocs` (unset with gws on PATH also means gdocs: set reports.type or add the extra)
 - Wiring: `skills/dev-kit/adapters/report_gdocs.py`, loaded by devtools.py's plugin registry. Tests: `tests.ps1` here.

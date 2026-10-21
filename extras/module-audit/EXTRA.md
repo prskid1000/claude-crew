@@ -5,5 +5,5 @@
 - Config: optional `findings.required` = the in-scope finding fields (default root_cause, why_today, why_not_prod, db_migration,
   code_location).
 Needed when: listed in kit.local.json extras (extra add does it)
-- Wiring: `skills/dev-kit/adapters/module_audit.py` (devtools.py plugin verb `findings`); revy returns `needs extra module-audit`
+- Wiring: `skills/dev-kit/adapters/module_audit.py` (devtools.py plugin verb `findings`); revy returns the extra line
   while it is missing. Tests: `tests.ps1` here.
