@@ -42,6 +42,7 @@ Remove-TestKit $k2
 # LIGHT / HEAVY classes need devtools.py migrations (extra migration-classify)
 if (-not (Test-Path (Join-Path $src 'skills/dev-kit/adapters/migrations.py'))) { 'SKIP local env: LIGHT/HEAVY classes (extra migration-classify not installed)' } else {
 $k = New-LocalEnvKit local; $L = Join-Path $k 'skills/local-env/localenv.ps1'
+$ma = New-Item -ItemType Directory -Force (Join-Path $k 'skills/dev-kit/adapters'); Copy-Item (Join-Path $src 'skills/dev-kit/adapters/migrations.py') $ma
 $t = @'
 $ErrorActionPreference = 'Stop'
 . $args[0]

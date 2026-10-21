@@ -81,7 +81,10 @@ Set-Content "$ud/u.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt
 $ut = @(foreach ($a in @(@('tap', 'Hello'), @('tap', 'Nope'), @('wait', 'Nope', '1'))) { $null = Px "$ud/u.ps1" $Q $ud @a 2>&1; $LASTEXITCODE })
 Expect "ui: found 0, NOT FOUND 1, wait TIMEOUT 1; unknown action 2 ($($ut -join ','),$uc)" (($ut -join ',') -eq '0,1,1' -and $uc -eq 2)
 # deploys[] laneApk: no stamp = UNKNOWN with the build hint; a stamp holding the merge = DEPLOYED (local checkout answers)
-$la = & { . $Q; function Row($d, $s, $x) { "$s|$x" }; $gr = Join-Path (Kd) 'app'; git init -q $gr; git -C $gr -c user.name=t -c user.email=t@t commit -qm a --allow-empty
+# Row, LocalAncestor, OnRef: the Invoke-Deployed helpers the adapter calls (a local checkout answers; no git host)
+$la = & { . $Q; function Row($d, $s, $x) { "$s|$x" }; function OnRef { $false }
+  function LocalAncestor($dir, $sha, $commit) { git -C $dir merge-base --is-ancestor $sha $commit 2>$null; $LASTEXITCODE -eq 0 }
+  $gr = Join-Path (Kd) 'app'; git init -q $gr; git -C $gr -c user.name=t -c user.email=t@t commit -qm a --allow-empty
   $sha = "$(git -C $gr rev-parse HEAD)".Trim(); $s8 = $sha.Substring(0, 8); $stamp = Join-Path (Kd) 'app.json'
   $a = Test-LaneApkDeployed ([pscustomobject]@{ laneApk = $stamp })
   & $J @{ commit = $sha; branch = 'main'; built = 'now'; appDir = $gr } $stamp; $b = Test-LaneApkDeployed ([pscustomobject]@{ laneApk = $stamp }); "$a#$b" }
