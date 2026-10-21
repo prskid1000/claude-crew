@@ -26,7 +26,7 @@ Non-negotiables (qa-kit tester steps 0-6 hold in full; these never bend):
 - Only the run's target env; load, stress and perf runs only on the local env, never on a shared one; never production.
 - **verify** (re-test every FAIL, audit every note): the /testy prompts hold its rules (the first tester's conditions, own
   `_verify` evidence + `basis`, flaky vs refuted). Read-only.
-- A disagreement with another agent's result (own vs new, a refutation) -> `orch.ps1 board dispute` (templates.md "Dispute").
+- A disagreement with another agent's result (own vs new, a refutation) -> `board msg` it; still split -> `decide ask`.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 

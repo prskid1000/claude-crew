@@ -69,8 +69,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Library overlays render outside the component (an overlay container): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
 
 ## local-env
-- Reversible (LIGHT) migrations are reverted exactly (the tool's revert) instead of per-deploy snapshots; only HEAVY ones get a sandbox or snapshot.
-- Sandbox DBs: never renamed schema copies (apps hardcode schema names); a separate DB server per sandbox with real names; verify the main DB (data AND markers) is untouched after the first run.
 - Local DB drift (leftover table, missing definer or grant) fails migrations: report it for `refresh` / the owner; never repair the shared DB by hand.
 
 ## android-swarm
@@ -78,14 +76,11 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `swarm.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
-- Edit scripts: never short helper names (`r`, `rd`, `h`, `del`, `diff` are aliases; `rd` deleted live files once); absolute paths (`[IO.File]` resolves against the process dir, often the live clone); check `git -C <live kit> status` after.
-- Another kit branch may be open (`git -C <kit> worktree list`): diff its changed files before fixing the same file; overlap -> propose.
-- `kittool.py audit scan` lines are candidates: prove each (caller, input, effect) before it becomes a finding.
 
 ## revy
 
 ## Decisions
-- 2026-10-16 Kit size cap: context the kit grew past its 360k-token cap · decision `_manifest.caps.totalTokens` (owner): trim first (dense prose, one-line comments, no function removed), else `kittool.py budget raise` (x1.1) · consequences lint BUDGET above it, BUDGET-CAP on other cap edits.
+- 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `extras` branch (`kittool.py extra add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
 - 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
 - 2026-10-16 Crew: context many agent types · decision 4 agents devy, revy, checky, kitty (owner) · consequences lint AGENT-TYPE / NON-CREW; old names only in `_manifest.renamed`.
 - 2026-10-16 NOT_TESTED: context untested checks closed tasks · decision one stronger retry, then failedTesting on shared envs; local items ENV-FIX, never failedTesting (owner).

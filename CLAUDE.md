@@ -1,7 +1,7 @@
 @AGENTS.md
 
 ## Claude Code-only mechanics
-Everything above this line is shared with Codex and Antigravity (see `AGENTS.md`'s last section for what does NOT port).
+Everything above this line is shared with Codex and Antigravity (README "Install" lists what does not port).
 - **Hooks** (`settings.json`): PreToolUse `dev.ps1 guard` (Bash, PowerShell) and `orch.ps1 guard-sendmessage` (SendMessage);
   SessionStart `orch.ps1 health` (git state, gates, stopped runs, lint, ports, retro / audit nudges) and `orch.ps1 cleanup -IfDue
   -Quiet` (async). `kittool.py port` ports them to `.codex/config.toml` / `.agents/hooks.json` (no SendMessage port).

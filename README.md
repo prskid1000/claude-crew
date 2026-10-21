@@ -1,10 +1,6 @@
 # claude-crew
 
-**[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built by `kittool.py flow --public` on each push)
-
-- **Total kit tokens**: 402,392 of 436,000 budget cap (92% utilization)
-- **Average tokens per file**: ~10,589 tokens across 38 tracked files
-- **Token efficiency target**: progressive 50% token reduction roadmap without feature loss
+**[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built on each push with the `flow-map` extra)
 
 A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
 local env shape, test env, deploy mechanism and tracker. Org specifics live only in git-ignored config
@@ -40,7 +36,7 @@ flowchart LR
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
 <!-- kit-graph:end -->
-Board, disputes, duels (`/buildy mode: 'duel'`): AGENTS.md "Crew".
+Board and disagreements: AGENTS.md "Crew".
 
 ## Router
 First matching row wins (from the `AGENTS.md` Router table).
@@ -114,7 +110,7 @@ The rule: "Configuration" `budget`; per-tool defaults in the table.
 <!-- kit-graph:end -->
 
 ## Leases
-One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, sandboxes, builds; only owner
+One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds; only owner
 holds (`localenv.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
 
 ## Recovery after a crash or restart
@@ -130,13 +126,24 @@ pwsh -File <workspace>/.claude/skills/orchestrate/orch.ps1 setup -WriteLocal   #
 ```
 Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker CLI, `gws`, the Android SDK. Fill
 `skills/dev-kit/kit.local.json`, `skills/qa-kit/targets.local.json` (the only place for passwords), `swarm.config.json` (phones);
-`npm install` in `skills/qa-kit`. Update: `git pull`, then `orch.ps1 setup -Migrate` once nothing runs if health says so.
+`npm install` in `skills/qa-kit`. Update: `git pull` once nothing runs.
+Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
+Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
+skills listed in `localOnly`.
+Not ported to Codex / Antigravity: the SendMessage guard hook, the Workflow and Skill tools, the Antigravity tools allow-list; the
+board, learn signals and decision pauses run by hand from the ported procedures.
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`orch.ps1 supervise -AutoFix -Brief`, every 10 min)
-  prints the owner's report: RAM buckets + free, top apps (💤 idle, 📈 growing), resources (⏳ holder gone), flags (ACT,
-  WATCH: STALL, ERROR SPIKE, RESTART LOOP, RESOURCE SPIKE, SILENT FAILURE, UNKNOWN, ORPHAN CONSOLES; ❓ ASK); `-Deep` (each 6th round): the
-  hour digest. After a restart: `orch.ps1 recover`. Every script prints its usage without arguments.
+  prints the owner's report: resources and their holders, flags (ACT, WATCH, ❓ ASK). After a restart: `orch.ps1 recover`.
+  Every script prints its usage without arguments.
+
+## Extras
+Optional parts (more trackers, git hosts, CI and report types, stack presets, kit admin and scaffolding, the duel mode) live on
+the `extras` branch, one folder each (`extras/<name>/EXTRA.md`: what, when it is needed, how it is wired):
+`python -X utf8 skills/orchestrate/kittool.py extra list | add <name> | remove <name> | check`. `add` writes its files into the
+kit as local-only files (`.git/info/exclude`: never pushed, outside the budget). A script that needs a missing one stops with
+`<feature> is an extra: run kittool.py extra add <name>`; `orch.ps1 health` / `setup` print the same for config that asks for one.
 
 ## Configuration
 `skills/dev-kit/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).
@@ -197,20 +204,14 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
   local); workflows, hooks and skills are Claude Code-only (Codex / Antigravity get ported agents and procedures).
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
-live clone, keeps it generic, gets a `revy` review and pushes main. Every part is added, renamed or removed one way:
-```powershell
-python -X utf8 skills/orchestrate/kittool.py new agent|skill|workflow|rule|event|config-key <name>   # file(s) from its template
-python -X utf8 skills/orchestrate/kittool.py rename agent|skill|workflow|rule|event|config-key <old> <new>   # every reference, no alias
-python -X utf8 skills/orchestrate/kittool.py new adr <title>   # a LESSONS.md Decisions line
-python -X utf8 skills/orchestrate/kittool.py remove <kind> <name>                                     # lists what still refers to it
-```
-`new` writes the part from its template, registers it in the manifest, adds Router / Events and test stubs (lint TODO-STUB
-refuses unfilled ones); then `port`, lint 0, tests.
+live clone, keeps it generic, gets a `revy` review and pushes main. Parts are added, renamed or removed with the `scaffold` extra
+(`kittool.py new | rename | remove <kind> <name>`, `new adr <title>`: template, manifest, Router / Events rows, test stub; lint
+TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. An optional feature goes to the `extras` branch, not the core.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
-  Character blocks and ports are generated from it; `renamed` drives `orch.ps1 setup -Migrate`.
+  Character blocks and ports are generated from it; `renamed` lists old names (no aliases).
 - **Formats** [SCHEMA, AGENT-TYPE]: SKILL.md and subagent front matter + the Character shape, JSON-Schema checked; every workflow
   `agent()` names a crew agentType. **Versions**: SemVer tags from Conventional Commits (`kittool.py release`; no CHANGELOG).
-  **Decisions**: ADR lines in LESSONS.md "Decisions" (`new adr`). Every addition: front matter, manifest entry, reachability edge,
+  **Decisions**: ADR lines in LESSONS.md "Decisions". Every addition: front matter, manifest entry, reachability edge,
   test, flow node, README row, ports; lint refuses a half-added part.
 
 ### Hard rules
@@ -251,7 +252,7 @@ always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · template
 pre-commit regenerates README graph sections and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `dev.ps1 wt commit`.
 ### Rule examples
-Copy a block into `rules/<name>.md` (org-only: `rules/<name>.local.md`, in `localOnly`) and adapt it; a `paths:` rule loads only
+Copy the block into `rules/<name>.md` (org-only: `rules/<name>.local.md`, in `localOnly`) and adapt it; a `paths:` rule loads only
 when a matching file is opened.
 
 #### Database migrations (any tool)
@@ -267,30 +268,8 @@ paths: ["**/liquibase/**", "**/db/migration/**", "**/Migrations/**", "**/migrati
   on top of the latest after a rebase, never a merge migration.
 ```
 
-#### Tests (any stack)
-```markdown
----
-paths: ["**/src/test/**", "**/*.spec.*", "**/*.test.*", "**/tests/**", "**/test_*.py", "**/*Tests.cs"]
----
-# Tests
-- One behaviour per test, arrange / act / assert, names `should_<behaviour>_when_<condition>` (or the repo's style).
-- Fixed clocks, no sleeps, no shared mutable state, deterministic builders / fixtures, mocks only at boundaries, no network
-  unless the test is tagged integration.
-- A fixed bug gets a regression test that fails before the fix. Run: `dev.ps1 check -Step test -Tests <names> -Touched`.
-```
-
-#### A JVM backend
-```markdown
----
-paths: ["**/src/main/java/**", "**/src/main/kotlin/**"]
----
-# Backend
-- DTOs in APIs, never entities; additive changes (optional fields, new endpoints); validation at the boundary.
-- Unit tests next to the package (`src/test/...`), integration tests tagged; `dev.ps1 check -Dir <module> -Step test -Touched`.
-```
-
 ## How the kit fits together
-Generated by `kittool.py flow --readme` (pre-commit); interactive: `<kit>/.runtime/cache/kit-flow.html` (public: the kit map above).
+Generated by `kittool.py flow --readme` (pre-commit); interactive: the `flow-map` extra (public: the kit map above).
 <!-- kit-graph:start map -->
 ```mermaid
 flowchart LR
@@ -325,7 +304,6 @@ flowchart LR
   workflows_testy_js -->|spawns| agents_checky_md
   workflows_testy_js -->|spawns| agents_kitty_md
   workflows_tidy_js -->|spawns| agents_kitty_md
-  workflows_tidy_js -->|spawns| agents_revy_md
   agents_checky_md -->|loads| skills_qa_kit_SKILL_md
   agents_devy_md -->|loads| skills_dev_kit_SKILL_md
 ```

@@ -56,12 +56,13 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R15 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
-  `_manifest`): `devy` builds (by /buildy, one per brief area, two in a duel), `revy` reviews (by /buildy, R13, R14),
+  `_manifest`): `devy` builds (by /buildy, one per brief area), `revy` reviews (by /buildy, R13, R14),
   `checky` tests (by /testy as lead / test / verify, R10), `kitty` keeps the kit and the machine (R2, R3, /tidy).
   Each loads its skill first; its Character shapes judgement and tone, never a rule or the Writing standards. Step 0 of every
-  agent reads the board (who is alive on this machine); a disagreement goes to `orch.ps1 board dispute` (two rounds, then the
-  owner judges through `decide ask`). Codex / Antigravity: the same agents are ported to `.codex/agents/*.toml` /
-  `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` / `.agents/workflows/*.md` by hand.
+  agent reads the board (who is alive on this machine); a disagreement with another agent's result: `board msg` it, still
+  split -> the owner judges (`orch.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the same agents are ported
+  to `.codex/agents/*.toml` / `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` /
+  `.agents/workflows/*.md` by hand.
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI, and merging) without pausing for approvals. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then it runs end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
@@ -69,30 +70,23 @@ the **Target**. A mixed request is split and each part routed on its own.
 
 ## Multi-agent work, builds and testing (every repo of the workspace)
 `<kit>` = the `.claude` folder of the workspace (the directory Claude Code was started in); kit scripts find it themselves.
-**What to load or launch:** the Router above (first matching row wins; workflows launch autonomously; a deploy
-starts only when a person says `deploy <env>`: nobody asks or proposes one). These rules hold whatever the route:
+These rules hold whatever the route:
 
 - File inspection: check top 40 lines for the Section/Function line map, then jump directly to the target line range using slicing (`view_file` StartLine/EndLine, sed, or awk) rather than loading entire files.
 - Builds and tests go through `<kit>/skills/dev-kit/dev.ps1 check` (stack auto-detected; the machine-wide memory gate queues
-  them; the guard hook blocks ungated builds). Targeted tests plus the tests of touched files (`-Touched`).
-- Parallel work happens in worktrees (`dev.ps1 wt`); commit with `dev.ps1 wt commit` (hooks run). Never `git stash`, never
-  `--no-verify`, never install packages into linked `node_modules` / `.venv`.
-- Rebase onto the latest target before editing, before pushing and before merging; merge only on a green pipeline, producers
-  (DB / API / library) before consumers (web / app / clients).
-- Commit WIP on your branch after each dev-flow step (`dev.ps1 wt commit -Message "chore(wip): <step>"`): a crash or restart
-  loses no edits.
-- Every change is tested on the LOCAL env before merge (reproduce bugs there first); deployed changes are tested on test
-  environments only (logins in `skills/qa-kit/targets.local.json`), never production. Defects are FAIL, never notes.
-- Phones only through `skills/android-swarm/swarm.ps1 acquire` (never boot or kill emulators by hand, never `adb kill-server`).
-- Every kit resource (env service, browser tab, phone, sandbox, build) has a holder: lease only what your item declares, release
-  when done; no live holder for `idle.graceMinutes` -> released (README "Leases").
+  them); parallel work in worktrees (`dev.ps1 wt`), commits with `dev.ps1 wt commit`; never install packages into linked
+  `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
+  editing, pushing and merging; merge only on a green pipeline, producers before consumers.
+- Phones only through `skills/android-swarm/swarm.ps1 acquire`. Every kit resource (env service, browser tab, phone, build) has
+  a holder: lease only what your item declares, release when done; no live holder for `idle.graceMinutes` -> released
+  (README "Leases").
 - Browsers are headless by default (`skills/qa-kit/browser.mjs`); a visible browser only when the owner asks to watch.
 - Run python and node from the PowerShell tool (pwsh 7), not Git Bash; Python with `-X utf8`.
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit.
 - The kit learns: every agent reads its lessons at step 0 (`orch.ps1 learn -Read -Skill <skill>`) and records surprises with
-  `orch.ps1 learn`. A user-visible behaviour change the task did not ask for, or several valid paths -> `orch.ps1 decide
-  ask` ("Decision pauses").
+  `orch.ps1 learn`.
+- A script prints `<feature> is an extra: run kittool.py extra add <name>` -> run that in `<kit>` (README "Extras"), then retry.
 - **The main session coordinating agents** loads `orchestrate` and follows its Events table (heartbeat, decisions, `deploy <env>`,
   recovery after a restart, HEAL, LEARN, retro, kit commits).
 
@@ -104,18 +98,5 @@ Check auth before using a CLI (never log in headlessly). Windows: resolve shims 
 | `glab` / `gh` | git host: MRs/PRs, pipelines (kit scripts: `lib.ps1` Invoke-HostVerb, README "Adapters") | `glab auth status` / `gh auth status` |
 | tracker | tasks, comments, statuses: only through `skills/dev-kit/dev.ps1 tracker` (`tracker.type`: README "Adapters") | `dev.ps1 tracker view <id>` |
 | `gws` (optional) | Google Docs reports and testing docs, only when `reports.type` is `gdocs` | resolve with `shutil.which()` |
-| `<your-cli>` | <purpose, e.g. logs / observability> | `<auth check>` |
 
-## Org specifics (fill in)
-- Org settings the scripts read: `skills/dev-kit/kit.local.json` (`orch.ps1 setup -WriteLocal` writes it from
-  `kit.example.json`; keys: README "Configuration").
-- Org rules, house style and **Org router rows** (same columns as the Router): `rules/*.local.md` (git-ignored).
-- Products / repos, test environments (names only; URLs and logins in `targets.local.json`), deploy rules, tracker statuses.
-- Code and test conventions: path-scoped rules in `rules/` (examples: README "Rule examples"); org-only skills under
-  `skills/<name>/` listed in `kit.local.json` `localOnly`. How to add any part: README "Extending".
-
-## Not portable to Codex/Antigravity (Claude Code-only)
-- SendMessage guard hook: neither tool has matching SendMessage tool.
-- Board, learn signals, and decision pauses: procedure docs guide human coordinator.
-- Skill name-triggered loading and kittool router/graph checks run against kit files.
-- Antigravity tools allow-list stays unset: tool names differ from Claude.
+Org specifics (settings, rules, Org router rows, more CLIs) and what does not port to Codex / Antigravity: README "Install".

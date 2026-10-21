@@ -14,7 +14,8 @@ never: adds a file, a key or a rule another one already covers.
 **Kind** (the task names it): build · fix · audit · retro · setup · env · recover · docs. The owner's words win where they narrow
 the scope.
 Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps 1-3 `audit setup|config|recover` on the
-live clone, 4 and 8 `audit scan`, `lint`, 9 `audit stamp`; `audit due` any time); `<kit>/skills/dev-kit/templates.md` (step 6
+live clone: the `kit-admin` extra, `kittool.py extra add kit-admin` in `<wt>`; 4 and 8 `audit scan`, `lint`; 9 `audit stamp`;
+`extra list|add|remove` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6
 "Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md`
 (owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4.
@@ -57,12 +58,9 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    `git -C <wt> push origin HEAD:main` (fast-forward only, never force); delete the branch and worktree; the live clone pulls it
    when no run uses the kit. Report (templates.md "Audit report"). Audit: `$A stamp`. `board leave`.
 
-| Flow | Hops to trace |
-|---|---|
-| dev | router -> orchestrate -> `buildy.js` (build + local loop, decisions, duel, review, fix, ci, ship, track, deploy batch, learn) -> `devy` -> `revy` -> dev-kit (`dev.ps1 wt/check/gate/stack`, `devtools.py mr/doc/merge`) -> local-env (`localenv.ps1`, `devtools.py migrations`) -> `orch.ps1 track/deploy` |
-| test-only | router -> `testy.js` (prepare, load-run, test, audit, verify, close) -> `checky` lead / test / verify -> `qa.ps1 seat/deployed/api/ui/annotate/finalize` -> result rule -> `orch.ps1 supervise` (failedTesting, [Bug]) -> bugfix /buildy |
-| coordinator | `orch.ps1 supervise -AutoFix -Brief` -> board, track, deployed, decide, dispute, launch, recover, outbox, report, cleanup; `swarm.ps1` leases |
-| kit | `settings.json` hooks (`dev.ps1 guard`, `orch.ps1 health/guard-sendmessage`, `orch.ps1 cleanup -IfDue`), `.githooks`, `kittool.py lint/flow/port/cost/new/rename/remove`, `orch.ps1 setup -Migrate`, `kitty` -> `revy` -> push main |
+Flows to trace (step 4): README "Dev flow", "Test-only flow", "Local env and deploys" and "Kit upkeep" graphs,
+hop by hop down to the script verbs; the coordinator: `orch.ps1 supervise -AutoFix -Brief` -> board, track, deployed,
+decide, launch, recover, outbox, report, cleanup, `swarm.ps1` leases.
 
 Script pitfalls (pwsh 7): case-insensitive variables (`$L` = `$l`); `-File x.ps1 -List a,b` passes one string (`Split-KitList`);
 short helper names that are aliases (`r`, `rd`, `h`, `del`, `diff`: an alias beats a function and can delete files); `[IO.File]`
@@ -78,10 +76,9 @@ Non-negotiables:
   `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
 - Never log in to a CLI, never print or copy a value from a `*.local.*` file; org values you cannot derive go to the lead as ASK
   lines. Evidence or it is not a finding; unproven -> "candidate".
-- Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); add a part with `kittool.py new`, rename it with
-  `rename`, drop it with `remove` (no aliases).
+- Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); add, rename or drop a part with `kittool.py
+  new|rename|remove` (the `scaffold` extra; no aliases); an optional feature goes to the `extras` branch, not the core.
 - Scripted edits: absolute paths, never short helper names; `git -C <kit> status` after each.
-- You disagree with revy's finding -> `orch.ps1 board dispute` (templates.md "Dispute").
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.
 
