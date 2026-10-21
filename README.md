@@ -335,8 +335,7 @@ flowchart LR
 flowchart LR
   skills_local_env_SKILL_md[local-env]
   skills_local_env_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill local-env| LESSONS_md[LESSONS.md]
-  skills_local_env_SKILL_md -->|steps 1-6 (envs, status, deploy, wait, use, logs| skills_local_env_localenv_ps1[localenv.ps1]
-  skills_local_env_SKILL_md -->|run by localenv.ps1 (devtools.py migrations) to | skills_dev_kit_devtools_py[devtools.py]
+  skills_local_env_SKILL_md -->|Steps 1-6; owner verbs: Rules (its header lists | skills_local_env_localenv_ps1[localenv.ps1]
 ```
 <!-- kit-graph:end -->
 
@@ -360,7 +359,7 @@ flowchart LR
 flowchart LR
   skills_qa_kit_SKILL_md[qa-kit]
   skills_qa_kit_SKILL_md -->|step 0 (and H0, L0): orch.ps1 learn -Read -Skill| LESSONS_md[LESSONS.md]
-  skills_qa_kit_SKILL_md -->|step 1 (seat), 2 (deployed), 3 (api, ui), 4 (ann| skills_qa_kit_qa_ps1[qa.ps1]
+  skills_qa_kit_SKILL_md -->|steps 1-4, 6; L1, L3 (its header lists the verbs| skills_qa_kit_qa_ps1[qa.ps1]
   skills_qa_kit_SKILL_md -->|L1 Selection (tracker list/view/owner; status -E| skills_dev_kit_dev_ps1[dev.ps1]
   skills_qa_kit_SKILL_md -->|L1 Selection (tracker list/view/owner; status -E| skills_local_env_localenv_ps1[localenv.ps1]
   skills_qa_kit_SKILL_md -->|step 3 (web: read its header first; one logged-i| skills_qa_kit_browser_mjs[browser.mjs]

@@ -6,35 +6,23 @@ qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
-  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL | KIT_DEVICE)
+  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
-Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer) · 2 usage ·
+Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage ·
   3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
-Sections: L58 report · L209 seat · L325 deployed · L504 api · L633 finalize · L978 annotate · L1034 retest · L1074 ui
+Extras (kittool.py extra add <name>, loaded from adapters/): deployed-checks, api-auth, qa-html-report, ios-simulator.
+Sections: L20 report · L91 seat · L159 deployed · L265 api · L384 finalize · L724 annotate · L758 retest · L798 ui
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
-function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
-# ---- report builder: HTML for Google Docs import (inline styles, tables for layout); Build-QaReportMd = Markdown
+foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
+# ---- report: Markdown (tracker comments, the report file; reports.type gdocs converts it to a Google Doc)
 function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
 
-function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
-
-$script:Palette = @{
-  PASS           = @{ fg = '#166534'; bg = '#dcfce7'; label = 'PASS' }
-  PASS_WITH_NOTE = @{ fg = '#92400e'; bg = '#fef3c7'; label = 'PASS (note)' }
-  FAIL           = @{ fg = '#991b1b'; bg = '#fee2e2'; label = 'FAIL' }
-  NOT_TESTED     = @{ fg = '#374151'; bg = '#f3f4f6'; label = 'NOT TESTED' }
-  PENDING        = @{ fg = '#1e40af'; bg = '#dbeafe'; label = 'PENDING' }
-  OUT_OF_SCOPE   = @{ fg = '#6b7280'; bg = '#f9fafb'; label = 'OUT OF SCOPE' }   # never-tested channel
-}
-$script:Font = "font-family:Arial,Helvetica,sans-serif"
-$script:Cell = "border:1px solid #d1d5db;padding:6px 8px;vertical-align:top;font-size:10pt"
-# evidence names (SKILL.md "Evidence"); sync with browser.mjs EVIDENCE_NAME, $script:EvidenceExt, -FixNames
+# evidence names (SKILL.md "Evidence"); browser.mjs EVIDENCE_NAME is the same literal, -FixNames writes them
 $script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$'
-# types finalize publishes
-$script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'
+$script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'   # types finalize publishes
 
 # "F2-T4_02_after-edit.jpeg" -> "After edit"
 function Caption($file) {
@@ -45,123 +33,13 @@ function Caption($file) {
   }
   return $file
 }
-# unknown result renders plain
-function Pal($r) { $p = $script:Palette[[string]$r]; if ($p) { $p } else { @{ fg = '#111827'; bg = '#ffffff'; label = $(if ($r) { [string]$r } else { '(no result)' }) } } }
-function Chip($k, $n) { $p = $script:Palette[$k]; "<td style='background:$($p.bg);color:$($p.fg);padding:8px 14px;text-align:center;$script:Font;border:1px solid #ffffff'><span style='font-size:18pt;font-weight:bold'>$n</span><br><span style='font-size:8pt;font-weight:bold'>$($p.label)</span></td>" }
-function Img($map, $f, $w) {
-  $src = if ($map.files[$f].src) { Esc $map.files[$f].src } else { $map.files[$f].link }
-  "<p style='margin:4px 0 12px 0'><img src='$src' width='$w'><br><span style='font-size:9pt;color:#6b7280'>$(Esc (Caption $f)) · <a href='$($map.files[$f].link)'>$(Esc $f)</a></span></p>"
-}
 # phone shots render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
 
-function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl, $DocNote) {
-  $checks = @($Res.checks)
-  $n = @{}; foreach ($k in $script:Palette.Keys) { $n[$k] = @($checks | Where-Object result -eq $k).Count }
-  $fails = @($checks | Where-Object result -eq 'FAIL')
-  $passAll = $n.PASS + $n.PASS_WITH_NOTE
-  $verdict = if ($fails.Count) { @('#991b1b', 'Failures found') } elseif ($n.NOT_TESTED) { @('#374151', 'Partly tested') } elseif ($n.PENDING) { @('#1e40af', 'Passed so far — app checks pending') } else { @('#166534', 'All checks passed') }
-  $h = New-Object System.Text.StringBuilder
-  function A($s) { [void]$h.Append($s) }
-
-  A "<html><head><meta charset='utf-8'></head><body style='$script:Font;color:#111827;font-size:10.5pt'>"
-  # Title block
-  A "<p style='font-size:9pt;color:#6b7280;margin:0'>TEST RESULTS · $(Esc $Date)</p>"
-  A "<h1 style='font-size:20pt;margin:2px 0 4px 0;color:#111827'>$(Esc $Title) — $(Esc $Code)</h1>"
-  A "<p style='font-size:12pt;margin:0 0 10px 0;color:$($verdict[0])'><b>$($verdict[1])</b></p>"
-  # Count chips
-  A "<table style='border-collapse:collapse;margin:6px 0 12px 0'><tr>"
-  foreach ($k in 'PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'PENDING', 'OUT_OF_SCOPE') { if ($n[$k] -or $k -in 'PASS', 'FAIL') { A (Chip $k $n[$k]) } }
-  A "</tr></table>"
-  # At a glance
-  $glance = "$passAll of $($checks.Count - $n.OUT_OF_SCOPE) checks pass"
-  if ($n.PASS_WITH_NOTE) { $glance += " ($($n.PASS_WITH_NOTE) with a note)" }
-  if ($fails.Count) { $glance += ". $($fails.Count) failed: " + (($fails | ForEach-Object { "$($_.id) ($($_.screen))" }) -join ', ') + $(if (@($fails | Where-Object verify -eq 'confirmed').Count) { ' — confirmed by an independent re-test' } else { '' }) }
-  if ($n.NOT_TESTED) { $glance += ". $($n.NOT_TESTED) not tested (reasons below)" }
-  if ($n.PENDING) { $glance += ". $($n.PENDING) app/other-lane checks are tested separately" }
-  if ($n.OUT_OF_SCOPE) { $glance += ". $($n.OUT_OF_SCOPE) out of scope (channels never tested by agent QA)" }
-  A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:14px'>At a glance</h2><p>$(Esc $glance).</p>"
-  if ($DocNote) { A "<p style='background:#f3f4f6;padding:6px 8px'>$DocNote</p>" }
-
-  # Facts table
-  A "<table style='border-collapse:collapse;width:100%;margin:8px 0'>"
-  function Fact($k, $v) { "<tr><td style='$script:Cell;background:#f8fafc;width:22%'><b>$k</b></td><td style='$script:Cell'>$v</td></tr>" }
-  A (Fact 'Scope' $(if ($GuideUrl) { "<a href='$GuideUrl'>$(Esc $Item.title)</a> (tester guide)" } else { Esc $Item.title }))
-  if (@($Item.subtasks).Count) { A (Fact 'Tasks' ((@($Item.subtasks) | ForEach-Object { "<a href='$(TaskLink $_.id)'>$(Esc $_.name)</a>$(if ($_.mrs) { " <span style='color:#6b7280'>· MRs $(Esc $_.mrs)</span>" })" }) -join '<br>')) }
-  if (@($Run.envLines).Count) { A (Fact 'Environment' ((@($Run.envLines) | ForEach-Object { Esc $_ }) -join '<br>')) }
-  A (Fact 'Tested by' "$(Esc $Tester) with Claude Code · $(Esc $Date)")
-  A (Fact 'Evidence' "<a href='$($Map.folderLink)'>$($Map.label)</a> · $(@($Map.files.Keys).Count) files")
-  A "</table>"
-
-  # Results table
-  A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Results</h2>"
-  A "<table style='border-collapse:collapse;width:100%'><tr>"
-  foreach ($c in @(@('Check', '7%'), @('Screen / area', '16%'), @('Result', '12%'), @('What was done', '30%'), @('What we saw', '35%'))) { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff;width:$($c[1])'><b>$($c[0])</b></td>" }
-  A "</tr>"
-  $i = 0
-  foreach ($c in $checks) {
-    $p = (Pal $c.result); $zebra = if ($i++ % 2) { '#f8fafc' } else { '#ffffff' }
-    $v = if ($c.verify) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $c.verify)</span>" } else { '' }
-    A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b></td><td style='$script:Cell'>$(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(Esc $c.what_was_done)</td><td style='$script:Cell'>$(Esc $c.observed)</td></tr>"
-  }
-  A "</table>"
-
-  # Failure details
-  if ($fails.Count) {
-    A "<h2 style='font-size:13pt;border-bottom:2px solid #991b1b;padding-bottom:3px;margin-top:16px;color:#991b1b'>Failures in detail</h2>"
-    foreach ($c in $fails) {
-      A "<h3 style='font-size:11.5pt;margin:12px 0 4px 0'>$(Esc $c.id) — $(Esc $c.screen)</h3><table style='border-collapse:collapse;width:100%'>"
-      A (Fact 'Steps' (Esc $c.what_was_done)); A (Fact 'What we saw' (Esc $c.observed))
-      if ($c.verify) { A (Fact 'Independent re-test' (Esc $c.verify)) }
-      $data = @($c.evidence | Where-Object { $_ -notmatch '\.(png|jpe?g)$' -and $Map.files[$_] })
-      if ($data.Count) { A (Fact 'Data evidence' (($data | ForEach-Object { "<a href='$($Map.files[$_].link)'>$(Esc $_)</a>" }) -join '<br>')) }
-      A "</table>"
-      foreach ($f in @($c.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { A (Img $Map $f (ImgWidth $f)) }
-    }
-  }
-
-  # Notes, not tested, findings, setup
-  $notes = @($checks | Where-Object { $_.result -in 'PASS_WITH_NOTE', 'NOT_TESTED', 'OUT_OF_SCOPE' })
-  if ($notes.Count -or @($Res.findings).Count) {
-    A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Notes</h2><ul>"
-    foreach ($c in $notes) { A "<li><b>$(Esc $c.id)</b> ($((Pal $c.result).label)): $(Esc $c.observed)</li>" }
-    foreach ($f in @($Res.findings)) { A "<li>$(Esc $f)</li>" }
-    A "</ul>"
-  }
-  $setup = @($Res.setup_changes) + @($Res.data_created) | Where-Object { $_ }
-  if ($setup.Count) { A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Setup changes and test data</h2><ul>$((($setup | ForEach-Object { "<li>$(Esc $_)</li>" }) -join ''))</ul>" }
-
-  # Screenshots of the passing checks
-  $gallery = @($checks | Where-Object { $_.result -ne 'FAIL' -and @($_.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] }).Count })
-  if ($gallery.Count) {
-    A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Screenshots</h2>"
-    foreach ($c in $gallery) {
-      A "<h3 style='font-size:11pt;margin:12px 0 2px 0'>$(Esc $c.id) — $(Esc $c.screen) <span style='color:$((Pal $c.result).fg);font-size:9pt'>$((Pal $c.result).label)</span></h3>"
-      foreach ($f in @($c.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { A (Img $Map $f (ImgWidth $f)) }
-    }
-  }
-
-  # Evidence index
-  $all = @($Map.files.Keys | Sort-Object)
-  if ($all.Count) {
-    A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Evidence index</h2><table style='border-collapse:collapse;width:100%'><tr>"
-    foreach ($c in 'File', 'Check', 'Type', 'Shows') { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff'><b>$c</b></td>" }
-    A "</tr>"
-    foreach ($f in $all) {
-      $chk = if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+)') { $Matches[1] } else { '' }
-      $type = switch -Regex ($f) { '\.(png|jpe?g)$' { 'Screenshot' } '\.json$' { 'API / data' } '\.(jsonl|ndjson)$' { 'Data (JSON lines)' } '\.(log|txt)$' { 'Log' } '\.csv$' { 'Export (CSV)' } '\.pdf$' { 'Document (PDF)' } '\.mp4$' { 'Recording' } default { 'File' } }
-      A "<tr><td style='$script:Cell'><a href='$($Map.files[$f].link)'>$(Esc $f)</a></td><td style='$script:Cell'>$(Esc $chk)</td><td style='$script:Cell'>$type</td><td style='$script:Cell'>$(Esc (Caption $f))</td></tr>"
-    }
-    A "</table>"
-  }
-  A "<p style='font-size:8pt;color:#9ca3af;margin-top:18px'>Generated by the Claude Code QA kit. Verdict rules and evidence standard: defects are always FAIL; every FAIL is re-tested independently before a bug task is raised.</p>"
-  A '</body></html>'
-  $h.ToString()
-}
-
-# Markdown: GitHub/GitLab comments and a file
 function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl) {
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
+  # an image: the host's embeddable src (gdocs) or its link; the quoted title = width in px (md_to_html)
+  function MdImg($f) { $u = if ($Map.files[$f].src) { $Map.files[$f].src } else { $Map.files[$f].link }; "![$(Caption $f)]($(([string]$u) -replace ' ', '%20') `"$(ImgWidth $f)`")" }
   function Lnk($f) { if ($Map.files[$f]) { "[$f]($(([string]$Map.files[$f].link) -replace ' ', '%20'))" } else { $f } }
   $label = @{ PASS = 'PASS'; PASS_WITH_NOTE = 'PASS (note)'; FAIL = '**FAIL**'; NOT_TESTED = 'NOT TESTED'; PENDING = 'PENDING'; OUT_OF_SCOPE = 'OUT OF SCOPE' }
   $checks = @($Res.checks)
@@ -185,7 +63,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
       $o.Add(''); $o.Add("### $($c.id) — $($c.screen)"); $o.Add("**Steps:** $($c.what_was_done)"); $o.Add(''); $o.Add("**Saw:** $($c.observed)")
       if ($c.verify) { $o.Add(''); $o.Add("**Independent re-test:** $($c.verify)") }
       $ev = @($c.evidence | Where-Object { $_ }); if ($ev.Count) { $o.Add(''); $o.Add("**Evidence:** $(($ev | ForEach-Object { Lnk $_ }) -join ', ')") }
-      foreach ($f in @($ev | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { $o.Add(''); $o.Add("![$(Caption $f)]($(([string]$Map.files[$f].link) -replace ' ', '%20'))") }
+      foreach ($f in @($ev | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { $o.Add(''); $o.Add((MdImg $f)) }
     }
   }
   $notes = @($checks | Where-Object { $_.result -in 'PASS_WITH_NOTE', 'NOT_TESTED', 'OUT_OF_SCOPE' })
@@ -196,6 +74,11 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   }
   $setup = @($Res.setup_changes) + @($Res.data_created) | Where-Object { $_ }
   if ($setup.Count) { $o.Add(''); $o.Add('## Setup changes and test data'); $o.Add(''); foreach ($s in $setup) { $o.Add("- $(MdEsc $s)") } }
+  $gallery = @($checks | Where-Object { $_.result -ne 'FAIL' -and @($_.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] }).Count })
+  if ($gallery.Count) {
+    $o.Add(''); $o.Add('## Screenshots')
+    foreach ($c in $gallery) { $o.Add(''); $o.Add("### $($c.id) — $($c.screen) ($($label[[string]$c.result]))"); foreach ($f in @($c.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { $o.Add(''); $o.Add((MdImg $f)) } }
+  }
   $all = @($Map.files.Keys | Sort-Object)
   if ($all.Count) {
     $o.Add(''); $o.Add('## Evidence index'); $o.Add(''); $o.Add('| File | Check | Shows |'); $o.Add('|---|---|---|')
@@ -205,39 +88,17 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o -join "`n"
 }
 
-# ---- seat: memory seat (fair FIFO, keepFreeGB floor) + item claim (first claimer owns <run>/<code>)
+# ---- seat: item claim (first claimer owns <run>/<code>) + a memory turn in the gate's queue; the seat file names its holder
 function Invoke-Seat {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
   [string]$Agent, [ValidateSet('web', 'api', 'app')][string]$Kind = 'web',
   [string]$RunDir, [string]$Code, [string]$Owner = 'w1',
-  [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0
+  [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0   # 0 = the gate's floor (gate.keepFreeGB)
 )
 $ErrorActionPreference = 'Stop'
-$dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $wait = Join-Path $dir 'wait'; $claims = Join-Path $dir 'claims'
-New-Item -ItemType Directory -Force $seats, $wait, $claims | Out-Null
-# floor = gate keepFreeGB (else 15% RAM, min 6 GB)
-if (-not $KeepFreeGB) {
-  $KeepFreeGB = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15)))) }
-}
-# gate-promised GB: running builds/phones + queued builds
-$gateLedger = Join-Path (Get-KitTemp) 'claude-build-gate'
-function Get-GatePromisedGB([string]$Ledger = $gateLedger) {
-  $rd = { param($d) @(Get-ChildItem $d -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.pid }) }
-  $run = & $rd $Ledger; $queued = & $rd (Join-Path $Ledger 'queue')
-  if (-not ($run.Count + $queued.Count)) { return 0 }
-  $ws = @{}; $kids = @{}
-  foreach ($p in Get-SysProcs -NoCommandLine) { $ws[$p.Id] = $p.WorkingSet; if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.ArrayList]::new() }; [void]$kids[$p.ParentId].Add($p.Id) }
-  $sum = 0.0
-  foreach ($e in $run) {
-    if (-not $ws.ContainsKey([int]$e.pid)) { continue }
-    $used = 0; $st = [Collections.Stack]::new(); $st.Push([int]$e.pid)
-    while ($st.Count) { $n = $st.Pop(); if ($ws.ContainsKey($n)) { $used += $ws[$n] }; if ($kids.ContainsKey($n)) { foreach ($k in $kids[$n]) { $st.Push($k) } } }
-    $sum += [math]::Max(0, [double]$e.need - $used / 1GB)
-  }
-  foreach ($t in $queued) { if ($ws.ContainsKey([int]$t.pid)) { $sum += [double]$t.need } }
-  [math]::Round($sum, 1)
-}
+$dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $claims = Join-Path $dir 'claims'
+New-Item -ItemType Directory -Force $seats, $claims | Out-Null
 $need = [double](Get-KitSetting "qa.seatGB.$Kind" @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind])
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
 function Locked([scriptblock]$b) {
@@ -245,9 +106,8 @@ function Locked([scriptblock]$b) {
   try { $got = $mutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { $got = $true }   # a killed holder hands it over
   try { & $b } finally { if ($got) { $mutex.ReleaseMutex() } }
 }
-function FreeGB { Get-FreeGB }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
-# README "Leases" (dead: idle.graceMinutes from first seen); old record without holder: 6 h
+# README "Leases": dead = no live holder for idle.graceMinutes from first seen; a record without holder fields: 6 h
 function LeaseLive($o, [string]$file) {
   if ($null -eq $o.PSObject.Properties['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
   $v = [pscustomobject]@{ agent = "$($o.lease)"; holderPid = $o.holderPid; holderStart = $o.holderStart; seen = $o.seen }
@@ -255,26 +115,21 @@ function LeaseLive($o, [string]$file) {
 }
 function Read-Seat($p) { try { Get-Content $p -Raw | ConvertFrom-Json } catch { $null } }   # half-written: skipped
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Read-Seat $_.FullName; if (-not $o) { return }; if (LeaseLive $o $_.FullName) { $o } else { Remove-Item $_.FullName -Force } }) }
-$holder = Get-KitHolder
 $lease = (($Agent -split ':', 2)[-1] -split '@')[0]   # item code: Test-KitLive matches step labels, board
 
 switch ($Action) {
   'status' {
     $s = Locked { Seats }
-    "free RAM $(FreeGB) GB, $(Get-GatePromisedGB) GB promised by the memory gate, keep $KeepFreeGB GB free (gate.keepFreeGB); $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
-    Get-ChildItem $wait -Filter *.json | Sort-Object LastWriteTime | ForEach-Object { $w = Read-Seat $_.FullName; if ($w) { "waiting: $($w.agent) ($($w.kind)) since $($w.since)" } }
+    "free RAM $(Get-FreeGB) GB; $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
     Get-ChildItem $claims -Filter *.json | ForEach-Object { $c = Read-Seat $_.FullName; if ($c) { "claim: $($c.run)/$($c.code) by $($c.owner) since $($c.since)" } }
   }
-
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
-    Remove-Item (Join-Path $seats "$(Safe $Agent).json"), (Join-Path $wait "$(Safe $Agent).json") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $seats "$(Safe $Agent).json") -Force -ErrorAction SilentlyContinue
     "seat released: $Agent"
   }
-
   'acquire' {
     if (-not $Agent) { throw 'acquire needs -Agent' }
-    # 1. item claim
     if ($RunDir -and $Code) {
       $run = Split-Path $RunDir -Leaf
       $cf = Join-Path $claims "$(Safe $run)__$(Safe $Code).json"
@@ -283,45 +138,25 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         $c = if (Test-Path $cf) { Read-Seat $cf }
         if ($c -and $c.owner -ne $Owner -and (LeaseLive $c $cf)) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
-        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + $holder) | ConvertTo-Json | Set-Content $cf
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | Set-Content $cf
         $null
       }
       if ($verdict) { $verdict; exit 3 }
     }
-    # 2. memory seat (fair FIFO)
-    $me = Safe $Agent; $wf = Join-Path $wait "$me.json"
-    if (Test-Path (Join-Path $seats "$me.json")) { "seat already held: $Agent"; exit 0 }
-    $rec = { ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + $holder) | ConvertTo-Json }
-    if (-not (Test-Path $wf)) { & $rec | Set-Content $wf }
-    $deadline = (Get-Date).AddMinutes($WaitMinutes); $told = $false
-    while ($true) {
-      $ok = Locked {
-        $mine = Get-Content $wf -Raw | ConvertFrom-Json
-        $mine | Add-Member -Force beat (Get-Date).ToString('s'); $mine | ConvertTo-Json | Set-Content $wf    # heartbeat: dead waiters never block
-        $ahead = @(Get-ChildItem $wait -Filter *.json | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
-            Where-Object { $_.agent -ne $Agent -and [datetime]$_.since -lt [datetime]$mine.since -and ((Get-Date) - [datetime]$(if ($_.beat) { $_.beat } else { $_.since })).TotalMinutes -lt 3 })
-        # promised = seats < 3 min old + gate's builds and phones
-        $promised = [double](@(Seats | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 }) | Measure-Object need -Sum).Sum + 0
-        $promised = [math]::Round($promised + (Get-GatePromisedGB), 1)
-        $left = (FreeGB) - [double]$promised - $need
-        if ($ahead.Count -eq 0 -and $left -ge $KeepFreeGB) {
-          & $rec | Set-Content (Join-Path $seats "$me.json")
-          Remove-Item $wf -Force
-          return "seat taken: $Agent ($Kind, ~$need GB); free RAM after it ~$([math]::Round($left, 1)) GB"
-        }
-        $script:why = if ($ahead.Count) { "$($ahead.Count) agent(s) ahead in the queue" } else { "free RAM $(FreeGB) GB - promised $promised GB - need $need GB < keep $KeepFreeGB GB" }
-        $null
-      }
-      if ($ok) { $ok; exit 0 }
-      if (-not $told) { "waiting for a seat: $script:why"; $told = $true }
-      if ((Get-Date) -gt $deadline) { "STILL WAITING ($script:why): run the same command again"; exit 4 }
-      Wait-KitPoll 15
-    }
+    $sf = Join-Path $seats "$(Safe $Agent).json"
+    if (Test-Path $sf) { "seat already held: $Agent"; exit 0 }
+    # the gate's fair memory queue (builds, phones, seats); a 0-second command = just the turn, so seats < 3 min old
+    # (their browser still starting) are added to what this one needs
+    $fresh = [double](@(Locked { Seats }) | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 } | Measure-Object need -Sum).Sum
+    $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
+    $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
+    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + (Get-KitHolder)) | ConvertTo-Json | Set-Content $sf
+    "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"
   }
 }
 }
-
-# ---- deployed: is a merged MR live on a test env (CI deploy job, squash, ssh, aws, manual, laneApk)
+# ---- deployed: is a merged MR live on a test env (CI deploy job, squash, laneApk; ssh / awsStack / probe / tag / manual: extra deployed-checks)
 function Invoke-Deployed {
 param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets
 $ErrorActionPreference = 'SilentlyContinue'
@@ -374,54 +209,6 @@ function LocalAncestor($dir, $sha, $commit) {
   git -C $dir merge-base --is-ancestor $sha $commit 2>$null
   $LASTEXITCODE -eq 0
 }
-# probeField: JSON path in the answer
-function Probe($d, $r) {
-  if ($d.tag) { git -C $r.checkout fetch -q --tags 2>$null; return @(git -C $r.checkout tag --sort=-creatordate 2>$null | Where-Object { $_ -match $d.tag })[0] }
-  $o = if ($d.probe -match '^https?://') { try { (Invoke-WebRequest $d.probe -ConnectionTimeoutSeconds 30).Content } catch { '' } } else { (Invoke-Sh $d.probe) -join "`n" }
-  if ($d.probeField) { try { $j = $o | ConvertFrom-Json; foreach ($k in $d.probeField.Split('.')) { $j = $j.$k }; $o = "$j" } catch { $o = '' } }
-  if ($d.probeRegex) { $m = [regex]::Match("$o", [string]$d.probeRegex); return $(if ($m.Success) { $m.Groups[1].Value } else { '' }) }
-  [regex]::Match("$o", '\b[0-9a-f]{7,40}\b').Value
-}
-# one memoised ssh call (script as base64); rc 0 match, 1 DIFF, 2 failed
-function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
-function SshState($s, $sha) {
-  $sub = ([string]$s.subdir).Trim('/')
-  $k = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$sha"
-  if ($memo.ContainsKey($k)) { return $memo[$k] }
-  $xs = (@($s.exclude | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '
-  $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
-  $sh = @(
-    '{'
-    "R=$(Sq ([string]$s.repoDir).TrimEnd('/')); SUB=$(Sq $sub); A=$(Sq ([string]$s.appDir).TrimEnd('/')); X=($xs); SU=$(if ($s.sudo -ne $false) { "'sudo -n'" })"
-    'H=sha256sum; command -v sha256sum >/dev/null || H="shasum -a 256"'
-    'echo "HEAD=$(git -C "$R" rev-parse --short HEAD 2>/dev/null) $(git -C "$R" log -1 --format=%cI HEAD 2>/dev/null)"'
-    "if git -C `"`$R`" merge-base --is-ancestor $sha HEAD 2>/dev/null; then echo ANC=yes; else echo ANC=no; fi"
-    $(if ($s.service) { "echo `"SVC=`$(systemctl show -p ActiveEnterTimestamp --value $(Sq $s.service) 2>/dev/null)`"" })
-    'skip() { local c pat cs; IFS=/ read -ra cs <<< "$1"; for c in "${cs[@]}"; do for pat in "${X[@]}"; do [[ $c == $pat ]] && return 0; done; done; return 1; }'
-    'cd "$R" 2>/dev/null || { echo RC=2; echo "DIFF=cannot cd to $R"; exit 0; }'
-    '$SU test -d "$A" 2>/dev/null || { echo RC=2; echo "DIFF=$SU test -d $A failed (no app dir / passwordless sudo: ssh.sudo false)"; exit 0; }'
-    'L=$(mktemp) || { echo RC=2; echo "DIFF=mktemp failed"; exit 0; }; trap ''rm -f "$L"'' EXIT'
-    'git ls-files -z -- ${SUB:+"$SUB"} | while IFS= read -r -d "" f; do r="${f#"$SUB"/}"; skip "$r" || printf "%s\0" "$r"; done > "$L"'
-    'N=$(tr -cd "\0" < "$L" | wc -c); echo "FILES=$N"'
-    '[ "$N" -gt 0 ] || { echo RC=2; echo "DIFF=git ls-files lists no tracked files under ${SUB:-the repo}"; exit 0; }'
-    'src=$(cd "$R/$SUB" && xargs -0 $H -- < "$L" 2>/dev/null)'
-    'app=$($SU sh -c ''cd "$1" && shift && xargs -0 "$@" -- 2>/dev/null'' _ "$A" $H < "$L")'
-    "out=`$(awk $(Sq $awk) <(printf '%s\n' `"`$app`") <(printf '%s\n' `"`$src`"))"
-    'if [ -n "$out" ]; then echo RC=1; printf "%s\n" "$out" | sed "s/^/DIFF=/"; else echo RC=0; fi'
-    '}'
-  ) -join "`n"
-  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
-  $key = [string]$s.key -replace '^~', $HOME
-  $lines = @(ssh -i $key -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $s.host "echo $b64 | base64 -d | bash" 2>$null)
-  $r = if (-not ($lines -match '^RC=')) { $null } else {
-    @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
-      anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
-      diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1)
-      files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1) }
-  }
-  $memo[$k] = $r; $r
-}
-
 # pwsh -File keeps the quotes: strip, split
 $out = foreach ($m in @(Split-KitList $Mrs)) {
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
@@ -448,34 +235,9 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {
       else { Row $d 'NOT-DEPLOYED' "$s8 is not in the lane ${apk}: rebuild it (swarm.ps1 build) from a branch holding the merge" }
       continue
     }
-    if ($d.ssh) {   # host HEAD holds the merge AND files match
-      $s = $d.ssh; $st = SshState $s $sha
-      if (-not $st) { Row $d 'UNKNOWN' "no answer from $($s.host) over ssh (key $($s.key); the host needs bash, git, base64)"; continue }
-      $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
-      if ($st.rc -gt 1 -and -not $st.head) { Row $d 'UNKNOWN' "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')"; continue }   # a wrong repoDir is not 'not deployed'
-      if (-not $st.anc) { Row $d 'NOT-DEPLOYED' "$s8 is not in the host checkout ($where)"; continue }
-      if ($st.rc -gt 1) { Row $d 'UNKNOWN' "in the host checkout, but the compare failed: $(($st.diff | Select-Object -First 2) -join '; ')"; continue }
-      if ($st.diff.Count) { Row $d 'NOT-DEPLOYED' "in the host checkout ($where), but $($st.diff.Count) of $($st.files) tracked file(s) differ from the installed app: $(($st.diff | Select-Object -First 3) -join '; ')"; continue }
-      Row $d 'DEPLOYED' "in the host checkout and installed ($($st.files) tracked files match, $where)"
-      continue
-    }
-    if ($d.probe -or $d.tag) {   # live commit: probe (URL / command) or newest matching tag
-      $c = Probe $d $r; $w = if ($d.tag) { "tag $c" } else { "probe commit $c" }
-      if (-not $c) { Row $d 'UNKNOWN' "no commit from $(if ($d.tag) { "tags matching $($d.tag)" } else { "probe $($d.probe)" })"; continue }
-      $on = LocalAncestor $r.checkout $sha $c; if ($null -eq $on) { $on = OnRef $p $mr $sha $c }
-      Row $d $(if ($on) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }) "$w $(if ($on) { 'holds' } else { 'lacks' }) $s8"; continue
-    }
-    if ($d.manual) { Row $d 'MANUAL' 'deployed by hand: confirm with the owner or an ssh check'; continue }
-    if ($d.awsStack) {   # no CI job: stack updated after the merge
-      $ra = if ($d.region) { @('--region', $d.region) } else { @() }   # else AWS CLI default region
-      $upd = aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null
-      if (-not $upd) { Row $d 'UNKNOWN' "cannot read stack $($d.awsStack) (aws sts get-caller-identity?)"; continue }
-      $at, $st, $created = "$upd" -split '\s+'
-      if ($at -eq 'None') { $at = $created }   # a stack never updated since creation
-      try {
-        if ([datetimeoffset]$at -gt [datetimeoffset]$mr.merged_at -and $st -match 'COMPLETE$' -and $st -notmatch 'ROLLBACK') { Row $d 'DEPLOYED' "stack $($d.awsStack) updated $at after the merge (by hand: confirm the build was from the merged branch)" }
-        else { Row $d 'NOT-DEPLOYED' "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" }
-      } catch { Row $d 'UNKNOWN' "stack $($d.awsStack): cannot read its update time ($upd)" }
+    if ($d.ssh -or $d.awsStack -or $d.probe -or $d.tag -or $d.manual) {
+      if ($ext = Get-Command Test-DeployedExtra -ErrorAction SilentlyContinue) { & $ext $d }
+      else { Row $d 'UNKNOWN' "deploys[] $(@('ssh', 'awsStack', 'probe', 'tag', 'manual' | Where-Object { $d.$_ })[0]) is an extra: run kittool.py extra add deployed-checks" }
       continue
     }
     if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
@@ -537,49 +299,41 @@ if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/')
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
 $a = $t.auth
-if ($a.type -eq 'query') { $uri += "$(if ($uri -match '\?') { '&' } else { '?' })$($a.param)=$([uri]::EscapeDataString([string]$u[1]))" }
-$tls = if ($a.cert) { @{ Certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([string]$a.cert, [string]$a.certPass) } } else { @{} }
+if ("$($a.type)" -notin '', 'login', 'none' -or $a.cert -or $a.refreshField) {   # other auth kinds: extra api-auth
+  if ($ext = Get-Command Invoke-ApiExtra -ErrorAction SilentlyContinue) { return & $ext @PSBoundParameters }
+  throw "auth type '$($a.type)'$(if ($a.cert) { ' + client cert' })$(if ($a.refreshField) { ' + refresh token' }) of target $Target is an extra: run kittool.py extra add api-auth"
+}
 
 function Fill($s) { ([string]$s).Replace('{user}', [string]$u[0]).Replace('{pass}', [string]$u[1]).Replace('{tenant}', $Tenant) }
 function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k }; $o }
 
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
-# cache: token (cookie type: Cookie header) + refresh token
-function Login([switch]$Refresh) {
+function Login {
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
-  if ($Refresh) { $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt } + $(if ($b.client_id) { @{ client_id = $b.client_id } } else { @{} }) }
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
-  $form = $a.contentType -eq 'form' -or $Refresh
-  $r = Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 -SessionVariable ws @tls
-  if ($a.type -eq 'cookie') { $tok = (@($ws.Cookies.GetAllCookies()) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' }
-  else { $j = $r.Content | ConvertFrom-Json; $tok = Get-Field $j $(if ($a.tokenField) { $a.tokenField } else { 'access_token' }); if ($a.refreshField) { $script:rt = Get-Field $j $a.refreshField } }
+  $form = $a.contentType -eq 'form'
+  $r = Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60
+  $tok = Get-Field ($r.Content | ConvertFrom-Json) $(if ($a.tokenField) { $a.tokenField } else { 'access_token' })
   if (-not $tok) { throw "login to $Target as $As returned no token" }
-  "$tok`n$script:rt" | Set-Content $cache -NoNewline
+  $tok | Set-Content $cache -NoNewline
   $tok
 }
+# login: the header template (default a bearer token); none: no auth header
 function AuthHeaders($tok) {
-  $h = @{}
-  switch ($a.type) {
-    'basic' { $h.Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($u[0]):$($u[1])")) }
-    { $_ -in 'none', 'query' } { }
-    'cookie' { $h.Cookie = $tok; if ($a.csrfCookie -and $tok -match "(?:^|; )$([regex]::Escape($a.csrfCookie))=([^;]+)") { $h[$(if ($a.csrfHeader) { $a.csrfHeader } else { 'X-XSRF-TOKEN' })] = [uri]::UnescapeDataString($Matches[1]) } }
-    'command' { $env:KIT_API_BODY = $Body; foreach ($l in @(Invoke-Sh ((Fill $a.cmd).Replace('{method}', $Method.ToUpper()).Replace('{url}', $uri)))) { if ($l -match '^\s*([\w-]+)\s*:\s*(.*)$') { $h[$Matches[1]] = $Matches[2] } } }   # HMAC / SigV4 signer
-    default { $n, $v = "$(if ($a.header) { $a.header } else { 'Authorization: Bearer {token}' })".Split(':', 2); $h[$n.Trim()] = $v.Trim().Replace('{token}', $tok) }
-  }
-  $h
+  if ($a.type -ne 'login') { return @{} }
+  $n, $v = "$(if ($a.header) { $a.header } else { 'Authorization: Bearer {token}' })".Split(':', 2)
+  @{ $n.Trim() = $v.Trim().Replace('{token}', $tok) }
 }
-$tok = $null; $login = $a.type -in 'login', 'cookie'
-if ($login) { $tok, $script:rt = if (Test-Path $cache) { @(Get-Content $cache) + '' }; if (-not "$tok".Trim()) { $tok = Login } }   # empty cache file: log in again
-elseif ($a.type -eq 'token') { $tok = if ($a.token) { $a.token } else { [string]$u[1] } }
+$tok = $null; $login = $a.type -eq 'login'
+if ($login) { $tok = if (Test-Path $cache) { "$(Get-Content $cache -Raw)".Trim() }; if (-not $tok) { $tok = Login } }   # empty cache file: log in again
 
 function Call($tk) {
   $h = AuthHeaders $tk; foreach ($k in $Headers.Keys) { $h[$k] = $Headers[$k] }
   if ($Tenant -and $t.tenantHeader) { $h[$t.tenantHeader] = $Tenant }
-  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType } + $tls
+  $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType }
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
-  # cookies redacted
   function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)cookie|authorization|token|key|secret|password') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
   try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
@@ -589,10 +343,9 @@ function Call($tk) {
 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $res = Call $tok
-if ($res[0] -eq 401 -and $login) { $tok = if ($script:rt) { try { Login -Refresh } catch { Login } } else { Login }; $sw.Restart(); $res = Call $tok }
+if ($res[0] -eq 401 -and $login) { $tok = Login; $sw.Restart(); $res = Call $tok }   # token expired: once more
 $sw.Stop()
 $status, $content, $ctype, $rhead = $res
-# binary response: saved as a file
 if ($content -is [byte[]]) {
   $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
   if ($Save) {
@@ -604,7 +357,6 @@ if ($content -is [byte[]]) {
 }
 
 if ($Save) {
-  # evidence envelope (SKILL.md "Evidence")
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
   # secrets redacted at any depth
@@ -638,7 +390,6 @@ param(
   [switch]$Force,
   [switch]$Check,
   [switch]$FixNames,
-  [switch]$AllowMissing,
   [int]$ExpectChecks = -1,              # truncated results.json refused
   [string]$Results = 'results.json',    # -Check: a retry renames only its own
   [string]$Report = '',                 # a reports.type name
@@ -757,15 +508,9 @@ if ($Check) {
   if ($fail) { exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids)"; exit 0
 }
-if ($lostList.Count -and -not $AllowMissing) {
-  throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run (or pass -AllowMissing to publish without them)."
+if ($lostList.Count) {
+  throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run."
 }
-foreach ($g in @($lost | Group-Object { $_.check.id })) {   # -AllowMissing: drop the names, say so
-  $c = $g.Group[0].check; $gone = @($g.Group | ForEach-Object name)
-  $c.evidence = @(@($c.evidence) | Where-Object { $_ -notin $gone })
-  $c | Add-Member -NotePropertyName observed -NotePropertyValue "$($c.observed) [Evidence missing at publish: $($gone -join ', ')]".Trim() -Force
-}
-if ($lostList.Count) { Write-Warning "published without missing evidence (-AllowMissing): $($lostList -join '; ')" }
 $fin = "$D/finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
@@ -773,7 +518,6 @@ $tester = if ($run.tester) { $run.tester } else { [Environment]::UserName }
 $tr = $run.tracker
 Push-Location $RunDir; $script:qaFinPushed = $true   # tracker CLIs run inside the run folder
 trap { if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }; break }
-function TaskUrl($id) { Get-TrackerUrl $id }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }
 
 # 1. Evidence: hosted by the report type (devtools evidence; gdocs: a Drive folder, a re-run adds new files) or the run folder
@@ -795,22 +539,23 @@ if ($ev.folderId) {
   foreach ($x in $files) { $map.files[$x.Name] = @{ id = $null; link = "$($x.Directory.Name)/$($x.Name)"; path = $x.FullName } }
 }
 
-# 2. Styled report
+# 2. Report
 $checks = @($res.checks)
 function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { Write-Warning "evidence found but not uploaded: $($missing -join '; ')" }
-Build-QaReport -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8
+$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # extra qa-html-report: the styled HTML goes to gdocs
+if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
-# 3. Report
 $null = Test-KitProse -Kind result-note -Path "$D/results.json"
-$null = Test-KitProse -Kind qa-report -Text (Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-String)
-Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.md" -Encoding utf8
+$md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl
+$null = Test-KitProse -Kind qa-report -Text $md
+$md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
 else {   # devtools doc (reports.type); kept-file types keep it in $D
-  $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" "$D/report.$(if ($rtype -in 'gdocs', 'html', 'pdf') { 'html' } else { 'md' })" $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype 2>&1 | ForEach-Object { "$_" }
+  $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" "$D/report.$(if ($html -and $rtype -eq 'gdocs') { 'html' } else { 'md' })" $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype 2>&1 | ForEach-Object { "$_" }
   $docUrl = if (-not $LASTEXITCODE) { @($o)[-1].Trim() } elseif ("$o" -match '(\S+) was uploaded but not shared') { Write-Warning "$o"; $Matches[1] }
   elseif ($prev.doc -match '^https?://') { Write-Warning "report publish ($rtype) failed - keeping the previous report $($prev.doc): $o"; $prev.doc }
   else { throw "report publish ($rtype) failed and there is no previous report (nothing was posted to the tracker): $o" }
@@ -870,12 +615,12 @@ function Add-NewDefects($st, [object[]]$defects) {
       $open = try { @((Get-TrackerTask $ask.id).subtasks | Where-Object { "$($_.name)" -like "$bp *" -and $_.id -notin $tested -and -not (Test-TrackerStatus $_.status 'closed') }) | Select-Object -First 1 } catch { $null }
       if ($open) {
         $o = Get-TrackerTask $open.id
-        $s.id = $open.id; $s.url = $(if ($open.url) { $open.url } else { TaskUrl $open.id }); $s.base = [string]$o.description
+        $s.id = $open.id; $s.url = $(if ($open.url) { $open.url } else { TaskLink $open.id }); $s.base = [string]$o.description
         $s.baseCount = if ("$($o.name)" -match '\((\d+)\)\s*$') { [int]$Matches[1] } else { 0 }
       }
     }
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
-    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects found while testing $($st.name) ($(TaskUrl $st.id)), package $Code") }
+    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects found while testing $($st.name) ($(TaskLink $st.id)), package $Code") }
     $n = [int]$s.baseCount + [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
     $body = "QA run **$title** on $(if ($item.target) { $item.target } else { $run.target }) ($Date) found these defects outside what the tested tasks changed. Results report: $docUrl`n$(if ($guideUrl) { "Tester guide (check ids refer to it): $guideUrl`n" })`n" + (($entries | ForEach-Object md) -join "`n")
@@ -884,7 +629,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     else {
       $t = New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2'
       if (-not $t.id) { return $null }
-      $s.id = $t.id; $s.url = $(if ($t.url) { $t.url } else { TaskUrl $t.id })
+      $s.id = $t.id; $s.url = $(if ($t.url) { $t.url } else { TaskLink $t.id })
     }
     $s.entries = $entries; $groups[$key] = $s
     [pscustomobject]@{ groups = $groups } | ConvertTo-Json -Depth 8 | Out-File $f -Encoding utf8
@@ -976,62 +721,40 @@ if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
 $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
 }
 
-# ---- annotate: -Rect / -Arrow / -Text on a PNG/JPEG (Windows only); image px (web: CSS px x DPR)
+# ---- annotate: -Rect 'x,y,w,h[,label]' boxes on a PNG/JPEG (Windows only); image px (web: CSS px x DPR)
 function Invoke-Annotate {
-param(
-  [Parameter(Mandatory)][string]$In, [string]$Out,
-  [string[]]$Rect = @(), [string[]]$Arrow = @(), [string[]]$Text = @(),
-  [ValidateSet('red', 'orange', 'green', 'blue')][string]$Color = 'red', [double]$Scale = 0,
-  [switch]$Copy
-)
+param([Parameter(Mandatory)][string]$In, [string]$Out, [string[]]$Rect = @(), [switch]$Copy)
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate needs Windows (System.Drawing): elsewhere mark() before shot(), or name the element in the check note' }
-# one item each, its commas stay
-$Rect = @(Split-KitList $Rect ';'); $Arrow = @(Split-KitList $Arrow ';'); $Text = @(Split-KitList $Text ';')
+$Rect = @(Split-KitList $Rect ';')   # one box each, its commas stay
 Add-Type -AssemblyName System.Drawing
 $src = (Resolve-Path $In).Path
 if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
 if (-not $Out) { $Out = $src }
-$bytes = [IO.File]::ReadAllBytes($src)                     # read fully to overwrite
-$ms = New-Object IO.MemoryStream(, $bytes)
+$ms = New-Object IO.MemoryStream(, [IO.File]::ReadAllBytes($src))   # read fully: the file may be overwritten
 $img0 = [Drawing.Image]::FromStream($ms)
 $bmp = New-Object Drawing.Bitmap $img0.Width, $img0.Height
 $g = [Drawing.Graphics]::FromImage($bmp)
 $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
 $g.DrawImage($img0, 0, 0, $img0.Width, $img0.Height)
-$k = if ($Scale) { $Scale } else { [math]::Max(1, $img0.Width / 1300) }  # sizes grow with the image
-$col = @{ red = [Drawing.Color]::FromArgb(230, 220, 38, 38); orange = [Drawing.Color]::FromArgb(230, 245, 140, 0); green = [Drawing.Color]::FromArgb(230, 22, 163, 74); blue = [Drawing.Color]::FromArgb(230, 37, 99, 235) }[$Color]
-$pen = New-Object Drawing.Pen $col, (4 * $k)
+$k = [math]::Max(1, $img0.Width / 1300)   # sizes grow with the image
+$red = [Drawing.Color]::FromArgb(230, 220, 38, 38)
+$pen = New-Object Drawing.Pen $red, (4 * $k)
 $font = New-Object Drawing.Font ([Drawing.FontFamily]::GenericSansSerif), ([float](15 * $k)), ([Drawing.FontStyle]::Bold)
-$bg = New-Object Drawing.SolidBrush $col
-$fg = [Drawing.Brushes]::White
-function Label([string]$t, [float]$x, [float]$y) {
-  if (-not $t) { return }
-  $sz = $g.MeasureString($t, $font)
-  $x = [math]::Max(0, [math]::Min($x, $bmp.Width - $sz.Width - 2)); $y = [math]::Max(0, [math]::Min($y, $bmp.Height - $sz.Height - 2))
-  $g.FillRectangle($bg, $x, $y, $sz.Width + 8 * $k, $sz.Height + 2 * $k)
-  $g.DrawString($t, $font, $fg, $x + 4 * $k, $y + $k)
-}
-function Parts($s) { $p = $s -split ',', 5; $p }
 foreach ($r in $Rect) {
   $p = $r -split ',', 5; $x = [float]$p[0]; $y = [float]$p[1]; $w = [float]$p[2]; $h = [float]$p[3]
   $g.DrawRectangle($pen, $x, $y, $w, $h)
-  if ($p.Count -ge 5) { $ly = if ($y - 30 * $k -ge 0) { $y - 30 * $k } else { $y + $h + 4 * $k }; Label $p[4] $x $ly }
+  if ($p.Count -ge 5 -and $p[4]) {   # label above the box, else below; kept inside the image
+    $sz = $g.MeasureString($p[4], $font)
+    $lx = [math]::Max(0, [math]::Min($x, $bmp.Width - $sz.Width - 2)); $ly = if ($y - 30 * $k -ge 0) { $y - 30 * $k } else { [math]::Min($y + $h + 4 * $k, $bmp.Height - $sz.Height - 2) }
+    $g.FillRectangle((New-Object Drawing.SolidBrush $red), $lx, $ly, $sz.Width + 8 * $k, $sz.Height + 2 * $k)
+    $g.DrawString($p[4], $font, [Drawing.Brushes]::White, $lx + 4 * $k, $ly + $k)
+  }
 }
-foreach ($a in $Arrow) {
-  $p = $a -split ',', 5; $x1 = [float]$p[0]; $y1 = [float]$p[1]; $x2 = [float]$p[2]; $y2 = [float]$p[3]
-  $ap = New-Object Drawing.Pen $col, (4 * $k)
-  $ap.CustomEndCap = New-Object Drawing.Drawing2D.AdjustableArrowCap 4, 4, $true
-  $g.DrawLine($ap, $x1, $y1, $x2, $y2)
-  if ($p.Count -ge 5) { Label $p[4] ($x1 - 10 * $k) ($y1 - 30 * $k) }
-}
-foreach ($t in $Text) { $p = $t -split ',', 3; Label $p[2] ([float]$p[0]) ([float]$p[1]) }
 $g.Dispose(); $img0.Dispose(); $ms.Dispose()
-$fmt = if ($Out -match '\.jpe?g$') { [Drawing.Imaging.ImageFormat]::Jpeg } else { [Drawing.Imaging.ImageFormat]::Png }
-$bmp.Save($Out, $fmt); $bmp.Dispose()
-"annotated $Out ($(@($Rect).Count) rect, $(@($Arrow).Count) arrow, $(@($Text).Count) text)"
+$bmp.Save($Out, $(if ($Out -match '\.jpe?g$') { [Drawing.Imaging.ImageFormat]::Jpeg } else { [Drawing.Imaging.ImageFormat]::Png })); $bmp.Dispose()
+"annotated $Out ($(@($Rect).Count) rect)"
 }
-
 # ---- retest: add a RETEST item for a fixed task whose fix went live (same -Code replaces it)
 function Invoke-Retest {
 param(
@@ -1079,9 +802,11 @@ param([Parameter(Position = 0)][string]$Action = 'dump', [Parameter(Position = 1
 $adb = Join-Path (Get-AndroidSdk) (Join-Path 'platform-tools' (Get-ExeName 'adb'))   # ANDROID_HOME / ANDROID_SDK_ROOT / OS default
 $dt = Get-KitSetting 'devices.type' 'android'
 if ($dt -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
-$ios = $dt -eq 'ios'   # Simulator: $env:KIT_DEVICE = udid
-$tag = if ($ios) { if ($env:KIT_DEVICE) { $env:KIT_DEVICE } else { 'booted' } } elseif ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
-if ($ios -and $Action -notin 'shot', 'openurl', 'log') { "ios: no ui $Action (simctl has no UI driver): use shot | openurl | log, prove the rest via the API"; exit 2 }
+if ($dt -eq 'ios') {
+  if ($ext = Get-Command Invoke-UiIos -ErrorAction SilentlyContinue) { return & $ext @PSBoundParameters }
+  [Console]::Error.WriteLine('devices.type ios is an extra: run kittool.py extra add ios-simulator'); exit 1
+}
+$tag = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { 'default' }
 $xmlLocal = Join-Path (Get-KitPath android-tmp -Create) "ui_$tag.xml"
 function Get-Nodes {
   # a failed dump must not return the old screen
@@ -1100,10 +825,10 @@ function Get-Nodes {
 }
 # text (exact, then contains) or #<resource-id suffix>
 function Find($all, $w) { if ($w -like '#*') { $all | Where-Object { $_.rid -like "*$($w.TrimStart('#'))" } | Select-Object -First 1 } else { ($all | Where-Object { $_.text -eq $w } | Select-Object -First 1) ?? ($all | Where-Object { $_.text -like "*$w*" } | Select-Object -First 1) } }
-function Tap($n, $w) { if ($n) { & $adb shell input tap $n.x $n.y; "tapped $(if ($w -like '#*') { "#$($n.rid)" } else { "'$($n.text)'" }) at $($n.x),$($n.y)" } else { "NOT FOUND: $w" } }
+function Tap($n, $w) { if ($n) { & $adb shell input tap $n.x $n.y; "tapped $(if ($w -like '#*') { "#$($n.rid)" } else { "'$($n.text)'" }) at $($n.x),$($n.y)" } else { "NOT FOUND: $w"; $script:uiFailed = $true } }
 function Shot($name, $dir) {
   if (-not $dir) { $dir = Join-Path (Get-KitPath shots) $tag }; New-Item -ItemType Directory -Force $dir | Out-Null; $f = Join-Path $dir "$name.png"; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
-  if ($ios) { xcrun simctl io $tag screenshot $f | Out-Null } else { & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null }
+  & $adb shell screencap -p /sdcard/qa_shot.png | Out-Null; & $adb pull /sdcard/qa_shot.png $f 2>&1 | Out-Null
   if (-not (Test-Path -LiteralPath $f) -or (Get-Item -LiteralPath $f).Length -eq 0) { throw "screenshot failed (device $tag offline?): nothing saved to $f" }; $f
 }
 switch ($Action) {
@@ -1114,7 +839,7 @@ switch ($Action) {
   'type' { & $adb shell input text ($Arg -replace ' ', '%s' -replace '([#&;()<>|$''"])', '\$1'); 'typed' }
   'key' { & $adb shell input keyevent $Arg; "key $Arg" }
   'swipe' { & $adb shell input swipe $Arg $Arg2 $Arg3 $Arg4 400; 'swiped' }
-  'openurl' { if ($ios) { xcrun simctl openurl $tag $Arg } else { & $adb shell am start -a android.intent.action.VIEW -d $Arg | Out-Null }; "opened $Arg" }
+  'openurl' { & $adb shell am start -a android.intent.action.VIEW -d $Arg | Out-Null; "opened $Arg" }
   'shot' { "saved $(Shot $Arg $Arg2)" }
   'shotmark' {
     # Arg name, Arg2 text or #id ('|' between), Arg3 label, Arg4 dir
@@ -1131,22 +856,23 @@ switch ($Action) {
   'wait' {
     $end = (Get-Date).AddSeconds($(if ($Arg2) { [int]$Arg2 } else { 30 }))
     # not `if (try ...)`: in ( ) `try` is a command
-    while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Start-Sleep 2 }
-    "TIMEOUT waiting for '$Arg'"
+    while ((Get-Date) -lt $end) { $hit = try { Get-Nodes | Where-Object { $_.text -like "*$Arg*" } } catch { $null }; if ($hit) { "found '$Arg'"; return }; Wait-KitPoll 2 }
+    "TIMEOUT waiting for '$Arg'"; exit 1
   }
   'photo' {
     # shutter: -Arg id suffix, else common ids; Arg2 = confirm text
     Start-Sleep 3
     $all = Get-Nodes
     $n = @(@($(if ($Arg) { $Arg } else { 'take-image-button', 'shutter', 'capture', 'take_photo', 'camera_button', 'btnCapture' }) | ForEach-Object { Find $all "#$_" }) + @($all | Where-Object { $_.text -match (Get-KitSetting 'qa.shutterText' '^(Take photo|Capture|Shutter|Take picture)$') }))[0]
-    if (-not $n) { "NOT FOUND: no shutter (pass its resource-id: qa.ps1 ui photo <id>; qa.ps1 ui dump shows ids)"; return }
+    if (-not $n) { "NOT FOUND: no shutter (pass its resource-id: qa.ps1 ui photo <id>; qa.ps1 ui dump shows ids)"; exit 1 }
     & $adb shell input tap $n.x $n.y; Start-Sleep 4
     $ok = Get-Nodes | Where-Object { $_.text -match $(if ($Arg2) { "^$([regex]::Escape($Arg2))$" } else { (Get-KitSetting 'qa.confirmText' '^(OK|Done|Use photo|Save|Confirm|✓|Use)$') }) } | Select-Object -First 1
     if ($ok) { & $adb shell input tap $ok.x $ok.y; Start-Sleep 2; "photo taken and accepted ('$($ok.text)')" } else { "photo taken (no confirm step seen)" }
   }
-  'log' { if ($ios) { xcrun simctl spawn $tag log show --last 5m --style compact --predicate $(if ($Arg) { "process == '$Arg'" } else { 'messageType == error' }) } else { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) } }
+  'log' { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) }
   default { "unknown action $Action (qa.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo)"; exit 2 }
 }
+if ($script:uiFailed) { exit 1 }   # NOT FOUND: the caller must not read it as done
 }
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
   switch ($__verb) {

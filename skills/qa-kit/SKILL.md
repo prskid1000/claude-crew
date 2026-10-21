@@ -8,29 +8,26 @@ description: "Load when: testing deployed work on a test env (checky test / veri
 hand.
 **Not when:** several deployed tasks tested by agents -> `/testy` (load `orchestrate`); before merge -> `local-env`
 (dev flow step 5); booting phones -> `android-swarm`; fixing what failed -> `dev-kit` (bugfix wave).
-**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator
-(failedTesting
+**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator (failedTesting
 tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `orch.ps1 learn -Read -Skill qa-kit` |
-| `qa.ps1` | step 1 (`seat`), 2 (`deployed`), 3 (`api`, `ui`), 4 (`annotate`), 6 (`finalize -Check -FixNames`); L1 (`deployed`), L3 (`finalize`, `retest`) |
+| `qa.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the extras: `deployed-checks`, `api-auth`, `qa-html-report`, `ios-simulator`) |
 | `<kit>/skills/dev-kit/dev.ps1`, `<kit>/skills/local-env/localenv.ps1` | L1 Selection (`tracker list/view/owner`; `status -Env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`. Check
-   the
-   SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
+0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
+   Check the SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
    `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `swarm.ps1
-   acquire|release` (keep the lease through waits < 30 min).
+   report. Phones: `swarm.ps1 acquire|release` (keep the lease through waits < 30 min).
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
@@ -65,23 +62,19 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `note`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
    "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
-   (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose]
-   findings);
-   `board leave`,
-   release seat / phone, close your tab (`s.done()`; never `killSession`, never log out); return the results.
+   (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
+   `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession`, never log out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
-(logical status;
-fallback `inProgress` + comment), the comment lists the failed / untested checks and why, NO new task · a new / unexpected
+(logical status; fallback `inProgress` + comment),
+the comment lists the failed / untested checks and why, NO new task · a new / unexpected
 defect -> ONE `[Bug] <ask> — new defects (n)` task under the task's original ask (appended to an open one) · PENDING -> open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
-change
-may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`; never
-deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user (`session()`: own tab,
-`relogin(s)` on a 401, never log out), <= 2 tabs per agent; app lanes: only your serial, never
-`adb kill-server`.
+change may be another agent's; change a setting only when a check needs it, restore it at once, list it in `setup_changes`;
+never deactivate, delete or re-password test logins; one shared Chrome per target + tenant + user (`session()`: own tab,
+`relogin(s)` on a 401, never log out), <= 2 tabs per agent; app lanes: only your serial, never `adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`
@@ -100,8 +93,7 @@ deactivate, delete or re-password test logins; one shared Chrome per target + te
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`dev.ps1 tracker status <task> closed` + a comment with the evidence);
-  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new
-  defect
+  own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
   -> `dev.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
 
 ## Lead steps (a test-only run; orchestrate T1-T4)
@@ -131,8 +123,7 @@ deactivate, delete or re-password test logins; one shared Chrome per target + te
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
   kitDir, mandate }` (Prepare = L1 Selection); `launch` record (orchestrate). Lead notes are the only channel to running testers.
-- L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on
-  disk);
+- L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on disk);
   a fix went live and needs a retest -> `qa.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.
 
 **Learn:** `orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.

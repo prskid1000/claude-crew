@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-swarm.tests.ps1: swarm.ps1 phone lanes: acquire, reverse, release, iOS, AVD, build, lanes on demand.
+swarm.tests.ps1: swarm.ps1 phone lanes: acquire, reverse, release, AVD, build (iOS: extra ios-simulator), lanes on demand.
 Usage: pwsh -NoProfile -File <kit>/tests/swarm.tests.ps1 (or tests/kit-tests.ps1 -Area swarm).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-# swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; ios serial = udid; avd; build command
+# swarm: -Reverse 8080,8081 = 2 ports, whole lease; release holds '__stopping__' until down ends; avd; build command
 $swt = @'
 $ErrorActionPreference = 'Stop'
 $tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]
@@ -21,21 +21,25 @@ $j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Reverse', '8080,8
 Set-Content "$tmp/d.ps1" "(Get-Content '$lf' -Raw | ConvertFrom-Json).agent > '$tmp/during.txt'"; $KitCmd.swarm = "$tmp/d.ps1"
 $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A')
 "release:$((Get-Content "$tmp/during.txt" -Raw).Trim() -eq '__stopping__' -and -not (Test-Path $lf))"
-Set-Content "$tmp/xcrun.cmd" "@echo off`r`necho iPhone (U1) (Booted)" -Encoding ascii; $env:PATH = "$tmp;$env:PATH"
-$script:SwarmCfg = [pscustomobject]@{ kind = 'ios'; lanes = @([pscustomobject]@{ name = 'I1'; udid = 'U1' }); apkDir = $tmp; app = [pscustomobject]@{ package = 'x' } }
-$j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'B', '-Reverse', '8080') | Select-Object -Last 1 | ConvertFrom-Json
 $s = "$tmp/sdk"; New-Item -ItemType Directory -Force "$s/platform-tools", "$s/system-images/a35/g/arm64-v8a", "$tmp/a" | Out-Null; Copy-Item $adb "$s/platform-tools"
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; port = 5570 }); adb = "$s/platform-tools/adb.cmd"; avdDir = "$tmp/avd"; apkDir = $tmp; out = $tmp; appFile = "$tmp/app.apk"
-  avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb {tfm}'; artifact = 'o/*.apk' } }
+  avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb {gw}'; artifact = 'o/*.apk' } }
 $null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw
 Set-Content "$tmp/gate.ps1" 'param($v, $Dir, $Cmd, $WaitMinutes) New-Item -ItemType Directory -Force "$Dir/o" | Out-Null; Set-Content "$Dir/o/x.apk" $Cmd'; $KitCmd.dev = "$tmp/gate.ps1"
 git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate')
-"kinds:$($j.serial -eq 'U1' -and -not @($j.reverse).Count) $($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb net9\.0-android')"
+"kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
 '@
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $sf 2>&1)
-foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True True') { Expect "swarm: $x" ($res -contains $x) }
+foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True') { Expect "swarm: $x" ($res -contains $x) }
 Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
+# lease files: reads and writes under the file lock (an open reader made the rename fail)
+$ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src 'skills/android-swarm/swarm.ps1')
+  foreach ($fn in (Get-Command Invoke-Phone).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -in 'Save-Json', 'Lease' }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+  $dir = Join-Path $rt 'ph'; New-Item -ItemType Directory -Force $dir | Out-Null; Save-Json @{ agent = 'A' } "$dir/L1.json"
+  Save-Json @{ agent = 'B' } "$dir/L1.json"; "$((Lease L1).agent)$(Test-Path "$dir/L1.json.lock")" }
+Expect "swarm: lease reads and writes go through the file lock, released after ($ss)" ($ss -eq 'BFalse' -and (Get-Content (Join-Path $src 'skills/android-swarm/swarm.ps1') -Raw) -match 'function Lease\(\$name\) \{[^\n]*Invoke-KitLocked')
+Remove-Item (Join-Path ([IO.Path]::GetTempPath()) "swl-$PID") -Recurse -Force -ErrorAction SilentlyContinue
 # lanes 0..N on demand: 3 requests, RAM for 2 boots: 2 boot, the 3rd waits, takes lane 1 when A releases it; no 3rd emulator ever starts
 $lsc = @'
 $tmp = $args[1]; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]

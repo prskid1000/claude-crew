@@ -1,16 +1,13 @@
 // browser.mjs: headless-browser library for testing any web app (import it; usage below). Exit codes: none (a library).
-// targets.local.json: web, webLogin, users, browser.engine (or KIT_BROWSER_ENGINE): chrome (default, puppeteer: one shared
-// Chrome per target+tenant+user, a tab each) | chromium | firefox | webkit (Playwright, a browser per process; KIT_PLAYWRIGHT
-// = module path). Logins shared via the session file (web storage + cookies), locked; never log out.
-// webLogin.type: form (path, fields, submit) | sso-steps (steps: goto, fill {sel: val}, click, wait sel|ms, waitUrl) |
-// script (.mjs: default async ({ page, user, pass, tenant, target, totp })) | storageState (file: cookies, origins).
-// {user} {pass} {tenant} {totp} (users: [user, pass, totpSecret]); {tenant} also in web.
+// targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
+// Logins shared via the session file (web storage + cookies), locked; never log out.
+// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Extras (adapters/, kittool.py extra
+// add): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
 //   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/qa-kit/browser.mjs'
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
-import { createHmac } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -57,13 +54,13 @@ function watch(page, apiPattern) {
   return net
 }
 
-// RFC 6238 (30 s, 6 digits)
-export function totp(secret, at = Date.now()) {
-  const bits = String(secret).toUpperCase().replace(/[^A-Z2-7]/g, '').split('').map((c) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(c).toString(2).padStart(5, '0')).join('')
-  const c = Buffer.alloc(8), h = (c.writeBigUInt64BE(BigInt(Math.floor(at / 30000))), createHmac('sha1', Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)))).update(c).digest())
-  return String((h.readUInt32BE(h[19] & 15) & 0x7fffffff) % 1e6).padStart(6, '0')
+const fill = (s, user, pass, tenant) => String(s).replace(/\{(user|pass|tenant)\}/g, (_, k) => ({ user, pass, tenant })[k] || '')
+// an optional part from adapters/ (kittool.py extra add <extra>), else one clear line
+async function adapter(file, what, extra) {
+  const f = join(__HERE, 'adapters', file)
+  if (!existsSync(f)) throw new Error(`${what} is an extra: run kittool.py extra add ${extra}`)
+  return import(pathToFileURL(f).href)
 }
-const fill = (s, user, pass, tenant, otp) => String(s).replace(/\{(user|pass|tenant|totp)\}/g, (_, k) => ({ user, pass, tenant, totp: otp && totp(otp) })[k] || '')
 const nav = (page, u, waitUntil = 'domcontentloaded') => page.goto(u, { waitUntil, timeout: 90000 }).catch(() => {})
 // off-host (an IdP) or the login path = a login page
 const loginPath = (t) => t.webLogin.path || '/login'
@@ -92,18 +89,16 @@ async function step(page, s, f) {
 async function login(page, t, tenant, as) {
   const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
-  const f = (s) => fill(s, user, pass, tenant, otp)
-  if (type === 'storageState') { await applyState(page, JSON.parse(readFileSync(resolve(__HERE, L.file), 'utf8'))); await nav(page, t.web + '/', 'networkidle2') }
-  else if (type === 'script') await (await import(pathToFileURL(resolve(__HERE, L.script)).href)).default({ page, user, pass, tenant, target: t, totp: otp && totp(otp) })
-  else {
+  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: the extra
+    const ext = await adapter('web-login.mjs', `webLogin.type ${type}${type === 'form' ? ' with {totp}' : ''}`, 'web-login-types')
+    await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
+  } else {
     await nav(page, t.web + (L.path || '/'), 'networkidle2')
     if (!onLogin(page, t)) return   // logged in: never log out
-    if (type === 'sso-steps') { for (const s of L.steps || []) await step(page, s, f) }
-    else {
-      await step(page, { fill: L.fields }, f)
-      if (L.rememberMeLabel) await page.evaluate((lb) => { const c = [...document.querySelectorAll('label')].find((e) => e.innerText.trim().toLowerCase() === lb.toLowerCase())?.querySelector('[type=checkbox]'); c?.checked || c?.click() }, L.rememberMeLabel)
-      await step(page, { click: L.submit }, f)
-    }
+    const f = (s) => fill(s, user, pass, tenant)
+    await step(page, { fill: L.fields }, f)
+    if (L.rememberMeLabel) await page.evaluate((lb) => { const c = [...document.querySelectorAll('label')].find((e) => e.innerText.trim().toLowerCase() === lb.toLowerCase())?.querySelector('[type=checkbox]'); c?.checked || c?.click() }, L.rememberMeLabel)
+    await step(page, { click: L.submit }, f)
   }
   await settle(page)
   if (onLogin(page, t)) throw new Error('login failed: ' + (await text(page)).slice(0, 300))
@@ -229,22 +224,6 @@ export async function sweepAll() {
   return closed
 }
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
-export const ensureLoggedIn = async (page, q = page.__qa) => q && ensureLogin(page, q.t, q.tenant, q.as, q.key)
-
-// Playwright: a browser per process, puppeteer names mapped
-async function pwPage(eng, bo, VIEW) {
-  let pw; const hint = `npx playwright install ${eng}`
-  for (const m of [process.env.KIT_PLAYWRIGHT, 'playwright-core', 'playwright'].filter(Boolean)) pw ||= await import(existsSync(m) ? pathToFileURL(statSync(m).isDirectory() ? join(m, 'index.mjs') : m).href : m).then((x) => x[eng] || x.default?.[eng], () => null)
-  if (!pw) throw new Error(`browser.engine ${eng}: npm i playwright-core in skills/qa-kit (or KIT_PLAYWRIGHT=<module>), then ${hint}`)
-  const browser = await pw.launch({ headless: true }).catch((e) => { throw new Error(`browser.engine ${eng}: ${String(e.message).split('\n')[0]} - ${hint}`) })
-  const ctx = await browser.newContext({ viewport: VIEW, locale: bo.lang, timezoneId: bo.timezone || undefined })
-  const page = await ctx.newPage(), go0 = page.goto.bind(page), wn = page.waitForNavigation.bind(page)
-  const wu = (o = {}) => ({ ...o, waitUntil: o.waitUntil === 'networkidle2' ? 'networkidle' : o.waitUntil })
-  Object.assign(page, { __pw: true, goto: (u, o) => go0(u, wu(o)), waitForNavigation: (o) => wn(wu(o)),
-    waitForNetworkIdle: (o = {}) => page.waitForLoadState('networkidle', { timeout: o.timeout }),
-    cookies: () => ctx.cookies(), setCookie: (...c) => ctx.addCookies(c) })
-  return { browser, page }
-}
 // your own logged-in tab
 export async function session({ target, tenant, as = 'admin' } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
@@ -256,7 +235,7 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
-  if (eng !== 'chrome') ({ browser, page } = await pwPage(eng, bo, VIEW))
+  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs', `browser.engine ${eng}`, 'browser-engines')).pwPage(eng, bo, VIEW))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
     port = await sessionPort(tn, tenant, as)

@@ -12,15 +12,12 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step A0 / L0: `orch.ps1 learn -Read -Skill android-swarm` |
-| `swarm.ps1` | A1-A4 (`acquire`, `ensure`, `launch`, `release`, `status`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim`, `arrange` run by `up` |
+| `swarm.ps1` | A1-A4 (`acquire`, `ensure`, `launch`, `release`, `status`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim` runs from `up` |
 
-Lanes and the app: `swarm.config.json` (git-ignored; `orch.ps1 setup -WriteLocal` writes it):
-`lanes[] {name, port | udid, user, notes, headless}`, `avd {abi, api, device, tag}`, `app {kind, package, appDir, buildTask,
-buildArgs, apkGlob | buildCmd + artifact, tfm (maui; net9.0-android), permissions, localManifests, localReverse, branch,
-javaHome, javaVersions}`.
-Device kinds (`kit.local.json` `devices.type`): android (default) · ios (Simulators, macOS; `qa.ps1 ui`
-shot / openurl / log, `$env:KIT_DEVICE=<udid>`) · none (verbs refuse; app checks NOT_TESTED). Output (APKs, logs, `swarm.json`):
-`<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
+Lanes and the app: `swarm.config.json` (git-ignored; `orch.ps1 setup -WriteLocal` writes it; keys and defaults: `Get-SwarmConfig`
+in `swarm.ps1`). `kit.local.json` `devices.type`: android (default) · none (verbs refuse; app checks NOT_TESTED). Extras
+(`kittool.py extra add`): `ios-simulator`, `app-kinds` (flutter, maui, capacitor, Expo), `emulator-windows` (visible windows
+in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
 - **lane APK** `apk/app.apk` (+ `app.json` stamp): the merged branch, installed on every lane at acquire (test-only runs).
 - **local-env APK** `apk/app-local.apk` (+ `app-local.json`): `swarm.ps1 build -Local [-AppDir <worktree>]` = a JS-bundled
   release build with the app's cleartext manifest overlay (`app.localManifests`, first that exists) for the local env's http
@@ -50,6 +47,6 @@ shot / openurl / log, `$env:KIT_DEVICE=<udid>`) · none (verbs refuse; app check
   `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes
   while a web pool or a dev wave runs.
 - L4. A person testing by hand: `swarm.ps1 acquire -Agent manual -Lane <name>` ... `release -Agent manual` (owner hold, 240 min).
-- Linux/macOS: SDK from `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`; `arrange` is Windows-only.
+- Linux/macOS: SDK from `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`.
 
 **Learn:** `orch.ps1 learn -Skill android-swarm -Kind <kind> -Text "<what + fix>"`.

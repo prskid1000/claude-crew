@@ -189,6 +189,13 @@ Expect 'deployed: no answer from the git host = UNKNOWN; an answer = NOT-DEPLOYE
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/qa-kit/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
 $null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
+# ui: a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
+$ud = Join-Path (Kd) 'ui'; New-Item -ItemType Directory -Force "$ud/platform-tools" | Out-Null
+Set-Content "$ud/s.xml" '<hierarchy><node text="Hello" resource-id="a:id/h" class="x" bounds="[0,0][10,10]"/></hierarchy>'
+Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nif `"%1`"==`"pull`" copy /y `"$ud\s.xml`" `"%3`" >nul`r`nexit /b 0" -Encoding ascii
+Set-Content "$ud/u.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt"; $env:ANDROID_HOME = $a[1]; . $a[0]; function Get-ExeName($n) { "$n.cmd" }; Invoke-Ui "$($a[2])" "$($a[3])" "$($a[4])"'
+$ut = @(foreach ($a in @(@('tap', 'Hello'), @('tap', 'Nope'), @('wait', 'Nope', '1'))) { $null = Px "$ud/u.ps1" $Q $ud @a 2>&1; $LASTEXITCODE })
+Expect "ui: found 0, NOT FOUND 1, wait TIMEOUT 1 ($($ut -join ','))" (($ut -join ',') -eq '0,1,1')
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $wo -match 'no api URL')
 $gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
@@ -197,30 +204,25 @@ Set-Content $sv @'
 require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
   if (u === '/login') return /R1/.test(b) ? j({ access_token: 'A2' }) : j({ access_token: 'A1', refresh_token: 'R1' }, 200, { 'set-cookie': ['sid=1', 'XSRF-TOKEN=x1'] })
-  const ok = { '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
+  const ok = { '/l': h.authorization === 'Bearer A1', '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
   u === '/v' ? j({ v: { sha: process.argv[3] } }) : j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
 $srv = Start-Process node -ArgumentList $sv, $P, $s1 -PassThru -NoNewWindow; Start-Sleep 1
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
-& $J @{ targets = @{ tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tr = & $T ($L + @{ type = 'login'; refreshField = 'refresh_token' }); tq = & $T @{ type = 'query'; param = 'api_key' }
-  tt = & $T @{ type = 'none' } '/t/{tenant}'; th = & $T @{ type = 'command'; cmd = 'echo X-Sig: s1' } } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
-$ok = foreach ($x in 'tc/c', 'tr/b', 'tq/q', 'tt/x', 'th/h') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
-Expect "api auth kinds ($ok)" (@($ok).Count -eq 5 -and (Get-Content "$(Kd)/A1-C1_01_tq.json" -Raw) -match 'api_key=\[redacted\]')
+& $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
+$ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
+$xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
+Expect "api auth login + none; other kinds name their extra ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is an extra: run kittool\.py extra add api-auth')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
 Set-Content "$(Kd)/dp.ps1" @'
 . $args[0]; $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
 foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
-$g, $a, $b = $args[1..3]; $r = @{ checkout = $g }; $memo = @{}; function ssh { $script:sh = $args[-1] }
-"cmd:$((Probe @{ probe = "git -C $g rev-parse HEAD" } $r) -eq $b)"; "url:$((Probe @{ probe = $args[4]; probeField = 'v.sha' } $r) -eq $a)"
-$v = Probe @{ tag = '^v\d' } $r; "tag:$($v -eq 'v1' -and (LocalAncestor $g $a $v) -and -not (LocalAncestor $g $b $v))"
-$null = SshState @{ sudo = $false } 'x'; $x = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($sh -split ' ')[1])); "ssh:$($x -match 'shasum -a 256' -and $x -notmatch 'sudo -n')"
-"rx:$((Probe @{ probe = 'echo 1234567 rev dead123'; probeRegex = 'rev (\w+)' } $r) -eq 'dead123')"
 function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
-'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"}]}]}' | Set-Content $kl
+'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"vm","ssh":{"host":"h"}}]}]}' | Set-Content $kl
 $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
-foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
+Expect 'deployed: an ssh deploy without its extra is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+vm\s+deploys\[\] ssh is an extra: run kittool\.py extra add deployed-checks')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
 # browser.mjs: mocks, then local fixture servers
 $nm = "$src/skills/qa-kit/node_modules"; $qk = "$k/skills/qa-kit"
@@ -251,7 +253,8 @@ const mk = () => { const id = 'T' + (++n), p = { url: () => 'https://app/x', clo
   createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: id } }), detach: async () => {} }) }; return p }
 const browser = { pages: async () => [...tabs], newPage: async () => { await new Promise((r) => setTimeout(r, 20)); const p = mk(); tabs.push(p); max = Math.max(max, tabs.length); return p } }
 let done = 0; const all = Array.from({ length: 9 }, () => openTab(browser, K, { agent: 'A' }).then((p) => { done++; return p }))
-await new Promise((r) => setTimeout(r, 5000))
+for (let i = 0; i < 100 && done < 8; i++) await new Promise((r) => setTimeout(r, 50))   // 8 open, then the 9th must still wait
+await new Promise((r) => setTimeout(r, 300))
 console.log('waits:' + (tabs.length === 8 && max === 8 && done === 8))
 await closeTab(tabs[0], K); const got = await Promise.all(all)
 console.log('ninth:' + (got.every(Boolean) && tabs.length === 8 && max === 8))
@@ -268,12 +271,11 @@ await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs
 '@
   foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x" (@($res) -contains "${x}:true") }
   Expect 'browser.mjs: never logs out' ((Get-Content "$qk/browser.mjs" -Raw) -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
-  # fixture app + IdP: form, TOTP, relogin (Chrome); sso-steps, shared cookie (Playwright)
-  $pwm = $env:KIT_PLAYWRIGHT ?? "$(& $py -c 'import os, playwright; print(os.path.dirname(playwright.__file__))' 2>$null)/driver/package"; $nopw = -not (Test-Path "$pwm/index.mjs")
+  # fixture app: form login, relogin (Chrome); sso-steps / other engines name their extra
   $res = NodeT auth @'
 import http from 'node:http'
 import { writeFileSync } from 'node:fs'
-const [TF, PW] = process.argv.slice(2), U = { admin: ['qa', '', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'] }, F = { '#u': '{user}', '#c': '{totp}' }
+const [TF, SLOW] = process.argv.slice(2), U = { admin: ['qa', '', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'] }, F = { '#u': '{user}', '#c': '123456' }
 let posts = 0, gen = 1
 const form = (to) => `<html><form method="post" action="${to}"><input id="u" name="u"><input id="c" name="c"><button>Go</button>`
 const app = http.createServer((q, s) => {
@@ -286,17 +288,16 @@ const app = http.createServer((q, s) => {
 await new Promise((r) => app.listen(0, r))
 const web = `http://127.0.0.1:${app.address().port}`, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
-  sso: { web, browser: { engine: 'chromium' }, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
+  sso: { web, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
 const b = await import(BM + '?a'), home = async (s) => (await b.text(s.page)).includes('home'), out = async (k, f) => console.log(k + ':' + await f().catch((e) => e.message))
-console.log('totp:' + (b.totp(U.admin[2], 59000) === '287082'))
+await out('extras', async () => /extra add browser-engines/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
 process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
-await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
-PW && (process.env.KIT_PLAYWRIGHT = PW)
-for (const k of ['sso', 'shared']) await out(k, async () => { const s = await b.session({ target: 'sso', tenant: 'b' }), r = s.engine === 'chromium' && await home(s) && posts === 3; await s.done(); return r })
-await out('hint', () => b.session({ target: 'ff' }).then(() => false, (e) => /playwright install firefox/.test(e.message)))
+// a real headless Chrome only with KIT_TESTS_SLOW (seconds each)
+if (SLOW) await out('webext', async () => /extra add web-login-types/.test(await b.session({ target: 'sso' }).then(() => '', (e) => e.message)))
+if (SLOW) await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 process.exit(0)
-'@ "$qk/targets.local.json" $(if (-not $nopw) { $pwm })
-  foreach ($x in 'totp', 'pin', 'chrome', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
+'@ "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
+  foreach ($x in @('extras', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' })) { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") }
   [IO.Directory]::Delete("$qk/node_modules")   # the junction only
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/qa-kit)' }
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/seats", "$sd/claims" | Out-Null
