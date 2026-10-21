@@ -2405,6 +2405,7 @@ function Invoke-PreCommit {
 function Write-KitHookError([string]$Verb, $Err) { try { Add-Content (Get-KitPath hook-log -Create) "$((Get-Date).ToString('s'))`t$Verb`t$Err`t$($Err.InvocationInfo.PositionMessage -replace '\s+', ' ')" } catch {}; "kit: $Verb failed ($($Err.Exception.Message)); see $(Get-KitPath hook-log)"; exit 0 }
 if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions only
   trap { if ($__verb -in 'health', 'cleanup') { Write-KitHookError $__verb $_ } else { break } }
+  $KitVerbOnError = { param($e) if ($__verb -in 'health', 'cleanup') { Write-KitHookError $__verb $e } }   # Invoke-KitVerb catches first
   if ($__verb -in '-h', '--help', 'help', '-?') { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
   switch ($__verb) {
     'board' { Invoke-KitVerb Invoke-Board $__rest }

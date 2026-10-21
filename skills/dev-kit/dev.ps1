@@ -627,7 +627,7 @@ function Top-Users($Snap) {
     Sort-Object gb -Descending | Select-Object -First 5 | ForEach-Object { '{0} {1:N1} GB' -f $_.n, $_.gb }) -join ', '
 }
 
-$gate = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate')
+$gate = [Threading.Mutex]::new($false, 'Global\claude-build-gate-' + ($ledger.ToLower() -replace '[^a-z0-9]', ''))   # one per ledger: a test run's own temp never waits on the machine's
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $learned = if ($NeedGB -le 0 -and $peaks.Count -ge 2) { " (learned from $($peaks.Count) runs)" } else { '' }
 $usual = if ($secs.Count -ge 2) { " usually ~$([math]::Ceiling((Get-MedianSec $secs) / 60)) min," } else { '' }

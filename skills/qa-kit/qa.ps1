@@ -1153,7 +1153,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
-    'finalize' { try { Invoke-KitVerb Invoke-Finalize $__rest } catch { [Console]::Error.WriteLine("finalize FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }   # run with &, a throw kept -Check's exit 0
+    'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1: Invoke-KitVerb
     'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' { Invoke-KitVerb Invoke-Ui $__rest }

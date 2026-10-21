@@ -1368,7 +1368,10 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
   $meta = (Get-Command $Fn).Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
-  if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $Fn @Tokens; return }
+  # a crash exits 1 (2 = bad parameters), never 0: a statement error alone lets `pwsh -File` exit 0, a throw keeps a caller's stale $LASTEXITCODE
+  $run = { param([object[]]$pa, [hashtable]$nm) try { & $Fn @pa @nm } catch [Management.Automation.ParameterBindingException] { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
+    catch { if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }
+  if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
     $t = "$($Tokens[$i])"
@@ -1386,7 +1389,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ',' } elseif ($vals.Count) { $vals[0] } else { '' }
     } else { $pos.Add($Tokens[$i]); $i++ }
   }
-  $pa = $pos.ToArray(); & $Fn @pa @named
+  & $run $pos.ToArray() $named
 }
 # ===== 6. entry scripts (one per area) =====
 $KitCmd = [pscustomobject]@{

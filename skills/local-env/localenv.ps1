@@ -1398,13 +1398,7 @@ switch ($Action) {
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
 elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 9 | Select-Object -Skip 1; exit 2 }
-else {
-  try { Invoke-KitVerb Invoke-LocalEnv @($args) }
-  catch {
-    $m = "$($_.Exception.Message)"
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -or $m -match 'unknown env|-Env needed|No local environments configured|unknown or ambiguous parameter|unknown option|needs -') {
-      [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2
-    }
-    throw
-  }
+else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
+  $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -') { [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2 } }
+  Invoke-KitVerb Invoke-LocalEnv @($args)
 }

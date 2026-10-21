@@ -151,6 +151,11 @@ $res = Invoke-PsTest 'tracker-test' $tb @(Join-Path $k 'skills/dev-kit/lib.ps1')
 Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'clickup', 'github', 'gitlab', 'jira', 'jira-server', 'linear', 'azure', 'youtrack', 'command'
 $kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
+# a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr
+$vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
+  $e = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
+  if ($LASTEXITCODE -ne $r[2] -or $e.Trim() -notmatch $r[3]) { "$($r[0]) -> $LASTEXITCODE $($e.Trim())" } }
+Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
 Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
 $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
