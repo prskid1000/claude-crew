@@ -533,7 +533,8 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
-}# ----- extras (kittool.py extra add <name>): adapters a config names but the kit does not ship; the files land in skills/dev-kit/adapters/
+}
+# ----- extras (kittool.py extra add <name>): adapters a config names but the kit does not ship; the files land in skills/dev-kit/adapters/
 $script:KitExtraOf = @{ 'tracker/jira-server' = 'tracker-jira'; 'git-host/bitbucket' = 'bitbucket'; 'ci/bitbucket' = 'bitbucket'
   'git-host/azure' = 'azure-devops'; 'ci/azure' = 'azure-devops'; 'git-host/gitea' = 'gitea'; 'ci/gitea' = 'gitea' }
 function Get-KitExtraLine([string]$Kind, [string]$Name) {
