@@ -168,9 +168,9 @@ $sf = Join-Path $k 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a
 $null = & $py -X utf8 $KT sections $sf (Join-Path $k 'none.ps1') 2>$null; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
 Expect 'sections: a shifted map or a missing file exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 $td = Join-Path (Kd) 'dup/tests'; New-Item -ItemType Directory -Force $td | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1') $td
-foreach ($a in 'orch', 'devkit') { "'PASS same  Case'; 'PASS own $a'; '0 failure(s)'" | Set-Content "$td/$a.tests.ps1" }
+foreach ($a in 'orch', 'devkit') { "$(if ($a -eq 'orch') { 'Start-Sleep 2; ' })'PASS same  Case'; 'PASS own $a'; ""py `$((Get-Command python).Source -notmatch '\.(bat|cmd)`$')""; '0 failure(s)'" | Set-Content "$td/$a.tests.ps1" }   # orch ends last
 $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area orch,devkit
-Expect 'kit-tests: one case name in two areas = TEST-DUP, exit 1' ($tdr.code -eq 1 -and $tdr.out -match 'TEST-DUP same case: orch, devkit' -and $tdr.out -notmatch 'TEST-DUP own')
+Expect 'kit-tests: one case name in two areas = TEST-DUP in area order, exit 1; areas get the real python (no shim)' ($tdr.code -eq 1 -and $tdr.out -match 'TEST-DUP same case: orch, devkit' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)

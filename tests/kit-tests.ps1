@@ -11,6 +11,10 @@ Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 param([string[]]$Area = 'all', [switch]$Slow)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
+# the real python first on PATH: a shim (pyenv-win python.bat runs chcp) flips the console code page all areas share, and a
+# pwsh started meanwhile prints mojibake
+$pyReal = foreach ($p in 'python', 'python3') { if (Get-Command $p -ErrorAction SilentlyContinue) { & $p -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1; break } }
+if ($pyReal) { $env:PATH = (Split-Path $pyReal) + [IO.Path]::PathSeparator + $env:PATH }
 # one file per area; each dot-sources harness.ps1
 $files = 'orch.tests.ps1', 'devkit.tests.ps1', 'qa.tests.ps1', 'kittool.tests.ps1', 'workflows.tests.ps1'
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' }) + 'extras'
@@ -25,9 +29,9 @@ $results = $areas | ForEach-Object -ThrottleLimit $areas.Count -Parallel {
     else { pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String }
   Write-Host "  $_ done ($([int]$clock.Elapsed.TotalSeconds) s)"   # progress while the slower areas run
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
-}
+} | Sort-Object { [array]::IndexOf($areas, $_.area) }   # area order, not finish order: output and TEST-DUP lists stay stable
 $fails = 0
-foreach ($r in $results | Sort-Object { [array]::IndexOf($areas, $_.area) }) {
+foreach ($r in $results) {
   "== $($r.area) ($($r.seconds) s)"
   $r.out
   # a crash before Complete-Tests prints no count: its FAIL lines, at least one
