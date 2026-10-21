@@ -122,8 +122,7 @@ BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template'
   'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 39300}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
-PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs',
-    'skills/qa-kit/browser.mjs', 'skills/orchestrate/kittool.py'}
+PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs', 'skills/qa-kit/browser.mjs', 'skills/orchestrate/kittool.py'}
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
@@ -1646,7 +1645,8 @@ def set_listed(kit, name, on):
 
 def extras_needed(kit):
     """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
-    `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set) or `<path>` exists
+    `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
+    the value contains it) or `<path>` exists
     (a kit file, the kit's own need); prose-only lines never install."""
     have = set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
@@ -1659,10 +1659,11 @@ def extras_needed(kit):
             continue
         name, fname, rule = m.group(1), m.group(2) or 'kit.local.json', m.group(3)
         cfg = configs.setdefault(fname, local_config(kit, fname))
-        for key, wants in re.findall(r'`([\w.*-]+)`\s*(?:=|is)\s*((?:`[^`]+`\s*\|?\s*)+)', rule):
+        for key, op, wants in re.findall(r'`([\w.*-]+)`\s*(=|is|~)\s*((?:`[^`]+`\s*\|?\s*)+)', rule):
             wants = re.findall(r'`([^`]+)`', wants)
             values = [str(v).lower() for v in config_values(cfg, key) if v not in (None, '', [], {})]
-            hit = next((w for w in wants if (w == '*' and values) or w.lower() in values), None)
+            match = (lambda w: any(w.lower() in v for v in values)) if op == '~' else (lambda w: w.lower() in values)   # ~ = contains
+            hit = next((w for w in wants if (w == '*' and values) or match(w)), None)
             if hit:
                 need.append((name, f'{key} "{hit}"'))
         need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule)   # a worktree: the main clone answers

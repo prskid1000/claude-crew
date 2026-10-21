@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-orch.tests.ps1: orch.ps1 track, decide, deploy, launch, board, supervise, learn, budget, setup (deploy merge: extra deploy-merge).
+orch.tests.ps1: orch.ps1 track, decide, launch, board, supervise, learn, budget, setup (deploy: extra deploys).
 Usage: pwsh -NoProfile -File <kit>/tests/orch.tests.ps1 (or tests/kit-tests.ps1 -Area orch).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -49,28 +49,8 @@ $i1, $i2 = 'A1', 'A2' | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -It
 $null = Px $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
 $hp = Px (Join-Path $k 'skills/orchestrate/orch.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
 Expect 'decide ids unique within a second; board check without -Worktree exit 2; orch.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
-# deploy batching
-$cfgF = Join-Path $k 'skills/dev-kit/kit.local.json'; $dep = { Px $O deploy @args }
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }, @{ target = 'prod'; branch = 'production'; job = 'deploy' }, @{ target = 'live'; production = $true }, @{ target = 'preprod'; production = $false }) }); deploy = @{ trigger = 'ask'; minIntervalHours = @{ default = 4 } } } $cfgF
-$null = New-Item -ItemType Directory -Force (Split-Path $tf); & $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('api!1'); done = $true; doneAt = (Get-Date).ToString('s') }; t2 = @{ task = 't2'; mrs = @('api!2'); done = $false } }; automerge = @{} } $tf
-$fx = Join-Path (Kd) 'deploy-fixture.json'
-& $J @{ mrs = @{ 'api!1' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) }; 'api!2' = @{ rows = @(@{ target = 'stage'; state = 'DEPLOYED'; detail = 'live' }) }; 'api!3' = @{ rows = @(@{ target = 'stage'; state = 'NOT-DEPLOYED'; detail = 'x' }) } }; lastCi = @{ stage = (Get-Date).AddHours(-6).ToString('s') } } $fx
-$plan = { @(& $dep plan -Offline $fx -Json | ConvertFrom-Json) }; $p = & $plan
-Expect 'deploy plan: production by name / flag / false; one ASK batch for stage' (($p.target -join ',') -eq 'stage,preprod' -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
-$null = & $dep request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx; $p = & $plan
-Expect 'deploy request: another session''s MR joins the same batch' ((@($p[0].mrs.mr | Sort-Object) -join ',') -eq 'api!1,api!3')
-$null = & $dep record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
-Expect 'deploy record: WAIT in the window, the request cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } $cfgF
-$fx2 = Join-Path (Kd) 'deploy-fixture2.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } $fx2
-$dr = & $dep request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String
-Expect 'deploy request: only the MR repo''s deploys; UNKNOWN names the deploy and why' ($dr -match 'DEPLOY stage: UNKNOWN: the deploy check failed: api!5: cannot reach the host' -and $dr -notmatch 'pystage')
-$null = & $dep record -Env stage -Mrs 'api!5' -By tester
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } $cfgF
-$null = & $dep request -Mrs 'api!3' -Run w3 -Offline $fx; $p = & $plan
-Expect 'deploy plan: trigger owner -> READY in the window, never ASK / WAIT' ($p[0].status -eq 'READY' -and $p[0].trigger -eq 'owner')
-$sup = (Get-Command (Join-Path $k 'skills/orchestrate/orch.ps1')).ScriptBlock.Ast.Extent.Text -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
-Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
+$dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
+Expect 'deploy without the deploys extra: its one line, exit 1' ($dxc -eq 1 -and $dx2.Trim() -eq 'orch.ps1 deploy is an extra: run kittool.py extra add deploys')
 $ld = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath launches }; New-Item -ItemType Directory -Force $ld | Out-Null
 $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
 $af = Join-Path (Kd) 'args.json'; [IO.File]::WriteAllText($af, $full)
@@ -94,7 +74,7 @@ $sl0 = pwsh @np $O launch -List -Brief | Out-String
 $dn = pwsh @np $O launch -Done -Run select-stg 2>&1 | Out-String; $sl1 = pwsh @np $O launch -List -Brief | Out-String
 Expect 'launch -Done -Run: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $dn -match 'marked completed: self-testy' -and $sl1 -notmatch 'select-stg')
 # orch batch 2: board TAKEOVER under lock; self records per args hash; promotion hold; passed statuses
-# never re-applied; "All MRs merged" once; deploy plan UNKNOWN on a failed check; supervise step-aside;
+# never re-applied; "All MRs merged" once; supervise step-aside;
 # LESSONS.md lock freed on a failed -Bump; top-level --help; MergedTip on a submodule
 $bwt = Join-Path (Kd) 'bwt'
 $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
@@ -139,12 +119,30 @@ $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run
 $null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
 "keep:$((Read-KitTracking).tasks['t8'].holdPromotion -eq 'late')"
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) { [pscustomobject]@{ code = 2; out = 'qa.ps1: usage error'; err = ''; timedOut = $false } }
-$p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
-"unknown:$(@($p | Where-Object status -eq 'UNKNOWN').Count -ge 1 -and -not @($p | Where-Object status -eq 'NOTHING').Count)"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track/deploy: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)' @('skip', 'once', 'hold', 'unknown', 'throttle', 'keep') 8
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)' @('skip', 'once', 'hold', 'throttle', 'keep') 8
+# gate.cacheFlush: a starved gate + a big file cache -> one flush per 30 min; a failing command = one WATCH
+$cft = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Get-KitSetting($Key, $Default) { if ($Key -eq 'gate.cacheFlush') { 'flush-now' } else { $Default } }
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
+$global:runs = 0; function Invoke-KitExe($Exe, $A, $TimeoutSec) { $global:runs++; [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
+function Get-SysMem { [pscustomobject]@{ TotalGB = 64; AvailGB = 9 } }
+$m = [pscustomobject]@{ TotalGB = 64; AvailGB = 3 }; $n = Get-Date
+$a = Invoke-KitCacheFlush 12 $m $n; $b = Invoke-KitCacheFlush 12 $m $n
+"once:$($a.what -eq 'auto-fixed: file cache flush: available 3 -> 9 GB' -and -not $b -and $global:runs -eq 1)"
+Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp')
+"short:$(-not (Invoke-KitCacheFlush 5 $m $n) -and $global:runs -eq 1)"
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 4GB } }
+"small:$(-not (Invoke-KitCacheFlush 12 $m $n) -and $global:runs -eq 1)"
+function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } }
+function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 1; out = ''; err = 'Access is denied.'; timedOut = $false } }
+$fl = Invoke-KitCacheFlush 12 $m $n
+"fail:$($fl.level -eq 'WATCH' -and $fl.what -match 'exit 1: Access is denied')"
+'@
+Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail')
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String
