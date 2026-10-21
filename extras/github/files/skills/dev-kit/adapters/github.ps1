@@ -79,6 +79,13 @@ Register-KitAdapter 'git-host' 'github' @{
   'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; __CommitObj $c.merge_base_commit.sha }
   'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; __CommitObj $c.sha $c.commit.committer.date }
   'repo.compare' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.from)...$(__Enc $a.to)"; if ($c) { [pscustomobject]@{ diffs = (__Files $c.files) } } }
+  # the kit origin (orch.ps1 setup): ok | set | skip: no admin rights | failed: <why>; never loosens or overwrites a rule
+  'branch.protect' = { param($a) __GhEnv; $p = "repos/$($a.repo)/branches/$(__Enc $a.branch)/protection"; $r = __Cli gh $p -Res; $no = "skip: no admin rights on $($a.repo)"
+    if (-not $r) { return 'failed: gh not found' }
+    if (-not $r.code) { $g = __HostJson $r.out; return $(if ($g.allow_force_pushes.enabled -or $g.allow_deletions.enabled) { 'failed: protected but force push or deletion allowed: turn them off by hand' } else { 'ok' }) }
+    $why = "$($r.err)".Trim(); if ($why -notmatch 'Branch not protected') { return $(if ($why -match 'HTTP 40[34]') { $no } else { "failed: $why" }) }
+    $s = __Cli gh $p 'PUT' @{ required_status_checks = $null; enforce_admins = $true; required_pull_request_reviews = $null; restrictions = $null; allow_force_pushes = $false; allow_deletions = $false } -Json -Res
+    if (-not $s.code) { 'set' } elseif ("$($s.err)" -match 'HTTP 40[34]') { $no } else { "failed: $("$($s.err)".Trim())" } }
 }
 # adapter:ci/github: Actions runs, check runs + commit statuses (external CI)
 Register-KitAdapter 'ci' 'github' @{

@@ -73,6 +73,11 @@ def cmd_setup(kit, fix):
     for n in ('work', 'cache', 'logs'):
         if not osp.isdir(kit_path(n, kit=kit)):
             need_setup.append(f'runtime folder {n}/ missing')
+    pf = kit_path('kit-protect', kit=kit)   # orch.ps1 setup records the kit origin's main / extras protection
+    st = [x for x in open(pf, encoding='utf-8', errors='replace').read().split('\n') if x.strip()] if osp.isfile(pf) else []
+    bad = [x for x in st if not re.match(r'^\S+ (ok|set|skip)', x)] if st else ['unchecked']
+    if bad:
+        need_setup.append('origin main / extras protection: ' + ', '.join(bad))
     if need_setup:
         if fix:
             rc, o, e = pwsh(setup_ps, 'setup', timeout=120)

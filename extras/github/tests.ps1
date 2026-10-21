@@ -5,7 +5,7 @@
 $k = New-TestKit github; $D = Join-Path $k 'skills/dev-kit/dev.ps1'
 $gh = @'
 $script:calls = [Collections.Generic.List[string]]::new()
-function gh { $script:calls.Add("gh $($args -join ' ')"); $global:LASTEXITCODE = 0; $p = "$($args[1])"
+function gh { $script:calls.Add("gh $($args -join ' ')"); $global:LASTEXITCODE = 0; $p = "$($args[1])"; if ("$args" -match '-X PUT') { return '{}' }
  switch -Regex ($p) {
   'pulls/7/files' { '[{"filename":"a.txt"},{"filename":"b.txt","previous_filename":"old.txt"}]'; break }
   'pulls/7$' { '{"number":7,"state":"open","head":{"ref":"f/x","sha":"abc"},"base":{"ref":"main"},"mergeable":false,"mergeable_state":"dirty"}'; break }
@@ -13,6 +13,9 @@ function gh { $script:calls.Add("gh $($args -join ' ')"); $global:LASTEXITCODE =
   'pulls\?state' { '[{"number":7,"state":"open","head":{"ref":"f/x"},"base":{"ref":"main"}},{"number":9,"state":"open","head":{"ref":"f/z"},"base":{"ref":"main"}}]'; break }
   'abc/check-runs' { '{"check_runs":[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/11/job/3"}]}'; break }
   'zzz/status$' { '{"statuses":[{"state":"pending","context":"jenkins"}]}'; break }
+  'branches/main/protection' { '{"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}'; break }
+  'branches/extras/protection' { '{"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}'; break }
+  'branches/(new|locked)/protection' { $global:LASTEXITCODE = 1; Write-Error $(if ($Matches[1] -eq 'new') { 'gh: Branch not protected (HTTP 404)' } else { 'gh: Not Found (HTTP 404)' }); break }
   'compare/' { '{"merge_base_commit":{"sha":"base1"},"files":[{"filename":"a.txt"}]}'; break }
   'actions/runs\?' { '{"workflow_runs":[{"id":11,"head_sha":"m8","created_at":"2026-10-15T11:00:00Z","conclusion":"success"}]}'; break }
   'actions/runs/11/jobs' { '{"jobs":[{"id":3,"name":"deploy-staging","conclusion":"success","completed_at":"2026-10-15T11:05:00Z"}]}'; break }
@@ -27,9 +30,11 @@ $p = @(Invoke-HostApi 'projects/o%2Fr/pipelines?ref=staging&per_page=10'); $j = 
 $null = Invoke-HostApi 'projects/o%2Fr/merge_requests/7/merge' -Method PUT -Fields @{ merge_when_pipeline_succeeds = 'true' }; "gh-auto:$(@($script:calls | ? { $_ -like 'gh pr merge 7 -R o/r --squash --delete-branch --auto' }).Count -eq 1)"
 $l = @(Invoke-HostVerb 'mr.list' @{ repo = 'o/r'; state = 'opened'; source_branch = 'f/z' }); "gh-list-head:$($l.Count -eq 1 -and $l[0].iid -eq 9)"
 $s = Invoke-HostVerb 'ci.status' @{ repo = 'o/r'; sha = 'zzz' } -NoMemo; "gh-status-external:$($s.status -eq 'pending')"
+$pm = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'main' } -NoMemo; $px = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'extras' } -NoMemo; $pn = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'new' } -NoMemo; $pl = Invoke-HostVerb 'branch.protect' @{ repo = 'o/r'; branch = 'locked' } -NoMemo
+"gh-protect:$($pm -eq 'ok' -and $px -like 'failed: protected but force push*' -and $pn -eq 'set' -and $pl -like 'skip: no admin rights*' -and @($script:calls -match 'PUT repos/o/r/branches/new/protection').Count)"
 '@
 $res = Invoke-PsTest 'github-host' $gh @(Join-Path $k 'skills/dev-kit/lib.ps1')
-Expect-Each $res 'github host: #' 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'gh-auto', 'gh-list-head', 'gh-status-external'
+Expect-Each $res 'github host: #' 'gh-mr', 'gh-merged', 'gh-changes', 'gh-base', 'gh-runs', 'gh-auto', 'gh-list-head', 'gh-status-external', 'gh-protect'
 # tracker on recorded answers (an unknown call fails)
 $tb = @'
 . $args[0]; $global:log = [Collections.Generic.List[string]]::new(); $__trRepo = 'g/p'
