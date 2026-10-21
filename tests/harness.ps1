@@ -8,6 +8,8 @@ $ErrorActionPreference = 'Stop'   # the area files inherit it (dot-sourced), as 
 $src = Split-Path $PSScriptRoot   # the kit
 $script:fails = 0
 Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
+# the memory gate's ledger sits in the temp folder: tests queue in their own, never in the machine's real build queue
+$env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-temp-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 $env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM

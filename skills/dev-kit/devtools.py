@@ -868,6 +868,7 @@ def selftest():
             return {'ci.runs': list(runs) if isinstance(runs, tuple) else runs, 'ci.config': cfg}.get(verb, {})
         return h
     merged = lambda: [a for v, a in calls if v == 'mr.merge']
+    sleep0, time.sleep = time.sleep, lambda s: None   # fake clock: re-read waits cost nothing
     try:
         g['remote'] = lambda wt: ('gitlab', 'g/r'); g['unmerged_producers'] = lambda *a, **k: []; g['_progress'] = lambda m: None
         g['kit_path'] = lambda n, **k: os.path.join(tempfile.mkdtemp(), 'tracking.json')
@@ -882,7 +883,7 @@ def selftest():
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'auto_merge': 'kit'})
         expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
     finally:
-        g.update(saved)
+        g.update(saved); time.sleep = sleep0
     expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
     # holdMerge, unreadable tracking, lost intent
     saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'kit_path')}
