@@ -16,7 +16,7 @@
  python devtools.py findings summary <module>.json [--sources ".."] [--out <dir>]   <module>-summary.md (publish it with doc)
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: SECTIONS
+Sections: L78 run · L123 tracker · L198 git host · L305 MR · L475 merge · L553 docs · L714 plugins · L727 lbcheck · L820 selftest · L962 findings · L1104 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
