@@ -2,7 +2,7 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|orch|devkit|qa|localenv|swarm|kittool|workflows|extras[,...]] [-Slow]
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|orch|devkit|qa|kittool|workflows|extras[,...]] [-Slow]
 (extras: each installed extra's tests.ps1 from the extras branch, kittool.py extra test; none installed = 0 checks)
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
 Outputs: each area's PASS / FAIL lines, its time, then a total. Exit codes: 0 pass · 1 a check failed · 2 usage error.
@@ -11,7 +11,7 @@ param([string[]]$Area = 'all', [switch]$Slow)
 $ErrorActionPreference = 'Stop'
 if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 # one file per area; each dot-sources harness.ps1
-$files = 'orch.tests.ps1', 'devkit.tests.ps1', 'qa.tests.ps1', 'localenv.tests.ps1', 'swarm.tests.ps1', 'kittool.tests.ps1', 'workflows.tests.ps1'
+$files = 'orch.tests.ps1', 'devkit.tests.ps1', 'qa.tests.ps1', 'kittool.tests.ps1', 'workflows.tests.ps1'
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' }) + 'extras'
 $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 $unknown = @($areas | Where-Object { $_ -notin $all })

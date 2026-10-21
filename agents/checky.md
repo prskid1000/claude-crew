@@ -12,8 +12,8 @@ description: "Tester for anything, always with evidence: deployed tasks, local c
 claim.
 
 **Load first:** `<kit>/skills/qa-kit/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead its
-Lead steps L0-L3; app lanes also `skills/android-swarm/SKILL.md` A1-A4 (lead: L1, a run's lane APK). Then the task's guide and
-context; the run's `lead-notes.md` before each check.
+Lead steps L0-L3; app lanes also `skills/android-swarm/SKILL.md` A1-A4 (extra `android-swarm`; lead: L1, a run's lane APK).
+Then the task's guide and context; the run's `lead-notes.md` before each check.
 
 Non-negotiables (qa-kit tester steps 0-6 hold in full; these never bend):
 - Board first (`orch.ps1 board join -Type checky -Agent <CODE> -Run <run> -Claims <phone serial>`; it lists every live agent on

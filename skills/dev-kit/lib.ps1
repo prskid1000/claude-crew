@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L65 config · L145 OS · L546 tracker · L816 git-host · L1013 entry-scripts
+Sections: L8 paths · L65 config · L145 OS · L521 tracker · L791 git-host · L988 entry-scripts
 #>
 # ===== 1. paths (kit.example.json _paths) =====
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
@@ -201,18 +201,6 @@ function Get-KitTreeGB([int]$Root, $Snap = $(Get-KitProcSnap)) {
   }
   $sum / 1GB
 }
-function Get-SysCpu {
-  if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
-  if (Test-Path /proc/stat) {
-    $read = { $f = ((Get-Content /proc/stat -TotalCount 1) -split '\s+' | Select-Object -Skip 1 | Where-Object { $_ } | ForEach-Object { [double]$_ }); @{ idle = $f[3] + $f[4]; all = ($f | Measure-Object -Sum).Sum } }
-    $a = & $read; Start-Sleep -Milliseconds 500; $b = & $read
-    $d = $b.all - $a.all; if ($d -le 0) { return 0 }
-    return [math]::Round(100 * (1 - ($b.idle - $a.idle) / $d), 0)
-  }
-  $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
-  [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
-}
-
 function ConvertFrom-PsElapsed([string]$e) {
   if ($e -notmatch '^(\d+-)?(\d+:){1,2}\d+$') { return $null }
   $d = 0; if ($e -match '^(\d+)-(.*)$') { $d = [int]$Matches[1]; $e = $Matches[2] }
@@ -487,19 +475,6 @@ function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [strin
   $script = 'cd "$1" || exit 1; log=$2; shift 2; s=; command -v setsid >/dev/null 2>&1 && s=setsid; $s nohup "$@" >"$log" 2>&1 </dev/null &'
   foreach ($a in @('-c', $script, 'sh', $WorkingDirectory, $Log, $FilePath) + @($ArgumentList)) { $psi.ArgumentList.Add([string]$a) }
   ([Diagnostics.Process]::Start($psi)).WaitForExit()
-}
-
-function Get-PortPids([int]$Port) {
-  if ($KitIsWindows) { return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ea 0 | Select-Object -ExpandProperty OwningProcess -Unique) }
-  if (Resolve-Tool lsof) { return @(lsof -t -nP -iTCP:$Port -sTCP:LISTEN 2>$null | ForEach-Object { [int]$_ } | Select-Object -Unique) }
-  if (Resolve-Tool fuser) { return @(("$(fuser -n tcp $Port 2>$null)" -split '\s+') | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
-  @()
-}
-
-function Test-PortListening([int]$Port) {
-  if ($KitIsWindows) { return @(Get-PortPids $Port).Count -gt 0 }
-  $t = [Net.Sockets.TcpClient]::new()
-  try { $t.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $t.Connected } catch { $false } finally { $t.Dispose() }
 }
 
 function Get-AndroidSdk {

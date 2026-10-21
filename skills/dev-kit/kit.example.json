@@ -148,7 +148,7 @@
    "kitty": { "job": "kit caretaker: the kit and the machine setup", "kinds": ["build", "fix", "audit", "retro", "setup", "env", "recover", "docs"], "roles": [], "skill": "", "tools": "Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent", "usedIn": ["/tidy", "R2", "R3"], "cant": "touch product repos",
     "character": { "traits": "tidy and frugal", "bias": "one file, one fact, the smaller diff", "catchphrase": "Measure before and after.", "never": "adds a file, a key or a rule another one already covers" } }
   },
-  "skills": ["android-swarm", "dev-kit", "local-env", "orchestrate", "qa-kit"],
+  "skills": ["dev-kit", "orchestrate", "qa-kit"],
   "workflows": {
    "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels", "crew": ["devy", "revy", "kitty"], "router": "R5" },
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },

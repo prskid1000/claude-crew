@@ -66,9 +66,9 @@ flowchart TD
   R9 -->|no| R10
   R10{"R10: Test, check or verify one thing outside…"} -->|yes| T10["checky agent"]
   R10 -->|no| R11
-  R11{"R11: The local env outside a running flow:…"} -->|yes| T11["local-env"]
+  R11{"R11: The local env outside a running flow:…"} -->|yes| T11["local-env skill"]
   R11 -->|no| R12
-  R12{"R12: Phones or APKs outside a running flow:…"} -->|yes| T12["android-swarm"]
+  R12{"R12: Phones or APKs outside a running flow:…"} -->|yes| T12["android-swarm skill"]
   R12 -->|no| R13
   R13{"R13: Review something already written,…"} -->|yes| T13["revy agent"]
   R13 -->|no| R14
@@ -111,7 +111,7 @@ The rule: "Configuration" `budget`; per-tool defaults in the table.
 
 ## Leases
 One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds; only owner
-holds (`localenv.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
+holds (`localenv.ps1 up -Owner`, phone `manual`; extra `local-env`, extra `android-swarm`) keep minutes, with a reminder.
 
 ## Recovery after a crash or restart
 WIP commits after every dev-flow step, so a fresh agent loses nothing.
@@ -279,9 +279,7 @@ flowchart LR
   agents_devy_md(devy)
   agents_kitty_md(kitty)
   agents_revy_md(revy)
-  skills_android_swarm_SKILL_md[android-swarm]
   skills_dev_kit_SKILL_md[dev-kit]
-  skills_local_env_SKILL_md[local-env]
   skills_orchestrate_SKILL_md[orchestrate]
   skills_qa_kit_SKILL_md[qa-kit]
   workflows_buildy_js[/buildy/]
@@ -291,9 +289,7 @@ flowchart LR
   AGENTS_md --> agents_devy_md
   AGENTS_md --> agents_kitty_md
   AGENTS_md --> agents_revy_md
-  AGENTS_md --> skills_android_swarm_SKILL_md
   AGENTS_md --> skills_dev_kit_SKILL_md
-  AGENTS_md --> skills_local_env_SKILL_md
   AGENTS_md --> skills_orchestrate_SKILL_md
   AGENTS_md --> skills_qa_kit_SKILL_md
   AGENTS_md --> workflows_buildy_js
@@ -310,15 +306,6 @@ flowchart LR
 ```
 <!-- kit-graph:end -->
 
-<!-- kit-graph:start skill-android-swarm -->
-```mermaid
-flowchart LR
-  skills_android_swarm_SKILL_md[android-swarm]
-  skills_android_swarm_SKILL_md -->|step A0 / L0: orch.ps1 learn -Read -Skill androi| LESSONS_md[LESSONS.md]
-  skills_android_swarm_SKILL_md -->|A1-A4 (acquire, ensure, launch, release, status)| skills_android_swarm_swarm_ps1[swarm.ps1]
-```
-<!-- kit-graph:end -->
-
 <!-- kit-graph:start skill-dev-kit -->
 ```mermaid
 flowchart LR
@@ -329,15 +316,6 @@ flowchart LR
   skills_dev_kit_SKILL_md -->|dot-sourced by every kit script; never run by ha| skills_dev_kit_lib_ps1[lib.ps1]
   skills_dev_kit_SKILL_md -->|steps 6-7, rebase conflicts (keepboth)| skills_dev_kit_devtools_py[devtools.py]
   skills_dev_kit_SKILL_md -->|setup (orch.ps1 setup -WriteLocal; keys: README | skills_dev_kit_kit_example_json[kit.example.json]
-```
-<!-- kit-graph:end -->
-
-<!-- kit-graph:start skill-local-env -->
-```mermaid
-flowchart LR
-  skills_local_env_SKILL_md[local-env]
-  skills_local_env_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill local-env| LESSONS_md[LESSONS.md]
-  skills_local_env_SKILL_md -->|Steps 1-6; owner verbs: Rules (its header lists | skills_local_env_localenv_ps1[localenv.ps1]
 ```
 <!-- kit-graph:end -->
 
@@ -362,8 +340,7 @@ flowchart LR
   skills_qa_kit_SKILL_md[qa-kit]
   skills_qa_kit_SKILL_md -->|step 0 (and H0, L0): orch.ps1 learn -Read -Skill| LESSONS_md[LESSONS.md]
   skills_qa_kit_SKILL_md -->|steps 1-4, 6; L1, L3 (its header lists the verbs| skills_qa_kit_qa_ps1[qa.ps1]
-  skills_qa_kit_SKILL_md -->|L1 Selection (tracker list/view/owner; status -E| skills_dev_kit_dev_ps1[dev.ps1]
-  skills_qa_kit_SKILL_md -->|L1 Selection (tracker list/view/owner; status -E| skills_local_env_localenv_ps1[localenv.ps1]
+  skills_qa_kit_SKILL_md -->|L1 Selection (tracker list/view/owner; a local e| skills_dev_kit_dev_ps1[dev.ps1]
   skills_qa_kit_SKILL_md -->|step 3 (web: read its header first; one logged-i| skills_qa_kit_browser_mjs[browser.mjs]
   skills_qa_kit_SKILL_md -->|L0: npm install in this folder (puppeteer-core)| skills_qa_kit_package_json[package.json]
 ```

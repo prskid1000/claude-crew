@@ -178,16 +178,9 @@ $res = @(pwsh @np $f2 $Q 2>&1)
 Expect 'deployed: no answer from the git host = UNKNOWN; an answer = NOT-DEPLOYED' ((@($res) -contains 'down:UNKNOWN') -and (@($res) -contains 'up:NOT-DEPLOYED'))
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/qa-kit/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
-$null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
-# ui: a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
-$ud = Join-Path (Kd) 'ui'; New-Item -ItemType Directory -Force "$ud/platform-tools" | Out-Null
-Set-Content "$ud/s.xml" '<hierarchy><node text="Hello" resource-id="a:id/h" class="x" bounds="[0,0][10,10]"/></hierarchy>'
-Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nif `"%1`"==`"pull`" copy /y `"$ud\s.xml`" `"%3`" >nul`r`nexit /b 0" -Encoding ascii
-Set-Content "$ud/u.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt"; $env:ANDROID_HOME = $a[1]; . $a[0]; function Get-ExeName($n) { "$n.cmd" }; Invoke-Ui "$($a[2])" "$($a[3])" "$($a[4])"'
-$ut = @(foreach ($a in @(@('tap', 'Hello'), @('tap', 'Nope'), @('wait', 'Nope', '1'))) { $null = Px "$ud/u.ps1" $Q $ud @a 2>&1; $LASTEXITCODE })
-Expect "ui: found 0, NOT FOUND 1, wait TIMEOUT 1 ($($ut -join ','))" (($ut -join ',') -eq '0,1,1')
+$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the extra android-swarm
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status printed); ui unknown action exits 2; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $wo -match 'no api URL')
+Expect 'api: no answer exits 1 (status printed); ui without its extra exits 2 naming it; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $wo -match 'no api URL')
 $gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
 $sv = "$(Kd)/s.cjs"; $P = 18000 + $PID % 1000
 Set-Content $sv @'
@@ -210,9 +203,10 @@ foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.Func
 function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
-'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"vm","ssh":{"host":"h"}}]}]}' | Set-Content $kl
+'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"vm","ssh":{"host":"h"}},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
 $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
 Expect 'deployed: an ssh deploy without its extra is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+vm\s+deploys\[\] ssh is an extra: run kittool\.py extra add deployed-checks')
+Expect 'deployed: a laneApk deploy without the extra android-swarm is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+deploys\[\] laneApk is an extra: run kittool\.py extra add android-swarm')
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
 # browser.mjs: mocks, then local fixture servers
 $nm = "$src/skills/qa-kit/node_modules"; $qk = "$k/skills/qa-kit"

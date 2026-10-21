@@ -49,8 +49,8 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R8 | Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents | `/testy` | `orchestrate` |
 | R9 | A person tests by hand from a human testing doc | `qa-kit` → H steps | — |
 | R10 | Test, check or verify one thing outside a running workflow: a deployed change, one screen or endpoint, a smoke after a deploy, a regression sweep, a user-report reproduction, a data or migration check, perf on the local env, an "is X live / true?" claim | `checky` agent (role test; kind task / smoke / regression / repro / data / perf / claim) | — (the agent loads `qa-kit`) |
-| R11 | The local env outside a running flow: inspect, reproduce or debug on it | `local-env` | — |
-| R12 | Phones or APKs outside a running flow: build the lane or local-env APK, a manual lease | `android-swarm` | — |
+| R11 | The local env outside a running flow: inspect, reproduce or debug on it | `local-env` skill (extra `local-env`) | — |
+| R12 | Phones or APKs outside a running flow: build the lane or local-env APK, a manual lease | `android-swarm` skill (extra `android-swarm`) | — |
 | R13 | Review something already written, outside a running workflow: open merge/pull requests, a kit commit, a brief, a testing or QA doc, a plan, a config, tracker texts | `revy` agent (kind mr / kit / doc / qa / plan / config) | — (the agent loads `dev-kit` Rules) |
 | R14 | Static audit of one module's code for bugs, performance or tech debt, without changing code | `revy` agent (kind module) | — |
 | R15 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
@@ -77,9 +77,9 @@ These rules hold whatever the route:
   them); parallel work in worktrees (`dev.ps1 wt`), commits with `dev.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
   editing, pushing and merging; merge only on a green pipeline, producers before consumers.
-- Phones only through `skills/android-swarm/swarm.ps1 acquire`. Every kit resource (env service, browser tab, phone, build) has
-  a holder: lease only what your item declares, release when done; no live holder for `idle.graceMinutes` -> released
-  (README "Leases").
+- Phones only through `skills/android-swarm/swarm.ps1 acquire` (extra `android-swarm`). Every kit resource (env service,
+  browser tab, phone, build) has a holder: lease only what your item declares, release when done; no live holder for
+  `idle.graceMinutes` -> released (README "Leases").
 - Browsers are headless by default (`skills/qa-kit/browser.mjs`); a visible browser only when the owner asks to watch.
 - Run python and node from the PowerShell tool (pwsh 7), not Git Bash; Python with `-X utf8`.
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by

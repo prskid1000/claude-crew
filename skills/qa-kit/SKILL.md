@@ -16,7 +16,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `orch.ps1 learn -Read -Skill qa-kit` |
 | `qa.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the extras: `deployed-checks`, `api-auth`, `qa-html-report`, `ios-simulator`) |
-| `<kit>/skills/dev-kit/dev.ps1`, `<kit>/skills/local-env/localenv.ps1` | L1 Selection (`tracker list/view/owner`; `status -Env`) |
+| `<kit>/skills/dev-kit/dev.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `localenv.ps1 status -Env`, extra `local-env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
@@ -27,7 +27,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
    `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `swarm.ps1 acquire|release` (keep the lease through waits < 30 min).
+   report. Phones: `swarm.ps1 acquire|release` (extra `android-swarm`; keep the lease through waits < 30 min).
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
@@ -118,7 +118,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
   4. Live: test env -> `qa.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved) -> in; local env (`localEnv`)
-     -> `localenv.ps1 status -Env <env>`, every MR commit in the running release -> in. Else left out with the state.
+     -> `localenv.ps1 status -Env <env>` (extra `local-env`), every MR commit in the running release -> in. Else left out
+     with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,

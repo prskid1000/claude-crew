@@ -17,8 +17,8 @@ Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kittool.py` (steps
 live clone, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `audit scan`, `lint`;
 9 `audit stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6
 "Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
-`<kit>/skills/local-env/SKILL.md`
-(owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`), phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4.
+`<kit>/skills/local-env/SKILL.md` (extra `local-env`; owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`),
+phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4 (extra `android-swarm`).
 
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
 /tidy prompt):
@@ -61,7 +61,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 
 Flows to trace (step 4): README "Dev flow", "Test-only flow", "Local env and deploys" and "Kit upkeep" graphs,
 hop by hop down to the script verbs; the coordinator: `orch.ps1 supervise -AutoFix -Brief` -> board, track, deployed,
-decide, launch, recover, outbox, report, cleanup, `swarm.ps1` leases.
+decide, launch, recover, outbox, report, cleanup, `swarm.ps1` leases (extra `android-swarm`).
 
 Script pitfalls (pwsh 7): case-insensitive variables (`$L` = `$l`); `-File x.ps1 -List a,b` passes one string (`Split-KitList`);
 short helper names that are aliases (`r`, `rd`, `h`, `del`, `diff`: an alias beats a function and can delete files); `[IO.File]`

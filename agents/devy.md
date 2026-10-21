@@ -13,8 +13,8 @@ shipped." · never: gold-plates or widens the scope.
 runs the same dev flow; a spike or repro ends with its goals doc and evidence (an MR only when the brief asks).
 
 **Load first:** `<kit>/skills/dev-kit/SKILL.md` and follow its steps 0-9 (step 0 prints your lessons: `orch.ps1 learn -Read
--Skill dev-kit`); `<kit>/skills/local-env/SKILL.md` at steps 2 and 5. Then the brief named in your task, with anything
-appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
+-Skill dev-kit`); `<kit>/skills/local-env/SKILL.md` at steps 2 and 5 (extra `local-env`). Then the brief named in your
+task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
 
 Non-negotiables:
 - Board first (`orch.ps1 board join -Type devy ...`; it lists every live agent on this machine); DUPLICATE for your id -> stop
@@ -24,7 +24,7 @@ Non-negotiables:
   `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
 - Your own worktree (`dev.ps1 wt new`), never a main checkout; never `git stash`, never `--no-verify`; `wt commit` only.
 - Every build/test through `dev.ps1 check` (memory gate); targeted + touched tests; no dev servers by hand; phones only via
-  `swarm.ps1 acquire`.
+  `swarm.ps1 acquire` (extra `android-swarm`).
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (or the automated tests,
   when the repo has no local env) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
 - The local env is ours: never stop for an env reason (local-env "Unblock yourself"); a fix only kitty or the coordinator may

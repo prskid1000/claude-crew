@@ -484,6 +484,7 @@ def lint(k, g=None, org_terms=None):
         bad('ROUTER-MISSING', 'CLAUDE.md', 'no "## Router" section')
         router = ''
     targets = set(k.skills) | {'/' + w for w in k.workflows} | set(k.agents)
+    known = known_extras(k.dir)   # None: the extras branch was never fetched (CI): names are not checked
     rows = table_rows(router)
     if not rows:
         bad('ROUTER-MISSING', 'CLAUDE.md', 'the Router section has no table rows')
@@ -492,7 +493,8 @@ def lint(k, g=None, org_terms=None):
             bad('ROUTER-TARGET', 'router', f'row needs # | conditions | target: {" | ".join(cells)[:60]}')
             continue
         found = {t for t in targets if re.search(r'`' + re.escape(t) + r'[`\s]', cells[2])}
-        if len(found) + (1 if re.search(r'\bdirect\b|org row', cells[2], re.I) else 0) != 1:
+        # a skill an extra brings (installed or not: never a kit file) is a target too: "`<name>` skill (extra `<name>`)"
+        if len(found) + (1 if re.search(r'\bdirect\b|org row|`([\w-]+)` skill \(extra `\1`\)', cells[2], re.I) else 0) != 1:
             bad('ROUTER-TARGET', 'router', f'row {cells[0]}: exactly one target expected, got {sorted(found) or "none"}')
     routed = router + '\n' + k.org_rows
     for s in k.skills:
@@ -549,6 +551,7 @@ def lint(k, g=None, org_terms=None):
         if '\r' in read(osp.join(k.dir, p), raw=True):
             bad('WF-CRLF', p, 'CR line endings (workflow scripts must be LF)')
     # ---- agents
+    agent_skill = {a: m.get('skill') for a, m in (manifest(k.dir).get('agents') or {}).items()}
     for a, p in k.agents.items():
         text = k.texts.get(p, '')
         desc = frontmatter(text).get('description', '')
@@ -556,7 +559,7 @@ def lint(k, g=None, org_terms=None):
             bad('AGENT-SPAWN', p, 'description must say "Spawned by <workflow / coordinator> ..."')
         if 'Not for' not in desc:
             bad('AGENT-SPAWN', p, 'description must say "Not for: ..."')
-        if not any(f'skills/{s}/SKILL.md' in text for s in k.skills):
+        if agent_skill.get(a) != '' and not any(f'skills/{s}/SKILL.md' in text for s in k.skills):   # _manifest skill "" = loads none
             bad('AGENT-SKILL', p, 'body must name the skill (skills/<name>/SKILL.md) it loads first')
     # ---- dangling kit paths (Markdown, workflow prompts)
     ext = r'\.(md|ps1|py|mjs|js|json|html|ini|txt)$'
@@ -567,7 +570,11 @@ def lint(k, g=None, org_terms=None):
         if not f.endswith('.md') or f.endswith('LESSONS.md'):
             continue
         fdir, sk = osp.dirname(f), skill_of(f)
-        for tok in re.findall(r'`([^`\n]+)`', k.texts.get(f, '')):
+        # a line that names its extra (extra `<name>`) may cite that extra's files: they are never kit files
+        lines = [x for x in k.texts.get(f, '').split('\n') if not EXTRA_NOTE.search(x)]
+        for x in sorted({n for n in EXTRA_NOTE.findall(k.texts.get(f, '')) if known is not None and n not in known}):
+            bad('REF-DANGLING', f, f'extra `{x}`: no such extra on origin/extras (kittool.py extra list)')
+        for tok in re.findall(r'`([^`\n]+)`', '\n'.join(lines)):
             t = (tok.strip().split() or [''])[0].replace('\\', '/')
             t = re.sub(r'^(<workspace>/)?\.claude/|^<kit>/', '', t).rstrip('.,;:)')
             if not re.search(ext, t) or skip.search(t) or re.match(r'^([A-Za-z]:)?/', t):
@@ -1524,10 +1531,16 @@ def cmd_budget(a):
 # extras/<name>/EXTRA.md says what it is and "Needed when: `<config key>` = `<value>`"; extras/<name>/files/<kit path> are its files.
 EXTRAS_REF = 'refs/remotes/origin/extras'
 EXCLUDE_MARK = '# kittool extra '
+EXTRA_NOTE = re.compile(r'\bextra `([\w-]+)`')   # core text citing an extra's part names it: lint skips that line's paths
 EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'scaffold', 'rename': 'scaffold', 'remove': 'scaffold', 'cost': 'kit-admin',
   'release': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
 PLUGINS = {}      # command -> handler, from installed kittool extras (skills/orchestrate/kittool_<name>.py)
 LINT_HOOKS = []   # (kit, problems, flags) -> None: adds problems
+
+def known_extras(kit):
+    """Names of the extras on the fetched extras branch; None when it was never fetched."""
+    rc, o, _ = git(kit, 'ls-tree', '-d', '--name-only', EXTRAS_REF, 'extras/')
+    return {x.split('/')[-1] for x in o.split('\n') if x} if rc == 0 else None
 
 def need_extra(feature, name):
     print(f'{feature} is an extra: run kittool.py extra add {name}', file=sys.stderr)

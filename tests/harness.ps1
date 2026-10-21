@@ -68,7 +68,7 @@ $J = { param($o, $f, [int]$d = 8) Set-JsonFile $f $o $d }
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
   foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
-      'skills/orchestrate/orch.ps1', 'skills/orchestrate/kittool.py', 'skills/local-env/localenv.ps1', 'LESSONS.md') {
+      'skills/orchestrate/orch.ps1', 'skills/orchestrate/kittool.py', 'LESSONS.md') {
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k

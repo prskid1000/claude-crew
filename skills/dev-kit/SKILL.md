@@ -56,6 +56,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
 - No `localEnv` configured for your repo: step 5 = the automated tests only; say "local env: none" in the MR and the report.
+  `local-env` (steps 2, 5, `$L`) is the extra `local-env`: `localEnv` set but `skills/local-env/` missing ->
+  `kittool.py extra sync` once, else the same as no `localEnv`.
 
 **Rules**
 - **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds
@@ -66,7 +68,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
 - **Gate:** every build/test through `dev.ps1 check` (or `gate -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo
   directly; waiting is normal, a killed build is not a code failure. Tool timeout 600000 ms (or `run_in_background`). A gate
   still queued when you must stop: push, open the MR as Draft with `Not run: <gate>`, report NOT_MERGED. No dev servers by hand
-  (the local env runs them), at most one headless browser; phones only through `swarm.ps1 acquire` (never `up`/`down`).
+  (the local env runs them), at most one headless browser; phones only through
+  `swarm.ps1 acquire` (never `up`/`down`; extra `android-swarm`).
 - **Tests** (stack-agnostic; reviewers check them, the dev loop is the guard because CI may skip tests):
   - Ship: unit tests for new/changed logic; a regression test per fixed bug (red before, green after); integration/API tests
     for endpoints touched; UI/component tests for screens touched where the stack supports it.
