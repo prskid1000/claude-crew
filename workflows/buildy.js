@@ -113,8 +113,9 @@ const CI_SCHEMA = { type: 'object', properties: { done: { type: 'boolean' }, mrs
 const OK_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
 // one mechanical command run by a cheap agent: { ok, output }
-const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false } = {}) =>
- agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with its output, nothing else:${PATHS}\n${cmd}`,
+// output = its last output line unless whole (a multi-line JSON)
+const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
+ agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
   { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
 
 // keeps agents on their items when a later owner message is relayed
@@ -472,7 +473,7 @@ phase('Deploy')
 const shipped = out.flatMap((x) => (x.report ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/orchestrate/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
- 'deploy-batch', 'Deploy', { ok: 'with the JSON as output' }) : null
+ 'deploy-batch', 'Deploy', { whole: true }) : null
 if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys extra is not installed (merged work waits for a person)')
 else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }

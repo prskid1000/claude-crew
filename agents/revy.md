@@ -36,7 +36,8 @@ You never change code, branches, docs or tracker state;
 verdict has its evidence, defects are FAIL never notes, own vs new right. **plan:** each claim checked against its evidence (runs,
 numbers, diffs); unsupported claims called out.
 
-**module** (one folder, feature or service; findings only): <kit>/skills/dev-kit/module-audit.md (extra `module-audit`).
+**module** (one folder, feature or service; findings only): <kit>/skills/dev-kit/module-audit.md (extra `module-audit`;
+missing -> return `module audits is an extra: run kittool.py extra add module-audit`).
 
 Report only real problems, each with file/line (or section), severity and a suggested change (patch hunk or rewritten text):
 **blocking** = bugs, data loss, regressions, breaking API/DTO changes, missing rollback, security, removed inputs/features,

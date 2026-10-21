@@ -11,7 +11,7 @@
   python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: extra kit-admin
   python -X utf8 kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]   # optional parts (origin `extras`)
 
-lint problem codes: each message says what is wrong and the fix; README "Extending" lists them.
+lint problem codes: each message says what is wrong and the fix; skills/orchestrate/kit-admin.md (extra kit-admin) lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
@@ -617,7 +617,7 @@ def lint(k, g=None, org_terms=None):
     cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
         bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples; '
-         'ports excluded): merge files (README "Extending")')
+         'ports excluded): merge files (kit-admin.md "Hard rules", extra kit-admin)')
     if len(plumbing) > cap_p:
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
          f'.github/*, settings.json): {", ".join(plumbing)}')
@@ -689,7 +689,7 @@ def lint(k, g=None, org_terms=None):
             if re.match(r'\s*(#|//|@\(\s*'')', line) or not re.search(rx_open[ext], line):   # comments, guard self-test data
                 continue
             if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
-                bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (README "Extending")')
+                bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (kit-admin.md "Shapes", extra kit-admin)')
     # ---- every lease or hold is written with its holder (README "Leases")
     for f in counted:
         if f.endswith('.ps1') and not f.startswith(('tests/',) + GENERATED):

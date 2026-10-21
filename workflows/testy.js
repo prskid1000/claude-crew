@@ -198,8 +198,9 @@ const AUDIT_SCHEMA = {
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
 const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
 // one mechanical command run by a cheap agent: { ok, output }
-const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false } = {}) =>
- agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with its output, nothing else:${PATHS}\n${cmd}`,
+// output = its last output line unless whole (a multi-line JSON)
+const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
+ agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
   { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'checky', model: 'haiku', effort: 'low' })
 
 // an item may name its own env (it.target)
@@ -239,6 +240,7 @@ function appBlock(L) {
 PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
 - ${SWARM}/SKILL.md A1-A3 (extra android-swarm) with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
   ${viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
+  every command starts with $env:ANDROID_SERIAL='${L.serial}';
 ${EXTRA_HINT('android-swarm')}
 - UI: & ${Q} ui <verb> (verbs: the qa.ps1 header). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }

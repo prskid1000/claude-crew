@@ -179,7 +179,7 @@ async function agent(prompt, o) {
  if (/^test:/.test(o.label)) return _res('A1', [ck('C1', 'FAIL', { defect: 'own' }), ck('C2', 'NOT_TESTED'), ck('C3', 'NOT_TESTED'), ck('C4', 'PASS'), ck('C5', 'PASS'), ck('C5', 'NOT_TESTED')])
  if (/^retest:/.test(o.label)) return _res('A1', [ck('C2', 'PASS'), ck('C3', 'PASS')])
  if (/^retest-strong:/.test(o.label)) return _res('A1', [ck('C5', 'PASS')])
- if (/^verify:/.test(o.label)) return { verdicts: [{ id: 'C1', outcome: 'confirmed', confirmed: true, attempts: 1, observed: 'again', evidence: [], basis: 'none' }] }
+ if (/^verify:/.test(o.label)) return { verdicts: [{ id: 'C1', outcome: 'confirmed', attempts: 1, observed: 'again', evidence: [], basis: 'none' }] }
  return _ok('published')
 }
 const args = { runDir: 'C:/runs/R4', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
@@ -261,7 +261,7 @@ async function agent(prompt, o) {
  calls.push({ label: o.label, prompt })
  if (/^record-args/.test(o.label)) return _rec()
  if (/^test:/.test(o.label)) return _res('A1', [ck('C1', 'FAIL', { defect: 'own', evidence: ['A1-C1_01_500.json'] }), ck('C2', 'FAIL', { defect: 'own' }), ck('C3', 'PASS')])
- if (/^verify:/.test(o.label)) return { verdicts: ['C1', 'C2'].map((id) => ({ id, outcome: 'refuted', confirmed: false, attempts: 1, observed: 'fine now', evidence: [`A1-${id}_verify_01_ok.json`], basis: 'saved _verify files' })) }
+ if (/^verify:/.test(o.label)) return { verdicts: ['C1', 'C2'].map((id) => ({ id, outcome: 'refuted', attempts: 1, observed: 'fine now', evidence: [`A1-${id}_verify_01_ok.json`], basis: 'saved _verify files' })) }
  return _ok('published')
 }
 const args = { runDir: 'C:/runs/R6', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }

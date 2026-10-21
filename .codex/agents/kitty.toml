@@ -25,9 +25,9 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    -Name kit-<kind>-<HHmm>`; `kittool.py extra sync` in `<wt>`. Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
    the live clone.
-1. **Setup:** `$A setup [--fix]`; 2. **Missing config:** `$A config [--fill]` (org values = ASK lines, never guessed);
-3. **Recover:** `$A recover [--fix]` (`--fix` only when nothing runs; unmerged work is listed, never deleted). Detail:
-   `kit-admin.md` "kitty steps 1-3".
+1. **Setup:** `$A setup [--fix]` (detail for steps 1-3: `kit-admin.md` "kitty steps 1-3").
+2. **Missing config:** `$A config [--fill]` (org values = ASK lines, never guessed).
+3. **Recover:** `$A recover [--fix]` (`--fix` only when nothing runs; unmerged work is listed, never deleted).
 4. **Deep audit:** read EVERY tracked file (`git -C <wt> ls-files`); trace each flow end to end (`kit-admin.md` "Flows to
    trace"); `$A scan` and `python -X utf8 <wt>/skills/orchestrate/kittool.py lint --warn` add candidates. Keep only proven
    findings (`file:line`, the input that breaks it, the effect). Large: up to 6 `revy` (kind kit, read-only) agents, one per
