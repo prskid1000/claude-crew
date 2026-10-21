@@ -17,13 +17,13 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy queue fine on the memory gate.
 
 ## dev-kit
-- LLM or MCP-path answers need live sampling (5 fresh chats) on an env with the MCP URL: sample on a free env before merge, or mark needsLiveCheck with the env. (2×)
+- LLM or MCP-path answers need live sampling (5 fresh chats) on an env with the MCP URL: sample on a free env before merge, or mark needsLiveCheck with the env. (3×)
 - A task can span repos and target branches: before worktrees run `git log --grep <task>` on each target; the brief's repo table lists them all. (4×)
 - Precondition helpers throwing a generic runtime error map to HTTP 500: use the validation helpers that return 400; grep every call site. (3×)
 - An API status-code change: grep the API specs for the endpoint and delete old known-bug blocks in the same MR (500->400 breaks pinned specs). (2×)
 - Never persist secrets from a task or queue payload (headers, env, tokens) to a db, WAL, log or temp file: process memory only, store NULL, chmod db files on open; grep host env var NAMES before removing a fallback. (2×)
 - Mixed CRLF/LF edits: `-Raw .Replace` with `n no-ops, `[IO.File]` relative paths resolve against the process cwd, python without newline='' drops CRLF: use Edit + `git diff`, or a script with absolute paths. (3×)
-- Linked shared dependencies can be older than the target: typechecks / builds may fail, spec.mjs can't bundle framework-DI specs. Spec framework-free helpers; the rest: local env or "left to CI". No reinstall. (5×)
+- Linked shared dependencies can be older than the target: typechecks / builds may fail, spec.mjs can't bundle framework-DI specs. Spec framework-free helpers; the rest: local env or "left to CI". No reinstall. (6×)
 - A guard fix for one app goes to its sibling copy in the same wave; a fix that clears or matches state matches method and path, not any success. (2×)
 - Git host 500/502 or CI gateway timeout: check the job log, retry on the same sha, merge only after green; never change code for it. (4×)
 - A read-only DB tool can fail to connect: the org's read-only fallback, noted in the MR; migration ids come from the coordinator, applied in id order. (4×)
@@ -37,7 +37,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - UI lifecycle: placement bugs need a structural spec over real templates; destroyed guard after every await, unregister on destroy; list mutations through one resolve-active helper; new transient states checked against the template. (8×)
 - Re-read `<brief>.contracts.md` AND the brief's bottom before every commit and push; never overwrite a typed user draft; show the server's 400 text. (5×)
 - Cross-repo contracts: quote producer validation verbatim; the producer accepts both spellings and opens its MR first; never invent limits or endpoints; a producer DTO change ships with its consumer in the same wave. (18×)
-- One-path fixes come back: test sibling endpoints, every error branch, the round-trip; a new branch in a shared method: grep every caller (proxies, portals, other products), list each in the MR; a business rule goes in every writing path. (21×)
+- One-path fixes come back: test sibling endpoints, every error branch, the round-trip; a new branch in a shared method: grep every caller (proxies, portals, other products), list each in the MR; a business rule goes in every writing path. (22×)
 - Before tightening validation grep every client caller for its real encoding; list each old-accepted input: tested or stated as newly rejected. (6×)
 - Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value. (7×)
 - Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
@@ -47,7 +47,8 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## qa-kit
-- A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (2×)
+- (2×) A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code.
+- A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
 - An upstream service's 5xx fails the checks that use it: check that service's health before FAIL; file it under its owner. (4×)
 - Every NOT_TESTED check states its cause in results.json and the outcome line. (5×)
 - Check the MCP servers the run uses before it starts (record in lead-notes.md); checks needing a down server use the API or scripts. (2×)
@@ -62,7 +63,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Layout fixes: test the smallest and largest viewports with real wheel scrolling (scrollIntoView hides overflow:hidden clipping). (3×)
 - Guide data drifts on shared envs: create your own data via the API; a later screen change: test the same intent (PASS_WITH_NOTE (a)); guide vs screen: read the code, quote both, ask the lead. (6×)
 - Parallel items toggling a shared env setting cause 403s elsewhere: serialise them; keep one feature-OFF account, made before the run. (3×)
-- Capture checks: time per screen and page type, wait for pageSize rows before timing, re-run once at low load before FAIL; a capture blocking past its cap is FAIL with the profile saved. (8×)
+- Capture checks: time per screen and page type, wait for pageSize rows before timing, re-run once at low load before FAIL; a capture blocking past its cap is FAIL with the profile saved. (9×)
 - A skipped item: its reason goes into run.json. (2×)
 - A server-side config check (model, temperature, fallback) from the API lane: verify the deployed code and its unit tests, name unseen env overrides; unprovable -> NOT_TESTED with cause.
 - A test env's signing key can differ from repo config: prove cross-product token refusal by unit test or the deployed key; check a separate service is deployed first.
@@ -72,6 +73,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Local DB drift (leftover table, missing definer or grant) fails migrations: report it for `refresh` / the owner; never repair the shared DB by hand.
 
 ## android-swarm
+- (2×) The android-build gate needs about 11.5 GB + 10 GB free: with a phone and the rm api up it queues 80-90 min. Request an envfix or build before other agents lease phones.
 - Lanes drop offline at ~2-14 GB free RAM: no heavy web lanes beside 3 emulators; `swarm.ps1 status` before each check, `swarm.ps1 ensure -Agent <id>` at once. (3×)
 - A restored snapshot can leave a lane "offline" in adb -> `swarm.ps1 avd reset -Lanes <name> -Level cold`.
 
