@@ -122,7 +122,7 @@ BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template'
   'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 39300}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
-PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/dev-kit/spec.mjs', 'skills/qa-kit/browser.mjs', 'skills/orchestrate/kittool.py'}
+PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/browser.mjs', 'skills/orchestrate/kittool.py'}
 TEXT_EXT = ('.md', '.ps1', '.psm1', '.py', '.js', '.mjs', '.json', '.html', '.txt', '.sh', '.yml', '.yaml', '.ini')
 JUNK_EXT = ('.apk', '.aab', '.log', '.zip', '.tmp')
 RESERVED = {'nul', 'con', 'prn', 'aux'}
