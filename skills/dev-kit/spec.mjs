@@ -16,27 +16,13 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-// --- kit paths (kit.example.json _paths): <runtime> = $CLAUDE_RUNTIME else <kit>/.runtime; durable under <kit>/.state
-const __HERE = dirname(fileURLToPath(import.meta.url))
-export const KIT = resolve(__HERE, '..', '..')
-const MAP = JSON.parse(readFileSync(join(__HERE, 'kit.example.json'), 'utf8'))._paths
-export const runtimeDir = () => process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir)
-export function kitPath(name, { create = false } = {}) {
- let rel, base
- if (name === 'runtime') { rel = '/'; base = runtimeDir() }
- else if (name in MAP.runtime) { rel = MAP.runtime[name]; base = runtimeDir() }
- else if (name in MAP.durable) { rel = MAP.durable[name]; base = join(KIT, MAP.stateDir) }
- else throw new Error(`kitPath: unknown name '${name}' (see skills/dev-kit/kit.example.json _paths)`)
- const p = rel === '/' ? base : join(base, rel.replace(/\/$/, ''))
- if (create) mkdirSync(rel.endsWith('/') ? p : dirname(p), { recursive: true })
- return p
-}
-// --- spec shim: jasmine/jest-style globals (library). install() puts them on globalThis; run() runs the registered specs.
-// Pure logic only (no TestBed, DOM, fakeAsync). Matchers (all with .not): toBe, toEqual/StrictEqual, toBeTruthy/Falsy/
-// Null/Undefined/Defined/CloseTo/InstanceOf, toContain, toThrow(Error), toMatch, toHaveLength/Property,
-// toBeGreaterThan/LessThan(OrEqual), toHaveBeenCalled(Times/With); jasmine/expect .any/anything/objectContaining.
-// Spies: spyOn(obj, m).and.returnValue/callFake/callThrough/throwError, jest .mockReturnValue/.mockImplementation,
-// jasmine.createSpy(Obj), jest.fn.
+// --- kit paths: bundles go to <runtime>/cache (kit.example.json _paths; runtime = $CLAUDE_RUNTIME, else <kit>/.runtime)
+const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const MAP = JSON.parse(readFileSync(join(KIT, 'skills', 'dev-kit', 'kit.example.json'), 'utf8'))._paths
+const cacheDir = join(process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir), MAP.runtime.cache.replace(/\/$/, ''))
+
+// --- spec shim: jasmine / jest-style globals for pure logic (no TestBed, DOM or fakeAsync): install() sets them, run() runs the
+// registered specs. Every matcher has .not; spies answer both jasmine (.and.*, .calls.*) and jest (.mock*) calls.
 
 const ASYM = Symbol('asymmetric')
 const asym = (desc, test) => ({ [ASYM]: true, test, toString: () => desc, [inspect.custom]: () => desc })
@@ -327,7 +313,7 @@ const ngStub = {
  },
 }
 
-const outRoot = join(kitPath('cache', { create: true }), 'node-spec', createHash('md5').update(dir.toLowerCase()).digest('hex').slice(0, 12))
+const outRoot = join(cacheDir, 'node-spec', createHash('md5').update(dir.toLowerCase()).digest('hex').slice(0, 12))
 mkdirSync(outRoot, { recursive: true })
 say(`no unit-test target: running ${uniq.length} spec file(s) under node (esbuild ${esbuild.version}${tsconfig ? ', ' + relative(dir, tsconfig) : ''}${realAngular ? '' : ', @angular/core stubbed'})`)
 install()
