@@ -222,7 +222,6 @@ function Wrapper($d, $name, $winExt, $fallback) {
 }
 
 function Has($d, [string[]]$pattern) { foreach ($p in $pattern) { if (Get-ChildItem -LiteralPath $d -Filter $p -File -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true } }; $false }
-function First($d, $pattern) { Get-ChildItem -LiteralPath $d -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
 function ReadJson($f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
 function ReadText($f) { if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue } else { '' } }
 function Get-NodePm($d) {
@@ -282,22 +281,9 @@ function Get-Stack($d) {
   }
   elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
     $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
-    $android = (Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($android) {
-      $s = 'android-gradle'
-      $var = [string](ReadJson (Join-Path $d '.claude-stack.json')).androidVariant
-      if (-not $var) {
-        $var = 'Debug'
-        foreach ($bf in @(Get-ChildItem -LiteralPath $d -Recurse -Depth 2 -Include build.gradle, build.gradle.kts -File -ErrorAction SilentlyContinue)) {
-          $bt = ReadText $bf.FullName
-          if ($bt -match '(?s)productFlavors\s*\{\s*(?:create\(\s*"|register\(\s*"|maybeCreate\(\s*")?([A-Za-z]\w*)') { $m1 = $Matches[1]; $var = $(if ($m1.Length -ge 1) { $m1.Substring(0, 1).ToUpper() + $m1.Substring(1) } else { $m1 }) + 'Debug'; break }
-        }
-      } else { $var = if ($var.Length -ge 1) { $var.Substring(0, 1).ToUpper() + $var.Substring(1) } else { $var } }
-      $c.compile = "$gw compile${var}Sources -q"
-      $c.test = "$gw test${var}UnitTest --tests {tests}"
-      $c.lint = "$gw lint$var"
-      $c.build = "$gw assemble$var"
-    } else {
+    # an Android module (AndroidManifest.xml): extra stack-presets
+    $android = [bool](Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (-not $android) {
       $s = 'gradle'
       $c.compile = "$gw classes -q"
       $c.test = "$gw test --tests {tests}"
@@ -366,10 +352,10 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # installed extras (stack-presets): .NET, Go, Rust, CMake, Make
+  # installed extras (stack-presets): Android Gradle, .NET, Go, Rust, CMake, Make
   foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
-  if (-not $s -and -not $ovr.stack -and (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile')) { throw (Get-KitExtraLine 'stack' 'presets') }
+  if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw (Get-KitExtraLine 'stack' 'presets') }
   if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone is a stack (the "add a .claude-stack.json" advice)
 
   if ($ovr) {
@@ -377,8 +363,7 @@ function Get-Stack($d) {
     if ($ovr.commands) { foreach ($p in $ovr.commands.PSObject.Properties) { $c[$p.Name] = $p.Value } }
     if ($ovr.deps) { $deps = @($ovr.deps) }
   }
-  $sln = if ($s -like 'dotnet*') { (First $d '*.sln').Name } else { $null }
-  [pscustomobject]@{ stack = $s; dir = $d; solution = $sln; deps = $deps; commands = [pscustomobject]$c }
+  [pscustomobject]@{ stack = $s; dir = $d; deps = $deps; commands = [pscustomobject]$c }
 }
 
 $top = (git -C $Dir rev-parse --show-toplevel 2>$null)
@@ -394,7 +379,7 @@ while ($d) {
 if (-not $hit) { throw "No known stack under $Dir (up to the git root): add a .claude-stack.json" }
 if ($Json) { $hit | ConvertTo-Json -Depth 4 }
 else {
-  "stack: $($hit.stack)   dir: $($hit.dir)$(if ($hit.solution) { "   solution: $($hit.solution)" })"
+  "stack: $($hit.stack)   dir: $($hit.dir)"
   $hit.commands.PSObject.Properties | Where-Object Value | ForEach-Object { '  {0,-9} {1}' -f $_.Name, $_.Value }
 }
 }
@@ -754,12 +739,6 @@ foreach ($s in $steps) {
     $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }
   }
-  if ($cmd -match '\{sln\}') {
-    $sln = @(Get-ChildItem -LiteralPath $st.dir -Filter *.sln -File -ErrorAction SilentlyContinue)
-    if (-not $sln.Count) { $sln = @(Get-ChildItem -LiteralPath $st.dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' }) }
-    if ($sln.Count -ne 1) { throw "[check] $($st.dir): expected one .sln (or project file), found $($sln.Count): -Dir to its folder" }
-    $cmd = $cmd.Replace('{sln}', $sln[0].FullName)
-  }
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
@@ -785,7 +764,6 @@ foreach ($s in $steps) {
   for ($bi = 0; $bi -lt $batches.Count; $bi++) {
   $cmd = $batches[$bi]
   if ($batches.Count -gt 1) { Write-Host "[check] $s batch $($bi + 1)/$($batches.Count)" }
-  if ($st.solution) { $cmd = $cmd -replace '\{sln\}', $st.solution }
   if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
   if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {
     $hash = Hash12 $st.dir.ToLower()
