@@ -154,6 +154,10 @@ New-Item -ItemType Directory -Force "$ud/alembic/versions", "$ud/prisma/migratio
 git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m tools
 $out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
 Expect 'check: Flyway, Alembic and Prisma files are UNRUN too' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 5 migration file\(s\) of another tool')
+New-Item -ItemType Directory -Force "$ud/config/liquibase" | Out-Null; '<databaseChangeLog/>' | Set-Content "$ud/config/liquibase/master.xml"
+git -C $ud add -A; git -C $ud -c user.name=t -c user.email=t@t commit -q -m lb
+$out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
+Expect 'check: Liquibase without the extra is UNRUN with the extra line' ($LASTEXITCODE -eq 5 -and $out -match 'extra add liquibase')
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
 Expect 'gate: gradle gets the heap cap' ($out -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
 # gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor

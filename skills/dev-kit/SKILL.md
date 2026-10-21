@@ -17,8 +17,7 @@ review; a person's `deploy <env>` starts the deploy), testers through the human 
 | `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
 | `dev.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `lib.ps1` | dot-sourced by every kit script; never run by hand |
-| `devtools.py` | steps 6-7, rebase conflicts (`keepboth`), `lbcheck` (run by `check`) |
-| `spec.mjs` | step 4: `check -Step test` runs it for a web project without a unit-test target |
+| `devtools.py` | steps 6-7, rebase conflicts (`keepboth`) |
 | `kit.example.json` | setup (`orch.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
 
 ## Steps (every devy; your brief wins where it differs)
@@ -74,8 +73,9 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   - Shape: arrange / act / assert; one behaviour per test; names `should_<behaviour>_when_<condition>` (or the repo's style);
     no sleeps or real clocks (fixed clock); no shared mutable state; deterministic builders / fixtures; mocks only at
     boundaries; no network unless tagged integration.
-  - Place: next to the repo's existing tests (its convention wins; `dev.ps1 stack` shows the runner; `kit.local.json`
-    `tests.<stack>.testFor` maps a source name to its test names for `-Touched`).
+  - Place: next to the repo's existing tests (its convention wins; `dev.ps1 stack` shows the runner; a web project without a
+    unit-test target: extra `node-spec`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
+    `-Touched`).
   - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
     (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + the attribution trailer your harness or org asks
@@ -89,8 +89,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.
 - **Migrations** (any tool): only your assigned range; never edit a merged migration; a down / rollback for every change;
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
-  (`repos[].migrations.check`, else Liquibase lbcheck; exit 5 = UNRUN: say so in the MR). Local env DB drift (a leftover
-  table, a missing user): report it, never "fix" the shared DB by hand.
+  (`repos[].migrations.check`, else Liquibase: extra `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
+  leftover table, a missing user): report it, never "fix" the shared DB by hand.
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per
   repo, title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your
   own

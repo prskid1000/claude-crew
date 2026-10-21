@@ -372,6 +372,7 @@ function Get-Stack($d) {
   if (-not $s) { return $null }
 
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
+
   if ($ovr) {
     if ($ovr.stack) { $s = $ovr.stack }
     if ($ovr.commands) { foreach ($p in $ovr.commands.PSObject.Properties) { $c[$p.Name] = $p.Value } }
@@ -857,7 +858,7 @@ function Test-DockerForContainerTests {
   return 4
 }
 
-# repos[].migrations.check runs (in the worktree); else Liquibase XML -> lbcheck; any other tool or changelog format = UNRUN (exit 5)
+# repos[].migrations.check runs (in the worktree); else Liquibase XML -> lbcheck (extra liquibase); any other tool or changelog format = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
   $main = Split-Path (git -C $top rev-parse --path-format=absolute --git-common-dir).Trim()
@@ -870,6 +871,7 @@ if ($Step -eq 'migrations') {
   $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
+  if (-not (Test-Path -LiteralPath (Join-Path $k 'adapters/liquibase.py'))) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit 5 }
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
   $env:LBCHECK_CHANGED = (@(git -C $top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'
   $rc = 0
@@ -892,7 +894,11 @@ foreach ($s in $steps) {
   $cmd = $st.commands.$s
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
-  if ($s -eq 'test' -and $cmd -match 'spec\.mjs') { Write-Host '[check] no unit-test target: spec.mjs runs specs under node (DOM: the project''s jsdom if any; TestBed/fakeAsync: NOT RUN)' }
+  if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and -not $Show) {
+    # no unit-test target: the node spec runner (pure-logic specs) is the extra node-spec
+    if (-not (Test-Path -LiteralPath $KitCmd.spec)) { Write-Host '[check] node spec runner is an extra: run kittool.py extra add node-spec'; exit 2 }
+    if ($RealAngular) { $cmd += ' --real-angular' }
+  }
   if ($Touched -and $s -eq 'test') {
     # CI may skip tests
     $chg = @(Get-ChangedFiles)
@@ -925,15 +931,6 @@ foreach ($s in $steps) {
       $cmd = $cmd.Replace('{tests}', $joined)
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
-  }
-  if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and $cmd -notmatch '--real-angular') {
-    # the @angular/core stub breaks @angular/forms
-    $why = if ($RealAngular) { '-RealAngular' } else {
-      $hit = @(@($Tests -split '[,\s]+' | Where-Object { $_ }) | ForEach-Object { Join-Path $st.dir $_ } | Where-Object { $_ -match '\.(spec|test)\.\w+$' -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
-              Where-Object { (Get-Content -LiteralPath $_ -Raw) -match '[''"]@angular/forms[''"]' } | Select-Object -First 1)
-      if ($hit.Count) { "$(Split-Path $hit[0] -Leaf) imports @angular/forms" }
-    }
-    if ($why) { $cmd += ' --real-angular'; Write-Host "[check] node-spec with the real @angular/core ($why)" }
   }
   if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') {
     $rc = Test-DockerForContainerTests

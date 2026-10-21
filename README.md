@@ -160,13 +160,12 @@ that asks for one.
 | `devices` | {"type": "android"} | type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: extra ios-simulator |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else lbcheck; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deployed-checks |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deployed-checks |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round) |
 | `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
 | `bugfixMandate`, `localOnly`, `orgTerms`, `extras` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it) |
-| `findings` |  | required: the QA finding fields (default root_cause, why_today, why_not_prod, db_migration, code_location) |
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
@@ -328,8 +327,7 @@ flowchart LR
   skills_dev_kit_SKILL_md -->|Writing standards whenever you write; steps 4 an| skills_dev_kit_templates_md[templates.md]
   skills_dev_kit_SKILL_md -->|steps 1-5, CI wait (pipes), the PreToolUse hook | skills_dev_kit_dev_ps1[dev.ps1]
   skills_dev_kit_SKILL_md -->|dot-sourced by every kit script; never run by ha| skills_dev_kit_lib_ps1[lib.ps1]
-  skills_dev_kit_SKILL_md -->|steps 6-7, rebase conflicts (keepboth), lbcheck | skills_dev_kit_devtools_py[devtools.py]
-  skills_dev_kit_SKILL_md -->|step 4: check -Step test runs it for a web proje| skills_dev_kit_spec_mjs[spec.mjs]
+  skills_dev_kit_SKILL_md -->|steps 6-7, rebase conflicts (keepboth)| skills_dev_kit_devtools_py[devtools.py]
   skills_dev_kit_SKILL_md -->|setup (orch.ps1 setup -WriteLocal; keys: README | skills_dev_kit_kit_example_json[kit.example.json]
 ```
 <!-- kit-graph:end -->

@@ -9,21 +9,16 @@
  python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
  python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
  python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
- python devtools.py lbcheck <master.xml> [since]   Liquibase sanity check (run by dev.ps1 check -Step migrations)
  python devtools.py selftest   offline self-test (and each installed plugin's)
- python devtools.py findings schema   the 23 keys with their formats, an example, the project profile shape
- python devtools.py findings validate <module>.json [...]   check a module audit's findings against the schema
- python devtools.py findings summary <module>.json [--sources ".."] [--out <dir>]   <module>-summary.md (publish it with doc)
-Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify).
+Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
+ lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
 Sections: L78 run · L123 tracker · L198 git host · L305 MR · L475 merge · L553 docs · L714 plugins · L727 lbcheck · L820 selftest · L962 findings · L1104 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
-import argparse, glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
-from collections import Counter
-import xml.etree.ElementTree as ET
+import glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
@@ -724,24 +719,7 @@ def load_plugins(folder=os.path.join(KIT, 'adapters')):
 load_plugins()
 
 
-# --- Liquibase XML changes (lbcheck)
-NON_CHANGE = {'preConditions', 'rollback', 'comment', 'validCheckSum', 'property'}
-
-
-def local(tag):
-    return tag.split('}', 1)[-1]
-
-
-def xml_change(el):
-    """{type, table, columns, attrs} of one change element."""
-    attrs = {k: v for k, v in el.attrib.items() if isinstance(v, str)}
-    table = (attrs.get('tableName') or attrs.get('baseTableName') or attrs.get('viewName') or '').strip('`"').lower()
-    columns = [c.get('name', '').lower() for c in el.iter() if local(c.tag) == 'column' and c.get('name')]
-    columns += [x.strip().strip('`"').lower() for k in ('columnName', 'columnNames') for x in (attrs.get(k) or '').split(',') if x.strip()]
-    return {'type': local(el.tag), 'table': table, 'columns': columns, 'attrs': attrs}
-
-
-# --- keepboth (rebase), lbcheck, self-test
+# --- keepboth (rebase), self-test
 def keepboth(paths):
     """Resolve conflict blocks as OURS then THEIRS; append-only files only (changelog includes, route/nav lists, i18n keys,
     DI registrations, barrel exports, requirements.txt), never real code."""
@@ -759,63 +737,6 @@ def keepboth(paths):
             left += 1
     return 1 if left else 0
 
-
-def lbcheck(argv):
-    """Liquibase sanity check (dev.ps1 check): replays master.xml's includes; flags create / add of an existing table / column
-without <preConditions>, schema changeSets without <rollback> (beyond auto-rollback types), not-reversible ones with an empty one.
-Reports files named >= since (yyyyMMddHHmmss) or listed in env LBCHECK_CHANGED ('|'); prints issues + 'ISSUES <n>', exit 1 if n."""
-    sys.stdout.reconfigure(encoding='utf-8')
-    master, since = os.path.abspath(argv[0]), argv[1] if len(argv) > 1 else '0'
-    m = re.search(r'^(.*?)[\\/]config[\\/]liquibase[\\/]', master) or re.search(r'^(.*[\\/]resources)[\\/]', master)
-    roots = [m.group(1) if m else os.path.dirname(master), os.path.dirname(master)]
-    changed = {f for f in os.environ.get('LBCHECK_CHANGED', '').split('|') if f}
-    schema = {'createTable', 'addColumn', 'dropColumn', 'dropTable', 'renameColumn', 'modifyDataType', 'addForeignKeyConstraint', 'createIndex',
-         'addUniqueConstraint', 'sql', 'update', 'insert', 'delete'}
-    auto = {'createTable', 'addColumn', 'renameColumn', 'createIndex', 'addForeignKeyConstraint', 'addUniqueConstraint'}
-    cols, issues = {}, []   # table -> its columns, replayed
-
-    def resolve(f, base):
-        ps = [os.path.join(base, f)] + [os.path.join(r, f.lstrip('/')) for r in roots]
-        return next((p for p in ps if os.path.exists(p)), ps[1])
-
-    def walk(path, fname):
-        try:
-            raw = open(path, encoding='utf-8', errors='replace').read()
-            root = ET.fromstring(raw.lstrip('\ufeff').encode('utf-8'))
-        except Exception as e: return issues.append(f'PARSE ERROR {fname}: {e}')
-        ts = re.match(r'(\d{14})', os.path.basename(fname))
-        report = (bool(ts) and ts.group(1) >= since) or os.path.basename(fname) in changed or (not ts and since == '0')   # a changed old one counts
-        for mm in re.finditer(r'<changeSet\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</changeSet>', raw, re.S) if report else ():   # ET drops comments
-            rb = re.search(r'<rollback\s*/>|<rollback\b[^>]*>(.*?)</rollback>', mm.group(2), re.S)
-            if re.search(r'not\s+reversible|irreversible|non-reversible|cannot\s+be\s+(rolled|reverted)|no\s+rollback', mm.group(2), re.I) and not (rb and (rb.group(1) or '').strip()):
-                issues.append(f'{fname} {mm.group(1)}: marked not reversible but its <rollback> is missing or empty (a revert would fail): write a real reverse statement')
-        for node in root:
-            t = local(node.tag)
-            if t == 'changeSet':
-                kids = [k for k in node if local(k.tag) not in NON_CHANGE]
-                guarded, cid = any(local(k.tag) == 'preConditions' for k in node), node.get('id')
-                for ch in map(xml_change, kids):
-                    tb, have = ch['table'], cols.setdefault(ch['table'], set()) if ch['type'] in ('createTable', 'addColumn') else cols.get(ch['table'], set())
-                    hit = ([tb] if tb in cols and ch['type'] == 'createTable' and have else []) + ([f'{tb}.{c}' for c in ch['columns'] if c in have] if ch['type'] == 'addColumn' else [])
-                    if hit and report and not guarded: issues.append(f'{fname} {cid}: {ch["type"]} {", ".join(hit)} already exists')
-                    if ch['type'] == 'dropTable': cols.pop(tb, None)
-                    elif ch['type'] == 'renameColumn' and ch['attrs'].get('oldColumnName', '').lower() in have:
-                        have.discard(ch['attrs']['oldColumnName'].lower()); have.add(ch['attrs'].get('newColumnName', '').lower())
-                    else:
-                        (have.difference_update if ch['type'] == 'dropColumn' else have.update if ch['type'] in ('createTable', 'addColumn') else len)(ch['columns'])
-                kinds = {local(k.tag) for k in kids} & schema
-                if report and kinds and not any(local(k.tag) == 'rollback' for k in node) and not kinds <= auto:
-                    issues.append(f'{fname} {cid}: {", ".join(sorted(kinds))} without a <rollback>')
-            elif t == 'include' and (node.get('file') or '').lower().endswith('.xml'):   # .sql / .yaml includes are valid Liquibase
-                walk(resolve(node.get('file'), os.path.dirname(path)), node.get('file'))
-            elif t == 'includeAll':
-                d = resolve(node.get('path') or '', os.path.dirname(path))
-                for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-                    if f.endswith('.xml'): walk(os.path.join(d, f), f)
-
-    walk(master, 'master.xml')
-    print('\n'.join(issues + [f'ISSUES {len(issues)}']))
-    return 1 if issues else 0
 
 def selftest():
     """Offline checks (missing body file refused; mergeAfter finds producers, warns on an unmatched repo name; merge_word).
@@ -884,7 +805,6 @@ def selftest():
         expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
     finally:
         g.update(saved); time.sleep = sleep0
-    expect('lbcheck has its XML parser (ET imported)', 'ET' in g)
     # holdMerge, unreadable tracking, lost intent
     saved = {k: g[k] for k in ('_run', 'remote', 'unmerged_producers', 'kit_path')}
     cfg0, puts = dict(CFG), []
@@ -960,148 +880,6 @@ def _report_selftest(expect):
         g.update(saved); shutil.rmtree(tmp, ignore_errors=True)
 
 
-# ===== findings (revy module audits)
-FINDINGS_SCHEMA = r'''A finding: exactly these 23 string keys ("" when unknown).
-
-| Key | Format |
-|---|---|
-| `id` | `<MODULE>-<BUG\|PERF\|REF\|GAP\|UX\|RPT>-NNN` |
-| `module`, `area`, `title`, `subtype`, `source` | short text (`subtype` e.g. Data Integrity, Validation, Concurrency, Memory leak, Schema/Migration) |
-| `layer` | `Web UI` \| `Java API` \| `.NET API` \| `Python` \| `Node API` \| `Mobile` \| `Desktop` \| `DB` \| `Jobs` \| `Integration` \| `Cross-cutting` (or the profile's own) |
-| `type` | `Bug` \| `Performance` \| `Tech Debt` \| `Functional Gap` \| `UX` \| `Reporting` |
-| `in_scope` | `Yes` (Bug / Performance / Tech Debt) \| `No` |
-| `severity` | `Critical` \| `High` \| `Medium` \| `Low` |
-| `current`, `expected`, `suggested_fix` | 1-2 sentences (`current` prefixed `(unverified)` when inferred) |
-| `business_impact`, `root_cause`, `customer_impact` | 1 sentence (in scope only) |
-| `why_today`, `why_not_prod` | in scope only, prefixed `(inferred)` unless evidenced; concrete |
-| `db_migration` | `Yes` \| `No` \| `Maybe` |
-| `code_location` | `file:line`, table or endpoint |
-| `product_decision` | `Yes` \| `No` |
-| `effort` | `Low` \| `Medium` \| `High` \| `""` |
-| `existing_notes` | prior comments, links, cross-refs, the evidence tier |
-
-Example finding: `{"id": "NOTIF-BUG-002", "module": "Notifications", "layer": "Node API", "type": "Bug", "in_scope": "Yes", "subtype":
-"Data Integrity", "title": "Digest ignores the unsubscribe flag", "area": "Email settings", "severity": "High", "current": "Opted-out
-users get the digest.", "expected": "They never get it.", "business_impact": "Unwanted email.", "root_cause": "The job never reads the
-flag.", "why_today": "(inferred) The flag came after the job.", "why_not_prod": "(inferred) Few opt-outs so far.", "customer_impact":
-"Opted-out users get mail.", "db_migration": "No", "suggested_fix": "Filter on the flag; add a test.", "code_location":
-"DigestJob.buildRecipients()", "product_decision": "No", "effort": "Low", "existing_notes": "Evidence: 3 of 3 test users.", "source": "module review"}`
-
-Project profile (<kit>/skills/dev-kit/projects/<project>.local.md, local; one per project):
-# Project profile: <name>
-## Repo layout
-| Layer | Repo / folder | Stack (dev.ps1 stack) | Notes (migration tool, single- or multi-tenant, ...) |
-## Intended-behaviour sources
-- docs / knowledge base / MCP tools / decision records
-## Live / test data (read-only)
-- how to query a test environment; never production writes
-## Findings output
-- folder, id prefix, workbook generator (if any)
-## Known by-design behaviours (not bugs)
-## Review lessons
-'''
-
-def validate(argv):
-    KEYS = ['id', 'module', 'layer', 'type', 'in_scope', 'subtype', 'title', 'area', 'severity', 'current', 'expected',
-      'business_impact', 'root_cause', 'why_today', 'why_not_prod', 'customer_impact', 'db_migration', 'suggested_fix',
-      'code_location', 'product_decision', 'effort', 'existing_notes', 'source']
-    VOCAB = {'type': {'Bug', 'Performance', 'Tech Debt', 'Functional Gap', 'UX', 'Reporting'}, 'in_scope': {'Yes', 'No'},
-        'severity': {'Critical', 'High', 'Medium', 'Low'}, 'db_migration': {'Yes', 'No', 'Maybe', ''},
-        'product_decision': {'Yes', 'No'}, 'effort': {'Low', 'Medium', 'High', ''}}
-    IN_SCOPE = {'Bug', 'Performance', 'Tech Debt'}
-    ID = re.compile(r'^[A-Z0-9]+(-[A-Z0-9]+)*-(BUG|PERF|REF|GAP|UX|RPT)-\d+$')
-
-    if len(argv) < 1:
-        print(__doc__.strip())
-        return (2)
-
-    problems, seen, rows = [], set(), 0
-    for path in argv:
-        try:
-            data = json.load(open(path, encoding='utf-8'))
-        except Exception as e:
-            problems.append(f'{path}: not valid JSON ({e})')
-            continue
-        if not isinstance(data, list):
-            problems.append(f'{path}: top level must be a JSON array')
-            continue
-        for o in data:
-            rows += 1
-            if not isinstance(o, dict):
-                problems.append(f'{path}: row {rows} is not a JSON object')
-                continue
-            fid = o.get('id', '?')
-            if set(o) != set(KEYS):
-                problems.append(f'{fid}: keys differ (missing {sorted(set(KEYS) - set(o))}, extra {sorted(set(o) - set(KEYS))})')
-                continue
-            if any(not isinstance(v, str) for v in o.values()):
-                problems.append(f'{fid!r}: all values must be strings')
-                continue   # checks below need strings
-            if fid in seen: problems.append(f'{fid}: duplicate id')
-            seen.add(fid)
-            if not ID.match(fid): problems.append(f'{fid}: id should look like ABBR-BUG-001')
-            for k, allowed in VOCAB.items():
-                if o[k] not in allowed: problems.append(f'{fid}: {k}={o[k]!r} not in {sorted(allowed)}')
-            if o['type'] in IN_SCOPE:
-                if o['in_scope'] != 'Yes': problems.append(f'{fid}: {o["type"]} must be in_scope Yes')
-                for k in (CFG.get('findings') or {}).get('required') or ('root_cause', 'why_today', 'why_not_prod', 'db_migration', 'code_location'):   # kit.local.json findings.required
-                    if not o.get(k): problems.append(f'{fid}: in-scope finding needs {k}')
-                if o['severity'] == 'Critical' and o['current'].startswith('(unverified)'): problems.append(f'{fid}: unverified finding cannot be Critical')
-            else:
-                if o['in_scope'] != 'No' or o['product_decision'] != 'Yes': problems.append(f'{fid}: {o["type"]} must be in_scope No, product_decision Yes')
-                for k in ('root_cause', 'why_today', 'why_not_prod', 'customer_impact'):
-                    if o[k]: problems.append(f'{fid}: out-of-scope finding should leave {k} empty')
-            if o['current'].startswith('(unverified)') and o['severity'] in ('Critical', 'High'):
-                problems.append(f'{fid}: unverified findings are capped at Medium')
-
-    for p in problems: print(p)
-    print('rows', rows, '| schema problems:', 'none' if not problems else len(problems))
-    return (1 if problems else 0)
-
-
-def summary(argv):
-    ap = argparse.ArgumentParser()
-    ap.add_argument('file')
-    ap.add_argument('--sources', default='')
-    ap.add_argument('--out', default=None)
-    a = ap.parse_args(argv)
-    rows = json.load(open(a.file, encoding='utf-8'))
-    module = rows[0]['module'] if rows else os.path.splitext(os.path.basename(a.file))[0]
-    out = a.out or os.path.dirname(os.path.abspath(a.file))
-    base = os.path.join(out, os.path.splitext(os.path.basename(a.file))[0] + '-summary')
-
-    SEV = ['Critical', 'High', 'Medium', 'Low']
-    ins = [r for r in rows if r['in_scope'] == 'Yes']
-    outs = [r for r in rows if r['in_scope'] != 'Yes']
-    by_type = Counter(r['type'] for r in ins)
-    by_sev = Counter(r['severity'] for r in ins)
-    top = sorted([r for r in ins if r['severity'] in ('Critical', 'High')], key=lambda r: SEV.index(r['severity']))
-    decide = [r for r in ins if r['product_decision'] == 'Yes']
-    unverified = [r for r in ins if r['current'].startswith('(unverified)')]
-    dbm = [r for r in ins if r['db_migration'] == 'Yes']
-
-
-    md = [f'# Technical audit — {module}', '']
-    types = ', '.join(f'{by_type[t]} {t}' for t in ('Bug', 'Performance', 'Tech Debt') if by_type[t])
-    ranked = sorted(ins, key=lambda r: (SEV.index(r['severity']), r['id']))
-    md.append(f'**{len(ins)} in-scope findings** ({types}) · '
-      f'**{len(outs)} out-of-scope** captured for product · severity: ' + ', '.join(f'{by_sev[s]} {s}' for s in SEV if by_sev[s]))
-    if a.sources:
-        md.append(f'\nSources used: {a.sources}')
-    md.append(f'\n{len(unverified)} finding(s) rest on unverified inference (capped at Medium); {len(dbm)} need a DB migration.')
-    if top:
-        md += ['', '## Critical / High', '', '| ID | Sev | Title | Where | Fix |', '|---|---|---|---|---|']
-        md += [f"| {r['id']} | {r['severity']} | {r['title']} | `{r['code_location']}` | {r['suggested_fix']} |" for r in top]
-    if decide:
-        md += ['', '## Needs a product decision', ''] + [f"- **{r['id']}** {r['title']} — {r['expected']}" for r in decide]
-    md += ['', '## All in-scope findings', '', '| ID | Type | Sev | Title | Effort |', '|---|---|---|---|---|']
-    md += [f"| {r['id']} | {r['type']} | {r['severity']} | {r['title']} | {r['effort']} |" for r in ranked]
-    if outs:
-        md += ['', '## Out of scope (captured for product)', ''] + [f"- {r['id']} ({r['type']}): {r['title']}" for r in outs]
-    open(base + '.md', 'w', encoding='utf-8').write('\n'.join(md) + '\n')
-    print(base + '.md')
-
-
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     a = sys.argv[1:]
@@ -1110,10 +888,14 @@ if __name__ == '__main__':
         sys.exit(VERBS[cmd](a[1:]) or 0)
     if cmd == 'migrations':
         extra_missing('devtools.py migrations (migration classes)', 'migration-classify')
+    if cmd == 'lbcheck':
+        extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
+    if cmd == 'findings':
+        extra_missing('devtools.py findings (module audits)', 'module-audit')
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
-    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'lbcheck': 1, 'findings': 1, 'selftest': 0}
-    FLAGS, opt = {'findings': {'--sources', '--out'}}, {}
+    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
+    FLAGS, opt = {}, {}
     for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
@@ -1139,19 +921,8 @@ if __name__ == '__main__':
         sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1 = refused, conflict or wait
     elif cmd == 'keepboth':
         sys.exit(keepboth(a[1:]))
-    elif cmd == 'lbcheck':
-        sys.exit(lbcheck(a[1:]))
     elif cmd == 'selftest':
         sys.exit(selftest())
-    elif cmd == 'findings':   # schema | validate <file> | summary <file>
-        sub = a[1] if len(a) > 1 else ''
-        if sub == 'schema':
-            print(FINDINGS_SCHEMA)
-        elif sub in ('validate', 'summary'):
-            sys.exit((validate if sub == 'validate' else summary)(a[2:]) or 0)
-        else:
-            print(__doc__)
-            sys.exit(2)
     elif cmd == 'doc':
         title, path = a[1], a[2]
         if os.path.isfile(title) and not os.path.isfile(path):   # swapped order: doc <file> "<title>"
