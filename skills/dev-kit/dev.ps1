@@ -857,8 +857,8 @@ if ($Step -eq 'migrations') {
   $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
   $masters = @($all | Where-Object { $_ -match '\.xml$' })
   # migrations of another tool (Flyway, Alembic, Prisma, ...): no kit check
-  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(db/)?(migrations?|migrate|flyway|alembic|prisma)/[^/]+\.(sql|py|ts|js|rb|cs|go)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$' })
-  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "other migration tool ($($tool.Count) files, e.g. $($tool[0]))" })
+  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(db/)?(migrations?|migrate|flyway|alembic|prisma)/[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$' })
+  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
