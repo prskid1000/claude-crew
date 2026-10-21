@@ -141,8 +141,12 @@ function Get-CimInstance { [pscustomobject]@{ SystemCacheResidentBytes = 20GB } 
 function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 1; out = ''; err = 'Access is denied.'; timedOut = $false } }
 $fl = Invoke-KitCacheFlush 12 $m $n
 "fail:$($fl.level -eq 'WATCH' -and $fl.what -match 'exit 1: Access is denied')"
+Remove-Item (Join-Path (Get-KitPath cache) 'cache-flush.stamp'); function Invoke-KitExe($Exe, $A, $TimeoutSec) { [pscustomobject]@{ code = 0; out = ''; err = ''; timedOut = $false } }
+$global:polls = 0; function Get-SysMem { $global:polls++; [pscustomobject]@{ TotalGB = 64; AvailGB = 3 } }   # no gain: polls only within its budget
+$nb = Invoke-KitCacheFlush 12 $m $n 2
+"budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
 '@
-Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail')
+Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String

@@ -13,8 +13,8 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 board · L171 budget · L199 launch · L296 recover · L389 track · L651 supervise report · L692 anomalies
-  L761 supervise · L1109 report · L1187 bugbrief · L1288 cleanup · L1433 learn · L1542 decide · L1610 health · L1665 nudge
-  L1700 setup · L1764 guard-sendmessage · L1780 prepush · L1838 precommit
+  L779 supervise · L1128 report · L1206 bugbrief · L1307 cleanup · L1452 learn · L1561 decide · L1629 health · L1684 nudge
+  L1719 setup · L1783 guard-sendmessage · L1799 prepush · L1857 precommit
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -773,7 +773,7 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
     return [pscustomobject]@{ level = 'WATCH'; what = "file cache flush failed ($why)"; action = 'Check kit.local.json gate.cacheFlush; the gate keeps waiting for RAM.' }
   }
   $after = $Mem.AvailGB
-  for ($i = 0; $i -lt 5 -and $after -lt $Mem.AvailGB + 0.5; $i++) { Wait-KitPoll 2; $after = (Get-SysMem).AvailGB }   # a scheduled task flushes after its start returns
+  for ($i = 0; $i -lt [math]::Min(5, [int]($TimeoutSec / 2)) -and $after -lt $Mem.AvailGB + 0.5; $i++) { Wait-KitPoll 2; $after = (Get-SysMem).AvailGB }   # a scheduled task flushes after its start returns; within the sweep budget
   [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: file cache flush: available $([math]::Round($Mem.AvailGB, 1)) -> $([math]::Round($after, 1)) GB"; action = 'Nothing to do.' }
 }function Get-KitFinishedRuns { @(Get-ChildItem (Get-KitPath launches) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -notlike 'self-*' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object completed | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
