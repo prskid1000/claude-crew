@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-qa.tests.ps1: qa.ps1 finalize (result rule), seats, deployed, api, retest; browser.mjs.
+qa.tests.ps1: qa.ps1 finalize (result rule), seats, api, retest; browser.mjs.
 Usage: pwsh -NoProfile -File <kit>/tests/qa.tests.ps1 (or tests/kit-tests.ps1 -Area qa).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -78,32 +78,6 @@ foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long
 $null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $lrc = $LASTEXITCODE
 $rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue); Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
 Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
-# deploy detection: a squash-merged deploy MR counts
-$t = @'
-. $args[0]
-$ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
-foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
-function Canned($deployMrs) {
-  $script:memo = @{}; $p = 'g%2Fweb'
-  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=stg"] = [pscustomobject]@{ id = 'OLD' }
-  $memo["projects/$p/repository/commits/stg"] = [pscustomobject]@{ committed_date = '2026-01-02T08:00:00Z' }
-  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=main"] = [pscustomobject]@{ id = 'F' }
-  $memo["projects/$p/merge_requests/5/changes?access_raw_diffs=true"] = [pscustomobject]@{ changes = @([pscustomobject]@{ new_path = 'a.ts'; old_path = 'a.ts' }) }
-  $memo["projects/$p/repository/compare?from=stg&to=main&straight=true"] = [pscustomobject]@{ diffs = @([pscustomobject]@{ new_path = 'a.ts'; old_path = 'a.ts' }) }
-  $memo["projects/$p/merge_requests?state=merged&target_branch=stg&updated_after=2026-01-02T07:00:00Z&per_page=50"] = $deployMrs
-  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=S"] = [pscustomobject]@{ id = 'F' }
-  $memo["projects/$p/repository/merge_base?refs[]=L&refs[]=stg"] = [pscustomobject]@{ id = 'L' }
-  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=S0"] = [pscustomobject]@{ id = 'X' }
-  $p
-}
-$mr = [pscustomobject]@{ iid = 5; merged_at = '2026-01-02T07:00:00Z'; target_branch = 'main' }
-$p = Canned @([pscustomobject]@{ iid = 9; sha = 'S'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "squash:$(OnRef $p $mr 'F' 'stg')"
-$p = Canned @([pscustomobject]@{ iid = 8; sha = 'S0'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "other:$(-not (OnRef $p $mr 'F' 'stg'))"
-'@
-$f = Join-Path (Kd) 'deployed-test.ps1'; Set-Content $f $t
-$res = @(pwsh @np $f $Q 2>&1)
-Expect 'deployed: a squash-merged deploy MR counts as deployed' (@($res | Where-Object { "$_" -eq 'squash:True' }).Count -eq 1)
-Expect 'deployed: a deploy MR without the commit does not' (@($res | Where-Object { "$_" -eq 'other:True' }).Count -eq 1)
 # ---- review batch 2: qa.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
@@ -161,53 +135,28 @@ $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'ne
 (Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
 $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
 Expect 'bugPrefix: bug reused, renamed, stripped by retest; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (2)' -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
-# deployed: an unanswered git host is UNKNOWN, not NOT-DEPLOYED
-$t2 = @'
-. $args[0]
-function Invoke-HostApi { $null }
-$ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
-foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
-$script:memo = @{}
-$d = [pscustomobject]@{ target = 'stg'; branch = 'staging' }
-"down:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state)"
-$memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = 'abc' }
-"up:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state)"
-'@
-$f2 = Join-Path (Kd) 'deployed-null.ps1'; Set-Content $f2 $t2
-$res = @(pwsh @np $f2 $Q 2>&1)
-Expect 'deployed: no answer from the git host = UNKNOWN; an answer = NOT-DEPLOYED' ((@($res) -contains 'down:UNKNOWN') -and (@($res) -contains 'up:NOT-DEPLOYED'))
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/qa-kit/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the extra android-swarm
+$xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status printed); ui without its extra exits 2 naming it; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $wo -match 'no api URL')
-$gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
+Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deployed-checks' -and $xo[1] -match '(?s)^2 .*extra add annotate' -and $wo -match 'no api URL')
 $sv = "$(Kd)/s.cjs"; $P = 18000 + $PID % 1000
 Set-Content $sv @'
 require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
   if (u === '/login') return /R1/.test(b) ? j({ access_token: 'A2' }) : j({ access_token: 'A1', refresh_token: 'R1' }, 200, { 'set-cookie': ['sid=1', 'XSRF-TOKEN=x1'] })
   const ok = { '/l': h.authorization === 'Bearer A1', '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
-  u === '/v' ? j({ v: { sha: process.argv[3] } }) : j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
+  j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
-$srv = Start-Process node -ArgumentList $sv, $P, $s1 -PassThru -NoNewWindow; Start-Sleep 1
+$srv = Start-Process node -ArgumentList $sv, $P -PassThru -NoNewWindow; Start-Sleep 1
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 $xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
 Expect "api auth login + none; other kinds name their extra ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is an extra: run kittool\.py extra add api-auth')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
-Set-Content "$(Kd)/dp.ps1" @'
-. $args[0]; $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
-foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
-function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
-Invoke-Deployed -Mrs 'web!5' -Detail
-'@
-'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"vm","ssh":{"host":"h"}},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
-$res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
-Expect 'deployed: an ssh deploy without its extra is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+vm\s+deploys\[\] ssh is an extra: run kittool\.py extra add deployed-checks')
-Expect 'deployed: a laneApk deploy without the extra android-swarm is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+deploys\[\] laneApk is an extra: run kittool\.py extra add android-swarm')
-Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
+$srv.Kill()
 # browser.mjs: mocks, then local fixture servers
 $nm = "$src/skills/qa-kit/node_modules"; $qk = "$k/skills/qa-kit"
 if (Test-Path "$nm/puppeteer-core") {

@@ -1,18 +1,18 @@
 <#
 qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/qa-kit/qa.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
-  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env?
+  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env? (extra deployed-checks)
   api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
-  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]
+  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (extra annotate)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL; extra android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
-Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, api-auth,
-  qa-html-report, ios-simulator.
-Sections: L21 report · L92 seat · L160 deployed · L252 api · L371 finalize · L711 annotate · L745 retest
+Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
+  api-auth, qa-html-report, ios-simulator.
+Sections: L21 report · L92 seat · L160 api · L279 finalize · L619 retest
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -157,98 +157,6 @@ switch ($Action) {
   }
 }
 }
-# ---- deployed: is a merged MR live on a test env (CI deploy job, squash, laneApk; ssh / awsStack / probe / tag / manual: extra deployed-checks)
-function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets
-$ErrorActionPreference = 'SilentlyContinue'
-$group = $KitConf.GitlabGroup
-$repos = @(Get-KitValue 'repos' @())
-function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x } }
-function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
-# memoised: supervise asks per round
-$memo = @{}
-function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
-function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
-# squash / cherry-pick: live if no file differs from $ref
-function ContentOn($p, $mr, $sha, $ref) {
-  # cheap guard: a ref older than the merge
-  $head = Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))"
-  if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
-  if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
-  $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
-  if (-not $files.Count) { return $false }
-  $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
-  if (-not $cmp) { return $false }
-  -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
-}
-# squash-merged deploy MR: live if one merged into $branch after a source head held the commit
-function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
-  if (-not $branch -or -not $mr.merged_at) { return $false }
-  $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
-    $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1
-    if ($land -and $dm.sha -and (IsAncestor $p $sha $dm.sha) -and (IsAncestor $p $land $ref)) { return $true }
-  }
-  $false
-}
-# NOT-DEPLOYED only if the host answers, else UNKNOWN
-function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
-function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
-# $null if checkout or commit missing
-function LocalAncestor($dir, $sha, $commit) {
-  if (-not $dir -or -not (Test-Path $dir)) { return $null }
-  git -C $dir cat-file -e "$commit^{commit}" 2>$null; if ($LASTEXITCODE) { return $null }
-  git -C $dir merge-base --is-ancestor $sha $commit 2>$null
-  $LASTEXITCODE -eq 0
-}
-# pwsh -File keeps the quotes: strip, split
-$out = foreach ($m in @(Split-KitList $Mrs)) {
-  if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
-  $r = Repo $Matches.repo; $iid = $Matches.iid
-  if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
-  $p = [uri]::EscapeDataString($(if ($group) { "$group/$($r.name)" } else { $r.name })); $ref = "$($r.name)!$iid"
-  $mr = Api "projects/$p/merge_requests/$iid"
-  if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
-  if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
-  # fast-forward: the MR head sha landed
-  $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
-  if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
-  $s8 = $sha.Substring(0, [math]::Min(8, $sha.Length))
-  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
-  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
-  foreach ($d in $deps) {
-    if ($d.laneApk) {   # app repo: the lane APK's commit
-      if ($ext = Get-Command Test-LaneApkDeployed -ErrorAction SilentlyContinue) { & $ext $d }
-      else { Row $d 'UNKNOWN' 'deploys[] laneApk is an extra: run kittool.py extra add android-swarm' }
-      continue
-    }
-    if ($d.ssh -or $d.awsStack -or $d.probe -or $d.tag -or $d.manual) {
-      if ($ext = Get-Command Test-DeployedExtra -ErrorAction SilentlyContinue) { & $ext $d }
-      else { Row $d 'UNKNOWN' "deploys[] $(@('ssh', 'awsStack', 'probe', 'tag', 'manual' | Where-Object { $d.$_ })[0]) is an extra: run kittool.py extra add deployed-checks" }
-      continue
-    }
-    if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
-    $hit = $null
-    # a pipeline older than the merge cannot hold it
-    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
-      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
-      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
-    }
-    if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
-    else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
-  }
-}
-$row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
-if ($Json) { $out | ConvertTo-Json -Depth 3 }
-elseif ($Detail) { $out | ForEach-Object $row }
-else {
-  $live = @($out | Where-Object state -eq 'DEPLOYED')
-  "deployed: $($live.Count)/$(@($out).Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
-  $out | Where-Object state -ne 'DEPLOYED' | ForEach-Object $row
-}
-exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
-}
-
 # ---- api: call a target's API as a test user (targets.local.json); -Save = redacted request/response evidence
 function Invoke-Api {
 param(
@@ -708,40 +616,6 @@ if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
 $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
 }
 
-# ---- annotate: -Rect 'x,y,w,h[,label]' boxes on a PNG/JPEG (Windows only); image px (web: CSS px x DPR)
-function Invoke-Annotate {
-param([Parameter(Mandatory)][string]$In, [string]$Out, [string[]]$Rect = @(), [switch]$Copy)
-$ErrorActionPreference = 'Stop'
-if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'annotate needs Windows (System.Drawing): elsewhere mark() before shot(), or name the element in the check note' }
-$Rect = @(Split-KitList $Rect ';')   # one box each, its commas stay
-Add-Type -AssemblyName System.Drawing
-$src = (Resolve-Path $In).Path
-if (-not $Out -and $Copy) { $Out = Join-Path (Split-Path $src) ("{0}-marked{1}" -f [IO.Path]::GetFileNameWithoutExtension($src), [IO.Path]::GetExtension($src)) }
-if (-not $Out) { $Out = $src }
-$ms = New-Object IO.MemoryStream(, [IO.File]::ReadAllBytes($src))   # read fully: the file may be overwritten
-$img0 = [Drawing.Image]::FromStream($ms)
-$bmp = New-Object Drawing.Bitmap $img0.Width, $img0.Height
-$g = [Drawing.Graphics]::FromImage($bmp)
-$g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
-$g.DrawImage($img0, 0, 0, $img0.Width, $img0.Height)
-$k = [math]::Max(1, $img0.Width / 1300)   # sizes grow with the image
-$red = [Drawing.Color]::FromArgb(230, 220, 38, 38)
-$pen = New-Object Drawing.Pen $red, (4 * $k)
-$font = New-Object Drawing.Font ([Drawing.FontFamily]::GenericSansSerif), ([float](15 * $k)), ([Drawing.FontStyle]::Bold)
-foreach ($r in $Rect) {
-  $p = $r -split ',', 5; $x = [float]$p[0]; $y = [float]$p[1]; $w = [float]$p[2]; $h = [float]$p[3]
-  $g.DrawRectangle($pen, $x, $y, $w, $h)
-  if ($p.Count -ge 5 -and $p[4]) {   # label above the box, else below; kept inside the image
-    $sz = $g.MeasureString($p[4], $font)
-    $lx = [math]::Max(0, [math]::Min($x, $bmp.Width - $sz.Width - 2)); $ly = if ($y - 30 * $k -ge 0) { $y - 30 * $k } else { [math]::Min($y + $h + 4 * $k, $bmp.Height - $sz.Height - 2) }
-    $g.FillRectangle((New-Object Drawing.SolidBrush $red), $lx, $ly, $sz.Width + 8 * $k, $sz.Height + 2 * $k)
-    $g.DrawString($p[4], $font, [Drawing.Brushes]::White, $lx + 4 * $k, $ly + $k)
-  }
-}
-$g.Dispose(); $img0.Dispose(); $ms.Dispose()
-$bmp.Save($Out, $(if ($Out -match '\.jpe?g$') { [Drawing.Imaging.ImageFormat]::Jpeg } else { [Drawing.Imaging.ImageFormat]::Png })); $bmp.Dispose()
-"annotated $Out ($(@($Rect).Count) rect)"
-}
 # ---- retest: add a RETEST item for a fixed task whose fix went live (same -Code replaces it)
 function Invoke-Retest {
 param(
@@ -785,10 +659,13 @@ $r | ConvertTo-Json -Depth 8 | Set-Content "$RunDir/run.json" -Encoding utf8
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions only
   switch ($__verb) {
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
-    'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
     'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1: Invoke-KitVerb
-    'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }
+    { $_ -in 'deployed', 'annotate' } {   # extras deployed-checks, annotate (adapters/)
+      $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate' }[$__verb]
+      if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }
+      else { [Console]::Error.WriteLine("qa.ps1 $__verb is an extra: run kittool.py extra add $(@{ deployed = 'deployed-checks'; annotate = 'annotate' }[$__verb])"); exit 2 }
+    }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' {   # phone lanes: extra android-swarm (adapters/ui_android.ps1)
       if (Get-Command Invoke-Ui -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Ui $__rest }

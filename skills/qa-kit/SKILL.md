@@ -15,7 +15,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `orch.ps1 learn -Read -Skill qa-kit` |
-| `qa.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the extras: `deployed-checks`, `api-auth`, `qa-html-report`, `ios-simulator`) |
+| `qa.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the extras: `deployed-checks`, `annotate`, `api-auth`, `qa-html-report`, `ios-simulator`) |
 | `<kit>/skills/dev-kit/dev.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `localenv.ps1 status -Env`, extra `local-env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
@@ -36,7 +36,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
    app `qa.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
-   `qa.ps1 annotate`).
+   `qa.ps1 annotate`: extra `annotate`).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
