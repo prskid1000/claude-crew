@@ -24,7 +24,8 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
-      if ((Test-Path $lock) -and ((Get-Date) - (Get-Item $lock).LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }   # a live holder keeps it open: the remove fails
+      $li = Get-Item -LiteralPath $lock -ErrorAction SilentlyContinue   # one call: the holder may remove it in between
+      if ($li -and ((Get-Date) - $li.LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }   # a live holder keeps it open: the remove fails
       Start-Sleep -Milliseconds 100
     }
   }
@@ -165,6 +166,12 @@ function Get-FreeGB { (Get-SysMem).FreeGB }
 function Get-KitKeepFreeGB {
   if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
   [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
+}
+# the system file cache stays resident until something needs RAM, which a gate never allows: half of it counts (dev.ps1 gate, local env)
+function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
+# a start that waited 20 min goes when it still leaves a hard floor (5% of RAM, at least 3 GB)
+function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
+  $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
 }
 # one process snapshot (working set, children, name per pid) for many Get-KitTreeGB calls
 function Get-KitProcSnap {

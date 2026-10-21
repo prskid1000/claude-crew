@@ -515,12 +515,6 @@ function Get-Queue {
   @($q | Sort-Object @{ e = { [int]$recent[$_.owner] } }, @{ e = { [datetime]$_.since } })
 }
 
-# Windows keeps the system file cache resident until something needs RAM, which the gate never allows: half of it counts
-function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
-# the head of the queue starts after 20 min when the build still leaves a hard floor (5% of RAM, at least 3 GB)
-function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
-  $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))
-}
 function Get-State {
   $Snap = Get-KitProcSnap
 
@@ -842,11 +836,13 @@ if ($SelfTest) {
   $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'
   $cases = @(
   @('P', 'git stash', $true),
-  @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $true),
-  @('P', '$s = $(git stash list); $s', $true),
+  @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
+  @('P', 'git stash push -m x', $true),
+  @('P', '$s = $(git stash list); $s', $false),
   @('P', 'pwsh -NoProfile -Command "git stash"', $true),
   @('B', 'cd repo && git -C x stash pop', $true),
-  @('B', 'FOO=1 git --no-pager stash show', $true),
+  @('B', 'FOO=1 git --no-pager stash show', $false),
+  @('B', 'git -C x stash push -m x', $true),
   @('B', "bash -c 'git stash'", $true),
   @('P', 'git commit -m "fix: never git stash here"', $false),
   @('P', "`$m = @'`nnever run git stash`n'@`ngit commit -m `$m", $false),
@@ -876,7 +872,7 @@ if ($SelfTest) {
   @('B', 'cd /d/x/{RT} && rm -rf work', $true, $rp),
   @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
   @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
-  @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $true),
+  @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $false),
   @('B', 'git push origin +HEAD:main', $true, 'force-push'),
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
   @('B', 'git push origin HEAD:main', $false, 'force-push'),
@@ -962,7 +958,7 @@ function StashArgs($words) {
     $w = [string]$words[$i]
     if ($w -in '-C', '-c', '--git-dir', '--work-tree', '--namespace') { $i++; continue }
     if ($w -like '-*') { continue }
-    return $w -eq 'stash'
+    return $w -eq 'stash' -and [string]$words[$i + 1] -notin 'list', 'show'   # read-only verbs
   }
   $false
 }
@@ -992,7 +988,7 @@ function Test-GitStash([string]$text, [string]$tool, [int]$depth = 0) {
     if (Test-GitStash $inner $(if ($m.Value -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }) ($depth + 1)) { return $true }
   }
   $t = [regex]::Replace((StripData $text), '(?m)(^|\s)#.*$', '$1')
-  $t -match '(?m)(^|[;&|({`\n]|\$\()\s*(\w+=\S*\s+)*(\S*[\\/])?git(\.exe)?\s+((-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*stash\b'
+  $t -match '(?m)(^|[;&|({`\n]|\$\()\s*(\w+=\S*\s+)*(\S*[\\/])?git(\.exe)?\s+((-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*stash\b(?!\s+(list|show)\b)'
 }
 # work/ holds in-flight runs
 function ActiveWork {

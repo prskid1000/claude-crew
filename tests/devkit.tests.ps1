@@ -67,6 +67,9 @@ $res = Invoke-PsTest 'tracker-test' $tb @(Join-Path $k 'skills/dev-kit/lib.ps1')
 Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'command'
 $kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
+# a stale lock that vanishes between the check and the read (Test-Path stub removes it) must not throw
+$kl = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
+Expect "Invoke-KitLocked: a lock removed mid-check is no crash ($kl)" ("$kl".Trim() -eq 'ran')
 # a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr
 $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
   $e = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
@@ -135,13 +138,12 @@ $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Re
 Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 # gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor
 $gt = @'
-$ast = [Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$null)
-foreach ($n in 'Get-GateAvailGB', 'Test-GateStart') { . ([scriptblock]::Create(($ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq $n }, $true) | Select-Object -First 1).Extent.Text)) }
+. $args[0]
 "cache:$((Get-GateAvailGB ([pscustomobject]@{ AvailGB = 13.6; CacheGB = 21 })) -eq 24.1)"
 "keep:$((Test-GateStart 11 10 0 64) -and -not (Test-GateStart 9 10 5 64))"
 "starved:$((Test-GateStart 4 10 25 64) -and -not (Test-GateStart 2 10 25 64))"
 '@
-Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'starved'
+Expect-Each (Invoke-PsTest 'gate-test' $gt @(Join-Path $k 'skills/dev-kit/lib.ps1')) 'gate: #' 'cache', 'keep', 'starved'
 # guard: a non-JSON payload denies (logged); empty stdin allows
 $gbad = '{not json' | Px $D guard | Out-String
 $gnone = '' | Px $D guard | Out-String
