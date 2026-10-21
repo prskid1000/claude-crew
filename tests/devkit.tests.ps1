@@ -121,7 +121,7 @@ $sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out
 $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
-Expect 'gate: gradle gets the heap cap' ($out -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
+Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 # gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor
 $gt = @'
 $ast = [Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$null)

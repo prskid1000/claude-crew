@@ -409,14 +409,8 @@ param(
   [double]$NeedGB = 0,
   [int]$MaxParallel = 0
 )
-# heap caps replace inherited -Xmx
-$HeapMinGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
 $keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
 if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
-$StartGB = @{ gradle = [double](Get-KitSetting 'gate.startHeapGB.gradle' 12); maven = [double](Get-KitSetting 'gate.startHeapGB.maven' 8); node = [double](Get-KitSetting 'gate.startHeapGB.node' 4) }
-$mavenKeep = ([string]$env:MAVEN_OPTS -replace '-Xm[xs]\S+|-XX:\+Use\w+GC|-XX:MaxMetaspaceSize=\S+', '' -replace '\s+', ' ').Trim()
-$nodeKeep = ([string]$env:NODE_OPTIONS -replace '--max-old-space-size=\d+', '' -replace '\s+', ' ').Trim()
-if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = '-Dorg.gradle.workers.max=4' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 $Kinds = [ordered]@{
@@ -484,7 +478,7 @@ if ($top) {
 $histKey = "$kind|$project"
 $hist = Read-History
 $samples = @($hist[$histKey] | Where-Object { $_ })
-$peaks = @($samples | ForEach-Object { [double]$_.gb }); $peakMax = ($peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
+$peaks = @($samples | ForEach-Object { [double]$_.gb })
 $secs = @($samples | ForEach-Object { [double]$_.sec } | Sort-Object)
 # small builds may backfill past a starving head
 function Get-MedianSec([double[]]$Secs) { $s = @($Secs | Sort-Object); if ($s.Count -lt 2) { return -1 }; $s[[int][math]::Floor($s.Count / 2)] }
@@ -498,28 +492,9 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
 }
 $need = if ($NeedGB -gt 0) { $NeedGB } else { Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB }
 
-$jvmKind = $kind -like 'maven*'
-$nodeKind = $kind -in @('ng-test', 'web-build', 'js-test', 'tsc-lint', 'rn-bundle', 'e2e')
-$gradleKind = $kind -in @('android-build', 'android-test', 'gradle')
-$heap = 0
-if ($jvmKind -or $nodeKind -or $gradleKind) {
-  # G1 free-ratios let the learned peak fall
-  $startHeap = if ($gradleKind) { $StartGB.gradle } elseif ($jvmKind) { $StartGB.maven } else { $StartGB.node }   # not $startGB: same variable
-  $maxGB = [math]::Max($startHeap, 8)
-  $heap = if ($peaks.Count -ge 2) { [int][math]::Ceiling($peakMax * 1.25) } else { $startHeap }
-  $heap = [math]::Min($maxGB, [math]::Max($HeapMinGB, $heap))
-  if ($NeedGB -le 0 -and $peaks.Count -lt 2) { $need = [math]::Max($need, $heap + 0.5) }   # no history: the heap can fill up
-}
-# $Cmd is a parameter (no script scope): returned
-function Set-HeapEnv([int]$gb, [string]$c) {
-  if ($jvmKind) { $env:MAVEN_OPTS = "$mavenKeep -Xmx${gb}g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000".Trim() }
-  if ($nodeKind) { $env:NODE_OPTIONS = "$nodeKeep --max-old-space-size=$($gb * 1024)".Trim() }
-  if ($gradleKind -and $c -notmatch 'org\.gradle\.jvmargs') {
-    # a -D overrides org.gradle.jvmargs
-    $c = ([regex]'(gradlew(\.bat)?|\bgradle)(?=\s|$)').Replace($c, "`$1 `"-Dorg.gradle.jvmargs=-Xmx${gb}g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30 -XX:G1PeriodicGCInterval=30000 -Dfile.encoding=UTF-8`"", 1)
-  }
-  $c
-}
+# heap caps (extra build-heap): a JVM / Node build gets a cap from its learned peak; under memory pressure the cap shrinks to its floor
+$heap = 0; $heapFloor = 0; $heapTool = $null
+if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & $hp $kind $peaks $NeedGB $need)) { $heap = $h.heap; $heapFloor = $h.floor; $need = $h.need; $heapTool = $h.tool }
 
 function Get-OwnerName([string]$Leaf, [string]$Repo) {
   if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { return $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) }
@@ -528,8 +503,6 @@ function Get-OwnerName([string]$Leaf, [string]$Repo) {
 $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf }
 $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
 $heapBase = $heap
-# a smaller heap thrashes in GC
-$heapFloor = if ($heap -gt 0 -and $peaks.Count -ge 2) { [math]::Min($heapBase, [math]::Max($HeapMinGB, [int][math]::Ceiling($peakMax * 1.1))) } else { $HeapMinGB }
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $startsFile = Join-Path $ledger 'starts.jsonl'
 $myTicket = Join-Path $queueDir "$PID.json"
@@ -626,7 +599,7 @@ while ((Get-Date) -lt $deadline) {
       }
     }
     if ((Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
-      if ($heap -gt 0) { $Cmd = Set-HeapEnv $heap $Cmd }
+      if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
