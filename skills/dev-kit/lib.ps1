@@ -540,14 +540,6 @@ function Get-KitExtraLine([string]$Kind, [string]$Name) {
   $extra = if ($script:KitExtraOf["$Kind/$Name"]) { $script:KitExtraOf["$Kind/$Name"] } else { "$Kind-$Name" }
   "$Kind $Name is an extra: run kittool.py extra add $extra"
 }
-# health / setup: one line per configured adapter that is not installed
-function Get-KitMissingExtras {
-  $need = @(, @('tracker', $KitConf.TrackerType)) + @(, @('git-host', $script:HostType)) + @(foreach ($r in @(Get-KitValue 'repos' @())) { , @('ci', (Get-KitCiType $r.name)) })
-  $lines = @(foreach ($n in $need) { if ($n[1] -and -not $KitAdapters[$n[0]][$n[1]]) { Get-KitExtraLine $n[0] $n[1] } })
-  $report = $KitConf.ReportType
-  if ($report -notin 'gdocs', 'markdown', 'html', 'command' -and -not (Test-Path (Join-Path $PSScriptRoot "adapters/report_$report.py"))) { $lines += "reports.type $report is an extra: run kittool.py extra add report-$report" }
-  @($lines | Select-Object -Unique)
-}
 
 # ===== 4. tracker adapter (a Register-KitAdapter block per tracker.type) =====
 
