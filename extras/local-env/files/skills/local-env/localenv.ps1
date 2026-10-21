@@ -8,7 +8,7 @@ In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; sta
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L18 config · L46 sandbox · L174 state · L211 leases · L233 code · L265 mig · L412 hooks · L521 processes · L651 daemon/train · L1069 verbs
+Sections: L18 config · L46 sandbox · L174 state · L211 leases · L233 code · L265 mig · L412 hooks · L521 processes · L674 daemon/train · L1092 verbs
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
@@ -519,6 +519,29 @@ function Remove-Sandbox([string]$e, [string]$key) {
 }
 
 # ---- processes
+# CPU load and port owners (only the local env uses them)
+function Get-SysCpu {
+  if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
+  if (Test-Path /proc/stat) {
+    $read = { $f = ((Get-Content /proc/stat -TotalCount 1) -split '\s+' | Select-Object -Skip 1 | Where-Object { $_ } | ForEach-Object { [double]$_ }); @{ idle = $f[3] + $f[4]; all = ($f | Measure-Object -Sum).Sum } }
+    $a = & $read; Start-Sleep -Milliseconds 500; $b = & $read
+    $d = $b.all - $a.all; if ($d -le 0) { return 0 }
+    return [math]::Round(100 * (1 - ($b.idle - $a.idle) / $d), 0)
+  }
+  $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
+  [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
+}
+function Get-PortPids([int]$Port) {
+  if ($KitIsWindows) { return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ea 0 | Select-Object -ExpandProperty OwningProcess -Unique) }
+  if (Resolve-Tool lsof) { return @(lsof -t -nP -iTCP:$Port -sTCP:LISTEN 2>$null | ForEach-Object { [int]$_ } | Select-Object -Unique) }
+  if (Resolve-Tool fuser) { return @(("$(fuser -n tcp $Port 2>$null)" -split '\s+') | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
+  @()
+}
+function Test-PortListening([int]$Port) {
+  if ($KitIsWindows) { return @(Get-PortPids $Port).Count -gt 0 }
+  $t = [Net.Sockets.TcpClient]::new()
+  try { $t.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $t.Connected } catch { $false } finally { $t.Dispose() }
+}
 function TreeIds([int]$root, $all) {
   if (-not $all) { $all = Get-SysProcs -NoCommandLine }
   $ids = [Collections.Generic.List[int]]::new(); $ids.Add($root); $i = 0
