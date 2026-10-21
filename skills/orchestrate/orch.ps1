@@ -20,9 +20,9 @@ $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
 # a broken adapter must not take every verb (and the hooks) down with it
 foreach ($adapter in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue)) { try { . $adapter.FullName } catch { [Console]::Error.WriteLine("adapter $($adapter.Name): $_") } }
-# a feature moved to the extras branch: one clear line instead of a crash
+# a feature moved to the extras branch: its function when installed, else one clear line instead of a crash
 function Assert-KitExtra([string]$Function, [string]$Feature, [string]$Extra) {
-  if (Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue) { return }
+  $fn = Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue; if ($fn) { return $fn }
   "$Feature is an extra: run kittool.py extra add $Extra"; exit 1
 }
 
@@ -491,7 +491,7 @@ function MrState0($ref) {
   $m.state
 }
 switch ($Action) {
-  'rebuild' { Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; Invoke-TrackRebuild }
+  'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch
   'add' {
     $given = $Task; $Task = NormTask $Task
     $refs = @(@($Mrs -split '\s*,\s*') | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
@@ -1724,7 +1724,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @())
-  if ($Action -eq 'merge') { Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploy-merge'; Invoke-DeployMerge -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
+  if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploy-merge'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task; return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create
@@ -2072,7 +2072,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
   if ($__verb -in '-h', '--help', 'help', '-?') { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
   switch ($__verb) {
     'board' {
-      if ($__rest[0] -in 'dispute', 'disputes') { Assert-KitExtra Invoke-BoardDispute 'board dispute' 'board-disputes'; Invoke-KitVerb Invoke-BoardDispute $__rest }
+      if ($__rest[0] -in 'dispute', 'disputes') { $null = Assert-KitExtra Invoke-BoardDispute 'board dispute' 'board-disputes'; Invoke-KitVerb Invoke-BoardDispute $__rest }
       else { Invoke-KitVerb Invoke-Board $__rest }
     }
     'learn' { Invoke-KitVerb Invoke-Learn $__rest }
