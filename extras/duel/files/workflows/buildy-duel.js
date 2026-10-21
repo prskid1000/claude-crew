@@ -279,7 +279,7 @@ const DUEL_SCHEMA = { type: 'object', properties: { approach: { type: 'string' }
  branch: { type: 'string' }, goalsDoc: { type: 'string' }, localTest: { type: 'string', enum: ['PASS', 'FAIL', 'NONE'] } }, required: ['approach', 'summary', 'evidence', 'worktrees', 'branch', 'localTest'] }
 const TURN_SCHEMA = { type: 'object', properties: { points: { type: 'array', items: { type: 'object', properties: { claim: { type: 'string' }, evidence: { type: 'string' } }, required: ['claim', 'evidence'] } },
  concede: { type: 'array', items: { type: 'string' } }, rest: { type: 'boolean', description: 'true = nothing new to add' } }, required: ['points', 'concede', 'rest'] }
-const PLAN_SCHEMA = { type: 'object', properties: { record: { type: 'string', description: 'the debate record (templates.md "Debate record"), markdown' },
+const PLAN_SCHEMA = { type: 'object', properties: { record: { type: 'string', description: 'the debate record (templates-debate.md), markdown' },
  unsupported: { type: 'array', items: { type: 'string' } }, recommend: { type: 'string', enum: ['A', 'B', 'none'] } }, required: ['record', 'unsupported', 'recommend'] }
 let AGENTS = A.agents
 let duel = null
@@ -300,7 +300,7 @@ Return approach, summary, evidence, worktrees, branch, goalsDoc and localTest.`,
  const poc = (i) => `POC ${side(i)} (devy ${A.agents[i].id}, ${pocs[i].approach}): ${pocs[i].summary}\n  evidence: ${pocs[i].evidence.join('; ')}\n  local test: ${pocs[i].localTest}, worktrees ${pocs[i].worktrees.join(', ')}`
  const both = `QUESTION: ${D.question}\n${poc(0)}\n${poc(1)}`
  const table = await agent(`Kind plan: compare two POCs of one question on the same criteria table (correctness, risk, size, performance, fit),
-each cell a fact with its evidence; read both worktrees and goals docs. Change nothing.${PATHS}\n${both}\nReturn the table as the record (templates.md "Debate record", table only), unsupported claims and your recommend.`,
+each cell a fact with its evidence; read both worktrees and goals docs. Change nothing.${PATHS}\n${both}\nReturn the table as the record (templates-debate.md, table only), unsupported claims and your recommend.`,
   { label: 'duel-compare', phase: 'Duel', schema: PLAN_SCHEMA, agentType: 'revy', ...pick('review') })
  const transcript = []
  for (let r = 1; r <= ROUNDS; r++) {
@@ -322,7 +322,7 @@ rest=true when you have nothing new.`, { label: `debate:${me.id}`, phase: 'Duel'
   if (rested === 2) break
  }
  const mod = await agent(`Kind plan (moderator): fact-check every claim of this debate against the evidence (read the worktrees, runs, numbers) and
-write the debate record (templates.md "Debate record": the table, agreed facts, open disagreements with each side's evidence, each
+write the debate record (templates-debate.md: the table, agreed facts, open disagreements with each side's evidence, each
 side's final pitch from its last turn, your fact-check notes). Change nothing.${PATHS}\n${both}\nTable:\n${table ? table.record : '(none)'}\nDebate:\n${transcript.join('\n')}`,
   { label: 'duel-moderate', phase: 'Duel', schema: PLAN_SCHEMA, agentType: 'revy', ...pick('review') })
  const file = `${rp('duels')}/${RUN.replace(/[^\w.-]/g, '_')}.md`
