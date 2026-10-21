@@ -1674,10 +1674,16 @@ def extras_needed(kit):
         need += [(name, f'{x} OS') for x in re.findall(r'`(\w+)`\s+OS\b', rule) if x == OS_NAME]
     return sorted(set(need))
 
+REPO_FILES = {}   # checkout -> its tracked paths: one git ls-files per repo and run, however many globs ask
+
 def repo_tracks(cfg, pattern):
     """A configured repo (kit.local.json repos[].checkout) tracks a file named like the glob, at any depth."""
-    return any(isinstance(c, str) and osp.isdir(c) and git(c, 'ls-files', '--', f':(glob)**/{pattern}', timeout=20)[1].strip()
-               for c in config_values(cfg, 'repos.*.checkout'))
+    for c in config_values(cfg, 'repos.*.checkout'):
+        if isinstance(c, str) and c not in REPO_FILES:
+            REPO_FILES[c] = git(c, 'ls-files', timeout=30)[1].split('\n') if osp.isdir(c) else []
+        if isinstance(c, str) and any(fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f, '*/' + pattern) for f in REPO_FILES[c]):
+            return True
+    return False
 
 def stale_extras(kit, installed):
     """Installed extras whose files differ from the fetched extras branch (git blob ids: bytes as stored)."""
@@ -1812,7 +1818,7 @@ def cmd_extra(a):
     if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
         git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
     if verb in ('sync', 'add', 'remove'):   # one writer at a time: the post-merge hook's background sync races a manual one
-        with locked(exclude_path(kit) or osp.join(kit, '.git-extras')):
+        with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
             return extra_write(kit, verb, names)
     if verb == 'test':
         return extra_test(kit, names or sorted(installed))

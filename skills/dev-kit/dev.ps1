@@ -777,6 +777,7 @@ foreach ($s in $steps) {
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
   $ran++
+  if ($rc -and $s -eq 'typecheck' -and $cmd -match '\btsc\b' -and -not $tc) { Write-Host '[check] errors outside your changes fail here: the baseline split is an extra: run kittool.py extra add ts-typecheck' }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
   }
   if (-not $Show) { Write-Host "[check] $s $(if ($unrun) { 'UNRUN (not a pass: see above)' } else { 'ok' })" }
