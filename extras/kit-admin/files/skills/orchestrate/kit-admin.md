@@ -30,7 +30,7 @@ feature goes to the `extras` branch, not the core.
 - **Script** [SCRIPT-HEADER, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN]: one entry file per area with verbs; header with usage and
   `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`; a
   failed call is UNKNOWN, never a state; paths via `Get-KitPath` / `kit_path` / `kitPath` / `rp()`; bounded network calls; no
-  desktop opens without `--open` / `-Open` (templates.md "Script header").
+  desktop opens without `--open` / `-Open` ("Script header" below).
 - **Skill** [SKILL-DESC, SKILL-BLOCK, FILES-*]: `description: "Load when: ... Not when: ... -> <sibling>."`; blocks Load when,
   Not when, Hands off to, Files (each file with its step), steps, Rules, Learn.
 - **Agent** [AGENT-SPAWN, AGENT-SKILL]: description with "Spawned by", "Precondition", "Not for"; `tools` only without MCP needs;
@@ -98,4 +98,31 @@ paths: ["**/liquibase/**", "**/db/migration/**", "**/Migrations/**", "**/migrati
   `dev.ps1 check -Step migrations` = ISSUES 0 before every push.
 - Flyway `V<range>__desc.sql` · Alembic: re-point `down_revision` after a rebase (one head) · EF Core / Prisma / Django: regenerate
   on top of the latest after a rebase, never a merge migration.
+```
+
+## Script header (every kit script; kit-lint SCRIPT-HEADER)
+```powershell
+<#
+<file>: <purpose, one line>. Run from pwsh 7:
+  & <kit>/skills/<skill>/<file> <verb> [args]
+Verbs: <verb> <params> — <what>
+Inputs: <config keys, files, env>. Outputs: <text / JSON with -Json / files>.
+Exit codes: 0 ok · 1 problem found · 2 usage error.
+#>
+```
+Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`. No silent failures: a failed call is
+UNKNOWN, never a state. Idempotent where possible. `learn` signals for surprises.
+
+## Audit report
+Saved to `<runtime>/logs/kitty-audits/audit-<date>.md` (kitty step 9).
+```markdown
+# Kit audit <date> (<commit>, branch kit/audit-<date>)
+## Result
+- <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · content <n>/<cap> · plumbing <n>/<cap> · tokens <n>
+## ASK
+- `<file> <key>`: <why> (never values)
+## Findings
+| # | Severity | Where | Problem (evidence) | Status |
+|---|---|---|---|---|
+## Improvements · kit.local.json additions · Next audit
 ```
