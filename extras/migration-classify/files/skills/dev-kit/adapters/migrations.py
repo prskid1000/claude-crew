@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 #   why, guarded, creates, refs, x (tool vars) ], reasons, tools }. plan -> { revert (newest first), kept, blocked, commands, hook (count
 #   left to db.rollback) }; --out: revert.json, files/, localenv-revert.xml. Rules: DEFAULT_RULES ("rules" replaces, "extraRules" first;
 #   first match decides); SQL lists per "dialect". Parsers: Liquibase, MIG_TOOLS, config "parsers" [ { match, parser | cmd } ].
-# Sections: L76 config · L115 parse · L373 rules · L440 classify · L552 plan · L640 cli · L673 selftest · L978 entry
+# Sections: L76 config · L114 parse · L372 rules · L438 classify · L549 plan · L637 cli · L670 selftest · L974 entry
 KNOWN = {'createTable', 'dropTable', 'addColumn', 'dropColumn', 'renameColumn', 'renameTable', 'modifyDataType', 'createIndex',
   'dropIndex', 'addForeignKeyConstraint', 'dropForeignKeyConstraint', 'addUniqueConstraint', 'dropUniqueConstraint',
   'addPrimaryKey', 'dropPrimaryKey', 'addNotNullConstraint', 'dropNotNullConstraint', 'addDefaultValue', 'dropDefaultValue',
@@ -111,8 +111,8 @@ def split_names(v):
     return [x.strip().strip('`"').lower() for x in (v or '').split(',') if x.strip()]
 
 
-# --- normalized changes
 # ---- parse: changeSets from Liquibase XML / YAML / SQL and other tools
+# --- normalized changes
 def change_from(t, attrs, cols, where, text):
     """t: change type; attrs: dict; cols: column names; where: WHERE text or None; text: SQL body."""
     tbl = (attrs.get('tableName') or attrs.get('baseTableName') or attrs.get('viewName') or '').strip('`"').lower()
@@ -369,7 +369,6 @@ def run_parser(name, path, text):
         return None, f'{name} parse failed: {str(ex)[:160]}', 'unparsed'
 
 
-# --- rules
 # ---- rules: the LIGHT / HEAVY judgement
 def setting(v, cfg):
     return cfg.get(v[1:]) if isinstance(v, str) and v.startswith('@') else v
@@ -436,7 +435,6 @@ def judge(cs, created, cfg):
     return 'light', '', ''
 
 
-# --- classify
 # ---- classify: the classify verb
 def logical(path, cfg):
     return re.sub(cfg['logicalRoot'], '', path)
@@ -548,7 +546,6 @@ def classify(a, cfg):
     return res
 
 
-# --- plan
 # ---- plan: the exact revert plan
 def key(c):
     return f"{c['file']}::{c['id']}::{c['author']}"
@@ -670,8 +667,7 @@ def mig_result(argv):
 
 
 
-# ---- selftest: temp-repo cases (python -X utf8 devtools.py migrations selftest)
-# --- selftest (git, temp repos): python -X utf8 devtools.py migrations selftest; exit 0 = all pass
+# ---- selftest: git temp repos (python -X utf8 devtools.py migrations selftest; exit 0 = all pass)
 SELFTEST = r'''import json, os, shutil, subprocess, sys, tempfile, unittest
 
 SCRIPT = os.path.abspath(__file__)

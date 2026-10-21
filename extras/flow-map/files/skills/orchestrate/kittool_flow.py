@@ -4,7 +4,7 @@
   python -X utf8 skills/orchestrate/kittool.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kittool.py extra add flow-map`; kittool.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L16 rules · L72 parts · L157 control · L330 parse · L590 link · L819 cycles · L895 pack · L1022 page · L1336 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L590 link · L819 cycles · L895 pack · L1022 page · L1336 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -13,8 +13,8 @@ from collections import defaultdict, deque
 
 ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 
-# ---- rules: patterns for refs, control flow, loops, outcomes
 # ==== the flow model
+# ---- rules: patterns for refs, control flow, loops, outcomes
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
 VER = 10
