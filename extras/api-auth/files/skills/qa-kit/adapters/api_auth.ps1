@@ -48,12 +48,12 @@ $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
 # cache: token (cookie type: Cookie header) + refresh token
 function Login([switch]$Refresh) {
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
-  if ($Refresh) { $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt } + $(if ($b.client_id) { @{ client_id = $b.client_id } } else { @{} }) }
+  if ($Refresh) { $cid = $b.client_id; $b = [ordered]@{ grant_type = 'refresh_token'; refresh_token = $script:rt }; if ($cid) { $b.client_id = $cid } }   # ordered + hashtable throws: the refresh never ran
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
   $form = $a.contentType -eq 'form' -or $Refresh
   $r = Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 -SessionVariable ws @tls
   if ($a.type -eq 'cookie') { $tok = (@($ws.Cookies.GetAllCookies()) | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' }
-  else { $j = $r.Content | ConvertFrom-Json; $tok = Get-Field $j $(if ($a.tokenField) { $a.tokenField } else { 'access_token' }); if ($a.refreshField) { $script:rt = Get-Field $j $a.refreshField } }
+  else { $j = $r.Content | ConvertFrom-Json; $tok = Get-Field $j $(if ($a.tokenField) { $a.tokenField } else { 'access_token' }); if ($a.refreshField) { $nrt = Get-Field $j $a.refreshField; if ($nrt) { $script:rt = $nrt } } }   # a refresh answer may omit it: keep the old one
   if (-not $tok) { throw "login to $Target as $As returned no token" }
   "$tok`n$script:rt" | Set-Content $cache -NoNewline
   $tok
