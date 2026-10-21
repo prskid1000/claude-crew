@@ -16,7 +16,7 @@ $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 # library (dot-sourced by the CLI and _daemon); state per env: Get-KitPath localenv /<env>.json (Update-State)
 $ErrorActionPreference = 'Stop'
 
-# ---- config
+# ---- config: kit.local.json localEnv, env and service lookups
 $script:LE = Get-KitValue 'localEnv' $null
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
 $script:LeaseMin = [int](Opt 'leaseMinutes' 30)
@@ -519,7 +519,7 @@ function Remove-Sandbox([string]$e, [string]$key) {
   Event $e 'sandbox-removed' @{ sandbox = $key; branch = $sbx.branch }
 }
 
-# ---- processes
+# ---- processes: CPU load, port owners, service processes
 # CPU load and port owners (only the local env uses them)
 function Get-SysCpu {
   if ($KitIsWindows) { return [math]::Round([double](Get-CimInstance Win32_Processor -Property LoadPercentage | Measure-Object LoadPercentage -Average).Average, 0) }
