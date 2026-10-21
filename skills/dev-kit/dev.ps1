@@ -1077,7 +1077,7 @@ do {
 
 # ---- guard: PreToolUse hook for the hard rules; prints a deny or nothing
 function Invoke-Guard {
-param([switch]$SelfTest)
+param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
   $da = 'default desktop app'; $rp = 'holds runs in progress'; $le = 'local env'; $hk = 'Hooks must run'
@@ -1107,6 +1107,8 @@ if ($SelfTest) {
   @('B', 'xdg-open out/report.html', $true, $da),
   @('B', 'cmd /c start "" report.pdf', $true, $da),
   @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
+  @('P', 'Start-Process pwsh -ArgumentList x.ps1 -PassThru -RedirectStandardOutput o.txt', $false, $da),
+  @('P', 'Start-Process -FilePath .\r.html', $true, $da),
   @('P', 'cd x; ii "out.pdf"', $true, $da),
   @('P', '& D:/kit/learn.ps1 -Skill dev-kit -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, $da),
   @('P', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, $da),
@@ -1143,6 +1145,7 @@ if ($SelfTest) {
   @('B', 'git push origin +HEAD:main', $true, 'force-push'),
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
   @('B', 'git push origin HEAD:main', $false, 'force-push'),
+  @('B', 'git push -fu origin main', $true, 'force-push'),
   @('B', 'git commit -n -m "x"', $true, $hk),
   @('P', 'git -C x commit -nm "x"', $true, $hk),
   @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
@@ -1155,7 +1158,7 @@ if ($SelfTest) {
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]
     $json = @{ tool_name = $tool; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime') } } | ConvertTo-Json -Compress -Depth 4
-    $out = ($json | pwsh -NoProfile -NonInteractive -File $PSCommandPath guard) -join ''
+    $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
     if (-not $ok) { $fail++ }
@@ -1164,7 +1167,7 @@ if ($SelfTest) {
   "$($cases.Count - $fail)/$($cases.Count) passed"
   exit [int]($fail -gt 0)
 }
-$stdin = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
+$stdin = if ($Json) { $Json } elseif ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
 if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
   $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
@@ -1303,7 +1306,10 @@ function Test-OpenDoc([string]$text, [string]$tool) {
         $el = @($ca.CommandElements); if (-not $el.Count) { continue }
         $val = { param($e) if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $e.Value } else { $e.Extent.Text.Trim('''"') } }
         if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
-        if ((& $val $el[0]) -match '^(Invoke-Item|ii|Start-Process|start|saps|explorer(\.exe)?|xdg-open|open)$' -and @($el | Select-Object -Skip 1 | Where-Object { (& $val $_) -match "$doc|^https?://" }).Count) { return $true }
+        # only the opened target counts (first argument or -FilePath / -Path): Start-Process pwsh -RedirectStandardOutput o.txt reads nothing
+        $fp = [array]::FindIndex([object[]]$el, [Predicate[object]] { param($x) $x -is [System.Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -match '^(FilePath|Path|LiteralPath)$' })
+        $tg = if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } elseif ($el.Count -gt 1 -and $el[1] -isnot [System.Management.Automation.Language.CommandParameterAst]) { $el[1] }
+        if ((& $val $el[0]) -match '^(Invoke-Item|ii|Start-Process|start|saps|explorer(\.exe)?|xdg-open|open)$' -and $tg -and (& $val $tg) -match "$doc|^https?://") { return $true }
       }
       return $false
     }
@@ -1316,7 +1322,7 @@ if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value
-  if ($p -match '(--force(?![-\w])|\s-f\b|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
+  if ($p -match '(--force(?![-\w])|\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
   }
 }
