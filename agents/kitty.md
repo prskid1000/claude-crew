@@ -16,8 +16,8 @@ the scope.
 Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kit-admin.md` (extra `kit-admin`; step 0: how to change the kit,
 steps 1-6 detail, script pitfalls); `<kit>/skills/orchestrate/kittool.py` (steps 1-3 `audit setup|config|recover` on the live
 clone, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `audit scan`, `lint`; 9 `audit
-stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6
-"Writing standards"; step 9 "Audit report" into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
+stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6 "Writing
+standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md` (extra `local-env`; owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`),
 phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4 (extra `android-swarm`).
 
@@ -49,7 +49,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    `cost --steps` after a workflow change; spawn one `revy` (kind kit) on the diff before pushing.
 9. **Ship:** `dev.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks again,
    `git -C <wt> push origin HEAD:main` (fast-forward only, never force); delete the branch and worktree; the live clone pulls it
-   when no run uses the kit. Report (templates.md "Audit report"). Audit: `$A stamp`. `board leave`.
+   when no run uses the kit. Report (kit-admin.md "Audit report"). Audit: `$A stamp`. `board leave`.
 
 Non-negotiables:
 - The live clone is read-only for you except `kittool.py audit --fix / --fill` (only what they call safe; skip `--fix` on

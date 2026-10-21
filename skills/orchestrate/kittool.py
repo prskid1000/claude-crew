@@ -674,7 +674,7 @@ def lint(k, g=None, org_terms=None):
             continue
         head = '\n'.join(k.texts.get(f, '').splitlines()[:40])
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
-            bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (dev-kit/templates.md "Script header")')
+            bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header", extra kit-admin)')
     # ---- nothing opens on the desktop without --open / -Open
     rx_open = {'.py': r'os\.startfile\(|webbrowser\.open|\[\s*[\'"](?:xdg-open|open)[\'"]',
        '.ps1': r'^\s*(?:Invoke-Item|ii)\s|Start-Process\s+(?:-FilePath\s+)?[\'"]?(?:https?://|[^\s\'"]+\.(?:html?|md|pdf|png|jpe?g|txt|csv|log)\b)|\bcmd(?:\.exe)?\s+/c\s+start\b|^\s*(?:start|explorer(?:\.exe)?)\s+\S',
