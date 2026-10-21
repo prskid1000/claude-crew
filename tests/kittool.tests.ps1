@@ -138,6 +138,11 @@ Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/x.ps1` (extra `dem
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real extra' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and
   $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: extra .nope.: no such extra')
+# section maps of extras: lint checks an installed extra's files; extra test checks the branch's, with or without a tests.ps1
+('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/extras/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/extras/big/EXTRA.md"
+('# x' + "`n") * 3000 | Set-Content "$xw/extras/big/files/skills/big.ps1"; Save-GitRepo $xw 'feat: big'; git -C $xw push -q $og extras 2>&1 | Out-Null
+$l5 = (& $ex lint --no-flow).out; $null = & $ex extra list; $t5 = & $ex extra test big   # list fetches the branch
+Expect 'sections: lint flags an installed extra''s file (fix on the extras branch); extra test flags the branch''s files; an unknown extra = exit 2' ($l5 -match 'SECTION-MAP\s+skills/orchestrate/kittool_demo\.py: no section markers.*\(extra demo: fix it on the extras branch\)' -and $t5.code -eq 1 -and $t5.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and (& $ex extra test nope).code -eq 2)
 # budget raise is in kit-admin (its tests); a manual cap edit is lint BUDGET-CAP
 $bj = Join-Path $kc 'skills/dev-kit/kit.example.json'; $b1 = & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String; $c1 = $LASTEXITCODE
 (Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String

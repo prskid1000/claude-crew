@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 load · L458 lint · L814 README graph · L920 lint command · L953 audit scan · L1188 registry ·
-  L1417 prose · L1560 sections · L1690 budget · L1708 extras · L2044 main
+Sections: L31 paths · L82 load · L458 lint · L815 README graph · L921 lint command · L954 audit scan · L1189 registry ·
+  L1418 prose · L1561 sections · L1691 budget · L1709 extras · L2056 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -686,9 +686,10 @@ def lint(k, g=None, org_terms=None):
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
             bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header", extra kit-admin)')
     # ---- section maps: the "Sections:" line vs the markers; every function and verb in a section
-    for f in sec_files(counted):
+    extra_of = {p: n for n, ps in installed_extras(k.dir).items() for p in ps if p not in counted}   # installed extras' files too
+    for f in sec_files(list(counted) + sorted(extra_of)):
         for c, w, m in sec_check(f, read(osp.join(k.dir, f)))[0]:
-            bad(c, w, m)
+            bad(c, w, m + (f' (extra {extra_of[f]}: fix it on the extras branch)' if f in extra_of else ''))
     # ---- nothing opens on the desktop without --open / -Open
     rx_open = {'.py': r'os\.startfile\(|webbrowser\.open|\[\s*[\'"](?:xdg-open|open)[\'"]',
        '.ps1': r'^\s*(?:Invoke-Item|ii)\s|Start-Process\s+(?:-FilePath\s+)?[\'"]?(?:https?://|[^\s\'"]+\.(?:html?|md|pdf|png|jpe?g|txt|csv|log)\b)|\bcmd(?:\.exe)?\s+/c\s+start\b|^\s*(?:start|explorer(?:\.exe)?)\s+\S',
@@ -1920,35 +1921,43 @@ function New-TestKit([string]$name) { $k = & $script:NewCoreTestKit $name; if (T
 """
 
 def extra_test(kit, names):
-    """Run each installed extra's tests.ps1 (it stays on the extras branch) against this kit, in parallel; harness output."""
+    """Run each installed extra's tests.ps1 (it stays on the extras branch) against this kit, in parallel, and check its
+    scripts' section maps (lint SECTION-*); harness output."""
     if not shutil.which('pwsh'):
         print('FAIL extra test: pwsh 7 is not on PATH\n1 failure(s)')
         return 1
     runs = []
     for name in names:
-        if f'extras/{name}/tests.ps1' not in git(kit, 'ls-tree', '--name-only', EXTRAS_REF, '--', f'extras/{name}/tests.ps1')[1]:
-            continue
         zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', EXTRAS_REF, f'extras/{name}'], capture_output=True, timeout=60).stdout
         tmp = tempfile.mkdtemp(prefix=f'extra-{name}-')
-        zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
-        here = osp.join(tmp, 'extras', name)
-        if osp.isfile(osp.join(kit, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
-            with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
-                fh.write(HARNESS_SHIM.replace('<kit>', kit.replace("'", "''")).replace('<files>', osp.join(here, 'files').replace("'", "''")))
-        cmd = ['pwsh', '-NoProfile', '-File', osp.join(tmp, 'extras', name, 'tests.ps1'), '-Kit', kit]
-        runs.append((name, tmp, subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')))
+        with contextlib.suppress(zipfile.BadZipFile):   # no such extra: an empty archive
+            zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
+        here, p = osp.join(tmp, 'extras', name), None
+        files = osp.join(here, 'files')   # its scripts' section maps, as lint checks them once installed
+        sec = ''.join(f'FAIL {c} {w}: {m}\n' for r, _, fs in os.walk(files) for x in fs
+                      for rel in sec_files([osp.relpath(osp.join(r, x), files).replace('\\', '/')]) for c, w, m in sec_check(rel, read(osp.join(r, x)))[0])
+        if osp.isfile(osp.join(here, 'tests.ps1')):
+            if osp.isfile(osp.join(kit, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
+                with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
+                    fh.write(HARNESS_SHIM.replace('<kit>', kit.replace("'", "''")).replace('<files>', files.replace("'", "''")))
+            cmd = ['pwsh', '-NoProfile', '-File', osp.join(here, 'tests.ps1'), '-Kit', kit]
+            d = osp.dirname(sys.executable)   # no python shim (chcp: shared console code page)
+            env = dict(os.environ, PATH=d + os.pathsep + os.environ.get('PATH', '')) if d else None
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', env=env)
+        runs.append((name, tmp, sec, p))
     fails = 0
-    for name, tmp, p in runs:
+    for name, tmp, sec, p in runs:
         try:
-            o = p.communicate(timeout=300)[0]
+            o = sec + (p.communicate(timeout=300)[0] if p else '')
         except subprocess.TimeoutExpired:
             p.kill()
-            o = 'FAIL timed out after 300 s\n'
+            o = sec + 'FAIL timed out after 300 s\n'
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        failed = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
+        failed = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p and p.returncode else 0)
         fails += failed
-        print(f'== extra {name}\n{o.rstrip()}\n-- extra {name}: {len(re.findall(r"(?m)^PASS ", o))} pass, {failed} fail')   # its own count: never read as the next one's
+        if p or sec:   # an extra without tests.ps1 shows only map problems
+            print(f'== extra {name}\n{o.rstrip()}\n-- extra {name}: {len(re.findall(r"(?m)^PASS ", o))} pass, {failed} fail')   # its own count: never read as the next one's
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
@@ -1999,6 +2008,9 @@ def cmd_extra(a):
         with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
             return extra_write(kit, verb, names)
     if verb == 'test':
+        if names and names[0] not in (known_extras(kit) or set()):
+            print(f'kittool extra test: no extra "{names[0]}" on origin/extras (kittool.py extra list)', file=sys.stderr)
+            return 2
         return extra_test(kit, names or sorted(installed))
     if verb == 'check':
         need = extras_needed(kit)
