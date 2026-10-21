@@ -17,9 +17,9 @@ Expect "localenv: db.engine without its presets stops with the extra line, exit 
 $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
 $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
 $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
-$pr = & { . $L2; $o = (Get-Date).AddMinutes(-11).ToString('o'); $u = (Get-Date).AddHours(1).ToString('o')
-  $st = @{ leases = @{ dead = @{ until = $u; holderPid = 999999; seen = $o }; grace = @{ until = $u; holderPid = 999999; seen = (Get-Date).AddMinutes(-3).ToString('o') }; live = @{ until = $u; holderPid = $PID } }
-    holds = @{ own = @{ owner = $true; until = (Get-Date).AddMinutes(5).ToString('o') }; old = @{ owner = $true; until = $o }; co = @{ agent = 'main'; seen = $o } }; requests = @() }
+$pr = & { . $L2; $ago = (Get-Date).AddMinutes(-11).ToString('o'); $u = (Get-Date).AddHours(1).ToString('o')
+  $st = @{ leases = @{ dead = @{ until = $u; holderPid = 999999; seen = $ago }; grace = @{ until = $u; holderPid = 999999; seen = (Get-Date).AddMinutes(-3).ToString('o') }; live = @{ until = $u; holderPid = $PID } }
+    holds = @{ own = @{ owner = $true; until = (Get-Date).AddMinutes(5).ToString('o') }; old = @{ owner = $true; until = $ago }; co = @{ agent = 'main'; seen = $ago } }; requests = @() }
   Prune $st; "$(($st.leases.Keys | Sort-Object) -join ',')|$(($st.holds.Keys | Sort-Object) -join ',')|$($st.leases.grace.graceLeft)" }
 Expect "leases: no live holder -> kept for the grace, then gone; owner holds keep their minutes; a coordinator hold needs a heartbeat ($pr)" ($pr -eq 'grace,live|own|7')
 $lv = & { . $L2; $b = Get-KitPath board -Create; & $J @{ agent = 'B1'; session = 'B1-s'; status = 'working'; beat = (Get-Date).ToString('o') } "$b/B1-s.json"
@@ -38,6 +38,13 @@ $sw = & { . $L2; Update-State shop { param($x) $x.n = 1 }
   $j = Start-ThreadJob { param($f) $h = [IO.File]::Open($f, 'Open', 'Read', 'Read'); Start-Sleep -Milliseconds 600; $h.Dispose() } -ArgumentList (StateFile shop)
   Start-Sleep -Milliseconds 200; Update-State shop { param($x) $x.n = 2 }; $null = Receive-Job $j -Wait; "$((Read-State shop).n)" }
 Expect "localenv: a state write succeeds after an outside reader closes the file ($sw)" ($sw -eq '2')
+# a start short of RAM marks itself waiting (Pressure then names it, so other envs stop idle services); half the file cache counts
+$wr = & { . $L2; Update-State shop { param($x) $x.services = @{ web = @{ status = 'down' } } }; $script:ph = 0
+  function Get-SysMem { [pscustomobject]@{ AvailGB = @(1, 10, 2)[$script:ph]; CacheGB = @(0, 0, 20)[$script:ph]; TotalGB = 64 } }
+  function Get-SysCpu { 10 }; function Need-GB { 3 }; function KeepFreeGB { 6 }
+  function Start-Sleep { $script:ph = 1; $script:seen = Pressure; $script:ph = 2 }
+  $null = Wait-Room shop @{ name = 'web' }; "$script:seen|$((Read-State shop).services.web.status)" }
+Expect "localenv: a waiting start is pressure, cache counts, then the mark is cleared ($wr)" ($wr -eq 'start(s) waiting for RAM: shop/web|down')
 Remove-TestKit $k2
 # LIGHT / HEAVY classes need devtools.py migrations (extra migration-classify)
 if (-not (Test-Path (Join-Path $src 'skills/dev-kit/adapters/migrations.py'))) { 'SKIP local env: LIGHT/HEAVY classes (extra migration-classify not installed)' } else {

@@ -599,29 +599,36 @@ function GraceMin([string]$e, $s) {
 }
 function KeepFreeGB { if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }; $m = Get-SysMem; [double](Get-KitSetting 'localEnv.keepFreeGB' (Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($m.TotalGB * 0.15, 1))))) }
 function Pressure {
-  if ((Get-SysMem).AvailGB -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
+  if ((Get-GateAvailGB (Get-SysMem)) -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
   $q = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue'
   $w = @(Get-ChildItem $q -Filter *.json -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 1 -and (Alive ([int]$_.BaseName)) })
   if ($w.Count) { return "$($w.Count) gated build(s) waiting for RAM" }
+  # a start waiting in any env: idle unleased services elsewhere make room (the caller stops them biggest first)
+  $ws = @(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $v = $st.services[$k]; if ($v.status -eq 'waiting' -and $v.waitPid -and (Alive ([int]$v.waitPid))) { "$n/$k" } } })
+  if ($ws.Count) { return "start(s) waiting for RAM: $($ws -join ', ')" }
   $null
 }
 function Wait-Room([string]$e, $s) {
   $need = Need-GB $e $s; $keep = KeepFreeGB
-  $until = (Get-Date).AddMinutes($script:RoomWaitMin); $said = (Get-Date).AddMinutes(-5)
-  while ($true) {
-    $m = Get-SysMem; $cpu = Get-SysCpu
-    $ramOk = ($m.AvailGB - $need) -ge $keep; $cpuOk = $cpu -lt $script:CpuMax
-    if ($ramOk -and $cpuOk) { return }
-    if ((Get-Date) -gt $until) {
-      if (-not $ramOk) {
-        $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
-        throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $($m.AvailGB) GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
+  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false
+  try {
+    while ($true) {
+      $m = Get-SysMem; $cpu = Get-SysCpu; $avail = Get-GateAvailGB $m
+      $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
+      if ($ramOk -and $cpuOk) { return }
+      if (-not $marked) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitPid = $PID }; $marked = $true }
+      if ((Get-Date) -gt $until) {
+        if (-not $ramOk) {
+          $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
+          Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = $false
+          throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
+        }
+        "[$e] CPU still $cpu% after $($script:RoomWaitMin) min: starting $($s.name) anyway"; return
       }
-      "[$e] CPU still $cpu% after $($script:RoomWaitMin) min: starting $($s.name) anyway"; return
+      if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for room to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%)"; $said = Get-Date }
+      Start-Sleep 10
     }
-    if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for room to start $($s.name): RAM avail $($m.AvailGB) GB (need $need + keep $keep), CPU $cpu% (max $($script:CpuMax)%)"; $said = Get-Date }
-    Start-Sleep 10
-  }
+  } finally { if ($marked) { Update-State $e { param($x) if ($x.services[$s.name].status -eq 'waiting') { $x.services[$s.name].status = 'down' } } } }
 }
 function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   $a = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'localenv.ps1')) + $a; $pwsh = (Get-Process -Id $PID).Path
@@ -1343,11 +1350,11 @@ switch ($Action) {
     try {
       $r = (EnvRepos $e)[$rn]; if (-not (Test-Path (Join-Path $r.wt '.git'))) { throw "[$e] $rn has no env worktree yet: run localenv.ps1 refresh -Env $e first" }
       Sync-DepLinks $e $r
-      $dir = SvcDir $e $t; $cmd = Expand-Placeholders ([string]$t.cmd) $e $t $dir ''
-      "[$e] task $Task in $dir : $cmd"
+      $sdir = SvcDir $e $t; $cmd = Expand-Placeholders ([string]$t.cmd) $e $t $sdir ''
+      "[$e] task $Task in $sdir : $cmd"
       With-Env (EnvVars $e $t) {
-        if ($t.gated) { & $KitCmd.dev gate -Dir $dir -Cmd $cmd }
-        else { Push-Location $dir; try { if ($KitIsWindows) { $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-task-$Task.cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null; Set-Content -LiteralPath $bat "@echo off`r`n$cmd" -Encoding ascii; & cmd.exe /d /c "`"$bat`"" } else { & /bin/sh -c $cmd } } finally { Pop-Location } }
+        if ($t.gated) { & $KitCmd.dev gate -Dir $sdir -Cmd $cmd }
+        else { Push-Location $sdir; try { if ($KitIsWindows) { $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-task-$Task.cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null; Set-Content -LiteralPath $bat "@echo off`r`n$cmd" -Encoding ascii; & cmd.exe /d /c "`"$bat`"" } else { & /bin/sh -c $cmd } } finally { Pop-Location } }
       }
       $code = $LASTEXITCODE
     } finally { Update-State $e { param($x) $x.leases.Remove($key) } }
@@ -1385,11 +1392,11 @@ switch ($Action) {
   'logs' { if (-not $Services) { throw 'logs needs -Service' }; $f = LogFile $e $Services[0]; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { "no log yet: $f" } }
   'events' { $f = Join-Path (Get-KitPath localenv-logs) "$e-events.jsonl"; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { 'no events yet' } }
   '_exec' {
-    $s = Svc $e $Services[0]; $dir = SvcDir $e $s; $log = LogFile $e $s.name
+    $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name
     $cmd = StartCmd $e $s $Artifact
     foreach ($kv in (EnvVars $e $s).GetEnumerator()) { [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value) }
-    Set-Location $dir
-    Add-Content $log "== $(Now) start in $dir : $cmd"
+    Set-Location $sdir
+    Add-Content $log "== $(Now) start in $sdir : $cmd"
     if ($KitIsWindows) { $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-$($s.name).cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null; Set-Content -LiteralPath $bat "@echo off`r`n$cmd >> `"$log`" 2>&1" -Encoding ascii; & cmd.exe /d /c "`"$bat`"" }
     else { & /bin/sh -c "$cmd >> '$log' 2>&1" }
     Add-Content $log "== $(Now) exited $LASTEXITCODE"

@@ -26,10 +26,10 @@ function Invoke-LearnAdmin {
     $now = (@($pub, $loc) | Where-Object { Test-Path $_ } | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n"
     $key = { param($s) ($s -replace '^-\s*', '' -replace '\(fixed in kit\)\s*', '' -replace '\s*\(\d+×\)', '').Trim() }
     $seen = @{}; $rows = [Collections.Generic.List[string]]::new(); $meta = ''
-    foreach ($l in @(git -C $KitConf.Kit log --no-merges --date=short '--format=KITLOG %ad %h' -p --unified=0 -- LESSONS.md 2>$null)) {
-      if ($l -like 'KITLOG *') { $meta = $l.Substring(7); continue }
-      if ($l -notmatch '^-- ') { continue }
-      $s = $l.Substring(1); $k0 = & $key $s
+    foreach ($gl in @(git -C $KitConf.Kit log --no-merges --date=short '--format=KITLOG %ad %h' -p --unified=0 -- LESSONS.md 2>$null)) {
+      if ($gl -like 'KITLOG *') { $meta = $gl.Substring(7); continue }
+      if ($gl -notmatch '^-- ') { continue }
+      $s = $gl.Substring(1); $k0 = & $key $s
       if (-not $k0 -or $seen[$k0] -or $now.Contains($k0)) { continue }
       $seen[$k0] = 1; $rows.Add("$meta $s")
     }
