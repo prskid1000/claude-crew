@@ -9,7 +9,7 @@ param([Parameter(Mandatory)][string]$Kit)
 . (Join-Path $Kit 'tests/harness.ps1')
 $k = New-TestKit liquibase
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/dev-kit/adapters') | Out-Null
-Copy-Item (Join-Path $PSScriptRoot 'files/skills/dev-kit/adapters/liquibase.py') (Join-Path $k 'skills/dev-kit/adapters')
+Copy-Item (Join-Path $PSScriptRoot 'files/skills/dev-kit/adapters/*') (Join-Path $k 'skills/dev-kit/adapters')
 $repo = Join-Path (Kd) 'lb-repo'; $lb = Join-Path $repo 'config/liquibase'; New-Item -ItemType Directory -Force "$lb/changelog" | Out-Null
 @'
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog">

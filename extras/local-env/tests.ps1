@@ -97,5 +97,19 @@ $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . 
 Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
 $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
 Expect 'supervise anomalies: only new log error lines count; level words case-sensitive (WARN ... Error while is none)' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 4)
+# guard rules (adapters/guard_localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
+$gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/dev-kit/adapters') | Out-Null
+Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/dev-kit/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/dev-kit/adapters')
+$env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
+foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
+    @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/local-env/localenv.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
+    @('B', 'rg "ng serve" src', $false), @('B', 'git log -S bootRun --oneline', $false), @('P', 'git commit -m "fix: ng serve proxy"', $false), @('B', 'npm run dev:build', $false),
+    @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $true), @('B', 'git push origin --delete localenv/shop', $false))) {
+  $json = @{ tool_name = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress
+  $denied = (pwsh @np (Join-Path $gk 'skills/dev-kit/dev.ps1') guard -Json $json | Out-String) -match '"permissionDecision":"deny"'
+  if ($denied -ne $c[2]) { $bad += $c[1] }
+}
+Remove-Item Env:KIT_GUARD_SELFTEST_ACTIVE
+Expect "guard: localenv/ pushes and hand-started dev servers denied, the rest allowed ($($bad -join ' | '))" (-not $bad.Count)
 Remove-TestKit $k
 Complete-Tests

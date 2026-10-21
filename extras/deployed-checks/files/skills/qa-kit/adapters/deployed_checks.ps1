@@ -1,4 +1,4 @@
-# deployed-checks (extra): deploy kinds ssh, awsStack, probe, tag, manual for qa.ps1 deployed (dot-sourced from adapters/).
+# deployed-checks (extra): qa.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # probeField: JSON path in the answer
@@ -77,4 +77,93 @@ function Test-DeployedExtra($d) {
       else { Row $d 'NOT-DEPLOYED' "stack $($d.awsStack) last updated $at ($st), merged $($mr.merged_at)" }
     } catch { Row $d 'UNKNOWN' "stack $($d.awsStack): cannot read its update time ($upd)" }
   }
+}
+
+# qa.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: extra
+# android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
+function Invoke-Deployed {
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets
+$ErrorActionPreference = 'SilentlyContinue'
+$group = $KitConf.GitlabGroup
+$repos = @(Get-KitValue 'repos' @())
+function Row($d, $s, $x) { [pscustomobject]@{ mr = $ref; target = $d.target; state = $s; detail = $x } }
+function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliases) -contains $name } | Select-Object -First 1 }
+# memoised: supervise asks per round
+$memo = @{}
+function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
+function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
+# squash / cherry-pick: live if no file differs from $ref
+function ContentOn($p, $mr, $sha, $ref) {
+  # cheap guard: a ref older than the merge
+  $head = Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))"
+  if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
+  if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
+  $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
+  if (-not $files.Count) { return $false }
+  $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
+  if (-not $cmp) { return $false }
+  -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
+}
+# squash-merged deploy MR: live if one merged into $branch after a source head held the commit
+function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
+  if (-not $branch -or -not $mr.merged_at) { return $false }
+  $after = ([datetimeoffset]$mr.merged_at).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  foreach ($dm in @(Api "projects/$p/merge_requests?state=merged&target_branch=$([uri]::EscapeDataString($branch))&updated_after=$after&per_page=50") | Where-Object { $_ -and $_.iid -ne $mr.iid }) {
+    $land = @($dm.merge_commit_sha, $dm.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1
+    if ($land -and $dm.sha -and (IsAncestor $p $sha $dm.sha) -and (IsAncestor $p $land $ref)) { return $true }
+  }
+  $false
+}
+# NOT-DEPLOYED only if the host answers, else UNKNOWN
+function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
+function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
+# $null if checkout or commit missing
+function LocalAncestor($dir, $sha, $commit) {
+  if (-not $dir -or -not (Test-Path $dir)) { return $null }
+  git -C $dir cat-file -e "$commit^{commit}" 2>$null; if ($LASTEXITCODE) { return $null }
+  git -C $dir merge-base --is-ancestor $sha $commit 2>$null
+  $LASTEXITCODE -eq 0
+}
+# pwsh -File keeps the quotes: strip, split
+$out = foreach ($m in @(Split-KitList $Mrs)) {
+  if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
+  $r = Repo $Matches.repo; $iid = $Matches.iid
+  if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
+  $p = [uri]::EscapeDataString($(if ($group) { "$group/$($r.name)" } else { $r.name })); $ref = "$($r.name)!$iid"
+  $mr = Api "projects/$p/merge_requests/$iid"
+  if (-not $mr -or -not $mr.iid) { [pscustomobject]@{ mr = $ref; target = ''; state = 'UNKNOWN'; detail = 'git host did not answer (glab/gh auth status?)' }; continue }   # a failed call is not 'not merged'
+  if ($mr.state -ne 'merged') { [pscustomobject]@{ mr = $ref; target = ''; state = 'NOT-MERGED'; detail = "$($mr.state)" }; continue }
+  # fast-forward: the MR head sha landed
+  $sha = @($mr.squash_commit_sha, $mr.merge_commit_sha, $mr.sha) | Where-Object { $_ } | Select-Object -First 1
+  if (-not $sha) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'UNKNOWN'; detail = 'merged MR has no commit sha (glab auth status?)' }; continue }
+  $s8 = $sha.Substring(0, [math]::Min(8, $sha.Length))
+  $deps = @($r.deploys | Where-Object { (-not $Target -or $_.target -eq $Target) -and (-not $Exclude -or $_.target -notmatch $Exclude) })
+  if (-not $deps.Count) { [pscustomobject]@{ mr = $ref; target = "$Target"; state = 'NO-TARGET'; detail = 'no deploys configured for this repo' }; continue }
+  foreach ($d in $deps) {
+    if ($d.laneApk) {   # app repo: the lane APK's commit
+      if ($ext = Get-Command Test-LaneApkDeployed -ErrorAction SilentlyContinue) { & $ext $d }
+      else { Row $d 'UNKNOWN' 'deploys[] laneApk is an extra: run kittool.py extra add android-swarm' }
+      continue
+    }
+    if ($d.ssh -or $d.awsStack -or $d.probe -or $d.tag -or $d.manual) { Test-DeployedExtra $d; continue }
+    if (-not (OnRef $p $mr $sha $d.branch)) { NotLiveRow $p $ref $d "not on $($d.branch) yet"; continue }
+    $hit = $null
+    # a pipeline older than the merge cannot hold it
+    foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
+      $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
+      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
+    }
+    if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
+    else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
+  }
+}
+$row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
+if ($Json) { $out | ConvertTo-Json -Depth 3 }
+elseif ($Detail) { $out | ForEach-Object $row }
+else {
+  $live = @($out | Where-Object state -eq 'DEPLOYED')
+  "deployed: $($live.Count)/$(@($out).Count) MR x target$(if ($live.Count) { ' (' + (($live | ForEach-Object { "$($_.mr)@$($_.target)" }) -join ', ') + ')' })"
+  $out | Where-Object state -ne 'DEPLOYED' | ForEach-Object $row
+}
+exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 })
 }

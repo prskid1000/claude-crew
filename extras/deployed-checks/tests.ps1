@@ -23,9 +23,37 @@ $null = SshState @{ sudo = $false } 'x'; $x = [Text.Encoding]::UTF8.GetString([C
 function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5; state = 'merged'; sha = 'F'; merged_at = '2026-01-02' } } '*merge_base*' { @{ id = 'F' } } '*ref=staging*' { , @(@{ id = 1; created_at = '2026-01-03'; sha = 'F' }) } '*jobs*' { , @(@{ name = 'deploy-eu'; status = 'success' }) } } }
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
-'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"}]}]}' | Set-Content $kl
+'{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
 $res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $srv.Kill(); Remove-Item $kl
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
+Expect 'deployed: a laneApk deploy without the extra android-swarm is UNKNOWN with the extra line' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+deploys\[\] laneApk is an extra: run kittool\.py extra add android-swarm')
+# a squash-merged deploy MR counts; an unanswered git host is UNKNOWN, not NOT-DEPLOYED
+$t = @'
+. $args[0]; $ast = (Get-Command Invoke-Deployed).ScriptBlock.Ast
+foreach ($fn in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { . ([scriptblock]::Create($fn.Extent.Text)) }
+function Canned($deployMrs) {
+  $script:memo = @{}; $p = 'g%2Fweb'
+  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=stg"] = [pscustomobject]@{ id = 'OLD' }
+  $memo["projects/$p/repository/commits/stg"] = [pscustomobject]@{ committed_date = '2026-01-02T08:00:00Z' }
+  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=main"] = [pscustomobject]@{ id = 'F' }
+  $memo["projects/$p/merge_requests/5/changes?access_raw_diffs=true"] = [pscustomobject]@{ changes = @([pscustomobject]@{ new_path = 'a.ts'; old_path = 'a.ts' }) }
+  $memo["projects/$p/repository/compare?from=stg&to=main&straight=true"] = [pscustomobject]@{ diffs = @([pscustomobject]@{ new_path = 'a.ts'; old_path = 'a.ts' }) }
+  $memo["projects/$p/merge_requests?state=merged&target_branch=stg&updated_after=2026-01-02T07:00:00Z&per_page=50"] = $deployMrs
+  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=S"] = [pscustomobject]@{ id = 'F' }
+  $memo["projects/$p/repository/merge_base?refs[]=L&refs[]=stg"] = [pscustomobject]@{ id = 'L' }
+  $memo["projects/$p/repository/merge_base?refs[]=F&refs[]=S0"] = [pscustomobject]@{ id = 'X' }
+  $p
+}
+$mr = [pscustomobject]@{ iid = 5; merged_at = '2026-01-02T07:00:00Z'; target_branch = 'main' }
+$p = Canned @([pscustomobject]@{ iid = 9; sha = 'S'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "squash:$(OnRef $p $mr 'F' 'stg')"
+$p = Canned @([pscustomobject]@{ iid = 8; sha = 'S0'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "other:$(-not (OnRef $p $mr 'F' 'stg'))"
+function Invoke-HostApi { $null }
+$script:memo = @{}; $d = [pscustomobject]@{ target = 'stg'; branch = 'staging' }
+"down:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state -eq 'UNKNOWN')"
+$memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = 'abc' }
+"up:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state -eq 'NOT-DEPLOYED')"
+'@
+Expect-Each (Invoke-PsTest 'deployed-refs' $t @($Q)) 'deployed: # (squash deploy MR, other deploy MR, git host down, host up)' 'squash', 'other', 'down', 'up'
 Remove-TestKit $k
 Complete-Tests
