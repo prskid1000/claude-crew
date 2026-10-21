@@ -862,7 +862,7 @@ function Get-TrackerTasks([string]$List, [string]$Status) {
 # ===== 5. git-host + ci adapters (README "Adapters"): Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... } =====
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
-$script:HostType = [string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))
+$script:HostType = ([string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))).ToLower()
 if ($script:HostType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 if ($script:HostType -eq 'github' -and -not $env:GH_HOST -and (__GhHost) -ne 'github.com') { $env:GH_HOST = [string](__GhHost) }
 $script:MrSegRx = '(?:-/merge_requests|pulls?|pull-requests|pullrequest)'
@@ -880,7 +880,7 @@ function Get-RepoConf([string]$Repo, [string]$Key, $Default) {
   foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$($r.$Key)" -ne '') { return $r.$Key } }
   $Default
 }
-function Get-KitCiType([string]$Repo, [string]$HostT = $script:HostType) { $c = [string](Get-RepoConf $Repo 'ci' 'host'); if ($c -eq 'external') { $c = [string](Get-KitSetting 'ci.type' 'host') }; if ($c -eq 'host') { $HostT } else { $c } }
+function Get-KitCiType([string]$Repo, [string]$HostT = $script:HostType) { $c = ([string](Get-RepoConf $Repo 'ci' 'host')).ToLower(); if ($c -eq 'external') { $c = ([string](Get-KitSetting 'ci.type' 'host')).ToLower() }; if ($c -eq 'host') { $HostT } else { $c } }
 function __HostJson($out) { $t = (@($out) | ForEach-Object { "$_" }) -join "`n"; if (-not $t.Trim()) { return $null }; try { $t | ConvertFrom-Json } catch { $null } }
 function __Enc([string]$s) { [uri]::EscapeDataString($s) }
 function __Del($a) { [bool](Get-RepoConf $a.repo 'deleteBranch' $true) }
@@ -993,7 +993,7 @@ Register-KitAdapter 'ci' 'none' @{ 'runs' = { @() }; 'jobs' = { @() }; 'log' = {
 
 $global:KitHostMemo = if ($global:KitHostMemo) { $global:KitHostMemo } else { @{} }
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
-  $t = if ($A.type) { $A.type } else { $script:HostType }
+  $t = ([string]$(if ($A.type) { $A.type } else { $script:HostType })).ToLower()
   if ($Verb -in 'mr.merge', 'mr.create' -and -not $A.method) { $A.method = [string](Get-RepoConf $A.repo 'mergeMethod' 'squash') }
   $ci = Get-KitCiType $A.repo $t
   $kind, $name, $v2 = if ($Verb -like 'ci.*') { 'ci', $ci, $Verb.Substring(3) } else { 'git-host', $t, $Verb }
