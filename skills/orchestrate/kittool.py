@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
 Sections: L31 paths · L82 load · L458 lint · L814 README graph · L920 lint command · L953 audit scan · L1188 registry ·
-  L1417 prose · L1560 sections · L1680 budget · L1698 extras · L2034 main
+  L1417 prose · L1560 sections · L1690 budget · L1708 extras · L2044 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -1568,7 +1568,7 @@ def sec_files(files):
     return [f for f in files if osp.splitext(f)[1] in SEC_CM and not f.startswith(('tests/',) + GENERATED)]
 
 def sec_marks(lines, cm):
-    return [(i + 1, m.group(1).strip()) for i, l in enumerate(lines) if (m := re.match(re.escape(cm) + r' ---- ([^:]+)', l))]
+    return [(i + 1, m.group(1).strip()) for i, l in enumerate(lines) if (m := re.match(re.escape(cm) + r' ---- ([^:·]+):', l))]
 
 def sec_parse(lines):
     """(first, last index, prefix, [(line, name)]) of the map; a continuation line ends the previous with ' ·' or starts with L<n>."""
@@ -1604,18 +1604,21 @@ def sec_verbs(ext, lines):
         arms = [(i, m.group(1), m.group(0)[:-len(m.group(0).lstrip())]) for i, l in enumerate(lines)
                 if top >= 0 and i > top and (m := re.match(r"\s+'([\w-]+)'\s*\{", l))]
         arms = [(i, v) for i, v, ind in arms if ind == arms[0][2]]
+        if arms:   # the last arm ends at the switch's closing brace
+            ind = len(lines[arms[0][0]]) - len(lines[arms[0][0]].lstrip())
+            arms.append((next((i for i in range(arms[-1][0] + 1, len(lines)) if re.match(r'\s{0,%d}\}' % (ind - 1), lines[i])), len(lines)), ''))
     elif ext == '.py':
         for i, l in enumerate(lines):
             if l.startswith('COMMANDS = {'):
                 return [(v, h, i + 1) for v, h in re.findall(r"'([\w-]+)': (\w+)", l)]
         arms = [(i, m.group(1)) for i, l in enumerate(lines) if (m := re.match(r"\s+(?:el)?if cmd == '([\w-]+)':", l))]
-    return [(v, '\n'.join(lines[i:arms[n + 1][0] if n + 1 < len(arms) else len(lines)]), i + 1) for n, (i, v) in enumerate(arms)]
+    return [(v, '\n'.join(lines[i:arms[n + 1][0] if n + 1 < len(arms) else len(lines)]), i + 1) for n, (i, v) in enumerate(arms) if v]
 
 def sec_check(f, text):
     """([(code, where, problem)], text with a current map or None) of one script: lint SECTION-MAP, SECTION-UNMAPPED."""
     ext = osp.splitext(f)[1]
     cm, nl = SEC_CM.get(ext), '\r\n' if '\r\n' in text else '\n'
-    lines = text.split(nl)
+    lines = [x.rstrip('\r') for x in text.split('\n')]   # mixed endings: read like lint, written back with the file's main one
     mp = sec_parse(lines) if cm else None
     if not cm or (not mp and len(text.encode('utf-8')) < SEC_MIN):
         return [], None
@@ -1625,6 +1628,9 @@ def sec_check(f, text):
     if not mp:
         return [('SECTION-MAP', f, 'no "Sections:" line in the first 40 lines: add one to the header, then kittool.py sections --fix')], None
     i, j, pre, have = mp
+    dup = [(ln, nm) for n, (ln, nm) in enumerate(marks) if nm in [x for _, x in marks[:n]]]
+    if dup:
+        return [('SECTION-MAP', f'{f}:{ln}', f'section name "{nm}" repeats: rename one marker') for ln, nm in dup], None
     at, named = {nm: ln for ln, nm in have}, {nm for _, nm in marks}
     probs = [('SECTION-UNMAPPED', f'{f}:{ln}', f'section "{nm}" is missing from the Sections: map -> kittool.py sections --fix')
              for ln, nm in marks if nm not in at]
@@ -1664,6 +1670,10 @@ def cmd_sections(a):
     for p in [osp.abspath(x) for x in rest] or [osp.join(KIT_DIR, f) for f in sec_files(counted_files(KIT_DIR))]:
         rel = (osp.relpath(p, KIT_DIR) if osp.splitdrive(p)[0].lower() == osp.splitdrive(KIT_DIR)[0].lower() else p).replace('\\', '/')
         if not sec_files([rel]):
+            continue
+        if not osp.isfile(p):
+            print(f'kittool sections: no such file {p}', file=sys.stderr)
+            left += 1
             continue
         text = read(p, raw=True)
         probs, fixed = sec_check(rel, text)

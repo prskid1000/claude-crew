@@ -163,12 +163,14 @@ lg = '"""\nSections:\n"""\n' + ''.join(f'# ---- section-name-{n}: x\n' for n in 
 lf = t.sec_check('y.py', lg)[1]
 print(sorted({c for c, _, _ in p}), fx.split('\n')[1], [w for _, w, _ in t.sec_check('x.ps1', fx)[0]], len(lf.split('\n')) - len(lg.split('\n')),
   t.sec_check('y.py', lf)[0], [w for _, w, _ in t.sec_check('z.py', '"""\nSections: L5 a\n"""\ndef f(): pass\n# ---- a: x\n')[0]],
-  t.sec_check('w.py', 'x = 1\n' * 2000)[0][0][2][:19], [x[:2] for x in t.sec_sizes('v.py', '# ---- a: x\n' + 'y\n' * 700)])
+  t.sec_check('w.py', 'x = 1\n' * 2000)[0][0][2][:19], [x[:2] for x in t.sec_sizes('v.py', '# ---- a: x\n' + 'y\n' * 700)],
+  [w for _, w, _ in t.sec_check('u.ps1', fx.replace("'no' { Write-Host x }", "'no' { Write-Host x }\r").replace('Assert-KitExtra X', 'Write-Host y') + 'function Late { }\n')[0]],
+  t.sec_check('d.ps1', '<#\r\nSections: L5 a\r\n#>\n\r\n# ---- a: x\r\n# ---- a: y\n')[0][0][2][:24])
 '@ | Set-Content $sp; $r = (& $py -X utf8 $sp (Split-Path $KT) | Out-String).Trim()
-Expect "sections: map from markers (wrapped: lines shift), function / verb outside a section, no markers, big section ($r)" ($r -eq "['SECTION-MAP', 'SECTION-UNMAPPED'] Sections: L5 a · L9 b ['x.ps1:12'] 2 [] ['z.py:4'] no section markers: [(1, 'a')]")
+Expect "sections: map from markers (wrapped: lines shift), function / verb outside a section, no markers, big section, mixed endings, a repeated name ($r)" ($r -eq "['SECTION-MAP', 'SECTION-UNMAPPED'] Sections: L5 a · L9 b ['x.ps1:12'] 2 [] ['z.py:4'] no section markers: [(1, 'a')] ['u.ps1:12', 'u.ps1:13'] section name ""a"" repeats")
 $sf = Join-Path $k 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a`r`n#>`r`n`r`n# ---- a: x`r`n")
-$null = & $py -X utf8 $KT sections $sf; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
-Expect 'sections: a shifted map exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
+$null = & $py -X utf8 $KT sections $sf (Join-Path $k 'none.ps1') 2>$null; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
+Expect 'sections: a shifted map or a missing file exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
