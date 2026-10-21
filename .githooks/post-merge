@@ -5,7 +5,7 @@
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do
   if command -v "$p" >/dev/null 2>&1 && "$p" -c '' >/dev/null 2>&1; then   # a store stub is on PATH but does not run
-    "$p" -X utf8 "$root/skills/orchestrate/kittool.py" extra sync
+    ("$p" -X utf8 "$root/skills/orchestrate/kittool.py" extra sync >/dev/null 2>&1 &)   # background: its fetch never holds up the pull
     "$p" -X utf8 "$root/skills/orchestrate/kittool.py" flow >/dev/null 2>&1
     break
   fi

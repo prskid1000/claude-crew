@@ -2021,22 +2021,44 @@ def config_values(cfg, dotted):
         cur = nxt
     return cur
 
-def local_config(kit, fname):
-    """A local config file (kit.local.json, targets.local.json, swarm.config.json) from skills/*/: this kit, else the main clone
-    (a worktree has no git-ignored files)."""
+def local_config_path(kit, fname):
+    """A local config file (kit.local.json, targets.local.json, swarm.config.json) in skills/*/: this kit's, else the main
+    clone's (a worktree has no git-ignored files); None when there is none."""
     for base in (kit, main_clone(kit)):
         for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
             if osp.isfile(osp.join(base, 'skills', d, fname)):
-                return load_json(osp.join(base, 'skills', d, fname))[0] or {}
-    return {}
+                return osp.join(base, 'skills', d, fname)
+    return None
+
+def local_config(kit, fname):
+    p = local_config_path(kit, fname)
+    return (load_json(p)[0] or {}) if p else {}
+
+def set_listed(kit, name, on):
+    """kit.local.json `extras`: names sync always installs (a fresh clone gets them back); extra add lists, remove unlists."""
+    p = local_config_path(kit, 'kit.local.json')
+    if not p:
+        return
+    with locked(p):
+        cfg = load_json(p)[0]
+        names = list(cfg.get('extras') or []) if isinstance(cfg, dict) else None
+        if names is None or (name in names) == on:
+            return
+        cfg['extras'] = sorted(set(names) | {name}) if on else [x for x in names if x != name]
+        indent = len(re.search(r'\n( *)"', read(p)).group(1)) if re.search(r'\n( *)"', read(p)) else 2
+        with open(p + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
+        os.replace(p + '.tmp', p)
 
 def extras_needed(kit):
-    """[(name, feature)]: extras this install asks for that are not installed. EXTRA.md "Needed when[ (<file>, ...)]:" lines:
+    """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
     `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set) or `<path>` exists
     (a kit file, the kit's own need); prose-only lines never install."""
     have = set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
-    need, configs = [], {}
+    need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
+    listed = configs['kit.local.json'].get('extras') or []
+    need += [(x, 'kit.local.json extras') for x in listed if isinstance(x, str) and x not in have and extra_files(kit, x)]
     for line in o.split('\n') if rc == 0 else []:
         m = re.match(r'^[^:]+:extras/([\w-]+)/EXTRA\.md:\d+:Needed when(?: \(([\w.-]+\.json)[^)]*\))?:(.*)$', line)
         if not m or m.group(1) in have:
@@ -2057,7 +2079,7 @@ def stale_extras(kit, installed):
     stale = []
     for name, paths in installed.items():
         rc, o, _ = git(kit, 'ls-tree', '-r', EXTRAS_REF, '--', f'extras/{name}/files/')
-        want = {x.split('\t')[1][len(f'extras/{name}/files/'):]: x.split()[2] for x in o.split('\n') if '\t' in x} if rc == 0 else {}
+        want = {x.split('\t')[1][len(f'extras/{name}/files/'):]: x.split()[2] for x in o.split('\n') if '\t' in x and '__pycache__/' not in x} if rc == 0 else {}
         have = dict(zip(paths, git(kit, 'hash-object', '--no-filters', '--', *paths)[1].split('\n')))
         if want and want != have:
             stale.append(name)
@@ -2101,6 +2123,9 @@ def extra_sync(kit):
 
 def extra_test(kit, names):
     """Run each installed extra's tests.ps1 (it stays on the extras branch) against this kit, in parallel; harness output."""
+    if not shutil.which('pwsh'):
+        print('FAIL extra test: pwsh 7 is not on PATH\n1 failure(s)')
+        return 1
     runs = []
     for name in names:
         if f'extras/{name}/tests.ps1' not in git(kit, 'ls-tree', '--name-only', EXTRAS_REF, '--', f'extras/{name}/tests.ps1')[1]:
@@ -2117,10 +2142,10 @@ def extra_test(kit, names):
         except subprocess.TimeoutExpired:
             p.kill()
             o = 'FAIL timed out after 300 s\n'
-        n = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
-        fails += n
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        fails += len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
         print(f'== extra {name}\n{o.rstrip()}')
-        shutil.rmtree(tmp, ignore_errors=True)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
@@ -2158,10 +2183,14 @@ def cmd_extra(a):
         return 0
     name = names[0]
     if verb == 'add':
-        return add_extra(kit, name, installed)
+        rc = add_extra(kit, name, installed)
+        if rc == 0:
+            set_listed(kit, name, True)
+        return rc
     tracked_files = set(tracked(kit))
     paths = [x for x in exclude_blocks(kit).get(name) or [rel for _, rel in extra_files(kit, name)] if x not in tracked_files]
     here = [x for x in paths if osp.isfile(osp.join(kit, x))]
+    set_listed(kit, name, False)
     if not here:
         print(f'kittool extra remove: {name} is not installed in {kit}', file=sys.stderr)
         return 1

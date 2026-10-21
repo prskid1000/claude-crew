@@ -12,7 +12,7 @@
   "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: browser profiles kept",
-  "bugfixMandate, localOnly, orgTerms": "words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks",
+  "bugfixMandate, localOnly, orgTerms, extras": "words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it)",
   "findings": "required: the QA finding fields (default root_cause, why_today, why_not_prod, db_migration, code_location)",
   "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it" },
  "gitHost": "gitlab.com",
@@ -102,6 +102,7 @@
  ],
  "bugfixMandate": ["<the owner's own words asking the coordinator to fix QA-raised bugs, verbatim>"],
  "localOnly": ["skills/<org-only-skill>", "<another org-only path>"],
+ "extras": [],
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/qa-kit/targets.local.json": {
