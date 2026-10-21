@@ -6,8 +6,8 @@ monorepo or many repos), any migration tool, any local env shape, test env, depl
 specifics live only in `*.local.*` files and `rules/*.local.md`. **Never put passwords, tokens or API keys here**: test logins
 live only in `skills/qa-kit/targets.local.json` (git-ignored).
 
-This file is the single source read by Codex and Antigravity directly and by Claude Code through `CLAUDE.md`'s `@AGENTS.md`
-import. Edit only here. Claude Code-only mechanics (hooks, the Workflow and Skill tools) are in `CLAUDE.md` below the import.
+Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md` (which adds the Claude Code-only mechanics); edit
+only here.
 
 ## Writing (hard rule, every agent and session)
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
@@ -25,9 +25,8 @@ import. Edit only here. Claude Code-only mechanics (hooks, the Workflow and Skil
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc -> all pass: closed · own check failed or
   incomplete: failedTesting (back to dev) · a new defect: one [Bug] task under the original ask.
-- **Budget** (both flows): an agent's budget = its tool's default compaction point; at 80% it hands off (resume brief, fresh
-  agent). A run's cap = its planned agents' budgets: over it at launch = refused with the split; at 80% nothing new starts,
-  the rest returns as `next` (README "Configuration" `budget`).
+- **Budget** (both flows, README "Configuration" `budget`): an agent hands off at 80% of its tool's compaction point (resume
+  brief, fresh agent); a run over its cap is refused with the split, at 80% of it nothing new starts (the rest returns as `next`).
 - **Decision pauses**: a change to existing behaviour a user sees (output, screens, data, rules applied) that the task did
   not ask for, or several valid paths -> the agent asks; internal logic changes with the same user-visible behaviour need no
   ask. It asks (`orch.ps1 decide ask`), that item waits for the owner's answer, the rest continue.
@@ -72,7 +71,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 `<kit>` = the `.claude` folder of the workspace (the directory Claude Code was started in); kit scripts find it themselves.
 These rules hold whatever the route:
 
-- File inspection: check top 40 lines for the Section/Function line map, then jump directly to the target line range using slicing (`view_file` StartLine/EndLine, sed, or awk) rather than loading entire files.
+- File inspection: read the top 40 lines (the section line map), then only the line range you need, never a whole large file.
 - Builds and tests go through `<kit>/skills/dev-kit/dev.ps1 check` (stack auto-detected; the machine-wide memory gate queues
   them); parallel work in worktrees (`dev.ps1 wt`), commits with `dev.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
@@ -97,6 +96,5 @@ Check auth before using a CLI (never log in headlessly). Windows: resolve shims 
 |-----|---------|------------|
 | `glab` / `gh` | git host: MRs/PRs, pipelines (kit scripts: `lib.ps1` Invoke-HostVerb, README "Adapters") | `glab auth status` / `gh auth status` |
 | tracker | tasks, comments, statuses: only through `skills/dev-kit/dev.ps1 tracker` (`tracker.type`: README "Adapters") | `dev.ps1 tracker view <id>` |
-| `gws` (optional) | Google Docs reports and testing docs, only when `reports.type` is `gdocs` | resolve with `shutil.which()` |
 
 Org specifics (settings, rules, Org router rows, more CLIs) and what does not port to Codex / Antigravity: README "Install".

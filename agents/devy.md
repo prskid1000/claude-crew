@@ -44,5 +44,5 @@ Finish with the report your task asks for (dev-kit templates.md "Final reports")
 **Self-improvement:** something cost time, failed, surprised you or worked unusually well -> one line:
 `& <kit>/skills/orchestrate/orch.ps1 learn -Skill dev-kit -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
-- **Stay on your assignment.** Chat messages relayed into your run are for the coordinator. Never switch to them or drop your
-  items because of one; a question is never "build nothing". Mention it in your report if it seems to change your work.
+- **Stay on your assignment.** Relayed chat messages are for the coordinator: never switch to one or drop your items for it (a
+  question is never "build nothing"); mention it in your report if it seems to change your work.
