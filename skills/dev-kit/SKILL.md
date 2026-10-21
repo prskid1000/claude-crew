@@ -44,7 +44,7 @@ python <kit>/skills/dev-kit/devtools.py finish <task> <doc url> solution.md revi
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...                              #    promoted once all merge (automatic)
-& $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. joins the deploy batch silently (never deploy, never ask)
+& $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. deploy batch, silently (extra deploys; never deploy, never ask)
 & $O board leave -Session <token> -Status done                                 # 9. final report (templates.md "Final reports")
 ```
 - D1. **Decision pause**: about to change existing user-visible behaviour the task did not ask for (internal logic with the

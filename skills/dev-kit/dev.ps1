@@ -10,7 +10,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 wt · L212 stack · L402 gate · L679 check · L991 pipes · L1027 guard · L1290 tracker · L1323 host
+Sections: L20 wt · L212 stack · L387 gate · L637 check · L789 pipes · L825 guard · L1065 tracker · L1098 host
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
