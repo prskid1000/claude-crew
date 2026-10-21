@@ -34,6 +34,6 @@ Non-negotiables (qa-kit tester steps 0-6 hold in full; these never bend):
   report shape.
 
 **Self-improvement:**
-`& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
+`& <kit>/skills/orchestrate/orch.ps1 learn -Skill qa-kit -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your results if it changes your work.

@@ -183,7 +183,17 @@ switch ($Action) {
     $l = Meta $Dir 'links'; if ($l) { "linked: $($l -join ', ')" }
   }
   'remove' {
+    # never the current folder: it may be a main tree or the live kit
+    if ($Name -and -not $Dir) {
+      $roots = if ($Root) { @($Root) } else { $KitConf.WorktreeRoots }
+      $hits = @(foreach ($rt in $roots) { Get-ChildItem -LiteralPath $rt -Directory -ErrorAction SilentlyContinue | Where-Object { $(if ($Repo) { $_.Name -eq "$Name-$(Split-Path $Repo -Leaf)" } else { $_.Name -eq $Name -or $_.Name.StartsWith("$Name-", [StringComparison]::OrdinalIgnoreCase) }) } })
+      if ($hits.Count -ne 1) { throw "wt remove -Name ${Name}: $($hits.Count) worktrees match in $($roots -join ', ')$(if ($hits) { ": $($hits.FullName -join ', ')" }); pass -Repo or -Dir" }
+      $Dir = $hits[0].FullName
+    }
+    if (-not $Dir) { throw 'remove needs -Dir <worktree> or -Name <name from wt new>' }
     $Dir = Resolve-Wt $Dir
+    $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
+    if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
     $farms = @($links | Where-Object { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })
     $links = @($links | Where-Object { $l = $_; -not @($farms | Where-Object { $l.StartsWith($_ + [IO.Path]::DirectorySeparatorChar) }).Count })

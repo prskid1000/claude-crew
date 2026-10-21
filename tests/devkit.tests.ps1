@@ -16,6 +16,11 @@ try {
   'feat: from file' | Set-Content "$r/msg.txt"
   Push-Location "$r/outer"; $null = pwsh @np $D wt commit -MessageFile "$r/msg.txt" 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt commit -MessageFile from the current folder' ($code -eq 0 -and (git -C "$r/outer" log -1 --format=%s) -eq 'feat: from file')
+  foreach ($n in 'a', 'ab', 'c-1', 'c-2') { git -C "$r/outer" worktree add -q -b $n "$r/wt/$n-outer" 2>$null }
+  Push-Location "$r/outer"
+  $bad = @(@(), @('-Dir', "$r/outer"), @('-Name', 'zz'), @('-Name', 'c')) | ForEach-Object { $a = $_; $null = pwsh @np $D wt remove @a -Force 2>&1; $LASTEXITCODE }
+  $null = pwsh @np $D wt remove -Name a 2>&1; $code = $LASTEXITCODE; Pop-Location
+  Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host + ci adapters: glab replies, type command, MR URLs, a missing extra
 $gh = @'

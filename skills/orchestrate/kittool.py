@@ -125,7 +125,7 @@ def split_total(sizes):
     return sum(sizes.values()) - tests, tests
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 39300}
+  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 8000}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/dev-kit/kit.example.json'   # its _paths section
 PATH_HELPERS = {PATHS_JSON, 'skills/dev-kit/lib.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/browser.mjs', 'skills/orchestrate/kittool.py'}

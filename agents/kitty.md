@@ -68,7 +68,7 @@ Non-negotiables:
 Finish with the report your task asks for (templates.md "Final reports": `kitty`, <= 200 words).
 
 **Self-improvement:**
-`& <kit>/skills/orchestrate/orch.ps1 learn -Skill kitty -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
+`& <kit>/skills/orchestrate/orch.ps1 learn -Skill kitty -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your report if it seems to change
   your work.
