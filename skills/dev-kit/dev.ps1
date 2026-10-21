@@ -305,30 +305,6 @@ function Get-Stack($d) {
       $c.run = if ((@(Get-ChildItem -LiteralPath $d -Filter 'build.gradle*' -File -ErrorAction SilentlyContinue | ForEach-Object { ReadText $_.FullName }) -join ' ') -match 'org\.springframework\.boot') { "$gw bootRun" } else { "$gw run" }
     }
   }
-  elseif (Has $d '*.sln', '*.csproj', '*.fsproj', '*.vbproj') {
-    $projs = Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Include *.csproj, *.fsproj, *.vbproj -File -ErrorAction SilentlyContinue | Select-Object -First 50
-    $legacy = [bool]($projs | Where-Object { -not (Select-String -LiteralPath $_.FullName -Pattern '<Project\s+Sdk=' -Quiet) } | Select-Object -First 1)
-    if ($legacy) {
-      $s = 'dotnet-msbuild'
-      # msbuild: on PATH only in a Developer prompt
-      $msb = 'msbuild'; $vst = 'vstest.console.exe'
-      $vswhere = if ($KitIsWindows -and ${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe' }
-      if ($vswhere -and (Test-Path $vswhere)) {
-        if (-not (Get-Command msbuild -ErrorAction SilentlyContinue)) { $f = @(& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null)[0]; if ($f) { $msb = "`"$f`"" } }
-        if (-not (Get-Command vstest.console.exe -ErrorAction SilentlyContinue)) { $f = @(& $vswhere -latest -products * -find '**\TestPlatform\vstest.console.exe' 2>$null)[0]; if ($f) { $vst = "`"$f`"" } }
-      }
-      $c.compile = "$msb `"{sln}`" /m:2 /v:q /nologo /p:Configuration=Debug"
-      $c.build = "$msb `"{sln}`" /m:2 /v:q /nologo /p:Configuration=Release"
-      $c.test = "$vst {tests}"
-    } else {
-      $s = 'dotnet'
-      $c.compile = 'dotnet build "{sln}" -nologo -v q -m:2'
-      $c.test = 'dotnet test "{sln}" -nologo --filter "{tests}"'
-      $c.format = 'dotnet format "{sln}" --verify-no-changes'
-      $c.build = 'dotnet build "{sln}" -nologo -v q -c Release'
-      if (Has $d '*.csproj', '*.fsproj') { $c.run = 'dotnet run --urls http://localhost:{port}' }
-    }
-  }
   elseif (Test-Path (Join-Path $d 'angular.json')) {
     $s = 'angular'; $n = Get-NodeTools $d; $deps = @('node_modules')
     $tsc = if (Test-Path (Join-Path $d 'tsconfig.app.json')) { 'tsconfig.app.json' } else { 'tsconfig.json' }
@@ -390,23 +366,9 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  elseif (Test-Path (Join-Path $d 'go.mod')) {
-    $s = 'go'
-    $c.compile = 'go build ./...'; $c.run = 'go run .'; $c.test = 'go test ./... -run "{tests}"'; $c.lint = 'go vet ./...'; $c.format = 'gofmt -l .'
-  }
-  elseif (Test-Path (Join-Path $d 'Cargo.toml')) {
-    $s = 'rust'
-    $c.compile = 'cargo check -q'; $c.test = 'cargo test {tests}'; $c.lint = 'cargo clippy -q'; $c.build = 'cargo build --release'; $c.run = 'cargo run'; $c.format = 'cargo fmt --check'
-  }
-  elseif (Test-Path (Join-Path $d 'CMakeLists.txt')) {
-    $s = 'cmake'
-    $c.compile = 'cmake -S . -B build && cmake --build build -j 2'; $c.test = 'ctest --test-dir build -R "{tests}"'
-  }
-  elseif (Test-Path (Join-Path $d 'Makefile')) {
-    $s = 'make'
-    $c.compile = 'make'
-    if ((ReadText (Join-Path $d 'Makefile')) -match '(?m)^test\s*:') { $c.test = 'make test' }
-  }
+  # installed extras (stack-presets): .NET, Go, Rust, CMake, Make
+  foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
+  if (-not $s -and (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile')) { throw (Get-KitExtraLine 'stack' 'presets') }
   if (-not $s) { return $null }
 
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
@@ -913,8 +875,9 @@ if ($Step -eq 'migrations') {
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
   $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
   $masters = @($all | Where-Object { $_ -match '\.xml$' })
-  $det = & (Get-Python) -X utf8 $KitCmd.devtools migrations detect --repo $top 2>$null | ConvertFrom-Json -AsHashtable
-  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($det) { $det.GetEnumerator() | ForEach-Object { "$($_.Key) ($($_.Value)$(if ($_.Value -is [long]) { ' files' }))" } })
+  # migrations of another tool (Flyway, Alembic, Prisma, ...): no kit check
+  $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(db/)?(migrations?|migrate|flyway|alembic|prisma)/[^/]+\.(sql|py|ts|js|rb|cs|go)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$' })
+  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "other migration tool ($($tool.Count) files, e.g. $($tool[0]))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
