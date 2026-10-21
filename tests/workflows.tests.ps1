@@ -76,37 +76,6 @@ $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
 Expect-Each $res 'buildy: #' 're-review', 'hold' -Show 5
 Expect 'buildy: default run name = orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
-# buildy duel: 2 POCs, compare, debate, owner judges, winner ships
-$jsu = @'
-const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
-const rep = (id) => _rep(lt, { mrs: [{ url: `https://h/g/api/-/merge_requests/${id === 'D2' ? 2 : 1}`, repo: 'api', merged: false }], worktrees: [`C:/wt/${id}`] })
-const calls = []
-async function agent(prompt, o) {
- calls.push({ label: o.label, agentType: o.agentType, prompt })
- if (/^record-args/.test(o.label)) return _rec()
- if (/^duel:/.test(o.label)) return { approach: o.label.endsWith('D1') ? 'cache' : 'index', summary: 'poc', evidence: ['run.json'], worktrees: [`C:/wt/${o.label.slice(5)}`], branch: 'f/x-poc', localTest: 'PASS' }
- if (/^debate:/.test(o.label)) return { points: [{ claim: 'faster', evidence: '120 ms vs 300 ms' }], concede: [], rest: true }
- if (o.label === 'duel-compare' || o.label === 'duel-moderate') return { record: '| correctness | a | b |', unsupported: [], recommend: 'B' }
- if (o.label === 'duel-ask') return { ok: true, output: 'DECISION d-20261016000000-duel-ab12 pending' }
- if (o.label === 'duel-verdict') return { ok: true, output: 'ANSWERED d-20261016000000-duel-ab12: B, the index wins' }
- if (/^build:/.test(o.label)) return rep(o.label.slice(6))
- if (/^review:/.test(o.label)) return { findings: [] }
- if (/^ci:/.test(o.label)) return { done: true, mrs: [{ mr: '2', status: 'success' }] }
- if (/^ship:/.test(o.label)) return { ...rep('D2'), ..._merged(2) }
- return _ok('[]')
-}
-const parallel = async (fns) => Promise.all(fns.map((f) => f()))
-const args = { brief: 'C:/b/duel.md', mode: 'duel', duel: { question: 'cache or index?', rounds: 2 }, agents: [{ id: 'D1', items: 'A1', area: 'q' }, { id: 'D2', items: 'A1', area: 'q', dependsOn: ['D1'] }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
-run(args, agent, _n, _n, pipeline, parallel).then((o) => {
- const deb = calls.filter((c) => /^debate:/.test(c.label))
- console.log(`duel-pocs:${calls.filter((c) => /^duel:D[12]$/.test(c.label) && c.agentType === 'devy').length === 2 && calls.some((c) => c.label === 'duel-compare' && c.agentType === 'revy')}`)
- console.log(`duel-debate:${deb.length === 2 && deb.every((c) => /board msg/.test(c.prompt))}`)
- console.log(`duel-judge:${o.duel && o.duel.winner === 'D2' && calls.some((c) => c.label === 'duel-ask' && /-Recommend B/.test(c.prompt)) && calls.some((c) => c.label === 'duel-close:D1')}`)
- console.log(`duel-ships-winner:${calls.some((c) => c.label === 'build:D2' && /DUEL WON/.test(c.prompt)) && !calls.some((c) => c.label === 'build:D1') && calls.some((c) => c.label === 'ship:D2')}`)
- console.log(`crew-only:${calls.every((c) => ['devy', 'revy', 'checky', 'kitty'].includes(c.agentType))}`)
-}).catch(_err)
-'@
-Expect-Each (Invoke-Js dw-duel $jsu $wfd) 'buildy duel: #' 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only' -Show 5
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
 const agent = async (p, o) => /^record-args/.test(o.label) ? _rec() : /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]')
@@ -114,6 +83,16 @@ const o1 = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, batch
 console.log(`batch-next:${!!(await run(o1.next.args, agent, _n, _n, pipeline).catch(_err))}`)
 '@
 Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
+# buildy: mode duel is an extra (refused, names the extra); a removed arg is warned about, not silently ignored
+$jso = @'
+const agent = async (p, o) => /^record-args/.test(o.label) ? _rec() : /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]')
+const logs = [], base = { brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'X1', items: 'A1' }] }
+const e = await run({ ...base, mode: 'duel' }, agent, _n, _n, pipeline).then(() => '', (x) => x.message)
+await run({ ...base, review: false }, agent, (m) => logs.push(m), _n, pipeline)
+console.log(`duel-refused:${/duel is an extra: run kittool.py extra add duel/.test(e)}`)
+console.log(`removed-arg:${logs.some((l) => /args.review was removed/.test(l))}`)
+'@
+Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
 $wf = [IO.File]::ReadAllText((Join-Path $src 'workflows/testy.js')) -replace '^export const meta', 'const meta'
 $js = @'
 const calls = []

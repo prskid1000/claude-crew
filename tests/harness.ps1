@@ -4,7 +4,7 @@ harness.ps1: the shared helpers every tests/<area>.tests.ps1 dot-sources (not ru
 Usage: . (Join-Path $PSScriptRoot 'harness.ps1') at the top of an area file; Complete-Tests at its end.
 Exit codes: none here; Complete-Tests ends the area file with 0 pass · 1 a check failed.
 #>
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'   # the area files inherit it (dot-sourced), as the single file did
 $src = Split-Path $PSScriptRoot   # the kit
 $script:fails = 0
 Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
@@ -36,7 +36,12 @@ function pwsh {
 
 function Kd { Split-Path $k }
 function Px { $input | pwsh -NoProfile -File @args }
-function Expect($what, $cond) { if ($cond) { "PASS $what" } else { "FAIL $what"; $script:fails++ } }
+# KIT_TESTS_TIME=1: Complete-Tests lists the slowest checks (time since the previous check)
+$script:clock = [Diagnostics.Stopwatch]::StartNew(); $script:times = [Collections.Generic.List[object]]::new()
+function Expect($what, $cond) {
+  $script:times.Add([pscustomobject]@{ s = $script:clock.Elapsed.TotalSeconds; what = $what }); $script:clock.Restart()
+  if ($cond) { "PASS $what" } else { "FAIL $what"; $script:fails++ }
+}
 # one Expect per key: a "<key>:true" line in $res ('#' in $label = the key); -Show N: N lines on a miss
 function Expect-Each($res, [string]$label, [string[]]$keys, [int]$Show = 0) {
   foreach ($x in $keys) { Expect $label.Replace('#', $x) (@($res | Where-Object { "$_" -eq "${x}:true" }).Count -eq 1) }
@@ -61,11 +66,14 @@ $J = { param($o, $f, [int]$d = 8) Set-JsonFile $f $o $d }
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
   foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
-      'skills/orchestrate/orch.ps1', 'skills/local-env/localenv.ps1', 'LESSONS.md') {
+      'skills/orchestrate/orch.ps1', 'skills/orchestrate/kittool.py', 'skills/local-env/localenv.ps1', 'LESSONS.md') {
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k
 }
 function TkPath($tkDir, $tkName, [switch]$Create) { & { . (Join-Path $tkDir 'skills/dev-kit/lib.ps1'); Get-KitPath $tkName -Create:$Create } }
 function Remove-TestKit($k) { Remove-Item (Kd) -Recurse -Force -ErrorAction SilentlyContinue }
-function Complete-Tests { "$script:fails failure(s)"; exit [int]($script:fails -gt 0) }
+function Complete-Tests {
+  if ($env:KIT_TESTS_TIME) { $script:times | Sort-Object s -Descending | Select-Object -First 8 | ForEach-Object { 'TIME {0,5:N1} s  {1}' -f $_.s, $_.what } }
+  "$script:fails failure(s)"; exit [int]($script:fails -gt 0)
+}

@@ -12,6 +12,6 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 2. **Test** -- one checky (role test) per guide: web/API pool in parallel, app guides one per phone
 3. **Verify** -- checky verify: note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL
 4. **Close** -- checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask
-5. **Learn** -- signals + LESSONS.md updates (40-line cap) from this run
+5. **Learn** -- signals from this run, cleanup (/tidy turns them into lessons)
 
 Arguments and step details: `.claude/workflows/testy.js` (its header comment) and the `orchestrate` skill.

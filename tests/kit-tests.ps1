@@ -12,20 +12,22 @@ $files = 'orch.tests.ps1', 'devkit.tests.ps1', 'qa.tests.ps1', 'localenv.tests.p
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' })
 $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 $unknown = @($areas | Where-Object { $_ -notin $all })
-if ($unknown) { Write-Error "kit-tests.ps1: unknown area(s) $($unknown -join ', '); known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
+if (-not $areas -or $unknown) { Write-Error "kit-tests.ps1: unknown or no area(s) '$($unknown -join ', ')'; known: $($all -join ', ')" -ErrorAction Continue; exit 2 }
 
 $started = Get-Date
 $results = $areas | ForEach-Object -ThrottleLimit $areas.Count -Parallel {
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $out = pwsh -NoProfile -File (Join-Path $using:PSScriptRoot "$_.tests.ps1") 2>&1 | Out-String
+  Write-Host "  $_ done ($([int]$clock.Elapsed.TotalSeconds) s)"   # progress while the slower areas run
   [pscustomobject]@{ area = $_; out = $out.TrimEnd(); code = $LASTEXITCODE; seconds = [int]$clock.Elapsed.TotalSeconds }
 }
 $fails = 0
 foreach ($r in $results | Sort-Object { [array]::IndexOf($areas, $_.area) }) {
   "== $($r.area) ($($r.seconds) s)"
   $r.out
-  # a crash before Complete-Tests prints no count: count it as one failure
-  if ($r.out -match '(?m)^(\d+) failure\(s\)\s*\z') { $fails += [int]$Matches[1] } elseif ($r.code) { $fails++ }
+  # a crash before Complete-Tests prints no count: its FAIL lines, at least one
+  if ($r.out -match '(?m)^(\d+) failure\(s\)\s*\z') { $fails += [int]$Matches[1] }
+  elseif ($r.code) { $fails += [Math]::Max(1, ([regex]::Matches($r.out, '(?m)^FAIL ')).Count) }
 }
 "$fails failure(s) in $($areas.Count) area(s), $([int]((Get-Date) - $started).TotalSeconds) s"
 exit [int]($fails -gt 0)
