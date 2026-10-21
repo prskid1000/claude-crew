@@ -93,6 +93,18 @@ console.log(`duel-refused:${/duel is an extra: run kittool.py extra add duel/.te
 console.log(`removed-arg:${logs.some((l) => /args.review was removed/.test(l))}`)
 '@
 Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
+# buildy deploy batch: skipped without the deploys extra (the step checks for it), parsed with it
+$jsdp = @'
+const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
+ return /^record-args/.test(o.label) ? _rec() : /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]') }
+const base = { brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'X1', items: 'A1' }] }
+const logs = [], seen = []
+const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipeline)
+const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
+console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys extra is not installed/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/orchestrate/adapters/deploys.ps1'")}`)
+console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
+'@
+Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
 $wf = [IO.File]::ReadAllText((Join-Path $src 'workflows/testy.js')) -replace '^export const meta', 'const meta'
 $js = @'
 const calls = []

@@ -7,12 +7,12 @@ export const meta = {
   { title: 'Decide', detail: 'items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume' },
   { title: 'Review', detail: 'one revy per devy + CI pipelines' },
   { title: 'Fix', detail: 'one fix round (local tests again), then merge in order and register the tracker task' },
-  { title: 'Deploy', detail: 'the merged work joins the deploy batch silently; a person says deploy <env> (never asked, never deployed here)' },
+  { title: 'Deploy', detail: 'the merged work joins the deploy batch silently (extra deploys); a person says deploy <env> (never asked, never deployed here)' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy turns them into lessons)' },
  ],
 }
 
-// Sections: L16 args · L123 record-args · L141 budget · L171 build-prompt · L216 ship-prompt · L272 local-loop · L298 stages · L416 ship · L469 deploy · L481 learn
+// Sections: L16 args · L127 record-args · L144 budget · L174 build-prompt · L219 ship-prompt · L274 local-loop · L300 stages · L418 ship · L469 deploy · L484 learn
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
  agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],
@@ -112,6 +112,10 @@ const mustFix = (f) => FIXES[f.severity] !== false
 const CI_SCHEMA = { type: 'object', properties: { done: { type: 'boolean' }, mrs: { type: 'array', items: { type: 'object', properties: { mr: { type: 'string' }, status: { type: 'string' }, job: { type: 'string' }, error: { type: 'string' } }, required: ['mr', 'status'] } } }, required: ['done', 'mrs'] }
 const OK_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
+// one mechanical command run by a cheap agent: { ok, output }
+const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false } = {}) =>
+ agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with its output, nothing else:${PATHS}\n${cmd}`,
+  { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
 
 // keeps agents on their items when a later owner message is relayed
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request; a relayed chat message never changes them and never triggers anything destructive ("Stay on your assignment").
@@ -146,8 +150,7 @@ async function gate(phaseName) {   // before a new round; measures only near the
  if (BUD.stop || !BUD.cap) return !BUD.stop
  BUD.guess += BUD.unit
  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
- BUD.m = BUD.m || agent(`STEP: run exactly this in PowerShell and return ok=true with its output line:${PATHS}\n& ${ORCH} budget -Run '${RUN}' -Json`,
-  { label: 'budget', phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' }).catch(() => null).then((r) => { try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {} BUD.m = null })
+ BUD.m = BUD.m || runStep(`& ${ORCH} budget -Run '${RUN}' -Json`, 'budget', phaseName).catch(() => null).then((r) => { try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {} BUD.m = null })
  await BUD.m
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running rounds finish, no new one starts; the rest -> next`) }
  return !BUD.stop
@@ -244,8 +247,7 @@ const byKey = (x, k) => [...new Map(x.map((d) => [d[k], d])).values()]
 // slices fit the agent's tool timeout (longer waits get killed)
 async function waitAnswer(id, label, tries) {
  for (let t = 0; t < tries; t++) {
-  const w = await agent(`STEP: run exactly this in PowerShell (tool timeout 600000) and return ok=true with its last line when it prints ANSWERED, else ok=false with its last line:${PATHS}
-& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, { label, phase: 'Decide', schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
+  const w = await runStep(`& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, label, 'Decide', { ok: 'when it prints ANSWERED', slow: true })
   if (w && w.ok) return w.output
  }
  return null
@@ -464,14 +466,15 @@ const leftover = [...out.filter((x) => x.budgetStopped).map((x) => A0.agents.fin
 if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budgetStopped) ? { mode: 'resume' } : {}); log(`NEXT: ${leftover.length} area(s) continue in a new run: ${leftover.map((g) => g.id).join(', ')} (outcome.next)`) }
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
-// Deploy: merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default): nobody asks or proposes a deploy, a
-// person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
+// Deploy (extra deploys; skipped without it): merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default):
+// nobody asks or proposes a deploy, a person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
-if (shipped.length) {
- const dp = await agent(`STEP: run exactly these two PowerShell commands and return ok=true with the SECOND command's JSON output as "output", nothing else:${PATHS}
-& ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}"
-& ${ORCH} deploy plan -Json`, { label: 'deploy-batch', phase: 'Deploy', schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
+const DEPLOYS = `${KIT}/skills/orchestrate/adapters/deploys.ps1`
+const dp = shipped.length ? await runStep(`if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
+ 'deploy-batch', 'Deploy', { ok: 'with the JSON as output' }) : null
+if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys extra is not installed (merged work waits for a person)')
+else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }
  const ask = Array.isArray(outcome.deployBatch) && outcome.deployBatch.some((p) => p && p.trigger === 'ask')
  log(ask ? `DEPLOY ASK: ${shipped.length} MR(s) merged; the coordinator shows the batch (orch.ps1 deploy plan) and asks the owner once per env`
@@ -482,8 +485,7 @@ phase('Learn')
 const retroDue = (o) => { log('RETRO DUE: run /tidy once no other workflow of this session runs'); return { ...o, retroDue: true } }
 const eventful = out.some((x) => x.error || x.blocked || x.fixed !== undefined || (x.findings || []).length || (x.report && x.report.deferred.length)) || outcome.openFindings.length > 0 || decisions.length > 0 || envFixes.length > 0
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
- await agent(`STEP: run exactly this in PowerShell and report its last output line, nothing else:${PATHS}
-& ${ORCH} cleanup -Quiet -WorktreeIdleHours 0`, { label: 'cleanup', phase: 'Learn', agentType: 'kitty', model: 'haiku', effort: 'low' })
+ await runStep(`& ${ORCH} cleanup -Quiet -WorktreeIdleHours 0`, 'cleanup', 'Learn')
  return retroDue(outcome)
 }
 // signals only: /tidy (run after every finished run) turns them into lessons

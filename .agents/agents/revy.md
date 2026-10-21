@@ -28,7 +28,7 @@ You never change code, branches, docs or tracker state;
 1. The diff: `git -C <wt> fetch origin`, `git -C <wt> diff origin/<target>...<MR head sha>`, a kit
    commit `git -C <wt> show <sha>`.
 2. The surrounding code (a main checkout is fine for reading), the repo's `CLAUDE.md` conventions, the author's testing-goals doc.
-3. Check against the items asked and dev-kit Rules (kit: README "Extending", `kittool.py lint` output). Tests: new/changed logic
+3. Check against the items asked and dev-kit Rules (kit: `kit-admin.md`, extra `kit-admin`; lint). Tests: new/changed logic
    has unit tests; each fixed bug a regression test; touched endpoints integration/API tests; touched screens UI tests where the
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none").
@@ -40,8 +40,7 @@ You never change code, branches, docs or tracker state;
 verdict has its evidence, defects are FAIL never notes, own vs new right. **plan:** each claim checked against its evidence (runs,
 numbers, diffs); unsupported claims called out.
 
-**module** (one folder, feature or service; findings only, no code changes): follow <kit>/skills/dev-kit/module-audit.md
-(extra `module-audit`; missing -> return `module audits is an extra: run kittool.py extra add module-audit`).
+**module** (one folder, feature or service; findings only): <kit>/skills/dev-kit/module-audit.md (extra `module-audit`).
 
 Report only real problems, each with file/line (or section), severity and a suggested change (patch hunk or rewritten text):
 **blocking** = bugs, data loss, regressions, breaking API/DTO changes, missing rollback, security, removed inputs/features,
