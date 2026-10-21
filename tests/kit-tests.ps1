@@ -422,6 +422,34 @@ if ($Area -in 'qa', 'all') {
   $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
   $null = Fin $h 'H1'; $w = Rec $h 'H1'; $null = Fin $h 'H2'
   Expect 'shared task waits for its sibling, then failedTesting' ($w.waitingFor -contains 'H2' -and (Rec $h 'H2').failedTesting)
+  $cap = Invoke-PsTest 'caption-test' ". `$args[0]; Caption 'TA1R-T1_01_new-instructions.png'; Caption 'TA1R-T1_verify_02_after-save.png'" @($Q)
+  Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -join '|') -ceq 'New instructions|After save (independent re-test)')
+  # run with & after -Check's exit 0: a crashing publish must still exit 1
+  $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
+  Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
+  # 300 long evidence paths: a fake uploader records the command-line length and the files it got
+  $dt = Join-Path $k 'skills/dev-kit'; Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
+  Set-Content "$dt/devtools.py" -Encoding utf8 @'
+import sys, os, runpy, ctypes
+here = os.path.dirname(os.path.abspath(__file__)); a = sys.argv
+if a[1:2] == ['evidence']:
+    ff = a[a.index('--files-from') + 1] if '--files-from' in a else None
+    n = len([x for x in open(ff, encoding='utf-8-sig').read().splitlines() if x.strip()]) if ff else 0
+    gl = ctypes.windll.kernel32.GetCommandLineW if os.name == 'nt' else None
+    if gl: gl.restype = ctypes.c_wchar_p
+    open(os.path.join(here, 'ev-rec.txt'), 'a').write(f'{len(gl() if gl else " ".join(a))} {n + len([x for x in a[2:] if x.endswith(".png")])}\n')
+    print('{}')
+else:
+    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')
+'@
+  $lr = New-Run 'L' @(@{ code = 'L1'; task = 'T20'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$lr/L1/shots" | Out-Null
+  foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long-evidence-name-' * 7)$i.png", [byte[]](1, 2, 3)) }
+  $null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $lrc = $LASTEXITCODE
+  $rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue); Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py"
+  Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
+  $kw = foreach ($ps in @(git -C $src ls-files '*.ps1')) { $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $src $ps), [ref]$null, [ref]$null)
+    $ast.FindAll({ $args[0] -is [Management.Automation.Language.CommandAst] -and $args[0].GetCommandName() -in 'if', 'foreach', 'switch', 'while', 'for', 'do', 'try' }, $true) | ForEach-Object { "${ps}:$($_.Extent.StartLineNumber)" } }
+  Expect "no keyword used as a command, e.g. (if ...) without `$ ($($kw -join ', '))" (-not $kw)
   # deploy detection: a squash-merged deploy MR counts
   $t = @'
 . $args[0]

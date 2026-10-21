@@ -11,7 +11,7 @@
  python devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
- python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] <file> ...   host evidence files (gdocs: Drive) -> JSON
+ python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
  python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python devtools.py lbcheck <master.xml> [since]   Liquibase sanity check (run by dev.ps1 check -Step migrations)
  python devtools.py selftest   offline self-test
@@ -2246,7 +2246,7 @@ if __name__ == '__main__':
     ARITY = {'task': 1, 'subtasks': 1, 'newtask': 5, 'status': 2, 'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'merge-wait': 2,
       'doc': 2, 'evidence': 1, 'keepboth': 1, 'lbcheck': 1, 'findings': 1, 'migrations': 1, 'selftest': 0}
     FLAGS, opt = {'findings': {'--sources', '--out'}}, {}
-    for f in ('--type', '--parent', '--folder') if cmd in ('doc', 'evidence') else ():
+    for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
@@ -2306,7 +2306,8 @@ if __name__ == '__main__':
             title, path = path, title
         print(make_doc(title, path, *(a[3:4] or [])))
     elif cmd == 'evidence':
-        print(json.dumps(make_evidence(a[1], a[2:], opt.get('--folder') or None, opt.get('--parent') or None)))
+        ff = open(opt['--files-from'], encoding='utf-8-sig').read().splitlines() if opt.get('--files-from') else []   # one path per line: no command-line limit
+        print(json.dumps(make_evidence(a[1], a[2:] + [x for x in ff if x.strip()], opt.get('--folder') or None, opt.get('--parent') or None)))
     else:
         print(__doc__)
         sys.exit(2)

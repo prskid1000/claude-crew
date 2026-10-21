@@ -1071,7 +1071,7 @@ def update_readme(text, sections):
 # ==== 2b. kit-flow model + page
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
-VER = 9
+VER = 10
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -1397,7 +1397,7 @@ def parse_code(p, f, text):
     # commands: dispatch lines (verb -> function) + its sub-verbs
     impl = {}
     for i, l in enumerate(lines):
-        m = re.search(r"^\s*'([\w-]+)'\s*\{\s*Invoke-KitVerb\s+([\w-]+)|__verb -eq '([\w-]+)'\)\s*\{\s*Invoke-KitVerb\s+([\w-]+)|"
+        m = re.search(r"^\s*'([\w-]+)'\s*\{\s*(?:try\s*\{\s*)?Invoke-KitVerb\s+([\w-]+)|__verb -eq '([\w-]+)'\)\s*\{\s*Invoke-KitVerb\s+([\w-]+)|"
            r"\bcmd\s*==\s*'([\w-]+)'\s*:|'([\w-]+)':\s*lambda[^:]*:\s*(\w+)\(", l)
         if m:
             verb = m.group(1) or m.group(3) or m.group(5) or m.group(6)

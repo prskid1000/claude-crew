@@ -41,7 +41,7 @@ function Caption($file) {
   if ($file -match '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify)?(_\d{2}m?)?_(.+)\.\w+$') {
     $c = ($Matches[3] -replace '[-_]', ' ').Trim(); $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }
     if (-not $c) { return $file }   # one odd name never crashes the publish
-    return (if ($c.Length -ge 1) { $c.Substring(0, 1).ToUpper() + $c.Substring(1) } else { $c }) + $v
+    return $c.Substring(0, 1).ToUpper() + $c.Substring(1) + $v   # $c is non-empty here
   }
   return $file
 }
@@ -782,8 +782,10 @@ if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { $map.fi
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype)
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
-$ev = & (Get-Python) -X utf8 $KitCmd.devtools @ea @($files | Where-Object { -not $map.files[$_.Name] } | ForEach-Object FullName)
-if ($LASTEXITCODE) { throw "evidence upload ($rtype) failed (above) - nothing was published" }
+$lf = [IO.Path]::GetTempFileName()   # a list file: 80+ long paths broke the command-line limit
+[IO.File]::WriteAllLines($lf, [string[]]@($files | Where-Object { -not $map.files[$_.Name] } | ForEach-Object FullName))
+$ev = & (Get-Python) -X utf8 $KitCmd.devtools @ea --files-from $lf; $evRc = $LASTEXITCODE; Remove-Item -LiteralPath $lf -ErrorAction SilentlyContinue
+if ($evRc) { throw "evidence upload ($rtype) failed (above) - nothing was published" }
 $ev = ($ev | Out-String) | ConvertFrom-Json
 if ($ev.folderId) {
   $map.folderId = $ev.folderId; $map.label = $ev.label; if ($ev.folderLink) { $map.folderLink = $ev.folderLink }
@@ -1151,7 +1153,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
-    'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }
+    'finalize' { try { Invoke-KitVerb Invoke-Finalize $__rest } catch { [Console]::Error.WriteLine("finalize FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }   # run with &, a throw kept -Check's exit 0
     'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' { Invoke-KitVerb Invoke-Ui $__rest }
