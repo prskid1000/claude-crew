@@ -1,0 +1,457 @@
+"""kittool extra kit-admin: `audit setup | config | recover`, the install, config and recovery checks of agents/kitty.md steps 1-3.
+
+  python -X utf8 skills/orchestrate/kittool.py audit setup [--fix] | config [--fill] | recover [--fix] [--kit <dir>] [--json <file>]
+
+Installed by `kittool.py extra add kit-admin`; kittool.py loads it and shares its own names (out, run, git, load_json, key_paths).
+Exit codes: 0 ok · 1 an ACT or ASK finding remains · 2 usage error.
+"""
+import json, os, re, shutil, subprocess, sys, time
+import os.path as osp
+
+OWN = KIT_DIR
+# (example file or localFiles entry, local file, what it holds)
+PAIRS = [('skills/dev-kit/kit.example.json', 'skills/dev-kit/kit.local.json', 'org settings (tracker, repos, reports, ...)'),
+  ('localFiles:skills/qa-kit/targets.local.json', 'skills/qa-kit/targets.local.json', 'QA targets and test logins (secrets)'),
+  ('localFiles:skills/android-swarm/swarm.config.json', 'skills/android-swarm/swarm.config.json', 'Android emulator lanes')]
+
+def example_of(ex_rel):
+    ex, err = load_json(osp.join(OWN, 'skills/dev-kit/kit.example.json'))
+    if not ex_rel.startswith('localFiles:'):
+        return {k: v for k, v in (ex or {}).items() if k != 'localFiles'}, err
+    return ((ex or {}).get('localFiles') or {}).get(ex_rel[len('localFiles:'):]), err
+# example value IS the default: --fill may write it
+SAFE_DEFAULTS = {'kitAudit.everyDays', 'cleanup.maxBrowserProfiles', 'supervise.ramActPct', 'supervise.minDiskFreeGB',
+    'build.mavenOffline', 'gate.heapMinGB'}
+PLACEHOLDER = re.compile(r'<[^>]+>|/path/to|example\.(com|app)|your[- ]', re.I)
+def pwsh(script, *a, timeout=120, stdin=''):
+    exe = shutil.which('pwsh')
+    if not exe:
+        return 127, '', 'pwsh 7 not on PATH'
+    return run([exe, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, *a], timeout=timeout, stdin=stdin)
+
+def py():
+    return sys.executable or shutil.which('python3') or shutil.which('python')
+
+def live_kit():
+    """The installed clone: the main worktree of this script's repo (an audit worktree checks the live kit, not itself)."""
+    rc, common, _ = git(OWN, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+    if rc == 0 and common:
+        main = osp.dirname(osp.normpath(common))
+        if osp.isfile(osp.join(main, PATHS_JSON)):
+            return main
+    return OWN
+
+def get(d, dotted):
+    cur = d
+    for part in dotted.split('.'):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+# ---- setup
+def cmd_setup(kit, fix):
+    if not osp.isdir(osp.join(kit, '.git')) and not osp.isfile(osp.join(kit, '.git')):
+        out('ACT', 'SETUP-CLONE', kit, 'not a git clone of the kit repo', 'README "Install": git clone <kit repo> <workspace>/.claude')
+        return
+    setup_ps = osp.join(kit, 'skills', 'orchestrate', 'orch.ps1')
+    need_setup = []
+    rc, hp, _ = git(kit, 'config', 'core.hooksPath')
+    if hp != '.githooks':
+        need_setup.append('core.hooksPath is not .githooks (pre-push gate off)')
+    cfg, _ = load_json(osp.join(kit, 'skills/dev-kit/kit.local.json'))
+    rc, ex, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude')
+    excl = open(ex, encoding='utf-8', errors='replace').read() if rc == 0 and osp.isfile(ex) else ''
+    miss = [p for p in ((cfg or {}).get('localOnly') or []) if f"/{p.replace(chr(92), '/').strip('/')}" not in excl]
+    if miss:
+        need_setup.append(f'{len(miss)} localOnly path(s) not in .git/info/exclude')
+    for n in ('work', 'cache', 'logs'):
+        if not osp.isdir(kit_path(n, kit=kit)):
+            need_setup.append(f'runtime folder {n}/ missing')
+    if need_setup:
+        if fix:
+            rc, o, e = pwsh(setup_ps, 'setup', timeout=120)
+            out('FIX' if rc == 0 else 'ACT', 'SETUP-INSTALL', 'orch.ps1 setup', '; '.join(need_setup) + ('' if rc == 0 else f' (orch.ps1 setup failed: {e[:200]})'))
+        else:
+            out('ACT', 'SETUP-INSTALL', kit, '; '.join(need_setup), f'pwsh -File {setup_ps} setup')
+    for ex_rel, loc_rel, what in PAIRS:
+        if not osp.isfile(osp.join(kit, loc_rel)):
+            lvl = 'ASK' if loc_rel.endswith('kit.local.json') else 'INFO'
+            out(lvl, 'SETUP-CONFIG', loc_rel, f'missing ({what})', 'orch.ps1 setup -WriteLocal, then fill it (the config step lists the keys)')
+    # hooks: scripts exist; sync SessionStart ones run clean, fast, valid JSON or nothing
+    sj, err = load_json(osp.join(kit, 'settings.json'))
+    if err:
+        out('ACT', 'SETUP-HOOKS', 'settings.json', err)
+        sj = {}
+    for event, blocks in ((sj or {}).get('hooks') or {}).items():
+        for b in blocks:
+            for h in b.get('hooks', []):
+                blob = ' '.join([h.get('command', '')] + list(h.get('args', [])))
+                m = re.search(r'\.claude[\\/]([\w./\\-]+\.ps1)', blob)
+                if not m:
+                    continue
+                rel = m.group(1).replace('\\', '/')
+                path = osp.join(kit, rel)
+                if not osp.isfile(path):
+                    out('ACT', 'SETUP-HOOKS', f'settings.json {event}', f'{rel} does not exist')
+                    continue
+                if event != 'SessionStart' or h.get('async'):
+                    continue
+                hargs = list(h.get('args', []))
+                extra = hargs[hargs.index('-File') + 2:] if '-File' in hargs else []   # verb + flags after the script path
+                t0 = time.time()
+                rc, o, e = pwsh(path, *extra, timeout=int(h.get('timeout', 10)) + 5, stdin='{"source":"startup"}')
+                dt = time.time() - t0
+                if rc != 0:
+                    out('ACT', 'SETUP-HOOK-FAIL', rel, f'SessionStart hook exit {rc}: {(e or o)[:200]}')
+                elif o:
+                    try:
+                        json.loads(o.splitlines()[-1])
+                    except ValueError:
+                        out('ACT', 'SETUP-HOOK-FAIL', rel, 'SessionStart hook output is not one JSON line (the harness ignores it)')
+                if dt > 2.5:
+                    out('WARN', 'SETUP-HOOK-SLOW', rel, f'SessionStart hook took {dt:.1f} s (keep synchronous hooks < 2 s; slow work goes async)')
+    sl = osp.join(kit, 'settings.local.json')
+    if osp.isfile(sl) and load_json(sl)[1]:
+        out('ACT', 'SETUP-CONFIG', 'settings.local.json', load_json(sl)[1])
+    # Codex / Antigravity ports + deployed copies
+    pk = osp.join(kit, 'skills', 'orchestrate', 'kittool.py')
+    if osp.isfile(pk):
+        rc, o, e = run([py(), '-X', 'utf8', pk, 'port', '--check'], timeout=60)
+        if rc:
+            out('ACT', 'SETUP-PORTS', 'kittool.py port --check', (o or e)[:300], f'python -X utf8 {pk} port (in the clone that changed, then commit)')
+    ws = osp.dirname(kit)
+    for n in ('AGENTS.md', 'GEMINI.md'):
+        src, dst = osp.join(kit, n), osp.join(ws, n)
+        if osp.isfile(src) and (not osp.isfile(dst) or aread(kit, n) != aread(ws, n)):
+            out('WARN', 'SETUP-PORTS', f'<workspace>/{n}', 'missing or differs from the kit copy (Codex/Antigravity read this one)', f'python -X utf8 {pk} port')
+    # CLIs: present and logged in (never log in)
+    for exe in ('git', 'pwsh', 'node'):
+        if not shutil.which(exe):
+            out('ACT', 'SETUP-CLI', exe, 'not on PATH (the kit needs it)')
+    tt = (os.environ.get('KIT_TRACKER_TYPE') or get(cfg, 'tracker.type') or 'none').lower()
+    need = {'clickup': ['clickup'], 'github': ['gh'], 'gitlab': ['glab'], 'jira': [], 'none': []}.get(tt, [])
+    hk = get(cfg, 'gitHostType') or next((k for k, rx in (('github', 'github'), ('bitbucket', 'bitbucket'), ('azure', r'dev\.azure|visualstudio'), ('gitea', 'gitea|forgejo|codeberg')) if re.search(rx, str(get(cfg, 'gitHost') or ''))), 'gitlab')
+    host_cli = {'github': 'gh', 'gitlab': 'glab'}.get(hk)   # REST hosts need a token, no CLI
+    for v in {'bitbucket': ['BITBUCKET_TOKEN'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'gitea': ['GITEA_TOKEN']}.get(hk, []):
+        if not os.environ.get(v):
+            out('ASK', 'SETUP-AUTH', v, f'environment variable not set (git host {hk})')
+    for exe in sorted(set(need + [host_cli] if host_cli else need)):
+        if not shutil.which(exe):
+            out('ASK', 'SETUP-CLI', exe, f'not on PATH (tracker.type {tt} / git host need it): install it and log in by hand')
+            continue
+        auth = {'gh': ['gh', 'auth', 'status'], 'glab': ['glab', 'auth', 'status']}.get(exe)
+        if auth:
+            rc, o, e = run([shutil.which(exe)] + auth[1:], timeout=30)
+            if rc:
+                out('ASK', 'SETUP-AUTH', exe, 'not logged in (auth status failed): the owner logs in by hand, never headlessly')
+    envs = {'jira': ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'], 'jira-server': ['JIRA_BASE_URL'] + ([] if os.environ.get('JIRA_TOKEN') or (os.environ.get('JIRA_EMAIL') and os.environ.get('JIRA_API_TOKEN')) else ['JIRA_TOKEN']), 'linear': ['LINEAR_API_KEY'], 'azure': ['AZURE_DEVOPS_EXT_PAT'], 'youtrack': ['YOUTRACK_URL', 'YOUTRACK_TOKEN']}
+    for v in envs.get(tt, []):
+        if not os.environ.get(v):
+            out('ASK', 'SETUP-AUTH', v, f'environment variable not set (tracker.type {tt})')
+    rt = (os.environ.get('KIT_REPORT_TYPE') or get(cfg, 'reports.type') or ('gdocs' if shutil.which('gws') else 'markdown')).lower()
+    if rt == 'gdocs' and not shutil.which('gws'):
+        out('ASK', 'SETUP-CLI', 'gws', 'reports.type gdocs needs the gws CLI on PATH, logged in')
+
+# ---- config
+def cmd_config(kit, fill):
+    doc, documented = config_doc_keys(OWN)
+    for ex_rel, loc_rel, what in PAIRS:
+        ex, _ = example_of(ex_rel)
+        loc, err = load_json(osp.join(kit, loc_rel))
+        if err == 'missing':
+            if loc_rel.endswith('kit.local.json'):
+                out('ASK', 'CONFIG-FILE', loc_rel, f'missing ({what})', 'orch.ps1 setup -WriteLocal; the lead fills org values')
+            continue
+        if err:
+            out('ACT', 'CONFIG-FILE', loc_rel, err)
+            continue
+        if not isinstance(loc, dict) or not isinstance(ex, dict):
+            out('ACT', 'CONFIG-FILE', loc_rel, 'top level must be a JSON object')
+            continue
+        changed = False
+        for p in key_paths(ex):
+            if any(p.startswith(m + '.') for m in USER_MAPS):
+                continue
+            ev, lv = get(ex, p), get(loc, p)
+            if lv is None:
+                if loc_rel.endswith('kit.local.json') and p in SAFE_DEFAULTS and fill:
+                    parent = loc
+                    for part in p.split('.')[:-1]:
+                        parent = parent.setdefault(part, {})
+                    if isinstance(parent, dict):
+                        parent[p.split('.')[-1]] = ev
+                        changed = True
+                        out('FIX', 'CONFIG-DEFAULT', f'{loc_rel} {p}', 'filled with the documented default')
+                continue
+            if ev is not None and not PLACEHOLDER.search(json.dumps(ev)) and type(ev) is not type(lv) and not (
+              isinstance(ev, (int, float)) and isinstance(lv, (int, float)) and not isinstance(lv, bool)):
+                out('ACT', 'CONFIG-TYPE', f'{loc_rel} {p}', f'is {type(lv).__name__}, expected {type(ev).__name__} (as in {osp.basename(ex_rel)})')
+        for p in key_paths(loc):
+            top = p.split('.')[0]
+            if get(ex, p) is None and p not in documented and f'`{p}' not in doc and not any(p.startswith(m + '.') for m in USER_MAPS) \
+              and top not in ('default', 'browser', 'keepFreeGB'):
+                out('WARN', 'CONFIG-UNKNOWN', f'{loc_rel} {p}', 'key not in the example nor README "Configuration": a typo, or an undocumented key a script reads?')
+        if changed:
+            bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S'))
+            shutil.copyfile(osp.join(kit, loc_rel), bak)
+            with open(osp.join(kit, loc_rel), 'w', encoding='utf-8') as f:
+                json.dump(loc, f, indent=2, ensure_ascii=False)
+                f.write('\n')
+            out('INFO', 'CONFIG-DEFAULT', loc_rel, f'written (backup {bak}: disposable runtime cache)')
+        if loc_rel.endswith('kit.local.json'):
+            config_rules(kit, loc)
+        elif loc_rel.endswith('targets.local.json'):
+            targets_rules(loc)
+        else:
+            swarm_rules(loc)
+    # keys the scripts read but nobody documented (both ways)
+    reads = script_config_keys(OWN, tracked(OWN))
+    for key, where in sorted(reads.items()):
+        top = key.split('.')[0]
+        if top not in documented and f'`{top}' not in doc:
+            out('ACT', 'CONFIG-UNDOC', where, f'script reads kit.local.json "{key}", not documented in README "Configuration" (nor kit.example.json)')
+
+def config_rules(kit, c):
+    """Values a feature in use needs and no default can supply: ASK the lead (key paths only, never values)."""
+    tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
+    tn = ((manifest(kit).get('adapters') or {}).get('tracker') or {}).get('names', 'none').split()
+    if tt not in tn:
+        out('ACT', 'CONFIG-VALUE', 'kit.local.json tracker.type', 'not one of ' + ' / '.join(tn))
+    if tt in ('github', 'gitlab') and not get(c, 'tracker.repo'):
+        out('ASK', 'CONFIG-NEED', 'kit.local.json tracker.repo', f'tracker.type {tt} needs owner/name or group/project')
+    rt = (os.environ.get('KIT_REPORT_TYPE') or get(c, 'reports.type') or ('gdocs' if shutil.which('gws') else 'markdown')).lower()
+    if rt == 'gdocs' and not c.get('driveParent'):
+        out('ASK', 'CONFIG-NEED', 'kit.local.json driveParent', 'reports.type gdocs needs the Drive folder id for guides and evidence')
+    if not c.get('orgTerms'):
+        out('ASK', 'CONFIG-NEED', 'kit.local.json orgTerms', 'empty: the pre-push org-term gate checks nothing; the lead lists org, product, host and tenant names')
+    for p in c.get('localOnly') or []:
+        if not osp.exists(osp.join(kit, p)):
+            out('WARN', 'CONFIG-VALUE', f'kit.local.json localOnly {p}', 'path does not exist in the clone (stale entry?)')
+    for k in ('reposRoot',):
+        if c.get(k) and not osp.isdir(osp.expanduser(str(c[k]))):
+            out('ACT', 'CONFIG-VALUE', f'kit.local.json {k}', 'folder does not exist on this machine')
+    for i, root in enumerate(c.get('worktreeRoots') or []):
+        if root and not osp.isdir(osp.dirname(osp.abspath(osp.expanduser(str(root))))):
+            out('ACT', 'CONFIG-VALUE', f'kit.local.json worktreeRoots[{i}]', 'its parent folder does not exist on this machine')
+    for i, r in enumerate(c.get('repos') or []):
+        w = f'kit.local.json repos[{i}]'
+        if not isinstance(r, dict):
+            out('ACT', 'CONFIG-TYPE', w, 'must be an object')
+            continue
+        for k in ('name', 'checkout', 'target'):
+            if not r.get(k):
+                out('ASK' if k != 'name' else 'ACT', 'CONFIG-NEED', f'{w}.{k}', 'missing')
+        if r.get('checkout') and not osp.isdir(osp.expanduser(str(r['checkout']).replace('<workspace>', osp.dirname(kit)))):
+            out('ACT', 'CONFIG-VALUE', f'{w}.checkout', 'folder does not exist on this machine')
+        for k in ('linkFrom',):
+            if r.get(k) and not osp.isdir(osp.expanduser(str(r[k]))):
+                out('ACT', 'CONFIG-VALUE', f'{w}.{k}', 'folder does not exist (wt.ps1 new fails)')
+        for t, d in (r.get('linkFromByTarget') or {}).items():
+            if d and not osp.isdir(osp.expanduser(str(d))):
+                out('ACT', 'CONFIG-VALUE', f'{w}.linkFromByTarget.{t}', 'folder does not exist (wt.ps1 new fails)')
+        for j, d in enumerate(r.get('deploys') or []):
+            dw = f'{w}.deploys[{j}]'
+            if not isinstance(d, dict) or not d.get('target'):
+                out('ACT', 'CONFIG-NEED', dw, 'needs a target')
+                continue
+            kinds = [k for k in ('branch', 'awsStack', 'ssh', 'manual', 'laneApk') if d.get(k)]
+            if not kinds:
+                out('ASK', 'CONFIG-NEED', dw, 'no way to check it: branch + job, awsStack + region, ssh {...}, manual or laneApk')
+            if d.get('branch') and not d.get('job'):
+                out('ASK', 'CONFIG-NEED', f'{dw}.job', 'branch deploys need the CI job name')
+            if d.get('awsStack') and not d.get('region'):
+                out('ASK', 'CONFIG-NEED', f'{dw}.region', 'awsStack deploys need the region')
+            s = d.get('ssh')
+            if isinstance(s, dict):
+                for k in ('host', 'key', 'repoDir', 'appDir'):
+                    if not s.get(k):
+                        out('ASK', 'CONFIG-NEED', f'{dw}.ssh.{k}', 'missing')
+                if s.get('key') and not osp.isfile(osp.expanduser(str(s['key']))):
+                    out('ACT', 'CONFIG-VALUE', f'{dw}.ssh.key', 'key file not found on this machine')
+    le = c.get('localEnv') or {}
+    ports = {}
+    for env, e in (le.get('envs') or {}).items():
+        for s in (e or {}).get('services') or []:
+            if s.get('port') and not s.get('external'):   # external infra may be shared
+                ports.setdefault(s['port'], []).append(f'{env}/{s.get("name")}')
+            if s.get('repo') and not any(s['repo'] in [r.get('name')] + list(r.get('aliases') or []) for r in c.get('repos') or [] if isinstance(r, dict)):
+                out('ACT', 'CONFIG-VALUE', f'kit.local.json localEnv.envs.{env} service {s.get("name")}', 'repo is not a repos[] name or alias')
+    for p, who in ports.items():
+        if len(who) > 1:
+            out('ACT', 'CONFIG-VALUE', f'kit.local.json localEnv port {p}', f'used by {len(who)} services (ports must be unique across envs)')
+
+def targets_rules(t):
+    tg = t.get('targets') or {}
+    if not tg:
+        out('ASK', 'CONFIG-NEED', 'targets.local.json targets', 'no test environment defined')
+    if t.get('default') and t['default'] not in tg:
+        out('ACT', 'CONFIG-VALUE', 'targets.local.json default', 'names no entry of targets')
+    for n, v in tg.items():
+        if not (v or {}).get('web') and not (v or {}).get('api'):
+            out('ASK', 'CONFIG-NEED', f'targets.local.json targets.{n}', 'needs web and/or api base URL')
+        if not (v or {}).get('users'):
+            out('ASK', 'CONFIG-NEED', f'targets.local.json targets.{n}.users', 'no test login (the lead supplies it; it stays in this file only)')
+        a = ((v or {}).get('auth') or {}).get('type')
+        if a and a not in ('login', 'token', 'basic', 'none'):
+            out('ACT', 'CONFIG-VALUE', f'targets.local.json targets.{n}.auth.type', 'not one of login / token / basic / none')
+
+def swarm_rules(s):
+    if not s.get('lanes'):
+        out('ASK', 'CONFIG-NEED', 'swarm.config.json lanes', 'no emulator lane defined')
+    for k in ('package', 'appDir'):
+        if not get(s, f'app.{k}'):
+            out('ASK', 'CONFIG-NEED', f'swarm.config.json app.{k}', 'missing')
+    if get(s, 'app.appDir') and not osp.isdir(osp.expanduser(str(get(s, 'app.appDir')))):
+        out('ACT', 'CONFIG-VALUE', 'swarm.config.json app.appDir', 'folder does not exist on this machine')
+
+# ---- recover
+def cmd_recover(kit, fix):
+    rc, _, _ = git(kit, 'fetch', '--quiet', '--prune', timeout=120)
+    if rc:
+        out('WARN', 'RECOVER-GIT', kit, 'git fetch failed: ahead/behind and merged checks use the last fetched state')
+    rc, st, _ = git(kit, 'status', '--porcelain=v1', '--branch')
+    lines = st.splitlines()
+    head = lines[0] if lines else ''
+    dirty = [l[3:] for l in lines[1:]]
+    if dirty:
+        out('ACT', 'RECOVER-DIRTY', kit, f'{len(dirty)} uncommitted change(s) in the live clone: {", ".join(dirty[:6])}',
+         'kit change -> commit + push it from a worktree; org-only path -> kit.local.json localOnly; leftover -> ask the lead')
+    for m in re.finditer(r'(behind|ahead) (\d+)', head):
+        out('WARN', 'RECOVER-UPSTREAM', kit, f'{m.group(2)} commit(s) {m.group(1)} upstream ({head[3:]})',
+         'behind: git pull --rebase once no agents run; ahead: push')
+    # worktrees of the kit repo
+    rc, wl, _ = git(kit, 'worktree', 'list', '--porcelain')
+    wts, cur = [], {}
+    for l in wl.splitlines() + ['']:
+        if not l.strip():
+            if cur:
+                wts.append(cur)
+            cur = {}
+        else:
+            k, _, v = l.partition(' ')
+            cur[k] = v or True
+    prunable = [w for w in wts if 'prunable' in w]
+    if prunable:
+        if fix:
+            git(kit, 'worktree', 'prune')
+            out('FIX', 'RECOVER-WORKTREE', kit, f'pruned {len(prunable)} kit worktree record(s) whose folder is gone')
+        else:
+            out('ACT', 'RECOVER-WORKTREE', kit, f'{len(prunable)} kit worktree record(s) point at missing folders', f'git -C {kit} worktree prune')
+    main = osp.normcase(osp.abspath(kit))
+    in_wt = set()
+    for w in wts:
+        path = w.get('worktree', '')
+        br = str(w.get('branch', '')).replace('refs/heads/', '')
+        if not path or osp.normcase(osp.abspath(path)) == main or 'prunable' in w:
+            continue
+        in_wt.add(br)
+        _, wd, _ = git(path, 'status', '--porcelain')
+        rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', br or 'HEAD', 'origin/main')
+        _, ahead, _ = git(kit, 'rev-list', '--count', f'origin/main..{br}') if br else (0, '?', '')
+        _, remote, _ = git(kit, 'ls-remote', '--heads', 'origin', br, timeout=60) if br else (0, '', '')
+        idle_h = (time.time() - max((osp.getmtime(osp.join(path, f)) for f in os.listdir(path)), default=0)) / 3600 if osp.isdir(path) else 99
+        if rc_m == 0 and not wd.strip():
+            if fix and idle_h > 2:
+                rc, _, e = git(kit, 'worktree', 'remove', path)
+                out('FIX' if rc == 0 else 'ACT', 'RECOVER-WORKTREE', path, f'kit worktree of finished branch {br} removed' + ('' if rc == 0 else f' failed: {e[:120]}'))
+            elif idle_h > 2:
+                out('ACT', 'RECOVER-WORKTREE', path, f'kit branch {br} has nothing beyond origin/main (merged or never used) and the worktree is clean (idle {idle_h:.0f} h)', f'git -C {kit} worktree remove {path}')
+            else:
+                out('INFO', 'RECOVER-WORKTREE', path, f'kit branch {br} has nothing new for origin/main, but the worktree was touched {idle_h * 60:.0f} min ago (in use?): leave it')
+        else:
+            out('WARN', 'RECOVER-HALF', path, f'kit branch {br or "(detached)"}: {ahead} commit(s) not on origin/main, '
+             f'{len(wd.splitlines())} uncommitted, {"pushed" if remote else "NOT pushed"}, idle {idle_h:.0f} h',
+             'in use by another agent? ask the lead; finished -> push the branch and merge it; abandoned -> list it for the lead')
+    # local kit branches without a worktree
+    rc, bl, _ = git(kit, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')
+    _, curb, _ = git(kit, 'rev-parse', '--abbrev-ref', 'HEAD')
+    for br in bl.splitlines():
+        if br in ('main', 'master', curb) or br in in_wt:
+            continue
+        rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', br, 'origin/main')
+        if rc_m == 0:
+            if fix:
+                rc, _, _ = git(kit, 'branch', '-d', br)
+                out('FIX' if rc == 0 else 'ACT', 'RECOVER-BRANCH', br, 'merged kit branch deleted' if rc == 0 else 'merged, but git branch -d refused')
+            else:
+                out('ACT', 'RECOVER-BRANCH', br, 'local kit branch already merged into origin/main', f'git -C {kit} branch -d {br}')
+        else:
+            _, n, _ = git(kit, 'rev-list', '--count', f'origin/main..{br}')
+            out('WARN', 'RECOVER-HALF', br, f'local kit branch with {n} commit(s) not on origin/main and no worktree', 'merge it, or list it for the lead (never delete unmerged work)')
+    # tracked files that must stay local
+    rc, ig, _ = git(kit, 'ls-files', '-ci', '--exclude-standard')
+    cfg, _ = load_json(osp.join(kit, 'skills/dev-kit/kit.local.json'))
+    lo = [p.replace('\\', '/').strip('/') for p in ((cfg or {}).get('localOnly') or [])]
+    bad = sorted(set([f for f in ig.splitlines() if f] + [f for f in tracked(kit) if '.local.' in osp.basename(f) or any(f == p or f.startswith(p + '/') for p in lo)]))
+    for f in bad:
+        out('ACT', 'RECOVER-TRACKED-LOCAL', f, 'tracked although git-ignored / local-only (it is published on push)',
+         f'git -C {kit} rm --cached -- {f} in a kit commit (the lead confirms; the file stays on disk)')
+    # launch records, board entries, product worktrees, runtime size
+    ld = kit_path('launches', kit=kit)
+    for f in sorted(os.listdir(ld)) if osp.isdir(ld) else []:
+        r, err = load_json(osp.join(ld, f))
+        if err or not isinstance(r, dict):
+            out('ACT', 'RECOVER-LAUNCH', f, f'unreadable launch record ({err})', 'delete it')
+        elif not r.get('completed'):
+            age = (time.time() - osp.getmtime(osp.join(ld, f))) / 3600
+            out('WARN', 'RECOVER-LAUNCH', r.get('runId', f), f'workflow launch with no completion, {age:.0f} h old ({osp.basename(str(r.get("script", "")))})',
+             'still running in a live session? leave it; dead -> resume (orchestrate E3) or orch.ps1 launch -Done -RunId <id>')
+    bd = kit_path('board', kit=kit)
+    for f in sorted(os.listdir(bd)) if osp.isdir(bd) else []:
+        p = osp.join(bd, f)
+        e, err = load_json(p)
+        if err or not isinstance(e, dict):
+            continue
+        try:
+            beat = datetime.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', str(e.get('beat'))))
+            age_h = (datetime.datetime.now(beat.tzinfo) - beat).total_seconds() / 3600
+        except ValueError:
+            age_h = 99
+        if e.get('status') != 'left' and age_h > 20 / 60:
+            if fix and age_h > 12:
+                e['status'] = 'left'
+                e['leftBy'] = 'kittool audit recover (no heartbeat > 12 h)'
+                with open(p, 'w', encoding='utf-8') as fh:
+                    json.dump(e, fh, indent=2)
+                out('FIX', 'RECOVER-BOARD', f, f'stale board entry {e.get("agent")} ({e.get("run")}) marked left ({age_h:.0f} h without a heartbeat)')
+            else:
+                out('WARN', 'RECOVER-BOARD', f, f'board entry {e.get("agent")} ({e.get("run")}) has no heartbeat for {age_h:.1f} h',
+                 'orch.ps1 supervise -AutoFix closes finished workflow agents; > 12 h: kittool.py audit recover --fix marks it left')
+    for root in (cfg or {}).get('worktreeRoots') or []:
+        root = osp.expanduser(str(root))
+        for d in sorted(os.listdir(root)) if osp.isdir(root) else []:
+            gp = osp.join(root, d, '.git')
+            if osp.isfile(gp):
+                gd = open(gp, encoding='utf-8', errors='replace').read().replace('gitdir:', '').strip()
+                if not osp.isdir(gd):
+                    out('ACT', 'RECOVER-ORPHAN', osp.join(root, d), 'worktree folder whose repo record is gone (git cannot see or clean it)',
+                     'check it holds nothing unpushed, then the lead deletes the folder; run git worktree prune in its repo')
+    cl = osp.join(kit, 'skills', 'orchestrate', 'orch.ps1')
+    rc, o, e = pwsh(cl, 'cleanup', *(['-Quiet'] if fix else ['-DryRun']), timeout=300)   # without the verb: usage, exit 2
+    if rc == 124:
+        out('WARN', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', 'did not finish within 5 min (git host lookups for many branches?): run it by hand with -DryRun')
+    elif rc != 0:
+        out('ACT', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', f'exit {rc}: {(e or o)[:200]}')
+    elif o and not fix:
+        out('INFO', 'RECOVER-CLEANUP', 'orch.ps1 cleanup -DryRun', f'{len(o.splitlines())} line(s) of clutter it would remove (--fix runs it; safe: it skips anything in use)')
+    elif fix:
+        out('FIX', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', 'ran (log: <runtime>/logs/cleanup.log)')
+    rt = kit_path('runtime', kit=kit)
+    size = 0
+    for d, _, fs in os.walk(rt):
+        for f in fs:
+            try:
+                size += osp.getsize(osp.join(d, f))
+            except OSError:
+                pass
+    if size > 5 * 1024 ** 3:
+        out('WARN', 'RECOVER-RUNTIME', rt, f'runtime holds {size / 1024 ** 3:.1f} GB', 'find the folder that grows; add a prune rule to orch.ps1 cleanup')
+
+
+def aread(kit, rel):
+    return read(osp.join(kit, rel))
+
+AUDIT_VERBS = {'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags),
+  'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
+ARGS = {'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False)}
