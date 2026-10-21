@@ -50,6 +50,9 @@ $ad = New-Item -ItemType Directory -Force (Join-Path $kc 'skills/orchestrate/ada
 $O = Join-Path $kc 'skills/orchestrate/orch.ps1'; $lo = { pwsh -NoProfile -File $O learn @args 2>&1 | Out-String }
 $au = & { . $O; Get-KitHealthLinesAudit }; $st = & { . (Join-Path $kc 'skills/dev-kit/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
 Expect 'kit-admin: health nudges a never-run kitty audit, quiet right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $au2)
+'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
+$pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String
+Expect 'kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them)' ($ue -and $pc -notmatch 'is an extra' -and $pc -match 'pre-commit')
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
 Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-Path (Join-Path $kc 'LESSONS.md.lock')))
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')

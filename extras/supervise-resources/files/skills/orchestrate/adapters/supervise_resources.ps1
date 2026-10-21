@@ -35,8 +35,8 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
   [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: file cache flush: available $([math]::Round($Mem.AvailGB, 1)) -> $([math]::Round($after, 1)) GB"; action = 'Nothing to do.' }
 }
 
-# supervise: flags, sweep lines and report rows (orch.ps1 supervise section 7)
-function Get-KitSuperviseFlagsResources([switch]$AutoFix) {
+# supervise: flags, sweep lines, report rows and the largest waiting build (orch.ps1 supervise section 3: before the slow sections)
+function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }
   $rows = [Collections.Generic.List[object]]::new(); $graceRows = @{}
 
@@ -120,7 +120,7 @@ function Get-KitSuperviseFlagsResources([switch]$AutoFix) {
   foreach ($t in @($builds | Where-Object { $_.kind -ne 'emulator' })) { $p = $byId[[int]$t.pid]; $rows.Add([pscustomobject]@{ name = "build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"; by = $t.owner; gb = $(if ($p) { [math]::Max((& $tree $p), 0.1) } else { [double]$t.need }) }) }
   foreach ($r in $rows) { if ($graceRows.ContainsKey($r.name)) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }; $r }
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
-  if ($need -and $mem.AvailGB -lt $keepFree + $need) { & $flag 'ACT' "RAM: $([math]::Round($mem.AvailGB, 1)) GB free < floor $keepFree + the largest waiting build $need GB" "Free the biggest: $((@($rows | Where-Object { $_.gb } | Sort-Object { -$_.gb } | Select-Object -First 3 | ForEach-Object { "$($_.name) $([math]::Round($_.gb, 1)) GB" })) -join '; ') (and the report's Resource table)" }
+  if ($need) { [pscustomobject]@{ ramNeed = $need } }   # orch.ps1 names the biggest rows of every extra
 }
 
 # board show: QA seats and local-env leases

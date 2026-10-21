@@ -1,8 +1,11 @@
 <#
-kit_admin.ps1 (extra kit-admin): kitty's tools in orch.ps1, dot-sourced by orch.ps1 (adapters/): the weekly audit nudge in health,
-the retro's lesson tools in learn -Stats | -History [-Grep] [-Last] | -Skill <s> (-Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40])
-Without it health has no audit nudge and these switches print the extra line; learn record, -Read and -Show stay in core.
-Exit codes: 0 ok · 1 -Bump / -Fixed matched not exactly one lesson · 2 usage.
+kit_admin.ps1 (extra kit-admin): kitty's tools in orch.ps1, dot-sourced by orch.ps1 (adapters/):
+  prepush · precommit                       the kit's git hooks (.githooks install this extra when it is missing)
+  learn -Stats | -History [-Grep] [-Last]   signals since the last retro, retired lessons
+  learn -Skill <s> -Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
+  health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
+Learn record, -Read and -Show stay in core.
+Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 function Invoke-LearnAdmin {
   param(
@@ -98,4 +101,86 @@ function Get-KitHealthLinesAudit {
   if ($last -and ((Get-Date) - $last).TotalDays -lt $every) { return }
   $busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 }).Count
   if (-not $busy) { "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (orchestrate E13)." }
+}
+# the kit's git pre-push hook (.githooks/pre-push): blocks local files, org terms; warns on stale ports
+function Invoke-PrePush {
+$ErrorActionPreference = 'Stop'
+$root = $KitConf.Kit
+$zero = '0' * 40
+$updates = @($(if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
+$hits = @()
+
+$revs = foreach ($u in $updates) { if ($u.rsha -eq $zero) { git -C $root rev-list $u.lsha --not --remotes } else { git -C $root rev-list "$($u.rsha)..$($u.lsha)" } }
+$revs = @($revs | Where-Object { $_ } | Select-Object -Unique)
+
+if ($revs.Count) {
+  $files = @($revs | ForEach-Object { git -C $root diff-tree --no-commit-id --name-only --diff-filter=ACMR -r $_ } | Where-Object { $_ } | Select-Object -Unique)
+  if ($files.Count) {
+    # pwsh piping appends CR
+    $ign = @(for ($i = 0; $i -lt $files.Count; $i += 100) { git -C $root check-ignore --no-index -- @($files[$i..([math]::Min($i + 99, $files.Count - 1))]) 2>$null })
+    foreach ($f in $ign) { $hits += "LOCAL FILE  $f is git-ignored or local-only (.gitignore / .git/info/exclude) but a pushed commit carries it: git rm --cached it and amend" }
+  }
+}
+
+$terms = @()
+$cfg = $KitConf.ConfigFile
+if ($env:KIT_ORG_TERMS) { $terms = @($env:KIT_ORG_TERMS -split ',' | Where-Object { $_.Trim() }) }
+elseif (Test-Path $cfg) { try { $terms = @((Get-Content $cfg -Raw | ConvertFrom-Json).orgTerms | Where-Object { $_ }) } catch { $hits += "CONFIG      $cfg is not valid JSON: $_" } }
+if (-not $terms.Count) { Write-Host 'pre-push: no orgTerms in skills/dev-kit/kit.local.json - org-term scan skipped' }
+else {
+  $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
+  if (-not $py) { $hits += 'PYTHON      python is not installed: the org-term scan (kittool.py lint) cannot run' }
+  else {
+    $out = Join-Path ([IO.Path]::GetTempPath()) "kit-prepush-$PID.json"
+    & $py -X utf8 $KitCmd.kittool lint $root --warn --no-flow --org-terms ($terms -join ',') --json $out | Out-Null
+    if (-not (Test-Path $out)) { $hits += "LINT        kittool.py lint failed (exit $LASTEXITCODE, no JSON): the org-term scan of the working tree did not run" }
+    $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
+    foreach ($p in $probs | Where-Object code -eq 'ORG-TERM') { $hits += "ORG TERM    $($p.where): $($p.problem)" }
+    $other = @($probs | Where-Object code -ne 'ORG-TERM')
+    if ($other.Count) { Write-Host "pre-push: warning: kit-lint reports $($other.Count) other problem(s) (python skills/orchestrate/kittool.py lint)" }
+  }
+  $rx = @($terms | ForEach-Object { $t = $_.Trim(); $stem = $t.TrimEnd('*'); [pscustomobject]@{ term = $t; rx = [regex]::new('(?<![\w-])' + [regex]::Escape($stem) + $(if ($t.EndsWith('*')) { '' } else { '(?![\w-])' }), $(if ($stem -cne $stem.ToLower()) { 'None' } else { 'IgnoreCase' })) } })
+  foreach ($r in $revs) {
+    foreach ($line in @(git -C $root show --format= --unified=0 --no-color $r)) {
+      if (-not $line.StartsWith('+') -or $line.StartsWith('+++')) { continue }
+      foreach ($x in $rx) { if ($x.rx.IsMatch($line)) { $hits += "ORG TERM    commit $($r.Substring(0, 8)) adds ""$($x.term)"": $($line.Substring(0, [math]::Min(120, $line.Length)))"; break } }
+    }
+  }
+}
+
+$py = Get-Python
+if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kittool.py port if deploying to codex/gemini)" } }   # 2: the ports extra is not installed
+
+if ($hits.Count) {
+  Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
+  $hits | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
+  Write-Host 'Fix them (the kit is public and generic: org values belong in *.local.* files or localOnly paths), then push again.'
+  exit 1
+}
+exit 0
+}
+
+# the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph and ports, runs lint
+# never stage the user's changes
+function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
+function Invoke-PreCommit {
+  $root = $KitConf.Kit
+  $py = Get-Python
+  if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow cannot run)' -ForegroundColor Red; exit 1 }
+  $userEdits = Test-UnstagedEdits $root 'README.md'
+  & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
+  if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
+  if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
+  elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
+  & $py -X utf8 $KitCmd.kittool port 2>$null | Out-Null   # silent without the ports extra
+  if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
+    git -C $root add -- .codex .agents GEMINI.md
+    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
+  }
+  $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
+  & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
+  if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
+  $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
+  if ($probs.Count) { Write-Host "pre-commit: BLOCKED - kit-lint: $($probs.Count) problem(s):" -ForegroundColor Red; $probs | Select-Object -First 25 | ForEach-Object { Write-Host "  $($_.code) $($_.where): $($_.problem)" }; exit 1 }
+  exit 0
 }
