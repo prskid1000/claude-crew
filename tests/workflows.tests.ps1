@@ -137,6 +137,26 @@ run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).th
 '@
 $res = Invoke-Js tc-envfix $js3 $wf
 Expect-Each $res 'testy local: #' 'envfix-ask', 'envfix-pass', 'envfix-held' -Show 5
+# testy: localenv.ps1 / swarm.ps1 calls are guarded (extras): a missing script prints the extra line; the prompt names extra sync
+$js3b = @'
+const calls = []
+async function agent(prompt, o) {
+ calls.push({ label: o.label, prompt })
+ if (/^record-args/.test(o.label)) return _rec()
+ if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
+ return _ok('')
+}
+const args = { runDir: 'C:/runs/R2', kitDir: 'C:/kit', learn: false, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
+ items: [{ code: 'P1', title: 'P one', guideFile: 'g.md', lane: 'app', subtasks: [{ id: 'T1' }] }] }
+run(args, agent, _n, _n, null).then(() => {
+ const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release:Falcon') || {}).prompt || ''
+ const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is an extra: run kittool.py extra add ${x}' }`)
+ console.log(`local-guard:${guard('local-env/localenv.ps1', 'local-env') && /extra sync \(or extra add local-env\)/.test(tp)}`)
+ console.log(`phone-guard:${guard('android-swarm/swarm.ps1', 'android-swarm') && /extra sync \(or extra add android-swarm\)/.test(tp)}`)
+ console.log(`release-guard:${/Test-Path 'C:\/kit\/skills\/android-swarm\/swarm\.ps1'.*release -Agent qa-w1-Falcon.*extra add android-swarm/.test(rel)}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy extras: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
 # testy retries per check: fewer checks keep the first FAIL; a duplicate (C5b) retries as C5
 $js4 = @'
 const calls = []

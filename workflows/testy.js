@@ -94,6 +94,10 @@ const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root 
 const QA = `${KIT}/skills/qa-kit`                 // SKILL.md = QA rules, targets.local.json = environments
 const Q = `${QA}/qa.ps1`
 const SWARM = `${KIT}/skills/android-swarm`
+const KITTOOL = `${KIT}/skills/orchestrate/kittool.py`
+// local-env and android-swarm are extras: a missing script prints the one extra line, never "not recognized"
+const viaExtra = (script, extra, rest) => `if (Test-Path '${script}') { & '${script}' ${rest} } else { '${extra} is an extra: run kittool.py extra add ${extra}' }`
+const EXTRA_HINT = (extra) => `- "${extra} is an extra" -> python -X utf8 ${KITTOOL} extra sync (or extra add ${extra}), then retry.`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
@@ -202,9 +206,11 @@ function localBlock(it) {
  if (!e) return ''
  return `
 LOCAL ENV "${e}" (extra local-env): ours, so NOT_TESTED is not final: unblock it yourself (qa-kit / local-env "Unblock yourself"; config in
- ${KIT}/.state/localenv/${e}.env; services: & ${KIT}/skills/local-env/localenv.ps1 use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'}
- -Session <board token>, release when done). A fix only kitty / the coordinator may do (up/down/refresh/drop, shared DB repair):
- NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.`
+ ${KIT}/.state/localenv/${e}.env; services:
+ ${viaExtra(`${KIT}/skills/local-env/localenv.ps1`, 'local-env', `use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>`)}
+ release when done). A fix only kitty / the coordinator may do (up/down/refresh/drop, shared DB repair):
+ NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.
+${EXTRA_HINT('local-env')}`
 }
 const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
@@ -230,7 +236,9 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
 PHONE (extra android-swarm; ${SWARM}/SKILL.md A1-A4): lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-- FIRST: & ${SWARM}/swarm.ps1 acquire -Agent ${LEASE(L)} -Lane ${L.name}; every command starts with $env:ANDROID_SERIAL='${L.serial}';
+- FIRST: ${viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
+  every command starts with $env:ANDROID_SERIAL='${L.serial}';
+${EXTRA_HINT('android-swarm')}
 - UI: & ${Q} ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log. Relaunch: & ${SWARM}/swarm.ps1 launch -Serial ${L.serial} [-Clear]
 - > 10 min of non-phone work: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)} (acquire again later); the workflow releases it after the lane's last item.
 - Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
@@ -533,7 +541,7 @@ async function pool(list, size, offset, laneOf) {
   // app lane done: return the lease (phone shuts down unless someone waits)
   const L = laneOf ? laneOf(w) : null
   if (L && L.name) {
-   await agent(`STEP: run exactly this in PowerShell and report its output, nothing else: & ${SWARM}/swarm.ps1 release -Agent ${LEASE(L)}`,
+   await agent(`STEP: run exactly this in PowerShell and report its output, nothing else: ${viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `release -Agent ${LEASE(L)}`)}`,
     { label: `release:${L.name}`, phase: 'Close', agentType: 'checky', model: 'haiku', effort: 'low' }).catch(() => null)
    log(`lane ${L.name} (${L.serial}) released`)
   }

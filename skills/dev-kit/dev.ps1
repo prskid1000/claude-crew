@@ -1271,7 +1271,7 @@ if (($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $kc.localEnv) -and $cmd -notmatc
   $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|serve)\s*$'
   foreach ($seg in @($cmd -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
     if ($seg -match $server) {
-      Deny "Dev servers run in the shared local env, not by hand: & $($KitCmd.local) use|up -Env <env> (list: envs; logs: logs -Env <env> -Service <s>)."
+      Deny "Dev servers run in the shared local env, not by hand: & $($KitCmd.local) use|up -Env <env> (list: envs; logs: logs -Env <env> -Service <s>; extra local-env: kittool.py extra sync if missing)."
     }
   }
 }
