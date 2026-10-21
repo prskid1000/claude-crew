@@ -95,3 +95,28 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 - `up` (only named services), `unhold`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then
   fail with the biggest users listed; report it, never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.
+
+## Config (`kit.local.json` `localEnv`; an example)
+```json
+{
+ "localEnv": {
+  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db.snapshot / restore: commands ({snapshot} = the name) run around migration layers. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
+  "maxLeaseMinutes": 120,
+  "idle": { "minMinutes": 15, "maxMinutes": 60 },
+  "envs": {
+   "shop": {
+    "description": "API + web of the shop",
+    "services": [
+     { "name": "db", "external": true, "port": 5432 },
+     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://localhost:8080/health", "dependsOn": ["db"],
+      "build": "mvn -q package -DskipTests", "artifact": "target/api-*.jar",
+      "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
+     { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
+    ],
+    "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
+    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>" }
+   }
+  }
+ }
+}
+```

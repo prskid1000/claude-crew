@@ -15,7 +15,7 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 | `swarm.ps1` | A1-A4 (`acquire`, `ensure`, `launch`, `release`, `status`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim` runs from `up` |
 | `<kit>/skills/qa-kit/adapters/ui_android.ps1` | never read: `qa.ps1 ui` and the `deploys[]` `laneApk` check of `qa.ps1 deployed` (this extra) |
 
-Lanes and the app: `swarm.config.json` (git-ignored; `orch.ps1 setup -WriteLocal` writes it; keys and defaults: `Get-SwarmConfig`
+Lanes and the app: `swarm.config.json` (git-ignored; an example: "Config" below; keys and defaults: `Get-SwarmConfig`
 in `swarm.ps1`). `kit.local.json` `devices.type`: android (default) · none (verbs refuse; app checks NOT_TESTED). Extras
 (`kittool.py extra add`): `ios-simulator`, `app-kinds` (flutter, maui, capacitor, Expo), `emulator-windows` (visible windows
 in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
@@ -51,3 +51,26 @@ in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (
 - Linux/macOS: SDK from `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`.
 
 **Learn:** `orch.ps1 learn -Skill android-swarm -Kind <kind> -Text "<what + fix>"`.
+
+## Config (an example `skills/android-swarm/swarm.config.json`)
+```json
+{
+ "swarm.config.json": {
+   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp; flutter, maui, capacitor: extra app-kinds. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "avdDir": "",
+   "outDir": "",
+   "headless": false,
+   "lanes": [
+    { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
+    { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }
+   ],
+   "app": {
+    "kind": "react-native", "package": "com.example.app", "appDir": "/path/to/example-app/app", "branch": "main",
+    "buildTask": "assembleRelease", "buildArgs": "-PreactNativeArchitectures=x86_64 -Dorg.gradle.workers.max=4",
+    "apkGlob": "app/build/outputs/apk/release/*.apk", "permissions": ["CAMERA", "ACCESS_FINE_LOCATION"],
+    "localManifests": ["src/debugOptimized/AndroidManifest.xml", "src/debug/AndroidManifest.xml"], "localReverse": [8080],
+    "javaHome": "", "javaVersions": [17, 21]
+   }
+  }
+}
+```
