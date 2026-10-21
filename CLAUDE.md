@@ -7,6 +7,6 @@ Everything above this line is shared with Codex and Antigravity (README "Install
   -Quiet` (async). `kittool.py port` (extra `ports`) ports them to `.codex/config.toml` / `.agents/hooks.json` (no SendMessage port).
 - **Agents** (`agents/*.md`) and **workflows** (`workflows/*.js`): `kittool.py port` writes `.codex/agents/*.toml`,
   `.agents/agents/*.md` and a manual procedure per workflow (`.codex/workflows/*.md`, `.agents/workflows/*.md`); `orch.ps1
-  health` runs `port --check` at every SessionStart.
+  health` runs `port --check` at every SessionStart (when installed).
 - **Skills** (`skills/*/SKILL.md`): loaded by name through the Skill tool. Launch workflows by path:
   `Workflow({ scriptPath: "<kit>/workflows/<name>.js", args })` (named lookup fails after a `cd`).

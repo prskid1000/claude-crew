@@ -1,6 +1,6 @@
 #!/bin/sh
 # Kit pre-push gate (enabled by orch.ps1 setup: git config core.hooksPath .githooks): blocks a push that carries an org term or a
-# git-ignored / local-only file, or stale generated ports (kittool.py port --check). Logic: skills/orchestrate/orch.ps1 prepush (pwsh 7 + python). Exit 1 = blocked.
+# git-ignored / local-only file, or stale generated ports (kittool.py port --check, extra ports). Logic: skills/orchestrate/orch.ps1 prepush (pwsh 7 + python). Exit 1 = blocked.
 root="$(git rev-parse --show-toplevel)"
 if command -v pwsh >/dev/null 2>&1; then
   exec pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$root/skills/orchestrate/orch.ps1" prepush "$@"

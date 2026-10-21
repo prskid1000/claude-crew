@@ -1,6 +1,6 @@
 #!/bin/sh
 # Kit pre-commit gate (enabled by orch.ps1 setup): regenerates the README graph sections (kittool.py flow --readme), runs lint.
-# Ports (kittool.py port) are regenerated and deployed to the workspace root (.codex, .agents, GEMINI.md) on every pre-commit.
+# Ports (kittool.py port, extra ports: skipped without it) are regenerated and deployed to the workspace root (.codex, .agents, GEMINI.md) on every pre-commit.
 # Pre-commit blocks only on: flow --readme failure, or kittool.py lint problems (unreached files, budgets: trim first,
 # then kittool.py budget raise, file cap, conventions). Logic: skills/orchestrate/orch.ps1 precommit. Exit 1 = blocked.
 root="$(git rev-parse --show-toplevel)"

@@ -1615,9 +1615,10 @@ def local_config(kit, fname):
     return (load_json(p)[0] or {}) if p else {}
 
 def set_listed(kit, name, on):
-    """kit.local.json `extras`: names sync always installs (a fresh clone gets them back); extra add lists, remove unlists."""
-    p = local_config_path(kit, 'kit.local.json')
-    if not p:
+    """kit.local.json `extras`: names sync always installs (a fresh clone gets them back); extra add lists, remove unlists.
+    Only this kit's own file: an add in a worktree never edits the live clone's config."""
+    p = osp.join(kit, 'skills', 'dev-kit', 'kit.local.json')
+    if not osp.isfile(p):
         return
     with locked(p):
         cfg = load_json(p)[0]
@@ -1702,6 +1703,12 @@ def extra_sync(kit):
             rc = max(rc, add_extra(kit, name, installed, 'updated'))
     return rc
 
+# an extra's tests.ps1 that dot-sources harness.ps1 beside itself gets the kit's harness; its test kits get the extra's files
+HARNESS_SHIM = """. '<kit>/tests/harness.ps1'
+$script:NewCoreTestKit = ${function:New-TestKit}
+function New-TestKit([string]$name) { $k = & $script:NewCoreTestKit $name; if (Test-Path '<files>') { Copy-Item '<files>/*' $k -Recurse -Force }; $k }
+"""
+
 def extra_test(kit, names):
     """Run each installed extra's tests.ps1 (it stays on the extras branch) against this kit, in parallel; harness output."""
     if not shutil.which('pwsh'):
@@ -1714,6 +1721,10 @@ def extra_test(kit, names):
         zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', EXTRAS_REF, f'extras/{name}'], capture_output=True, timeout=60).stdout
         tmp = tempfile.mkdtemp(prefix=f'extra-{name}-')
         zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
+        here = osp.join(tmp, 'extras', name)
+        if osp.isfile(osp.join(kit, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
+            with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
+                fh.write(HARNESS_SHIM.replace('<kit>', kit.replace("'", "''")).replace('<files>', osp.join(here, 'files').replace("'", "''")))
         cmd = ['pwsh', '-NoProfile', '-File', osp.join(tmp, 'extras', name, 'tests.ps1'), '-Kit', kit]
         runs.append((name, tmp, subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')))
     fails = 0

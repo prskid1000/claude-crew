@@ -212,7 +212,7 @@ TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. An optional featur
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
   Character blocks and ports are generated from it; `renamed` lists old names (no aliases).
 - **Formats** [SCHEMA, AGENT-TYPE]: SKILL.md and subagent front matter + the Character shape, JSON-Schema checked; every workflow
-  `agent()` names a crew agentType. **Versions**: SemVer tags from Conventional Commits (`kittool.py release`; no CHANGELOG).
+  `agent()` names a crew agentType. **Versions**: SemVer tags from Conventional Commits (`kittool.py release`, extra kit-admin; no CHANGELOG).
   **Decisions**: ADR lines in LESSONS.md "Decisions". Every addition: front matter, manifest entry, reachability edge,
   test, flow node, README row, ports; lint refuses a half-added part.
 
@@ -226,7 +226,7 @@ TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. An optional featur
 always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 428000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
   Over a budget: trim first (dense prose, dedupe, never golf that hurts reading); only when trimming cannot make room,
-  `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any
+  `kittool.py budget raise -Reason "<why>"` (extra kit-admin; x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any
   other change of the total].
 - **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
@@ -249,7 +249,7 @@ always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · template
   `kit.example.json` sample. **Hook**: `pwsh` exec form, SessionStart < 2 s, slow work async.
 
 ### Before every push
-`agents/kitty.md` step 8: `kittool.py lint` (0 problems, 0 counted flow issues), `port` + `port --check`, `tests/kit-tests.ps1
+`agents/kitty.md` step 8: `kittool.py lint` (0 problems, 0 counted flow issues), `port` + `port --check` (extra ports), `tests/kit-tests.ps1
 [-Area <area>]` (areas in parallel), `lint --org-terms <kit.local.json>`, `cost --steps` after a workflow change.
 pre-commit regenerates README graph sections and ports and blocks on lint (a flow issue with a `flow: <reason>` marker is
 deliberate); pre-push blocks stale ports, org terms and local files; commit with `dev.ps1 wt commit`.

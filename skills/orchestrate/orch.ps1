@@ -2058,7 +2058,7 @@ function Invoke-PreCommit {
   if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
   if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
   elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
-  & $py -X utf8 $KitCmd.kittool port | Out-Null
+  & $py -X utf8 $KitCmd.kittool port 2>$null | Out-Null   # silent without the ports extra
   if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
     git -C $root add -- .codex .agents GEMINI.md
     Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
