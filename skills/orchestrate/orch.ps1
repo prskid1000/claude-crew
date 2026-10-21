@@ -922,7 +922,7 @@ foreach ($lf in @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorActi
   $s0 = "$($ls.seen)"; $keep = Update-KitLease $ls
   if ($keep -and (-not $s0 -or ([datetime]$ls.seen - [datetime]$s0).TotalMinutes -ge 1) -and (Test-Path $lf.FullName)) { $ls | ConvertTo-Json -Depth 5 | Set-Content "$($lf.FullName).sv"; Move-Item "$($lf.FullName).sv" $lf.FullName -Force }   # atomic, never resurrects
   if ($keep) { if ($null -ne $ls.graceLeft) { $graceRows["phone $($ls.lane)"] = $ls.graceLeft }; continue }   # seen persists
-  if ($AutoFix) { $r = & $KitCmd.swarm release -Agent $ls.agent 2>&1; Flag 'INFO' "auto-fixed: released phone $($ls.lane) of $($ls.agent) (no live holder): $r" 'Nothing to do.' }
+  if ($AutoFix -and (Test-Path $KitCmd.swarm)) { $r = & $KitCmd.swarm release -Agent $ls.agent 2>&1; Flag 'INFO' "auto-fixed: released phone $($ls.lane) of $($ls.agent) (no live holder): $r" 'Nothing to do.' }
   else { Flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent): no live holder" "& $($KitCmd.swarm) release -Agent $($ls.agent)" }
 }
 
@@ -1065,7 +1065,7 @@ $ps = @(Get-SysProcs); $kids = @{}; $byId = @{}; foreach ($p in $ps) { $kids[$p.
 # RAM of a process tree, each process counted once
 $seen = @{}; $tree = { param($r) $g = 0.0; $st = [Collections.Stack]::new(); $st.Push($r); while ($st.Count) { $q = $st.Pop(); if (-not $q -or $seen[$q.Id]) { continue }; $seen[$q.Id] = 1; $g += $q.WorkingSet; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }; $g / 1GB }
 $res = [Collections.Generic.List[object]]::new()
-$le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
+$le = if (Test-Path $KitCmd.local) { Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))) }   # the local-env extra
 $envStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
 $er = Get-KitEnvRows $envStatus $now; foreach ($x in $er.rows) { $res.Add($x) }; foreach ($x in $er.flags) { Flag $x.level $x.what $x.action }
 $ports = try { Get-Content (Get-KitPath browser-ports) -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; $keyOf = @{}; foreach ($k in $ports.Keys) { $keyOf["$($ports[$k])"] = $k }
@@ -1254,7 +1254,7 @@ $runName = "bugfix-$($Task)"
 $md = @"
 # Bug-fix brief: $($j.name)
 
-Follow ``$claude/skills/dev-kit/templates.md`` "Bug-fix brief", ``$claude/skills/dev-kit/SKILL.md`` and ``$claude/skills/local-env/SKILL.md`` "Debug locally".
+Follow ``$claude/skills/dev-kit/templates.md`` "Bug-fix brief", ``$claude/skills/dev-kit/SKILL.md`` and ``$claude/skills/local-env/SKILL.md`` "Debug locally" (extra local-env).
 This brief wins where they differ.
 
 Task: $($j.url) — checks $ids to fix. **Reproduce each check on the local env FIRST** (template steps 1-4).
@@ -1280,7 +1280,7 @@ $($rows -join "`n")
 Branches ``fix/$($KitConf.TrackerTag)$Task-<slug>``; worktree prefix ``$slugAgent``; board run ``$runName``. Tracker (``$claude/skills/dev-kit/dev.ps1 tracker``):
 in progress → review (orch.ps1 track sets promoted when all merge). The workflow merges after review: do NOT merge yourself.
 Register: ``$claude/skills/orchestrate/orch.ps1 track add -Task $Task -Discover``.
-Phones (app bugs): the local-env APK (``swarm.ps1 build -Local``, ``swarm.ps1 acquire -Agent $Agent -Apk local``); release it when done.
+Phones (app bugs, extra android-swarm): the local-env APK (``swarm.ps1 build -Local``, ``swarm.ps1 acquire -Agent $Agent -Apk local``); release it when done.
 "@
 $dir = Get-KitPath briefs -Create
 $out = Join-Path $dir "$Task.md"
