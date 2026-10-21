@@ -1,5 +1,5 @@
 # kit-admin
 
-kitty's tools: `kittool.py audit setup [--fix] | config [--fill] | recover [--fix]` (agents/kitty.md steps 1-3), `cost [--steps]` (start tokens per agent, workflow prompts), `release [--tag] [--publish]` (SemVer + notes), `budget raise -Reason` (the token cap x1.1).
+kitty's tools and rules: `skills/orchestrate/kit-admin.md` (how to change the kit: rules, shapes, lint codes, pre-push checks, kitty steps 1-6 detail, script pitfalls; README "Extending" points to it); `kittool.py audit setup [--fix] | config [--fill] | recover [--fix]` (agents/kitty.md steps 1-3), `cost [--steps]` (start tokens per agent, workflow prompts), `release [--tag] [--publish]` (SemVer + notes), `budget raise -Reason` (the token cap x1.1).
 Needed when: `skills/dev-kit/kit.local.json` exists (a configured install: the weekly audit nudge spawns kitty), or listed in kit.local.json `extras`.
-Wiring: `kittool.py` loads `skills/orchestrate/kittool_admin.py` (audit verbs setup, config, recover; commands cost, release; `budget raise` through `kittool.py budget`).
+Wiring: `kittool.py` loads `skills/orchestrate/kittool_admin.py` (audit verbs setup, config, recover; commands cost, release; `budget raise` through `kittool.py budget`); `agents/kitty.md` reads `kit-admin.md` at step 0.
