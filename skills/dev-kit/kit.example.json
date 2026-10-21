@@ -178,10 +178,10 @@
   "caps": { "content": 30, "plumbing": 8, "totalTokens": 428000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github gitlab jira jira-server linear azure youtrack command none" },
-   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github bitbucket azure gitea command" },
+   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "clickup github gitlab command none" },
+   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github command" },
    "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "gdocs markdown html command" },
-   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github bitbucket azure gitea jenkins command none", "values": "host" },
+   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github command none", "values": "host" },
     "db-engine": { "config": "", "file": "skills/local-env/localenv.ps1", "table": "DbPresets", "verbs": "snapshot restore", "names": "postgres mysql sqlserver sqlite oracle mongodb" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",

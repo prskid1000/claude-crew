@@ -188,10 +188,10 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs) | Built in | Code |
 |---|---|---|---|---|
-| tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | clickup, github, gitlab, jira, jira-server, linear, azure, youtrack, command, none | `skills/dev-kit/lib.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, github, bitbucket, azure, gitea, command | `skills/dev-kit/lib.ps1` |
+| tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | clickup, github, gitlab, command, none | `skills/dev-kit/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, github, command | `skills/dev-kit/lib.ps1` |
 | report | `reports.type` | publish | gdocs, markdown, html, command | `skills/dev-kit/devtools.py` |
-| ci | `ci.type` | runs jobs log status config | gitlab, github, bitbucket, azure, gitea, jenkins, command, none | `skills/dev-kit/lib.ps1` |
+| ci | `ci.type` | runs jobs log status config | gitlab, github, command, none | `skills/dev-kit/lib.ps1` |
 | db-engine | `` | snapshot restore | postgres, mysql, sqlserver, sqlite, oracle, mongodb | `skills/local-env/localenv.ps1` |
 <!-- kit-graph:end -->
 
