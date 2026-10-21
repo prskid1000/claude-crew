@@ -26,6 +26,10 @@ $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
 # ---- board: who is alive; one writer per worktree
+# $Change returns $null = unchanged; script scope: supervise uses it too
+function Update-BoardEntry([string]$Path, [scriptblock]$Change) {
+  Invoke-KitLocked $Path { if (Test-Path $Path) { $e0 = Get-Content $Path -Raw | ConvertFrom-Json; $n0 = & $Change $e0; if ($null -ne $n0) { $n0 | ConvertTo-Json | Set-Content $Path } } }
+}
 function Invoke-Board {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('join', 'beat', 'show', 'check', 'leave', 'msg', 'inbox', 'dispute', 'disputes')][string]$Action,
@@ -59,10 +63,6 @@ function Warnings($me, $act) {
       if ($common) { "AREA: $($o.agent) also lists $($common -join ', ')." }
     }
   }
-}
-# $Change returns $null = unchanged
-function Update-BoardEntry([string]$Path, [scriptblock]$Change) {
-  Invoke-KitLocked $Path { if (Test-Path $Path) { $e0 = Get-Content $Path -Raw | ConvertFrom-Json; $n0 = & $Change $e0; if ($null -ne $n0) { $n0 | ConvertTo-Json | Set-Content $Path } } }
 }
 function Print($act) {
   if (-not $act) { 'board: no other active agents'; return }
