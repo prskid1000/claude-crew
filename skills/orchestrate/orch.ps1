@@ -1041,6 +1041,9 @@ $seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAc
 L "qa seats: $seatsNow taken; free RAM $([math]::Round($mem.AvailGB, 1)) GB"
 # extras add their own checks: functions Get-KitSuperviseFlags<Name> return { level, what, action }
 foreach ($hook in @(Get-Command 'Get-KitSuperviseFlags*' -CommandType Function -ErrorAction SilentlyContinue)) { foreach ($x in @(& $hook -AutoFix:$AutoFix | Where-Object level)) { Flag $x.level $x.what $x.action } }
+# config that needs an extra not installed (offline: the last fetched extras branch)
+$need = if ((Within 'extras') -and (Get-Command (Get-Python) -ErrorAction SilentlyContinue)) { @(& (Get-Python) -X utf8 $KitCmd.kittool extra check 2>$null) }
+if ($need) { Flag 'ACT' "missing extra(s): $($need -join '; ')" "python -X utf8 $($KitCmd.kittool) extra sync (between runs: it may update installed extras)" }
 
 # 11. retro due (no workflow running), budgets: past handoff, handoffs not continued, runs at their stop line
 if (-not $runTotal) {
@@ -1822,7 +1825,11 @@ $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
 $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
 if ($Flow -or $Fetch) {
-  if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) { git -C $kit fetch --quiet 2>$null }
+  if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
+    git -C $kit fetch --quiet 2>$null
+    # extras the config needs, installed in the background (this hook is async): a failure is one hook-log line
+    if ($py) { $sync = & $py -X utf8 $KitCmd.kittool extra sync 2>&1; if ($LASTEXITCODE) { Add-Content (Get-KitPath hook-log -Create) "$((Get-Date).ToString('s'))`thealth`textra sync failed: $($sync -join ' ')" } }
+  }
   if ($Flow -and $py) { & $py -X utf8 $KitCmd.kittool flow $kit | Out-Null }
   exit 0
 }
@@ -1961,7 +1968,7 @@ foreach ($k in $want.Keys) {
   if ($WriteLocal) { $want[$k] | ConvertTo-Json -Depth 20 | Set-Content $f -Encoding utf8; Say "wrote $k from kit.example.json: fill in the <...> values (git-ignored)" }
   else { Say "to do: $k is missing (setup -WriteLocal writes it from kit.example.json, then fill it in)" }
 }
-if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { foreach ($x in @(& (Get-Python) -X utf8 $KitCmd.kittool extra check 2>$null)) { Say $x } }   # config that needs an extra not installed
+if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { foreach ($x in @(& (Get-Python) -X utf8 $KitCmd.kittool extra sync 2>&1)) { Say $x } }   # extras the config needs
 Say 'kit ready.'
 }
 

@@ -1,8 +1,13 @@
 #!/bin/sh
-# Kit post-merge hook (enabled by orch.ps1 setup: core.hooksPath .githooks): after git pull / merge, regenerates the live clone's
-# kit-flow page (kittool.py flow). Never opens it, never fails the merge.
+# Kit post-merge hook (enabled by orch.ps1 setup: core.hooksPath .githooks): after git pull / merge, installs or updates the
+# extras the config needs (kittool.py extra sync) and regenerates the live clone's kit-flow page (kittool.py flow). Never opens
+# it, never fails the merge.
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do
-  command -v "$p" >/dev/null 2>&1 && "$p" -X utf8 "$root/skills/orchestrate/kittool.py" flow >/dev/null 2>&1 && break
+  if command -v "$p" >/dev/null 2>&1 && "$p" -c '' >/dev/null 2>&1; then   # a store stub is on PATH but does not run
+    "$p" -X utf8 "$root/skills/orchestrate/kittool.py" extra sync
+    "$p" -X utf8 "$root/skills/orchestrate/kittool.py" flow >/dev/null 2>&1
+    break
+  fi
 done
 exit 0

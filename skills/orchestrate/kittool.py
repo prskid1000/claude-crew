@@ -9,7 +9,7 @@
   python -X utf8 kittool.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits
   python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap (x1.1 per raise)
-  python -X utf8 kittool.py extra list | add <name> | remove <name> | check   # optional parts from the origin's `extras` branch
+  python -X utf8 kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]   # optional parts (origin `extras`)
 
 lint problem codes: each message says what is wrong and the fix; README "Extending" lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
@@ -19,7 +19,7 @@ error or a command that needs an extra not installed (one line: `<feature> is an
 Sections: 1 paths · 2 load, graph, lint · 3 README graph · 4 lint command · 5 port · 6 audit scan · 7 cost · 8 registry,
 release · 9 prose · 10 budget · 11 extras · 12 main
 """
-import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time
+import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -2006,7 +2006,7 @@ def extra_files(kit, name):
     """[(path on the extras branch, kit path)] of one extra."""
     prefix = f'extras/{name}/files/'
     rc, o, _ = git(kit, 'ls-tree', '-r', '--name-only', EXTRAS_REF, '--', prefix)
-    return [(x, x[len(prefix):]) for x in o.split('\n') if x.startswith(prefix)] if rc == 0 else []
+    return [(x, x[len(prefix):]) for x in o.split('\n') if x.startswith(prefix) and '__pycache__/' not in x] if rc == 0 else []
 
 def config_values(cfg, dotted):
     """Every value at a dotted path; `*` walks every key or list item."""
@@ -2021,33 +2021,125 @@ def config_values(cfg, dotted):
         cur = nxt
     return cur
 
+def local_config(kit, fname):
+    """A local config file (kit.local.json, targets.local.json, swarm.config.json) from skills/*/: this kit, else the main clone
+    (a worktree has no git-ignored files)."""
+    for base in (kit, main_clone(kit)):
+        for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
+            if osp.isfile(osp.join(base, 'skills', d, fname)):
+                return load_json(osp.join(base, 'skills', d, fname))[0] or {}
+    return {}
+
 def extras_needed(kit):
-    """[(name, feature)]: extras kit.local.json asks for (their EXTRA.md "Needed when" lines; value `*` = the key is set)
-    that are not installed."""
-    local = osp.join(kit, 'skills', 'dev-kit', 'kit.local.json')
-    cfg = load_json(local if osp.isfile(local) else osp.join(main_clone(kit), 'skills', 'dev-kit', 'kit.local.json'))[0] or {}
+    """[(name, feature)]: extras this install asks for that are not installed. EXTRA.md "Needed when[ (<file>, ...)]:" lines:
+    `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set) or `<path>` exists
+    (a kit file, the kit's own need); prose-only lines never install."""
     have = set(installed_extras(kit))
-    rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when:', EXTRAS_REF, '--', 'extras/')
-    need = []
+    rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
+    need, configs = [], {}
     for line in o.split('\n') if rc == 0 else []:
-        m = re.match(r'^[^:]+:extras/([\w-]+)/EXTRA\.md:\d+:Needed when:(.*)$', line)
-        for key, want in re.findall(r'`([\w.*-]+)`\s*(?:=|is)\s*`([^`]+)`', m.group(2)) if m else []:
-            values = [v for v in config_values(cfg, key) if v not in (None, '', [], {})]
-            if m.group(1) not in have and (want == '*' and values or any(str(v).lower() == want.lower() for v in values)):
-                need.append((m.group(1), f'{key} "{want}"'))
+        m = re.match(r'^[^:]+:extras/([\w-]+)/EXTRA\.md:\d+:Needed when(?: \(([\w.-]+\.json)[^)]*\))?:(.*)$', line)
+        if not m or m.group(1) in have:
+            continue
+        name, fname, rule = m.group(1), m.group(2) or 'kit.local.json', m.group(3)
+        cfg = configs.setdefault(fname, local_config(kit, fname))
+        for key, wants in re.findall(r'`([\w.*-]+)`\s*(?:=|is)\s*((?:`[^`]+`\s*\|?\s*)+)', rule):
+            wants = re.findall(r'`([^`]+)`', wants)
+            values = [str(v).lower() for v in config_values(cfg, key) if v not in (None, '', [], {})]
+            hit = next((w for w in wants if (w == '*' and values) or w.lower() in values), None)
+            if hit:
+                need.append((name, f'{key} "{hit}"'))
+        need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule) if osp.exists(osp.join(kit, p))]
     return sorted(set(need))
 
+def stale_extras(kit, installed):
+    """Installed extras whose files differ from the fetched extras branch (git blob ids: bytes as stored)."""
+    stale = []
+    for name, paths in installed.items():
+        rc, o, _ = git(kit, 'ls-tree', '-r', EXTRAS_REF, '--', f'extras/{name}/files/')
+        want = {x.split('\t')[1][len(f'extras/{name}/files/'):]: x.split()[2] for x in o.split('\n') if '\t' in x} if rc == 0 else {}
+        have = dict(zip(paths, git(kit, 'hash-object', '--no-filters', '--', *paths)[1].split('\n')))
+        if want and want != have:
+            stale.append(name)
+    return stale
+
+def add_extra(kit, name, installed, verb='installed'):
+    """Write one extra's files from the fetched branch and register them local-only; 0 ok, 1 refused, 2 no such extra."""
+    files = extra_files(kit, name)
+    if not files:
+        print(f'kittool extra add: no extra "{name}" on origin/extras (kittool.py extra list)', file=sys.stderr)
+        return 2
+    mine, tracked_files = set(installed.get(name, [])), set(tracked(kit))   # re-adding updates it; anything else is never overwritten
+    clash = sorted(rel for _, rel in files if rel in tracked_files or (osp.exists(osp.join(kit, rel)) and rel not in mine))
+    if clash:
+        print(f'kittool extra add {name}: refused - it would overwrite {clash}', file=sys.stderr)
+        return 1
+    for rel in mine - {rel for _, rel in files}:   # a file the new version dropped
+        os.remove(osp.join(kit, rel))
+    for src, rel in files:
+        blob = subprocess.run(['git', '-C', kit, 'show', f'{EXTRAS_REF}:{src}'], capture_output=True, timeout=60).stdout   # bytes as stored
+        os.makedirs(osp.dirname(osp.join(kit, rel)), exist_ok=True)
+        with open(osp.join(kit, rel), 'wb') as fh:
+            fh.write(blob)
+    set_exclude(kit, name, [rel for _, rel in files])
+    print(f'extra {name}: {verb} {len(files)} file(s), local-only (never pushed): {", ".join(rel for _, rel in files)}')
+    return 0
+
+def extra_sync(kit):
+    """Install every extra this install needs (extras_needed); refresh installed ones the branch changed, only while the kit
+    is not behind origin/main (a newer extra may need newer core: the pull comes first). Silent when nothing to do."""
+    if git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]:
+        print('kittool extra sync: the extras branch was never fetched (offline?): nothing installed', file=sys.stderr)
+        return 1
+    rc, installed = 0, installed_extras(kit)
+    for name in sorted({n for n, _ in extras_needed(kit)}):
+        rc = max(rc, add_extra(kit, name, installed))
+    if git(kit, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD')[0] == 0:
+        for name in stale_extras(kit, installed):
+            rc = max(rc, add_extra(kit, name, installed, 'updated'))
+    return rc
+
+def extra_test(kit, names):
+    """Run each installed extra's tests.ps1 (it stays on the extras branch) against this kit, in parallel; harness output."""
+    runs = []
+    for name in names:
+        if f'extras/{name}/tests.ps1' not in git(kit, 'ls-tree', '--name-only', EXTRAS_REF, '--', f'extras/{name}/tests.ps1')[1]:
+            continue
+        zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', EXTRAS_REF, f'extras/{name}'], capture_output=True, timeout=60).stdout
+        tmp = tempfile.mkdtemp(prefix=f'extra-{name}-')
+        zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
+        cmd = ['pwsh', '-NoProfile', '-File', osp.join(tmp, 'extras', name, 'tests.ps1'), '-Kit', kit]
+        runs.append((name, tmp, subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')))
+    fails = 0
+    for name, tmp, p in runs:
+        try:
+            o = p.communicate(timeout=300)[0]
+        except subprocess.TimeoutExpired:
+            p.kill()
+            o = 'FAIL timed out after 300 s\n'
+        n = len(re.findall(r'(?m)^FAIL ', o)) or (1 if p.returncode else 0)
+        fails += n
+        print(f'== extra {name}\n{o.rstrip()}')
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f'{fails} failure(s)')
+    return 1 if fails else 0
+
 def cmd_extra(a):
-    """kittool.py extra list | add <name> | remove <name> | check"""
+    """kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]"""
     kit = KIT_DIR
     verb, names = (a[0] if a else 'list'), a[1:]
-    if verb not in ('list', 'add', 'remove', 'check') or len(names) != (1 if verb in ('add', 'remove') else 0):
+    want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
+    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want:
         print(cmd_extra.__doc__, file=sys.stderr)
         return 2
-    # offline: the last fetched branch answers; check fetches only when it never did (it runs at SessionStart)
-    if verb in ('list', 'add') or git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]:
-        git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
     installed = installed_extras(kit)
+    # offline: the last fetched branch answers; check and test fetch only when it never did (check runs at SessionStart)
+    if verb in ('list', 'add', 'sync') or (git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0] and (verb != 'test' or installed)):
+        git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
+    if verb == 'sync':
+        return extra_sync(kit)
+    if verb == 'test':
+        return extra_test(kit, names or sorted(installed))
     if verb == 'check':
         need = extras_needed(kit)
         for name, feature in need:
@@ -2065,40 +2157,24 @@ def cmd_extra(a):
             print(f"{'*' if name in installed else ' '} {name:20} {what[:100]}")
         return 0
     name = names[0]
+    if verb == 'add':
+        return add_extra(kit, name, installed)
     tracked_files = set(tracked(kit))
-    if verb == 'remove':
-        paths = [x for x in exclude_blocks(kit).get(name) or [rel for _, rel in extra_files(kit, name)] if x not in tracked_files]
-        here = [x for x in paths if osp.isfile(osp.join(kit, x))]
-        if not here:
-            print(f'kittool extra remove: {name} is not installed in {kit}', file=sys.stderr)
-            return 1
-        for rel in here:
-            os.remove(osp.join(kit, rel))
-            d = osp.dirname(osp.join(kit, rel))
-            while d != kit and osp.isdir(d) and not os.listdir(d):   # folders the extra brought
-                os.rmdir(d)
-                d = osp.dirname(d)
-        elsewhere = [w for w in worktrees(kit) if any(osp.isfile(osp.join(w, x)) for x in paths)]
-        if not elsewhere:   # the shared exclude keeps the block while another worktree still has the files
-            set_exclude(kit, name, None)
-        print(f'extra {name}: removed {len(here)} file(s)' + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
-        return 0
-    files = extra_files(kit, name)
-    if not files:
-        print(f'kittool extra add: no extra "{name}" on origin/extras (kittool.py extra list)', file=sys.stderr)
-        return 2
-    mine = set(installed.get(name, []))   # re-adding an installed extra updates it; anything else is never overwritten
-    clash = sorted(rel for _, rel in files if rel in tracked_files or (osp.exists(osp.join(kit, rel)) and rel not in mine))
-    if clash:
-        print(f'kittool extra add {name}: refused - it would overwrite {clash}', file=sys.stderr)
+    paths = [x for x in exclude_blocks(kit).get(name) or [rel for _, rel in extra_files(kit, name)] if x not in tracked_files]
+    here = [x for x in paths if osp.isfile(osp.join(kit, x))]
+    if not here:
+        print(f'kittool extra remove: {name} is not installed in {kit}', file=sys.stderr)
         return 1
-    for src, rel in files:
-        blob = subprocess.run(['git', '-C', kit, 'show', f'{EXTRAS_REF}:{src}'], capture_output=True, timeout=60).stdout   # bytes as stored
-        os.makedirs(osp.dirname(osp.join(kit, rel)), exist_ok=True)
-        with open(osp.join(kit, rel), 'wb') as fh:
-            fh.write(blob)
-    set_exclude(kit, name, [rel for _, rel in files])
-    print(f'extra {name}: installed {len(files)} file(s), local-only (never pushed): {", ".join(rel for _, rel in files)}')
+    for rel in here:
+        os.remove(osp.join(kit, rel))
+        d = osp.dirname(osp.join(kit, rel))
+        while d != kit and osp.isdir(d) and not os.listdir(d):   # folders the extra brought
+            os.rmdir(d)
+            d = osp.dirname(d)
+    elsewhere = [w for w in worktrees(kit) if any(osp.isfile(osp.join(w, x)) for x in paths)]
+    if not elsewhere:   # the shared exclude keeps the block while another worktree still has the files
+        set_exclude(kit, name, None)
+    print(f'extra {name}: removed {len(here)} file(s)' + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
     return 0
 
 def load_plugins():

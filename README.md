@@ -141,9 +141,13 @@ board, learn signals and decision pauses run by hand from the ported procedures.
 ## Extras
 Optional parts (more trackers, git hosts, CI and report types, stack presets, kit admin and scaffolding, the duel mode) live on
 the `extras` branch, one folder each (`extras/<name>/EXTRA.md`: what, when it is needed, how it is wired):
-`python -X utf8 skills/orchestrate/kittool.py extra list | add <name> | remove <name> | check`. `add` writes its files into the
-kit as local-only files (`.git/info/exclude`: never pushed, outside the budget). A script that needs a missing one stops with
-`<feature> is an extra: run kittool.py extra add <name>`; `orch.ps1 health` / `setup` print the same for config that asks for one.
+`python -X utf8 skills/orchestrate/kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]`. `add` writes its
+files into the kit as local-only files (`.git/info/exclude`: never pushed, outside the budget). `sync` installs every extra whose
+"Needed when" matches this install (`<key>` = `<value>` [| `<value>`] in kit.local.json or the file the line names, or `<path>`
+exists) and updates installed ones the branch changed (only while the kit is not behind origin/main); SessionStart (`health` async),
+`setup` and the post-merge hook run it. `test` runs installed extras' tests from the branch (`kit-tests.ps1` area `extras`). A script that
+needs a missing one stops with `<feature> is an extra: run kittool.py extra add <name>`; `health` and `supervise` list config
+that asks for one.
 
 ## Configuration
 `skills/dev-kit/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).

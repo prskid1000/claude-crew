@@ -106,6 +106,16 @@ Expect-Cases @(
       { param($r) $exc = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
         $r.code -eq 0 -and -not (Test-Path $demo) -and $exc -notmatch 'kittool extra' -and $exc -match '(?m)^# ' })
 )
+# extra sync: config in kit.local.json or another local file (alternatives), a kit file that exists; a changed branch file updates
+foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by qa.ps1): `targets.*.auth.type` = `basic` | `token`'), @('own', 'Needed when: `.githooks/pre-commit` exists'))) {
+  New-Item -ItemType Directory -Force "$xw/extras/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/extras/$($x[0])/EXTRA.md"; "$($x[0])" | Set-Content "$xw/extras/$($x[0])/files/notes/$($x[0]).txt"
+}
+git -C $xw add -A; & $gt $xw commit -q -m 'feat: duo, own'; git -C $xw push -q $og extras 2>&1 | Out-Null
+'{ "targets": { "t1": { "auth": { "type": "token" } } } }' | Set-Content (Join-Path $kc 'skills/qa-kit/targets.local.json'); git -C $kc push -q origin main 2>&1 | Out-Null; git -C $kc fetch -q origin
+$s1 = & $ex extra sync; $s2 = & $ex extra sync
+"x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; & $gt $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
+$s3 = & $ex extra sync
+Expect 'extra sync: installs what config or the kit needs, one line each; then silent; a branch change updates it' ($s1.code -eq 0 -and @($s1.out.Trim() -split "`n").Count -eq 3 -and $s1.out -match 'extra duo: installed' -and $s1.out -match 'extra own: installed' -and -not $s2.out.Trim() -and $s3.out.Trim() -match '^extra demo: updated 1 file' -and (Get-Content $demo -Raw) -match 'x = 1' -and -not (git -C $kc status --porcelain))
 # lint codes and release on the copy
 $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
