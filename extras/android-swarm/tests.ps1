@@ -72,7 +72,7 @@ Expect "swarm: lanes on demand, a waiting request takes a lane freed meanwhile, 
 Remove-Item "$lf2.ps1", $lf2 -Recurse -Force -ErrorAction SilentlyContinue
 # qa.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/qa-kit/qa.ps1'
-$ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/qa-kit/adapters'); Copy-Item (Join-Path $src 'skills/qa-kit/adapters/ui_android.ps1') $ad
+foreach ($f in 'skills/qa-kit/adapters/ui_android.ps1', 'skills/dev-kit/adapters/android_sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android_sdk.ps1
 $null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
 $ud = Join-Path (Kd) 'ui'; New-Item -ItemType Directory -Force "$ud/platform-tools" | Out-Null
 Set-Content "$ud/s.xml" '<hierarchy><node text="Hello" resource-id="a:id/h" class="x" bounds="[0,0][10,10]"/></hierarchy>'
