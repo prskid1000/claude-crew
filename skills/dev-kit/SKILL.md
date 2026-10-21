@@ -13,13 +13,13 @@ review; a person's `deploy <env>` starts the deploy), testers through the human 
 
 | File | Read / run at |
 |---|---|
-| `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill dev-kit` prints this skill's section (+ the local one) |
-| `templates.md` | "Writing standards" at every step that writes text; step 4 (Testing goals), step 6 (MR body, Human testing doc, Task solution), D1 (Decision request), briefs (orchestrate step 2) |
-| `dev.ps1` | steps 1-5 (`wt`, `stack`, `check`, `gate`, `tracker`), CI wait (`pipes`), PreToolUse hook (`guard`) |
-| `lib.ps1` | library dot-sourced by every kit script (config, paths, OS, tracker and git-host adapters); never run by hand |
-| `devtools.py` | step 6 (`mr`, `doc`, `finish`), step 7 (`merge`), rebase conflicts (`keepboth`), check migrations (`lbcheck`, run by `check`) |
-| `spec.mjs` | step 4: the test runner `check -Step test` uses for a web project without a unit-test target (never by hand) |
-| `kit.example.json` | setup: `orch.ps1 setup -WriteLocal` writes `kit.local.json` and the other local files from it (keys: README "Configuration"); `_paths` = the one map of runtime (`.runtime/`) and durable (`.state/`) paths every script resolves (lib.ps1, devtools, spec, browser) |
+| `<kit>/LESSONS.md` | step 0 (`orch.ps1 learn -Read -Skill dev-kit`) |
+| `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
+| `dev.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
+| `lib.ps1` | dot-sourced by every kit script; never run by hand |
+| `devtools.py` | steps 6-7, rebase conflicts (`keepboth`), `lbcheck` (run by `check`) |
+| `spec.mjs` | step 4: `check -Step test` runs it for a web project without a unit-test target |
+| `kit.example.json` | setup (`orch.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
 
 ## Steps (every devy; your brief wins where it differs)
 ```powershell
@@ -60,12 +60,10 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
 
 **Rules**
 - **Board:** `join` first (DUPLICATE for your id -> stop without writing); `beat -Session <t> -Status "<doing>"` before builds
-  and
-  pushes; `check -Worktree <wt> -Session <t>` before each commit (another writer -> stop, tell the coordinator); `leave` at the
-  end.
+  and pushes; `check -Worktree <wt> -Session <t>` before each commit (another writer -> stop, tell the coordinator); `leave` at
+  the end.
 - **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
-  a
-  linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
+  a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `dev.ps1 check` (or `gate -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo
   directly; waiting is normal, a killed build is not a code failure. Tool timeout 600000 ms (or `run_in_background`). A gate
   still queued when you must stop: push, open the MR as Draft with `Not run: <gate>`, report NOT_MERGED. No dev servers by hand
@@ -94,8 +92,8 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   (`repos[].migrations.check`, else Liquibase lbcheck; exit 5 = UNRUN: say so in the MR). Local env DB drift (a leftover
   table, a missing user): report it, never "fix" the shared DB by hand.
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per
-  repo,
-  title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own
+  repo, title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your
+  own
   branch.
 - **Tracker:** always `dev.ps1 tracker` (any backend; logical statuses `inProgress` -> `review` once the MR, the testing doc and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set

@@ -4,10 +4,9 @@ Every brief, doc, body and report the flows fill. Copy the section you need into
 fill the `<...>` parts, delete what does not apply. Which step fills which section: the Files index of the skill that uses it.
 
 ## Writing standards (every artefact the kit reads or writes)
-One table, read at the step that writes the artefact (the skill's Files index says which). Dense, not thin: fewer words, the
-same facts. Every limit is a ceiling, not a target. `python -X utf8 <kit>/skills/orchestrate/kittool.py prose --kind <kind>
-<file>` measures a produced text (exit 1 = findings); generators (`devtools.py mr/comment/finish/newtask`, `dev.ps1 wt commit`,
-`orch.ps1 bugbrief/decide`, `qa.ps1 finalize`) run it and print findings; nothing is truncated. A finding is fixed by rewriting.
+The rules: AGENTS.md "Writing". Every limit is a ceiling, not a target. `kittool.py prose --kind <kind> <file>` measures a text
+(exit 1 = findings); the generators (`devtools.py mr/comment/finish`, `dev.ps1 wt commit`, `orch.ps1 bugbrief/decide`,
+`qa.ps1 finalize`) run it and print findings, never truncate. A finding is fixed by rewriting.
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space). Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
@@ -178,28 +177,6 @@ Answer: pending
 - **checky**: results.json (the workflow's schema); summary line per package; lead: the run report link and the result rule applied.
 - **kitty**: branch + commits · fixed / proposed / ASK counts · report path · the lead's next steps.
 
-## Dispute (`orch.ps1 board dispute`; one per disagreement)
-Opened by the agent that disagrees; the other answers ONCE with its evidence; agreement -> both record it and continue; still split
-after 2 rounds -> `decide ask` with both positions side by side (the owner judges; only that item waits); every verdict is a
-learn signal (/tidy turns repeats into rules).
-```markdown
-## DISPUTE <id> (<from> vs <to>, item <item>)
-Claim: <what is wrong, one line> · Evidence: <files, runs, numbers, file:line> · Proposed: <the outcome you want>
-Answer (<to>): <agree | disagree> — <its evidence>
-```
-
-## Debate record (a duel: two devy POCs, revy moderates)
-```markdown
-# Duel <question> (<run>)
-| Criterion | POC A (<devy id>, <approach>) | POC B (<devy id>, <approach>) |
-|---|---|---|
-| correctness · risk · size · performance · fit | <fact + evidence> | <fact + evidence> |
-## Agreed facts
-## Open disagreements (each side's evidence)
-## Final pitch A · Final pitch B (<= 80 words each)
-## Fact-check (revy: claims without evidence)
-```
-
 ## Script header (every kit script; kit-lint SCRIPT-HEADER)
 ```powershell
 <#
@@ -219,8 +196,8 @@ Saved to `<runtime>/logs/kitty-audits/audit-<date>.md` (kitty step 9).
 # Kit audit <date> (<commit>, branch kit/audit-<date>)
 ## Result
 - <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · content <n>/<cap> · plumbing <n>/<cap> · tokens <n>
-## Setup / config / recovery
-- FIX ... | ACT ... | ASK `<file> <key>`: <why> (never values)
+## ASK
+- `<file> <key>`: <why> (never values)
 ## Findings
 | # | Severity | Where | Problem (evidence) | Status |
 |---|---|---|---|---|

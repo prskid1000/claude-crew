@@ -320,13 +320,13 @@ flowchart LR
 ```mermaid
 flowchart LR
   skills_dev_kit_SKILL_md[dev-kit]
-  skills_dev_kit_SKILL_md -->|step 0: orch.ps1 learn -Read -Skill dev-kit prin| LESSONS_md[LESSONS.md]
-  skills_dev_kit_SKILL_md -->|Writing standards at every step that writes text| skills_dev_kit_templates_md[templates.md]
-  skills_dev_kit_SKILL_md -->|steps 1-5 (wt, stack, check, gate, tracker), CI | skills_dev_kit_dev_ps1[dev.ps1]
-  skills_dev_kit_SKILL_md -->|library dot-sourced by every kit script (config,| skills_dev_kit_lib_ps1[lib.ps1]
-  skills_dev_kit_SKILL_md -->|step 6 (mr, doc, finish), step 7 (merge), rebase| skills_dev_kit_devtools_py[devtools.py]
-  skills_dev_kit_SKILL_md -->|step 4: the test runner check -Step test uses fo| skills_dev_kit_spec_mjs[spec.mjs]
-  skills_dev_kit_SKILL_md -->|setup: orch.ps1 setup -WriteLocal writes kit.loc| skills_dev_kit_kit_example_json[kit.example.json]
+  skills_dev_kit_SKILL_md -->|step 0 (orch.ps1 learn -Read -Skill dev-kit)| LESSONS_md[LESSONS.md]
+  skills_dev_kit_SKILL_md -->|Writing standards whenever you write; steps 4 an| skills_dev_kit_templates_md[templates.md]
+  skills_dev_kit_SKILL_md -->|steps 1-5, CI wait (pipes), the PreToolUse hook | skills_dev_kit_dev_ps1[dev.ps1]
+  skills_dev_kit_SKILL_md -->|dot-sourced by every kit script; never run by ha| skills_dev_kit_lib_ps1[lib.ps1]
+  skills_dev_kit_SKILL_md -->|steps 6-7, rebase conflicts (keepboth), lbcheck | skills_dev_kit_devtools_py[devtools.py]
+  skills_dev_kit_SKILL_md -->|step 4: check -Step test runs it for a web proje| skills_dev_kit_spec_mjs[spec.mjs]
+  skills_dev_kit_SKILL_md -->|setup (orch.ps1 setup -WriteLocal; keys: README | skills_dev_kit_kit_example_json[kit.example.json]
 ```
 <!-- kit-graph:end -->
 
