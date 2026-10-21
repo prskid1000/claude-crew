@@ -1,13 +1,14 @@
 <#
-localenv-sandbox.ps1 (extra localenv-sandbox; core localenv.ps1 forwards here when present): ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
+localenv.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
 on; a service = a start command in a folder (default dev.ps1 stack `run`). Model: local-env SKILL.md "Local testing".
   & <kit>/skills/local-env/localenv.ps1 <verb> [args]
 Verbs: envs · status · deploy · wait · use · release · promote · task · logs · events · migrations · sql -Query (read-only)
        (owner) up -Services [-Owner] · unhold · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
 In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; status -Json.
-Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up · 2 usage (unknown env, no localEnv) · 3 still running
-  (wait -Id; use / task got no lease within -Wait).
-Sections: L31 presets · L80 sandbox · L338 mig · L400 sync · L476 hook · L513 env · L717 daemon/train · L1153 verbs
+Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
+  localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
+Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
+Sections: L18 config · L46 sandbox · L174 state · L211 leases · L233 code · L265 mig · L412 hooks · L521 processes · L651 daemon/train · L1069 verbs
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
@@ -26,36 +27,8 @@ $script:IdleMinM = [double](Opt 'idle.minMinutes' 15)
 $script:IdleMaxM = [double](Opt 'idle.maxMinutes' 60)
 $script:LoopExitM = [double](Opt 'loopExitMinutes' 10)
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
-# db.engine presets fill the db / sandbox.db hooks an env leaves unset: {H} {P} {U} {N} {URI} = db host, port, user, name, uri; {snapDir}
-& { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'; $sf = '"{snapDir}/{snapshot}'; $sb = '{N}_{suffix}'; $o = '{U}@{H}:{P}/{N} schemas={U} directory=DATA_PUMP_DIR dumpfile={snapshot}.dmp'
-$script:DbPresets = @{
-  postgres  = @{ port = 5432; snapshot = "pg_dump -Fc $q -f $sf.dump`" {N}"; restore = "pg_restore --clean --if-exists $q -d {N} $sf.dump`""; query = "psql $q -d {N} -At -c `"{sql}`""
-                exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f {file}"; clone = "createdb $q -T {N} $sb"; drop = "dropdb --if-exists $q $sb" }
-  mysql     = @{ port = 3306; snapshot = "mysqldump --single-transaction --routines --triggers $my {N} > $sf.sql`""; restore = "mysql $my {N} < $sf.sql`""; query = "mysql $my -N -e `"{sql}`" {N}"
-                exec = "mysql $my {N} < {file}"; clone = "mysql $my -e `"CREATE DATABASE $sb`" && mysqldump $my {N} | mysql $my $sb"; drop = "mysql $my -e `"DROP DATABASE IF EXISTS $sb`"" }
-  sqlserver = @{ port = 1433; snapshot = "$ss -b -Q `"BACKUP DATABASE [{N}] TO DISK=N'{snapDir}/{snapshot}.bak' WITH INIT`""; restore = "$ss -b -Q `"RESTORE DATABASE [{N}] FROM DISK=N'{snapDir}/{snapshot}.bak' WITH REPLACE`""
-                query = "$ss -d {N} -h -1 -Q `"{sql}`""; exec = "$ss -d {N} -b -i {file}" }
-  sqlite    = @{ snapshot = "sqlite3 `"{N}`" `".backup '{snapDir}/{snapshot}.db'`""; restore = "sqlite3 `"{N}`" `".restore '{snapDir}/{snapshot}.db'`""; query = "sqlite3 `"{N}`" `"{sql}`""
-                exec = "sqlite3 `"{N}`" `".read {file}`""; clone = "sqlite3 `"{N}`" `".backup '{N}.{suffix}'`"" }
-  oracle    = @{ port = 1521; snapshot = "expdp $o reuse_dumpfiles=y"; restore = "impdp $o table_exists_action=replace"; exec = "sqlplus -s -l {U}@{H}:{P}/{N} @{file}" }
-  mongodb   = @{ port = 27017; snapshot = "mongodump --uri `"{URI}`" --gzip --archive=$sf.gz`""; restore = "mongorestore --uri `"{URI}`" --drop --gzip --archive=$sf.gz`""; query = "mongosh `"{URI}`" --quiet --eval `"{sql}`""
-                clone = "mongodump --uri `"{URI}`" --archive | mongorestore --uri `"{URI}`" --archive --nsFrom `"{N}.*`" --nsTo `"$sb.*`""; drop = "mongosh `"{URI}`" --quiet --eval `"db.getSiblingDB('$sb').dropDatabase()`"" }
-}
-$script:DbPresets.mariadb = $script:DbPresets.mysql
-$script:DbAlias = @{ postgresql = 'postgres'; pg = 'postgres'; mssql = 'sqlserver'; mongo = 'mongodb' }
-foreach ($n in $(if ($script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) })) {
-  $db = $script:LE.envs.$n.db; if ($db.engine -and $script:DbAlias["$($db.engine)".ToLower()]) { $db.engine = $script:DbAlias["$($db.engine)".ToLower()] }; $p = if ($db.engine) { $script:DbPresets["$($db.engine)".ToLower()] }; if (-not $p) { continue }
-  $port = if ($db.port) { $db.port } else { $p.port }; $sd = (Join-Path (Get-KitPath localenv-env) 'snapshots').Replace('\', '/')
-  $h = if ($db.host) { $db.host } else { '127.0.0.1' }; $v = @{ H = $h; P = $port; U = "$($db.user)"; N = "$($db.name)"; snapDir = $sd
-          URI = $(if ($db.uri) { $db.uri } else { "mongodb://${h}:$port/$($db.name)" }) }
-  $sb = $script:LE.envs.$n.sandbox
-  foreach ($k in 'snapshot', 'restore', 'query', 'exec', 'clone', 'drop') {
-    $o = if ($k -in 'clone', 'drop') { $sb.db } else { $db }; if (-not $p.$k -or ($k -in 'clone', 'drop' -and -not $sb)) { continue }
-    if (-not $o) { $sb | Add-Member db ([pscustomobject]@{}) -Force; $o = $sb.db }
-    if (-not $o.$k) { $c = $p.$k; foreach ($x in $v.Keys) { $c = $c.Replace("{$x}", "$($v[$x])") }; $o | Add-Member $k $c -Force }
-  }
-  if ($p.snapshot) { New-Item -ItemType Directory -Force $sd | Out-Null }
-} }
+# optional parts (kittool.py extra add <name>) are dot-sourced from adapters/ (db-engine-presets fills unset db / sandbox.db hooks)
+foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
 $script:FailPattern = [string](Opt 'failPattern' 'APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module')
 function Now { (Get-Date).ToString('o') }
 function EnvNames { if ($script:LE -and $script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) } else { @() } }
@@ -116,6 +89,7 @@ function Test-PortClash {
   }
   foreach ($port in $by.Keys) {
     $u = @($by[$port]); if ($u.Count -lt 2) { continue }
+    # one external service shared by several envs (same start or none) is fine
     if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
   }
 }
@@ -199,9 +173,10 @@ function Event([string]$e, [string]$kind, [hashtable]$data = @{}) {
 
 # ---- state (one JSON per env, locked writes)
 function StateFile([string]$e) { Join-Path (Get-KitPath localenv -Create) "$e.json" }
+# readers take the file's lock too (Update-State already holds it): an open reader made the writer's rename fail
 function Read-State([string]$e) {
   $f = StateFile $e; $st = $null
-  if (Test-Path $f) { try { $st = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable } catch { Write-Warning "localenv: $f unreadable, starting a fresh state ($_)" } }
+  if (Test-Path $f) { try { $st = $(if ($script:stateLocked) { Get-Content $f -Raw } else { Invoke-KitLocked $f { Get-Content $f -Raw } }) | ConvertFrom-Json -AsHashtable } catch { Write-Warning "localenv: $f unreadable, starting a fresh state ($_)" } }
   if ($st -isnot [hashtable]) { $st = @{} }
   foreach ($k in 'services', 'leases', 'holds', 'sandboxes') { if ($st[$k] -isnot [hashtable]) { $st[$k] = @{} } }
   foreach ($k in 'requests', 'releases') { $st[$k] = @(@($st[$k]) | Where-Object { $_ }) }
@@ -213,10 +188,11 @@ function Read-State([string]$e) {
 function Update-State([string]$e, [scriptblock]$Change) {
   $f = StateFile $e
   Invoke-KitLocked $f {
-    $__state = Read-State $e
+    $script:stateLocked = $true
+    try { $__state = Read-State $e } finally { $script:stateLocked = $false }
     & $Change $__state
     $__state | ConvertTo-Json -Depth 10 | Set-Content "$f.tmp" -Encoding utf8
-    for ($i = 0; ; $i++) { try { [IO.File]::Move("$f.tmp", $f, $true); break } catch [IO.IOException] { if ($i -ge 40) { throw }; Start-Sleep -Milliseconds 50 } }   # a reader may hold it open
+    for ($i = 0; ; $i++) { try { [IO.File]::Move("$f.tmp", $f, $true); break } catch [IO.IOException], [UnauthorizedAccessException] { if ($i -ge 100) { throw }; [Threading.Thread]::Sleep(50) } }   # an open reader (Windows: access denied) blocks the rename; a real wait
   }
 }
 function Alive($p) { $p -and [bool](Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue) }
@@ -625,7 +601,7 @@ function Wait-Room([string]$e, $s) {
   }
 }
 function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
-  $a = @('-NoProfile', '-NonInteractive', '-File', $PSCommandPath) + $a; $pwsh = (Get-Process -Id $PID).Path
+  $a = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'localenv.ps1')) + $a; $pwsh = (Get-Process -Id $PID).Path
   if ($KitIsWindows) { return (Start-Process -FilePath $pwsh -ArgumentList (($a | ForEach-Object { if ("$_" -match '\s' -or "$_" -eq '') { "`"$_`"" } else { $_ } }) -join ' ') -WorkingDirectory $dir -WindowStyle Hidden -PassThru).Id }
   Start-Detached -FilePath $pwsh -ArgumentList $a -WorkingDirectory $dir -Log $log
   Start-Sleep 1; (Get-SysProcs | Where-Object { $_.CommandLine -match [regex]::Escape($match) } | Select-Object -First 1).Id
@@ -1107,6 +1083,9 @@ $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if (-not $EnvName -and $Action -notin 'envs', 'status') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
+# db.engine without its presets (extra db-engine-presets) or its own snapshot / restore hooks: stop before anything changes
+$needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets -and -not ($c.db.snapshot -and $c.db.restore)) { "env $n (db.engine): db.engine presets are an extra: run kittool.py extra add db-engine-presets" } })
+if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote') { [Console]::Error.WriteLine("localenv.ps1: $($needs[0])"); exit 1 }
 
 function Ensure-Loop {
   $st = Read-State $e
@@ -1397,14 +1376,8 @@ switch ($Action) {
 
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
-elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 9 | Select-Object -Skip 1; exit 2 }
-else {
-  try { Invoke-KitVerb Invoke-LocalEnv @($args) }
-  catch {
-    $m = "$($_.Exception.Message)"
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -or $m -match 'unknown env|-Env needed|No local environments configured|unknown or ambiguous parameter|unknown option|needs -') {
-      [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2
-    }
-    throw
-  }
+elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 11 | Select-Object -Skip 1; exit 2 }
+else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
+  $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -') { [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2 } }
+  Invoke-KitVerb Invoke-LocalEnv @($args)
 }
