@@ -14,7 +14,7 @@ row.
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill orchestrate` |
-| `orch.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` |
+| `orch.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (extra `kit-admin`; `.githooks` install it) |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge` | K3: run by git (`orch.ps1 setup` sets core.hooksPath) |
 | `kittool.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 
@@ -64,14 +64,14 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 | E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone |
 | E3 | Agents/workflow stopped (crash, limits, restart), or budget handoff | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, resume brief and exact `Workflow({ scriptPath, resumeFromRunId, args })`; resume refused -> printed relaunch (`mode: 'resume'`); unpublished QA -> `qa.ps1 finalize` lines. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `orch.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (extra `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `qa.ps1 retest` |
-| E5 | A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -> ask ONCE per env, inside `deploy.minIntervalHours` say when) | at once, end to end, no question back (extra deploys): `orch.ps1 deploy plan -Env <env>` (every session's merged-not-deployed MRs), deploy per org rules (`deploy merge` for deploy branch), `deploy record -Env <env> -Mrs <refs> -By <who>`, `deploy intest -Apply` once live |
+| E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, end to end, no question back: the steps in `<kit>/skills/orchestrate/deploys.md` (extra `deploys`) |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first) |
 | E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>`; `next` (budget stop, batch, refusal) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); then E10 |
 | E8 | The owner changes a rule or scope mid-run | append to brief AND contracts file (QA: `lead-notes.md`); agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished (`retroDue`), supervise says "retro due", or signals piled up | /tidy once no other workflow of this session runs (one retro covers several runs) |
 | E11 | HEAL: guard block wrong, script crash, workaround, kit friction; a line `<feature> is an extra: run kittool.py extra add <name>` | the extra line: `kittool.py extra sync` (between runs) or the line's `extra add`, retry. Else spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
-| E12 | LEARN: something cost time, failed or surprised you | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "(n×) ..."`); 3x -> script check / default |
+| E12 | LEARN: something cost time, failed or surprised you | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "(n×) ..."`, extra `kit-admin`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `dev.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
 

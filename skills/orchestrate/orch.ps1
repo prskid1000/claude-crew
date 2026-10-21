@@ -1,7 +1,7 @@
 <#
 orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>/skills/orchestrate/orch.ps1 <verb> [args]
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session]   agent board, messages
-  learn -Skill -Kind -Text | -Read | -Lesson | -Bump | -Fixed | -Trim | -Show | -Stats | -History   signals + LESSONS.md
+  learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: extra kit-admin)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id>] [-Hours 48]   stopped runs: state, resume brief, exact resume call
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
@@ -9,12 +9,12 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   supervise [-AutoFix] [-Brief] [-Agents] [-Json] [-Takeover] [-Session]   heartbeat
   report -Run <id> [-Detail] · bugbrief -Task -Agent -Repos · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
   deploy plan|request|record|intest ... (extra deploys) · decide ask|list|answer|wait ...   deploy batch; decision pauses
-  health · nudge · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit   hooks and install
-Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below.
+  health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
+Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 board · L171 budget · L199 launch · L296 recover · L389 track · L651 supervise report · L692 anomalies
-  L750 supervise · L1100 report · L1178 bugbrief · L1279 cleanup · L1424 learn · L1533 decide · L1601 health · L1656 nudge
-  L1691 setup · L1755 guard-sendmessage · L1771 prepush · L1829 precommit
+Sections: L46 board · L186 budget · L214 launch · L306 recover · L396 track · L657 supervise report · L698 anomalies
+  L727 supervise · L985 report · L1062 bugbrief · L1163 cleanup · L1277 learn · L1308 decide · L1376 health · L1432 retro due
+  L1442 setup · L1506 guard-sendmessage
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -25,6 +25,22 @@ foreach ($adapter in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filte
 function Assert-KitExtra([string]$Function, [string]$Feature, [string]$Extra) {
   $fn = Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue; if ($fn) { return $fn }
   "$Feature is an extra: run kittool.py extra add $Extra"; exit 1
+}
+# what installed extras add to a verb: every function named <Prefix>* (adapters/*.ps1); it sees the calling verb's variables
+function Invoke-KitHooks([string]$Prefix, [hashtable]$Arguments = @{}) {
+  foreach ($hook in @(Get-Command "$Prefix*" -CommandType Function -ErrorAction SilentlyContinue)) { & $hook @Arguments }
+}
+# workflow run folders (<Claude project dir>/<session>/subagents/workflows/<run>) of every session, or of one
+function Get-KitWorkflowDirs([string]$Session) {
+  Get-ChildItem $KitConf.ClaudeProjectDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
+}
+# every parsed *.json of a state folder, each with its path in .file; a broken file is skipped
+function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
+  if (-not $Dir) { return }
+  foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter $Filter -File -ErrorAction SilentlyContinue)) {
+    $o = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { $null }
+    if ($o) { $o | Add-Member -Force NoteProperty file $f.FullName; $o }
+  }
 }
 
 # ---- board: who is alive; one writer per worktree
@@ -47,7 +63,7 @@ param(
 )
 $dir = Get-KitPath board -Create
 $staleMin = [double](Get-KitSetting 'idle.beatMinutes' 20)
-function All { foreach ($f in Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue) { try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; $e | Add-Member -Force NoteProperty file $f.FullName; $e } catch {} } }
+function All { Read-KitJsonFiles $dir }
 function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
 # plain claims only lowercased: GetFullPath mangles them
 function Norm($p) { if (-not $p) { return }; if ($p -match '[\\/]|^[A-Za-z]:') { [IO.Path]::GetFullPath($p).TrimEnd('\').ToLower() } else { $p.ToLower() } }
@@ -136,8 +152,7 @@ switch ($Action) {
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
-    foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath qa-seats) 'seats') -Filter *.json -ErrorAction SilentlyContinue)) { $o = try { Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($o) { "  seat: $($o.agent) $($o.kind) $($o.need) GB since $($o.since)$(if ((Test-KitHolder $o) -eq $false) { ' (holder gone)' })" } }
-    foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter *.json -ErrorAction SilentlyContinue)) { $o = try { Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { $null }; foreach ($l in @($o.leases.PSObject.Properties)) { "  lease: $($f.BaseName) $($l.Name) on $(@($l.Value.services) + @($l.Value.repos) -join ', ') until $($l.Value.until)" } } }
+    Invoke-KitHooks Get-KitBoardLines }   # extra supervise-resources: QA seats, local-env leases
   'check' {
     if (-not $Worktree) { 'usage: board check -Worktree <dir> -Session <token>'; exit 2 }
     $mine = Norm $Worktree
@@ -181,7 +196,7 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
 function Invoke-Budget {
 param([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Plan = '', [string]$Run = '', [switch]$Json)
 if ($Run) {   # a workflow run: the sum of its agents' spend vs the cap its launch -Self recorded
-  $sf = @(Get-ChildItem (Get-KitPath launches -Create) -Filter 'self-*.json' | Sort-Object LastWriteTime -Descending | ForEach-Object { $o = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($o.run -eq $Run) { $o | Add-Member -Force NoteProperty file $_.FullName; $o } })[0]
+  $sf = @(Read-KitJsonFiles (Get-KitPath launches -Create) 'self-*.json' | Where-Object run -eq $Run | Sort-Object { [datetime]$_.at } -Descending)[0]
   if (-not $sf) { "no launch record for run $Run"; exit 1 }
   $wf = if ($sf.wfDir -and (Test-Path $sf.wfDir)) { $sf.wfDir } else { $t = Find-KitTranscript "-Run '$Run' " 'agent-*.jsonl'; if ($t) { Split-Path $t } }
   $sp = @(if ($wf) { Get-ChildItem $wf -Filter 'agent-*.jsonl' | ForEach-Object { (Get-KitSpend $_.FullName).spend } })
@@ -225,7 +240,7 @@ if ($Self) {
 if ($Done) {
   if (-not $RunId -and -not $Run) { 'usage: launch -Done -RunId <id> | -Run <run> (a self record: the workflow wrote it)'; exit 2 }
   $files = @(@(if ($RunId) { Join-Path $dir "$(& $safe $RunId).json" }) | Where-Object { Test-Path -LiteralPath $_ })
-  if ($Run) { $files += @(Get-ChildItem -LiteralPath $dir -Filter 'self-*.json' -File -ErrorAction SilentlyContinue | Where-Object { $o = try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { $null }; $o.run -eq $Run } | ForEach-Object FullName) }
+  if ($Run) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object run -eq $Run | ForEach-Object file) }
   if (-not $files.Count) { Write-Host "[launch] no record for $RunId$Run (nothing to mark)"; exit 0 }
   foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-Date).ToString('o'); $r | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $x -Encoding utf8 } }
   Write-Host "[launch] marked completed: $(@($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
@@ -244,17 +259,14 @@ if (-not $List) {
   exit 0
 }
 
+# one line per stopped run; the resume calls, briefs and finalize lines: orch.ps1 recover
 $out = @(foreach ($s in Get-StoppedRuns -Hours $Hours) {
-  $src = if ($s.selfFile) { "$($s.selfFile) (written by the workflow: exact)" } else { "$($s.file) (typed by the coordinator: may be short)" }
-  if (-not $s.runId) { if ($Brief) { "$($s.leaf) run $($s.run): launched, run id never recorded (orch.ps1 recover finds it; finished: launch -Done -Run '$($s.run)')" } else { "STOPPED? $($s.leaf) run $($s.run): no launch record with a run id; orch.ps1 recover finds it in the session journals; args $src" }; continue }
-  if ($Brief) { "$($s.leaf) $($s.runId) (resumeFromRunId $($s.runId), args $(if ($s.selfFile) { $s.selfFile } else { $s.file }))" }
-  else { "STOPPED? $($s.leaf) run $($s.runId) launched $($s.at.ToString('yyyy-MM-dd HH:mm'))$(if ($s.runDir) { ", runDir $($s.runDir)" })`n  resume: Workflow({ scriptPath: '$($s.script)', resumeFromRunId: '$($s.runId)', args: $(Get-LaunchArgsJson (Get-Content -LiteralPath $(if ($s.selfFile) { $s.selfFile } else { $s.file }) -Raw | ConvertFrom-Json)) }) (args from $src)`n  details + resume brief: orch.ps1 recover -RunId $($s.runId) · finished already: orch.ps1 launch -Done -RunId $($s.runId)" }
+  if ($s.runId) { "$($s.leaf) $($s.runId) (resumeFromRunId $($s.runId), args $(if ($s.selfFile) { $s.selfFile } else { $s.file }))" }
+  else { "$($s.leaf) run $($s.run): launched, run id never recorded (orch.ps1 recover finds it; finished: launch -Done -Run '$($s.run)')" }
 })
-foreach ($q in Get-OrphanQaItems -Hours ([math]::Max($Hours, 48))) {
-  $out += if ($Brief) { "QA run $($q.run): $($q.codes.Count) item(s) tested, never published ($($q.codes -join ', ')): qa.ps1 finalize" }
-          else { "UNPUBLISHED QA $($q.dir): $($q.codes -join ', ') have results.json but no finalize.json / held.json and no live workflow: per item & $($KitCmd.qa) finalize -RunDir '$($q.dir)' -Code <code> (idempotent)$(if ($q.fails) { "; unverified FAIL in $($q.fails -join ', '): verify first (checky) or relaunch testy only: [...]" })" }
-}
+foreach ($q in Get-OrphanQaItems -Hours ([math]::Max($Hours, 48))) { $out += "QA run $($q.run): $($q.codes.Count) item(s) tested, never published ($($q.codes -join ', ')): qa.ps1 finalize" }
 $out | ForEach-Object { $_ }
+if ($out.Count -and -not $Brief) { 'resume calls, resume briefs, finalize lines: orch.ps1 recover' }
 exit 0
 }
 
@@ -271,25 +283,23 @@ function Get-LaunchRunName($a) {
 # self records alone have no runId
 function Get-StoppedRuns([int]$Hours = 24, [switch]$All) {
   $dir = Get-KitPath launches -Create; $since = (Get-Date).AddHours(-$Hours)
-  $selfs = @(Get-ChildItem -LiteralPath $dir -Filter 'self-*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { $o = try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($o) { $o | Add-Member -Force NoteProperty file $_.FullName; $o } })
+  $selfs = @(Read-KitJsonFiles $dir 'self-*.json')
+  $records = @(Read-KitJsonFiles $dir | Where-Object { (Split-Path $_.file -Leaf) -notlike 'self-*' -and $_.script } | Sort-Object { (Get-Item -LiteralPath $_.file).LastWriteTime })   # args dumps are no launches
   $used = @{}
-  foreach ($f in Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'self-*' } | Sort-Object LastWriteTime) {
-    $r = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    if ($r.completed -or -not $r.script) { continue }   # args dumps and broken records are no launches
-    $at = try { [datetime]$r.at } catch { $f.LastWriteTime }
+  foreach ($r in $records | Where-Object { -not $_.completed }) {
+    $at = try { [datetime]$r.at } catch { (Get-Item -LiteralPath $r.file).LastWriteTime }
     if ($at -lt $since) { continue }
     if (-not $All -and (Test-KitHolder $r) -eq $true) { continue }
     $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
     $sf = @($selfs | Where-Object { $run -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
     if (-not $sf) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | Select-Object -First 1 -ExpandProperty file }
     if ($sf) { $used[$sf] = $true; $so = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($so.completed) { continue }; $run = $so.run }   # an owner-stopped self record ends the launch too
-    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $f.FullName; selfFile = $sf; runDir = $r.runDir; record = $r }
+    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r }
   }
   foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and [datetime]$_.at -ge $since }) {
     if (-not $All -and (Test-KitHolder $s) -eq $true) { continue }
     # only a completed record of THIS launch hides it
-    $known = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File | Where-Object { $_.Name -notlike 'self-*' } | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count
-    if ($known) { continue }
+    if (@($records | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count) { continue }
     [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null }
   }
 }
@@ -298,7 +308,7 @@ function Invoke-Recover {
 param([string]$RunId, [int]$Hours = 48)
 $runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]$RunId) | Where-Object { -not $RunId -or $_.runId -eq $RunId })
 if ($RunId -and -not $runs.Count) { "no launch record for $RunId within $Hours h (orch.ps1 launch -List)"; exit 0 }
-$wfDirs = @(Get-ChildItem $KitConf.ClaudeProjectDir -Directory -ErrorAction SilentlyContinue | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
+$wfDirs = @(Get-KitWorkflowDirs | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
 foreach ($s in $runs) {
   if (-not $s.runId) {
     $hit = $wfDirs | Where-Object { @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch "launch -Self -Script $($s.leaf) -Run '$($s.run)' " -Quiet }).Count } | Select-Object -First 1
@@ -308,7 +318,7 @@ foreach ($s in $runs) {
   $aj = Get-LaunchArgsJson $lr; if (-not $a.runDir -and $lr.runDir) { $a | Add-Member -Force NoteProperty runDir $lr.runDir }
   "== $($s.leaf) run $(if ($s.runId) { $s.runId } else { '<id unknown>' }) ($($s.run)), launched $($s.at.ToString('yyyy-MM-dd HH:mm'))"
   "  args: $(if ($s.selfFile) { "$($s.selfFile) (.args, written by the workflow: exact)" } else { "$($s.file) (.args, typed by the coordinator: a missing field breaks resumeFromRunId)" })"
-  $board = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.run -eq $s.run })
+  $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $s.run })
   foreach ($b in $board | Where-Object status -ne 'left' | Sort-Object agent) { "  board: $($b.agent) $($b.status), last beat $(([datetime]$b.beat).ToString('dd MMM HH:mm'))$(if ((Test-KitHolder $b) -eq $false) { ', session gone' }) | $($b.area)" }
   if (@($board | Where-Object status -eq 'left').Count) { "  board: $(@($board | Where-Object status -eq 'left').Count) entr(ies) left" }
   $wts = @(); $brief = @()
@@ -351,19 +361,16 @@ foreach ($s in $runs) {
 }
 if (-not $runs.Count) { 'no stopped workflow runs' }
 foreach ($q in Get-OrphanQaItems -Hours $Hours) { "== QA $($q.run): tested, never published: $($q.codes -join ', ')$(if ($q.fails) { " (unverified FAIL in $($q.fails -join ', '): checky first)" })"; foreach ($c in $q.codes) { "  & $($KitCmd.qa) finalize -RunDir '$($q.dir)' -Code $c" } }
-foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue) + @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorAction SilentlyContinue)) {   # README "Leases"
-  $o = try { Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { $null }; $ls = @{}; if ($o.lane) { $ls[$o.agent] = $o } else { foreach ($p in @($o.leases.PSObject.Properties) + @($o.holds.PSObject.Properties) | Where-Object { $_ }) { $ls[$p.Name] = $p.Value } }
-  foreach ($k in @($ls.Keys)) { if ($k -notin '__stopping__', 'manual' -and -not (Test-KitLive $ls[$k])) { "== LEASE $($f.BaseName) $k [$(@($ls[$k].services) -join ',')]: no live holder, ends after idle.graceMinutes (now: $(if ($o.lane) { "swarm.ps1 release -Agent $k" } else { "localenv.ps1 release|unhold -Env $($f.BaseName) -Agent $k" }))" } }
-}
+Invoke-KitHooks Get-KitRecoverLines   # extra supervise-resources: env and phone leases with no live holder
 foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (orch.ps1 supervise -AutoFix replays it)" }
 "== heartbeat: a new session has none; arm ONE: CronCreate (cron */10 * * * *), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (orchestrate E1)"""
 }
 
 # agents that handed off at their budget and no fresh agent took over yet
-function Get-KitHandoffs([double]$Hours = 48) { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.handoffBrief -and -not $_.continuedBy -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt $Hours }) }
+function Get-KitHandoffs([double]$Hours = 48) { @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.handoffBrief -and -not $_.continuedBy -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt $Hours }) }
 function Get-OrphanQaItems([int]$Hours = 48) {
-  $live = @(Get-ChildItem -LiteralPath (Get-KitPath launches -Create) -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } |
+  $live = @(Read-KitJsonFiles (Get-KitPath launches -Create) |
       Where-Object { -not $_.completed -and (Test-KitHolder $_) -ne $false } | ForEach-Object { [string]$(if ($_.runDir) { $_.runDir } else { $_.args.runDir }) } | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf })
   foreach ($d in Get-ChildItem -LiteralPath (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) -and $_.Name -notin $live }) {
     $codes = @(); $fails = @()
@@ -622,8 +629,7 @@ switch ($Action) {
       }
       $cmts = @($allC | Where-Object { $_ -notmatch '^All MRs merged' })
       if (-not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide|live check') })) {
-        $proj = $KitConf.ClaudeProjectDir
-        $steps = @(Get-ChildItem $proj -Recurse -Filter 'journal.jsonl' -File | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
+        $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {
               $j = try { $line | ConvertFrom-Json } catch { $null }
               $mine = (@($j.result.done) -match [regex]::Escape($o.task)) -or @(@($j.result.mrs) | Where-Object { $o.mrs -contains (NormRef $_.url) }).Count
@@ -692,11 +698,8 @@ function Format-KitReport($d, [switch]$Agents) {   # -Agents: the coordinator's 
 # ---- anomalies (pure: $c this round, $p last round's state.anom) -> WATCH flags + next state
 function Get-KitAnomalies($c, $p) {
   $f = [Collections.Generic.List[object]]::new(); $AddF = { param($w, $a) $f.Add([pscustomobject]@{ level = 'WATCH'; what = $w; action = $a }) }; if (-not $p) { $p = @{} }
-  foreach ($l in @($c.logs | Where-Object { $_.errors -gt 0 })) { & $AddF "ERROR SPIKE: $($l.errors) new error line(s) in $($l.path)" "first: $($l.first)" }
-  foreach ($r in @($c.restarts | Where-Object { $_.n -gt 2 })) { & $AddF "RESTART LOOP: $($r.env) $($r.svc) restarted $($r.n) times in 30 min" "evidence localenv.ps1 logs -Env $($r.env) -Service $($r.svc)" }
   if ($null -ne $p.outbox -and $c.outbox -gt [int]$p.outbox) { & $AddF "SILENT FAILURE: tracker outbox grew to $($c.outbox) write(s)" 'evidence .state/outbox.jsonl: tracker auth / network' }
   if ($null -ne $p.toolErrors -and $c.toolErrors -gt [int]$p.toolErrors) { & $AddF "SILENT FAILURE: $($c.toolErrors - [int]$p.toolErrors) new agent result error(s)" "evidence $($c.errorRun) journal" }
-  foreach ($u in @($c.adopted | Where-Object { $_ })) { & $AddF "UNKNOWN: $($u.env) $($u.svc) port $($u.port) is served by a process the kit did not start" "stop it or change the port (localenv.ps1 status -Env $($u.env))" }
   [pscustomobject]@{ flags = @($f); state = @{ outbox = $c.outbox; toolErrors = $c.toolErrors } }
 }
 # agents of a journal still running: no result, no later finished start of the same item (a 529-dead agent writes no result),
@@ -720,33 +723,7 @@ function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime
   }
   [pscustomobject]@{ skip = $true; flag = $flag }
 }
-# gate history keys whose last 3 builds failed; old failures (a path since fixed) are no news: the last one must be < 24 h old
-function Get-KitBuildFailures($Hist, [datetime]$Now) {
-  if (-not $Hist) { return }   # no gate history yet
-  foreach ($k in @($Hist.Keys)) {
-    $last = @($Hist[$k] | Select-Object -Last 3)
-    if ($last.Count -eq 3 -and -not ($last | Where-Object { $_.ok }) -and $last[-1].at -and ($Now - [datetime]$last[-1].at).TotalHours -lt 24) { $k }
-  }
-}
-# a starved gate (its head waited 10+ min) while the file cache holds 25%+ of RAM: run gate.cacheFlush (an org command line, e.g. an
-# elevated task) at most once per 30 min (stamp in the runtime cache); returns one flag or nothing, never throws
-function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$TimeoutSec = 120) {
-  $cmd = "$(Get-KitSetting 'gate.cacheFlush' '')".Trim()
-  if (-not $cmd -or $WaitMin -lt 10) { return }
-  $stamp = Join-Path (Get-KitPath cache -Create) 'cache-flush.stamp'
-  if ((Test-Path $stamp) -and ($Now - (Get-Item $stamp).LastWriteTime).TotalMinutes -lt 30) { return }
-  $cacheGB = try { (Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop).SystemCacheResidentBytes / 1GB } catch { 0 }   # \Memory\System Cache Resident Bytes
-  if ($cacheGB -lt 0.25 * $Mem.TotalGB) { return }
-  Set-Content $stamp $Now.ToString('s')
-  $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-Command', $cmd) $TimeoutSec
-  if ($r.timedOut -or $r.code) {
-    $why = if ($r.timedOut) { "timed out after $TimeoutSec s" } else { "exit $($r.code): $(@("$($r.err)`n$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0])" }
-    return [pscustomobject]@{ level = 'WATCH'; what = "file cache flush failed ($why)"; action = 'Check kit.local.json gate.cacheFlush; the gate keeps waiting for RAM.' }
-  }
-  $after = $Mem.AvailGB
-  for ($i = 0; $i -lt [math]::Min(5, [int]($TimeoutSec / 2)) -and $after -lt $Mem.AvailGB + 0.5; $i++) { Wait-KitPoll 2; $after = (Get-SysMem).AvailGB }   # a scheduled task flushes after its start returns; within the sweep budget
-  [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: file cache flush: available $([math]::Round($Mem.AvailGB, 1)) -> $([math]::Round($after, 1)) GB"; action = 'Nothing to do.' }
-}function Get-KitFinishedRuns { @(Get-ChildItem (Get-KitPath launches) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -notlike 'self-*' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object completed | ForEach-Object runId) }
+function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # who holds the supervise lock: the heartbeat's session, never this pwsh (a new pid each round would step aside from itself)
 function Get-SuperviseOwner([string]$Session) {
@@ -784,8 +761,7 @@ $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } cat
 if (-not $state.quietRuns) { $state.quietRuns = @{} }
 
 # 1. workflows: running agents from each journal
-$proj = $KitConf.ClaudeProjectDir
-$wfDirs = Get-ChildItem $proj -Directory | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory } | Sort-Object LastWriteTime -Descending | Select-Object -First 6
+$wfDirs = Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6
 $finishedRuns = Get-KitFinishedRuns
 if (-not $Session) { foreach ($k in @($state.quietRuns.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $state.quietRuns.Remove($k) } } }   # out of view: forget it (-Session sees only its own runs)
 foreach ($w in $wfDirs) {
@@ -825,7 +801,7 @@ foreach ($w in $wfDirs) {
 
 # 2. board: gone sessions, re-joins, duplicates, silent entries
 $board = Get-KitPath board
-$entries = @(Get-ChildItem $board -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json })
+$entries = @(Read-KitJsonFiles $board)
 $markLeft = { param($e) Update-BoardEntry (Join-Path $board "$($e.session).json") { param($x) $x.status = 'left'; $x } }
 foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -eq $false })) {
   if ($AutoFix) { & $markLeft $e; Flag 'INFO' "auto-fixed: board entry $($e.agent) ($($e.run)) marked left: its session process $($e.holderPid) is gone" 'Resume its work if unfinished (orch.ps1 recover).' }
@@ -862,44 +838,15 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
   Flag 'WATCH' "board entry $($s.agent) ($($s.run)) has no heartbeat for $([int]($now - [datetime]$s.beat).TotalMinutes) min" 'It may have finished without leaving, or be stuck. Cross-check with the workflow journal.'
 }
 
-# 3. build gate: holders, queue, repeated failures; ⏳ = holders in their grace
-$graceRows = @{}
-$ledger = Join-Path (Get-KitTemp) 'claude-build-gate'
-$queue = @(Get-ChildItem (Join-Path $ledger 'queue') -Filter '*.json' | ForEach-Object { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (Get-Process -Id $t.pid) { $t } })
-$runningB = @(Get-ChildItem $ledger -Filter '*.json' | Where-Object Name -ne 'history.json' | ForEach-Object { $t = Get-Content $_.FullName -Raw | ConvertFrom-Json; if (Get-Process -Id $t.pid) { $t } })
-foreach ($t in @($runningB | Where-Object { $_.gate })) {   # holder = its gate process (then its owner agent)
-  $bl = @{ agent = $t.owner; pid = $t.gate; seen = $t.seen }; $keep = Update-KitLease $bl; if ("$($bl.seen)" -ne "$($t.seen)") { $t | Add-Member -Force seen $bl.seen; $t | ConvertTo-Json | Set-Content (Join-Path $ledger "$($t.pid).json") }
-  $bp = Get-Process -Id ([int]$t.pid) -ErrorAction SilentlyContinue; if (-not $bp -or $bp.StartTime -gt ([datetime]$t.started).AddSeconds(5)) { continue }   # pid reused: not ours
-  if ($keep) { if ($null -ne $bl.graceLeft) { $graceRows["build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"] = $bl.graceLeft }; continue }
-  if ($AutoFix) { try { $bp.Kill($true) } catch {}; Flag 'INFO' "auto-fixed: stopped build $($t.kind) of $($t.owner) (pid $($t.pid)): no live holder" 'Nothing to do.' }
-  else { Flag 'ACT' "build $($t.kind) of $($t.owner) (pid $($t.pid)) runs with no live holder" 'supervise -AutoFix stops it.' }
-}
-$oldest = $queue | Sort-Object { [datetime]$_.since } | Select-Object -First 1
-$wait = if ($oldest) { [int]($now - [datetime]$oldest.since).TotalMinutes } else { 0 }
-L "gate: $($runningB.Count) running ($((@($runningB | ForEach-Object { "$($_.kind)" }) -join ', '))), $($queue.Count) queued, longest wait $wait min"
-if ($wait -ge 30) { Flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run orch.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
-elseif ($queue.Count -ge 6) { Flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
-$hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-foreach ($k in Get-KitBuildFailures $hist $now) { Flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; it may need help or a brief fix.' }
-
-# 4. phone leases whose holder is gone (swarm.ps1 shuts lanes down; dead emulators reboot on acquire)
-foreach ($lf in @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorAction SilentlyContinue)) {
-  $ls = Get-Content $lf.FullName -Raw | ConvertFrom-Json; $age = [int]($now - [datetime]$ls.since).TotalMinutes
-  if ($ls.agent -eq 'manual') {
-    if ($age -ge 240) { Flag 'WATCH' "phone $($ls.lane) booted by hand $([int]($age / 60)) h ago is still up" "If you are done with it: & $($KitCmd.swarm) release -Agent manual" }
-    continue
-  }
-  if ($ls.agent -eq '__stopping__') { continue }
-  $s0 = "$($ls.seen)"; $keep = Update-KitLease $ls
-  if ($keep -and (-not $s0 -or ([datetime]$ls.seen - [datetime]$s0).TotalMinutes -ge 1) -and (Test-Path $lf.FullName)) { $ls | ConvertTo-Json -Depth 5 | Set-Content "$($lf.FullName).sv"; Move-Item "$($lf.FullName).sv" $lf.FullName -Force }   # atomic, never resurrects
-  if ($keep) { if ($null -ne $ls.graceLeft) { $graceRows["phone $($ls.lane)"] = $ls.graceLeft }; continue }   # seen persists
-  if ($AutoFix -and (Test-Path $KitCmd.swarm)) { $r = & $KitCmd.swarm release -Agent $ls.agent 2>&1; Flag 'INFO' "auto-fixed: released phone $($ls.lane) of $($ls.agent) (no live holder): $r" 'Nothing to do.' }
-  else { Flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent): no live holder" "& $($KitCmd.swarm) release -Agent $($ls.agent)" }
-}
-
-# 5. memory, disk, guard blocks
+# 3. memory, disk, guard blocks; extras' machine guards
 $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
-if ($AutoFix -and (Within 'cache flush')) { foreach ($x in @(Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))))) { Flag $x.level $x.what $x.action } }
+$keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
+# extras' hooks (adapters/*.ps1) see this sweep's variables ($now, $mem, $keepFree, Within, Left) and return { level, what, action } = a
+# flag, { name, by, gb } = a report row, { info } = an owner line, { ramNeed } = GB a waiting build needs, a string = a sweep line
+$res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(); $script:ramNeed = 0
+function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Flag $x.level $x.what $x.action } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
+# machine guards first, inside the sweep budget (build gate, cache flush, phones, QA seats: extra supervise-resources)
+foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix })) { Add-KitResult $x }
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90); $diskMin = [double](Get-KitSetting 'supervise.minDiskFreeGB' 30)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run orch.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
 $drive = if ($KitIsWindows -and $KitConf.Workspace.Length -gt 0) { $KitConf.Workspace.Substring(0, 1) } else { $KitConf.Workspace }
@@ -909,7 +856,7 @@ if ($freeGB -lt $diskMin) { Flag 'ACT' "disk ${drive}: only $freeGB GB free" 'Ru
 $blocks = @(Get-Content (Get-KitPath guard-log) | Where-Object { $_ -match '^(\S+)\t' -and ($now - [datetime]$Matches[1]).TotalMinutes -lt 60 })
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: read guard.log; add a contracts note or a lesson so they stop.' }
 
-# 6. -AutoFix: tracker (track run), outbox, cleanup (deployed tasks -> inTest: the deploys extra's hook)
+# 4. -AutoFix: tracker (track run), outbox, cleanup (deployed tasks -> inTest: the deploys extra's hook)
 if ($AutoFix -and (Within 'tracker checks')) {
   # an active agent with the MR branch checked out is already on it
   function OwnerOf($repo, $iid) {
@@ -942,7 +889,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
 }
 
-# 7. QA results back to the dev flow: new [Bug] tasks, failedTesting tasks (orchestrate E6)
+# 5. QA results back to the dev flow: new [Bug] tasks, failedTesting tasks (orchestrate E6)
 if (Within 'QA bug tasks') {
   $parents = @(Get-ChildItem (Get-KitPath qa-runs) -Directory | ForEach-Object { try { (Get-Content (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).tracker.parent } catch {} } | Where-Object { $_ } | Select-Object -Unique)
   $tracked = @((Read-KitTracking).tasks.Keys)
@@ -976,38 +923,21 @@ if (Within 'failedTesting tasks') {
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> per task (reproduce locally first), then launch." }
 }
 
-# 8. decisions and ENV-FIX requests: every round until answered
+# 6. decisions and ENV-FIX requests: every round until answered
 foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ })) {
   $age = "waiting $([int]($now - [datetime]$d.at).TotalMinutes) min"
   if ($d.kind -eq 'envfix') { Flag 'ACT' "ENV-FIX $($d.id) $age ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Fix it (you or kitty kind env: config, paths, a hung train, shared DB repair; never start a service no live lease or person asked for), then & $($KitCmd.orch) decide answer -Id $($d.id) -By coordinator -Answer 'done: <what you did>' (cannot: 'cannot: <why>')"; continue }
   Flag 'ACT' "DECISION $($d.id) $age ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Ask the owner (options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { "; recommended: $($d.recommend)" })), then & $($KitCmd.orch) decide answer -Id $($d.id) -Answer '<their words>'"
 }
 
-# 9. QA seats and claims of gone sessions (one line per gone session), orphan browser tabs
-$keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
-$seatDir = Get-KitPath qa-seats
-$goneSeats = @(foreach ($sf in @(Get-ChildItem (Join-Path $seatDir 'seats'), (Join-Path $seatDir 'claims') -Filter *.json -ErrorAction SilentlyContinue)) {
-    $so = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json } catch { $null }
-    if ($so -and (Test-KitHolder $so) -eq $false) { [pscustomobject]@{ file = $sf.FullName; holder = "$($so.holderPid)"; what = "$(Split-Path $sf.DirectoryName -Leaf)/$($sf.BaseName)" } }
-  })
-foreach ($g in $goneSeats | Group-Object holder) {
-  $what = "$($g.Count) QA seat/claim file(s) of gone session process $($g.Name): $((@($g.Group | Select-Object -First 3 | ForEach-Object what)) -join ', ')$(if ($g.Count -gt 3) { ', …' })"
-  if ($AutoFix) { $g.Group | ForEach-Object { Remove-Item $_.file -Force }; Flag 'INFO' "auto-fixed: freed $what" 'Nothing to do.' }
-  else { Flag 'WATCH' $what 'supervise -AutoFix frees them.' }
-}
-if ($AutoFix -and (Within 'browser tabs') -and (Test-Path (Join-Path $KitConf.Kit 'skills/qa-kit/node_modules/puppeteer-core')) -and @(Get-ChildItem (Get-KitPath sessions) -Filter 'tabs-*.json' -ErrorAction SilentlyContinue).Count) {
-  $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/qa-kit/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll())") (Left)
-  if ($r.code -eq 0 -and "$($r.out)".Trim() -match '^[1-9]\d*$') { Flag 'INFO' "auto-fixed: closed $($r.out.Trim()) orphan browser tab(s) (holder gone or left the board)" 'Nothing to do.' }
-}
-$seatsNow = @(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count
-L "qa seats: $seatsNow taken; free RAM $([math]::Round($mem.AvailGB, 1)) GB"
-# extras add their own checks (deploys: live -> inTest, the deploy plan): functions Get-KitSuperviseFlags<Name> return { level, what, action }
-foreach ($hook in @(Get-Command 'Get-KitSuperviseFlags*' -CommandType Function -ErrorAction SilentlyContinue)) { foreach ($x in @(& $hook -AutoFix:$AutoFix | Where-Object level)) { Flag $x.level $x.what $x.action } }
+# 7. extras' checks (deploys, local env, ...): the same result shapes as section 3
+foreach ($x in @(Invoke-KitHooks Get-KitSuperviseFlags @{ AutoFix = $AutoFix })) { Add-KitResult $x }
+if ($script:ramNeed -and $mem.AvailGB -lt $keepFree + $script:ramNeed) { Flag 'ACT' "RAM: $([math]::Round($mem.AvailGB, 1)) GB free < floor $keepFree + the largest waiting build $($script:ramNeed) GB" "Free the biggest: $((@($res | Where-Object { $_.gb } | Sort-Object { -$_.gb } | Select-Object -First 3 | ForEach-Object { "$($_.name) $([math]::Round($_.gb, 1)) GB" })) -join '; ')" }
 # config that needs an extra not installed (offline: the last fetched extras branch)
 $need = if ((Within 'extras') -and (Get-Command (Get-Python) -ErrorAction SilentlyContinue)) { @(& (Get-Python) -X utf8 $KitCmd.kittool extra check 2>$null) }
 if ($need) { Flag 'ACT' "missing extra(s): $($need -join '; ')" "python -X utf8 $($KitCmd.kittool) extra sync (between runs: it may update installed extras)" }
 
-# 10. retro due (no workflow running), budgets: past handoff, handoffs not continued, runs at their stop line
+# 8. retro due (no workflow running), budgets: past handoff, handoffs not continued, runs at their stop line
 if (-not $runTotal) {
   $since = Get-KitRetroSince
   $finished = @($wfDirs | Where-Object { $_.LastWriteTime -gt $since -and (Select-String (Join-Path $_.FullName 'journal.jsonl') -Pattern '"label":"(build|test|retest|verify|fix):' -Quiet) }).Count
@@ -1022,7 +952,7 @@ foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -Er
   if ($sp -and $sp.spent -ge $o.stopAt * $o.cap) { Flag 'WATCH' "run $($o.run) at $([int](100 * $sp.spent / $o.cap))% of its cap ($($sp.spent) / $($o.cap))" 'No new item starts; launch its next when it finishes (E7).' }
 }
 
-# 11. the round report: agents (board + workflow steps), resources the kit holds (one process snapshot)
+# 9. the round report: agents (board + workflow steps)
 $rep = if ($state.report) { $state.report } else { @{ spend = @{} } }; $spendNow = @{}
 $ags = [Collections.Generic.List[object]]::new()
 foreach ($e in $active) { $ags.Add([pscustomobject]@{ type = $(if ($e.type) { $e.type } else { 'other' }); name = $e.agent; mode = $(if ($e.status -and $e.status -ne 'working') { $e.status } else { $e.run }); wait = $e.status -match 'wait'; spend = $e.spend }) }
@@ -1032,57 +962,12 @@ foreach ($a in $wfAgents) {
   $ags.Add([pscustomobject]@{ type = Get-KitLabelType $a.label; name = $nm; mode = $(if ($p -match 'envfix') { 'env-fix' } elseif ($p -match 'wait|decide') { 'decision' } else { $p }); wait = $p -match 'wait|decide'; spend = $sp.spend })
 }
 foreach ($x in $ags) { $spendNow[$x.name] = $x.spend; $x | Add-Member -Force NoteProperty prevSpend $(if ($rep.spend -and $null -ne $rep.spend[$x.name]) { $rep.spend[$x.name] } else { $x.spend }) }
-$ps = @(Get-SysProcs); $kids = @{}; $byId = @{}; foreach ($p in $ps) { $kids[$p.ParentId] = @($kids[$p.ParentId]) + $p; $byId[$p.Id] = $p }
-# RAM of a process tree, each process counted once
-$seen = @{}; $tree = { param($r) $g = 0.0; $st = [Collections.Stack]::new(); $st.Push($r); while ($st.Count) { $q = $st.Pop(); if (-not $q -or $seen[$q.Id]) { continue }; $seen[$q.Id] = 1; $g += $q.WorkingSet; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }; $g / 1GB }
-$res = [Collections.Generic.List[object]]::new()
-$le = if (Test-Path $KitCmd.local) { Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))) }   # the local-env extra
-$envStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
-$er = if ($envRowsFn = Get-Command Get-KitEnvRows -ErrorAction SilentlyContinue) { & $envRowsFn $envStatus $now } else { [pscustomobject]@{ rows = @(); flags = @(); owner = @() } }   # extra local-env
-foreach ($x in $er.rows) { $res.Add($x) }; foreach ($x in $er.flags) { Flag $x.level $x.what $x.action }
-$ports = try { Get-Content (Get-KitPath browser-ports) -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; $keyOf = @{}; foreach ($k in $ports.Keys) { $keyOf["$($ports[$k])"] = $k }
-$isBr = { param($p) $p.Name -match '^(chrome|msedge|chromium)(\.exe)?$' }
-foreach ($b in @($ps | Where-Object { (& $isBr $_) -and -not ($byId[$_.ParentId] -and (& $isBr $byId[$_.ParentId])) })) {
-  if ($b.CommandLine -notmatch '--remote-debugging-port=(\d+)' -or -not $keyOf[$Matches[1]]) { continue }
-  $k = $keyOf[$Matches[1]]; $tf = Get-Item (Join-Path (Get-KitPath sessions) "tabs-$($k -replace '\|', '__').json") -ErrorAction SilentlyContinue; $tabs = try { Get-Content $tf.FullName -Raw | ConvertFrom-Json } catch { $null }
-  $idleM = ($now - $(if ($tabs._idle) { [DateTimeOffset]::FromUnixTimeMilliseconds([long]$tabs._idle).LocalDateTime } else { [datetime]$b.Created })).TotalMinutes   # no tab holder since (browser.mjs sweep)
-  if ($AutoFix -and $tabs._idle -and -not @($tabs.PSObject.Properties | Where-Object Name -notmatch '^_').Count -and $idleM -ge [double](Get-KitSetting 'idle.graceMinutes' 10)) {
-    try { (Get-Process -Id $b.Id).Kill($true) } catch {}; Flag 'INFO' "auto-fixed: closed test browser $k (no tab holder for $([int]$idleM) min)" 'Nothing to do.'; continue
-  }
-  $res.Add([pscustomobject]@{ name = "browser $(($k -split '\|' | Where-Object { $_ }) -join '·')"; by = (@($tabs.PSObject.Properties | Where-Object { $_.Name -ne '_key' -and $_.Value.agent } | ForEach-Object { $_.Value.agent }) | Select-Object -Unique) -join ', '; gb = & $tree $b })
-}
-$lanes = try { (Get-Content (Join-Path (Split-Path $PSScriptRoot) 'android-swarm/swarm.config.json') -Raw | ConvertFrom-Json).lanes } catch { @() }
-foreach ($p in @($ps | Where-Object { $_.Name -match '^emulator' -and $_.CommandLine -match '-port\s+(\d+)' })) {
-  $port = $Matches[1]; $ln = @($lanes | Where-Object { "$($_.port)" -eq $port })[0]; $nm = if ($ln) { $ln.name } else { "emulator-$port" }
-  $ls = try { Get-Content (Join-Path (Get-KitPath phones) "$nm.json") -Raw | ConvertFrom-Json } catch { $null }
-  $res.Add([pscustomobject]@{ name = "phone $nm"; by = $(if ($ls) { $ls.agent } else { 'no lease' }); gb = & $tree $p })
-}
-foreach ($wq in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($now - $_.LastWriteTime).TotalMinutes -lt 3 })) {   # queued / booting lanes
-  $w = try { Get-Content $wq.FullName -Raw | ConvertFrom-Json } catch { continue }
-  $held = @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $w.agent })[0]
-  $res.Add([pscustomobject]@{ name = "phone $(if ($held) { $held.lane } elseif ($w.lane) { $w.lane } else { 'next lane' })"; by = "$($w.agent) $(if ($held) { '(waiting for RAM)' } else { '(waiting for a lane)' })"; gb = 0 })
-}
-foreach ($t in @($runningB | Where-Object { $_.kind -ne 'emulator' })) { $p = $byId[[int]$t.pid]; $res.Add([pscustomobject]@{ name = "build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"; by = $t.owner; gb = $(if ($p) { [math]::Max((& $tree $p), 0.1) } else { [double]$t.need }) }) }
-foreach ($r in $res | Where-Object { $graceRows.ContainsKey($_.name) }) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }
-$need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
-if ($mem.AvailGB -lt $keepFree + $need -and $need) { Flag 'ACT' "RAM: $([math]::Round($mem.AvailGB, 1)) GB free < floor $keepFree + the largest waiting build $need GB" "Free the biggest: $((@($res | Where-Object { $_.gb } | Sort-Object { -$_.gb } | Select-Object -First 3 | ForEach-Object { "$($_.name) $([math]::Round($_.gb, 1)) GB" })) -join '; ')" }
-$deployInfo = @(@(try { (Get-Content (Join-Path (Get-KitPath deploys) 'plan-cache.json') -Raw | ConvertFrom-Json).ready } catch { }) | Where-Object { $_ } | ForEach-Object { "deploy ready: $_ (waits for a person's deploy <env>)" }) + $er.owner
 
-# 12. anomalies vs the last round: env restarts and log errors, outbox, agent errors, unknown port owners
-$restarts = @()
-foreach ($sf in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue)) {
-  $x = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $x) { continue }
-  foreach ($sn in @($x.services.Keys)) { $c = @($x.services[$sn].restarts | Where-Object { $_ -and ($now - [datetime]$_).TotalMinutes -lt 30 }).Count; if ($c) { $restarts += [pscustomobject]@{ env = $sf.BaseName; svc = $sn; n = $c } } }
-}
-$logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-2) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
-$pa = $state.anom
-$cur = @{ restarts = $restarts; toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count
-  logs = @(if ($logErrorsFn = Get-Command Get-KitLogErrors -ErrorAction SilentlyContinue) { & $logErrorsFn $logs $(if ($pa.logSizes) { $pa.logSizes } else { @{} }) })
-  adopted = @($envStatus | ForEach-Object { $ev = $_; @($ev.services | Where-Object state -eq 'up (adopted)' | ForEach-Object { [pscustomobject]@{ env = $ev.env; svc = $_.service; port = $_.port } }) }) }
-$an = Get-KitAnomalies $cur $pa; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }
-$an.state.logSizes = @{}; foreach ($x in $cur.logs) { $an.state.logSizes[$x.path] = $x.size }; $state.anom = $an.state
+# 10. anomalies vs the last round: outbox, agent errors (env restarts, log errors: extra local-env)
+$cur = @{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count }
+$an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
 $state.report = @{ spend = $spendNow; at = $now.ToString('s') }; $state | ConvertTo-Json -Depth 5 | Set-Content $stateFile
-$report = [pscustomobject]@{ agents = @($ags); mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $deployInfo; detailFile = (Get-KitPath supervise-report) }
+$report = [pscustomobject]@{ agents = @($ags); mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $script:ownerInfo; detailFile = (Get-KitPath supervise-report) }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 if ($script:skipped.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $($script:skipped -join ', ')" 'Partial result: the skipped sections run next round.' }
 L "sweep: $secs s"
@@ -1101,9 +986,8 @@ $global:LASTEXITCODE = 0
 function Invoke-Report {
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail)
 $ErrorActionPreference = 'SilentlyContinue'
-$proj = $KitConf.ClaudeProjectDir
-$dir = Get-ChildItem $proj -Directory | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Join-Path $_.FullName "subagents/workflows/$Run" } | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $dir) { [Console]::Error.WriteLine("wave-report: workflow $Run not found under $proj"); exit 1 }  # swallowed under SilentlyContinue
+$dir = Get-KitWorkflowDirs $Session | Where-Object Name -eq $Run | Select-Object -First 1 -ExpandProperty FullName
+if (-not $dir) { [Console]::Error.WriteLine("wave-report: workflow $Run not found under $($KitConf.ClaudeProjectDir)"); exit 1 }  # swallowed under SilentlyContinue
 $ev = @(Get-Content (Join-Path $dir 'journal.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
 $label = @{}; foreach ($e in $ev | Where-Object type -eq 'started') { $label[$e.agentId] = $e.label }
 $results = @($ev | Where-Object type -eq 'result' | ForEach-Object { [pscustomobject]@{ label = $label[$_.agentId]; r = $_.result } })
@@ -1298,38 +1182,7 @@ function Gone($path, $why) {
 function Old($item, $hours) { ($now - $item.LastWriteTime).TotalHours -gt $hours }
 
 if (-not $WorktreesOnly) {
-$profiles = Get-KitPath chrome-profiles
-$chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|headless_shell|google chrome|microsoft edge|firefox|MiniBrowser|WebKitWebProcess)(\.exe)?$' | Where-Object { $_.CommandLine -match '--?headless|-juggler' -and $_.CommandLine -match [regex]::Escape($profiles) }
-$qaRuns = @(Get-ChildItem (Get-KitPath qa-runs) -Directory | ForEach-Object Name)
-$qaActive = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } |
-  Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt [double](Get-KitSetting 'idle.beatMinutes' 20) -and ($_.run -in $qaRuns -or "$($_.worktrees)" -match 'chrome:') }).Count
-# a test browser goes once no live tab holder is left for idle.graceMinutes (browser.mjs registry), never by its age
-$ports = try { Get-Content (Get-KitPath browser-ports) -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $ports) { $ports = @{} }; $keyOf = @{}; foreach ($k in @($ports.Keys)) { $keyOf["$($ports[$k])"] = $k }
-foreach ($c in $chromes | Where-Object { $_.ParentId -notin $chromes.Id }) {
-  $tabs = $null; if ($c.CommandLine -match '--remote-debugging-port=(\d+)' -and $keyOf[$Matches[1]]) { $tabs = try { Get-Content (Join-Path (Get-KitPath sessions) "tabs-$($keyOf[$Matches[1]] -replace '\|', '__').json") -Raw | ConvertFrom-Json } catch { $null } }
-  if (@($tabs.PSObject.Properties | Where-Object { $_.Name -notmatch '^_' -and $_.Value.pid -and (Get-Process -Id ([int]$_.Value.pid) -ErrorAction SilentlyContinue) }).Count) { continue }
-  $since = if ($tabs._idle) { [DateTimeOffset]::FromUnixTimeMilliseconds([long]$tabs._idle).LocalDateTime } else { [datetime]$c.Created }
-  if (($now - $since).TotalMinutes -ge [double](Get-KitSetting 'idle.graceMinutes' 10)) { [void]$actions.Add("killed headless browser pid $($c.Id) (no live tab holder for $([int]($now - $since).TotalMinutes) min)"); if (-not $DryRun) { Stop-SysProcess $c.Id } }
-}
-$inUse = @($chromes | ForEach-Object { if ($_.CommandLine -match 'chrome-profiles[\\/](\d+)') { $Matches[1] } } | Sort-Object -Unique)
-foreach ($p in Get-ChildItem $profiles -Directory) { if ($p.Name -notin $inUse -and (Old $p 24)) { Gone $p.FullName 'idle browser profile' } }
-$seatsActive = @(Get-ChildItem (Join-Path (Get-KitPath qa-seats) 'seats') -Filter '*.json' | Where-Object { $so = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; $so -and (Test-KitHolder $so) -ne $false }).Count   # a live holder, not an age
-$maxProfiles = [math]::Max(0, [int]$KitConf.MaxBrowserProfiles)
-if (-not $seatsActive -and -not $qaActive) {
-  # Chrome rewrites "Local State" on use
-  $left = @(Get-ChildItem $profiles -Directory | Where-Object { Test-Path $_.FullName } | ForEach-Object {
-      $ls = Get-Item (Join-Path $_.FullName 'Local State') -Force
-      [pscustomobject]@{ dir = $_; used = $(if ($ls) { $ls.LastWriteTime } else { $_.LastWriteTime }) } } | Sort-Object used -Descending)
-  foreach ($x in @($left | Select-Object -Skip $maxProfiles)) { if ($x.dir.Name -notin $inUse) { Gone $x.dir.FullName "browser profile beyond the newest $maxProfiles (cleanup.maxBrowserProfiles)" } }
-}
-
-$gradleBusy = @(Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json' |
-  ForEach-Object { try { $e = Get-Content $_.FullName -Raw | ConvertFrom-Json; if ($e.kind -match 'android|gradle' -and (Get-Process -Id $e.pid)) { $e } } catch {} }).Count
-if (-not $gradleBusy) {
-  foreach ($d in Get-SysProcs -Name '^java(\.exe)?$' | Where-Object { $_.CommandLine -match 'GradleDaemon|KotlinCompileDaemon' }) {
-    if (($now - $d.Created).TotalMinutes -gt 10) { [void]$actions.Add(("stopped idle {0} pid {1} ({2:N1} GB)" -f $(if ($d.CommandLine -match 'Kotlin') { 'Kotlin daemon' } else { 'Gradle daemon' }), $d.Id, ($d.WorkingSet / 1GB))); $script:freed += [long]$d.WorkingSet; if (-not $DryRun) { Stop-SysProcess $d.Id } }
-  }
-}
+Invoke-KitHooks Invoke-KitCleanup   # extra supervise-resources: test browsers, their profiles, idle Gradle / Kotlin daemons
 
 # name, max h, why
 foreach ($x in @(('sessions', 8, 'expired shared web login'), ('tokens', 72, 'old API token'), ('evidence', 336, 'loose evidence > 14 d'), ('waves', 336, 'wave report > 14 d'), ('launches', 72, 'launch record > 3 d'), ('briefs', 720, 'briefs > 30 d'), ('docs', 720, 'docs > 30 d'), ('retros', 2160, 'retro report > 90 d'), ('kitty-audits', 2160, 'kit audit report > 90 d'), ('tsbuild', 720, 'tsc cache > 30 d'))) {
@@ -1421,7 +1274,10 @@ if (-not $Quiet) { $summary; $actions }
 $global:LASTEXITCODE = 0
 }
 
-# ---- learn: signals + LESSONS.md
+# ---- learn: signals + LESSONS.md (lesson edits, -Stats, -History: extra kit-admin)
+# a lessons file as LF lines (empty when missing); the "## <name>" section of it as [start, end), $null when absent
+function Read-KitLessonLines([string]$Path) { if (Test-Path $Path) { , [Collections.Generic.List[string]]@(([IO.File]::ReadAllText($Path) -replace "`r", '') -split "`n") } else { , [Collections.Generic.List[string]]::new() } }
+function Find-KitLessonSection($Lines, [string]$Name) { $s = $Lines.IndexOf("## $Name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $Lines.Count -and $Lines[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
 function Invoke-Learn {
   param(
     [string]$Skill, [ValidateSet('friction', 'failure', 'defect-missed', 'false-positive', 'rule-violation', 'stale-env', 'flaky', 'idea', 'win')][string]$Kind,
@@ -1429,102 +1285,21 @@ function Invoke-Learn {
     [switch]$Show, [int]$Last = 30, [switch]$Stats, [switch]$Read, [switch]$History, [string]$Grep,
     [string]$Lesson, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
   )
+  if ($Stats -or $History -or $Lesson -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
+    $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
+  }
   $file = Get-KitPath signals -Create
-  $pub = Join-Path $KitConf.Kit 'LESSONS.md'; $loc = Join-Path $KitConf.Kit 'LESSONS.local.md'
   if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
-  if ($Stats) {
-    $since = Get-KitRetroSince
-    $all = if (Test-Path $file) { @(Get-Content $file | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { [datetime]$_.at -gt $since -and $_.kind -ne 'retired' }) } else { @() }
-    "signals since last retro ($(if ($since -eq [datetime]::MinValue) { 'never' } else { $since.ToString('yyyy-MM-dd HH:mm') })): $($all.Count)"
-    $all | Group-Object skill, kind | Sort-Object Count -Descending | ForEach-Object { '  {0,3}  {1}' -f $_.Count, $_.Name }
-    return
-  }
-  $load = { param($f) if (Test-Path $f) { , [Collections.Generic.List[string]]@(([IO.File]::ReadAllText($f) -replace "`r", '') -split "`n") } else { , [Collections.Generic.List[string]]::new() } }
-  $range = { param($L, $name) $s = $L.IndexOf("## $name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $L.Count -and $L[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
-  if ($History) {
-    $now = (@($pub, $loc) | Where-Object { Test-Path $_ } | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n"
-    $key = { param($s) ($s -replace '^-\s*', '' -replace '\(fixed in kit\)\s*', '' -replace '\s*\(\d+×\)', '').Trim() }
-    $seen = @{}; $rows = [Collections.Generic.List[string]]::new(); $meta = ''
-    foreach ($l in @(git -C $KitConf.Kit log --no-merges --date=short '--format=KITLOG %ad %h' -p --unified=0 -- LESSONS.md 2>$null)) {
-      if ($l -like 'KITLOG *') { $meta = $l.Substring(7); continue }
-      if ($l -notmatch '^-- ') { continue }
-      $s = $l.Substring(1); $k0 = & $key $s
-      if (-not $k0 -or $seen[$k0] -or $now.Contains($k0)) { continue }
-      $seen[$k0] = 1; $rows.Add("$meta $s")
-    }
-    if (Test-Path $file) { foreach ($j in @(Get-Content $file | Where-Object { $_ -match '"kind":"retired"' } | ForEach-Object { $_ | ConvertFrom-Json })) { $k0 = & $key $j.text; if (-not $seen[$k0]) { $seen[$k0] = 1; $rows.Insert(0, "$(([datetime]$j.at).ToString('yyyy-MM-dd')) $($j.skill) $($j.text)") } } }
-    $h = @(if (Test-Path $loc) { $L = & $load $loc; $r = & $range $L 'History'; if ($r) { $L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^- ' } } })
-    $all = @(@($rows) + $h | Where-Object { -not $Grep -or $_ -match [regex]::Escape($Grep) } | Select-Object -First $Last)
-    if ($all.Count) { $all } else { 'no retired lessons' }
-    return
-  }
   if ($Read) {
     if (-not $Skill) { 'usage: learn -Read -Skill <skill>'; exit 2 }
-    foreach ($f in $pub, $loc) {
-      $L = & $load $f; $r = & $range $L $Skill; if (-not $r) { continue }
+    foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
+      $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill; if (-not $r) { continue }
       $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' } | Select-Object -First 41)   # step-0 read cap: 40 lessons
-      if ($lines.Count -gt 1) { "$(if ($f -eq $loc) { '(local) ' })$($lines -join "`n")" }
+      if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
     }
     return
   }
-  if ($Lesson -or $Fixed -or $Bump -or $Trim) {
-    if (-not $Skill) { 'need -Skill <skill> with -Lesson / -Bump / -Fixed / -Trim'; exit 2 }
-    $terms = @(Get-KitValue 'orgTerms' @()) | Where-Object { $_ -and $_ -notmatch '^<' }
-    $key = if ($Bump) { $Bump } elseif ($Fixed) { $Fixed } else { $null }
-    $orgWord = $Lesson -and @($terms | Where-Object { $Lesson -match [regex]::Escape($_) }).Count
-    $inLocal = $key -and (Test-Path $loc) -and ([IO.File]::ReadAllText($loc)).Contains($key) -and -not ([IO.File]::ReadAllText($pub)).Contains($key)
-    $f = if ($Project -or $orgWord -or $inLocal) { $loc } else { $pub }
-    if ($f -eq $loc -and -not (Test-Path $loc)) { [IO.File]::WriteAllText($loc, "# Kit lessons - org / project (LOCAL ONLY, never published)`nShape of LESSONS.md; learn -Read prints both.`n") }
-    if ($orgWord -and -not $Project) { "org term: written to LESSONS.local.md" }
-    # concurrent learners lost lines
-    $script:learnRc = 0
-    $sigF = $file  # $file inside would be ITS -File (case-insensitive)
-    Invoke-KitLocked $f {
-    $L = & $load $f; while ($L.Count -and $L[$L.Count - 1] -eq '') { $L.RemoveAt($L.Count - 1) }
-    $r = & $range $L $Skill
-    if (-not $r) { $h = $L.IndexOf('## History'); $at = if ($h -ge 0) { $h } else { $L.Count }; $L.Insert($at, ''); $L.Insert($at, "## $Skill"); $r = & $range $L $Skill }
-    $moved = [Collections.Generic.List[string]]::new()
-    $idx = { @($r[0]..($r[1] - 1) | Where-Object { $L[$_] -match '^- ' }) }
-    if ($Lesson) {
-      $line = '- ' + ($Lesson.Trim() -replace '^-\s*', '')
-      if ($Project) {
-        $ph = "### Project: $Project"; $p = -1; for ($i = $r[0]; $i -lt $r[1]; $i++) { if ($L[$i] -eq $ph) { $p = $i } }
-        if ($p -lt 0) { $L.Insert($r[1], $line); $L.Insert($r[1], $ph) } else { $L.Insert($p + 1, $line) }
-      } else { $L.Insert($r[0] + 1, $line) }
-      $r = & $range $L $Skill
-      "lesson added to $(Split-Path $f -Leaf) ## $Skill"
-    }
-    if ($Bump) {
-      $hit = @(& $idx | Where-Object { $L[$_].Contains($Bump) })
-      if ($hit.Count -ne 1) { "-Bump must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
-      $s = $L[$hit[0]]
-      if ($Append) { $c = $Append.Trim().TrimEnd('.'); $s = if ($s -match '^(.*?)\.?(\s*\(\d+×\))$') { "$($Matches[1]). $c.$($Matches[2])" } else { "$($s.TrimEnd('.')). $c." } }
-      $m = [regex]::Match($s, '\((\d+)×\)')
-      $L[$hit[0]] = if ($m.Success) { $s.Remove($m.Index, $m.Length).Insert($m.Index, "($([int]$m.Groups[1].Value + 1)×)") } else { "$s (2×)" }
-      "lesson bumped in ## $Skill"
-    }
-    if ($Fixed) {
-      $hit = @(& $idx | Where-Object { $L[$_].Contains($Fixed) })
-      if ($hit.Count -ne 1) { "-Fixed must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
-      $moved.Add(($L[$hit[0]] -replace '^- (\(fixed in kit\) )?', '- (fixed in kit) ')); $L.RemoveAt($hit[0]); $r = & $range $L $Skill
-    }
-    # "### Project:" lines stay
-    while (@(& $idx).Count -gt $Max) {
-      $gen = @(& $idx | Where-Object { $i = $_; -not @($r[0]..$i | Where-Object { $L[$_] -like '### *' }).Count })
-      $i = if ($gen.Count) { $gen[-1] } else { @(& $idx)[-1] }
-      $moved.Add($L[$i]); $L.RemoveAt($i); $r = & $range $L $Skill
-    }
-    [IO.File]::WriteAllText($f, (($L -join "`n") + "`n"))
-    if ($moved.Count) {
-      $at = (Get-Date).ToString('s'); $lines = @($moved | ForEach-Object { [ordered]@{ at = $at; skill = $Skill; kind = 'retired'; text = $_; ref = $(if ($Fixed) { 'fixed' } else { 'trim' }); source = 'learn' } | ConvertTo-Json -Compress })
-      Invoke-KitLocked $sigF { Add-Content -LiteralPath $sigF $lines -Encoding utf8 }
-    }
-    "$(Split-Path $f -Leaf) ## ${Skill}: $(@(& $idx).Count) lines (max $Max)$(if ($moved.Count) { "; retired $($moved.Count) (learn -History lists them)" })"
-    }
-    if ($script:learnRc) { exit $script:learnRc }
-    return
-  }
-  if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show, -Stats, -History, -Lesson, -Bump, -Fixed, -Trim)'; exit 2 }
+  if (-not ($Skill -and $Kind -and $Text)) { 'need -Skill -Kind -Text (or -Read, -Show; kit-admin: -Stats, -History, -Lesson, -Bump, -Fixed, -Trim)'; exit 2 }
   $sig = [ordered]@{ at = (Get-Date).ToString('s'); skill = $Skill; kind = $Kind; text = $Text; ref = $Ref; source = $Source } | ConvertTo-Json -Compress
   Invoke-KitLocked $file { Add-Content -LiteralPath $file $sig -Encoding utf8 }
   "recorded ($Skill/$Kind)"
@@ -1645,7 +1420,8 @@ if ($py) {
   & $py -X utf8 $KitCmd.kittool port --check 2>$null | ForEach-Object { $msgs += $_ }   # silent without the ports extra
   & $py -X utf8 $KitCmd.kittool extra check 2>$null | ForEach-Object { $msgs += $_ }   # config that needs an extra not installed
 }
-foreach ($n in @(& $KitCmd.orch nudge | ForEach-Object { try { ($_ | ConvertFrom-Json).systemMessage } catch { } } | Where-Object { $_ })) { $msgs += $n }
+if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
+$msgs += @(Invoke-KitHooks Get-KitHealthLines)   # extra kit-admin: the weekly kitty audit nudge
 if ($msgs) {
   $text = ($msgs -join ' | ') + ' (orchestrate Events)'
   @{ systemMessage = $text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $text } } | ConvertTo-Json -Compress -Depth 4
@@ -1653,39 +1429,14 @@ if ($msgs) {
 exit 0
 }
 
-# ---- nudge: retro / audit due (part of health)
+# ---- retro due: one rule for health, supervise and report
 function Get-KitRetroSince { $m = Get-KitPath last-retro; if (Test-Path $m) { [datetime](Get-Content $m -Raw).Trim() } else { [datetime]::MinValue } }
-# one rule for health, supervise and report: 15+ signals and guard blocks since the last retro, or any signal once a run finished
+# 15+ signals and guard blocks since the last retro, or any signal once a run finished
 function Get-KitRetroDue([switch]$RunFinished) {
   $since = Get-KitRetroSince
   $n = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '"kind":"retired"' -and $_ -match '"at":"([^"]+)"' -and [datetime]$Matches[1] -gt $since }).Count
   $g = @(Get-Content (Get-KitPath guard-log) -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(\S+)\t' -and [datetime]$Matches[1] -gt $since }).Count
   if ($n + $g -ge 15 -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
-}
-function Invoke-Nudge {
-$ErrorActionPreference = 'SilentlyContinue'
-$kit = $KitConf.Kit
-$msgs = @()
-
-if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
-
-$every = 7
-try { $c = Get-Content (Join-Path $kit 'skills/dev-kit/kit.local.json') -Raw -ErrorAction Stop | ConvertFrom-Json; if ($null -ne $c.kitAudit.everyDays) { $every = [double]$c.kitAudit.everyDays } } catch {}
-if ($every -gt 0) {
-  $am = Get-KitPath last-kitty-audit
-  $last = $null; if (Test-Path $am) { try { $last = [datetime]((Get-Content $am -Raw).Trim()) } catch {} }
-  if (-not $last -or ((Get-Date) - $last).TotalDays -ge $every) {
-    $busy = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } |
-        Where-Object { $_.agent -eq 'kitty' -and $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 60 }).Count
-    if (-not $busy) { $msgs += "Kit audit due (last $(if ($last) { $last.ToString('yyyy-MM-dd') } else { 'never' }), every $every days): spawn one kitty agent (orchestrate E13)." }
-  }
-}
-
-if ($msgs) {
-  $text = $msgs -join ' | '
-  @{ systemMessage = $text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $text } } | ConvertTo-Json -Compress -Depth 4
-}
-exit 0
 }
 
 # ---- setup: install / repair (idempotent)
@@ -1768,89 +1519,6 @@ $why = "Blocked: '$to' ($label) is an agent inside workflow $($meta.Directory.Na
 exit 0
 }
 
-# ---- prepush: block local files, org terms, stale ports
-function Invoke-PrePush {
-$ErrorActionPreference = 'Stop'
-$root = $KitConf.Kit
-$zero = '0' * 40
-$updates = @($(if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }) -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $p = $_ -split '\s+'; [pscustomobject]@{ lsha = $p[1]; rsha = $p[3] } } | Where-Object { $_.lsha -ne $zero })
-$hits = @()
-
-$revs = foreach ($u in $updates) { if ($u.rsha -eq $zero) { git -C $root rev-list $u.lsha --not --remotes } else { git -C $root rev-list "$($u.rsha)..$($u.lsha)" } }
-$revs = @($revs | Where-Object { $_ } | Select-Object -Unique)
-
-if ($revs.Count) {
-  $files = @($revs | ForEach-Object { git -C $root diff-tree --no-commit-id --name-only --diff-filter=ACMR -r $_ } | Where-Object { $_ } | Select-Object -Unique)
-  if ($files.Count) {
-    # pwsh piping appends CR
-    $ign = @(for ($i = 0; $i -lt $files.Count; $i += 100) { git -C $root check-ignore --no-index -- @($files[$i..([math]::Min($i + 99, $files.Count - 1))]) 2>$null })
-    foreach ($f in $ign) { $hits += "LOCAL FILE  $f is git-ignored or local-only (.gitignore / .git/info/exclude) but a pushed commit carries it: git rm --cached it and amend" }
-  }
-}
-
-$terms = @()
-$cfg = $KitConf.ConfigFile
-if ($env:KIT_ORG_TERMS) { $terms = @($env:KIT_ORG_TERMS -split ',' | Where-Object { $_.Trim() }) }
-elseif (Test-Path $cfg) { try { $terms = @((Get-Content $cfg -Raw | ConvertFrom-Json).orgTerms | Where-Object { $_ }) } catch { $hits += "CONFIG      $cfg is not valid JSON: $_" } }
-if (-not $terms.Count) { Write-Host 'pre-push: no orgTerms in skills/dev-kit/kit.local.json - org-term scan skipped' }
-else {
-  $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
-  if (-not $py) { $hits += 'PYTHON      python is not installed: the org-term scan (kittool.py lint) cannot run' }
-  else {
-    $out = Join-Path ([IO.Path]::GetTempPath()) "kit-prepush-$PID.json"
-    & $py -X utf8 $KitCmd.kittool lint $root --warn --no-flow --org-terms ($terms -join ',') --json $out | Out-Null
-    if (-not (Test-Path $out)) { $hits += "LINT        kittool.py lint failed (exit $LASTEXITCODE, no JSON): the org-term scan of the working tree did not run" }
-    $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
-    foreach ($p in $probs | Where-Object code -eq 'ORG-TERM') { $hits += "ORG TERM    $($p.where): $($p.problem)" }
-    $other = @($probs | Where-Object code -ne 'ORG-TERM')
-    if ($other.Count) { Write-Host "pre-push: warning: kit-lint reports $($other.Count) other problem(s) (python skills/orchestrate/kittool.py lint)" }
-  }
-  $rx = @($terms | ForEach-Object { $t = $_.Trim(); $stem = $t.TrimEnd('*'); [pscustomobject]@{ term = $t; rx = [regex]::new('(?<![\w-])' + [regex]::Escape($stem) + $(if ($t.EndsWith('*')) { '' } else { '(?![\w-])' }), $(if ($stem -cne $stem.ToLower()) { 'None' } else { 'IgnoreCase' })) } })
-  foreach ($r in $revs) {
-    foreach ($line in @(git -C $root show --format= --unified=0 --no-color $r)) {
-      if (-not $line.StartsWith('+') -or $line.StartsWith('+++')) { continue }
-      foreach ($x in $rx) { if ($x.rx.IsMatch($line)) { $hits += "ORG TERM    commit $($r.Substring(0, 8)) adds ""$($x.term)"": $($line.Substring(0, [math]::Min(120, $line.Length)))"; break } }
-    }
-  }
-}
-
-$py = Get-Python
-if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kittool port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kittool.py port if deploying to codex/gemini)" } }   # 2: the ports extra is not installed
-
-if ($hits.Count) {
-  Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
-  $hits | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
-  Write-Host 'Fix them (the kit is public and generic: org values belong in *.local.* files or localOnly paths), then push again.'
-  exit 1
-}
-exit 0
-}
-
-# ---- precommit: regenerate + stage README graph and run lint
-# never stage the user's changes
-function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
-function Invoke-PreCommit {
-  $root = $KitConf.Kit
-  $py = Get-Python
-  if (-not $py -or -not (Get-Command $py -ErrorAction SilentlyContinue)) { Write-Host 'pre-commit: BLOCKED - python is not installed (kittool lint / flow cannot run)' -ForegroundColor Red; exit 1 }
-  $userEdits = Test-UnstagedEdits $root 'README.md'
-  & $py -X utf8 $KitCmd.kittool flow --readme $root | Out-Null
-  if ($LASTEXITCODE) { Write-Host "pre-commit: kittool flow failed (exit $LASTEXITCODE)"; exit 1 }
-  if ($userEdits) { Write-Host 'pre-commit: README.md has unstaged edits: graph sections regenerated but NOT staged (git add README.md yourself if they belong)' }
-  elseif (@(git -C $root status --porcelain -- README.md).Count) { git -C $root add -- README.md; Write-Host 'pre-commit: README graph sections regenerated and staged' }
-  & $py -X utf8 $KitCmd.kittool port 2>$null | Out-Null   # silent without the ports extra
-  if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
-    git -C $root add -- .codex .agents GEMINI.md
-    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and deployed to workspace'
-  }
-  $out = Join-Path ([IO.Path]::GetTempPath()) "kit-precommit-$PID.json"
-  & $py -X utf8 $KitCmd.kittool lint $root --no-flow --json $out | Out-Null
-  if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kittool lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
-  $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
-  if ($probs.Count) { Write-Host "pre-commit: BLOCKED - kit-lint: $($probs.Count) problem(s):" -ForegroundColor Red; $probs | Select-Object -First 25 | ForEach-Object { Write-Host "  $($_.code) $($_.where): $($_.problem)" }; exit 1 }
-  exit 0
-}
-
 # SessionStart hooks never surface an error: one warning line, the detail in the hook log
 function Write-KitHookError([string]$Verb, $Err) { try { Add-Content (Get-KitPath hook-log -Create) "$((Get-Date).ToString('s'))`t$Verb`t$Err`t$($Err.InvocationInfo.PositionMessage -replace '\s+', ' ')" } catch {}; "kit: $Verb failed ($($Err.Exception.Message)); see $(Get-KitPath hook-log)"; exit 0 }
 if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions only
@@ -1874,11 +1542,10 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
-    'nudge' { Invoke-KitVerb Invoke-Nudge $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }
     'guard-sendmessage' { Invoke-KitVerb Invoke-GuardSendMessage $__rest }
-    'prepush' { Invoke-KitVerb Invoke-PrePush $__rest }
-    'precommit' { Invoke-KitVerb Invoke-PreCommit $__rest }
+    'prepush' { $null = Assert-KitExtra Invoke-PrePush 'orch.ps1 prepush' 'kit-admin'; Invoke-KitVerb Invoke-PrePush $__rest }   # the kit's own git hooks
+    'precommit' { $null = Assert-KitExtra Invoke-PreCommit 'orch.ps1 precommit' 'kit-admin'; Invoke-KitVerb Invoke-PreCommit $__rest }
     default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }
   }
 }
