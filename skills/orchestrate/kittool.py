@@ -1647,8 +1647,8 @@ def set_listed(kit, name, on):
 def extras_needed(kit):
     """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
     `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
-    the value contains it) or `<path>` exists
-    (a kit file, the kit's own need); prose-only lines never install."""
+    the value contains it), `<path>` exists (a kit file, the kit's own need) or `<glob>` in a repo (a repos[].checkout tracks
+    such a file); prose-only lines never install."""
     have = set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
     need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
@@ -1669,7 +1669,13 @@ def extras_needed(kit):
                 need.append((name, f'{key} "{hit}"'))
         need += [(name, f'{p} exists') for p in re.findall(r'`([^`\s]+)`\s+exists', rule)   # a worktree: the main clone answers
                  if any(osp.exists(osp.join(base, p)) for base in (kit, main_clone(kit)))]
+        need += [(name, f'{p} in a repo') for p in re.findall(r'`([^`\s]+)`\s+in a repo', rule) if repo_tracks(configs['kit.local.json'], p)]
     return sorted(set(need))
+
+def repo_tracks(cfg, pattern):
+    """A configured repo (kit.local.json repos[].checkout) tracks a file named like the glob, at any depth."""
+    return any(isinstance(c, str) and osp.isdir(c) and git(c, 'ls-files', '--', f':(glob)**/{pattern}', timeout=20)[1].strip()
+               for c in config_values(cfg, 'repos.*.checkout'))
 
 def stale_extras(kit, installed):
     """Installed extras whose files differ from the fetched extras branch (git blob ids: bytes as stored)."""
