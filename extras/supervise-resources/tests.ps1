@@ -5,10 +5,8 @@ gone sessions' QA seats freed in one line, board show seats and leases.
 Usage: kittool.py extra test supervise-resources (tests/kit-tests.ps1 -Area extras runs every installed extra).
 Exit codes: 0 pass · 1 a check failed.
 #>
-param([string]$Kit)   # kittool.py extra test passes the kit; else this file sits next to <kit>/tests/harness.ps1
-. $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-$k = New-TestKit sres; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/orchestrate/adapters')
-Copy-Item (Join-Path $PSScriptRoot 'files/skills/orchestrate/adapters/supervise_resources.ps1') $ad
+. (Join-Path $PSScriptRoot 'harness.ps1')   # kittool.py extra test: the kit's harness; New-TestKit adds this extra's files
+$k = New-TestKit sres
 $O = Join-Path $k 'skills/orchestrate/orch.ps1'
 # gate.cacheFlush: a starved gate + a big file cache -> one flush per 30 min; a failing command = one WATCH
 $cft = @'

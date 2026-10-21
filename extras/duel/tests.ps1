@@ -5,23 +5,9 @@ Usage: pwsh -NoProfile -File extras/duel/tests.ps1 -Kit <kit> (the workflow come
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([Parameter(Mandatory)][string]$Kit)
-. (Join-Path $Kit 'tests/harness.ps1')   # sets $src = $Kit
-# workflow sims: shared fixtures + $js; __BODY__ = the workflow source
-$jsLib = @'
-const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
-const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })
-const _rep = (localTest, extra = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...extra })
-const _merged = (n) => ({ mrs: [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: true, mergeState: 'MERGED' }] })
-const _rec = () => ({ ok: true, output: 'RECORDED' })
-const _ok = (output) => ({ ok: true, output, signals: 0, lessonsChanged: [] })
-const _err = (e) => console.log('error:' + e)
-const _n = () => {}
-const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
-const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
-'@
-function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]::WriteAllText($f, ($jsLib + "`n" + $js).Replace('__BODY__', $wf)); @(node $f 2>&1) }
+. (Join-Path $Kit 'tests/harness.ps1')   # sets $src = $Kit; $jsLib + Invoke-Js: the workflow sim
 $k = New-TestKit duel
-$wfd = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'files/workflows/buildy-duel.js')) -replace '^export const meta', 'const meta'
+$wfd = Join-Path $PSScriptRoot 'files/workflows/buildy-duel.js'
 # buildy duel: 2 POCs, compare, debate, owner judges, winner ships
 $jsu = @'
 const lt = { status: 'PASS', env: 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' }
