@@ -195,9 +195,10 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main; an optional feature goes to the `extras` branch, not the core.
 The rules, part shapes, lint codes and pre-push checks: `skills/orchestrate/kit-admin.md` (extra `kit-admin`). Token budgets
-(lint BUDGET; UTF-8 bytes / 4, README graph sections excluded):
+(lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kittool.py budget` prints both totals). The kit total measures
+what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 428000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 200000 · all tests 33000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
 
 ## Rule examples

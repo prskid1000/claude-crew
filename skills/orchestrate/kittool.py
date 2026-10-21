@@ -86,6 +86,7 @@ GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
 CAP_BASE = 200000   # _manifest.caps.totalTokens moves only in `budget raise` steps from here: x1.1, rounded to 1k (lint BUDGET-CAP)
+TEST_CAP = 33000    # _manifest.caps.testTokens default: tests/ (lint BUDGET-TESTS)
 TRIM_FIRST = 'trim first (dense prose, dedupe; never golf that hurts reading); if impossible: kittool.py budget raise -Reason "<why trimming cannot make room>"'
 
 def cap_next(c):
@@ -117,6 +118,11 @@ def counted_files(kdir):
     """Tracked files the budget counts: all but the generated ports (a deletion not staged yet is gone)."""
     rc, o, _ = git(kdir, 'ls-files')
     return [x for x in o.split('\n') if x and not x.startswith(GENERATED) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
+
+def split_total(sizes):
+    """(kit total, tests total) of {file: tokens}: the kit total is what agents load; tests/ never is (own cap testTokens)."""
+    tests = sum(n for f, n in sizes.items() if f.startswith('tests/'))
+    return sum(sizes.values()) - tests, tests
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
   'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 6600, 'tests': 39300}
@@ -611,9 +617,9 @@ def lint(k, g=None, org_terms=None):
     plumbing = [x for x in counted if x.startswith(PLUMBING)]
     content = [x for x in counted if x not in plumbing and not x.startswith('tests/')]   # tests: one file per area, bounded by the tests budget
     caps = manifest(k.dir).get('caps') or {}
-    if not all(isinstance(caps.get(x), int) for x in ('content', 'plumbing', 'totalTokens')):
-        bad('MANIFEST', PATHS_JSON, '_manifest.caps needs integer content, plumbing and totalTokens')
-        caps = {'content': 30, 'plumbing': 8, 'totalTokens': CAP_BASE, **caps}
+    if not all(isinstance(caps.get(x), int) for x in ('content', 'plumbing', 'totalTokens', 'testTokens')):
+        bad('MANIFEST', PATHS_JSON, '_manifest.caps needs integer content, plumbing, totalTokens and testTokens')
+        caps = {'content': 30, 'plumbing': 8, 'totalTokens': CAP_BASE, 'testTokens': TEST_CAP, **caps}
     cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
         bad('FILE-CAP', 'kit', f'{len(content)} content files (cap {cap_c}: docs, agents, workflows, skills, scripts, config examples; '
@@ -654,10 +660,12 @@ def lint(k, g=None, org_terms=None):
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
     if always > BUDGETS['always']:
         over.append(('always-loaded (CLAUDE.md + AGENTS.md + rules)', always, BUDGETS['always']))
-    total = sum(sizes.values())
+    total, tests = split_total(sizes)
     cap_t = caps['totalTokens']
     if total > cap_t:
         over.append(('kit total', total, cap_t))
+    if tests > caps['testTokens']:
+        bad('BUDGET-TESTS', 'tests', f"{tests} tokens (cap {caps['testTokens']}): merge duplicate cases, share setup in tests/harness.ps1")
     if over:
         top = ', '.join(f'{f} {n}' for f, n in sorted(sizes.items(), key=lambda x: -x[1])[:5])
         for f, n, cap in over:
@@ -840,7 +848,7 @@ def readme_sections(k, g):
             rows.append(f"| `{key}` | {cell({a: b for a, b in v.items() if not a.startswith('_')})} | {cell(v.get('_readme', ''), 999)} |")
     out['table-config'] = ['| Key | Example / default | Meaning |', '|---|---|---|'] + rows
     caps = man.get('caps') or {}
-    out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · total {caps.get('totalTokens')} · files: {caps.get('content')} content + {caps.get('plumbing')} plumbing"]
+    out['table-caps'] = [' · '.join(f'{n} {v}' for n, v in BUDGETS.items()) + f" · total {caps.get('totalTokens')} · all tests {caps.get('testTokens')} · files: {caps.get('content')} content + {caps.get('plumbing')} plumbing"]
     ma, mw = man.get('agents') or {}, man.get('workflows') or {}   # crew hero: who starts whom
     out['crew'] = ['flowchart LR', f'  OW([{mq("owner")}]) -->|{mq("asks, says deploy env")}| CO[{mq("coordinator: Router + Events")}]'] + [
      x for w, m in mw.items() for x in [f"  CO -->|{mq(m.get('router', ''))}| W_{w}[/{mq(w)}/]"] + [f'  W_{w} -->|{mq("spawns")}| A_{c}({mq(c)})' for c in m.get('crew', [])]] + [
@@ -1512,14 +1520,15 @@ def cmd_prose(a):
 
 # ==== 8. budget
 def cmd_budget(a):
-    """kittool.py budget [show]: the kit total vs _manifest.caps.totalTokens. budget raise -Reason "<why trimming cannot make
-    room>" (x1.1 per step, only while over the cap) is in the kit-admin extra."""
+    """kittool.py budget [show]: the kit total (agent-loaded files) vs _manifest.caps.totalTokens, tests/ vs caps.testTokens.
+    budget raise -Reason "<why trimming cannot make room>" (x1.1 per step, only while over the cap) is in the kit-admin extra."""
     kit = KIT_DIR
     flags, rest = parse_opts(a, {'-Reason', '-reason', '--reason'})
-    total = sum(size_tokens(kit, f) for f in counted_files(kit))
-    cap = (manifest(kit).get('caps') or {}).get('totalTokens', CAP_BASE)
+    total, tests = split_total({f: size_tokens(kit, f) for f in counted_files(kit)})
+    caps = manifest(kit).get('caps') or {}
+    cap, cap_t = caps.get('totalTokens', CAP_BASE), caps.get('testTokens', TEST_CAP)
     if not rest or rest[0] == 'show':
-        print(f'kit total {total} of cap {cap} ({total * 100 // cap}%); next raise step {cap_next(cap)}')
+        print(f'kit total {total} of cap {cap} ({total * 100 // cap}%) · tests {tests} of cap {cap_t}; next raise step {cap_next(cap)}')
         return 0
     if rest[0] == 'raise':
         raise_cap = PLUGINS.get('budget raise')

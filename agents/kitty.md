@@ -38,8 +38,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    area; verify each.
 5. **Generic & agnostic:** `kittool.py lint --org-terms <kit>/skills/dev-kit/kit.local.json` = 0 ORG-TERM; org values -> config
    keys with defaults (`kit-admin.md` "kitty steps 5-6").
-6. **Consistency:** indexes, README tables, manifest, ports, reach, budgets, script headers, prose (`kit-admin.md` "kitty steps
-   5-6").
+6. **Consistency:** indexes, README tables, manifest, ports, reach, budgets (`kittool.py budget`: the total counts what agents
+   load; `tests/` has its own cap), script headers, prose (`kit-admin.md` "kitty steps 5-6").
 7. **Improve:** `& $O learn -Stats`, `-Show -Last 300`, `-History`, the newest `<runtime>/logs/retros/*.md`,
    `<runtime>/logs/guard.log`; a retired lesson ("(fixed in kit)") seen again = a regression finding. Each pattern -> the
    smallest durable change.
