@@ -31,6 +31,8 @@ $wc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); i
 Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
 $yq = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('qa-kit').search('see skills/qa-kit/qa.ps1') is not None)"
 Expect 'lint YAML: an unquoted ": " in a workflow fails, quoted / block scalars pass; old names after a /' ("$yq" -eq 'True [] True')
+$pc = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kittool as k; print(k.ps_case('function A {\n  `$s = \'{\'\n  `$o = 1\n}\nfunction B {\n  `$O = 2\n}\n'), k.ps_case('function A {\n  `$o = 1\n  if (`$x) { `$O = 2 }\n}\n'))"
+Expect "PS-CASE: per function, a brace in a string ignored ($pc)" ("$pc" -eq "[] [(3, 'O', 'o', 2)]")
 $mp = Join-Path $k 'mermaid.py'; @'
 import sys, re; sys.path.insert(0, sys.argv[1]); import kittool as t
 k = t.load(sys.argv[2]); k.index['dev-kit'] = [(1, 'step 0 (orch.ps1 learn -Read -Skill dev-kit)', ['LESSONS.md']), (2, 'say "q" a|b <x> #1; ' + 'word ' * 20, ['LESSONS.md'])]

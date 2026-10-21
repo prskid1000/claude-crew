@@ -785,6 +785,12 @@ def lint(k, g=None, org_terms=None):
                     bad('CONFIG-UNDOC', f, f'key "{key}" is not documented in README.md "Configuration"')
     # ---- registry, schemas, old names, agent types, scaffold stubs
     registry_lint(k, bad)
+    # ---- PS-CASE on the .ps1 files changed vs origin/main (audit scan: every file, as a WARN)
+    rc, o, _ = git(k.dir, 'diff', '--name-only', 'origin/main', '--')
+    for f in (o.splitlines() if rc == 0 else []):
+        if f.endswith('.ps1') and osp.isfile(osp.join(k.dir, f)):
+            for lb, b, a, la in ps_case(k.texts.get(f) or read(osp.join(k.dir, f))):
+                bad('PS-CASE', f'{f}:{lb}', f'${b} is the same variable as ${a} (line {la}) in this function: rename one')
     # ---- org terms (published files + README/docs/examples)
     if org_terms:
         scan = [(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in k.files if not is_overlay(k, f)]
@@ -1075,19 +1081,41 @@ def cmd_scan(kit):
                     out('WARN', 'PY-ENCODING', f'{f}:{ln}', 'open() without encoding= reads cp1252 on Windows')
     doc_flags(texts)
 
-def ps_pitfalls(f, t):
-    code = strip_ps_comments(t)
-    lines = code.split('\n')
-    assigned = {}   # one variable, two spellings, both ASSIGNED ($L, $l): the second overwrites
-    for ln, line in enumerate(lines, 1):
+def ps_case(t):
+    """One variable assigned under two spellings ($L, $l) in one function (or the script body): [(line, b, a, line_a)]."""
+    code = re.sub(r"""@'.*?'@|@".*?"@""", lambda m: '\n' * m.group(0).count('\n'), strip_ps_comments(t), flags=re.S)
+    scopes, stack, depth, sid, pending = {}, [(0, -1)], 0, 0, None   # stack: (scope id, depth it closes at)
+    for ln, line in enumerate(code.split('\n'), 1):
+        if re.match(r'\s*function\s+[\w:-]+', line, re.I):
+            sid += 1; pending = sid
+        cur = pending if pending is not None else stack[-1][0]
+        line = re.sub(r"""'[^']*'|"(?:[^"`]|`.)*\"""", '""', line)   # quoted text is data
         for m in re.finditer(r'\$(?:script:|local:)?([A-Za-z_]\w*)\s*(?:=(?![=~])|\+=)|foreach\s*\(\s*\$([A-Za-z_]\w*)\s+in\b', line, re.I):
             n = m.group(1) or m.group(2)
             if n.lower() not in AUTOMATIC:
-                assigned.setdefault(n.lower(), {}).setdefault(n, ln)
-    for forms in assigned.values():
-        if len(forms) > 1:
-            (a, la), (b, lb) = sorted(forms.items(), key=lambda x: x[1])[:2]
-            out('WARN', 'PS-CASE', f'{f}:{lb}', f'${b} (line {lb}) is the same variable as ${a} (line {la}): PowerShell names are case-insensitive')
+                scopes.setdefault(cur, {}).setdefault(n.lower(), {}).setdefault(n, ln)
+        for ch in line:
+            if ch == '{':
+                depth += 1
+                if pending is not None:
+                    stack.append((pending, depth)); pending = None
+            elif ch == '}':
+                if len(stack) > 1 and stack[-1][1] == depth:
+                    stack.pop()
+                depth -= 1
+    hits = []
+    for vars_ in scopes.values():
+        for forms in vars_.values():
+            if len(forms) > 1:
+                (a, la), (b, lb) = sorted(forms.items(), key=lambda x: x[1])[:2]
+                hits.append((lb, b, a, la))
+    return sorted(hits)
+
+def ps_pitfalls(f, t):
+    code = strip_ps_comments(t)
+    lines = code.split('\n')
+    for lb, b, a, la in ps_case(t):   # the second spelling overwrites the first
+        out('WARN', 'PS-CASE', f'{f}:{lb}', f'${b} (line {lb}) is the same variable as ${a} (line {la}): PowerShell names are case-insensitive')
     for ln, line in enumerate(lines, 1):
         m = re.search(r'\$(\w+)\s*=(?![=~])', line)
         if m and m.group(1).lower() in AUTOMATIC - {'lastexitcode'} and not re.search(r'\[(ref)\]', line):
@@ -1485,7 +1513,7 @@ def result_notes(obj):
     """Every note string in a results.json (any depth)."""
     if isinstance(obj, dict):
         for k_, v in obj.items():
-            if k_ in ('note', 'notes', 'finding') and isinstance(v, str):
+            if k_ in ('note', 'notes', 'finding', 'observed', 'what_was_done') and isinstance(v, str):
                 yield v
             else:
                 yield from result_notes(v)
