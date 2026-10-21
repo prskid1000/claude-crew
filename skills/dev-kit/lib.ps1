@@ -24,14 +24,14 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
-      $li = Get-Item -LiteralPath $lock -ErrorAction SilentlyContinue   # one call: the holder may remove it in between
-      if ($li -and ((Get-Date) - $li.LastWriteTime).TotalMinutes -gt 2) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }   # a live holder keeps it open: the remove fails
+      # .NET, not Remove-Item: a lock its holder deletes in between made Remove-Item throw despite SilentlyContinue
+      try { if ([IO.File]::Exists($lock) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2) { [IO.File]::Delete($lock) } } catch {}   # a live holder keeps it open: the delete fails
       Start-Sleep -Milliseconds 100
     }
   }
   # warn + return too: SilentlyContinue ignores a throw
   if (-not $fs) { $m = "Invoke-KitLocked: $lock still held after 130 s - not writing $File"; Write-Warning $m; throw $m; return }
-  try { & $Body } finally { $fs.Dispose(); Remove-Item $lock -Force -ErrorAction SilentlyContinue }
+  try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
 }
 # -Strict: bad JSON -> <file>.bad-<time> + throw (never {} over all tasks)
 function Read-KitTracking([switch]$Strict) {
