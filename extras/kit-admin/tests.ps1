@@ -33,11 +33,7 @@ $b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 220000'
 Expect 'kit-admin: budget raise refused under the cap, x1.1 over it' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '200000 -> 220000' -and $c2)
 # kit-admin.md: every [CODE] it names is a lint code kittool.py emits (no stale rule names)
 $doc = Get-Content (Join-Path $PSScriptRoot 'files/skills/orchestrate/kit-admin.md') -Raw
-<<<<<<< HEAD
-$emitted = [regex]::Matches((Get-Content (Join-Path $Kit 'skills/orchestrate/kittool.py') -Raw), "(?:bad\('|\('(?=SECTION-))([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
-=======
-$emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/orchestrate/kittool.py') -Raw), "bad\('([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
->>>>>>> 087dae2 (test(extras): one case per behaviour, kit harness helpers (wip))
+$emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/orchestrate/kittool.py') -Raw), "(?:bad\('|\('(?=SECTION-))([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }
 $named = [regex]::Matches($doc, '\[([A-Z][A-Z, *-]+)\]') | ForEach-Object { $_.Groups[1].Value -split ',\s*' } | Where-Object { $_ -notmatch '\*' -and $_ -ne 'CODE' }
 $stale = @($named | Where-Object { $_ -notin $emitted })
 Expect "kit-admin: kit-admin.md names only lint codes kittool.py emits (stale: $($stale -join ', '))" ($named.Count -gt 5 -and -not $stale.Count)
