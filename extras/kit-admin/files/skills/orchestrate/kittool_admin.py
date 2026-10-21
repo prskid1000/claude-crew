@@ -551,7 +551,7 @@ function mock(label) {
    { id: 'T3', subtask_id: 't1', screen: 'Orders', result: 'FAIL', what_was_done: 'cancelled', observed: 'PUT /api/orders -> 500', evidence: [] }],
    findings: ['seed data was old'], setup_changes: [], data_created: [] }
   case 'audit': return { reclassify: [{ id: 'T2', defect: false, reason: 'cosmetic' }], newDefects: [] }
-  case 'verify': return { verdicts: [{ id: 'T3', confirmed: true, observed: '500 again', evidence: [] }] }
+  case 'verify': return { verdicts: [{ id: 'T3', outcome: 'confirmed', observed: '500 again', evidence: [] }] }
   case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
   case 'prepare': return { runDir: SAMPLE['testy'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
   case 'load-run': return { json: JSON.stringify(SAMPLE['testy']) }
