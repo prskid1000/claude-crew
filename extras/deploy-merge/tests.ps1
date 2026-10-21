@@ -1,5 +1,9 @@
 #Requires -Version 7
-# Offline test of the extra: a throw-away copy of the kit's orch.ps1 + lib.ps1 with this extra installed. Exit 0 pass, 1 fail.
+<#
+tests.ps1 (extra deploy-merge): offline, on a throw-away copy of the kit's orch.ps1 + lib.ps1 with this extra's files.
+Usage: pwsh -NoProfile -File extras/deploy-merge/tests.ps1 -Kit <kit>
+Exit codes: 0 pass · 1 a check failed.
+#>
 param([Parameter(Mandatory)][string]$Kit)
 $ErrorActionPreference = 'Stop'
 $script:fails = 0

@@ -7,7 +7,8 @@ param(
   [string]$Agent, [string]$With, [string]$Item, [string]$Claim, [string]$Evidence, [string]$Propose, [string]$Id, [string]$Run = '', [string]$Contracts = '',
   [ValidateSet('', 'agree', 'disagree')][string]$Answer = '', [switch]$Open, [switch]$Json
 )
-switch ($Action) {  'dispute' {
+switch ($Action) {
+  'dispute' {
     $dd = Get-KitPath disputes -Create
     if (-not $Id) {
       if (-not ($Agent -and $With -and $Claim -and $Evidence)) { 'usage: board dispute -Agent <me> -With <id> -Item <item> -Claim ".." -Evidence ".." -Propose ".." [-Run <run>] [-Contracts <file>]'; exit 2 }
@@ -55,7 +56,9 @@ switch ($Action) {  'dispute' {
     if (-not $dl.Count) { 'no disputes' }
   }
 }
-}function Request-DisputeDecision($o, [string]$detail) {
+}
+
+function Request-DisputeDecision($o, [string]$detail) {
   $ask = & $KitCmd.orch decide ask -Run "$($o.run)" -Agent $o.from -Item "$($o.item)" -Question "Dispute $($o.id) ($($o.from) vs $($o.with), item $($o.item)): who is right? $detail" -Options "A: $($o.from): $($o.propose)", "B: $($o.with): keep its result" -Contracts "$($o.contracts)" 2>&1 | Out-String
   if ($ask -match '\b(d-\d{14}-[\w-]+)') { $Matches[1] } else { 'not raised' }
 }
