@@ -22,5 +22,10 @@ export async function login({ page, t, tenant, user, pass, otp, type }, h) {
     await h.nav(page, t.web + (L.path || '/'), 'networkidle2')
     if (!h.onLogin(page, t)) return   // logged in: never log out
     for (const s of L.steps || []) await h.step(page, s, f)
+  } else if (type === 'form') {   // a form whose fields carry {totp}
+    await h.nav(page, t.web + (L.path || '/'), 'networkidle2')
+    if (!h.onLogin(page, t)) return
+    await h.step(page, { fill: L.fields }, f)
+    await h.step(page, { click: L.submit }, f)
   } else throw new Error(`webLogin.type ${type}: form | sso-steps | script | storageState`)
 }

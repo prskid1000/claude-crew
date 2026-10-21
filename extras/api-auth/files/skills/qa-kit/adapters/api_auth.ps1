@@ -20,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
 # Git Bash rewrites '/api/x' into a Git path: undo
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
-$here = $PSScriptRoot
+$here = Split-Path $PSScriptRoot   # adapters/ -> qa-kit/
 $cfgFile = Join-Path $here 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - run orch.ps1 setup -WriteLocal, then fill it in" }
 $cfg = Get-Content $cfgFile -Raw | ConvertFrom-Json

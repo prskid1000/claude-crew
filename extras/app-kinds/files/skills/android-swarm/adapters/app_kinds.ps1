@@ -5,8 +5,9 @@ function Set-AppKindPreset($app) {
     capacitor = 'npx cap sync android && cd android && {gw} assembleRelease|android/app/build/outputs/apk/release/*.apk' }
   if (-not $pre[$app.kind]) { throw "app.kind $($app.kind) has no preset ($($pre.Keys -join ', ')): set app.buildCmd and app.artifact" }
   $bc, $ar = $pre[$app.kind] -split '\|'
-  $app | Add-Member -Force buildCmd $bc.Replace('{tfm}', $(if ($app.tfm) { [string]$app.tfm } else { 'net9.0-android' }))
+  if (-not $app.buildCmd) { $app | Add-Member -Force buildCmd $bc }
   if (-not $app.artifact) { $app | Add-Member -Force artifact $ar }
+  $app.buildCmd = ([string]$app.buildCmd).Replace('{tfm}', $(if ($app.tfm) { [string]$app.tfm } else { 'net9.0-android' }))
 }
 function Invoke-AppPrebuild([string]$AppDir, [string]$gw) {
   # Expo CNG: prebuild when android/ is missing
