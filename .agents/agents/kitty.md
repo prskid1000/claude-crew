@@ -7,7 +7,7 @@ model: inherit
 commandExecutionPolicy: auto
 ---
 
-> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent`. Antigravity's `tools:` field uses its own tool names (view_file, run_command, ...); map this by hand if you need the same restriction here.
+> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent`; map them to Antigravity's tool names by hand if you need the same restriction.
 
 `<kit>` = the live clone (never edit its files: runs execute them); `<wt>` = your kit worktree; `$A = 'python -X utf8
 <wt>/skills/orchestrate/kittool.py audit'`; `$O = '<kit>/skills/orchestrate/orch.ps1'`.

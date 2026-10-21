@@ -7,7 +7,7 @@ model: inherit
 commandExecutionPolicy: auto
 ---
 
-> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Bash`. Antigravity's `tools:` field uses its own tool names (view_file, run_command, ...); map this by hand if you need the same restriction here.
+> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Bash`; map them to Antigravity's tool names by hand if you need the same restriction.
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).
 

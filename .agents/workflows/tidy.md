@@ -4,11 +4,11 @@
 
 **When to run it:** A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective
 
-Antigravity has no pipeline/phase scripting engine equivalent to Claude Code's Workflow tool, so this is a manual run procedure, not an automated script. Drive it yourself as the coordinator: delegate each phase to the matching subagent in `.agents/agents/*.md` yourself, in the phase order below.
+Antigravity has no workflow engine: you are the coordinator. Per phase, in order: delegate it to the matching subagent in `.agents/agents/*.md`.
 
 ## Phases
 
 1. **Analyse** -- 4 parallel kitty analysts: dev, QA, speed/infra, docs/evidence
 2. **Apply** -- one kitty dedupes, applies lesson + rule changes, writes the retro report, says when the audit is due
 
-Full argument shape and step-by-step mechanics: the canonical source is `.claude/workflows/tidy.js` (read its header comment and the `orchestrate` skill before running this by hand).
+Arguments and step details: `.claude/workflows/tidy.js` (its header comment) and the `orchestrate` skill.

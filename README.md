@@ -84,51 +84,9 @@ flowchart TD
 
 ## Dev flow (/buildy)
 devy codes and tests on the local env in a loop, revy reviews, the workflow merges; only a person's `deploy <env>` ships it.
-<!-- kit-graph:start flow-dev -->
-```mermaid
-flowchart LR
-  T([task / bug]) --> C[devy: code]
-  C --> G[testing-goals doc]
-  G --> R{bug?}
-  R -->|yes| RP[reproduce on the local env]
-  R -->|no| L
-  RP --> L[local test loop: deploy branch, lease, run every goal]
-  L -->|goal fails, < 3 rounds| C
-  L -->|3 rounds failed| SR[one stronger fix round]
-  SR -->|still failing| B[[held: the coordinator decides]]
-  L -.->|coordinator-only env fix| EF[[ENV-FIX: the coordinator fixes, the item waits]]
-  EF -.->|done| L
-  C -.->|behaviour not asked for / several paths| D[[decision request: the item waits]]
-  D -.->|owner answers| C
-  L -->|every goal passes| V[review + CI]
-  V -->|findings / red| C
-  V -->|clean, green| M[merge, producers first]
-  M --> H[human testing doc + tracker promoted]
-  H --> DB[merged work waits: nobody asks]
-  DB -->|a person says deploy env| DP[deploy at once + record]
-  DP --> IT[tracker inTest]
-  IT --> HT([testers close it, or failedTesting -> back to dev])
-```
-<!-- kit-graph:end -->
 
 ## Test-only flow (/testy)
 checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
-<!-- kit-graph:start flow-test-only -->
-```mermaid
-flowchart LR
-  Q([deployed tasks + testing docs]) --> TE[checky per doc: web, API, phone lanes]
-  TE --> AU[note audit]
-  AU --> SR[stronger retry of NOT_TESTED]
-  SR -->|local env, still NOT_TESTED| EF[[ENV-FIX: coordinator fixes, retest; then held]]
-  SR --> VE[checky re-tests every FAIL]
-  VE --> FI{result rule}
-  FI -->|all pass| CL[closed]
-  FI -->|own check failed / incomplete on a shared env| FT[failedTesting: back to dev, no new task]
-  FI -->|new defect| BG[one Bug task under the ask]
-  FT --> BW[bugfix wave: reproduce locally first]
-  BG --> BW
-```
-<!-- kit-graph:end -->
 <!-- kit-graph:start table-workflows -->
 | Workflow | Covers | Crew | Router row |
 |---|---|---|---|
@@ -139,65 +97,12 @@ flowchart LR
 
 ## Task lifecycle
 Logical tracker statuses (`tracker.statuses` maps them to your board's names).
-<!-- kit-graph:start flow-lifecycle -->
-```mermaid
-stateDiagram-v2
-  [*] --> open
-  open --> inProgress: devy starts
-  inProgress --> review: MRs open
-  review --> inProgress: findings / red CI
-  review --> promoted: every MR merged (track)
-  promoted --> inTest: a person said deploy env
-  inTest --> closed: every check passes
-  inTest --> failedTesting: own check failed / incomplete
-  failedTesting --> inProgress: bugfix /buildy
-  inTest --> open: new defect = one [Bug] task
-  closed --> [*]
-```
-<!-- kit-graph:end -->
 
 ## Local env and deploys
 One shared instance per env, branches as layers; deploys wait for a person's word (`deploy.trigger`).
-<!-- kit-graph:start flow-local-env -->
-```mermaid
-flowchart LR
-  BR[branch] -->|localenv deploy| TR[train: merge, gated build, switch-over]
-  TR -->|conflict / build fail| RF[refused / rejected: fix]
-  TR --> LV[live release]
-  LV -->|use: lease| CK[goals: api, browser, phone with the local-env APK]
-  CK -->|errors| DBG[debug: logs, events, DB read-only, debugPort]
-  DBG --> BR
-  CK -->|every goal passes| PR[promote, release]
-```
-<!-- kit-graph:end -->
-<!-- kit-graph:start flow-deploy -->
-```mermaid
-flowchart LR
-  MW[merged MRs from every session] --> PL[orch deploy plan]
-  RQ[deploy request: workflows] --> PL
-  CI[last deploy: CI + kit log] --> PL
-  PL -->|trigger owner| RD[READY: waits, nobody asks]
-  RD -->|a person says deploy env| DO[deploy per org rules]
-  PL -->|trigger ask, window open| ASK[ASK the owner once per env]
-  PL -->|trigger ask, inside the window| WT[WAIT until the window ends]
-  ASK -->|yes| DO
-  DO --> RC[deploy record] --> IN[deploy intest]
-```
-<!-- kit-graph:end -->
 
 ## Budget and handoff
 The rule: "Configuration" `budget`; per-tool defaults in the table.
-<!-- kit-graph:start flow-budget -->
-```mermaid
-flowchart LR
-  P[plan: agents x budget = run cap] -->|estimate > cap| SP[refused: split into batches]
-  P --> RUN[run]
-  RUN -->|spend >= runStopAt x cap| NX[no new item; rest returns as next]
-  NX -->|coordinator relaunches| P
-  RUN --> AG[agent] -->|spend >= handoffAt x budget| HB[resume brief + board leave -Handoff]
-  HB -->|fresh agent, same -Agent -Run| AG
-```
-<!-- kit-graph:end -->
 <!-- kit-graph:start table-budget -->
 | Tool / window | Budget | Source |
 |---|---|---|
@@ -211,54 +116,12 @@ flowchart LR
 ## Leases
 One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, sandboxes, builds; only owner
 holds (`localenv.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
-<!-- kit-graph:start flow-leases -->
-```mermaid
-flowchart LR
-  H[holder: workflow step, board beat, pid, owner -Minutes] -->|use / acquire / openTab / gate| R[env service, tab, phone, sandbox, build]
-  R --> L{holder live?}
-  L -->|yes: seen = now| R
-  L -->|no| G[grace: idle.graceMinutes, report shows ⏳]
-  G -->|holder back| R
-  G -->|grace over| X[stopped / released]
-  R -->|release / unhold| X
-```
-<!-- kit-graph:end -->
 
 ## Recovery after a crash or restart
 WIP commits after every dev-flow step, so a fresh agent loses nothing.
-<!-- kit-graph:start flow-recovery -->
-```mermaid
-sequenceDiagram
-  participant O as owner
-  participant C as coordinator
-  participant K as kit scripts
-  participant A as fresh agent
-  O->>C: restart / new session
-  C->>K: orch.ps1 health (SessionStart)
-  K-->>C: stopped runs, handoffs, dirty worktrees
-  C->>K: orch.ps1 recover
-  K-->>C: resume brief + exact resume call per run
-  C->>A: relaunch from the brief (WIP commits kept)
-  A->>K: board join -Resume (TAKEOVER, not DUPLICATE)
-  C->>K: supervise -AutoFix every 10 min
-```
-<!-- kit-graph:end -->
 
 ## Kit upkeep
 The kit learns from every run and fixes itself in a kit worktree.
-<!-- kit-graph:start flow-upkeep -->
-```mermaid
-flowchart LR
-  AG[every agent] -->|orch.ps1 learn| SG[signals]
-  SG -->|run finished / 15 piled up| TI[/tidy: kitty/]
-  TI --> LS[LESSONS.md + rule changes]
-  LS -->|step 0 reads its section| AG
-  HB[supervise heartbeat] -->|flags| EV[orchestrate Events]
-  EV -->|kit friction| KF[kitty fix -> revy -> push main]
-  WK[weekly nudge] --> AU[kitty audit] --> KF
-  KF -->|git pull when idle| AG
-```
-<!-- kit-graph:end -->
 
 ## Install
 ```powershell
@@ -357,7 +220,7 @@ refuses unfilled ones); then `port`, lint 0, tests.
 - **Token budgets** [BUDGET] (UTF-8 bytes / 4; README graph sections excluded; LESSONS.md: 40 lines per skill), from kittool
   `BUDGETS` and `_manifest.caps`:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 436000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 39300 · total 428000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
   Over a budget: trim first (dense prose, dedupe, never golf that hurts reading); only when trimming cannot make room,
   `kittool.py budget raise -Reason "<why>"` (x1.1, rounded to 1k; the reason goes in the commit message) [BUDGET-CAP refuses any

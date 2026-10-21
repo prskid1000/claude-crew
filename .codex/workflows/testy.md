@@ -4,7 +4,7 @@
 
 **When to run it:** Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents
 
-Codex has no pipeline/phase scripting engine equivalent to Claude Code's Workflow tool, so this is a manual run procedure, not an automated script. Drive it yourself as the coordinator: spawn each phase's agents from `.codex/agents/*.toml` yourself with `spawn_agent` (one call per agent in that phase, up to the session's concurrency limit), `wait_agent` for them to finish, then move to the next phase, in the order below. Verified against the installed CLI (`codex features list`: hooks/multi_agent stable) on 2026-10-13 -- `spawn_agents_on_csv` does not exist; don't use it.
+Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase.
 
 ## Phases
 
@@ -14,4 +14,4 @@ Codex has no pipeline/phase scripting engine equivalent to Claude Code's Workflo
 4. **Close** -- checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask
 5. **Learn** -- signals + LESSONS.md updates (40-line cap) from this run
 
-Full argument shape and step-by-step mechanics: the canonical source is `.claude/workflows/testy.js` (read its header comment and the `orchestrate` skill before running this by hand).
+Arguments and step details: `.claude/workflows/testy.js` (its header comment) and the `orchestrate` skill.

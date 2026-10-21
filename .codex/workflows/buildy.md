@@ -4,7 +4,7 @@
 
 **When to run it:** Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)
 
-Codex has no pipeline/phase scripting engine equivalent to Claude Code's Workflow tool, so this is a manual run procedure, not an automated script. Drive it yourself as the coordinator: spawn each phase's agents from `.codex/agents/*.toml` yourself with `spawn_agent` (one call per agent in that phase, up to the session's concurrency limit), `wait_agent` for them to finish, then move to the next phase, in the order below. Verified against the installed CLI (`codex features list`: hooks/multi_agent stable) on 2026-10-13 -- `spawn_agents_on_csv` does not exist; don't use it.
+Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase.
 
 ## Phases
 
@@ -15,4 +15,4 @@ Codex has no pipeline/phase scripting engine equivalent to Claude Code's Workflo
 5. **Deploy** -- the merged work joins the deploy batch silently; a person says deploy <env> (never asked, never deployed here)
 6. **Learn** -- signals + lessons from this wave, cleanup
 
-Full argument shape and step-by-step mechanics: the canonical source is `.claude/workflows/buildy.js` (read its header comment and the `orchestrate` skill before running this by hand).
+Arguments and step details: `.claude/workflows/buildy.js` (its header comment) and the `orchestrate` skill.

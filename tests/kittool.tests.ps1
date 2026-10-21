@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-kittool.tests.ps1: kittool.py prose, lint, port, new / rename / remove, budget, flow; kit-wide script checks.
+kittool.tests.ps1: kittool.py prose, lint, port, extras, release, budget; kit-wide script checks.
 Usage: pwsh -NoProfile -File <kit>/tests/kittool.tests.ps1 (or tests/kit-tests.ps1 -Area kittool).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -69,7 +69,7 @@ ok_main = kt.main_clone(str(tmp)) == str(tmp)
 # lint measures PROSE against the linted kit's templates.md (k.dir), not the script's kit
 src = open(sys.argv[1], encoding='utf-8').read()
 ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src \
-    and "kit_path('cache', create=True, kit=kit), osp.basename(loc_rel)" in src and "render timed out" in src
+    and 'the workflow render failed' in src
 print(f'kittool-ports:{ok_toml and ok_lf}')
 print(f'kittool-deploy:{ok_deploy}')
 print(f'kittool-misc:{ok_main and ok_prose}')
@@ -77,67 +77,51 @@ print(f'kittool-misc:{ok_main and ok_prose}')
 $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
 $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
 Expect-Each $res 'kittool: #' 'kittool-ports', 'kittool-deploy', 'kittool-misc'
-$oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
+# a throw-away git copy of the kit with a local origin: extras, lint codes, release, budget raise
 $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-reg-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
-foreach ($f in @(git -C $src ls-files) + @('agents/devy.md', 'agents/revy.md', 'agents/checky.md', 'agents/kitty.md')) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
-git -C $kc init -q; git -C $kc add -A; git -C $kc -c user.name=t -c user.email=t@t commit -q -m 'feat: base'
+foreach ($f in @(git -C $src ls-files)) { $s1 = Join-Path $src $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
+$gt = { git -C $args[0] -c user.name=t -c user.email=t@t @($args | Select-Object -Skip 1) }
+git -C $kc init -q -b main; git -C $kc add -A; & $gt $kc commit -q -m 'feat: base'
 $KT2 = Join-Path $kc 'skills/orchestrate/kittool.py'
-$n1 = & $py -X utf8 $KT2 new agent zappy --skill dev-kit 2>&1 | Out-String
-$l1 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-$mf = { (Get-Content (Join-Path $kc 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json)._manifest }
-$okNew = (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).agents.zappy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '\| R\d+ \| TODO\(new\).*`zappy` agent' -and $l1 -match 'TODO-STUB'
-$tpl = Join-Path $kc 'skills/dev-kit/templates.md'; Add-Content $tpl "`nsee last-zappys and zappy-stamp" -Encoding utf8
-$r1 = & $py -X utf8 $KT2 rename agent zappy zippy 2>&1 | Out-String
-$okRen = (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).renamed.zappy -eq 'zippy' -and
-  (Get-Content $tpl -Raw) -match 'see last-zippys and zippy-stamp' -and
-  (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '`zippy` agent' -and (Test-Path (Join-Path $kc '.codex/agents/zippy.toml')) -and -not (Test-Path (Join-Path $kc '.codex/agents/zappy.toml'))
-$x1 = & $py -X utf8 $KT2 remove agent zippy 2>&1 | Out-String
-$okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -notmatch 'zippy'
-$klj = Join-Path $kc 'skills/dev-kit/kit.local.json'; '{ "net": { "timeoutSec": 5 } }' | Set-Content $klj -Encoding utf8
-$null = & $py -X utf8 $KT2 rename event E14 E15 2>&1; $rnw = & $py -X utf8 $KT2 rename config-key net.timeoutSec net.waitSec 2>&1 | Out-String
-$null = & $py -X utf8 $KT2 new adr Budget per agent 2>&1
-$sk = Get-Content (Join-Path $kc 'skills/orchestrate/SKILL.md') -Raw
-$okId = $rnw -match 'WARN nested read\? skills/local-env/localenv\.ps1' -and (& $mf).events -contains 'E15' -and -not ((& $mf).events -contains 'E14') -and $sk -match '\|\s*E15\s*\|' -and $sk -notmatch '\bE14\b' -and
-  (Get-Content (Join-Path $kc 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).net.waitSec -eq 60 -and (Get-Content $klj -Raw | ConvertFrom-Json).net.waitSec -eq 5 -and
-  -not (git -C $kc grep -l 'net\.timeoutSec' -- . ':!.codex' ':!.agents') -and (Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -match '## Decisions\r?\n(?:.*\r?\n)*- \d{4}-\d\d-\d\d Budget per agent: context TODO\(new\)'
-Expect "kittool rename event + config-key, new adr ($okId)" $okId
-$wfp = Join-Path $kc 'workflows/tidy.js'; Add-Content $wfp "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8; Add-Content (Join-Path $kc 'skills/dev-kit/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
+$og = Join-Path (Split-Path $kc) 'origin.git'; git init -q --bare $og; git -C $kc remote add origin $og
+$xw = Join-Path (Split-Path $kc) 'xw'; git init -q -b extras $xw
+$xd = Join-Path $xw 'extras/demo'; New-Item -ItemType Directory -Force "$xd/files/skills/orchestrate" | Out-Null
+"# demo`n`nA demo command.`nNeeded when: ``tracker.type`` = ``demo```n" | Set-Content "$xd/EXTRA.md"
+"COMMANDS = {'demo': lambda a: print('demo ran') or 0}`nARGS = {'demo': (set(), set(), False)}`n" | Set-Content "$xd/files/skills/orchestrate/kittool_demo.py"
+git -C $xw add -A; & $gt $xw commit -q -m 'feat: demo extra'; git -C $xw push -q $og extras 2>&1 | Out-Null
+$ex = { $o = & $py -X utf8 $KT2 @args 2>&1 | Out-String; [pscustomobject]@{ out = $o; code = $LASTEXITCODE } }
+'{ "tracker": { "type": "demo" } }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')
+$demo = Join-Path $kc 'skills/orchestrate/kittool_demo.py'
+Expect-Cases @(
+  , @('extra: a command of a missing extra = exit 2 + one "extra add" line', { & $ex flow $kc }, { param($r) $r.code -eq 2 -and $r.out.Trim() -eq 'kittool.py flow is an extra: run kittool.py extra add flow-map' })
+  , @('extra list: names from origin/extras', { & $ex extra list }, { param($r) $r.code -eq 0 -and $r.out -match '(?m)^  demo\s+A demo command' })
+  , @('extra check: config asks for a missing extra', { & $ex extra check }, { param($r) $r.code -eq 1 -and $r.out -match 'tracker\.type "demo" is an extra: run kittool\.py extra add demo' })
+  , @('extra add: files written, local-only (git status clean), command loaded', { & $ex extra add demo; & $ex demo },
+      { param($r) $r.out.Trim() -eq 'demo ran' -and (Test-Path $demo) -and -not (git -C $kc status --porcelain) })
+  , @('extra add: lint skips it, list marks it, check is satisfied', { (& $ex lint --no-flow).out + (& $ex extra list).out + (& $ex extra check).code },
+      { param($r) $r -notmatch 'kittool_demo' -and $r -match '(?m)^\* demo' -and $r -match '0$' })
+  , @('extra add: never overwrites a file it did not install', { $null = & $ex extra remove demo; '# mine' | Set-Content $demo; & $ex extra add demo },
+      { param($r) $r.code -eq 1 -and $r.out -match 'refused' -and (Get-Content $demo -Raw) -match 'mine' })
+  , @('extra remove: files and the exclude block go, user lines stay', { Remove-Item $demo; $null = & $ex extra add demo; & $ex extra remove demo },
+      { param($r) $exc = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
+        $r.code -eq 0 -and -not (Test-Path $demo) -and $exc -notmatch 'kittool extra' -and $exc -match '(?m)^# ' })
+)
+# lint codes and release on the copy
+$oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
+Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
+Add-Content (Join-Path $kc 'skills/dev-kit/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 $rel = & $py -X utf8 $KT2 release 2>&1 | Out-String
-Expect "kittool new / rename / remove (new $okNew, rename $okRen, remove $okRem)" ($okNew -and $okRen -and $okRem)
 Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s); release: SemVer tag' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and $rel -match '^# v\d+\.\d+\.\d+')
+# budget raise: steps of x1.1 from 200000
 $bj = Join-Path $kc 'skills/dev-kit/kit.example.json'; $bt = { & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String }
-$capTo = { param($v) foreach ($p in $bj, $KT2) { (Get-Content $p -Raw) -replace '(totalTokens[''"]:\s*)\d+', "`${1}$v" | Set-Content $p -NoNewline }; git -C $kc commit -qam cap }
-& $capTo 480000; $b1 = & $bt; $c1 = $LASTEXITCODE   # a cap step above any kit size: refused
-& $capTo 360000
-$b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 396000'
+$capTo = { param($v) (Get-Content $bj -Raw) -replace '("totalTokens":\s*)\d+', "`${1}$v" | Set-Content $bj -NoNewline; & $gt $kc commit -qam cap }
+& $capTo 518000; $b1 = & $bt; $c1 = $LASTEXITCODE   # a cap step above the kit: refused
+('x' * 1000000) | Set-Content (Join-Path $kc 'pad.dat'); git -C $kc add pad.dat;   # not a text file: lint does not scan it
+ & $capTo 200000
+$b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 220000'
 (Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect 'budget raise: refused under the cap, x1.1 over it; a manual cap edit = BUDGET-CAP' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '360000 -> 396000' -and $c2 -and $l3 -match 'BUDGET-CAP')
+Expect 'budget raise: refused under the cap, x1.1 over it; a manual cap edit = BUDGET-CAP' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '200000 -> 220000' -and $c2 -and $l3 -match 'BUDGET-CAP')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
-# kit-flow: loop words in strings / comments / one-liners are no loops; unbounded ones are (kittool.py 2b)
-$fx = @'
-import re, sys, types, collections
-sys.path.insert(0, sys.argv[1])
-import kittool
-T = {'fp.ps1': '''function Active { All | Where-Object { $_.status -ne 'left' -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt $staleMin } }
-function Hint { "== heartbeat: arm ONE: CronCreate (cron */10 * * * *), prompt: run supervise and retry when stale" }
-function Keep($x, $rm) { $x.m = @(@($x.m) | Where-Object { $p = "$_" -split '>', 2; $p[0] -notin $rm }) }
-function Label { $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }; $v }
-function Bounded { for ($i = 0; $i -lt 3; $i++) { Start-Sleep 1 }; foreach ($x in @(1, 2)) { $x }; while ((Get-Date) -lt $end) { Start-Sleep 5 } }
-''', 'fp.py': 'def port():\n    print("kittool port: GEMINI.md stale or missing; retry later")\n',
-     'fp.mjs': 'export function login(page, L) {\n  if (!page.url().includes(L.path)) {   // logged in as someone else: clear and retry\n    return 1\n  }\n}\n',
-     'real.ps1': 'function Poll($f) {\n  while ($true) { Start-Sleep 5; if (Test-Path $f) { break } }\n}\n',
-     'real.mjs': 'export async function waitDone(poll) {\n  let done = false\n  while (!done) { done = await poll() }\n}\n',
-     'marked.ps1': 'function Watch($f) {\n  while ($true) { Start-Sleep 5 }   # flow: unbounded on purpose - watch until Ctrl+C\n}\n'}
-k = types.SimpleNamespace(files=list(T), texts=T, dir=sys.argv[2], skills=[], agents={}, workflows={})
-d = kittool.model(k, [])
-c = collections.Counter(m.group(0) for i in d['issues'] for m in [re.search(r'(fp|real|marked)\.\w+', i['text'])] if m)
-print(' '.join(f'{f}={c.get(f, 0)}' for f in T), 'deliberate=' + str(sum(1 for i in d['deliberate'] if 'marked.ps1' in i['text'])))
-'@
-$fxf = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $fxf $fx -Encoding utf8
-$res = "$(& $py -X utf8 $fxf (Join-Path $src 'skills/orchestrate') ([IO.Path]::GetTempPath()) 2>&1)"
-Expect "kit-flow: no false loop issues ($res)" ($res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0')
-Expect 'kit-flow: real unbounded loops flagged once each' ($res -match 'real\.ps1=1 real\.mjs=1')
-Expect 'kit-flow: a loop marked `flow: <reason>` is listed as deliberate, not counted' ($res -match 'marked\.ps1=0' -and $res -match 'deliberate=1')
 Remove-TestKit $k
 Complete-Tests
