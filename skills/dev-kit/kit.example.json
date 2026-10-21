@@ -28,7 +28,7 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | github | command; clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
+  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
@@ -166,10 +166,10 @@
   "caps": { "content": 30, "plumbing": 8, "totalTokens": 428000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "github command none" },
-   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab github command" },
+   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
+   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab command" },
    "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "markdown html command" },
-   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab github command none", "values": "host" }
+   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab command none", "values": "host" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
    "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",

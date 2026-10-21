@@ -157,7 +157,7 @@ needs a missing extra stops with `<feature> is an extra: run kittool.py extra ad
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json and swarm.config.json from it |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / github / command; clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command (command '&lt;cli&gt; {title} {path} {parent}' printing the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: extras. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none |
 | `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind. |
 | `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
@@ -179,10 +179,10 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs) | Built in | Code |
 |---|---|---|---|---|
-| tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | github, command, none | `skills/dev-kit/lib.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, github, command | `skills/dev-kit/lib.ps1` |
+| tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | command, none | `skills/dev-kit/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, command | `skills/dev-kit/lib.ps1` |
 | report | `reports.type` | publish | markdown, html, command | `skills/dev-kit/devtools.py` |
-| ci | `ci.type` | runs jobs log status config | gitlab, github, command, none | `skills/dev-kit/lib.ps1` |
+| ci | `ci.type` | runs jobs log status config | gitlab, command, none | `skills/dev-kit/lib.ps1` |
 <!-- kit-graph:end -->
 
 ## Layout, state and safety
