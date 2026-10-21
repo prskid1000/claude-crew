@@ -1422,6 +1422,9 @@ if (Test-Path (Join-Path $kit '.git')) {
     if ($head -match 'ahead (?<a>\d+)') { $parts += "$($Matches.a) commit(s) ahead of $up (push them)" }
   }
   if ((git -C $kit config core.hooksPath 2>$null) -ne '.githooks') { $parts += "pre-push gate off (run: pwsh -File $($KitCmd.orch) setup)" }
+  $pf = Get-KitPath kit-protect
+  $st = if (Test-Path $pf) { @(Get-Content $pf | Where-Object { $_ }) }; $bad = if (-not $st) { 'unchecked' } else { @($st | Where-Object { $_ -notmatch '^\S+ (ok|set|skip)' }) }
+  if ($bad) { $parts += "origin main / extras protection: $($bad -join ', ') (run: orch.ps1 setup)" }
   if ($parts) { $msgs += "kit: " + ($parts -join '; ') }
 } else {
   $msgs += "kit: $kit is not a git clone of the kit repo (install: README Install)"
@@ -1458,6 +1461,22 @@ function Get-KitRetroDue([switch]$RunFinished) {
   if ($n + $g -ge 15 -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
 }
 
+# ---- the kit origin's main and extras: force push and deletion off, direct push on (host verb branch.protect; never product repos)
+function Set-KitOriginProtection {
+  $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
+  $lines = if ("$(git -C $kit remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?(?<h>[^/:\\]{2,})(?::\d+)?[:/](?<r>[^:\\]+?)(?:\.git)?/?$') { 'origin failed: no origin remote with a host' } else {
+    $h, $repo, $t = $Matches.h, $Matches.r, (Get-HostKind $Matches.h)
+    if ($t -eq 'gitlab') { $env:GITLAB_HOST = $h } elseif ($t -eq 'github') { $env:GH_HOST = $h }
+    foreach ($b in 'main', 'extras') {
+      if (-not (git -C $kit rev-parse --verify -q "refs/remotes/origin/$b" 2>$null)) { "$b failed: origin/$b not fetched (git fetch origin)"; continue }
+      $r = try { Invoke-HostVerb 'branch.protect' @{ type = $t; repo = $repo; branch = $b } -NoMemo } catch { "failed: $_" }
+      "$b $(if ($r) { $r } else { "failed: set it by hand on $h/$repo (force push off, deletion off, direct push on)" })"
+    }
+  }
+  $env:GITLAB_HOST, $env:GH_HOST = $gl, $gh
+  Set-Content (Get-KitPath kit-protect -Create) $lines
+  $lines | ForEach-Object { "protect: $_" }
+}
 # ---- setup: install / repair (idempotent)
 function Invoke-Setup {
 param([switch]$Exclude, [switch]$Quiet, [switch]$WriteLocal)
@@ -1505,6 +1524,7 @@ if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m
 if (-not (Test-Path (Join-Path $kit '.git'))) { Write-Warning "$kit is not a git clone: install per README ""Install""" }
 else {
   if ((git -C $kit config core.hooksPath) -ne '.githooks') { git -C $kit config core.hooksPath .githooks; Say 'git: core.hooksPath = .githooks (pre-commit, pre-push, post-merge on)' }
+  Set-KitOriginProtection | Where-Object { $_ -notmatch ' ok$' } | ForEach-Object { Say $_ }
   $r = Update-Exclude; if ($r) { Say $r }
 }
 $m = Set-Memory; if ($m) { Say $m }

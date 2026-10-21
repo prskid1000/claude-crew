@@ -56,7 +56,8 @@ Non-negotiables:
 - Never log in to a CLI, never print or copy a value from a `*.local.*` file; org values you cannot derive go to the lead as ASK
   lines. Evidence or it is not a finding; unproven -> "candidate".
 - Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); parts and optional features: `kit-admin.md`
-  "Parts" (no aliases).
+  "Parts" (no aliases); build, move or retire an extra: README "Extras" (`main` and `extras` are protected: fast-forward
+  only).
 - Scripted edits: absolute paths, never short helper names; `git -C <kit> status` after each.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.

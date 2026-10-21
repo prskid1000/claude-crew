@@ -752,6 +752,13 @@ Register-KitAdapter 'git-host' 'gitlab' @{
   'repo.base' = { param($a) __Gp $a "/repository/merge_base?refs[]=$(__Enc $a.a)&refs[]=$(__Enc $a.b)" }
   'repo.commit' = { param($a) __Gp $a "/repository/commits/$(__Enc $a.ref)" }
   'repo.compare' = { param($a) __Gp $a "/repository/compare?from=$(__Enc $a.from)&to=$(__Enc $a.to)$(if ($a.straight) { '&straight=true' })" }
+  # the kit origin (orch.ps1 setup): ok | set | skip: no admin rights | failed: <why>; never loosens or overwrites a rule
+  'branch.protect' = { param($a) $r = __Gp $a "/protected_branches/$(__Enc $a.branch)" -Res; $no = "skip: no admin rights on $($a.repo)"
+    if (-not $r) { return 'failed: glab not found' }
+    if (-not $r.code) { return $(if ((__HostJson $r.out).allow_force_push) { 'failed: protected but force push allowed: turn it off by hand' } else { 'ok' }) }
+    $why = "$($r.out) $($r.err)".Trim(); if ($why -match '\b403\b') { return $no }; if ($why -notmatch '404 (Branch )?Not Found') { return "failed: $why" }
+    $s = __Gp $a '/protected_branches' 'POST' @{ name = $a.branch; push_access_level = 40; merge_access_level = 40; allow_force_push = 'false' } -Res
+    if (-not $s.code) { 'set' } elseif ("$($s.out) $($s.err)" -match '\b40[34]\b') { $no } else { "failed: $("$($s.out) $($s.err)".Trim())" } }
 }
 # MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (extras github, gitea)
 function __Mr([hashtable]$H) {

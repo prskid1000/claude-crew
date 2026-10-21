@@ -77,8 +77,9 @@ $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd')
 Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $mw = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
+$gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} cases need a kit clone
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
-Expect 'guard self-test' ($out -match '(\d+)/\1 passed')
+Expect 'guard self-test' ($out -match '(\d+)/\1 passed'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
 $out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/dev-kit/devtools.py'
@@ -103,6 +104,16 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 "no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
 "unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
 '@
+$gp = @'
+. $args[0]; $global:post = ''
+function glab { $p = "$($args -join ' ')"; $global:LASTEXITCODE = 0
+  if ($p -match '-X POST') { $global:post = $p; return '{}' }
+  switch -Regex ($p) { 'branches/main$' { '{"allow_force_push":false}'; break } 'branches/dev$' { '{"allow_force_push":true}'; break }
+    'branches/(\w+)$' { $global:LASTEXITCODE = 1; Write-Error "glab: $(@{ extras = '404 Not Found'; locked = '403 Forbidden' }[$Matches[1]] ?? '401 Unauthorized')" } } }
+$v = foreach ($b in 'main', 'dev', 'extras', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo)" }
+"protect:$(($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;extras=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')"
+'@
+Expect-Each (Invoke-PsTest 'gitlab-protect' $gp @(Join-Path $k 'skills/dev-kit/lib.ps1')) 'gitlab branch.protect: ok, force allowed, set, no admin, auth failure' 'protect'
 $res = Invoke-PsTest 'pipes-test' $pt @((Join-Path $k 'skills/dev-kit/lib.ps1'), $D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
 # migrations: the repo's own check, Liquibase (extra), any other tool UNRUN

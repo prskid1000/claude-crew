@@ -19,6 +19,15 @@ $lw = Join-Path (Kd) 'kit wt'; git -C $mk worktree add -q --detach $lw 2>$null
 $kx = (pwsh @np "$lw/skills/orchestrate/orch.ps1" setup -Exclude 2>&1 | Out-String)
 Expect 'orch.ps1: --help 0, bad verb 2; worktree: excludes to main clone, no memory' ($h0 -eq 0 -and $h2 -eq 2 -and
   (Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+git -C $mk remote add origin https://github.com/o/r.git; foreach ($b in 'main', 'extras') { git -C $mk update-ref "refs/remotes/origin/$b" HEAD }
+$po = Invoke-PsTest kit-protect @'
+$null = . $args[0] 6>$null; $global:seen = @()
+Register-KitAdapter 'git-host' 'github' @{ 'branch.protect' = { param($a) $global:seen += "$($a.repo)#$($a.branch)"; if ($a.branch -eq 'main') { 'set' } } }
+Set-KitOriginProtection; $global:seen -join ' '
+'@ @("$mk/skills/orchestrate/orch.ps1") | Out-String
+$ph = pwsh @np "$mk/skills/orchestrate/orch.ps1" health 2>&1 | Out-String
+Expect 'setup: protects the kit origin main + extras (fake host), no verb -> by-hand line; health reports it' ($po -match 'protect: main set' -and
+  $po -match 'extras failed: set it by hand on github\.com/o/r' -and $po -match 'o/r#main o/r#extras' -and $ph -match 'protection: extras failed')
 $env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (the type alone: no clickup call, so the extra tracker-clickup is not needed)
 $out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
 Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -match 'needs a real -Task id')

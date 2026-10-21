@@ -130,12 +130,32 @@ board, learn signals and decision pauses run by hand from the ported procedures.
 
 ## Extras
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and
-scaffolding, the duel mode) live on the `extras` branch, one folder each (`extras/<name>/EXTRA.md`: what, when it is needed, how
-it is wired; writing one: the README on that branch):
-`python -X utf8 skills/orchestrate/kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]`. Installed
-files are local-only (`.git/info/exclude`: never pushed, outside the budget). `sync` installs every extra whose "Needed when"
-matches this install and updates changed ones; SessionStart (`health`), `setup` and the post-merge hook run it. A script that
-needs a missing extra stops with `<feature> is an extra: run kittool.py extra add <name>`.
+scaffolding, the duel mode) live on the origin's `extras` branch, one folder each; the core stays small.
+
+**Use** (`python -X utf8 skills/orchestrate/kittool.py extra <verb>`):
+- `list`: the extras on `origin/extras` (`*` = installed) · `check`: config that needs a missing extra · `add <name>` /
+  `remove <name>`: install / delete its files and list / unlist it in kit.local.json `extras` (always installed) · `sync`:
+  installs every extra whose "Needed when" matches, updates changed ones only while the kit is not behind origin/main ·
+  `test [<name>]`: installed extras' tests.
+- Files install at their kit path, local-only (`.git/info/exclude`: never pushed, outside the budget). `sync` runs in
+  SessionStart `health`, `setup` and the post-merge hook.
+- A script that needs a missing extra stops with `<feature> is an extra: run kittool.py extra add <name>`: run it in `<kit>`,
+  retry.
+
+**Write one** (`kitty`):
+- Shape: `extras/<name>/files/<kit path>` (each file where it installs), `extras/<name>/EXTRA.md` (What; `Needed when:`;
+  Wiring), `extras/<name>/tests.ps1` (`tests/harness.ps1` helpers).
+- `Needed when:` forms, `,` = any: `` `key` = `v` | `w` `` (`` = `*` ``: set; `*` in a key walks keys and list items:
+  `repos.*.ci`), `` `key` ~ `v` `` (contains), `` `<path>` exists ``, `` `<glob>` in a repo `` (a `repos[].checkout` tracks one),
+  `` `<os>` OS `` (windows, linux, macos); `Needed when (<file>.json):` reads that file. Listed in `extras`: always installed.
+- Seam: core calls the extra when it is loaded, else prints the stop line; never a broken reference (lint and tests pass without
+  it).
+- Move a core part out: `git grep` its callers, a seam at each, its files + tests to `extras/<name>/`, README / Files rows /
+  manifest updated; lint + tests on main, `extra test <name>` with it.
+- Publish: `git -C <kit> worktree add -b kit/extras-<date> <dir> origin/extras`, commit, `git push origin HEAD:extras`.
+- `main` and `extras` are protected: fast-forward pushes only (on a reject: fetch, rebase), never force or delete. The guard
+  denies force, delete and move from the kit clone and its worktrees; `orch.ps1 setup` sets it on the kit origin (host verb `branch.protect`;
+  hosts without it: the by-hand line), `health` reports it missing.
 
 ## Configuration
 `skills/dev-kit/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).
@@ -181,7 +201,7 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 | Kind | Selected by | Interface (verbs) | Built in | Code |
 |---|---|---|---|---|
 | tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | command, none | `skills/dev-kit/lib.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare | gitlab, command | `skills/dev-kit/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect | gitlab, command | `skills/dev-kit/lib.ps1` |
 | report | `reports.type` | publish | markdown, html, command | `skills/dev-kit/devtools.py` |
 | ci | `ci.type` | runs jobs log status config | gitlab, command, none | `skills/dev-kit/lib.ps1` |
 <!-- kit-graph:end -->

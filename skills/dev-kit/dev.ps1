@@ -833,7 +833,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'
+  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -877,6 +877,20 @@ if ($SelfTest) {
   @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
   @('B', 'git push origin HEAD:main', $false, 'force-push'),
   @('B', 'git push -fu origin main', $true, 'force-push'),
+  @('B', 'git -C "{KIT}" push origin --force-with-lease HEAD:extras', $true, $pb),
+  @('P', 'git -C "{KIT}" push origin ":extras"', $true, $pb),
+  @('B', 'cd "{KIT}" && git push origin --delete "extras"', $true, $pb),
+  @('P', 'Set-Location -Path "{KIT}"; git push -d origin main', $true, $pb),
+  @('P', 'Push-Location "{KIT}"; git push --mirror origin', $true, $pb),
+  @('B', 'git -C "{KIT}" branch -D extras', $true, $pb),
+  @('B', 'git -C "{KIT}" branch -f extras HEAD~1', $true, $pb),
+  @('P', 'git -C "{KIT}" branch -dr origin/extras', $true, $pb),
+  @('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/extras', $true, $pb),
+  @('B', 'git -C "{KIT}" push -u origin HEAD:extras; git -C "{KIT}" branch --show-current', $false, $pb),
+  @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
+  @('B', 'git -C /nowhere/repo push origin --delete main; git -C /nowhere/repo branch -D develop', $false, $pb),
+  @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:extras', $false, $pb),
+  @('P', 'git -C "{KIT}" commit -m "never git push origin --delete main"', $false, $pb),
   @('B', 'git commit -n -m "x"', $true, $hk),
   @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
   @('B', 'git commit --no-edit --amend', $false, $hk),
@@ -887,7 +901,7 @@ if ($SelfTest) {
   $fail = 0
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]
-    $json = @{ tool_name = $tool; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime') } } | ConvertTo-Json -Compress -Depth 4
+    $json = @{ tool_name = $tool; tool_input = @{ command = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))) } } | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
@@ -1054,6 +1068,30 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value
   if ($p -match '(--force(?![-\w])|\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
+  }
+}
+# the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and extras never forced, deleted or moved
+function GitCommon([string]$d) {
+  for (; $d; $d = Split-Path $d) {
+    $g = Join-Path $d '.git'
+    if (Test-Path -LiteralPath $g -PathType Container) { return [IO.Path]::GetFullPath($g) }
+    if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }
+  }
+}
+if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitCommon (Split-Path (Split-Path $K)))) {
+  $here = if ($in.cwd) { [string]$in.cwd } else { (Get-Location).Path }
+  $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
+  if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
+    $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
+    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main|extras)$'
+    foreach ($m in [regex]::Matches($u, '\bgit\b[^|;&]*\b(push\b|branch\b|update-ref\b)[^|;&]*')) {
+      $p = $m.Value; $tk = -split $p; $hit = @($tk | ForEach-Object { if ($_ -match $pr) { $Matches[1] } })[0]
+      $bad = switch ($m.Groups[1].Value) {
+        'push' { $p -match '--mirror|--prune' -or ($hit -and ($p -match '--force|--delete|\s-[a-zA-Z]*[fd][a-zA-Z]*(?=\s|$)' -or @($tk | Where-Object { $_ -match '^[+:]' -and $_ -match $pr }).Count)) }
+        'branch' { $hit -and $p -match '\s(-[a-zA-Z]*[dDfMm][a-zA-Z]*|--delete|--force|--move)(?=\s|$)' }
+        default { [bool]$hit } }
+      if ($bad) { Deny "$(if ($hit) { $hit } else { 'main / extras' }): a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it (README ""Extras"")." }
+    }
   }
 }
 $gated = $cmd -match 'dev\.ps1["'']?\s+(gate|check)\b|swarm\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'

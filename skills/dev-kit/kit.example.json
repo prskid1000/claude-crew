@@ -133,7 +133,7 @@
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
-   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare", "names": "gitlab command" },
+   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect", "names": "gitlab command" },
    "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "markdown html command" },
    "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab command none", "values": "host" }
   },
@@ -200,6 +200,7 @@
    "signals": "learning.jsonl",
    "last-retro": "learning.stamp",
    "last-kitty-audit": "kitty-audit.stamp",
+   "kit-protect": "kit-protect.txt",
    "tracking": "tracking.json",
    "deploy-log": "deploys.jsonl",
    "outbox": "outbox.jsonl",
