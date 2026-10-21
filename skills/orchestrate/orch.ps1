@@ -12,9 +12,9 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L46 board · L186 budget · L214 launch · L306 recover · L396 track · L657 supervise report · L698 anomalies
-  L727 supervise · L985 report · L1062 bugbrief · L1163 cleanup · L1277 learn · L1308 decide · L1376 health · L1432 retro due
-  L1442 setup · L1506 guard-sendmessage
+Sections: L46 board · L186 budget · L214 launch · L306 recover · L396 track · L666 supervise report · L707 anomalies
+  L736 supervise · L994 report · L1071 bugbrief · L1179 cleanup · L1293 learn · L1324 decide · L1392 health · L1448 retro due
+  L1458 setup · L1522 guard-sendmessage
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -396,6 +396,27 @@ function NormTask($id) {
 
 # ---- track: task <-> MRs; promoted once all merge
 # MR / PR URL -> <repo>!<iid>
+function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $null } }
+# search ignores in=source_branch
+function Find-TaskMrs($task) {
+  $tagged = "$($KitConf.TrackerTag)$task"
+  @(foreach ($r in @($KitConf.TrackerRepos)) {
+      $pp = ProjPath $r; if (-not $pp) { continue }
+      $enc = $pp -replace '/', '%2F'
+      @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
+        @(Invoke-HostApi "projects/$enc/merge_requests?state=opened&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
+        Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
+    }) | Select-Object -Unique
+}
+# repo@target of the tasks' MRs: a bug fix lands where the original ask shipped
+function Get-TaskMrBranches([string[]]$Tasks) {
+  foreach ($ref in @(@($Tasks | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { Find-TaskMrs $_ }) | Select-Object -Unique)) {
+    if ("$ref" -notmatch '^(?<r>[^!]+)!(?<i>\d+)$') { continue }
+    $repo = $Matches.r; $iid = $Matches.i; $pp = ProjPath $repo; if (-not $pp) { continue }
+    $m = Invoke-HostApi "projects/$($pp -replace '/', '%2F')/merge_requests/$iid"
+    if ($m.target_branch) { [pscustomobject]@{ ref = $ref; repo = $repo; branch = [string]$m.target_branch } }
+  }
+}
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() } }
 function Invoke-Track {
 param([Parameter(Position = 0)][ValidateSet('add', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
@@ -411,7 +432,6 @@ function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { 
 $group = $KitConf.GitlabGroup
 $groupRx = if ($group) { '(?:' + [regex]::Escape($group) + '/)?' } else { '' }
 $alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $alias[$p.Name] = [string]$p.Value } }
-function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($group) { "$group/$repo" } else { $null } }
 function NormRef($r) {
   $r = "$r".Trim().Trim("'", '"')  # with the quotes
   if ($u = ConvertFrom-MrUrl $r) { $r = "$($u.repo -replace "^(?i)$groupRx", '')!$($u.n)" }
@@ -425,17 +445,6 @@ function TaskOfMr($ref) {
   $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
   foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)") { return (NormTask $Matches.id) } }
   ''
-}
-# search ignores in=source_branch
-function Find-TaskMrs($task) {
-  $tagged = "$($KitConf.TrackerTag)$task"
-  @(foreach ($r in @($KitConf.TrackerRepos)) {
-      $pp = ProjPath $r; if (-not $pp) { continue }
-      $enc = $pp -replace '/', '%2F'
-      @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
-        @(Invoke-HostApi "projects/$enc/merge_requests?state=opened&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
-        Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
-    }) | Select-Object -Unique
 }
 # re-arming would break merge order
 function ProducerOpen($proj, $iid) {
@@ -1097,6 +1106,13 @@ foreach ($fin in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.j
 $evidence = if ($runItem) { "Evidence + exported guide: ``$($runItem.FullName)/`` and ``$(Split-Path $runItem.FullName)/guides/$($runItem.Name).txt``." } else { 'Evidence: the results doc linked in the task.' }
 
 $Repos = @($Repos -split '\s*,\s*' | Where-Object { $_ })
+$orig = @(try { Get-TaskMrBranches @($Task, [string]$j.parent) } catch { @() })
+function RepoName($r) { @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0].name }
+foreach ($o in $orig) {   # the original ask's repos join the table unless named
+  $rn = RepoName $o.repo
+  if ($rn -and -not @($Repos | Where-Object { (RepoName ($_ -split '@')[0]) -eq $rn }).Count) { $Repos += "$rn@$($o.branch)" }
+}
+$origLine = if ($orig) { "Original ask's MRs: " + (($orig | ForEach-Object { "$($_.ref) -> ``$($_.branch)``" }) -join ', ') + '.' }
 $rows = foreach ($spec in $Repos) {
   $r, $branch = $spec -split '@', 2
   $repo = @($cfg.repos | Where-Object { $_.name -eq $r -or @($_.aliases) -contains $r })[0]
@@ -1116,11 +1132,13 @@ This brief wins where they differ.
 
 Task: $($j.url) — checks $ids to fix. **Reproduce each check on the local env FIRST** (template steps 1-4).
 $evidence
+$origLine
 
 ## Failed checks
 $(($checks | ForEach-Object { "- **$($_.id)** — $($_.screen): $($_.saw)" }) -join "`n")
 $(if ($Hints) { "`n## Coordinator notes`n" + (($Hints | ForEach-Object { "- $_" }) -join "`n") + "`n" })
-**No deferrals.** Fix every check above (root cause + test) or prove it stale/expected with evidence. Fix only these checks.
+Fix every check above (root cause + test) or prove it stale/expected with evidence. Fix only these checks. A check you cannot
+fix here (another area or repo) needs a follow-up tracker task (cause, proposed fix) linked in a comment on $Task before your MR is done.
 Product calls: the reference behaviour or a recorded decision, named. Additive only: users the fix does not target see no change
 (crash/500/data-loss fixes may apply to everyone: list them under "Kept for everyone").
 
