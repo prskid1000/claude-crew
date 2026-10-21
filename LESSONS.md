@@ -18,7 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy queue fine on the memory gate.
 
 ## dev-kit
-- Git host 500/502 or CI gateway timeout: check the job log, retry the failed JOB on the same sha (`glab api -X POST projects/<id>/jobs/<job>/retry`; `glab ci retry <pipeline>` 404s), merge only after green; never change code for it. (6×)
+- Git host 500/502, CI gateway timeout or merge's `INFRA <reason>`: retry the failed JOB on the same sha (`glab api -X POST projects/<id>/jobs/<job>/retry`; `glab ci retry` 404s), merge only after green, no code change. (6×)
 - Re-read `<brief>.contracts.md` AND the brief's bottom right before every push, not only the commit: a scope addition stamped after your head commit is still yours; never overwrite a typed user draft; show the server's 400 text. (7×)
 - Resuming an area: `dev.ps1 wt status`, `git log origin/<target>..<branch>`, the host's MR state (a stopped agent may have merged); vanished worktree: `wt new` on the same branch; rebase, re-run targeted tests, keep the goals file in .runtime/work/goals; takeovers skip the testing doc. (11×)
 - Linked shared deps can be older than the target: typecheck / build may fail; no reinstall. (6×)
@@ -47,7 +47,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
 - Check the MCP servers the run uses before it starts (record in lead-notes.md); checks needing a down server use the API or scripts. (2×)
-- `finalize -Check -FixNames` fixes names only: confirm each listed file exists with a supported type and compare results.json with the uploaded list. (4×)
 - `qa.ps1 api` in PowerShell: never pipe a -Save call into Select-Object -First N; never Out-String long JSON: read .response.body from the -Save file; variables are case-insensitive; no passwords in results or reports. (5×)
 - A FAIL found in a retest: check the build from before the MR (old build or git blame); not caused by the MR -> `defect: new` with that evidence. (2×)
 - A retest of a fix in shared code covers every caller and screen on the same code path or record. (3×)

@@ -13,12 +13,12 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
  lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L73 run · L118 tracker · L193 git host · L300 MR · L470 merge · L548 docs · L662 plugins · L675 keepboth · L694 selftest · L820 CLI
+Sections: L73 run · L118 tracker · L193 git host · L300 MR · L484 merge · L562 docs · L679 plugins · L692 keepboth · L711 selftest · L849 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
-import glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
+import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
@@ -366,6 +366,20 @@ def _progress(msg):
     print(f'[merge] {msg}', flush=True)
 
 
+INFRA = ('ci_quota_exceeded', 'runner_system_failure', 'stuck_or_timeout_failure', 'scheduler_failure', 'api_failure',
+         'runner_unsupported', 'no_matching_runner')
+
+
+def _failed(H, hp, iid):
+    """PIPELINE_FAILED text; only infra failure_reasons on the failed jobs -> retry the same sha, not a code fix."""
+    hp = hp if isinstance(hp, dict) else {}
+    jobs = H('ci.jobs', id=str(hp['id'])) if hp.get('id') else []
+    why = sorted({str(j.get('failure_reason') or '') for j in jobs if isinstance(j, dict) and j.get('status') == 'failed'}) if isinstance(jobs, list) else []
+    if why and all(w in INFRA for w in why):
+        return f'INFRA {", ".join(why)}: retry on the same sha; no code change\nPIPELINE_FAILED'
+    return f'pipeline {hp.get("status")} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
+
+
 def _final(H, iid, put, st, proj):
     """Re-read the MR after the merge call -> result text + status word."""
     m = {}
@@ -386,7 +400,7 @@ def _final(H, iid, put, st, proj):
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'conflict on !{iid}: {RESOLVE}\nCONFLICT'
     if hp in ('failed', 'canceled'):
-        return f'pipeline {hp} on !{iid}: fix it, do not merge\nPIPELINE_FAILED'
+        return _failed(H, m.get('head_pipeline'), iid)
     if hp in ('running', 'pending') or (not hp and st in ('running', 'pending')):   # the host merges only with required checks
         return f'!{iid}: checks still running, no merge scheduled (no required checks?): run merge again in a few minutes\nWAIT'
     return f'not merged: !{iid} is {m.get("state")} ({m.get("detailed_merge_status")}); merge reply: {str(put)[:300]}\nNOT_MERGED'
@@ -502,7 +516,7 @@ def _auto_merge(worktree, iid, max_wait):
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
     if st in ('failed', 'canceled'):
-        return f'PIPELINE {st}: fix it, do not merge\nPIPELINE_FAILED'
+        return _failed(H, m.get('head_pipeline'), iid)
     # no CI config -> merge now (merge-when-green would wait forever); CI + no pipeline 5 min after the MR update -> NOT_MERGED
     no_ci = False
     if st is None:
@@ -757,6 +771,11 @@ def selftest():
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'state': 'opened'})
         expect('running checks, nothing scheduled: WAIT', merge_word(auto_merge('.', '7')) == 'WAIT' and merged()[0]['auto'])
+        calls.clear(); g['_host'] = lambda v, **a: [{'status': 'failed', 'failure_reason': 'ci_quota_exceeded'}] if v == 'ci.jobs' else fake(hp={'status': 'failed', 'id': 9})(v, **a)
+        r = auto_merge('.', '7')
+        expect('infra-only job failures: INFRA retry, no merge', r.startswith('INFRA ci_quota_exceeded') and merge_word(r) == 'PIPELINE_FAILED' and not merged())
+        calls.clear(); g['_host'] = lambda v, **a: [{'status': 'failed', 'failure_reason': 'script_failure'}] if v == 'ci.jobs' else fake(hp={'status': 'failed', 'id': 9})(v, **a)
+        expect('a script failure: fix it', 'fix it' in auto_merge('.', '7'))
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'auto_merge': 'kit'})
         expect('kit-emulated merge-when-green: SCHEDULED', merge_word(auto_merge('.', '7')) == 'SCHEDULED')
     finally:
@@ -780,6 +799,13 @@ def selftest():
         expect('a lost merge-when-green intent is reported', 'could not record' in err.getvalue())
     finally:
         g.update(saved); CFG.clear(); CFG.update(cfg0)
+    sent, run0 = [], g['_run']
+    g['_run'] = lambda argv, **k: sent.append(argv[-1]) or sent.append(open(argv[-1], encoding='utf-8').read()) or ''
+    try:
+        _tracker('comment', '1', 'x' * 300)
+    finally:
+        g['_run'] = run0
+    expect('a 300-char tracker text goes via a temp file, then is removed', sent[1:] == ['x' * 300] and not os.path.exists(sent[0]))
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
     expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
     _report_selftest(expect)
