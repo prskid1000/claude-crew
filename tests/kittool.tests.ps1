@@ -179,4 +179,6 @@ Expect 'kit-tests: one case name in two areas = TEST-DUP in area order, exit 1; 
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
+$pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $ia = $pg.IndexOf('extra add flow-map'); $il = $pg.IndexOf('kittool.py lint')
+Expect 'pages.yml: lint runs the flow checks (flow-map added first, no --no-flow), so an issue the page would show fails CI' ($ia -ge 0 -and $il -gt $ia -and $pg -notmatch '--no-flow')
 Complete-Tests

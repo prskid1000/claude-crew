@@ -250,7 +250,7 @@ PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.us
   ${viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
   every command starts with $env:ANDROID_SERIAL='${L.serial}';
 ${EXTRA_HINT('android-swarm')}
-- UI: & ${Q} ui <verb> (verbs: the qa.ps1 header). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
+- UI: & ${Q} ui <verb> (verbs: qa.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }
 const API = `
 API-ONLY LANE: qa.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check.`

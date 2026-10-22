@@ -19,12 +19,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: 'Lint (0 problems: the same gate as the pre-commit hook)'
-        run: python -X utf8 skills/orchestrate/kittool.py lint --no-flow
-      - name: Build the page (public files only; the page is the flow-map extra)
+      - name: 'Lint with the flow checks (0 problems: an unresolved verb or a cycle gap fails here, not on the page)'
         run: |
           python -X utf8 skills/orchestrate/kittool.py extra add flow-map
-          python -X utf8 skills/orchestrate/kittool.py flow --public --out _site/index.html
+          python -X utf8 skills/orchestrate/kittool.py lint
+      - name: Build the page (public files only; the page is the flow-map extra)
+        run: python -X utf8 skills/orchestrate/kittool.py flow --public --out _site/index.html
       - name: Org-term scan (only when the ORG_TERMS secret is set)
         env:
           ORG_TERMS: ${{ secrets.ORG_TERMS }}
