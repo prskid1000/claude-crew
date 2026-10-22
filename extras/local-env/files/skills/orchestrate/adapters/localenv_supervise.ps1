@@ -1,6 +1,7 @@
 <#
 localenv_supervise.ps1 (extra local-env): the local env in orch.ps1 supervise, dot-sourced by orch.ps1 (skills/orchestrate/adapters/):
-env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left).
+env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left);
+Invoke-KitPauseLocalEnv in orch.ps1 pause.
 Exit codes: none (functions only).
 #>
 # new error lines per log since its last size (ERROR SPIKE); level words case-sensitive: "WARN ... Error while" is no error
@@ -31,6 +32,18 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     if ($down.Count) { $rows.Add([pscustomobject]@{ name = "$($ev.env) · $(($down | ForEach-Object service) -join ' · ') (down)"; by = "$(@($down | ForEach-Object { if ("$($_.why)" -match 'memory|RAM') { 'memory' } elseif ($_.why) { "$($_.why)".Substring(0, [math]::Min(30, "$($_.why)".Length)) } else { $_.state } } | Select-Object -Unique) -join ', ')"; gb = 0 }) }
   }
   [pscustomobject]@{ rows = @($rows); flags = @($fl); owner = @($own) }
+}
+# orch.ps1 pause: kit-started services no live lease or hold needs stop now (paused agents' leases are only in grace)
+function Invoke-KitPauseLocalEnv {
+  if (-not (Test-Path $KitCmd.local)) { return }
+  $st = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') 60
+  foreach ($ev in @(try { "$($st.out)" | ConvertFrom-Json } catch { @() })) {
+    $live = @(@($ev.leases) + @($ev.holds) | Where-Object { $_ -and $null -eq $_.graceLeft } | ForEach-Object { @($_.services) })
+    $idle = @($ev.services | Where-Object { $_.state -eq 'up' -and $_.service -notin $live } | ForEach-Object service)
+    if (-not $idle.Count) { continue }
+    $dn = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'down', '-Env', $ev.env, '-Services', ($idle -join ',')) 180
+    "local env $($ev.env): $(if ($dn.code) { "stopping $($idle -join ', ') FAILED: $($dn.out)" } else { "stopped $($idle -join ', ') (no live holder)" })"
+  }
 }
 # supervise section 7: env rows and flags, owner holds (info), restart loops, unknown port owners, new log errors (sizes cached per round)
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {

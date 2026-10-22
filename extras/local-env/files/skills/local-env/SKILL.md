@@ -26,7 +26,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   (or crash-restart) services; no holder: stop after `idle.graceMinutes` + idle grace (normal idle), at once under memory
   pressure; starts wait for RAM + CPU (the gate's floor).
 - **Migrations**: a layer with migrations changes the shared DB: `db.snapshot` runs before the switch-over, `db.restore` on
-  rollback; a layer that leaves keeps its DB changes. `sandbox`: a migrating branch gets its own build + DB copy (`sb<k>-<svc>`);
+  rollback; a layer that leaves keeps its DB changes. Snapshot names, by hand too: `<tenant or env>-<purpose>-<yyyy-MM-dd>`,
+  lowercase-kebab (`ConvertTo-KitSlug`). `sandbox`: a migrating branch gets its own build + DB copy (`sb<k>-<svc>`);
   `db.rollback`: LIGHT layers revert exactly on leave (`migrations -Env <env> [-Branch]` shows the plan; classes need the extra
   `migration-classify`); `tasks` (`task -Task <name>`), `sql -Query` (read-only). `db.engine` presets: extra `db-engine-presets`
   (`localenv.ps1` names the extra when the config needs one).

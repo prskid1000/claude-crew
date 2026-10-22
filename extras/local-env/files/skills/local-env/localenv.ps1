@@ -858,7 +858,7 @@ function Run-Train {
   $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations -and -not (LayerLight $_) }).Count })
   if ($mig.Count -and (Get-EnvCfg $e).db.snapshot) {
     Phase 'db snapshot (migration layers)' $block @($affected)
-    $snap = "$e-before-$tag"
+    $snap = ConvertTo-KitSlug "$e-before-$tag-$(Get-Date -Format yyyy-MM-dd)"   # <tenant / env>-<purpose>-<date>, lowercase-kebab
     $err = Invoke-Hook $e 'snapshot' @{ snapshot = $snap }
     if ($err) { $notes.Add("db snapshot failed, release goes on without a restore point: $err"); $snap = $null }
     else { Update-State $e { param($x) $x.snapshots = @(@($x.snapshots) + @(@{ name = $snap; at = (Now); release = $newN; layers = @($mig.branch) }) | Where-Object { $_ } | Select-Object -Last 10) } }

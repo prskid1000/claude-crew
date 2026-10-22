@@ -113,6 +113,10 @@ $st = TkPath $k localenv -Create; Set-JsonFile (Join-Path $st 'shop.json') @{ se
 $hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[]}]' } }
   @(Get-KitSuperviseFlagsLocalEnv) | ForEach-Object { "$($_.what)$($_.name)" } }) -join "`n"
 Expect 'supervise hook: env row, RESTART LOOP (3 in 30 min), UNKNOWN port owner' ($hk -match 'shop · web' -and $hk -match 'RESTART LOOP: shop api restarted 3 times' -and $hk -match 'UNKNOWN: shop web port 4200')
+$ph = (& { . $O; $global:downs = @(); function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$T) { if ($A -contains 'down') { $global:downs += $A[-1]; return [pscustomobject]@{ code = 0 } }
+  [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"up"},{"service":"web","state":"up"},{"service":"db","state":"up"},{"service":"x","state":"up (external)"}],"leases":[{"agent":"P1","services":["api"],"graceLeft":8}],"holds":[{"who":"me","services":["db"],"graceLeft":null}]}]' } }
+  Invoke-KitPauseLocalEnv; "downs=$($global:downs -join '|')" }) -join "`n"
+Expect 'pause hook: services only a paused agent''s lease (in grace) or nobody needs stop; a live hold and external ones stay' ($ph -match 'stopped api, web \(no live holder\)' -and $ph -match 'downs=api,web$')
 # guard rules (adapters/guard_localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/dev-kit/adapters') | Out-Null
 Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/dev-kit/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/dev-kit/adapters')

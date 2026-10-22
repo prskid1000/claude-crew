@@ -45,5 +45,14 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
 '@
 $res = Invoke-PsTest 'deploy-unknown' $ut @($O)
 Expect-Each $res 'deploy: #' @('unknown')
+$it = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+Update-KitTracking { param($t) $t.tasks['gone1'] = @{ task = 'gone1'; mrs = @('api!1') }; $t.tasks['ok2'] = @{ task = 'ok2'; mrs = @('api!2') } }
+function Get-TrackerTask($id) { if ($id -eq 'gone1') { throw "HTTP 404 'Task not found, deleted'" }; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
+$o = Invoke-MarkInTest -Apply | Out-String
+"gone:$($o -match 'GONE  gone1' -and $o -match 'missing: gone1' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
+'@
+Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on (#)' @('gone')
 Remove-TestKit $k
 Complete-Tests

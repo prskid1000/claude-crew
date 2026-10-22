@@ -5,7 +5,7 @@ deploys.ps1 (extra deploys): the deploy batch of orchestrate E5, dot-sourced by 
   orch.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   orch.ps1 deploy merge ...   extra deploy-merge
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L12 helpers · L22 intest · L100 deploy · L201 supervise
+Sections: L12 helpers · L22 intest · L101 deploy · L202 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 
@@ -54,9 +54,10 @@ function Get-MrPaths([string]$mr) {
   $pathMemo[$mr]
 }
 
-$marked = 0; $wait = 0
+$marked = 0; $wait = 0; $gone = @()
 foreach ($id in $cand.Keys) {
-  $info = Get-TrackerTask $id
+  # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
+  $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
   if (-not $info) { continue }
   if (-not (Test-TrackerStatus ([string]$info.status) 'promoted')) { continue }  # never override a person
   $name = if ($info.name) { $info.name } else { $cand[$id].name }
@@ -94,7 +95,7 @@ foreach ($id in $cand.Keys) {
     $marked++; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
   } catch { Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
 }
-if (-not $Quiet) { "mark-in-test: $($cand.Count) candidate(s), $marked marked, $wait waiting on a deploy" }
+if (-not $Quiet -or $gone.Count) { "mark-in-test: $($cand.Count) candidate(s), $marked marked, $wait waiting on a deploy$(if ($gone.Count) { ", $($gone.Count) deleted in the tracker (missing: $($gone -join ', '))" })" }
 }
 
 # ---- deploy: plan, request, record
