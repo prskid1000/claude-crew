@@ -41,7 +41,7 @@ const DT = `${K}/devtools.py`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "duels": "work/duels/"}, "durable": {}}
+const KP = {"runtime": {"launches": "work/launches/", "duels": "work/duels/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -603,7 +603,7 @@ ${JSON.stringify(outcome).slice(0, 60000)}
 2. & ${ORCH} learn -Read -Skill dev-kit and the recent signals (learn -Show -Last 200). A pattern seen >= 2 times that is not a lesson yet:
  learn -Skill <skill> -Lesson "(n×) <one actionable line>" (an org-specific one goes to LESSONS.local.md by itself); a recurring one:
  learn -Bump "<words>"; a lesson the kit now handles: learn -Fixed "<words>"; then learn -Skill <skill> -Trim. Don't touch SKILL.md.
-3. & ${ORCH} cleanup -Quiet -WorktreeIdleHours 0, then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
+3. & ${ORCH} cleanup -WorktreeIdleHours 0: mention what it freed.
 Return how many signals you recorded and which lessons changed.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s), lessons changed: ${learned.lessonsChanged.join('; ') || 'none'}`)
 return retroDue(outcome)

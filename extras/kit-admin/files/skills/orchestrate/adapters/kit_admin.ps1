@@ -5,7 +5,7 @@ kit_admin.ps1 (extra kit-admin): kitty's tools in orch.ps1, dot-sourced by orch.
   learn -Skill <s> -Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L11 learn · L99 health · L108 prepush · L167 precommit
+Sections: L11 learn · L98 health · L107 prepush · L166 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 # ---- learn: lesson tools, -Stats, -History
@@ -89,8 +89,7 @@ function Invoke-LearnAdmin {
     }
     [IO.File]::WriteAllText($f, (($L -join "`n") + "`n"))
     if ($moved.Count) {
-      $at = (Get-Date).ToString('s'); $lines = @($moved | ForEach-Object { [ordered]@{ at = $at; skill = $Skill; kind = 'retired'; text = $_; ref = $(if ($Fixed) { 'fixed' } else { 'trim' }); source = 'learn' } | ConvertTo-Json -Compress })
-      Invoke-KitLocked $sigF { Add-Content -LiteralPath $sigF $lines -Encoding utf8 }
+      $at = (Get-Date).ToString('s'); foreach ($x in $moved) { Write-KitLog signals '' ([ordered]@{ at = $at; skill = $Skill; kind = 'retired'; text = $x; ref = $(if ($Fixed) { 'fixed' } else { 'trim' }); source = 'learn' }) }
     }
     "$(Split-Path $f -Leaf) ## ${Skill}: $(@(& $idx).Count) lines (max $Max)$(if ($moved.Count) { "; retired $($moved.Count) (learn -History lists them)" })"
   }

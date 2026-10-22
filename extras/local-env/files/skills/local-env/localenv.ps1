@@ -8,8 +8,8 @@ In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; sta
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L19 config · L47 sandbox · L175 state · L212 leases · L234 code · L266 migrations · L413 hooks · L522 processes ·
-  L682 daemon · L1100 verbs
+Sections: L19 config · L47 sandbox · L174 state · L211 leases · L233 code · L265 migrations · L412 hooks · L521 processes ·
+  L681 daemon · L1099 verbs
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
@@ -168,8 +168,7 @@ function With-Env($vars, [scriptblock]$body) {
 }
 function LogFile([string]$e, [string]$n) { Join-Path (Get-KitPath localenv-logs -Create) "$e-$n.log" }
 function Event([string]$e, [string]$kind, [hashtable]$data = @{}) {
-  $data.at = Now; $data.kind = $kind
-  try { ($data | ConvertTo-Json -Compress -Depth 6) | Add-Content (Join-Path (Get-KitPath localenv-logs -Create) "$e-events.jsonl") } catch { }
+  $data.env = $e; Write-KitLog env $kind $data
 }
 
 # ---- state: one JSON per env, locked writes
@@ -679,7 +678,7 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
-# ---- daemon: this script only; -Env = loop, -Train = worker; logs <logs>/<env>-loop.log, -train.log, -events.jsonl
+# ---- daemon: this script only; -Env = loop, -Train = worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
 function Invoke-Daemon {
 param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train)
 $e = $EnvName
@@ -1401,7 +1400,7 @@ switch ($Action) {
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }
   'logs' { if (-not $Services) { throw 'logs needs -Service' }; $f = LogFile $e $Services[0]; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { "no log yet: $f" } }
-  'events' { $f = Join-Path (Get-KitPath localenv-logs) "$e-events.jsonl"; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { 'no events yet' } }
+  'events' { $ev = @(Read-KitLog env (Get-Date).AddDays(-30) | Where-Object env -eq $e | Select-Object -Last $Tail); if ($ev) { $ev | ForEach-Object { $_ | Select-Object * -ExcludeProperty stream | ConvertTo-Json -Compress } } else { 'no events yet' } }
   '_exec' {
     $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name
     $cmd = StartCmd $e $s $Artifact

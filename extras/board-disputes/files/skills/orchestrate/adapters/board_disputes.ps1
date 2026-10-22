@@ -44,7 +44,7 @@ switch ($Action) {
       else { $script:dispOut = @('usage: board dispute -Id <id> -Agent <me> -Answer agree|disagree -Evidence ".." | -Claim ".." -Evidence ".."'); return }
       $o | ConvertTo-Json -Depth 6 | Set-Content $df -Encoding utf8
       $script:dispOut = @("DISPUTE $Id $($o.status)$(if ($o.decision) { ": DECISION $($o.decision) (the owner judges)" })")
-      if ($o.status -ne 'open') { $sig = [ordered]@{ at = (Get-Date).ToString('s'); skill = 'orchestrate'; kind = 'friction'; text = "dispute $Id ($($o.from) vs $($o.with), item $($o.item)) $($o.status): $(@($o.rounds)[0].claim)"; ref = $Id; source = 'board' } | ConvertTo-Json -Compress; $sf = Get-KitPath signals -Create; Invoke-KitLocked $sf { Add-Content -LiteralPath $sf $sig -Encoding utf8 } }
+      if ($o.status -ne 'open') { Write-KitLog signals '' ([ordered]@{ at = (Get-Date).ToString('s'); skill = 'orchestrate'; kind = 'friction'; text = "dispute $Id ($($o.from) vs $($o.with), item $($o.item)) $($o.status): $(@($o.rounds)[0].claim)"; ref = $Id; source = 'board' }) }
     }
     $script:dispOut | ForEach-Object { $_ }
   }

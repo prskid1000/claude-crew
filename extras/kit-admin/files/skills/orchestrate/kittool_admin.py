@@ -449,7 +449,7 @@ def cmd_recover(kit, fix):
     elif o and not fix:
         out('INFO', 'RECOVER-CLEANUP', 'orch.ps1 cleanup -DryRun', f'{len(o.splitlines())} line(s) of clutter it would remove (--fix runs it; safe: it skips anything in use)')
     elif fix:
-        out('FIX', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', 'ran (log: <runtime>/logs/cleanup.log)')
+        out('FIX', 'RECOVER-CLEANUP', 'orch.ps1 cleanup', 'ran (orch.ps1 audit -Since 1h shows what it freed)')
     rt = kit_path('runtime', kit=kit)
     size = 0
     for d, _, fs in os.walk(rt):
