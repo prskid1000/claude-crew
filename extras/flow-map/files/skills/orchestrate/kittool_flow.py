@@ -4,7 +4,7 @@
   python -X utf8 skills/orchestrate/kittool.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kittool.py extra add flow-map`; kittool.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L590 link · L819 cycles · L895 pack · L1022 page · L1336 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1056 page · L1386 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -17,7 +17,7 @@ ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
 # ---- rules: patterns for refs, control flow, loops, outcomes
 # Nodes: kit parts per file (commands, functions, phases, agent() calls, steps, rows, decisions, control flow, state, config, CLIs).
 # Edges: regex refs (reason + file:line, cached per content hash). Issues: dangling refs, unhandled outcomes, unbounded loops.
-VER = 10
+VER = 11
 CODE = ('.ps1', '.psm1', '.py', '.js', '.mjs', '.sh')
 STR = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
 FN = {'ps1': re.compile(r'^\s*function\s+([\w-]+)'),
@@ -367,6 +367,40 @@ def parse_code(p, f, text):
         m = re.search(r'Invoke-KitVerb\s+([\w-]+)\s+@\(\$args\)', l)   # args passed on: the function's verbs are the script's
         if m:
             impl[m.group(1)] = (f, base)
+        m = re.match(r"\s*(COMMANDS|[A-Z_]*VERBS|[A-Z_]*EXTRA[A-Z_]*)\s*=\s*\{", l) if lg == 'py' else None   # verb tables: COMMANDS (verb: fn), EXTRA_OF (verb: 'extra')
+        tbl = ''
+        for j in range(i, min(len(lines), i + 12)) if m else ():
+            tbl += live[j] + '\n'
+            if tbl.count('{') <= tbl.count('}'):
+                break
+        for v, fn, ex in re.findall(r"'([\w -]+)':\s*(?:([a-z_]\w*)\s*(?=[,}])|'([\w-]+)')", '\n'.join(lines[i:i + tbl.count('\n')]) if m else ''):
+            if fn and not any(nm == fn for _, _, nm in sp) or ex and 'EXTRA' not in m.group(1):
+                continue
+            cid = p.part(f'{f}#>{v}', f'{base} {v}', 'cmd', i + 1, l.strip() if fn else f'extra {ex}: {l.strip()}')
+            if fn:
+                p.ref('impl', cid, fn, i + 1)
+                impl.setdefault(fn, (cid, f'{base} {v}'))
+    # ps1 dispatch: each case of `switch ($__verb)` is a verb (`'v' {` or `{ $_ -in 'a', 'b' } {`); its function = the case's first Invoke-KitVerb
+    for i, l in enumerate(lines):
+        if lg != 'ps1' or not re.match(r'\s*switch\s*\(\s*\$__verb\s*\)\s*\{', l):
+            continue
+        cases = []
+        for j in range(i + 1, len(lines)):
+            mm = re.match(r"^(\s*)(?:'([\w-]+)'|\{\s*\$_\s+-in\s+((?:'[\w-]+'\s*,?\s*)+)\})\s*\{", lines[j])
+            if mm and (not cases or len(mm.group(1)) == cases[0][1]):
+                cases.append((j, len(mm.group(1)), [mm.group(2)] if mm.group(2) else re.findall(r"'([\w-]+)'", mm.group(3))))
+            elif re.match(r'\s*default\s*\{', lines[j]) and (not cases or len(lines[j]) - len(lines[j].lstrip()) == cases[0][1]) or len(lines[j]) - len(lines[j].lstrip()) <= len(l) - len(l.lstrip()) and lines[j].strip() == '}':
+                cases.append((j, -1, []))
+                break
+        for (j, _, vs), (nxt, _, _) in zip(cases, cases[1:]):
+            fn = re.search(r'Invoke-KitVerb\s+(Invoke-[\w-]+)', '\n'.join(live[j:nxt]))
+            for v in vs:
+                if v.startswith('-') or v == 'help':
+                    continue
+                cid = p.part(f'{f}#>{v}', f'{base} {v}', 'cmd', j + 1, lines[j].strip())
+                if fn:
+                    p.ref('impl', cid, fn.group(1), j + 1)
+                    impl.setdefault(fn.group(1), (cid, f'{base} {v}'))
     for a, b, name in sp:
         if name not in impl:
             continue
@@ -822,8 +856,8 @@ NAMED = [('heartbeat', [('timer', r'(?i)^cron |every \d+ ?min'), ('cmd', r'orch\
       ('row', r'^E\d+'), ('timer', r'(?i)^cron |every \d+ ?min')]),
   ('learn -> retro -> lessons', [('cmd', r'orch\.ps1 learn$'), ('state', r'^signals$'), ('slash', r'^/tidy$'),
           ('file', r'^LESSONS\.md$'), ('step', r'^0\. .*learn'), ('cmd', r'orch\.ps1 learn$')]),
-  ('failedTesting -> dev -> deploy -> QA', [('outcome', r'^failedTesting$'), ('slash', r'^/buildy$'), ('cmd', r'orch\.ps1 deploy request$'),
-            ('row', r'^E5\b'), ('slash', r'^/testy$'), ('outcome', r'^failedTesting$')])]
+  ('failedTesting -> dev -> deploy -> QA', [('outcome', r'^failedTesting$'), ('slash', r'^/buildy$'), ('row', r'^E5\b'),   # merged work waits for `deploy <env>`
+            ('slash', r'^/testy$'), ('outcome', r'^failedTesting$')])]
 
 def named_cycles(N, E, issues):
     out = defaultdict(list)
@@ -1032,7 +1066,7 @@ def write(out, data, texts):
     with open(out, 'w', encoding='utf-8') as fh:
         fh.write(html(data, osp.basename(side)))
 
-PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kit flow</title>
+PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content"><title>Kit flow</title>
 <style>:root{--bg:#f8fafc;--fg:#0f172a;--mut:#64748b;--ln:#e2e8f0;--pn:#ffffff;--pn2:#f1f5f9;--hi:#d97706;--bad:#dc2626;--sel:#2563eb22;
 --kw:#7c3aed;--st:#047857;--cm:#94a3b8;--nu:#c2410c;--va:#0369a1;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#0b1120;--fg:#e2e8f0;--mut:#94a3b8;--ln:#1e293b;--pn:#0f172a;--pn2:#111c33;--hi:#fbbf24;--bad:#f87171;--sel:#60a5fa22;
@@ -1064,12 +1098,18 @@ pre{margin:0;font:12px/1.55 var(--mono);tab-size:2}.cl{display:flex}.cl .n{color
 .cl.me{background:var(--sel)}.kw{color:var(--kw)}.st{color:var(--st)}.cm{color:var(--cm);font-style:italic}.nu{color:var(--nu)}.va{color:var(--va)}
 #meta{padding:8px 14px;border-bottom:1px solid var(--ln);color:var(--mut);line-height:1.5}#meta .f{font:11px var(--mono)}#meta a,.lnk{color:var(--va);cursor:pointer;margin-right:12px;text-decoration:none}
 #tip{position:fixed;max-width:380px;background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:6px 8px;pointer-events:none;display:none;white-space:pre-wrap;box-shadow:0 4px 14px #0002;z-index:9}
-select.b{max-width:100%}</style></head><body>
+select.b{max-width:100%}#sx,#howto{display:none}
+@media (pointer:coarse),(max-width:640px){.b,.menu label,.li{min-height:44px}.b{display:inline-flex;align-items:center}.seg .b{padding:4px 12px}
+#rail{width:52px}.ri,#legb{width:44px;height:44px}input.b,select.b{font-size:16px}}
+@media (max-width:640px){input#q{flex:1 1 120px;width:auto;min-width:0}.dd>.menu{position:fixed;top:auto;left:8px;right:60px;max-height:60dvh;overflow:auto}
+#side{position:fixed;left:0;right:52px;bottom:0;height:62vh;height:62dvh;width:auto!important;display:none;border:1px solid var(--ln);border-radius:14px 14px 0 0;z-index:8;box-shadow:0 -8px 24px #0003}
+#side.open{display:flex}#grip{display:none}#sh{padding-right:56px}#sx{display:inline-flex;position:absolute;right:6px;top:4px;z-index:3}#howto{display:block;margin-bottom:8px;line-height:1.5}
+#leg .g{grid-template-columns:repeat(2,minmax(0,1fr))}#leg{max-height:70dvh;overflow:auto}}</style></head><body>
 <div id="app"><div id="main"><canvas id="c"></canvas>
 <div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key, bottom-left); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
 <input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div>
 <span class="b" id="legb" title="key"></span><div id="leg"></div></div>
-<div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
+<div id="side"><div id="grip" title="drag to resize · double-click to reset"></div><span class="b" id="sx" title="close">✕</span><div id="sh"></div><div id="meta" style="display:none"></div><div id="sb"></div></div>
 <div id="rail"></div></div><div id="tip"></div>
 <script>
 const D = __DATA__, $ = s => document.querySelector(s), cv = $('#c'), X = cv.getContext('2d'), tip = $('#tip');
@@ -1228,8 +1268,9 @@ let curTab = LS.get('tab', 'code'), sideW = LS.get('w', 420), sideOpen = false;
 if (!D.issues.length) { delete TABS.issues; if (curTab === 'issues') curTab = 'code' }
 for (const t in TABS) { const d = document.createElement('div'); d.className = 'ri'; d.dataset.t = t; d.title = TABS[t][1] + (t === 'issues' ? (D.dirty ? ' (uncommitted work: commit is blocked until 0)' : '') : ''); d.innerHTML = svgI(TABS[t][0], null, 20) + (t === 'issues' && D.issues.length ? `<span class="badge">${D.issues.length}</span>` : t === 'loops' ? `<span class="badge" style="background:#db2777">${D.cycles.length}</span>` : '');
  d.onclick = () => sideOpen && curTab === t ? closeSide() : openSide(t); $('#rail').append(d) }
-function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; LS.set('open', true) } tab(t); setTimeout(size, 200) }
-function closeSide() { sideOpen = false; side.style.width = '0'; LS.set('open', false); document.querySelectorAll('.ri').forEach(r => r.classList.remove('on')); setTimeout(size, 200) }
+const narrow = () => matchMedia('(max-width:640px)').matches;   // phones: the side panel is a bottom sheet over the graph
+function openSide(t) { curTab = t; LS.set('tab', t); if (!sideOpen) { sideOpen = true; side.style.width = sideW + 'px'; side.classList.add('open'); LS.set('open', true) } tab(t); setTimeout(size, 200) }
+function closeSide() { sideOpen = false; side.style.width = '0'; side.classList.remove('open'); LS.set('open', false); document.querySelectorAll('.ri').forEach(r => r.classList.remove('on')); setTimeout(size, 200) }
 const fl = n => D.files[n.g].id + (n.ln ? ':' + n.ln : '');
 const row = (n, title, extra, cls, fn) => { const d = document.createElement('div'); d.className = 'li ' + (cls || ''); d.innerHTML = (extra || '') + (n ? svgI(KD[n.kk][1], n.col) : '') + `<span class="t">${title}<span class="f">${n ? esc(fl(n)) : ''}</span></span>`; d.onclick = fn; return d };
 function filterBox(ph, onq) { const s = document.createElement('div'); s.className = 'sticky'; const i = document.createElement('input'); i.className = 'b'; i.placeholder = ph; i.style.width = '100%'; i.oninput = () => onq(i.value.toLowerCase()); s.append(i); sb.append(s); return s }
@@ -1302,31 +1343,40 @@ function menu(id, items, state, label) { const dd = $(id), m = dd.querySelector(
 menu('#ddS', Object.keys(FAM).map(f => [f, `${svgI(Object.values(KD).find(k => k[0] === f)[1], FAM[f][1])} ${FAM[f][0]}`, N.filter(n => n.fam === f).length]), famOn);
 menu('#ddE', Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => [k, `<svg width="26" height="8"><line x1="1" y1="4" x2="25" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="6 4"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg> ${k}`, E.filter(e => e.k === k).length]), ekOn);
 const leg = $('#leg'), cnt = k => N.filter(n => n.kk === k).length;
-leg.innerHTML = '<h4 style="margin-top:0">Nodes</h4><div class="g">' + Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join('') +
+$('#sx').onclick = closeSide;
+leg.innerHTML = `<div id="howto">${esc($('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in'))}</div>` + '<h4 style="margin-top:0">Nodes</h4><div class="g">' + Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join('') +
  '</div><h4>Edges</h4><div class="g">' + Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join('') +
  '</div><h4>Families</h4><div class="g">' + Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join('') + '</div>';
-$('#legb').innerHTML = svgI('key', null, 18); $('#legb').onclick = e => { e.stopPropagation(); leg.classList.toggle('open') }; $('#legb').onmouseenter = () => leg.classList.add('open'); leg.onclick = e => e.stopPropagation();
+$('#legb').innerHTML = svgI('key', null, 18); $('#legb').onclick = e => { e.stopPropagation(); leg.classList.toggle('open') }; $('#legb').onmouseenter = () => { if (matchMedia('(hover:hover)').matches) leg.classList.add('open') }; leg.onclick = e => e.stopPropagation();
+$('#ttl').onclick = e => { if (narrow()) { e.stopPropagation(); leg.classList.toggle('open') } };   // no hover on phones: the how-to sits in the key
 addEventListener('click', () => { leg.classList.remove('open'); document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')) });
 $('#q').oninput = () => { const q = $('#q').value.trim().toLowerCase(); trace = null; if (!q) { force = new Set(); focus = fE = null; return rebuild() } show(N.filter(n => (n.l + ' ' + n.id).toLowerCase().includes(q)).slice(0, 300)) };
 $('#q').onkeydown = e => { if (e.key === 'Enter' && focus && focus.size) { const n = [...focus][0]; select(n); center(n) } };
 $('#fit').onclick = () => { fitTo(); fitSc = sc; LVL = 0; rebuild() };
-let drag = null;
-const hit = (sx, sy) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, d = Math.hypot(n.x - x, n.y - y); if (d < r + 4 / sc && d < bd) { bd = d; best = n } } return best };
+let drag = null, pinch = null;
+const ptrs = new Map();   // touch: one finger pans / drags, two pinch-zoom; a touch hit reaches 22 px (a 44 px target)
+const hit = (sx, sy, slop = 4) => { const [x, y] = s2w(sx, sy); let best = null, bd = 1e9; for (const n of VN) { const r = LVL === 0 ? (n.k === 'file' ? 16 : 11) : n.r, d = Math.hypot(n.x - x, n.y - y); if (d < Math.max(r + 4 / sc, slop / sc) && d < bd) { bd = d; best = n } } return best };
 const pt = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] };
-cv.addEventListener('pointerdown', e => { const [x, y] = pt(e), n = hit(x, y); drag = {n, x, y, tx, ty, moved: false}; cv.setPointerCapture(e.pointerId) });
-cv.addEventListener('pointermove', e => { const [x, y] = pt(e);
- if (!drag) { const n = hit(x, y); if (n !== hover) { hover = n; draw() }
+const two = () => { const [a, b] = [...ptrs.values()]; return [Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+cv.addEventListener('pointerdown', e => { const [x, y] = pt(e); ptrs.set(e.pointerId, [x, y]); cv.setPointerCapture(e.pointerId);
+ if (ptrs.size === 2) { const [d, mx, my] = two(); pinch = {d, mx, my, sc, tx, ty}; drag = null; tip.style.display = 'none'; return }
+ const n = hit(x, y, e.pointerType === 'touch' ? 22 : 4); drag = ptrs.size === 1 ? {n, x, y, tx, ty, moved: false, thr: e.pointerType === 'touch' ? 8 : 3} : null });
+const lift = e => { ptrs.delete(e.pointerId); if (pinch && ptrs.size < 2) { pinch = null; drag = null } };
+cv.addEventListener('pointercancel', e => { lift(e); drag = null });
+cv.addEventListener('pointermove', e => { const [x, y] = pt(e); if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, [x, y]);
+ if (pinch && ptrs.size >= 2) { const [d, mx, my] = two(), f = d / pinch.d; sc = pinch.sc * f; tx = mx - (pinch.mx - pinch.tx) * f; ty = my - (pinch.my - pinch.ty) * f; zoomLevel(); draw(); return }
+ if (!drag) { if (e.pointerType === 'touch') return; const n = hit(x, y); if (n !== hover) { hover = n; draw() }
   if (n) { tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 14, innerWidth - 390) + 'px'; tip.style.top = e.clientY + 14 + 'px'; tip.textContent = `${n.l}\n${KD[n.kk][2]} · ${fl(n)}${bad.has(n.i) ? '\n⚠ ' + bad.get(n.i)[0].code : ''}` } else tip.style.display = 'none'; return }
- const dx = x - drag.x, dy = y - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; if (!drag.moved) return;
+ const dx = x - drag.x, dy = y - drag.y; if (Math.abs(dx) + Math.abs(dy) > drag.thr) drag.moved = true; if (!drag.moved) return;
  if (drag.n) { const [wx, wy] = s2w(x, y); drag.n.fx = wx; drag.n.fy = wy; heat(.2) } else { tx = drag.tx + dx; ty = drag.ty + dy; draw() } });
-cv.addEventListener('pointerup', e => { if (drag && !drag.moved) { const n = drag.n; if (!n) { sel = null; focus = fE = null; trace = null; force = new Set(); rebuild() } else select(n, e.shiftKey || (focus && focus.has(n) && n !== sel)) } drag = null });
+cv.addEventListener('pointerup', e => { lift(e); if (drag && !drag.moved) { const n = drag.n; if (!n) { sel = null; focus = fE = null; trace = null; force = new Set(); rebuild() } else select(n, e.shiftKey || (focus && focus.has(n) && n !== sel)) } drag = null });
 cv.addEventListener('dblclick', e => { const n = hit(...pt(e)); if (!n || !G[n.g].fn) return; coll.has(n.g) ? coll.delete(n.g) : coll.add(n.g); rebuild() });
 cv.addEventListener('contextmenu', e => { const n = hit(...pt(e)); if (n) { e.preventDefault(); n.fx = n.fy = null; heat(.2) } });
 cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = pt(e), f = Math.exp(-e.deltaY * .0015); tx = x - (x - tx) * f; ty = y - (y - ty) * f; sc *= f; zoomLevel(); draw() }, {passive: false});
 addEventListener('keydown', e => { if (e.key === 'Escape') { leg.classList.remove('open'); sel = null; trace = null; focus = fE = null; force = new Set(); $('#q').value = ''; rebuild() }
  if (trace && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && document.activeElement.tagName !== 'INPUT') stepTo(tIdx + (e.key === 'ArrowRight' ? 1 : -1)) });
 new ResizeObserver(size).observe($('#main'));
-rebuild(); for (let i = 0; i < 420; i++) tick(); size(); fitTo(); fitSc = sc; draw(); if (LS.get('open', false)) openSide(curTab);
+rebuild(); for (let i = 0; i < 420; i++) tick(); size(); fitTo(); fitSc = sc; draw(); if (LS.get('open', false) && !narrow()) openSide(curTab);
 window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, show, fitTo, center, get sc() { return sc }};
 </script></body></html>
 '''

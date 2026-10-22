@@ -28,6 +28,13 @@ k = types.SimpleNamespace(files=list(T), texts=T, dir=sys.argv[2], skills=[], ag
 d = flow.model(k, [])
 c = collections.Counter(m.group(0) for i in d['issues'] for m in [re.search(r'(fp|real|marked)\.\w+', i['text'])] if m)
 print(' '.join(f'{f}={c.get(f, 0)}' for f in T), 'deliberate=' + str(sum(1 for i in d['deliberate'] if 'marked.ps1' in i['text'])))
+V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'audit': cmd_lint}\nFORMATS = {'json': cmd_lint}\nEXTRA_OF = {'flow': 'flow-map',\n  'port': 'ports'}\n",
+     'a.ps1': "function Invoke-Board { }\nswitch ($__verb) {\n  'board' {\n    if ($x) { Invoke-KitVerb Invoke-Board $r }\n  }\n"
+       "  'two' { switch ($m) { 'x' {1}  default {2} } }\n  'deploy' { $null = Assert-KitExtra Invoke-Deploy 'a.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $r }\n"
+       "  { $_ -in 'deployed', 'annotate' } {\n    Invoke-KitVerb $fn $r\n  }\n  default { exit 2 }\n}\n",
+     'doc.md': '# d\n- `tool.py lint`, `tool.py audit scan`, `tool.py port`, `a.ps1 board`, `a.ps1 deploy request`, `a.ps1 annotate`, `a.ps1 nope`, `tool.py json`\n'}
+k = types.SimpleNamespace(files=list(V), texts=V, dir=sys.argv[2], skills=[], agents={}, workflows={})
+print('verbs=' + ','.join(sorted(i['text'].split(':')[0] for i in flow.model(k, [])['issues'] if i['code'] == 'UNRESOLVED')))
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/orchestrate') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/orchestrate/kittool_flow.py') 2>&1)"
@@ -36,6 +43,7 @@ $checks = [ordered]@{
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
+  'verbs from COMMANDS / EXTRA_OF tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
 }
 $fails = 0
 foreach ($c in $checks.GetEnumerator()) { if ($c.Value) { "PASS flow-map: $($c.Key)" } else { "FAIL flow-map: $($c.Key)"; $fails++ } }
