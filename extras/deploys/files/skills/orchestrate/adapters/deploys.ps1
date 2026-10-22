@@ -5,7 +5,7 @@ deploys.ps1 (extra deploys): the deploy batch of orchestrate E5, dot-sourced by 
   orch.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   orch.ps1 deploy merge ...   extra deploy-merge
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L12 helpers · L22 intest · L100 deploy · L196 supervise
+Sections: L12 helpers · L22 intest · L100 deploy · L201 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 
@@ -132,8 +132,13 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $taskOf = @{}; $cand = [ordered]@{}
   $tr = Read-KitTracking
   foreach ($t in $tr.tasks.Values) {
-    if ($t.done -and $t.doneAt -and ((Get-Date) - [datetime]$t.doneAt).TotalDays -gt $Days) { continue }
-    foreach ($m in @($t.mrs)) { $taskOf[$m] = $t.task; $cand[$m] = 'tracked' }
+    if ($t.done -and (-not $t.doneAt -or ((Get-Date) - [datetime]$t.doneAt).TotalDays -gt $Days)) { continue }   # no doneAt: an old record
+    foreach ($m in @($t.mrs)) {
+      # live on every test env of its repo (supervise liveOn): nothing to deploy, no lookup
+      $need = @($tOf[(& $repoOf $m)] | Where-Object { $_ -in $targets })
+      if ($need.Count -and -not @($need | Where-Object { $_ -notin @($t.liveOn) }).Count) { continue }
+      $taskOf[$m] = $t.task; $cand[$m] = 'tracked'
+    }
   }
   $pend = if (Test-Path $pf) { @((Get-Content $pf -Raw | ConvertFrom-Json).requests) } else { @() }
   foreach ($q in $pend) { foreach ($m in @($q.mrs)) { $cand[$m] = "requested by $($q.run)" } }

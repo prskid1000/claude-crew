@@ -3,7 +3,7 @@ localenv.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) t
 on; a service = a start command in a folder (default dev.ps1 stack `run`). Model: local-env SKILL.md "Local testing".
   & <kit>/skills/local-env/localenv.ps1 <verb> [args]
 Verbs: envs · status · deploy · wait · use · release · promote · task · logs · events · migrations · sql -Query (read-only)
-       (owner) up -Services [-Owner] · unhold · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
+       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
 In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; status -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
@@ -1100,7 +1100,7 @@ function Test-ReadOnlySql([string]$q) {
 # ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
@@ -1307,6 +1307,16 @@ switch ($Action) {
   'unhold' {   # ends a hold (-Services: only those); services stop when idle, never at once
     Update-State $e { param($x) if ($x.holds[$Agent]) { $left = @($x.holds[$Agent].services | Where-Object { $Services -and $_ -notin (Closure $e $Services) }); if ($left.Count) { $x.holds[$Agent].services = $left } else { $x.holds.Remove($Agent) } } }
     Event $e 'unhold' @{ agent = $Agent; services = @($Services) }; "[$e] hold of $Agent $(if ($Services) { "on $($Services -join ', ') " })removed: services stop after their idle grace"
+  }
+  'restart' {   # down would end the leases and stop dependents: this stops only -Services, the controller starts them again
+    if (-not $Services) { throw 'restart needs -Services <svc,..>' }
+    $order = @(EnvServices $e | Where-Object { $_.name -in $Services -and (Managed $_) }); [array]::Reverse($order)
+    foreach ($s in $order) { if (Healthy $e $s) { Stop-Svc $e $s 'restarted' }; "[$e] $($s.name) restarting" }
+    Event $e 'restart' @{ agent = $Agent; services = @($order.name) }
+    $st = Read-State $e; Prune $st; $wanted = @(@($st.leases.Values) + @($st.holds.Values) | ForEach-Object { Closure $e @($_.services) })
+    $idle = @($order.name | Where-Object { $_ -notin $wanted }); if ($idle.Count) { "[$e] no lease or hold needs $($idle -join ', '): down until the next use / up" }
+    $back = @($order.name | Where-Object { $_ -in $wanted })
+    if ($back.Count) { Ensure-Loop; if (Wait-Up $back) { Show-Status $e } else { exit 1 } }
   }
   'down' {
     $names = if ($Services) { @(@($Services) + @(Dependents $e $Services) | Select-Object -Unique) } else { All-Managed }

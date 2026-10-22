@@ -29,11 +29,16 @@ $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; 
 $null = Invoke-KitVerb Invoke-Avd @('create', '-Lanes', 'A1', '-NoBoot'); $ini = Get-Content "$tmp/avd/A1.avd/config.ini" -Raw
 Set-Content "$tmp/gate.ps1" 'param($v, $Dir, $Cmd, $WaitMinutes) New-Item -ItemType Directory -Force "$Dir/o" | Out-Null; Set-Content "$Dir/o/x.apk" $Cmd'; $KitCmd.dev = "$tmp/gate.ps1"
 git -C "$tmp/a" init -q; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m i; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate')
+# build -Local: app-local.apk only from origin/<app.branch> HEAD or a localenv/* branch, else a side APK
+$script:SwarmCfg.app | Add-Member branch 'main'; Set-Content "$tmp/a/.gitignore" 'o/'; git -C "$tmp/a" add .gitignore; git -C "$tmp/a" -c user.name=t -c user.email=t@t commit -q -m ig
+$null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local'); $side = -not (Test-Path "$tmp/app-local.apk") -and @(Get-ChildItem $tmp -Filter 'app-local-*.apk').Count
+git -C "$tmp/a" checkout -q -b localenv/r1; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local')
+"local:$($side -and (Test-Path "$tmp/app-local.apk"))"
 "kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
 '@
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" (Join-Path $src 'skills/android-swarm/swarm.ps1') $sf 2>&1)
-foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True') { Expect "swarm: $x" ($res -contains $x) }
+foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True', 'local:True') { Expect "swarm: $x" ($res -contains $x) }
 Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
 # lease files: reads and writes under the file lock (an open reader made the rename fail)
 $ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src 'skills/android-swarm/swarm.ps1')

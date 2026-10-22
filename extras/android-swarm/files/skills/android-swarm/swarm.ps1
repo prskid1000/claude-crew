@@ -12,7 +12,7 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs an extra) · 2 usage error.
 Extras (adapters/): app-kinds (flutter, maui, capacitor, Expo prebuild), emulator-windows (arrange), ios-simulator.
-Sections: L21 config · L101 phone · L299 build · L438 install · L464 launch · L476 avd · L562 up · L649 down · L678 slim
+Sections: L21 config · L101 phone · L299 build · L443 install · L469 launch · L481 avd · L567 up · L654 down · L683 slim
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -413,8 +413,13 @@ if (-not $apk) { throw "no APK built under $apkRoot (app module not 'app'? set a
 }
 $apkDir = $c.apkDir; $x = '.apk'; $meta = [ordered]@{ branch = $branch; commit = $commit; appDir = $AppDir; built = (Get-Date).ToString('s') }; $took = "Done in $([int]((Get-Date) - $t0).TotalMinutes) min:"
 function Put($to) { Copy-Item $apk.FullName (Join-Path $apkDir $to) -Force }
-if ($Local) {   # never the shared APK
-  Put "app-local$x"; Put "app-local-$(($branch -replace '[^\w.-]', '_'))-$commit$x"
+if ($Local) {   # never the shared APK; app-local.apk (every lane's local app) only from the env's code: origin/<app.branch> or localenv/*
+  $own = "app-local-$(($branch -replace '[^\w.-]', '_'))-$commit$x"; Put $own
+  $why = if ($dirty) { "$dirty uncommitted change(s)" } elseif ($branch -notlike 'localenv/*' -and $c.app.branch) {
+    git -C $AppDir fetch -q origin $c.app.branch 2>$null
+    if ("$(git -C $AppDir rev-parse HEAD)".Trim() -ne "$(git -C $AppDir rev-parse "origin/$($c.app.branch)" 2>$null)".Trim()) { "$branch is not origin/$($c.app.branch) HEAD" } }
+  if ($why) { "$took $(Join-Path $apkDir $own) only (side APK, app-local$x kept: $why); use it: acquire -Apk $(Join-Path $apkDir $own)"; return }
+  Put "app-local$x"
   $meta + @{ local = $true } | ConvertTo-Json | Set-Content (Join-Path $apkDir 'app-local.json') -Encoding utf8
   "$took $(Join-Path $apkDir "app-local$x") ($branch @ $commit); use it: acquire -Apk local"
   return

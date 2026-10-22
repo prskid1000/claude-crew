@@ -23,6 +23,7 @@ in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (
 - **local-env APK** `apk/app-local.apk` (+ `app-local.json`): `swarm.ps1 build -Local [-AppDir <worktree>]` = a JS-bundled
   release build with the app's cleartext manifest overlay (`app.localManifests`, first that exists) for the local env's http
   API; `acquire -Apk local` installs it and reverses `app.localReverse`. Not debug variants: they need Metro / a dev launcher.
+  Only a clean origin/<app.branch> HEAD or `localenv/*` replaces it; any other build is a side APK (`acquire -Apk <its path>`).
 
 ## App-lane steps (devy and checky)
 - A0. `orch.ps1 learn -Read -Skill android-swarm`.

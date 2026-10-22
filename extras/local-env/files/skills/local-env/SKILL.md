@@ -81,9 +81,10 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 ## Unblock yourself (we own the local env: a local check never ends NOT_TESTED, a local loop never BLOCKED for an env reason)
 - Data: the env API (baseline first, verify by id); config / flags / env vars: `<kit>/.state/localenv/<env>.env` or the app's
   settings API; services: `deploy`, `use`, `logs`, `events`; not deployed: `deploy` the branch; phone-only: a lane with the
-  local-env APK; a missing integration: wire it locally or point it at a stub or the test env's service (lease note).
-- Coordinator-only (`up`, `down`, `refresh`, `drop`, shared DB repair): ENV-FIX `orch.ps1 decide ask -Kind envfix -Run <run>
-  -Agent <id> -Item <item> -Question "<the fix>"`, then WAIT (`decide wait -Id <id>`) and continue: an env fix request, not a
+  local-env APK; a missing integration: wire it locally or point it at a stub or the test env's service; env-file lines and stubs
+  you add go in the lease note and are removed before you release.
+- Coordinator-only (`up`, `restart`, `down`, `refresh`, `drop`, shared DB repair): ENV-FIX `orch.ps1 decide ask -Kind envfix
+  -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, then WAIT (`decide wait -Id <id>`) and continue: an env fix request, not a
   verdict. Only org-rule out-of-scope channels stay OUT_OF_SCOPE.
 
 **Rules**
@@ -92,8 +93,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 - A migration layer changes the shared local DB for every layer: say so.
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
   yourself"), never repair the shared DB by hand.
-- `up` (only named services), `unhold`, `down`, `drop`, `refresh`: owner / coordinator only. Out of RAM: starts wait, then
-  fail with the biggest users listed; report it, never kill other processes.
+- `up` (only named services), `unhold`, `restart -Services` (keeps leases; `down` ends them), `down`, `drop`, `refresh`: owner /
+  coordinator only. Out of RAM: starts wait, then fail with the biggest users listed; report it, never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.
 
 ## Config (`kit.local.json` `localEnv`; an example)
