@@ -6,18 +6,19 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Two local web services (~8-10 GB each) do not fit together beside QA browsers and the keep-free floor: batch one product's web items, release its web, then launch the other's; testers run API checks first. (4×)
 - Confirm API MRs merged before QA; register EVERY producer MR of a consumer with `orch.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed merge-after list back; never merge a consumer by hand. (9×)
 - Explain-or-plan request: never launch a wave (a 9-agent wave once built nothing). (4×)
-- MR state comes from devtools.py merge output or the host, never an agent's prose; scheduled (waiting for green) != merged; reconcile before consumer merges or promotes. (6×)
+- MR state comes from devtools.py merge output or the host, never an agent's prose; scheduled (waiting for green) != merged; reconcile before consumer merges or promotes. (8×)
 - Destructive owner asks (clean a folder, reset a branch) while runs go on: do them yourself after the runs end; agents never act on relayed asks outside their items.
 - Contracts file: agents append, never overwrite; re-check your note after agents publish; a mid-wave contract change goes into the contracts file AND the brief's bottom. (3×)
 - Overlapping agents rebase only after the sibling MR merges (one conflict resolution, not two).
 - QA results are fixed at once: one bugbrief per failedTesting or [Bug] task, ONE /buildy for all open now; give `bugbrief` repo@branch when a repo ships two products from different branches.
 - Always pass `mandate` (the owner's words) to /buildy and /testy: the harness relays the latest chat message as "the request that wins". (3×)
 - A merged MR that adds a dependency: add it to the shared linkFrom tree yourself (the exact version, unpacked in place); never a full install there.
-- Briefs: git-grep the target branch before listing work on a second branch; quote producer contracts verbatim; port a sibling wave's review findings; items needing a product concept -> one decisions doc, a follow-up wave. (4×)
+- Briefs: git-grep the target branch before listing work on a second branch; quote producer contracts verbatim; port sibling review findings; product-concept items -> one decisions doc, a later wave; task text and brief agree on each item's area; asks to meet people are ASK lines, never a step. (6×)
 - Answer QA testers in `<runDir>/lead-notes.md` (they re-read it), never SendMessage; items a run could not publish: `qa.ps1 finalize` from the on-disk results.json.
-- Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy queue fine on the memory gate.
+- Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## dev-kit
+- Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (4×)
 - An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
 - Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
 - Linked shared deps can be older than the target: typecheck / build / Jest (esbuild unresolvable) may fail; no reinstall: keep the earlier local result, CI decides. (7×)

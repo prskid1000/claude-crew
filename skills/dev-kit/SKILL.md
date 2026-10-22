@@ -76,7 +76,11 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
     for endpoints touched; UI/component tests for screens touched where the stack supports it.
   - Shape: arrange / act / assert; one behaviour per test; names `should_<behaviour>_when_<condition>` (or the repo's style);
     no sleeps or real clocks (fixed clock); no shared mutable state; deterministic builders / fixtures; mocks only at
-    boundaries; no network unless tagged integration.
+    boundaries; no network unless tagged integration. Every assertion runs: a list is asserted non-empty before a loop over
+    it; a success test calls the endpoint and never branches on an error status; a placeholder is a listed coverage gap,
+    never counted. Shared env or tenant: unique ids from one helper (no random, no real clock); assert only records the
+    test made; settings and cleanup in before/after hooks registered before the mutation; cleanup accepts 2xx/404 only,
+    the MR lists leftovers.
   - Place: next to the repo's existing tests (its convention wins; `dev.ps1 stack` shows the runner; a web project without a
     unit-test target: extra `node-spec`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
     `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
