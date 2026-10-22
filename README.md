@@ -109,6 +109,25 @@ The rule: "Configuration" `budget`; per-tool defaults in the table.
 One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (extra `runtimes`);
 only owner holds (`localenv.ps1 up -Owner`, phone `manual`; extra `local-env`, extra `android-swarm`) keep minutes, with a reminder.
 
+## Pause and resume
+- **Checkpoints** (both paths): each agent runs `dev.ps1 checkpoint` at every step boundary (worktree, commit, testing goals,
+  loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume.json` + `resume.md`. Kit
+  state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
+  start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
+- **Pause** (power off, a day offline): `orch.ps1 pause -All | -Run <run> [-Reason] [-Wait 10]`. Agents read PAUSE on their
+  next `board beat` (and inbox), checkpoint, commit WIP locally, release leases and leave the board `paused`; env services no
+  live holder needs stop (extra `local-env`); `.state/pauses/` records runs, launch records, agents, checkpoints and worktree
+  heads; it prints "safe to power off". Nothing after it needs the network.
+- **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
+  `paused/crashed runs: N -> orch.ps1 resume`.
+- **Resume**: `orch.ps1 resume -All | -Run <run> [-Wait <min>]`. Offline -> says so, stops. Per agent a brief
+  (`work/agents/<id>/resume-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
+  redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
+  merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT.
+- Kept: commits, diffs, MRs, tracker state, decisions, checkpoints, launch records, coordinator program state (`orch.ps1
+  program set|get`). Lost: agent conversations (a fresh agent from its brief), running builds and tests (rerun), env service
+  processes (started on the next lease), browser logins.
+
 ## Install
 ```powershell
 git clone https://github.com/prskid1000/claude-crew <workspace>/.claude
@@ -126,7 +145,7 @@ procedures.
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`orch.ps1 supervise -AutoFix -Brief`, every 10 min)
-  prints the owner's report: resources and their holders, flags (ACT, WATCH, ❓ ASK). After a restart: `orch.ps1 recover`.
+  prints the owner's report: resources and their holders, flags (ACT, WATCH, ❓ ASK). After a restart: `orch.ps1 resume -All`.
   Every script prints its usage without arguments.
 
 ## Extras
@@ -234,7 +253,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/orchestrate/kit-
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kittool.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 220000 · all tests 33000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 220000 · all tests 36000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, an extra's in `extras/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name

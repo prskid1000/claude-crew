@@ -20,7 +20,9 @@ row.
 
 ## One orchestration model (both flows)
 State every run shares: launch record (`orch.ps1 launch`), agent board (`board`), tracking (`.state/tracking.json`, `track`),
-decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`). Both
+decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`), agent
+checkpoints (`dev.ps1 checkpoint`), your own program state (`orch.ps1 program set|get -Program <name>`: phases -> runs, MRs,
+synced; never only in the session: a heartbeat after a restart reads it). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps.
 What happened when, who called what: `orch.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
 line per step, kit call, build, guard block, signal, decision, deploy; supervise and retros read it, never journals or log
@@ -65,7 +67,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 |---|---|---|
 | E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat every 10 min: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste output verbatim (own line only when ACT needs action), act on flags; 2nd session supervisor steps aside. Stop when nothing runs |
 | E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone |
-| E3 | Agents/workflow stopped (crash, limits, restart), or budget handoff | `orch.ps1 recover`: per run its board, worktrees, MRs, decisions, resume brief and exact `Workflow({ scriptPath, resumeFromRunId, args })`; resume refused -> printed relaunch (`mode: 'resume'`); unpublished QA -> `qa.ps1 finalize` lines. You stopped it: `launch -Done -RunId <id>` |
+| E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `orch.ps1 pause -All` (or `-Run <run>`, `-Reason`) until "safe to power off"; the machine stays on: stop the workflow runs and the heartbeat. Back or after a crash: `orch.ps1 resume -All` (network first; a brief per agent from its checkpoint; merged runs skipped; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> relaunch `mode: 'resume'`; unpublished QA -> `qa.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `orch.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (extra `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `qa.ps1 retest` |
 | E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, end to end, no question back: the steps in `<kit>/skills/orchestrate/deploys.md` (extra `deploys`); then in test: testers, or /testy on request |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first) |

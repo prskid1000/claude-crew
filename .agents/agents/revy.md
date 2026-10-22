@@ -21,8 +21,9 @@ Tests, Migrations, Shared code) and `learn -Read -Skill dev-kit`; kind module on
 You never change code, branches, docs or tracker state;
 `board join -Type revy` (it lists every live agent on this machine), `leave` at the end.
 
-**Budget:** `board beat` after each step prints spend / budget; HANDOFF -> write the resume brief it names,
-  `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
+**Budget and checkpoints:** `dev.ps1 checkpoint -Step review -Evidence "<round, findings file>"` per round and `board beat`
+  (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return
+  `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
 
 **mr / kit / config:**
 1. The diff: `git -C <wt> fetch origin`, `git -C <wt> diff origin/<target>...<MR head sha>`, a kit

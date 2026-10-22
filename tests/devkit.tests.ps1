@@ -167,5 +167,7 @@ Expect "guard: an extra's note is context, no decision; runtime without its extr
 $lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' } }
 $tt = pwsh -NoProfile -Command ". '$lw/skills/dev-kit/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
+$gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
+Expect 'lib: a deleted tracker task leaves tracking (an outage page does not); a pid reused after a reboot holds nothing' ($gt -eq 'True False False True|False True')
 Remove-TestKit $k
 Complete-Tests

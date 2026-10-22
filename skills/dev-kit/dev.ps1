@@ -9,11 +9,12 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
+ checkpoint -Agent <id> -Run <run> -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (orch.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L18 init · L24 wt · L226 stack · L401 gate · L650 check · L803 pipes · L839 guard · L1195 dir · L1205 tracker ·
-  L1238 host
+Sections: L19 init · L25 wt · L227 stack · L402 gate · L652 check · L805 pipes · L841 guard · L1197 dir · L1207 checkpoint ·
+  L1231 tracker · L1264 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -40,7 +41,7 @@ function Resolve-Wt($d) {
   $d
 }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
-function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { $v | Set-Content $f } elseif (Test-Path $f) { Get-Content $f } }
+function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { Write-KitAtomic $f "$v`n" } elseif (Test-Path $f) { Get-Content $f } }
 function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
   (@('dependencies', 'devDependencies') | ForEach-Object { if ($p.$_) { $p.$_.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
@@ -510,11 +511,12 @@ $heapBase = $heap
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
 $myTicket = Join-Path $queueDir "$PID.json"
 $since = (Get-Date).ToString('o')
-function Write-Ticket { @{ pid = $PID; owner = $owner; kind = $kind; need = $need; since = $since; dir = $Dir } | ConvertTo-Json -Compress | Set-Content $myTicket }
+$myStart = Get-KitPidStart $PID
+function Write-Ticket { Write-KitAtomic $myTicket (@{ pid = $PID; start = $myStart; owner = $owner; kind = $kind; need = $need; since = $since; dir = $Dir } | ConvertTo-Json -Compress) }
 function Get-Queue {
   $q = foreach ($f in Get-ChildItem $queueDir -Filter '*.json' -ErrorAction SilentlyContinue) {
     try { $t = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    if (-not (Get-Process -Id $t.pid -ErrorAction SilentlyContinue)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
+    if (-not (Test-KitPid $t.pid $t.start)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }   # its process gone (or a reused pid after a reboot)
     $t
   }
   $cut = (Get-Date).AddMinutes(-30); $recent = @{}
@@ -528,7 +530,7 @@ function Get-State {
   $promised = 0; $running = 0; $backfills = 0
   foreach ($f in Get-ChildItem $ledger -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -ne 'history.json') {
     try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    if (-not $Snap.procs.ContainsKey([int]$e.pid)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
+    if (-not $Snap.procs.ContainsKey([int]$e.pid) -or -not (Test-KitPid $e.pid $e.start)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }
     $running++
     if ($e.backfill) { $backfills++ }
     $promised += [math]::Max(0, [double]$e.need - (Get-KitTreeGB ([int]$e.pid) $Snap))
@@ -608,7 +610,7 @@ while ((Get-Date) -lt $deadline) {
       Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
-      @{ pid = $proc.Id; gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
+      Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json)
       break
     }
     $waits++; Add-KitMemSample $s.Avail
@@ -1195,11 +1197,35 @@ exit 0
 # ---- dir: the only places agents write under the runtime: agents/<agent>/[<item>/], evidence/<item>/; names lowercase-kebab
 function Invoke-Dir {
 param([string]$Agent, [string]$Item, [ValidateSet('scratch', 'evidence')][string]$Kind = 'scratch', [string]$Name)
-$slug = { param($s) ("$s".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
+$slug = { param($s) ConvertTo-KitSlug $s }
 if (-not $(if ($Kind -eq 'evidence') { $Item } else { $Agent })) { 'usage: dev.ps1 dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent <id>] [-Name <file>]'; exit 2 }
 $d = if ($Kind -eq 'evidence') { Join-Path (Get-KitPath evidence) (& $slug $Item) } else { Join-Path (Get-KitPath agents) (& $slug $Agent) | Join-Path -ChildPath $(if ($Item) { & $slug $Item } else { '' }) }
 New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
+}
+
+# ---- checkpoint: an agent's resume point at each step boundary (crash, pause): resume.json + resume.md in its dir, atomic
+$script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
+function Invoke-Checkpoint {
+param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read)
+if (-not $Agent -or -not ($Step -or $Read)) { "usage: dev.ps1 checkpoint -Agent <id> -Run <run> -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
+$jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Agent -Name 'resume.md'
+if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent" }; return }
+$c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
+if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
+$s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('s') }
+if ($Dir) { $Dir = (Resolve-Path -LiteralPath $Dir).Path; $s.dir = $Dir; $s.head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); $c.worktrees = @(@($c.worktrees) + $Dir | Where-Object { $_ } | Select-Object -Unique) }
+$i = [array]::IndexOf($script:KitSteps, $Step.ToLower())
+$c.steps = @(@($c.steps) + $s); $c.done = $false; $c.updated = $s.at
+$c.next = if ($Next) { $Next } elseif ($Step -eq 'done') { 'none' } elseif ($i -ge 0) { $script:KitSteps[$i + 1] } else { 'the next check' }
+if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Leases) }
+$c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
+Write-KitAtomic $jf ($c | ConvertTo-Json -Depth 6)
+$md = @("# Checkpoint $Agent (run $($c.run)), $($c.updated)", "Next: $($c.next) (start here; the steps below are done: verify, never redo)", '', '## Done') +
+  @($c.steps | ForEach-Object { "- $($_.at) $($_.step)$(if ($_.item) { " [$($_.item)]" }): $($_.evidence)$(if ($_.head) { " ($($_.dir) @ $($_.head))" })" }) +
+  @('', '## Open', "- worktrees: $(@($c.worktrees) -join ', ')", "- leases: $(@($c.leases) -join ', ')", "- decisions pending: $(@($c.decisions) -join ', ')")
+Write-KitAtomic $mf (($md -join "`n") + "`n")
+"checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 
 # ---- tracker: lib.ps1 tracker adapters
@@ -1247,6 +1273,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
   switch ($__verb) {
     'wt' { Invoke-KitVerb Invoke-Wt $__rest }
     'dir' { Invoke-KitVerb Invoke-Dir $__rest }
+    'checkpoint' { Invoke-KitVerb Invoke-Checkpoint $__rest }
     'stack' { Invoke-KitVerb Invoke-Stack $__rest }
     'gate' { Invoke-KitVerb Invoke-Gate $__rest }
     'check' { Invoke-KitVerb Invoke-Check $__rest }
@@ -1255,6 +1282,6 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
     'host' { Invoke-KitVerb Invoke-Host $__rest }
     'runtime' { if (Get-Command Invoke-Runtime -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Runtime $__rest } else { [Console]::Error.WriteLine('dev.ps1 runtime is an extra: run kittool.py extra add runtimes'); exit 1 } }
-    default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
+    default { Get-Content $PSCommandPath -TotalCount 16 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
   }
 }

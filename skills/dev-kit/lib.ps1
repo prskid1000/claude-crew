@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L829 kitlog · L922 entry-scripts
+Sections: L8 paths · L80 config · L160 OS · L295 leases · L489 tracker · L709 git-host · L844 kitlog · L937 entry-scripts
 #>
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
@@ -18,14 +18,14 @@ function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
-# cross-process <file>.lock, stale after 2 min; 130 s wait -> throw (never unlocked)
+# cross-process <file>.lock, stale after 2 min (Windows: at once once its holder is gone, e.g. killed); 130 s wait -> throw (never unlocked)
 function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandatory)][scriptblock]$Body) {
   $lock = "$File.lock"; $fs = $null
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
       # .NET, not Remove-Item: a lock its holder deletes in between made Remove-Item throw despite SilentlyContinue
-      try { if ([IO.File]::Exists($lock) -and ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2) { [IO.File]::Delete($lock) } } catch {}   # a live holder keeps it open: the delete fails
+      try { if ([IO.File]::Exists($lock) -and ($KitIsWindows -or ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2)) { [IO.File]::Delete($lock) } } catch {}   # a live holder keeps it open: the delete fails
       Start-Sleep -Milliseconds 100
     }
   }
@@ -33,6 +33,14 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   if (-not $fs) { $m = "Invoke-KitLocked: $lock still held after 130 s - not writing $File"; Write-Warning $m; throw $m; return }
   try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
 }
+# temp + rename in the same folder: a crash leaves the old file or the new one, never half of one; a reader holding it: retried
+function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text) {
+  $p = [IO.Path]::GetFullPath($Path, (Get-Location -PSProvider FileSystem).ProviderPath); $t = "$p.$PID.tmp"
+  [IO.File]::WriteAllText($t, $Text, [Text.UTF8Encoding]::new($false))
+  for ($i = 0; ; $i++) { try { [IO.File]::Move($t, $p, $true); return } catch { if ($i -ge 40) { [IO.File]::Delete($t); throw }; Start-Sleep -Milliseconds 50 } }
+}
+# names the kit makes (dev.ps1 dir, briefs, checkpoints, snapshots): lowercase-kebab
+function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
 # -Strict: bad JSON -> <file>.bad-<time> + throw (never {} over all tasks)
 function Read-KitTracking([switch]$Strict) {
   $f = Get-KitPath tracking; $t = $null
@@ -58,6 +66,12 @@ function Update-KitTracking([Parameter(Mandatory)][scriptblock]$Change) {
     $t | ConvertTo-Json -Depth 8 | Set-Content "$f.tmp" -Encoding utf8
     Move-Item "$f.tmp" $f -Force
   }
+}
+# a task deleted in the tracker (404 + "task not found"; never an outage page or a missing CLI): tracking drops it, the entry
+# goes to the calls log, $true
+function Remove-KitGoneTask([string]$Id, $Err) {
+  if ("$Err" -notmatch '(?is)(?=.*\b404\b)(?=.*\b(task|issue|item|ticket)\b[^.]{0,30}\b(not found|does not exist|deleted)\b)|could not resolve to an? issue') { return $false }
+  Update-KitTracking { param($t) Write-KitLog calls task-gone @{ task = $Id; error = "$Err"; entry = $t.tasks[$Id] }; $t.tasks.Remove($Id) }; $true
 }
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
@@ -270,32 +284,33 @@ function Get-KitHolder {
   }
   [ordered]@{ holderPid = $null; holderStart = '' }
 }
-function Test-KitHolder($o) {
-  if (-not $o -or -not $o.holderPid) { return $null }
-  $p = Get-Process -Id ([int]$o.holderPid) -ErrorAction SilentlyContinue
-  if (-not $p) { return $false }
-  if ($o.holderStart) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$o.holderStart).TotalSeconds) -lt 2 } catch {} }
+function Get-KitPidStart([int]$Id) { try { (Get-Process -Id $Id -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch { '' } }
+# the same process only with the same start time: a cold boot reuses pids. $Start untyped: JSON gives a DateTime
+function Test-KitPid($Id, $Start) {
+  $p = if ($Id) { Get-Process -Id ([int]$Id) -ErrorAction SilentlyContinue }; if (-not $p) { return $false }
+  if ($Start) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$Start).TotalSeconds) -lt 2 } catch {} }
   $true
 }
+function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null }; Test-KitPid $o.holderPid $o.holderStart }
 # ---- leases: liveness leases (README "Leases"), ONE rule for env services, test browsers, phones, sandboxes, builds
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
   $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder)
   if ($OwnerMinutes) { $l.owner = $true; $l.until = (Get-Date).AddMinutes($OwnerMinutes).ToString('o') }   # only owner holds keep minutes
-  if ($ProcessId) { $l.pid = $ProcessId }; $l
+  if ($ProcessId) { $l.pid = $ProcessId; $l.pidStart = Get-KitPidStart $ProcessId }; $l
 }
 $script:KitLiveCache = @{}
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitSetting 'idle.beatMinutes' 20); $a = "$($l.agent)"
   if ($l.owner -or ($l.until -and -not $a -and -not $l.holderPid)) { return [datetime]$l.until -gt $now }   # a pre-lease hold keeps its minutes
-  if ($l.pid -and (Get-Process -Id ([int]$l.pid) -ErrorAction SilentlyContinue)) { return $true }
+  if ($l.pid -and (Test-KitPid $l.pid $l.pidStart)) { return $true }
   $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt $bm) { $s } } catch {} }
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
   $b = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
     Where-Object { $_.status -ne 'left' -and $(if ($l.session) { $_.session -eq $l.session } else { $_.agent -and $_.agent -in @($a, $l.holder) }) })
-  if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Get-Process -Id ([int]$_.pid) -ErrorAction SilentlyContinue)) }).Count) { return $true }
+  if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart)) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
   if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt $bm) { return $true } }
   (Test-KitHolder $l) -eq $true
@@ -847,7 +862,7 @@ function Get-KitLogFile([string]$Stream, [datetime]$Day = (Get-Date), [switch]$C
 # run / agent / task: the call's -Run -Agent -Task, its -Session's board entry, the board entry claiming its -Dir / -Worktree, KIT_AGENT / KIT_RUN
 function Get-KitWho([Collections.IDictionary]$Named = @{}) {
   $w = [ordered]@{ run = "$($Named.Run)"; agent = "$($Named.Agent)"; task = "$($Named.Task)" }
-  $b = if ($Named.Session) { try { Get-Content (Join-Path (Get-KitPath board) "$($Named.Session).json") -Raw | ConvertFrom-Json } catch {} }
+  $b = if ($Named.Session) { try { Get-Content (Join-Path (Get-KitPath board) "$($Named.Session).json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch {} }
   $dir = "$(@($Named.Dir, $Named.Worktree) | Where-Object { $_ } | Select-Object -First 1)"
   if (-not $b -and -not $w.agent -and $dir) { $d = try { [IO.Path]::GetFullPath($dir).TrimEnd('\', '/').ToLower() } catch { '' }
     $b = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } |

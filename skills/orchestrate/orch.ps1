@@ -3,7 +3,9 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session]   agent board, messages
   learn -Skill -Kind -Text | -Read | -Show (-Lesson | -Bump | -Fixed | -Trim | -Stats | -History: extra kit-admin)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Done -RunId|-Run | -List [-Brief]
-  recover [-RunId <id>] [-Hours 48]   stopped runs: state, resume brief, exact resume call
+  recover [-RunId <id> | -Run <runs>] [-Hours 48]   stopped runs: state, resume brief, exact resume call
+  pause -Run <run> | -All [-Reason] [-Wait 10] · resume -Run <run> | -All [-Wait <min>]   stop at checkpoints; paused / crashed runs back
+  program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail]   task <-> MRs; promoted when all merged
   supervise [-AutoFix] [-Brief] [-Agents] [-Json] [-Takeover] [-Session]   heartbeat
@@ -13,9 +15,10 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L20 init · L48 board · L189 budget · L217 launch · L309 recover · L399 track · L669 supervise report · L710 anomalies ·
-  L739 supervise · L997 report · L1074 audit · L1134 bugbrief · L1244 cleanup · L1368 learn · L1398 decide · L1464 health ·
-  L1523 retro due · L1533 the kit origin's main and extras · L1549 setup · L1614 guard-sendmessage
+Sections: L23 init · L51 board · L216 budget · L244 launch · L336 recover · L403 pause · L447 resume · L505 program · L549 track ·
+  L822 supervise report · L863 anomalies · L892 supervise · L1150 report · L1227 audit · L1287 bugbrief · L1397 cleanup ·
+  L1521 learn · L1551 decide · L1617 health · L1679 retro due · L1689 the kit origin's main and extras · L1705 setup ·
+  L1770 guard-sendmessage
 #>
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -48,8 +51,18 @@ function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
 # ---- board: who is alive; one writer per worktree
 # $Change returns $null = unchanged; script scope: supervise uses it too
 function Update-BoardEntry([string]$Path, [scriptblock]$Change) {
-  Invoke-KitLocked $Path { if (Test-Path $Path) { $e0 = Get-Content $Path -Raw | ConvertFrom-Json; $n0 = & $Change $e0; if ($null -ne $n0) { $n0 | ConvertTo-Json | Set-Content $Path } } }
+  Invoke-KitLocked $Path { if (Test-Path $Path) { $e0 = Get-Content $Path -Raw | ConvertFrom-Json; $n0 = & $Change $e0; if ($null -ne $n0) { Write-KitAtomic $Path ($n0 | ConvertTo-Json) } } }
 }
+# board entries whose session process is gone (crash, reboot): left + crashed (health, supervise -AutoFix); the entries
+function Set-KitBoardCrashed {
+  foreach ($e in @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -eq $false })) {
+    Update-BoardEntry $e.file { param($x) $x.status = 'left'; $x | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); $x }; $e
+  }
+}
+function Get-KitCheckpointFile([string]$Agent) { Join-Path (Get-KitPath agents) "$(ConvertTo-KitSlug $Agent)/resume.json" }
+function Get-KitCheckpoint([string]$Agent) { $f = Get-KitCheckpointFile $Agent; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
+# the newest pause holding this run (one of all runs unless resume released it), $null when none
+function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) } | Sort-Object { [datetime]$_.at })[-1] }
 function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text) {
   $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
@@ -61,7 +74,7 @@ param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('join', 'beat', 'show', 'check', 'leave', 'msg', 'inbox')][string]$Action,
   [string]$Agent, [string]$Area = '', [string]$Items = '', [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume, [string]$Type = '',
-  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Handoff = ''
+  [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Handoff = '', [double]$Wait = 1.5
 )
 $dir = Get-KitPath board -Create
 $staleMin = [double](Get-KitSetting 'idle.beatMinutes' 20)
@@ -110,7 +123,7 @@ switch ($Action) {
     else { $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
     # the dead pid is the join shell's: not alone
     foreach ($o in @($same | Where-Object { $_.session -ne $tok })) {
-      $alive = $o.pid -and [bool](Get-Process -Id ([int]$o.pid) -ErrorAction SilentlyContinue)
+      $alive = $o.pid -and (Test-KitPid $o.pid $o.pidStart)
       $age = ($now - [datetime]$o.beat).TotalMinutes
       $shared = @(@(Split-KitList $o.worktrees | ForEach-Object { Norm $_ }) | Where-Object { $_ -and $_ -in $myClaims })
       $why = if ((Test-KitHolder $o) -eq $false) { "its session process $($o.holderPid) is gone (crash or restart)" } elseif (-not $alive -and $age -ge 3) { "no heartbeat for $([int]$age) min" } elseif ($Resume -and $shared.Count) { "-Resume on $($shared -join ', ')" } else { $null }
@@ -121,11 +134,16 @@ switch ($Action) {
       } catch { $notes += "could not take over session $($o.session): $_" }
     }
     $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; area = $Area; items = $Items; worktrees = @(Split-KitList $Worktrees); contracts = $Contracts
-                      status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID } + (Get-KitHolder)
+                      status = 'working'; joined = $joined; beat = $now.ToString('o'); pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
     $bg = Get-KitBudget -Model $Model; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; spend = 0 }
-    $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { $me | ConvertTo-Json | Set-Content $mf }
+    $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitAtomic $mf ($me | ConvertTo-Json) }
     $ho = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.handoffBrief -and -not $_.continuedBy } | Sort-Object { [datetime]$_.beat } -Descending)[0]
     if ($ho) { Update-BoardEntry $ho.file { param($x) $x | Add-Member -Force NoteProperty continuedBy $tok; $x }; "CONTINUE: the previous $Agent handed off at its budget: read its resume brief $($ho.handoffBrief) first, then go on from there" }
+    $ck = Get-KitCheckpoint $Agent
+    if ($ck -and -not $ck.done -and $ck.next -ne 'none' -and (-not $Run -or -not $ck.run -or $ck.run -eq $Run)) {
+      $rb = Join-Path (Split-Path (Get-KitCheckpointFile $Agent)) 'resume-brief.md'
+      "CHECKPOINT: start at step '$($ck.next)': $(if (Test-Path -LiteralPath $rb) { "$rb (orch.ps1 resume verified it), " })$((Get-KitCheckpointFile $Agent) -replace 'json$', 'md'). Done steps: verify (sha, MR, doc exist), never redo; an uncommitted diff is the interrupted step's work: keep it"
+    }
     $act = @(Active | Where-Object session -ne $tok)
     Print $act
     $notes | ForEach-Object { $_ }
@@ -148,9 +166,10 @@ switch ($Action) {
       $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model } }
       Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
       "budget: spend $($sp.spend) / $($bg.budget) (handoff at $($bg.handoff))"
-      if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $hb = Join-Path (Get-KitPath briefs -Create) "handoff-$($me.agent -replace '[^\w.-]', '_')-$Session.md"; "HANDOFF: spend $($sp.spend) >= $($bg.handoff): write a resume brief (templates.md ""Resume brief"") to $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
+      if ($bg.handoff -and $sp.spend -ge $bg.handoff) { $hb = Join-Path (Get-KitPath briefs -Create) "$(ConvertTo-KitSlug "handoff-$($me.agent)-$Session").md"; "HANDOFF: spend $($sp.spend) >= $($bg.handoff): write a resume brief (templates.md ""Resume brief"") to $hb, commit WIP, board leave -Session $Session -Handoff $hb, return handoff = $hb and stop: a fresh agent continues" }
     }
     $u = Get-Unread $me.agent; if ($u) { "INBOX: $u message(s) wait: orch.ps1 board inbox -Agent $($me.agent)" }
+    $pz = Get-KitActivePause $me.run; if ($pz) { "PAUSE ($($pz.reason)): now, at this step boundary: dev.ps1 checkpoint, dev.ps1 wt commit (WIP, no push), release your leases, then board leave -Session $Session -Status paused (again while it prints PAUSED); return no result" }
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
@@ -165,7 +184,15 @@ switch ($Action) {
   'leave' {
     $f = Join-Path $dir "$Session.json"
     if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff recorded)"; exit 1 }
-    Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; $x }
+    $paused = $Status -eq 'paused'
+    Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
+    $cf = Get-KitCheckpointFile $script:leftEntry.agent
+    if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # finished: the next join starts fresh
+    if ($paused) {
+      $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
+      if ($pz) { "PAUSED ($Session): stay stopped, return no result; the coordinator stops this run or resumes it. Run this same leave again now"; exit 0 }
+      "RESUMED: board join -Agent $($script:leftEntry.agent) -Run '$($script:leftEntry.run)' -Resume, then go on at your checkpoint's next step"; exit 0
+    }
     "left ($Session)$(if ($Handoff) { ": handoff brief $Handoff (a fresh agent continues: board join prints CONTINUE)" })"
   }
   'msg' {
@@ -180,7 +207,7 @@ switch ($Action) {
       $m = @(Get-Content $f | ForEach-Object { $_ | ConvertFrom-Json })
       $show = @($m | Where-Object { $All -or -not $_.read }); foreach ($x in $show) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from): $($x.text)" }
       if (-not $show.Count) { 'inbox: nothing unread' }
-      Set-Content -LiteralPath $f (@($m | ForEach-Object { $_.read = $true; $_ | ConvertTo-Json -Compress })) -Encoding utf8
+      Write-KitAtomic $f ((@($m | ForEach-Object { $_.read = $true; $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
     }
   }
 }
@@ -204,7 +231,7 @@ if ($Run) {   # a workflow run: the sum of its agents' spend vs the cap its laun
   $wf = if ($sf.wfDir -and (Test-Path $sf.wfDir)) { $sf.wfDir } else { $t = Find-KitTranscript "-Run '$Run' " 'agent-*.jsonl'; if ($t) { Split-Path $t } }
   $sp = @(if ($wf) { Get-ChildItem $wf -Filter 'agent-*.jsonl' | ForEach-Object { (Get-KitSpend $_.FullName).spend } })
   $o = [ordered]@{ run = $Run; spent = [int](($sp | Measure-Object -Sum).Sum); agents = $sp.Count; cap = [int]$sf.cap; estimate = [int]$sf.estimate; stopAt = [double]$sf.stopAt }
-  Invoke-KitLocked $sf.file { $j = Get-Content $sf.file -Raw | ConvertFrom-Json; $j | Add-Member -Force NoteProperty wfDir $wf; $j | Add-Member -Force NoteProperty spent $o.spent; $j | ConvertTo-Json -Depth 30 | Set-Content $sf.file -Encoding utf8 }
+  Invoke-KitLocked $sf.file { $j = Get-Content $sf.file -Raw | ConvertFrom-Json; $j | Add-Member -Force NoteProperty wfDir $wf; $j | Add-Member -Force NoteProperty spent $o.spent; Write-KitAtomic $sf.file ($j | ConvertTo-Json -Depth 30) }
   if ($Json) { $o | ConvertTo-Json -Compress } else { "run $Run`: spent $($o.spent) of the cap $($o.cap) ($($o.agents) agents; stop at $([int]($o.stopAt * 100))%)" }; exit 0
 }
 $b = Get-KitBudget -Tool $Tool -Model $Model -Window $Window
@@ -236,7 +263,7 @@ if ($Self) {
   $leaf = Split-Path $Script -Leaf
   $rec = [ordered]@{ script = (Join-Path $kit "workflows/$leaf"); run = $Run; args = $a; argsRaw = $raw; runDir = $(if ($RunDir) { $RunDir } else { $a.runDir }); fnv = $got; at = (Get-Date).ToString('o') } + (Get-KitHolder)
   $bud = if ($Plan) { $c = Get-KitPlanCap $Plan; $b0 = Get-KitBudget; [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; handoffAt = $b0.handoffAt; plan = $Plan }; $rec += [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; plan = $Plan } }
-  $rec | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Get-SelfLaunchFile $leaf $Run $got) -Encoding utf8
+  Write-KitAtomic (Get-SelfLaunchFile $leaf $Run $got) ($rec | ConvertTo-Json -Depth 30)
   "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }; exit 0
 }
 
@@ -245,7 +272,7 @@ if ($Done) {
   $files = @(@(if ($RunId) { Join-Path $dir "$(& $safe $RunId).json" }) | Where-Object { Test-Path -LiteralPath $_ })
   if ($Run) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object run -eq $Run | ForEach-Object file) }
   if (-not $files.Count) { Write-Host "[launch] no record for $RunId$Run (nothing to mark)"; exit 0 }
-  foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-Date).ToString('o'); $r | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $x -Encoding utf8 } }
+  foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-Date).ToString('o'); Write-KitAtomic $x ($r | ConvertTo-Json -Depth 30) } }
   Write-Host "[launch] marked completed: $(@($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
   exit 0
 }
@@ -257,15 +284,15 @@ if (-not $List) {
   $rec = [ordered]@{ runId = $RunId; script = $Script; args = $a; argsFile = $(if ($ArgsFile) { (Resolve-Path -LiteralPath $ArgsFile).Path } else { $null })
     runDir = $(if ($RunDir) { $RunDir } else { $null }); session = $(if ($Session) { $Session } else { $null }); at = (Get-Date).ToString('o'); completed = $null } + (Get-KitHolder)
   $f = Join-Path $dir "$(& $safe $RunId).json"
-  $rec | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $f -Encoding utf8
+  Write-KitAtomic $f ($rec | ConvertTo-Json -Depth 30)
   Write-Host "[launch] recorded $RunId ($(Split-Path $Script -Leaf)) -> $f"
   exit 0
 }
 
 # one line per stopped run; the resume calls, briefs and finalize lines: orch.ps1 recover
 $out = @(foreach ($s in Get-StoppedRuns -Hours $Hours) {
-  if ($s.runId) { "$($s.leaf) $($s.runId) (resumeFromRunId $($s.runId), args $(if ($s.selfFile) { $s.selfFile } else { $s.file }))" }
-  else { "$($s.leaf) run $($s.run): launched, run id never recorded (orch.ps1 recover finds it; finished: launch -Done -Run '$($s.run)')" }
+  if ($s.runId) { "$(if ($s.paused) { 'paused ' })$($s.leaf) $($s.runId) (resumeFromRunId $($s.runId), args $(if ($s.selfFile) { $s.selfFile } else { $s.file }))" }
+  else { "$(if ($s.paused) { 'paused ' })$($s.leaf) run $($s.run): launched, run id never recorded (orch.ps1 recover finds it; finished: launch -Done -Run '$($s.run)')" }
 })
 foreach ($q in Get-OrphanQaItems -Hours ([math]::Max($Hours, 48))) { $out += "QA run $($q.run): $($q.codes.Count) item(s) tested, never published ($($q.codes -join ', ')): qa.ps1 finalize" }
 $out | ForEach-Object { $_ }
@@ -291,25 +318,26 @@ function Get-StoppedRuns([int]$Hours = 24, [switch]$All) {
   $used = @{}
   foreach ($r in $records | Where-Object { -not $_.completed }) {
     $at = try { [datetime]$r.at } catch { (Get-Item -LiteralPath $r.file).LastWriteTime }
-    if ($at -lt $since) { continue }
-    if (-not $All -and (Test-KitHolder $r) -eq $true) { continue }
+    if ($at -lt $since -and -not $r.paused) { continue }   # a paused run waits for resume however long
+    if (-not $All -and -not $r.paused -and (Test-KitHolder $r) -eq $true) { continue }
     $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
     $sf = @($selfs | Where-Object { $run -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
     if (-not $sf) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | Select-Object -First 1 -ExpandProperty file }
     if ($sf) { $used[$sf] = $true; $so = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($so.completed) { continue }; $run = $so.run }   # an owner-stopped self record ends the launch too
-    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r }
+    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r; paused = $r.paused }
   }
-  foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and [datetime]$_.at -ge $since }) {
-    if (-not $All -and (Test-KitHolder $s) -eq $true) { continue }
+  foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and ($_.paused -or [datetime]$_.at -ge $since) }) {
+    if (-not $All -and -not $s.paused -and (Test-KitHolder $s) -eq $true) { continue }
     # only a completed record of THIS launch hides it
     if (@($records | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count) { continue }
-    [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null }
+    [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null; paused = $s.paused }
   }
 }
 # ---- recover: stopped runs; no network
 function Invoke-Recover {
-param([string]$RunId, [int]$Hours = 48)
-$runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]$RunId) | Where-Object { -not $RunId -or $_.runId -eq $RunId })
+param([string]$RunId, [string[]]$Run = @(), [int]$Hours = 48)
+$Run = @(Split-KitList $Run)
+$runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]($RunId -or $Run.Count)) | Where-Object { (-not $RunId -or $_.runId -eq $RunId) -and (-not $Run.Count -or $_.run -in $Run) })
 if ($RunId -and -not $runs.Count) { "no launch record for $RunId within $Hours h (orch.ps1 launch -List)"; exit 0 }
 $wfDirs = @(Get-KitWorkflowDirs | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
 foreach ($s in $runs) {
@@ -322,7 +350,7 @@ foreach ($s in $runs) {
   "== $($s.leaf) run $(if ($s.runId) { $s.runId } else { '<id unknown>' }) ($($s.run)), launched $($s.at.ToString('yyyy-MM-dd HH:mm'))"
   "  args: $(if ($s.selfFile) { "$($s.selfFile) (.args, written by the workflow: exact)" } else { "$($s.file) (.args, typed by the coordinator: a missing field breaks resumeFromRunId)" })"
   $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $s.run })
-  foreach ($b in $board | Where-Object status -ne 'left' | Sort-Object agent) { "  board: $($b.agent) $($b.status), last beat $(([datetime]$b.beat).ToString('dd MMM HH:mm'))$(if ((Test-KitHolder $b) -eq $false) { ', session gone' }) | $($b.area)" }
+  foreach ($b in $board | Where-Object { $_.status -ne 'left' -or $_.paused -or $_.crashed } | Sort-Object agent) { "  board: $($b.agent) $(if ($b.paused) { 'paused' } elseif ($b.crashed) { 'crashed' } else { $b.status }), last beat $(([datetime]$b.beat).ToString('dd MMM HH:mm'))$(if ((Test-KitHolder $b) -eq $false) { ', session gone' }) | $($b.area)" }
   if (@($board | Where-Object status -eq 'left').Count) { "  board: $(@($board | Where-Object status -eq 'left').Count) entr(ies) left" }
   $wts = @(); $brief = @()
   $agents = if ($a.agents) { @($a.agents) } else { @($board | Group-Object agent | ForEach-Object { [pscustomobject]@{ id = $_.Name; items = $_.Group[0].items } }) }
@@ -340,6 +368,8 @@ foreach ($s in $runs) {
       }
     }
     if (-not @($wts | Where-Object { $_ -like "*worktree: $($ag.id) *" }).Count) { $brief += "- $($ag.id) (items $($ag.items)): no worktree found: not started, or removed" }
+    $ck = Get-KitCheckpoint $ag.id
+    if ($ck -and -not $ck.done -and (-not $ck.run -or $ck.run -eq $s.run)) { $l = "$($ag.id) checkpoint: next $($ck.next); done: $(@($ck.steps | ForEach-Object { "$($_.step) $($_.evidence)".Trim() }) -join '; ')"; $wts += "  $l"; $brief += "- $l (start there; dev.ps1 checkpoint -Agent $($ag.id) -Read)" }
   }
   $wts
   if ($s.runId) {
@@ -349,12 +379,12 @@ foreach ($s in $runs) {
   foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ -and $_.run -eq $s.run })) { "  decision pending: $($d.id) $($d.agent) item $($d.item): $($d.question)" }
   if ($s.leaf -eq 'testy.js' -and $a.runDir) { "  QA run folder: $($a.runDir) (unpublished items: below)" }
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) {
-    $rf = Join-Path (Get-KitPath launches -Create) "$(if ($s.runId) { $s.runId } else { $s.run }).resume.md"
+    $rf = Join-Path (Get-KitPath launches -Create) "$(ConvertTo-KitSlug $(if ($s.runId) { $s.runId } else { $s.run })).resume.md"
     $txt = @("# Resume brief: $($s.run) ($($s.leaf) $($s.runId))", "Original brief: $($a.brief) (it wins where this differs). Mode: resume.",
       'A stopped agent''s work is below. Join the board with its id + -Resume (TAKEOVER, not DUPLICATE). Before editing: dev.ps1 wt status',
       '-Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it stopped (testing goals, local test',
       'loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.', '', '## State at recovery') + $brief
-    [IO.File]::WriteAllText($rf, ($txt -join "`n") + "`n")
+    Write-KitAtomic $rf (($txt -join "`n") + "`n")
     "  resume brief: $rf"
   }
   if ($s.runId) { "  RESUME: Workflow({ scriptPath: '$($s.script -replace '\\', '/')', resumeFromRunId: '$($s.runId)', args: $aj })" }
@@ -368,6 +398,126 @@ Invoke-KitHooks Get-KitRecoverLines   # extra supervise-resources: env and phone
 foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (orch.ps1 supervise -AutoFix replays it)" }
 "== heartbeat: a new session has none; arm ONE: CronCreate (cron */10 * * * *), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (orchestrate E1)"""
+}
+
+# ---- pause: agents checkpoint, commit WIP, release leases, stop; a .state record lets resume start each at its next step
+function Get-KitWtState([string]$Dir) {
+  if (-not (Test-Path -LiteralPath $Dir)) { return [pscustomobject]@{ dir = $Dir; gone = $true; dirty = @() } }
+  [pscustomobject]@{ dir = $Dir; branch = "$(git -C $Dir branch --show-current 2>$null)".Trim(); head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); dirty = @(git -C $Dir status --porcelain 2>$null | ForEach-Object { "$_".Substring(3) }) }
+}
+function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {   # $null removes it
+  foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Properties.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitAtomic $x ($j | ConvertTo-Json -Depth 30) } }
+}
+function Invoke-Pause {
+param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10)
+if (-not ($Run -or $All)) { 'usage: orch.ps1 pause -Run <run> | -All [-Reason "<why>"] [-Wait <min, default 10>]'; exit 2 }
+$pf = Join-Path (Get-KitPath pauses -Create) "pause-$(Get-Date -Format yyyy-MM-dd-HHmmss).json"
+$rec = [ordered]@{ at = (Get-Date).ToString('o'); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; agents = @(); runs = @() }
+Write-KitAtomic $pf ($rec | ConvertTo-Json -Depth 30)   # from now every board beat prints PAUSE
+$mine = { param($x) $All -or $x.run -eq $Run }
+$live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (& $mine $_) -and (Test-KitHolder $_) -ne $false })
+foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): at your next step boundary: dev.ps1 checkpoint, dev.ps1 wt commit (WIP, no push), release your leases, board leave -Session $($b.session) -Status paused; return no result" }
+"PAUSE sent to $($live.Count) agent(s)$(if ($live.Count) { " ($(@($live.agent) -join ', '))" }); waiting up to $Wait min for each to leave at a checkpoint"
+$until = (Get-Date).AddMinutes($Wait)
+while ($true) {
+  $open = @($live | Where-Object { $e = try { Get-Content -LiteralPath $_.file -Raw | ConvertFrom-Json } catch { $null }; $e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false })
+  if (-not $open.Count -or (Get-Date) -ge $until) { break }; Wait-KitPoll 15
+}
+$runs = @(Get-StoppedRuns -Hours 168 -All | Where-Object { & $mine $_ })
+foreach ($s in $runs) {
+  Set-KitLaunchField @($s.file, $s.selfFile) paused $pf
+  $rec.runs += [ordered]@{ run = $s.run; leaf = $s.leaf; runId = $s.runId; file = $s.file; selfFile = $s.selfFile
+    launch = $(if ($s.file) { Get-Content -LiteralPath $s.file -Raw | ConvertFrom-Json }); self = $(if ($s.selfFile) { Get-Content -LiteralPath $s.selfFile -Raw | ConvertFrom-Json }) }   # cleanup may remove launches/ meanwhile
+}
+foreach ($b in $live) {
+  $ck = Get-KitCheckpoint $b.agent
+  $dirs = @(@($ck.worktrees) + @($b.worktrees | Where-Object { "$_" -match '[\\/]' -and (Test-Path -LiteralPath "$_" -PathType Container) }) | Where-Object { $_ } | Select-Object -Unique)
+  $rec.agents += [ordered]@{ agent = $b.agent; run = $b.run; session = $b.session; confirmed = $b.session -notin @($open.session); next = $ck.next; checkpoint = $ck; worktrees = @($dirs | ForEach-Object { Get-KitWtState $_ }) }
+}
+$hooks = @(Invoke-KitHooks Invoke-KitPause)   # extra local-env: services no live holder needs stop
+$rec.state = 'paused'; Write-KitAtomic $pf ($rec | ConvertTo-Json -Depth 30)
+"PAUSED $($live.Count - $open.Count) of $($live.Count) agent(s) at a checkpoint$(if ($open.Count) { "; not confirmed: $(@($open.agent) -join ', ') (their last checkpoint and worktree hold the state; resume treats them as crashed)" }); $($runs.Count) run(s) marked paused$(if ($runs.Count) { ": $(@($runs.run) -join ', ')" })"
+$hooks
+"record: $pf"
+if ($open.Count) { "NOT safe yet: $(@($open.agent) -join ', ') still working; wait (orch.ps1 pause again) or power off anyway = a crash for them (resume starts them at their last checkpoint)" }
+else { 'Safe to power off: nothing after this needs the network.' }
+'Machine stays on: stop the workflow runs and the heartbeat (agents wait in board leave). Back: orch.ps1 resume -All (or -Run <run>)'
+}
+
+# ---- resume: paused and crashed runs; network first; done steps verified (sha, MR), never redone; merged runs skipped
+function Test-KitOnline { if ($env:KIT_OFFLINE) { return $env:KIT_OFFLINE -eq '0' }; $c = [Net.Sockets.TcpClient]::new(); try { $c.ConnectAsync($KitConf.GitHost, 443).Wait(5000) -and $c.Connected } catch { $false } finally { $c.Dispose() } }
+function Test-KitStepEvidence($st) {
+  $e = "$($st.evidence)".Trim()
+  $u = if ($e -match '^https?://') { ConvertFrom-MrUrl $e } elseif ($e -match '^(?<r>[\w./-]+)!(?<n>\d+)$') { @{ repo = (Get-HostProject $Matches.r -Raw); n = $Matches.n } }
+  if ($u) { $h = try { Invoke-HostVerb 'mr.get' $u -NoMemo } catch { $null }; return [pscustomobject]@{ mr = $e; state = "$($h.state)"; text = "MR $(if ($h) { $h.state } else { 'UNKNOWN (host call failed): check it' })" } }
+  $sha = if ($e -cmatch '^[0-9a-f]{7,40}$') { $e } else { $st.head }
+  if ($st.dir -and $sha) { git -C $st.dir cat-file -e "$sha^{commit}" 2>$null; return [pscustomobject]@{ text = $(if ((Test-Path -LiteralPath $st.dir) -and -not $LASTEXITCODE) { "commit $sha present" } else { "commit $sha not found (rebased? check the branch; redo only what it lacks)" }) } }
+  [pscustomobject]@{ text = $(if ($e -match '^https?://') { 'link recorded' } else { 'recorded' }) }
+}
+function Invoke-Resume {
+param([string]$Run = '', [switch]$All, [double]$Wait = 0, [int]$Hours = 168)
+if (-not ($Run -or $All)) { 'usage: orch.ps1 resume -Run <run> | -All [-Wait <min> for the network]'; exit 2 }
+$until = (Get-Date).AddMinutes($Wait)
+while (-not (Test-KitOnline)) {
+  if ((Get-Date) -ge $until) { "OFFLINE: $($KitConf.GitHost):443 unreachable; resume needs the git host and the tracker. Connect, then run orch.ps1 resume again (-Wait <min> waits for the network)"; exit 1 }
+  Wait-KitPoll 30
+}
+$pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($All -or $_.run -in '*', $Run) })
+foreach ($p in $pauses) { foreach ($r in @($p.runs)) { foreach ($pair in @(, @($r.file, $r.launch)) + @(, @($r.selfFile, $r.self))) {   # launch records a cleanup removed while paused
+  if ($pair[0] -and $pair[1] -and -not (Test-Path -LiteralPath $pair[0])) { New-Item -ItemType Directory -Force (Split-Path $pair[0]) | Out-Null; Write-KitAtomic $pair[0] ($pair[1] | ConvertTo-Json -Depth 30) } } }
+  foreach ($a in @($p.agents | Where-Object { $_.checkpoint })) { $cf = Get-KitCheckpointFile $a.agent; if (-not (Test-Path -LiteralPath $cf)) { New-Item -ItemType Directory -Force (Split-Path $cf) | Out-Null; Write-KitAtomic $cf ($a.checkpoint | ConvertTo-Json -Depth 6) } } }   # and checkpoints (cleanup: agents/ after 7 d)
+$null = Set-KitBoardCrashed
+$go = @()
+foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run -eq $Run })) {
+  "== $($s.leaf) run $($s.run) ($(if ($s.paused) { 'paused' } else { 'crashed' }))"
+  $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object run -eq $s.run)
+  $waiting = @($board | Where-Object { $_.paused -and ((Get-Date) - [datetime]$_.beat).TotalMinutes -lt 3 })   # board leave -Status paused beats every 1.5 min
+  Set-KitLaunchField @($s.file, $s.selfFile) paused $null   # resumed, relaunched or skipped: no longer paused
+  if ($waiting.Count) { "  still running: $(@($waiting.agent) -join ', ') wait in board leave; released, they rejoin and continue (no relaunch)"; continue }
+  $lr = Get-Content -LiteralPath $(if ($s.selfFile) { $s.selfFile } else { $s.file }) -Raw | ConvertFrom-Json
+  $wf = @(Get-KitWorkflowDirs | Where-Object { $s.runId -and $_.Name -eq $s.runId })[0]
+  $jl = @(if ($wf -and (Test-Path (Join-Path $wf.FullName 'journal.jsonl'))) { Get-Content (Join-Path $wf.FullName 'journal.jsonl') | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } })
+  $res = @($jl | Where-Object type -eq 'result' | ForEach-Object agentId)
+  $steps = @($jl | Where-Object type -eq 'started' | ForEach-Object { [pscustomobject]@{ who = ($_.label -split ':', 2)[-1] -replace '@.*$', ''; done = $_.agentId -in $res } })
+  $mrs = @(); $noMr = 0   # agents: the launch args, the board and every checkpoint of the run (checky checkpoints under its <CODE>)
+  $cks = @(Get-ChildItem (Get-KitPath agents) -Filter 'resume.json' -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.run -eq $s.run } | ForEach-Object agent)
+  $lines = @(foreach ($ag in @(@(@($lr.args.agents) | ForEach-Object { $_.id }) + @($board.agent) + $cks | Where-Object { $_ } | Select-Object -Unique)) {
+    $mySteps = @($steps | Where-Object who -eq $ag)
+    $ck = Get-KitCheckpoint $ag
+    if (-not $ck -or $ck.done -or ($ck.run -and $ck.run -ne $s.run)) { "  $ag`: no open checkpoint$(if ($mySteps.Count -and -not @($mySteps | Where-Object { -not $_.done }).Count) { '; its steps have journal results: not relaunched (resumeFromRunId keeps them)' })"; continue }
+    $b = @("# Resume brief $ag (run $($s.run))", "Start AT step: $($ck.next). The steps below are done and were verified now: never redo them.", '', '## Done (verified)')
+    if (-not @($ck.steps | Where-Object step -eq 'mr').Count) { $noMr++ }
+    foreach ($st in @($ck.steps)) { $v = Test-KitStepEvidence $st; if ($v.mr) { $mrs += $v }; $b += "- $($st.step)$(if ($st.item) { " [$($st.item)]" }): $($st.evidence) -> $($v.text)" }
+    $b += @('', "## Interrupted step '$($ck.next)': rerun it from the kept diff (never discard it)") + @(foreach ($d in @($ck.worktrees)) { $w = Get-KitWtState $d; "- $d $(if ($w.gone) { 'GONE: recreate the worktree from its branch' } else { "branch $($w.branch) @ $($w.head); uncommitted, kept: $(if ($w.dirty.Count) { $w.dirty -join ', ' } else { 'none' })" })" })
+    $b += @('', "## Open: leases to take again: $(@($ck.leases) -join ', '); decisions: $(@($ck.decisions) -join ', ')")
+    $bf = Join-Path (Split-Path (Get-KitCheckpointFile $ag)) 'resume-brief.md'; Write-KitAtomic $bf (($b -join "`n") + "`n")
+    "  $ag`: resume at '$($ck.next)' -> $bf"
+  })
+  $openMrs = @($mrs | Where-Object { $_.state -ne 'merged' })
+  if ($mrs.Count -and -not $openMrs.Count -and -not $noMr) { "  SKIP: all $($mrs.Count) MR(s) merged; finished: orch.ps1 launch -Done $(if ($s.runId) { "-RunId $($s.runId)" } else { "-Run '$($s.run)'" })"; continue }
+  $lines; $go += $s.run
+}
+# a pause of all runs resumed for one run: that run released, the others stay paused
+foreach ($p in $pauses) { Invoke-KitLocked $p.file { $j = Get-Content -LiteralPath $p.file -Raw | ConvertFrom-Json; if ($All -or $j.run -ne '*') { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-Date).ToString('o') } else { $j | Add-Member -Force NoteProperty released @(@($j.released) + $Run | Where-Object { $_ } | Select-Object -Unique) }; Write-KitAtomic $p.file ($j | ConvertTo-Json -Depth 30) } }
+if ($go.Count) { Invoke-Recover -Run $go -Hours $Hours } else { 'nothing to relaunch' }
+}
+
+# ---- program: the coordinator's own state per program (phases -> run, MRs, synced) in .state; a heartbeat reads it after a restart
+function Invoke-Program {
+param([Parameter(Position = 0)][ValidateSet('set', 'get', 'list')][string]$Action = 'list', [string]$Program, [string]$Key, [string]$Value, [switch]$Json)
+$dir = Get-KitPath programs -Create
+if ($Action -eq 'list') { Get-ChildItem $dir -Filter '*.json' | ForEach-Object BaseName; return }
+if (-not $Program -or ($Action -eq 'set' -and -not $Key)) { 'usage: orch.ps1 program set -Program <name> -Key <k> -Value <text | JSON> | get -Program <name> [-Key <k>] [-Json] | list'; exit 2 }
+$f = Join-Path $dir "$(ConvertTo-KitSlug $Program).json"
+$read = { if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable } else { @{} } }
+if ($Action -eq 'set') {
+  $v = try { $Value | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { $Value }
+  Invoke-KitLocked $f { $p = & $read; $p[$Key] = $v; $p._updated = (Get-Date).ToString('s'); Write-KitAtomic $f ($p | ConvertTo-Json -Depth 20) }
+  "program $Program`: $Key set"; return
+}
+$p = & $read
+if ($Key) { if (-not $p.ContainsKey($Key)) { "program $Program has no key $Key"; exit 1 }; $p = $p[$Key] }
+if ($Json -or $p -isnot [string]) { ConvertTo-Json -InputObject $p -Depth 20 } else { $p }
 }
 
 # agents that handed off at their budget and no fresh agent took over yet
@@ -430,7 +580,8 @@ if (-not $Action) { Fail 'usage: orch.ps1 track add|run|rebuild ... (or -Rebuild
 $wavesDir = Get-KitPath waves
 $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
-function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { '' } }
+$script:gone = @{}   # deleted in the tracker: dropped from tracking
+function TaskStatus($id) { try { [string](Get-TrackerTask $id).status } catch { if (Remove-KitGoneTask $id $_) { $script:gone[$id] = $true }; '' } }
 $group = $KitConf.GitlabGroup
 $groupRx = if ($group) { '(?:' + [regex]::Escape($group) + '/)?' } else { '' }
 $alias = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $alias[$p.Name] = [string]$p.Value } }
@@ -597,6 +748,7 @@ switch ($Action) {
         if (-not @($o.mrs).Count -or -not $o.discoveredAt -or ((Get-Date) - [datetime]$o.discoveredAt).TotalMinutes -ge 30) { $o.mrs = @(@($o.mrs) + @(Find-TaskMrs $o.task) | Where-Object { $_ } | Select-Object -Unique); $o.discoveredAt = (Get-Date).ToString('s'); Save $o -Run }
         if (-not @($o.mrs).Count) { continue }
         $cur = TaskStatus $o.task
+        if ($script:gone[$o.task]) { "DROPPED $($o.task): deleted in the tracker, no longer tracked"; continue }
         if (-not (Test-TrackerStatus $cur 'review')) {
           $allMerged = -not @(@($o.mrs) | Where-Object { (MrState $_) -ne 'merged' }).Count
           if (-not $allMerged) { $o.Remove('allMergedAt'); Save $o -Run; continue }
@@ -626,6 +778,7 @@ switch ($Action) {
       if ($busy) { Hold "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix"; continue }
       # never backwards (QA may have closed it)
       $now = TaskStatus $o.task
+      if ($script:gone[$o.task]) { "DROPPED $($o.task): deleted in the tracker, no longer tracked"; continue }
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
@@ -759,7 +912,7 @@ $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   if (-not $Takeover -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt 30) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
-  @{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json | Set-Content $lk
+  Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json)
 }
 if ($script:aside) { $script:aside; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 }
@@ -814,7 +967,7 @@ foreach ($w in $wfDirs) {
 # 2. board: gone sessions, re-joins, duplicates, silent entries
 $board = Get-KitPath board
 $entries = @(Read-KitJsonFiles $board)
-$markLeft = { param($e) Update-BoardEntry (Join-Path $board "$($e.session).json") { param($x) $x.status = 'left'; $x } }
+$markLeft = { param($e) Update-BoardEntry (Join-Path $board "$($e.session).json") { param($x) $x.status = 'left'; $x | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); $x } }
 foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -eq $false })) {
   if ($AutoFix) { & $markLeft $e; Flag 'INFO' "auto-fixed: board entry $($e.agent) ($($e.run)) marked left: its session process $($e.holderPid) is gone" 'Resume its work if unfinished (orch.ps1 recover).' }
   else { Flag 'WATCH' "board entry $($e.agent) ($($e.run)): its session process $($e.holderPid) is gone" 'supervise -AutoFix marks it left; orch.ps1 recover lists its work.' }
@@ -841,7 +994,7 @@ function LabelNames($l) { $p = $l -split ':'; $n = ($p[-1] -split '@')[0]; @($n)
 $liveNames = @($liveLabels | ForEach-Object { LabelNames $_ })
 $doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames })
 # workflow steps for Test-KitLive
-@{ at = $now.ToString('o'); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json | Set-Content (Get-KitPath live-steps -Create)
+Write-KitAtomic (Get-KitPath live-steps -Create) (@{ at = $now.ToString('o'); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json)
 foreach ($s in $stale | Where-Object { $_.agent -in $doneNames }) {
   if ($AutoFix) { & $markLeft $s; Flag 'INFO' "auto-fixed: board entry $($s.agent) marked left (its workflow step finished)" 'Nothing to do.' }
 }
@@ -978,7 +1131,7 @@ foreach ($x in $ags) { $spendNow[$x.name] = $x.spend; $x | Add-Member -Force Not
 # 10. anomalies vs the last round: outbox, agent errors (env restarts, log errors: extra local-env)
 $cur = @{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count }
 $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
-$state.report = @{ spend = $spendNow; at = $now.ToString('s') }; $state | ConvertTo-Json -Depth 5 | Set-Content $stateFile
+$state.report = @{ spend = $spendNow; at = $now.ToString('s') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ agents = @($ags); mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $script:ownerInfo; detailFile = (Get-KitPath supervise-report) }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 if ($script:skipped.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $($script:skipped -join ', ')" 'Partial result: the skipped sections run next round.' }
@@ -1408,7 +1561,7 @@ function Invoke-Decide {
   $save = {
     param($o)
     $f = Join-Path $dir "$($o.id).json"
-    Invoke-KitLocked $f { $o | ConvertTo-Json -Depth 5 | Set-Content $f -Encoding utf8 }
+    Invoke-KitLocked $f { Write-KitAtomic $f ($o | ConvertTo-Json -Depth 5) }
     Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at)   # at = this line's time; the pending line's is the ask's
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
@@ -1502,8 +1655,11 @@ if (Test-Path (Join-Path $kit '.git')) {
 $hook = $null
 if ([Console]::IsInputRedirected) { try { $hook = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch {} }
 if (-not $hook -or $hook.source -ne 'compact') {
-  $stopped = @(& $KitCmd.orch launch -List -Brief 2>$null)
-  if ($stopped.Count) { $msgs += "after a restart: $($stopped -join '; '). Do: & '$($KitCmd.orch)' recover (resume calls, resume briefs, qa.ps1 finalize lines; orchestrate E3); finished ones: orch.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: start one (orchestrate E1)" }
+  # a crash or power loss: board entries and launch records whose process is gone are marked crashed
+  $crashed = @(Set-KitBoardCrashed)
+  foreach ($s in @(Get-StoppedRuns -Hours 72 | Where-Object { -not $_.paused })) { foreach ($x in @($s.file, $s.selfFile) | Where-Object { $_ }) { try { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if (-not $j.crashed) { $j | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); Write-KitAtomic $x ($j | ConvertTo-Json -Depth 30) } } } catch {} } }
+  $stopped = @(& $KitCmd.orch launch -List -Brief -Hours 72 2>$null)
+  if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; orchestrate E3); finished ones: orch.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (orchestrate E1: CronCreate */10 * * * *, orch.ps1 supervise -AutoFix -Brief)" }
 }
 if ($py) {
   $lint =& $py -X utf8 $KitCmd.kittool lint $kit --summary --warn --no-flow 2>$null
@@ -1649,6 +1805,9 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'deploy' { $null = Assert-KitExtra Invoke-Deploy 'orch.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $__rest }
     'decide' { Invoke-KitVerb Invoke-Decide $__rest }
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }
+    'pause' { Invoke-KitVerb Invoke-Pause $__rest }
+    'resume' { Invoke-KitVerb Invoke-Resume $__rest }
+    'program' { Invoke-KitVerb Invoke-Program $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }

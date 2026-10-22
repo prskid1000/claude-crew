@@ -59,8 +59,9 @@ Non-negotiables:
 - The live clone is read-only for you except `kittool.py audit --fix / --fill` (only what they call safe; skip `--fix` on
   worktrees, board and cleanup while anything runs) and, kind env, the local env's own owner verbs; every tracked change goes
   through `<wt>` and a push. Unmerged work is listed, never deleted. Never touch product repos.
-- **Budget:** `board beat` after each step prints spend / budget; HANDOFF -> write the resume brief it names, WIP commit,
-  `board leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues).
+- **Budget and checkpoints:** `dev.ps1 checkpoint -Agent kitty -Run kit-<kind> -Step <n> -Dir <wt>` after each step and
+  `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume brief it names, WIP commit, `board
+  leave -Handoff <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> start there.
 - Never log in to a CLI, never print or copy a value from a `*.local.*` file; org values you cannot derive go to the lead as ASK
   lines. Evidence or it is not a finding; unproven -> "candidate".
 - Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); parts and optional features: `kit-admin.md`

@@ -66,7 +66,7 @@ $null = pwsh @np $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.
 $rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
 $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
-Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
+Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')))
 Expect 'recover: RESUME line has the recorded args byte for byte' ($rc.Contains("resumeFromRunId: 'wf_t1', args: $full })"))
 $sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
 $null = & $self testy.js select-stg $sa $null -RunDir 'C:/rt/qa-runs/d-stg'
@@ -222,5 +222,37 @@ $hr = & { . $O; $n = Get-Date
 Expect 'supervise: a run silent 2+ days is flagged once, then skipped' ($hr -eq 'True|True|True|True')
 $jr = & { . $O; $s = @(@{ agentId = 'a1'; label = 'build:X1' }, @{ agentId = 'a2'; label = 'build:X1' }, @{ agentId = 'a3'; label = 'review:X1' }, @{ agentId = 'a4'; label = 'test:Q1@2' }, @{ agentId = 'a5'; label = 'test:Q1' }, @{ agentId = 'a6'; label = 'test:Q1' }); (@(Get-JournalRunning $s @('a3')) | ForEach-Object agentId) -join ',' }
 Expect 'journal: running = no result, not superseded by a later finished start of the item or a restart of the label' ($jr -eq 'a4,a6')
+# crash, pause, resume (MR states: a fake git host)
+$DV = Join-Path $k 'skills/dev-kit/dev.ps1'; $cw = Join-Path (Kd) 'cwt'; New-Item -ItemType Directory -Force $cw | Out-Null; 'a' | Set-Content "$cw/a.txt"; Save-GitRepo $cw base
+$cs = if ((Px $O board join -Agent C1 -Run cr -Claims $cw | Out-String) -match 'SESSION (\S+)') { $Matches[1] }
+$mr = 'https://h.example/g/api/-/merge_requests/'
+foreach ($c in @('C1', 'worktree', $cw), @('C1', 'commit', (git -C $cw rev-parse --short HEAD)), @('C2', 'commit', 'x'), @('C2', 'mr', "${mr}5"), @('C3', 'mr', "${mr}6")) { $null = Px $DV checkpoint -Agent $c[0] -Run $(if ($c[0] -eq 'C3') { 'cm' } else { 'cr' }) -Step $c[1] -Evidence $c[2] -Dir $cw }
+'b' | Set-Content "$cw/b.txt"   # the interrupted step's diff
+$bf = Join-Path (TkPath $k board) "$cs.json"
+$kp = Start-Process $pwshExe -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', ". '$(Lib)'; Invoke-KitLocked '$bf' { Start-Sleep 60 }"
+while (-not (Test-Path "$bf.lock")) { Start-Sleep -Milliseconds 100 }; $kp.Kill(); $kp.WaitForExit()   # killed mid-write
+$e = Read-Json $bf; $e.holderPid = $kp.Id; & $J $e $bf
+$null = Px $O launch -Done -RunId wf_t1
+foreach ($r in 'cr', 'cm') { $null = & $self buildy.js $r "{""brief"":""C:/b/$r.md"",""agents"":[{""id"":""$(if ($r -eq 'cr') { 'C1"},{"id":"C2' } else { 'C3' })""}]}"; $sx = Get-ChildItem (TkPath $k launches) -Filter "self-buildy-$r-*.json" | Select-Object -First 1; $x = Read-Json $sx.FullName; $x.holderPid = $kp.Id; & $J $x $sx.FullName 10 }
+$ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/orchestrate/adapters')
+'Register-KitAdapter ''git-host'' ''gitlab'' @{ ''mr.get'' = { param($a) [pscustomobject]@{ iid = $a.n; state = $(if ($a.n -eq ''6'') { ''merged'' } else { ''opened'' }); sha = ''s'' } } }' | Set-Content "$ad/fakehost.ps1"
+$sw = [Diagnostics.Stopwatch]::StartNew(); $hh = Px $O health | Out-String; $hs = $sw.Elapsed.TotalSeconds
+$env:KIT_OFFLINE = '1'; $off = Invoke-TestScript $O resume -All; $env:KIT_OFFLINE = '0'
+$rs = Px $O resume -All | Out-String; $ag = TkPath $k agents
+$b1 = Get-Content "$ag/c1/resume-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
+$bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
+Expect 'crash: an agent killed holding the board lock -> health marks it crashed at once, no lock left, all state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
+Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -and $off.out -match 'OFFLINE' -and $off.out -cnotmatch 'RESUME|RELAUNCH')
+Expect 'resume after a crash: brief at the next step, done steps verified, diff kept; join prints CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match 'uncommitted, kept: b\.txt' -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
+Expect 'resume after MR opened: starts at review, MR verified (no new MR); an all-merged run skipped' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 -> MR opened' -and $rs -match '(?s)run cm.*SKIP: all 1 MR\(s\) merged' -and $rs -notmatch "C3`: resume")
+$ps = if ((Px $O board join -Agent P1 -Run pr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O board join -Agent P2 -Run pr; $null = & $self buildy.js pr '{"brief":"C:/b/pr.md"}'
+$pd = TkPath $k pauses -Create; $pj = Start-ThreadJob { & $using:pwshExe -NoProfile -File $using:O pause -Run pr -Reason 'power off' -Wait 0.2 2>&1 | Out-String }   # P1 confirms, P2 never does
+while (-not (Get-ChildItem $pd -Filter 'pause-*.json')) { Start-Sleep -Milliseconds 100 }
+$pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pz = $pj | Wait-Job | Receive-Job
+$pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
+$pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item $ad -Recurse -Force
+Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a waiting run releases it' ($pz -match 'PAUSED 1 of 2 .*not confirmed: P2' -and $pz -match 'NOT safe yet: P2' -and $pr.state -eq 'paused' -and @($pr.agents | Where-Object confirmed).agent -eq 'P1' -and $pr.runs[0].self -and $pb -match 'PAUSE \(power off\)' -and $pl -match '^PAUSED' -and $pll -match 'paused buildy\.js' -and $pu -match 'still running: P1' -and $pu -cnotmatch 'RELAUNCH' -and $pl2 -match 'RESUMED' -and $pl3 -notmatch 'paused buildy')
+$null = Px $O program set -Program 'Big Plan' -Key phases -Value '{"p1":"wf_1"}'; $pg = Px $O program get -Program 'Big Plan' -Key phases | Out-String; $pm = Invoke-TestScript $O program get -Program 'Big Plan' -Key nope
+Expect 'program state in .state: set, get, a missing key exit 1' ($pg -match 'wf_1' -and $pm.code -eq 1)
 Remove-TestKit $k
 Complete-Tests

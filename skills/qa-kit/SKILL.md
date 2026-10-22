@@ -36,7 +36,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
    app `qa.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
-   `qa.ps1 annotate`: extra `annotate`).
+   `qa.ps1 annotate`: extra `annotate`). Each verdict: `dev.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id> -Next <next
+   check id> -Evidence "<verdict> <file>"` (a restart starts at that check; a beat's PAUSE line says what to do).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),

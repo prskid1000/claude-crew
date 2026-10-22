@@ -113,7 +113,7 @@ function Safe($s) { $s -replace '[^\w.-]', '_' }
 function LeaseLive($o, [string]$file) {
   if ($null -eq $o.PSObject.Properties['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
   $v = [pscustomobject]@{ agent = "$($o.lease)"; holderPid = $o.holderPid; holderStart = $o.holderStart; seen = $o.seen }
-  $live = Update-KitLease $v; $o | Add-Member -Force seen $v.seen; $o | ConvertTo-Json | Set-Content $file; $live
+  $live = Update-KitLease $v; $o | Add-Member -Force seen $v.seen; Write-KitAtomic $file ($o | ConvertTo-Json); $live
 }
 function Read-Seat($p) { try { Get-Content $p -Raw | ConvertFrom-Json } catch { $null } }   # half-written: skipped
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Read-Seat $_.FullName; if (-not $o) { return }; if (LeaseLive $o $_.FullName) { $o } else { Remove-Item $_.FullName -Force } }) }
@@ -140,7 +140,7 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         $c = if (Test-Path $cf) { Read-Seat $cf }
         if ($c -and $c.owner -ne $Owner -and (LeaseLive $c $cf)) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
-        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | Set-Content $cf
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $cf $_ }
         $null
       }
       if ($verdict) { $verdict; exit 3 }
@@ -153,7 +153,7 @@ switch ($Action) {
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
     $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
-    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + (Get-KitHolder)) | ConvertTo-Json | Set-Content $sf
+    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
     "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"
   }
 }
@@ -571,7 +571,7 @@ $fh = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Enco
 $fmx = [Threading.Mutex]::new($false, "Global\kit-finalize-$fh")
 $fOwn = $true; try { $fOwn = $fmx.WaitOne(600000) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
 if (-not $fOwn) { $fmx.Dispose(); throw "another finalize of $RunDir held the tracker step for 10 min: re-run finalize -Code $Code" }
-function Save-Fin { $out | ConvertTo-Json -Depth 6 | Out-File $fin -Encoding utf8 }
+function Save-Fin { Write-KitAtomic $fin ($out | ConvertTo-Json -Depth 6) }
 try {
 foreach ($st in @($item.subtasks)) {
   $mine = @($checks | Where-Object { $_.subtask_id -eq $st.id })
@@ -665,7 +665,7 @@ $r = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $items = @($r.items | Where-Object { $_.code -ne $Code })
 $items += [pscustomobject]@{ code = $Code; lane = $Lane; title = $Title; guideFile = $gf; retest = $true; only = @($Only); subtasks = @([pscustomobject]@{ id = $Task; name = $t.name; mrs = $Mrs }) }
 $r.items = $items
-$r | ConvertTo-Json -Depth 8 | Set-Content "$RunDir/run.json" -Encoding utf8
+Write-KitAtomic "$RunDir/run.json" ($r | ConvertTo-Json -Depth 8)
 "added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"
 }
 

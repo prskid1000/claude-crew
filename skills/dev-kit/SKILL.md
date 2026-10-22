@@ -85,7 +85,12 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
     (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + the attribution trailer your harness or org asks
   for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash`.
-  Checkpoint: a WIP commit (`chore(wip): <step>`) after each step 1-5, so a crash or restart loses no edits.
+- **Checkpoint** (crash, pause): at each step boundary (worktree, commit sha, testing goals, loop round N + result, MR url,
+  review round, CI result, testing doc url, tracker, merge) `& $D checkpoint -Agent <id> -Run <run> -Step <worktree|commit|goals|
+  loop|mr|review|ci|doc|tracker|merge> -Evidence "<sha|url|result>" -Dir <wt>`, and a WIP commit (`chore(wip): <step>`) after
+  steps 1-5. `board join` prints CHECKPOINT: start at that step; verify the done ones, never redo them; keep an uncommitted
+  diff. `board beat` prints PAUSE: checkpoint, WIP commit (no push), release your leases, `board leave -Session <t> -Status
+  paused` (again while it prints PAUSED); return no result.
 - **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
