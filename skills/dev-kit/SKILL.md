@@ -99,10 +99,9 @@ python <kit>/skills/dev-kit/devtools.py merge <wt> <iid>                       #
   append-only changelog conflicts: `python devtools.py keepboth <file>`; before every push `check -Step migrations` = exit 0
   (`repos[].migrations.check`, else Liquibase: extra `liquibase`; exit 5 = UNRUN: say so in the MR). Local env DB drift (a
   leftover table, a missing user): report it, never "fix" the shared DB by hand.
-- **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before pushing (append-only if you write to it); one MR per
-  repo, title with `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your
-  own
-  branch.
+- **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
+  change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with
+  `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
 - **Tracker:** always `dev.ps1 tracker` (any backend; logical statuses `inProgress` -> `review` once the MR, the testing doc and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
   `inTest` or `closed` yourself.

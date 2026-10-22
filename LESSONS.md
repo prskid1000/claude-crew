@@ -18,13 +18,14 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy queue fine on the memory gate.
 
 ## dev-kit
+- An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
+- Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
+- Linked shared deps can be older than the target: typecheck / build / Jest (esbuild unresolvable) may fail; no reinstall: keep the earlier local result, CI decides. (7×)
 - Git host 500/502, CI gateway timeout or merge's `INFRA <reason>`: retry the failed JOB on the same sha (`glab api -X POST projects/<id>/jobs/<job>/retry`; `glab ci retry` 404s), merge only after green, no code change. (6×)
-- Re-read `<brief>.contracts.md` AND the brief's bottom right before every push, not only the commit: a scope addition stamped after your head commit is still yours; never overwrite a typed user draft; show the server's 400 text. (7×)
 - Resuming an area: `dev.ps1 wt status`, `git log origin/<target>..<branch>`, the host's MR state (a stopped agent may have merged); vanished worktree: `wt new` on the same branch; rebase, re-run targeted tests, keep the goals file in .runtime/work/goals; takeovers skip the testing doc. (11×)
-- Linked shared deps can be older than the target: typecheck / build may fail; no reinstall. (6×)
 - LLM or MCP-path answers need live sampling (5 fresh chats) on an env with the MCP URL: sample on a free env before merge, or mark needsLiveCheck with the env. (3×)
 - A task can span repos and target branches: before worktrees run `git log --grep <task>` on each target; the brief's repo table lists them all. (4×)
-- Precondition helpers throwing a generic runtime error map to HTTP 500: use the validation helpers that return 400; grep every call site. (3×)
+- Precondition helpers throwing a generic runtime error map to HTTP 500: use the validation helpers that return 400; grep every call site; the UI shows the server's 400 text. (3×)
 - Never persist secrets from a task or queue payload (headers, env, tokens) to a db, WAL, log or temp file: process memory only, store NULL, chmod db files on open; grep host env var NAMES before removing a fallback. (2×)
 - Mixed CRLF/LF edits: `-Raw .Replace` with `n no-ops, `[IO.File]` relative paths resolve against the process cwd, python without newline='' drops CRLF: use Edit + `git diff`, or a script with absolute paths. (5×)
 - A read-only DB tool can fail to connect: the org's read-only fallback, noted in the MR; migration ids come from the coordinator, applied in id order. (4×)
@@ -36,10 +37,9 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - UI lifecycle: placement bugs need a structural spec over real templates; destroyed guard after every await, unregister on destroy; list mutations through one resolve-active helper; new transient states checked against the template. (8×)
 - Cross-repo contracts: quote producer validation verbatim; the producer accepts both spellings and opens its MR first; never invent limits or endpoints; a producer DTO change ships with its consumer in the same wave. (18×)
 - Before tightening validation grep every client caller for its real encoding; list each old-accepted input: tested or stated as newly rejected. (6×)
-- Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value. (7×)
+- Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value; never overwrite a typed user draft. (7×)
 - Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
 - Mappers building an entity in steps: a flag read early misses parties resolved later; grep later setters, add a post-pass and a final-entity test. (3×)
-- Feature gates: gate only what the feature introduced, on the flag; on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (13×)
 - Shared multi-env services: the env is part of every key (DB name, cache key); external calls after commit on a bounded executor; read-only views get a wall-clock bound; secret temp files in a 0700 folder swept by age. (2×)
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
@@ -50,7 +50,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - `qa.ps1 api` in PowerShell: never pipe a -Save call into Select-Object -First N; never Out-String long JSON: read .response.body from the -Save file; variables are case-insensitive; no passwords in results or reports. (5×)
 - A FAIL found in a retest: check the build from before the MR (old build or git blame); not caused by the MR -> `defect: new` with that evidence. (2×)
 - A retest of a fix in shared code covers every caller and screen on the same code path or record. (3×)
-- Flags switched on for a retest are restored at teardown and noted in lead-notes.md. (3×)
 - Lanes sharing one user share its per-user server state: one session key per lane; delete only your own data. (3×)
 - Lead notes can widen scope: re-read lead-notes.md before each check; a required check goes into the run item (`qa.ps1 retest -Only <ids>` + the guide). (4×)
 - Before any FAIL run `qa.ps1 deployed` for EVERY repo of the task; an owner-confirmed manual deploy counts after an API marker check; re-check the test app's version before finalising FAILs. (8×)
@@ -64,7 +63,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Library overlays render outside the component (an overlay container): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
 
 ## local-env
-- Local DB drift (leftover table, missing definer or grant) fails migrations: report it for `refresh` / the owner; never repair the shared DB by hand.
+- Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations; a failed FK changeSet leaves a half-added column: ENV-FIX (kitty NULLs the orphans, drops the column or restores the qa-baseline snapshot, restarts the api); never fix the shared DB by hand. (2×)
 
 ## android-swarm
 - The android-build gate needs about 11.5 GB + keep-free: with a phone and a local API up it waits up to 20 min (the gate's head start) or longer; build before other agents lease phones. (4×)
