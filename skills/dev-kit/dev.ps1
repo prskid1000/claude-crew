@@ -623,7 +623,7 @@ if (-not $proc) { Write-Host "[gate] could not start within $WaitMinutes min"; e
 $sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, double) would truncate
 try {
   $null = $proc.Handle   # keeps ExitCode readable
-  while (-not $proc.HasExited) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
+  while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
   $proc.WaitForExit(); $code = $proc.ExitCode
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
