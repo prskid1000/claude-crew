@@ -11,7 +11,7 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L16 init · L22 wt · L224 stack · L399 gate · L643 check · L796 pipes · L832 guard · L1167 tracker · L1200 host
+Sections: L16 init · L22 wt · L224 stack · L399 gate · L648 check · L801 pipes · L837 guard · L1172 tracker · L1205 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -397,6 +397,32 @@ else {
 }
 
 # ---- gate: machine-wide memory gate; exit = the command's code, 3 = not started in time
+# build kinds: command regex -> default GB until 2 runs are learned
+$script:GateKinds = [ordered]@{
+  'emulator' = @('^exit 0 #emulator', 4.5)
+  'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
+  'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
+  'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
+  'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
+  'e2e' = @('cypress|playwright', 3.5)
+  'ng-test' = @('\bng test\b|\bkarma\b', 3)
+  'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
+  'maven-test' = @('^(?!.*-D(skipTests|maven\.test\.skip)\b).*\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
+  'maven' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
+  'dotnet' = @('msbuild|dotnet (build|test|publish)', 3)
+  'rust' = @('cargo (build|test|clippy|check)', 4)
+  'native' = @('cmake --build|\bmake\b', 3)
+  'js-test' = @('jest|vitest', 2)
+  'tsc-lint' = @('\btsc\b|eslint', 2)
+  'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
+  'go' = @('go (build|test|vet)', 2)
+}
+function Get-GateKind([string]$c) { foreach ($k in $script:GateKinds.Keys) { if ($c -match $script:GateKinds[$k][0]) { return $k } }; 'other' }
+# history: the command relative to its build dir (worktree paths differ per agent), 120 chars
+function Get-GateHistCmd([string]$Cmd, [string]$Dir) {
+  $c = $Cmd; foreach ($d in @([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')) | ForEach-Object { $_; $_.Replace('\', '/') } | Select-Object -Unique) { $c = [regex]::Replace($c, [regex]::Escape($d) + '(?=[\\/\s"'']|$)', '.', 'IgnoreCase') }
+  if ($c.Length -gt 120) { $c.Substring(0, 120) } else { $c }
+}
 function Invoke-Gate {
 param(
   [Parameter(Mandatory)][string]$Cmd,
@@ -409,27 +435,6 @@ param(
 $keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
 if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-
-$Kinds = [ordered]@{
-  'emulator' = @('^exit 0 #emulator', 4.5)
-  'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
-  'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
-  'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
-  'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
-  'e2e' = @('cypress|playwright', 3.5)
-  'ng-test' = @('ng test|karma', 3)
-  'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)
-  'maven-test' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b.*\b(test|verify|package|install)\b', 3)
-  'maven' = @('\b(mvn|mvnd|mvnw(\.cmd)?)\b', 2.5)
-  'dotnet' = @('msbuild|dotnet (build|test|publish)', 3)
-  'rust' = @('cargo (build|test|clippy|check)', 4)
-  'native' = @('cmake --build|\bmake\b', 3)
-  'js-test' = @('jest|vitest', 2)
-  'tsc-lint' = @('\btsc\b|eslint', 2)
-  'python' = @('pytest|mypy|ruff|compileall', 1.5)
-  'go' = @('go (build|test|vet)', 2)
-}
-function Get-Kind([string]$c) { foreach ($k in $Kinds.Keys) { if ($c -match $Kinds[$k][0]) { return $k } }; 'other' }
 
 # cmd.exe has no ';'
 function ConvertTo-CmdSeparators([string]$c) {
@@ -461,8 +466,8 @@ New-Item -ItemType Directory -Force $ledger | Out-Null
 $histFile = Join-Path $ledger 'history.json'
 function Read-History { try { Get-Content $histFile -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} } }
 
-$kind = Get-Kind $Cmd
-$default = if ($Kinds.Contains($kind)) { $Kinds[$kind][1] } else { 2 }
+$kind = Get-GateKind $Cmd
+$default = if ($script:GateKinds.Contains($kind)) { $script:GateKinds[$kind][1] } else { 2 }
 $project = Split-Path ([IO.Path]::GetFullPath($Dir)) -Leaf
 $top = (git -C $Dir rev-parse --show-toplevel 2>$null)
 if ($top) {
@@ -543,7 +548,7 @@ function Top-Users($Snap) {
 }
 
 $gate = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate')
-$deadline = (Get-Date).AddMinutes($WaitMinutes)
+$deadline = (Get-Date).AddMinutes($WaitMinutes); $queuedAt = Get-Date
 $learned = if ($NeedGB -le 0 -and $peaks.Count -ge 2) { " (learned from $($peaks.Count) runs)" } else { '' }
 $usual = if ($secs.Count -ge 2) { " usually ~$([math]::Ceiling((Get-MedianSec $secs) / 60)) min," } else { '' }
 Write-Host "[gate] $kind needs ~$need GB$learned,$usual keep $KeepFreeGB GB free: $Cmd"
@@ -599,7 +604,7 @@ while ((Get-Date) -lt $deadline) {
         $psi.WorkingDirectory = $Dir; $psi.UseShellExecute = $false
         $proc = [Diagnostics.Process]::Start($psi)
       }
-      Remove-Item $myTicket -ErrorAction SilentlyContinue
+      Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
       @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
       $entry = Join-Path $ledger "$($proc.Id).json"
       @{ pid = $proc.Id; gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
@@ -630,7 +635,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
       $txt = if (Test-Path $histFile) { Get-Content $histFile -Raw -ErrorAction Stop } else { '' }
       $h = if ("$txt".Trim()) { $txt | ConvertFrom-Json -AsHashtable -ErrorAction Stop } else { @{} }
       if ($h -is [hashtable]) {
-        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; cmd = $(if ($Cmd.Length -gt 60) { $Cmd.Substring(0, 60) } else { $Cmd }) } | Select-Object -Last 10)
+        $h[$histKey] = @(@($h[$histKey] | Where-Object { $_ }) + @{ gb = [math]::Round($peak, 2); sec = [int]$sw.Elapsed.TotalSeconds; ok = ($code -eq 0); at = (Get-Date).ToString('o'); code = $code; wait = $waitSec; cmd = (Get-GateHistCmd $Cmd $Dir) } | Select-Object -Last 10)
         $h | ConvertTo-Json -Depth 3 | Set-Content "$histFile.tmp" -ErrorAction Stop
         Move-Item "$histFile.tmp" $histFile -Force -ErrorAction Stop
       }

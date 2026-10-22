@@ -71,7 +71,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished (`retroDue`), supervise says "retro due", or signals piled up | /tidy once no other workflow of this session runs (one retro covers several runs) |
 | E11 | HEAL: guard block wrong, script crash, workaround, kit friction; a line `<feature> is an extra: run kittool.py extra add <name>` | the extra line: `kittool.py extra sync` (between runs) or the line's `extra add`, retry. Else spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
-| E12 | LEARN: something cost time, failed or surprised you | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "(n×) ..."`, extra `kit-admin`); 3x -> script check / default |
+| E12 | LEARN: something cost time, failed or surprised you | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "... (n×)"`, extra `kit-admin`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `dev.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
 

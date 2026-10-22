@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L212 local · L240 app · L263 test-prompt ·
-//   L317 verify · L361 run-item · L538 pool · L560 budget · L583 run · L619 learn
+//   L317 verify · L361 run-item · L539 pool · L561 budget · L584 run · L620 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -374,7 +374,8 @@ function adoptRetry(res, retry, note) {
  for (const c2 of (retry && !retry.skipped && retry.checks) || []) {
   const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
   if (i < 0 || c2.result === 'NOT_TESTED') continue
-  res.checks[i] = { ...c2, id: res.checks[i].id, observed: `${c2.observed} (${note}; first attempt: ${res.checks[i].observed})` }
+  // the report's Saw cell shows what the retry saw; the blocked first attempt stays in the results file
+  res.checks[i] = { ...c2, id: res.checks[i].id, observed: `${c2.observed} (${note})`, firstAttempt: res.checks[i].observed }
  }
 }
 

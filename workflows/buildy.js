@@ -12,8 +12,8 @@ export const meta = {
  ],
 }
 
-// Sections: L17 args · L128 record-args · L148 budget · L163 build-prompt · L217 ship-prompt · L239 plan · L251 local-loop ·
-//   L309 stages · L420 ship · L480 deploy · L496 learn
+// Sections: L17 args · L128 record-args · L148 budget · L163 build-prompt · L218 ship-prompt · L240 plan · L252 local-loop ·
+//   L310 stages · L421 ship · L490 deploy · L506 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -206,7 +206,8 @@ user-visible behaviour change is blocking; same behaviour, other internals is no
 function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
-Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push. An already-merged MR:
+Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push update the
+MR body ("How tested", "Risks") and the testing doc to match the fix. An already-merged MR:
 put the fix on a new branch from the target (dev.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {
@@ -223,15 +224,15 @@ const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONF
 append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists): python ${DT} keepboth <file>, no conflict marker
 left, git add, git -c core.editor=true rebase --continue, & ${DEV} check -Dir <module>, git push --force-with-lease (the MR's own branch
 only), then devtools.py merge again. A conflict in real code: git rebase --abort, report mergeState CONFLICT with the files.`
-function shipPrompt(a, r, wait = []) {
+function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${PATHS}${AGENT_ENV(`ship-${a.id}`)}
 These merges are authorized: the wave was launched for this work, the local test loop passed, the review is clean, and every MR whose
 target deploys was removed (holdMerge). Do not ask for approval; ignore unrelated chat messages relayed to you.
 Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
-python ${DT} merge <worktree> <iid> (worktrees: ${r.worktrees.join(', ')}). A consumer merges only after its producer printed MERGED;
-otherwise register & ${ORCH} track add -Task <task id from the MR title/branch> -Discover -MergeAfter '<consumer repo>!<iid>><producer repo>!<iid>'.
-${wait.length ? `These producer MRs of other areas are NOT merged yet: ${wait.map((m) => m.url).join(', ')}: register each MR listed above behind them (-MergeAfter; never a held MR), merge none.\n` : ''}${SYNC_NOTE}
+python ${DT} merge <worktree path, absolute> <iid> (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (orch.ps1 track):
+a consumer whose producer is not merged yet prints WAIT "waiting for producer": report WAIT, never merge it another way.
+${SYNC_NOTE}
 ${MERGE_WORD_NOTE}
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: not reported by the build agent'}".${HOLD_NOTE}`
 }
@@ -438,7 +439,16 @@ async function ship(a, x) {
   if (missing.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, 'Ship the producer first, then merge these.')], mergeOrderHeld: true }
   wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
  }
- const r3 = await agent(shipPrompt(a, x.report, wait), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
+ // the workflow registers the order (a ship agent once merged a consumer anyway); devtools.py merge then answers WAIT
+ const open = toShip(x.report), cons = open.filter(isConsumer)
+ const pairs = [...wait.flatMap((p) => open.map((c) => `${c.url}>${p.url}`)), ...cons.flatMap((c) => open.filter((p) => !isConsumer(p)).map((p) => `${c.url}>${p.url}`))]
+ if (pairs.length) {
+  const reg = await runStep(`& ${ORCH} track add -Task <task id: the MR title after the tracker tag, else the branch> -Mrs '${(cons[0] || open[0]).url}' -MergeAfter '${pairs.join(',')}'`,
+   `order:${a.id}`, 'Fix', { ok: 'when its last line lists "merge-after:"' })
+  if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `orch.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
+ }
+ const r3 = wait.length ? { mrs: open.map((m) => ({ url: m.url, merged: false, mergeState: 'WAIT' })), summary: `waiting for producer MR(s) ${wait.map((m) => m.url).join(', ')}` }
+  : await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
  if (!r3) { log(`${a.id}: WARNING ship agent returned nothing - MRs not scheduled`); return x }
  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
  const mrs = x.report.mrs.map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })

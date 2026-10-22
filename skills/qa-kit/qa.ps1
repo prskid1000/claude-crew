@@ -12,7 +12,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
   api-auth, qa-html-report, ios-simulator.
-Sections: L21 report · L93 seat · L161 api · L280 finalize · L625 retest
+Sections: L21 report · L93 seat · L161 api · L285 finalize · L633 retest
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -244,10 +244,15 @@ $sw.Stop()
 $status, $content, $ctype, $rhead = $res
 if ($content -is [byte[]]) {
   $bytes = $content; $content = "[binary $($bytes.Length) bytes, $ctype]"
-  if ($Save) {
+  if ($Save -and -not $bytes.Length) { $content += ' (empty: no file saved)' }
+  elseif ($Save) {
     $bdir = if ($OutDir) { $OutDir } else { Get-KitPath evidence }; New-Item -ItemType Directory -Force $bdir | Out-Null
     $ext = if ([string]$rhead['content-disposition'] -match 'filename\*?=(?:UTF-8'''')?"?([^";]+)') { [IO.Path]::GetExtension($Matches[1]) } else { '' }
-    if (-not $ext) { $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '.bin' } } }
+    if (-not $ext) { $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '' } } }
+    if (-not $ext) {   # octet-stream: the magic bytes, then strict UTF-8 text
+      $hex = -join @($bytes | Select-Object -First 4 | ForEach-Object { $_.ToString('X2') })
+      $ext = switch -Regex ($hex) { '^25504446' { '.pdf' } '^89504E47' { '.png' } '^FFD8FF' { '.jpg' } '^504B0304' { '.zip' } default { try { if ($ctype -and $ctype -notmatch 'octet-stream') { throw }; $null = [Text.UTF8Encoding]::new($false, $true).GetString($bytes); '.txt' } catch { '.bin' } } }
+    }
     $bf = Join-Path $bdir "$Save.body$ext"; [IO.File]::WriteAllBytes($bf, $bytes); $content += " saved to $bf"
   }
 }
@@ -397,6 +402,9 @@ if ($Check) {
     $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)/$($_.Name)" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
+  # a note without its class hides defects; a re-test's own note (verify) is exempt
+  $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not $_.verify -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
+  if ($noClass.Count) { $fail = $true; "$Code note check: PASS_WITH_NOTE without its class (observed starts with '(a|b|c|d) <why>', qa-kit SKILL.md step 5; else FAIL): $($noClass -join ', ')" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
@@ -407,7 +415,7 @@ if ($Check) {
   $pr = @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
   if ($pr.Count) { $fail = $true; "$Code prose check: shorten observed / what_was_done in $Results (dev-kit/templates.md ""Writing standards""):"; $pr | ForEach-Object { "  $_" } }
   if ($fail) { exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, prose)"; exit 0
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"; exit 0
 }
 if ($lostList.Count) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run."

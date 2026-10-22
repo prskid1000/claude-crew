@@ -6,8 +6,8 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit kittool
-# static sweeps over every kit .ps1: a keyword or an unknown Verb-Noun run as a command ((if ...) without $); a helper nested in one
-# function but called outside it (Update-BoardEntry in Invoke-Board)
+# sweeps over every kit .ps1: a keyword / unknown Verb-Noun run as a command ((if ...) without $); a helper nested in one
+# function, called outside it (Update-BoardEntry in Invoke-Board)
 $FD = [Management.Automation.Language.FunctionDefinitionAst]; $Up = { param($n) $p = $n.Parent; while ($p -and $p -isnot $FD) { $p = $p.Parent }; $p }
 $asts = @(git -C $src ls-files '*.ps1' ':!tests' | ForEach-Object { , @($_, [Management.Automation.Language.Parser]::ParseFile((Join-Path $src $_), [ref]$null, [ref]$null)) })
 $defs = @{}; foreach ($x in $asts) { foreach ($d in $x[1].FindAll({ $args[0] -is $FD }, $true)) { if (-not $defs.ContainsKey($d.Name)) { $defs[$d.Name] = [Collections.ArrayList]::new() }; $pa = & $Up $d; $null = $defs[$d.Name].Add($(if ($pa) { $pa } else { 'top' })) } }
@@ -92,7 +92,7 @@ Expect-Cases @(
       { param($r) $exc = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
         $r.code -eq 0 -and -not (Test-Path $demo) -and $exc -notmatch 'kittool extra' -and $exc -match '(?m)^# ' })
 )
-# extra sync: config in kit.local.json or another local file (alternatives), a kit file that exists; a changed branch file updates
+# extra sync: config in kit.local.json or another local file, an existing kit file; a changed branch file updates
 foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by qa.ps1): `targets.*.auth.type` = `basic` | `token`'), @('own', 'Needed when: `.githooks/pre-commit` exists'), @('never', 'Needed when: you want the page (`flow --readme` stays core).'))) {
   New-Item -ItemType Directory -Force "$xw/extras/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/extras/$($x[0])/EXTRA.md"; "$($x[0])" | Set-Content "$xw/extras/$($x[0])/files/notes/$($x[0]).txt"
 }
@@ -103,7 +103,7 @@ $s1 = & $ex extra sync; $s2 = & $ex extra sync
 "x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; git -C $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
 $s3 = & $ex extra sync
 Expect 'extra sync: installs what config or the kit needs, one line each; then silent; a branch change updates it' ($s1.code -eq 0 -and @($s1.out.Trim() -split "`n").Count -eq 3 -and $s1.out -match 'extra duo: installed' -and $s1.out -match 'extra own: installed' -and -not $s2.out.Trim() -and $s3.out.Trim() -match '^extra demo: updated 1 file' -and (Get-Content $demo -Raw) -match 'x = 1' -and -not (git -C $kc status --porcelain))
-# an extra whose earlier version listed other files (its exclude block) is updated, not refused; two syncs at once never collide
+# an extra whose old version listed other files (exclude block) updates, not refused; two syncs at once never collide
 $xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
 (Get-Content $xf -Raw) -replace '(?m)^/notes/own\.txt\r?$', "/notes/own.txt`n/notes/own-old.txt" | Set-Content $xf -NoNewline
 'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; git -C $xw commit -qam 'fix: own'; git -C $xw push -q $og extras 2>&1 | Out-Null
@@ -114,8 +114,8 @@ Expect "extra sync: its own old file list is updated, not refused; two syncs at 
 $kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Read-Json $kl).extras
 Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Read-Json $kl).extras
 Expect 'extra add lists it in kit.local.json extras (a fresh clone''s sync reinstalls it), remove unlists it; a prose need never installs' ($a1.code -eq 0 -and 'never' -in $l1 -and $s4.out -match 'extra never: installed' -and 'never' -notin $l2 -and $s1.out -notmatch 'extra never')
-# extra sync on a config like a real install: tracker clickup, gdocs reports, a local env whose db commands run liquibase, a node
-# web service -> exactly those four (decoys: another tracker, another report type, a listed-only extra)
+# extra sync, a real-like config (tracker clickup, gdocs reports, liquibase db commands, a node web service) -> exactly those
+# four (decoys: another tracker and report type, a listed-only extra)
 $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup`'; 'tracker-jira' = 'Needed when: `tracker.type` = `jira` | `jira-server`'
   'report-gdocs' = 'Needed when: `reports.type` = `gdocs` (unset with gws on PATH also means gdocs: set reports.type or add the extra)'; 'report-pdf' = 'Needed when: `reports.type` = `pdf`'
   'liquibase' = 'Needed when: `localEnv.envs.*.db.applied` ~ `liquibase`, `localEnv.envs.*.db.rollback` ~ `liquibase`, or listed in kit.local.json `extras`'
@@ -138,7 +138,7 @@ Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/x.ps1` (extra `dem
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real extra' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and
   $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: extra .nope.: no such extra')
-# section maps of extras: lint checks an installed extra's files; extra test checks the branch's, with or without a tests.ps1
+# extras' section maps: lint checks installed files; extra test the branch's, with or without a tests.ps1
 ('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/extras/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/extras/big/EXTRA.md"
 ('# x' + "`n") * 3000 | Set-Content "$xw/extras/big/files/skills/big.ps1"; Save-GitRepo $xw 'feat: big'; git -C $xw push -q $og extras 2>&1 | Out-Null
 $l5 = (& $ex lint --no-flow).out; $null = & $ex extra list; $t5 = & $ex extra test big   # list fetches the branch
@@ -152,7 +152,7 @@ $rb = 'kit total (\d+) of cap \d+ \(\d+%\) . tests (\d+) of cap 33000'; $b2 = & 
 Set-Content (Join-Path $kc 'tests/zz.tests.ps1') ('#' * 140000) -NoNewline; git -C $kc add tests/zz.tests.ps1
 $b3 = & $py -X utf8 $KT2 budget 2>&1 | Out-String; $l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 $m2 = [regex]::Match($b2, $rb); $m3 = [regex]::Match($b3, $rb)
-Expect "budget: +35000 test tokens leave the kit total as is, add to tests; over testTokens = BUDGET-TESTS, one file over 8000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
+Expect "budget: +35000 test tokens add to tests, not the kit total; over testTokens = BUDGET-TESTS, a file over 8000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
   $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap 33000\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 8000\)')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
@@ -168,14 +168,14 @@ print(sorted({c for c, _, _ in p}), fx.split('\n')[1], [w for _, w, _ in t.sec_c
   [w for _, w, _ in t.sec_check('u.ps1', fx.replace("'no' { Write-Host x }", "'no' { Write-Host x }\r").replace('Assert-KitExtra X', 'Write-Host y') + 'function Late { }\n')[0]],
   t.sec_check('d.ps1', '<#\r\nSections: L5 a\r\n#>\n\r\n# ---- a: x\r\n# ---- a: y\n')[0][0][2][:24])
 '@ | Set-Content $sp; $r = (& $py -X utf8 $sp (Split-Path $KT) | Out-String).Trim()
-Expect "sections: map from markers (wrapped: lines shift), function / verb outside a section, no markers, big section, mixed endings, a repeated name ($r)" ($r -eq "['SECTION-MAP', 'SECTION-UNMAPPED'] Sections: L5 a · L9 b ['x.ps1:12'] 2 [] ['z.py:4'] no section markers: [(1, 'a')] ['u.ps1:12', 'u.ps1:13'] section name ""a"" repeats")
+Expect "sections: map from markers (wrapped), function / verb outside a section, no markers, big section, mixed endings, repeated name ($r)" ($r -eq "['SECTION-MAP', 'SECTION-UNMAPPED'] Sections: L5 a · L9 b ['x.ps1:12'] 2 [] ['z.py:4'] no section markers: [(1, 'a')] ['u.ps1:12', 'u.ps1:13'] section name ""a"" repeats")
 $sf = Join-Path $k 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 $null = & $py -X utf8 $KT sections $sf (Join-Path $k 'none.ps1') 2>$null; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KT sections --fix $sf
 Expect 'sections: a shifted map or a missing file exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
 $td = Join-Path (Kd) 'dup/tests'; New-Item -ItemType Directory -Force $td | Out-Null; Copy-Item (Join-Path $src 'tests/kit-tests.ps1') $td
-foreach ($a in 'orch', 'devkit') { "$(if ($a -eq 'orch') { 'Start-Sleep 2; ' })'PASS same  Case'; 'PASS own $a'; ""py `$((Get-Command python).Source -notmatch '\.(bat|cmd)`$')""; '0 failure(s)'" | Set-Content "$td/$a.tests.ps1" }   # orch ends last
+foreach ($a in 'orch', 'devkit') { "$(if ($a -eq 'orch') { 'Start-Sleep 2; ' })'PASS same  Case'; 'PASS own $a'; 'FAIL x'; ""py `$((Get-Command python).Source -notmatch '\.(bat|cmd)`$')""; '1 failure(s)'" | Set-Content "$td/$a.tests.ps1" }   # orch ends last
 $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area orch,devkit
-Expect 'kit-tests: one case name in two areas = TEST-DUP in area order, exit 1; areas get the real python (no shim)' ($tdr.code -eq 1 -and $tdr.out -match 'TEST-DUP same case: orch, devkit' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
+Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real python, no shim; FAILs recapped by area' ($tdr.code -eq 1 -and $tdr.out -match 'Failed checks:\s+\[orch\] x\s+\[devkit\] x' -and $tdr.out -match 'TEST-DUP same case: orch, devkit' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
 Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/orchestrate/kittool.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)

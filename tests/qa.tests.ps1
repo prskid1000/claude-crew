@@ -44,10 +44,10 @@ $rb = Get-Content "$b/B1/report.md" -Raw; $rc1 = Get-Content "$c/C1/report.md" -
 Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observed only in the table' ($rb -match '\| \[details\]\(#c2--s\) \|' -and ([regex]::Matches($rb, 'o C2')).Count -eq 1 -and
   $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
 Copy-Item (Join-Path $src 'skills/dev-kit/templates.md') (Join-Path $k 'skills/dev-kit/')   # the prose limits
-$pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') })
-$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; & $J $rj "$pl/P1/results.json"
+$pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
+$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) x'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
 $po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
-Expect "finalize -Check: a 60-word observed fails the prose check ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word')
+Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class (not a re-test)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$')
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
@@ -66,7 +66,7 @@ Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -j
 # run with & after -Check's exit 0: a crashing publish must still exit 1
 $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
 Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
-# finalize with a fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest the real one
+# finalize, fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest real
 $dt = Join-Path $k 'skills/dev-kit'
 function Use-FakeUploader([string]$Evidence, [scriptblock]$Run) {
   Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
@@ -154,13 +154,15 @@ $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LA
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the extra android-swarm
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target named' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deployed-checks' -and $xo[1] -match '(?s)^2 .*extra add annotate' -and $wo -match 'no api URL')
+Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deployed-checks' -and $xo[1] -match '(?s)^2 .*extra add annotate' -and $wo -match 'no api URL')
 $api = Start-TestApi; $P = $api.port
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 $xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
 Expect "api auth login + none; other kinds name their extra ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is an extra: run kittool\.py extra add api-auth')
+foreach ($e in 'pdf', 'txt', 'empty') { $null = Px $Q api -Target tt -Path "/$e" -Save "S-$e" -OutDir (Kd) 2>&1 }; $bo = @(Get-ChildItem (Kd) -Filter 'S-*.body*').Name -join ' '
+Expect "api -Save: octet-stream sniffed, empty body: no file ($bo)" ($bo -ceq 'S-pdf.body.pdf S-txt.body.txt')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
 $api.proc.Kill()
 # browser.mjs: mocks, then local fixture servers

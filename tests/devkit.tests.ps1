@@ -146,19 +146,21 @@ $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
 Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
-# gate: half the system file cache counts as free; the head of the queue starts after 20 min above a 5% RAM floor
+# gate: half the file cache counts as free; the queue head starts after 20 min above a 5% RAM floor
 $gt = @'
 . $args[0]
+"kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test')"
+"histcmd:$((Get-GateHistCmd 'mvn -f C:\w\a\p.xml' 'C:/W/a') -eq 'mvn -f .\p.xml' -and (Get-GateHistCmd ('x' * 200) 'C:\w').Length -eq 120)"
 "cache:$((Get-GateAvailGB ([pscustomobject]@{ AvailGB = 13.6; CacheGB = 21 })) -eq 24.1)"
 "keep:$((Test-GateStart 11 10 0 64) -and -not (Test-GateStart 9 10 5 64))"
 "starved:$((Test-GateStart 4 10 25 64) -and -not (Test-GateStart 2 10 25 64))"
 '@
-Expect-Each (Invoke-PsTest 'gate-test' $gt @(Join-Path $k 'skills/dev-kit/lib.ps1')) 'gate: #' 'cache', 'keep', 'starved'
+Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'starved', 'kinds', 'histcmd'
 # guard: a non-JSON payload denies (logged); empty stdin allows
 $gbad = '{not json' | Px $D guard | Out-String
 $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
-# an extra's guard rule may return a note: it reaches the agent as additionalContext, the call is not decided; no runtimes extra: one line
+# an extra's guard rule may return a note (additionalContext, the call not decided); no runtimes extra: one line
 $na = Join-Path $k 'skills/dev-kit/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na

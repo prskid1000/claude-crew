@@ -13,8 +13,8 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
  lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L30 config · L64 run · L121 tracker · L196 git host · L277 MR · L340 merge · L568 docs · L685 plugins · L699 keepboth ·
-  L718 selftest · L860 CLI
+Sections: L30 config · L64 run · L121 tracker · L196 git host · L279 MR · L342 merge · L574 docs · L691 plugins · L705 keepboth ·
+  L724 selftest · L871 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -213,8 +213,10 @@ def host_kind(host):
 
 def remote(worktree):
     """(adapter, project path) of the worktree's origin (Azure: org/project/repo)."""
-    url = _run(['git', '-C', worktree, 'remote', 'get-url', 'origin']).strip()
-    m = re.match(r'^(?:\w+://)?(?:[^@/\s]+@)?(?:ssh\.)?([^/:\s]+)(?::\d+)?[:/](?:v3/)?(.+?)(?:\.git)?/?$', url)
+    if not os.path.isdir(worktree):   # git's "fatal: cannot change to" text parsed as a remote -> a wrong project path
+        raise SystemExit(f'not a folder: {worktree} (cwd {os.getcwd()}) - pass the worktree path, absolute, not a repo name')
+    url = _run(['git', '-C', worktree, 'remote', 'get-url', 'origin'], check=True).strip()
+    m = re.match(r'^(?:\w+://)?(?:[^@/\s]+@)?(?:ssh\.)?([^/:\s]+)(?::\d+)?[:/](?:v3/)?(\S+?)(?:\.git)?/?$', url)
     if not m:
         raise SystemExit(f'unsupported remote: {url}')
     return host_kind(m.group(1)), m.group(2).replace('/_git/', '/')
@@ -510,12 +512,16 @@ def _auto_merge(worktree, iid, max_wait):
             return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (orch.ps1 track mergeAfter) with the coordinator\nNOT_MERGED'
         return '\n'.join(lines) + '\nnot merged now: orch.ps1 track run (supervise) merges it once the producer merged\nWAIT'
     H = _mr_api(host, proj, iid)
-    m = H('mr.get')
-    m = m if isinstance(m, dict) else {}
+    for i in range(2):   # one retry: a blip must not cost an agent round
+        raw = H('mr.get')
+        m = raw if isinstance(raw, dict) else {}
+        if m.get('state') or i:
+            break
+        time.sleep(3)
     if m.get('state') == 'merged':
         return f'already merged !{iid}\nMERGED'
     if not m.get('state'):
-        return f'!{iid}: the git host did not answer (auth status? network?): run merge again\nWAIT'
+        return f'!{iid}: no MR state from the git host for {proj} (auth status? network? path?); reply: {str(raw)[:300]}\nWAIT'
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
@@ -734,6 +740,7 @@ def selftest():
             expect(what, text in str(e))
     refused('a missing body file is refused', lambda: _body('no-such-body.md'), 'file not found')
     expect('multi-line body text passes', _body('a\nb') == 'a\nb')
+    refused('merge: a repo name instead of a worktree folder is refused', lambda: remote('no-such-checkout-x1'), 'not a folder')
     page = md_to_html('![shot 1](https://x/a.png "260") [link](https://y)\n![b](c.png)')
     expect('md_to_html: images with width (default 600) and captions, links stay links', '<img src="https://x/a.png" width="260"><br><i>shot 1</i>' in page
            and '<img src="c.png" width="600">' in page and '<a href="https://y">link</a>' in page)
@@ -775,6 +782,10 @@ def selftest():
         expect('CI, no head pipeline after 5 min: NOT_MERGED, no merge', merge_word(auto_merge('.', '7', max_wait=0)) == 'NOT_MERGED' and not merged())
         calls.clear(); g['_host'] = fake(runs={'raw': 'error: 500'})
         expect('a failed pipeline query is WAIT, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'WAIT' and not merged())
+        calls.clear(); g['_host'] = lambda verb, **a: calls.append((verb, a)) or {'raw': 'null'}
+        res = auto_merge('.', '7', max_wait=0)
+        expect('no MR state: mr.get retried once, WAIT names the project and the reply', merge_word(res) == 'WAIT' and 'g/r' in res
+               and "'raw': 'null'" in res and [v for v, _ in calls] == ['mr.get', 'mr.get'])
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'state': 'opened'})

@@ -40,7 +40,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
      (b) cosmetic difference, (c) Expected blocked by platform limit or imprecise wording (check code/lead, quote both),
-     (d) false conditional ("not applicable: <condition>", with evidence).
+     (d) false conditional ("not applicable: <condition>", with evidence); `observed` starts with the class: `(b) <why>`.
    - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed (failedTesting -> back to dev);

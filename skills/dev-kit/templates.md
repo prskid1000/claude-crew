@@ -145,6 +145,7 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 - Checks: check quick ✅ · tests `<names>` ✅ · touched-class tests ✅ · migrations ISSUES 0 ✅
 - Local env: <env> r<n>: goals G1-Gn PASS (testing-goals doc) · Not run: <what, why> (or "nothing")
 - UI: <committed spec or screenshot link> (or "not a UI change") · Pure logic: <spec file> (or "none")
+- Regression: `<test>` red before the fix, green after (or "not a fix") · Changed methods without a test: <names> (or "none")
 ## Risks
 - <deferred item — reason> · Behaviour limits: <not handled> · Needs after deploy: <settings / data> (or "none")
 ## Links

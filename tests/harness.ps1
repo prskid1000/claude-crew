@@ -13,8 +13,8 @@ $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 $env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM
 $env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # own temp: never the machine's build-gate queue
-# `pwsh -NoProfile -File <kit script>` from a test runs in this process (0.07 s, not a 0.7 s start): streams, exit code, cwd, env and
-# globals as a child sees them; stdin readers and gate / check (console writers) stay processes; KIT_TESTS_SPAWN=1: always processes
+# `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
+# env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes
 $pwshExe = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
 function pwsh {
   $a = @($args); $in = @($input)
@@ -92,7 +92,7 @@ function New-GitKitCopy([string]$Dir, [switch]$Push) {
   if ($Push) { git -C $kc push -q origin main 2>&1 | Out-Null; git -C $kc fetch -q origin }
   $kc
 }
-# a git clone <Kd>/<Name> of the test kit's lib.ps1, kit.example.json and $Files, kit.local.json = $Local (uncommitted); returns its linked worktree '<Name> wt'
+# git repo <Kd>/<Name>: lib.ps1, kit.example.json, $Files; kit.local.json = $Local (uncommitted); returns its worktree '<Name> wt'
 function New-LinkedKit([string]$Name, [hashtable]$Local, [string[]]$Files = @()) {
   $mk = Join-Path (Kd) $Name
   foreach ($f in @('skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json') + $Files) { $d = New-Item -ItemType Directory -Force (Join-Path $mk (Split-Path $f)); Copy-Item (Join-Path $k $f) $d }
@@ -108,16 +108,17 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
   if (u === '/login') return /R1/.test(b) ? j({ access_token: 'A2' }) : j({ access_token: 'A1', refresh_token: 'R1' }, 200, { 'set-cookie': ['sid=1', 'XSRF-TOKEN=x1'] })
   const ok = { '/l': h.authorization === 'Bearer A1', '/c': h.cookie && h['x-xsrf-token'] === 'x1', '/b': h.authorization === 'Bearer A2', '/q?api_key=K9': 1, '/t/acme/x': 1, '/t/acme/ct': h['content-type'] === 'text/plain', '/h': h['x-sig'] === 's1' }[u]
+  if (/^\/t\/acme\/(pdf|txt|empty)$/.test(u)) { s.writeHead(200, { 'content-type': 'application/octet-stream' }); return s.end({ pdf: '%PDF-1 x', txt: 'a,b' }[u.slice(8)] || '') }
   u === '/v' ? j({ v: { sha: process.argv[3] } }) : j({}, ok ? 200 : 401) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
   [pscustomobject]@{ port = $port; proc = (Start-Process node -ArgumentList $sv, $port, $Sha -PassThru -NoNewWindow) }; Start-Sleep 1
 }
-# browser.mjs in the test kit with the kit's puppeteer-core linked ($false: not installed); NodeT <name> <js> [args] runs $js after m = await import(BM)
+# browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
   $nm = "$src/skills/qa-kit/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
   Copy-Item "$src/skills/qa-kit/browser.mjs" "$k/skills/qa-kit"; New-Item -ItemType Junction -Path "$k/skills/qa-kit/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
 }
-# NodeT js head: a login fixture app at `web` (/login form, /sso-app -> /idp on localhost; a 6-digit c logs in, posts counts them, gen++ logs out)
+# NodeT head: login app at `web` (/login form; /sso-app -> /idp on localhost; a 6-digit c logs in; posts counted; gen++ logs out)
 $LoginApp = @'
 import http from 'node:http'
 import { writeFileSync } from 'node:fs'
@@ -135,7 +136,7 @@ const web = `http://127.0.0.1:${app.address().port}`, U = { admin: ['qa', '', 'G
 const login = async () => { const b = await import(BM + '?a'); return { b, home: async (s) => (await b.text(s.page)).includes('home'), out: async (k, f) => console.log(k + ':' + await f().catch((e) => e.message)) } }
 '@ + "`n"
 function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = '$([Uri]::new("$k/skills/qa-kit/browser.mjs").AbsoluteUri)', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
-# workflow sims: Invoke-Js <name> <js> <workflow file> runs $jsLib + $js in node, run() = the workflow body (agents mocked by $js)
+# workflow sims: Invoke-Js <name> <js> <workflow>: $jsLib + $js in node, run() = the workflow body (agents mocked)
 $jsLib = @'
 const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
 const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })

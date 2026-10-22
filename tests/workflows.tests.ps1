@@ -60,6 +60,16 @@ const o1 = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, batch
 console.log(`batch-next:${!!(await run(o1.next.args, _pass, _n, _n, pipeline).catch(_err))}`)
 '@
 Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
+# buildy: merge pairs set by the workflow; no ship agent behind an unmerged producer
+$jsm = @'
+const mr = (r, s) => ({ url: `u/${r}/-/merge_requests/1`, repo: r, merged: false, mergeState: s }), lt = { status: 'PASS' }
+const { calls, agent } = _mock((p, o) => ({ 'build:F1': _rep(lt, { mrs: [mr('py')] }), 'build:F2': _rep(lt, { mrs: [mr('java'), mr('web')] }), 'ship:F1': _rep(lt, { mrs: [mr('py', 'WAIT')] }),
+ 'order:F2': { ok: true, output: 'merge-after: x' } }[o.label] || (/^review/.test(o.label) ? { findings: [] } : undefined)), '[]')
+const o = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'F1' }, { id: 'F2', dependsOn: ['F1'] }] }, agent, _n, _n, pipeline)
+const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.replace(/\/-\/merge_requests\/1/g, '')
+console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
+'@
+Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
 # buildy: mode duel is an extra (refused, names the extra); a removed arg is warned about, not silently ignored
 $jso = @'
 const logs = [], base = { brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'X1', items: 'A1' }] }
@@ -92,12 +102,10 @@ const args = { runDir: 'C:/runs/R1', kitDir: 'C:/kit', learn: false, items: [{ c
 run(args, agent, _n, _n, null).then(() => {
  const s = calls.find((c) => c.label === 'retest-strong:A1'), cl = calls.find((c) => c.label === 'close:A1')
  console.log(`strong:${!!s && s.model === 'opus' && /blocked by env-data/.test(s.prompt) && /ONLY these checks: C1/.test(s.prompt)}`)
- console.log(`closed-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt)}`)
+ console.log(`closed-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt) && /\(stronger retry\)"[^}]*"firstAttempt":/.test(cl.prompt)}`)
 }).catch(_err)
 '@
-$res = Invoke-Js tc-retry $js $wf
-Expect 'testy: NOT_TESTED gets one stronger retry, told its blocker' (@($res | Where-Object { "$_" -eq 'strong:true' }).Count -eq 1)
-Expect 'testy: the retry''s PASS is what gets published' (@($res | Where-Object { "$_" -eq 'closed-pass:true' }).Count -eq 1)
+Expect-Each (Invoke-Js tc-retry $js $wf) 'testy NOT_TESTED retry: #' 'strong', 'closed-pass'
 # testy local: NOT_TESTED -> ENV-FIX + retest; 2 cycles: held
 $js3 = @'
 const mk = (fixWorks) => _mock((prompt, o) => {
@@ -117,7 +125,7 @@ run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).th
 '@
 $res = Invoke-Js tc-envfix $js3 $wf
 Expect-Each $res 'testy local: #' 'envfix-ask', 'envfix-pass', 'envfix-held' -Show 5
-# testy: localenv.ps1 / swarm.ps1 calls are guarded (extras): a missing script prints the extra line; the prompt names extra sync
+# testy: localenv.ps1 / swarm.ps1 calls guarded (extras): a missing one prints the extra line; the prompt names extra sync
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])

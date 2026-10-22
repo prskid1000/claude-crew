@@ -14,7 +14,7 @@ steps 1-6 detail, script pitfalls); `<kit>/skills/orchestrate/kittool.py` (steps
 clone, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `audit scan`, `lint`; 9 `audit
 stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6 "Writing
 standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
-`<kit>/skills/local-env/SKILL.md` (extra `local-env`; owner steps `up -Services`, `unhold`, `down`, `refresh`, `drop`),
+`<kit>/skills/local-env/SKILL.md` (extra `local-env`; owner steps `up -Services`, `unhold`, `restart`, `down`, `refresh`, `drop`),
 phone lanes `<kit>/skills/android-swarm/SKILL.md` L2-L4 (extra `android-swarm`).
 
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
@@ -58,7 +58,8 @@ Non-negotiables:
 - Keep the kit generic (org specifics -> `kit.local.json`, `rules/*.local.md`); parts and optional features: `kit-admin.md`
   "Parts" (no aliases); build, move or retire an extra: README "Extras" (`main` and `extras` are protected: fast-forward
   only).
-- Scripted edits: absolute paths, never short helper names; `git -C <kit> status` after each.
+- Edits: the Edit tool first; a scripted one uses absolute paths, full command names (no short helpers), distinct variable
+  names and keeps the file's line endings (CRLF too); one git step per call, `git -C <kit> status` after each.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip the steps, the board and the report
   shape.
 
