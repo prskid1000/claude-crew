@@ -38,7 +38,7 @@ const DT = `${K}/devtools.py`
 const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/"}, "durable": {}}
+const KP = {"runtime": {"launches": "work/launches/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -518,7 +518,7 @@ ${JSON.stringify(outcome).slice(0, 60000)}
 
 1. One signal per notable event (failures, local-test rounds, blocked items, decisions, review findings, deferrals, budget stops / handoffs, anything that cost
  time or worked unusually well): & ${ORCH} learn -Skill <dev-kit|local-env|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
-2. & ${ORCH} cleanup -Quiet -WorktreeIdleHours 0, then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
+2. & ${ORCH} cleanup -WorktreeIdleHours 0: mention what it freed.
 Return how many signals you recorded.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s)`)
 return retroDue(outcome)

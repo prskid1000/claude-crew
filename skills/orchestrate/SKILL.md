@@ -21,7 +21,10 @@ row.
 ## One orchestration model (both flows)
 State every run shares: launch record (`orch.ps1 launch`), agent board (`board`), tracking (`.state/tracking.json`, `track`),
 decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`). Both
-workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps. Launch by path:
+workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps.
+What happened when, who called what: `orch.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
+line per step, kit call, build, guard block, signal, decision, deploy; supervise and retros read it, never journals or log
+files). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
 Invoking the coordinator is the only action needed: all steps run autonomously to completion without asking confirmation.
 
@@ -66,7 +69,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `orch.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (extra `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `qa.ps1 retest` |
 | E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, end to end, no question back: the steps in `<kit>/skills/orchestrate/deploys.md` (extra `deploys`); then in test: testers, or /testy on request |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `orch.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first) |
-| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>`; `next` (budget stop, batch, refusal) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); then E10 |
+| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (timeline: `audit -Run <id>`); `next` (budget stop, batch, refusal) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); then E10 |
 | E8 | The owner changes a rule or scope mid-run | append to brief AND contracts file (QA: `lead-notes.md`); agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished (`retroDue`), supervise says "retro due", or signals piled up | /tidy once no other workflow of this session runs (one retro covers several runs) |

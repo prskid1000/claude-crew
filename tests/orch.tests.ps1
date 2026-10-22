@@ -55,12 +55,12 @@ Expect 'decide ids unique within a second; board check without -Worktree exit 2;
 $dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
 $pp = Px $O precommit 2>&1 | Out-String; $ppc = $LASTEXITCODE
 Expect 'deploy / precommit without their extra (deploys, kit-admin): its one line, exit 1' ($ppc -eq 1 -and $pp.Trim() -eq 'orch.ps1 precommit is an extra: run kittool.py extra add kit-admin' -and $dxc -eq 1 -and $dx2.Trim() -eq 'orch.ps1 deploy is an extra: run kittool.py extra add deploys')
-$ld = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Get-KitPath launches }; New-Item -ItemType Directory -Force $ld | Out-Null
+$ld = TkPath $k launches -Create
+# launch -Self <script> <run> <json> [fnv]: $json written to an args file, -Fnv its hash unless given; more args passed on
+$self = { param($s, $run, $json, $fnv) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv ($fnv ?? (& { . $O; Get-KitFnv $json })) @args | Out-String }
 $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
-$af = Join-Path (Kd) 'args.json'; [IO.File]::WriteAllText($af, $full)
-$h = & { . $O; Get-KitFnv $full }
-$bad = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv 00000000 | Out-String; $badCode = $LASTEXITCODE
-$ok = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af -Fnv $h | Out-String
+$bad = & $self buildy.js wave-x $full 00000000; $badCode = $LASTEXITCODE
+$ok = & $self buildy.js wave-x $full
 Expect 'launch -Self: wrong hash MISMATCH (exit 1), right one RECORDED' ($badCode -eq 1 -and $bad -match 'MISMATCH' -and $ok -match 'RECORDED')
 $null = pwsh @np $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/wave-x.md"}' 2>&1
 $rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
@@ -68,8 +68,8 @@ $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
 Expect 'launch -List / recover: stopped run resumes with exact args' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match "resumeFromRunId: 'wf_t1'" -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf_t1.resume.md')))
 Expect 'recover: RESUME line has the recorded args byte for byte' ($rc.Contains("resumeFromRunId: 'wf_t1', args: $full })"))
-$sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'; $saf = Join-Path (Kd) 'args-sel.json'; [IO.File]::WriteAllText($saf, $sa)
-$null = pwsh @np $O launch -Self -Script testy.js -Run select-stg -ArgsFile $saf -Fnv (& { . $O; Get-KitFnv $sa }) -RunDir 'C:/rt/qa-runs/d-stg'
+$sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
+$null = & $self testy.js select-stg $sa $null -RunDir 'C:/rt/qa-runs/d-stg'
 $sr = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Get-Content -Raw | ConvertFrom-Json
 Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'select-stg')
 $sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
@@ -85,9 +85,7 @@ $bd = TkPath $k board
 Expect 'board: beat after TAKEOVER exit 1, no lock left' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
 $lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String
 Expect 'board leave: an unknown session exits 1, records no handoff' ($LASTEXITCODE -eq 1 -and $lv -match 'unknown session')
-$a2 = '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'; $af2 = Join-Path (Kd) 'args2.json'; [IO.File]::WriteAllText($af2, $a2)
-$h2 = & { . $O; Get-KitFnv $a2 }
-$null = pwsh @np $O launch -Self -Script buildy.js -Run wave-x -ArgsFile $af2 -Fnv $h2
+$null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'
 Expect 'launch -Self: 2 launches, one run name: 2 records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
 '{"kitDir":"C:/k","runDir":"C:/r"}' | Set-Content (Join-Path $ld 'args-testy-r.json'); '{"script":"","at":"bad"}' | Set-Content (Join-Path $ld 'broken.json')
 $ll = pwsh @np $O launch -List 2>&1 | Out-String; $cl = pwsh @np $O cleanup -IfDue -Quiet 2>&1 | Out-String; $clc = $LASTEXITCODE
@@ -137,12 +135,13 @@ $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-Str
 $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: an extra''s hook sees the sweep''s variables, adds a sweep line, a flag, a report row, an owner line, a RAM need' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: fake row 1 GB' -and $sr -match '\*\*WATCH\*\* fake flag' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\*\*INFO\*\* fake info'); Remove-Item $ad -Recurse -Force
-$lt = Join-Path (Kd) 'lk.json'; '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
+$lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
+& $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
-$lw = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
+$lw = & { . (Lib); try { Invoke-KitLocked $lt { 'got' } } catch { "threw: $_" } }; $null = $lj | Wait-Job
 Expect 'Invoke-KitLocked: an old lock still held open waits for its holder, never fails fast' ($lw -eq 'got')
-'' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5); $sw = [Diagnostics.Stopwatch]::StartNew()
-$l2 = & { . (Join-Path $k 'skills/dev-kit/lib.ps1'); Invoke-KitLocked $lt { 'got' } }
+& $old; $sw = [Diagnostics.Stopwatch]::StartNew()
+$l2 = & { . (Lib); Invoke-KitLocked $lt { 'got' } }
 Expect 'Invoke-KitLocked: an old lock nobody holds is taken at once, none left' ($l2 -eq 'got' -and $sw.Elapsed.TotalSeconds -lt 10 -and -not (Test-Path "$lt.lock"))
 $hlp = pwsh @np $O --help | Out-String; $hc2 = $LASTEXITCODE; $null = pwsh @np $O nope; $nc = $LASTEXITCODE
 Expect 'orch.ps1 --help: header only, exit 0; bad verb exit 2' ($hc2 -eq 0 -and $hlp -match '^\s*orch\.ps1: the coordinator' -and $hlp -notmatch '__verb|#>' -and $nc -eq 2)
@@ -154,8 +153,14 @@ $gd = "$(git -C "$sm/super/m" rev-parse --path-format=absolute --git-common-dir)
 $mt = & { . $O; $fa = (Get-Command Invoke-Cleanup).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'MergedTip' }, $true) | Select-Object -First 1; . ([scriptblock]::Create($fa.Extent.Text)); $global:seen = @(); function Invoke-HostVerb([string]$Verb, [hashtable]$A) { $global:seen += $A.repo; @() }; $null = MergedTip $gd 'f/x'; $global:seen -join ' ' }
 Expect 'cleanup: MergedTip on a submodule''s git dir asks the submodule''s project, not the superproject' ($mt -match 'g/subrepo' -and $mt -notmatch 'superrepo')
 $sd = TkPath $k sessions -Create; foreach ($n in 'tabs-t__u.json', 'old-login.json') { $p = Join-Path $sd $n; '{}' | Set-Content $p; (Get-Item $p).LastWriteTime = (Get-Date).AddHours(-9) }
+$rt = TkPath $k runtime; $ap = TkPath $k apks -Create
+foreach ($p in @("$rt/h1-run.log", "$rt/work/x2/a.txt", "$rt/work/x2") + @(1..5 | ForEach-Object { "$ap/app-$_.apk" })) { if (-not (Test-Path $p)) { New-Item -Force $p | Out-Null }; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-15) }
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
+Expect 'cleanup keep rules: newest N APKs kept, entries off the layout (runtime root, work/) go' ($cd -match '2 x\s+apks > 72 h' -and $cd -match 'layout \(runtime root\)' -and $cd -match 'layout \(work/\)')
+$env:KIT_RUN = 'r-9'; $env:KIT_AGENT = 'K1'; $null = pwsh @np $O decide list; $null = pwsh @np $O learn -Skill kitty -Kind idea -Text 'Bearer abc123defghij token=abc1 a@b.co'
+$null = python -X utf8 "$k/skills/orchestrate/kittool.py" budget; $env:KIT_RUN = $env:KIT_AGENT = $null; $au = (pwsh @np $O audit -Run r-9 2>&1) -join "`n"
+Expect 'kitlog: call lines (ps1 + py) masked; audit merges the streams in order' ($au -match '(?s)^audit run r-9: [3-9] events.*orch\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kittool\.py budget')
 $nt = @'
 . $args[0]
 $env:KIT_NET_TRIES = '1'   # a tracker whose CLI fails as $global:trFails says: network, then fine, then a real error
@@ -167,7 +172,7 @@ $s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status o/r#9' -and -not (Te
 $global:trFails = 'no issue 9 in o/r (HTTP 404)'
 try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
 '@
-$res = Invoke-PsTest 'outbox-test' $nt @(Join-Path $k 'skills/dev-kit/lib.ps1')
+$res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')
 & $J @{} (Join-Path $k 'skills/dev-kit/kit.local.json')   # a configured kit: lib.ps1 skips its load-time git lookup
 "`n## zz-test`n- a core lesson" | Add-Content (Join-Path $k 'LESSONS.md')

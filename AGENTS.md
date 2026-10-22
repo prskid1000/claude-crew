@@ -82,7 +82,8 @@ These rules hold whatever the route:
 - Browsers are headless by default (`skills/qa-kit/browser.mjs`); a visible browser only when the owner asks to watch.
 - Run python and node from the PowerShell tool (pwsh 7), not Git Bash; Python with `-X utf8`.
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
-  name (`Get-KitPath`); never elsewhere in the kit.
+  name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, diffs, logs, evidence outside a QA run) go
+  only where `dev.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says.
 - The kit learns: every agent reads its lessons at step 0 (`orch.ps1 learn -Read -Skill <skill>`) and records surprises with
   `orch.ps1 learn`.
 - A script prints `<feature> is an extra: run kittool.py extra add <name>` -> run that in `<kit>` (README "Extras"), then retry.

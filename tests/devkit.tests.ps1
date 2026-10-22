@@ -63,19 +63,19 @@ Initialize-KitTracker -Type command
 $r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description 'd' -Parent T1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks B inTest) }
 "command:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'T9' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
 '@
-$res = Invoke-PsTest 'tracker-test' $tb @(Join-Path $k 'skills/dev-kit/lib.ps1')
+$res = Invoke-PsTest 'tracker-test' $tb @(Lib)
 Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'command'
-$kv = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
+$kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
 # a stale lock that vanishes between the check and the read (Test-Path stub removes it) must not throw
-$kl = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
+$kl = pwsh -NoProfile -Command ". '$(Lib)'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
 Expect "Invoke-KitLocked: a lock removed mid-check is no crash ($kl)" ("$kl".Trim() -eq 'ran')
 # a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr
 $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
-  $e = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
+  $e = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
   if ($LASTEXITCODE -ne $r[2] -or $e.Trim() -notmatch $r[3]) { "$($r[0]) -> $LASTEXITCODE $($e.Trim())" } }
 Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
-$mw = pwsh -NoProfile -Command ". '$(Join-Path $k 'skills/dev-kit/lib.ps1')'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
+$mw = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} cases need a kit clone
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
@@ -113,30 +113,25 @@ function glab { $p = "$($args -join ' ')"; $global:LASTEXITCODE = 0
 $v = foreach ($b in 'main', 'dev', 'extras', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo)" }
 "protect:$(($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;extras=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')"
 '@
-Expect-Each (Invoke-PsTest 'gitlab-protect' $gp @(Join-Path $k 'skills/dev-kit/lib.ps1')) 'gitlab branch.protect: ok, force allowed, set, no admin, auth failure' 'protect'
-$res = Invoke-PsTest 'pipes-test' $pt @((Join-Path $k 'skills/dev-kit/lib.ps1'), $D)
+Expect-Each (Invoke-PsTest 'gitlab-protect' $gp @(Lib)) 'gitlab branch.protect: ok, force allowed, set, no admin, auth failure' 'protect'
+$res = Invoke-PsTest 'pipes-test' $pt @((Lib), $D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
-# migrations: the repo's own check, Liquibase (extra), any other tool UNRUN
+# migrations: the repo's own check, Liquibase (extra), any other tool UNRUN; $mig: add files (path = text), commit, check
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
 Save-GitRepo $ud init
-New-Item -ItemType Directory -Force "$ud/db/migrate", "$ud/database/migrations" | Out-Null; 'def change; end' | Set-Content "$ud/db/migrate/20240101000000_x.rb"
-'x' | Set-Content "$ud/CHANGELOG.md"; '<?php' | Set-Content "$ud/database/migrations/2024_01_01_000000_x.php"; Save-GitRepo $ud rb
-$out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
-Expect 'check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $out -match '000000_x\.php' -and $out -notmatch 'CHANGELOG')
+$mig = { param([hashtable]$f) foreach ($p in $f.Keys) { New-Item -Force "$ud/$p" -Value $f[$p] | Out-Null }; Save-GitRepo $ud add; Invoke-TestScript $D check -Dir $ud -Step migrations }
+Expect-Cases @(
+  , @('check: migrations without a kit check or tool are UNRUN (exit 5), docs skipped', { & $mig @{ 'db/migrate/20240101000000_x.rb' = 'def change; end'; 'CHANGELOG.md' = 'x'; 'database/migrations/2024_01_01_000000_x.php' = '<?php' } },
+      { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $r.out -match '000000_x\.php' -and $r.out -notmatch 'CHANGELOG' })
+  , @('check: Flyway, Alembic and Prisma files are UNRUN too', { & $mig @{ 'alembic/versions/a1_x.py' = 'x'; 'prisma/migrations/1_x/migration.sql' = 'x'; 'db/migration/V1__x.sql' = 'x' } },
+      { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 5 migration file\(s\) of another tool' })
+  , @('check: Liquibase without the extra is UNRUN with the extra line', { & $mig @{ 'config/liquibase/master.xml' = '<databaseChangeLog/>' } }, { param($r) $r.code -eq 5 -and $r.out -match 'extra add liquibase' })
+)
 $tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
 'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
 $out = pwsh @np $D check -Dir $tr -Step test -Touched 2>&1 | Out-String
 Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its spec runs' ($out -match '-Touched: 1 test\(s\) for 1 changed file\(s\): src/Audit\.spec\.ts')
-New-Item -ItemType Directory -Force "$ud/alembic/versions", "$ud/prisma/migrations/1_x", "$ud/db/migration" | Out-Null
-'x' | Set-Content "$ud/alembic/versions/a1_x.py"; 'x' | Set-Content "$ud/prisma/migrations/1_x/migration.sql"; 'x' | Set-Content "$ud/db/migration/V1__x.sql"
-Save-GitRepo $ud tools
-$out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
-Expect 'check: Flyway, Alembic and Prisma files are UNRUN too' ($LASTEXITCODE -eq 5 -and $out -match 'UNRUN: 5 migration file\(s\) of another tool')
-New-Item -ItemType Directory -Force "$ud/config/liquibase" | Out-Null; '<databaseChangeLog/>' | Set-Content "$ud/config/liquibase/master.xml"
-Save-GitRepo $ud lb
-$out = pwsh -NoProfile -File $D check -Dir $ud -Step migrations 2>&1 | Out-String
-Expect 'check: Liquibase without the extra is UNRUN with the extra line' ($LASTEXITCODE -eq 5 -and $out -match 'extra add liquibase')
 $wd = Join-Path (Kd) 'web-no-tests'; New-Item -ItemType Directory -Force $wd | Out-Null
 '{ "name": "w", "devDependencies": { "typescript": "5" } }' | Set-Content "$wd/package.json"; '{}' | Set-Content "$wd/tsconfig.json"
 $out = pwsh -NoProfile -File $D check -Dir $wd -Step test -Tests x.spec.ts 2>&1 | Out-String
@@ -160,6 +155,9 @@ Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'st
 $gbad = '{not json' | Px $D guard | Out-String
 $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
+$gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
+$dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
+Expect 'guard: a write off the kit layout gets a note naming dev.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
 # an extra's guard rule may return a note (additionalContext, the call not decided); no runtimes extra: one line
 $na = Join-Path $k 'skills/dev-kit/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na

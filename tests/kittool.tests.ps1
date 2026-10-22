@@ -74,7 +74,8 @@ $xw = Join-Path (Split-Path $kc) 'xw'; git init -q -b extras $xw
 $xd = Join-Path $xw 'extras/demo'; New-Item -ItemType Directory -Force "$xd/files/skills/orchestrate" | Out-Null
 "# demo`n`nA demo command.`nNeeded when: ``tracker.type`` = ``demo```n" | Set-Content "$xd/EXTRA.md"
 "COMMANDS = {'demo': lambda a: print('demo ran') or 0}`nARGS = {'demo': (set(), set(), False)}`n" | Set-Content "$xd/files/skills/orchestrate/kittool_demo.py"
-Save-GitRepo $xw 'feat: demo extra'; git -C $xw push -q $og extras 2>&1 | Out-Null
+$pushX = { param($m) Save-GitRepo $xw $m; git -C $xw push -q $og extras 2>&1 | Out-Null }   # commit all, push the extras branch
+& $pushX 'feat: demo extra'
 $ex = { $o = & $py -X utf8 $KT2 @args 2>&1 | Out-String; [pscustomobject]@{ out = $o; code = $LASTEXITCODE } }
 '{ "tracker": { "type": "demo" } }' | Set-Content (Join-Path $kc 'skills/dev-kit/kit.local.json')
 $demo = Join-Path $kc 'skills/orchestrate/kittool_demo.py'
@@ -97,16 +98,16 @@ foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by qa.ps1): 
   New-Item -ItemType Directory -Force "$xw/extras/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/extras/$($x[0])/EXTRA.md"; "$($x[0])" | Set-Content "$xw/extras/$($x[0])/files/notes/$($x[0]).txt"
 }
 New-Item -ItemType Directory -Force "$xw/extras/duo/files/notes/__pycache__" | Out-Null; 'x' | Set-Content "$xw/extras/duo/files/notes/__pycache__/d.pyc"   # a stray build file is never installed or compared
-git -C $xw add -A -f; git -C $xw commit -q -m 'feat: duo, own, never'; git -C $xw push -q $og extras 2>&1 | Out-Null
+git -C $xw add -A -f; & $pushX 'feat: duo, own, never'
 '{ "targets": { "t1": { "auth": { "type": "token" } } } }' | Set-Content (Join-Path $kc 'skills/qa-kit/targets.local.json'); git -C $kc push -q origin main 2>&1 | Out-Null; git -C $kc fetch -q origin
 $s1 = & $ex extra sync; $s2 = & $ex extra sync
-"x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; git -C $xw commit -qam 'fix: demo'; git -C $xw push -q $og extras 2>&1 | Out-Null
+"x = 1" | Add-Content "$xd/files/skills/orchestrate/kittool_demo.py"; & $pushX 'fix: demo'
 $s3 = & $ex extra sync
 Expect 'extra sync: installs what config or the kit needs, one line each; then silent; a branch change updates it' ($s1.code -eq 0 -and @($s1.out.Trim() -split "`n").Count -eq 3 -and $s1.out -match 'extra duo: installed' -and $s1.out -match 'extra own: installed' -and -not $s2.out.Trim() -and $s3.out.Trim() -match '^extra demo: updated 1 file' -and (Get-Content $demo -Raw) -match 'x = 1' -and -not (git -C $kc status --porcelain))
 # an extra whose old version listed other files (exclude block) updates, not refused; two syncs at once never collide
 $xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
 (Get-Content $xf -Raw) -replace '(?m)^/notes/own\.txt\r?$', "/notes/own.txt`n/notes/own-old.txt" | Set-Content $xf -NoNewline
-'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; git -C $xw commit -qam 'fix: own'; git -C $xw push -q $og extras 2>&1 | Out-Null
+'own v2' | Set-Content "$xw/extras/own/files/notes/own.txt"; & $pushX 'fix: own'
 Remove-Item (Join-Path $kc 'notes/duo.txt')
 $jobs = 1..2 | ForEach-Object { Start-Job -ArgumentList $py, $KT2 { param($py, $kt) & $py -X utf8 $kt extra sync 2>&1 | Out-String } }
 $both = (Receive-Job $jobs -Wait -AutoRemoveJob) -join "`n"
@@ -125,22 +126,22 @@ $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup
   'os-here' = 'Needed when: `windows` OS, `linux` OS, `macos` OS'; 'os-none' = 'Needed when: `beos` OS' }
 $wr = Join-Path (Kd) 'web repo'; New-Item -ItemType Directory -Force "$wr/app" | Out-Null; '{}' | Set-Content "$wr/app/tsconfig.json"; git -C $wr init -q; git -C $wr add -A
 foreach ($n in $needs.Keys) { New-Item -ItemType Directory -Force "$xw/extras/$n/files/notes" | Out-Null; "# $n`n`n$($needs[$n])" | Set-Content "$xw/extras/$n/EXTRA.md"; $n | Set-Content "$xw/extras/$n/files/notes/$n.txt" }
-Save-GitRepo $xw 'feat: real-like extras'; git -C $xw push -q $og extras 2>&1 | Out-Null
+& $pushX 'feat: real-like extras'
 & $J @{ tracker = @{ type = 'clickup' }; reports = @{ type = 'gdocs' }; localEnv = @{ envs = @{ e1 = @{ db = @{ applied = 'mvn liquibase:status'; rollback = 'mvn liquibase:rollback' }
   services = @(@{ name = 'api'; start = 'java -jar api.jar' }, @{ name = 'web'; start = 'yarn ng serve --port 4200' }) } } }; repos = @(@{ name = 'web'; checkout = $wr }) } $kl
 $s5 = & $ex extra sync; $got = @([regex]::Matches($s5.out, '(?m)^extra (\S+): installed') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
 Expect "extra sync: a real-like config installs exactly tracker-clickup, report-gdocs, liquibase, node-spec, ts-typecheck (a repo file), os-here (this OS) ($($got -join ','))" ($s5.code -eq 0 -and ($got -join ',') -eq 'liquibase,node-spec,os-here,report-gdocs,tracker-clickup,ts-typecheck')
 # lint codes on the copy
 $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
-Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
+Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })`nappendFileSync('a.jsonl', x)" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
 Add-Content (Join-Path $kc 'skills/dev-kit/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/x.ps1` (extra `demo`)', 'run `skills/gone/y.ps1`', 'see extra `nope`' -Encoding utf8   # a path an extra brings: cited with its extra
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect 'kittool lint: AGENT-TYPE, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real extra' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and
+Expect 'kittool lint: AGENT-TYPE, LOG-DIRECT, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real extra' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/dev-kit/templates\.md.*$oldSk" -and
   $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: extra .nope.: no such extra')
 # extras' section maps: lint checks installed files; extra test the branch's, with or without a tests.ps1
 ('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/extras/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/extras/big/EXTRA.md"
-('# x' + "`n") * 3000 | Set-Content "$xw/extras/big/files/skills/big.ps1"; Save-GitRepo $xw 'feat: big'; git -C $xw push -q $og extras 2>&1 | Out-Null
+('# x' + "`n") * 3000 | Set-Content "$xw/extras/big/files/skills/big.ps1"; & $pushX 'feat: big'
 $l5 = (& $ex lint --no-flow).out; $null = & $ex extra list; $t5 = & $ex extra test big   # list fetches the branch
 Expect 'sections: lint flags an installed extra''s file (fix on the extras branch); extra test flags the branch''s files; an unknown extra = exit 2' ($l5 -match 'SECTION-MAP\s+skills/orchestrate/kittool_demo\.py: no section markers.*\(extra demo: fix it on the extras branch\)' -and $t5.code -eq 1 -and $t5.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and (& $ex extra test nope).code -eq 2)
 # budget raise is in kit-admin (its tests); a manual cap edit is lint BUDGET-CAP

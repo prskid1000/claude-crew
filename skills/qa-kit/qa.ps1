@@ -12,7 +12,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
   api-auth, qa-html-report, ios-simulator.
-Sections: L21 report · L93 seat · L161 api · L285 finalize · L633 retest
+Sections: L21 report · L93 seat · L161 api · L284 finalize · L632 retest
 #>
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -230,7 +230,7 @@ function Call($tk) {
   $p = @{ Uri = $uri; Method = $Method; Headers = $h; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; ContentType = $ContentType }
   if ($Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes($Body) }
   $script:sentHeaders = $h
-  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match '(?i)cookie|authorization|token|key|secret|password') { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
+  function HeaderMap($pairs) { $m = [ordered]@{}; foreach ($kv in $pairs) { $m[([string]$kv.Key).ToLower()] = if ($kv.Key -match $KitLogMap.secretKey) { '[redacted]' } else { @($kv.Value) -join ', ' } }; $m }
   try { $r = Invoke-WebRequest @p; $hm = HeaderMap $r.Headers.GetEnumerator(); return @([int]$r.StatusCode, $r.Content, [string]$hm['content-type'], $hm) }
   catch {
     $resp = $_.Exception.Response
@@ -260,16 +260,15 @@ if ($content -is [byte[]]) {
 if ($Save) {
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
-  # secrets redacted at any depth
+  # secrets redacted at any depth (keys: kit.example.json _paths.log.secretKey)
   function Redact($o) {
-    if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $script:secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
-    if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $script:secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
+    if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
+    if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
     if ($o -is [array]) { return , @($o | ForEach-Object { Redact $_ }) }
     $o
   }
-  $script:secretKey = '(?i)passw|^pass$|^pwd$|secret|token|api_?key|authorization|cookie'
   function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { Redact (ConvertFrom-Json $s -NoEnumerate) } catch { $s } }
-  $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match '(?i)authorization|cookie|token|key|secret|password') { '[redacted]' } else { $script:sentHeaders[$k] } }
+  $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match $KitLogMap.secretKey) { '[redacted]' } else { $script:sentHeaders[$k] } }
   $code, $check = if ($Save -match '^([A-Za-z0-9]+)-([A-Za-z]*\d+)') { $Matches[1], $Matches[2] } else { '', '' }
   [ordered]@{
     meta     = [ordered]@{ code = $code; check = $check; target = $Target; tenant = $Tenant; user = [string]$u[0]; at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); durationMs = $sw.ElapsedMilliseconds; tool = 'qa.ps1 api' }

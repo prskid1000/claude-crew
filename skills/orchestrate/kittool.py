@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 load · L458 lint · L815 README graph · L921 lint command · L954 audit scan · L1189 registry ·
-  L1418 prose · L1561 sections · L1691 budget · L1709 extras · L2056 main
+Sections: L31 paths · L82 kitlog · L159 load · L535 lint · L900 README graph · L1006 lint command · L1039 audit scan ·
+  L1274 registry · L1503 prose · L1646 sections · L1776 budget · L1794 extras · L2141 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -78,6 +78,83 @@ def locked(path, stale=120):
             os.remove(lock)
         except OSError:
             pass
+
+# ---- kitlog: every log line (_paths.log; lib.ps1 Write-KitLog writes the same lines)
+LOG = MAP['log']
+_MASKS = [(re.compile(p, re.I), re.sub(r'\$(\d)', r'\\g<\1>', r)) for p, r in LOG['mask']]   # case-insensitive, as .NET -replace
+
+def mask(v, d=0):
+    """Secrets out of a value: keys matching secretKey -> [redacted], strings through the mask patterns."""
+    if isinstance(v, str):
+        for rx, r in _MASKS:
+            v = rx.sub(r, v)
+        return v
+    if isinstance(v, dict) and d < 5:
+        return {k: '[redacted]' if re.search(LOG['secretKey'], str(k)) else mask(x, d + 1) for k, x in v.items()}
+    if isinstance(v, (list, tuple)) and d < 5:
+        return [mask(x, d + 1) for x in v]
+    return v if v is None or isinstance(v, (bool, int, float)) else mask(str(v))
+
+def log_file(stream, day=None, create=False):
+    if stream not in LOG['streams']:
+        raise KeyError(f'kitlog: unknown stream {stream!r} (kit.example.json _paths.log.streams)')
+    if stream in MAP['durable']:
+        return kit_path(stream, create)
+    p = osp.join(kit_path('audit'), (day or datetime.date.today()).isoformat(), stream + '.jsonl')
+    if create:
+        os.makedirs(osp.dirname(p), exist_ok=True)
+    return p
+
+def kit_who(args=()):
+    """run / agent: KIT_RUN / KIT_AGENT, else the board entry claiming a folder among the arguments."""
+    who = {'run': os.environ.get('KIT_RUN', ''), 'agent': os.environ.get('KIT_AGENT', '')}
+    dirs = [osp.normcase(osp.abspath(a)) for a in args if isinstance(a, str) and len(a) > 3 and osp.isdir(a)]
+    bd = kit_path('board')
+    if not who['agent'] and dirs and osp.isdir(bd):
+        for n in os.listdir(bd):
+            p = osp.join(bd, n)
+            if not n.endswith('.json') or time.time() - osp.getmtime(p) > 86400:
+                continue
+            try:
+                e = json.load(open(p, encoding='utf-8-sig'))
+            except (OSError, ValueError):
+                continue
+            if e.get('status') != 'left' and any(d.startswith(osp.normcase(osp.abspath(w))) for w in e.get('worktrees') or [] if w for d in dirs):
+                who = {'run': who['run'] or e.get('run') or '', 'agent': e.get('agent') or ''}
+                break
+    return who
+
+_CALL = {}
+
+def kitlog(stream, event='', fields=None, who=None):
+    """Append one masked JSON line to a stream; never raises."""
+    try:
+        o = {'at': datetime.datetime.now().astimezone().isoformat()}
+        o.update({k: v for k, v in (who or _CALL.get('who') or kit_who()).items() if v})
+        o.update(script=_CALL.get('script', ''), verb=_CALL.get('verb', ''), **({'event': event} if event else {}))
+        o.update(mask(fields or {}))
+        with open(log_file(stream, create=True), 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(o, ensure_ascii=False, default=str) + '\n')
+    except Exception:
+        pass
+
+def audited(script, argv, cli):
+    """Runs a CLI (cli() -> exit code) between its call lines (stream calls): start with masked arguments, end with rc and ms."""
+    sub = 2 if argv[1:2] and re.match(r'^[a-z][\w-]*$', argv[1]) else 1
+    _CALL.update(script=script, verb=' '.join(argv[:sub]), who=kit_who(argv))
+    out, hide = [], False
+    for x in argv[sub:]:
+        out.append('[redacted]' if hide else mask(re.sub(r'\s+', ' ', x))[:120])
+        hide = x.startswith('-') and bool(re.search(LOG['secretKey'], x))
+    kitlog('calls', 'start', {'pid': os.getpid(), 'args': ' '.join(out)[:500]})
+    t0, rc = time.time(), 1
+    try:
+        rc = cli() or 0
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+    finally:
+        kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000)})
+    return rc
 
 # ---- load: kit files, the reach graph
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}
@@ -760,6 +837,14 @@ def lint(k, g=None, org_terms=None):
                 if rx.search(line):
                     bad('RUNTIME-RAW', f'{f}:{ln}', f'{what}: use Get-KitPath / kit_path / kitPath / rp(<name>) (names in {PATHS_JSON})')
                     break
+    # ---- log lines only through kitlog (Write-KitLog / kitlog): an append to a .log / .jsonl / *-log / signals target
+    app = re.compile(r'Add-Content|Out-File\b[^|\n]*-Append|AppendAllText|appendFile|\bopen\([^)]*[\'"]a[\'"]|(?<!>)>>(?!>)')
+    tgt = re.compile(r'\.jsonl\b|\.log\b|[\w-]-log\b|\bsignals\b', re.I)
+    for f in k.files:
+        if f.endswith(('.ps1', '.py', '.mjs', '.js')) and not f.startswith('tests/'):
+            for ln, line in enumerate(k.texts.get(f, '').splitlines(), 1):
+                if app.search(line) and tgt.search(line):
+                    bad('LOG-DIRECT', f'{f}:{ln}', 'appends a log line by hand: Write-KitLog <stream> (lib.ps1) / kitlog() (kittool.py), streams in kit.example.json _paths.log')
     if pmap:
         for w, p in k.workflows.items():
             m = re.search(r'^const KP = (\{.*\})\s*$', k.texts.get(p, ''), re.M)
@@ -2118,4 +2203,4 @@ if __name__ == '__main__':
     load_plugins()
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
     rc = check_args(cmd, rest)
-    sys.exit(rc if rc is not None else (PLUGINS.get(cmd) or COMMANDS[cmd])(rest))
+    sys.exit(rc if rc is not None else audited('kittool.py', sys.argv[1:], lambda: (PLUGINS.get(cmd) or COMMANDS[cmd])(rest)))

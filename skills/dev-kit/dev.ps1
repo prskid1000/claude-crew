@@ -8,10 +8,12 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
+ dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L16 init · L22 wt · L224 stack · L399 gate · L648 check · L801 pipes · L837 guard · L1172 tracker · L1205 host
+Sections: L18 init · L24 wt · L226 stack · L401 gate · L650 check · L803 pipes · L839 guard · L1195 dir · L1205 tracker ·
+  L1238 host
 #>
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -506,7 +508,6 @@ $ownerRoot = if ($top) { Split-Path $top -Leaf } else { Split-Path ([IO.Path]::G
 $owner = if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Get-OwnerName $ownerRoot $(if ($top) { $repoName } else { '' }) }
 $heapBase = $heap
 $queueDir = Join-Path $ledger 'queue'; New-Item -ItemType Directory -Force $queueDir | Out-Null
-$startsFile = Join-Path $ledger 'starts.jsonl'
 $myTicket = Join-Path $queueDir "$PID.json"
 $since = (Get-Date).ToString('o')
 function Write-Ticket { @{ pid = $PID; owner = $owner; kind = $kind; need = $need; since = $since; dir = $Dir } | ConvertTo-Json -Compress | Set-Content $myTicket }
@@ -517,7 +518,7 @@ function Get-Queue {
     $t
   }
   $cut = (Get-Date).AddMinutes(-30); $recent = @{}
-  foreach ($l in Get-Content $startsFile -Tail 300 -ErrorAction SilentlyContinue) { try { $x = $l | ConvertFrom-Json; if ([datetime]$x.at -gt $cut) { $recent[$x.owner] = 1 + [int]$recent[$x.owner] } } catch {} }
+  foreach ($x in @(Read-KitLog builds $cut | Where-Object event -eq 'start')) { $recent[$x.owner] = 1 + [int]$recent[$x.owner] }
   @($q | Sort-Object @{ e = { [int]$recent[$_.owner] } }, @{ e = { [datetime]$_.since } })
 }
 
@@ -605,7 +606,7 @@ while ((Get-Date) -lt $deadline) {
         $proc = [Diagnostics.Process]::Start($psi)
       }
       Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
-      @{ owner = $owner; kind = $kind; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Add-Content $startsFile
+      Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
       @{ pid = $proc.Id; gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json | Set-Content $entry
       break
@@ -626,6 +627,7 @@ try {
   while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
   $proc.WaitForExit(); $code = $proc.ExitCode
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
+Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
   # builds finish together; an unreadable file is never reset
   $got = $false
@@ -934,11 +936,11 @@ $stdin = if ($Json) { $Json } elseif ([Console]::IsInputRedirected) { [Console]:
 if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
   $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
-  "$((Get-Date).ToString('s'))`t-`tmalformed hook input`t$one" | Add-Content (Get-KitPath guard-log -Create)
+  Write-KitLog guard deny @{ why = 'malformed hook input'; cmd = $one }
   if ($stdin -match '"toolCall"|"conversationId"') {
-    @{ decision = 'deny'; reason = 'kit guard: hook input not JSON (logged to guard.log); retry' } | ConvertTo-Json -Compress
+    @{ decision = 'deny'; reason = 'kit guard: hook input not JSON (logged: orch.ps1 audit); retry' } | ConvertTo-Json -Compress
   } else {
-    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged to guard.log); retry' } } | ConvertTo-Json -Compress -Depth 4
+    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged: orch.ps1 audit); retry' } } | ConvertTo-Json -Compress -Depth 4
   }
   exit 0
 }
@@ -956,7 +958,7 @@ function Deny($why) {
   if ($in.session_id) {   # test runs must not raise a guard WATCH
     $one = $raw -replace "[\r\n\t]+", " // "
     if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
-    "$((Get-Date).ToString('s'))`t$($in.session_id)`t$why`t$one" | Add-Content (Get-KitPath guard-log -Create)
+    Write-KitLog guard deny @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $why; cmd = $one }
   }
   if ($isGravity) {
     @{ decision = 'deny'; reason = $why } | ConvertTo-Json -Compress
@@ -990,8 +992,28 @@ function LiveFile([string]$p, [string]$base) {
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (dev.ps1 wt) and push; the coordinator pulls'
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
+# an agent's own write into the runtime / state must land under a _paths name (dev.ps1 dir); guard.layout warn | block
+$layout = @(@((Get-KitRuntime), 'runtime'), @((Split-Path (Get-KitPath tracking)), 'durable'))
+function OffLayout([string]$p, [string]$base) {
+  if (-not $p -or $p -match '[$*?<>|`]') { return }
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
+  $p = [IO.Path]::GetFullPath(($p -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'))
+  foreach ($r in $layout) {
+    $rel = [IO.Path]::GetRelativePath($r[0], $p).Replace('\', '/'); if ($rel -match '^\.\.(/|$)|^\.$' -or [IO.Path]::IsPathRooted($rel)) { continue }
+    if (-not @($script:KitPathMap.($r[1]).PSObject.Properties.Value | ForEach-Object { ([string]$_).TrimEnd('/') } | Where-Object { $rel -eq $_ -or ($_ -notin 'work', 'cache', 'logs' -and $rel.StartsWith("$_/")) }).Count) { "$($r[1])/$rel" }
+  }
+}
+# the note (warn) or the deny (block); Deny runs here, outside any captured output
+function LayoutCheck {
+  if (-not $off) { return }
+  $lw = "kit layout: $(@($off | Select-Object -Unique) -join ', ') is no kit place: agent files go under & $($KitCmd.dev) dir -Agent <id> [-Item <task>] (work/agents/<id>/) or dir -Kind evidence -Item <task> (work/evidence/<task>/)"
+  if ($kc.guard.layout -eq 'block') { $raw = "$($in.tool_name) $($off -join ' ')"; Deny $lw }
+  if ($in.session_id) { Write-KitLog guard warn @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $lw } }; $script:layoutNote = $lw
+}
+$off = @(foreach ($e in $edits) { OffLayout $e $here })
 if (-not $cmd) {
-  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
+  LayoutCheck
+  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress } elseif ($script:layoutNote) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = $script:layoutNote } } | ConvertTo-Json -Compress -Depth 4 }
   exit 0
 }
 
@@ -1114,8 +1136,8 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after dev.ps1 wt sync.'
   }
 }
-# shell writes into the live clone: file verbs, redirects and git verbs that change the work tree (the cd / -C target, else cwd)
-if ($live -and -not $liveOk) {
+# shell writes (file verbs, redirects; the cd / -C target, else cwd): into the live clone (git verbs too) or off the layout
+if ($cmd) {
   $cur = $here
   foreach ($seg in (StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&>]*)"|''([^''\s;|&>]*)''', '$1$2'))) -split '\r?\n|;|&&|\|\||\|') {
     $tk = @(-split $seg); if (-not $tk.Count) { continue }
@@ -1128,13 +1150,13 @@ if ($live -and -not $liveOk) {
       for ($i = 1; $i -lt $tk.Count; $i++) {
         if ($tk[$i] -eq '-C') { $i++; $gd = if ([IO.Path]::IsPathRooted($tk[$i])) { $tk[$i] } elseif ($gd) { Join-Path $gd $tk[$i] }; continue }
         if ($tk[$i] -match '^-') { if ($tk[$i] -eq '-c') { $i++ }; continue }
-        if ($tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and $seg -notmatch '\s(-n|--dry-run|--check|-h|--help)(\s|$)' -and (InLive $gd '')) { Deny $liveWhy }
+        if (-not $liveOk -and $tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and $seg -notmatch '\s(-n|--dry-run|--check|-h|--help)(\s|$)' -and (InLive $gd '')) { Deny $liveWhy }
         break
       }
     }
     elseif ($w -match '^(Copy-Item|cpi|cp|copy)$') { $hits += @($pa | Select-Object -Last 1) }
     elseif ($w -match '^(Set-Content|sc|Add-Content|ac|Out-File|Clear-Content|clc|Remove-Item|ri|rm|del|erase|rmdir|rd|Move-Item|mi|mv|move|Rename-Item|rni|ren|New-Item|ni|tee|Tee-Object|touch)$' -or ($w -eq 'sed' -and $seg -match '\s(-i|--in-place)')) { $hits += @($pa | Select-Object -Skip ([int]($w -eq 'sed'))) }
-    foreach ($h in $hits) { if ($h -match '[\\/]|\.\w{1,8}$' -and (LiveFile $h $cur)) { Deny $liveWhy } }
+    foreach ($h in $hits) { if ($h -match '[\\/]|\.\w{1,8}$') { if (-not $liveOk -and (LiveFile $h $cur)) { Deny $liveWhy }; if ($w -notmatch '^(Remove-Item|ri|rm|del|erase|rmdir|rd)$') { $off += @(OffLayout $h $cur) } } }
   }
 }
 # the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and extras never forced, deleted or moved
@@ -1163,10 +1185,21 @@ if ($heavy -and -not $gated) {
 }
 # installed extras add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason, @{ note = '<line for the agent>' } or nothing> } }
 # ($a: cmd without quoted data, raw, config, hook input); last, so a note's side effect only follows a command that runs
-$notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }
+$notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
+LayoutCheck; $notes = @(@($notes) + $script:layoutNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
 elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
 exit 0
+}
+
+# ---- dir: the only places agents write under the runtime: agents/<agent>/[<item>/], evidence/<item>/; names lowercase-kebab
+function Invoke-Dir {
+param([string]$Agent, [string]$Item, [ValidateSet('scratch', 'evidence')][string]$Kind = 'scratch', [string]$Name)
+$slug = { param($s) ("$s".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
+if (-not $(if ($Kind -eq 'evidence') { $Item } else { $Agent })) { 'usage: dev.ps1 dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent <id>] [-Name <file>]'; exit 2 }
+$d = if ($Kind -eq 'evidence') { Join-Path (Get-KitPath evidence) (& $slug $Item) } else { Join-Path (Get-KitPath agents) (& $slug $Agent) | Join-Path -ChildPath $(if ($Item) { & $slug $Item } else { '' }) }
+New-Item -ItemType Directory -Force $d | Out-Null
+if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
 # ---- tracker: lib.ps1 tracker adapters
@@ -1213,6 +1246,7 @@ function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
   switch ($__verb) {
     'wt' { Invoke-KitVerb Invoke-Wt $__rest }
+    'dir' { Invoke-KitVerb Invoke-Dir $__rest }
     'stack' { Invoke-KitVerb Invoke-Stack $__rest }
     'gate' { Invoke-KitVerb Invoke-Gate $__rest }
     'check' { Invoke-KitVerb Invoke-Check $__rest }

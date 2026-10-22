@@ -19,7 +19,7 @@ const A = args || {}
 const C = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
 const RT = (A.runtimeDir || `${C}/.runtime`).replace(/[\\/]+$/, '')
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"guard-log": "logs/guard.log", "qa-runs": "work/qa-runs/", "audits": "work/audits/", "retros": "logs/retros/", "launches": "work/launches/"}, "durable": {"signals": "learning.jsonl", "last-retro": "learning.stamp"}}
+const KP = {"runtime": {"qa-runs": "work/qa-runs/", "audits": "work/audits/", "retros": "logs/retros/", "launches": "work/launches/"}, "durable": {"signals": "learning.jsonl", "last-retro": "learning.stamp"}}
 const rp = (n) => (n in KP.durable ? `${C}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
@@ -27,7 +27,7 @@ const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relati
 const SOURCES = `${PATHS}
 Data sources (agents/kitty.md step 7; missing files = no data yet):
 - signals ${rp('signals')}: only those after the time in ${rp('last-retro')} are new (& ${C}/skills/orchestrate/orch.ps1 learn -Show -Last 500; -Stats)
-- guard blocks ${rp('guard-log')}; build gate history <OS temp>/claude-build-gate/history.json (peak GB, seconds, ok per build kind)
+- calls, guard blocks, builds (gate waits), decisions since the last retro: & ${C}/skills/orchestrate/orch.ps1 audit -Since <its time> -Json; build gate history <OS temp>/claude-build-gate/history.json (peak GB, seconds, ok per build kind)
 - QA runs ${rp('qa-runs')}/*/ (run.json, results.json, finalize.json, lead-notes.md); module audits ${rp('audits')}/
 - kit structure: python -X utf8 ${C}/skills/orchestrate/kittool.py lint --warn --no-flow
 - the kit itself: SKILL.md files, LESSONS.md + LESSONS.local.md, retired lessons (orch.ps1 learn -History: a fixed problem back?),

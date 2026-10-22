@@ -20,10 +20,10 @@ function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c 2>&1 | Out-String }
 function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
 function Task($id) { Read-Json (Join-Path $store "$id.json") }
 function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.name -like '`[Bug`]*' }) }
+# a task in the tracker-none store
+function New-Task($id, $name, $parent = $null, $status = 'open', $desc = '') { & $J @{ id = $id; name = $name; status = $status; parent = $parent; list = 'L1'; assignees = @(); description = $desc; comments = @() } (Join-Path $store "$id.json") }
 New-Item -ItemType Directory -Force $store | Out-Null
-foreach ($x in @(@('PA', 'Ask A', $null), @('PQ', 'Ask Q', $null), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) {
-  & $J @{ id = $x[0]; name = $x[1]; status = 'open'; parent = $x[2]; list = 'L1'; assignees = @(); description = ''; comments = @() } (Join-Path $store "$($x[0]).json")
-}
+foreach ($x in @(@('PA', 'Ask A'), @('PQ', 'Ask Q'), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) { New-Task @x }
 $a = New-Run 'A' @(@{ code = 'A1'; task = 'T1'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
 $out = Fin $a 'A1'
 Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
@@ -126,7 +126,7 @@ $null = pwsh @np $Q finalize -RunDir $ex -Code E1 -Check -FixNames -Results resu
 Expect 'finalize -Results: a scoped retry renames only its own files' (-not (Test-Path "$ex/E1/shots/retryshot.png") -and (Test-Path "$ex/E1/shots/othershot.png") -and (Get-Content "$ex/E1/results-retry.json" -Raw) -match 'E1-C2_' -and (Get-Content "$ex/E1/results.json" -Raw) -eq $before)
 Remove-Item "$ex/E1/shots" -Recurse -Force; Remove-Item "$ex/E1/results-retry.json" -Force
 $cf = New-Run 'CF' @(@{ code = 'F1'; task = 'TF'; checks = , @('C1', 'PASS') })
-& $J @{ id = 'TF'; name = 'Task F'; status = 'in test'; parent = $null; list = 'L1'; assignees = @(); description = ''; comments = @() } (Join-Path $store 'TF.json')
+New-Task TF 'Task F' $null 'in test'
 (Get-Item (Join-Path $store 'TF.json')).IsReadOnly = $true
 $null = Fin $cf 'F1'; $r1 = Rec $cf 'F1'
 (Get-Item (Join-Path $store 'TF.json')).IsReadOnly = $false
@@ -136,14 +136,14 @@ $here0 = (Get-Location).Path
 $wd = pwsh -NoProfile -Command "Set-Location '$($env:TEMP)'; . '$Q'; `$null = Invoke-Finalize -RunDir '$ex' -Code E1 -NoTracker *>&1; (Get-Location).Path" | Select-Object -Last 1
 Expect 'finalize: the caller''s directory is restored' ($wd.TrimEnd('\') -eq $env:TEMP.TrimEnd('\') -and (Get-Location).Path -eq $here0)
 $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') })
-& $J @{ id = 'TZ'; name = 'Task Z'; status = 'open'; parent = $null; list = 'L1'; assignees = @(); description = '### C1 — s'; comments = @() } (Join-Path $store 'TZ.json')
+New-Task TZ 'Task Z' $null open '### C1 — s'
 $null = Fin $rt 'Z1'
 $ro = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-String
 $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
 # tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
 $kl = "$k/skills/dev-kit/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
-foreach ($x in @('PY', 'Ask Y', $null), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { & $J @{ id = $x[0]; name = $x[1]; status = 'open'; parent = $x[2]; list = 'L1'; description = '' } "$store/$($x[0]).json" }
+foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }
 $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'new') })
 (Get-Content "$by/run.json" -Raw) -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
 (Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
@@ -207,7 +207,7 @@ const S = kitPath('sessions'); writeFileSync(kitPath('browser-ports'), JSON.stri
 writeFileSync(`${S}/tabs-u____v__t__a.json`, JSON.stringify({ _key: 'u__v|t|a' })); writeFileSync(`${S}/tabs-gone.json`, JSON.stringify({ _key: 'gone' }))
 await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs-u____v__t__a.json`) && !existsSync(`${S}/tabs-gone.json`)))
 '@
-  foreach ($x in 'waits', 'ninth', 'fails', 'orphans', 'sweep') { Expect "browser.mjs tabs: $x" (@($res) -contains "${x}:true") }
+  Expect-Each $res 'browser.mjs tabs: #' 'waits', 'ninth', 'fails', 'orphans', 'sweep'
   Expect 'browser.mjs: never logs out' ((Get-Content "$qk/browser.mjs" -Raw) -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
   # fixture app: form login, relogin (Chrome); sso-steps / other engines name their extra
   $res = NodeT auth ($LoginApp + @'
@@ -222,7 +222,7 @@ if (SLOW) await out('webext', async () => /extra add web-login-types/.test(await
 if (SLOW) await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 process.exit(0)
 '@) "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
-  foreach ($x in @('extras', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' })) { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") }
+  Expect-Each $res 'browser.mjs login: #' (@('extras', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' }))
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/qa-kit)' }
 $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"

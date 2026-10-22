@@ -24,7 +24,7 @@ import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess,
 KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'orchestrate'))
-from kittool import kit_path, locked   # one path map and lock for every kit script
+from kittool import kit_path, locked, audited   # one path map, lock and call log for every kit script
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -869,8 +869,8 @@ def _report_selftest(expect):
 
 
 # ---- CLI: argument checks, verb dispatch
-if __name__ == '__main__':
-    sys.stdout.reconfigure(encoding='utf-8')
+def _cli():
+    global REPORT_TYPE
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
@@ -920,3 +920,8 @@ if __name__ == '__main__':
     elif cmd == 'evidence':
         ff = open(opt['--files-from'], encoding='utf-8-sig').read().splitlines() if opt.get('--files-from') else []   # one path per line: no command-line limit
         print(json.dumps(make_evidence(a[1], a[2:] + [x for x in ff if x.strip()], opt.get('--folder') or None, opt.get('--parent') or None)))
+
+
+if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.exit(audited('devtools.py', sys.argv[1:], _cli))

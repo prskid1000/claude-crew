@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L859 entry-scripts
+Sections: L8 paths · L66 config · L146 OS · L280 leases · L474 tracker · L694 git-host · L829 kitlog · L922 entry-scripts
 #>
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
@@ -556,7 +556,7 @@ function __TrIssue($Num, $Name, $St, $Url, $Who, $Repo, [string]$Body, [scriptbl
 
 function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
   $d = Get-KitPath tracker-none -Create
-  Add-Content (Get-KitPath tracker-log -Create) ("{0} {1} {2}" -f (Get-Date -Format s), $Id, (__TrShort $What)) -Encoding utf8
+  Write-KitLog calls tracker-none @{ id = $Id; what = (__TrShort $What) }
   if (-not $Id) { return $null }
   $f = Join-Path $d "$($Id -replace '[^\w.-]', '_').json"
   $o = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
@@ -826,16 +826,79 @@ function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fiel
   Invoke-HostVerb $v $a -NoMemo:$NoMemo
 }
 
+# ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)
+$script:KitLogMap = $script:KitPathMap.log
+function Protect-KitText([string]$s) { if ($s) { foreach ($m in $script:KitLogMap.mask) { $s = $s -replace $m[0], $m[1] } }; $s }
+function Protect-KitValue($v, [int]$d = 0) {
+  if ($null -eq $v -or $v -is [ValueType]) { return $v }
+  if ($v -is [string]) { return Protect-KitText $v }
+  $isD = $v -is [Collections.IDictionary]
+  if (($isD -or $v -is [Management.Automation.PSCustomObject]) -and $d -lt 5) {
+    $o = [ordered]@{}; foreach ($k in @(if ($isD) { $v.Keys } else { $v.PSObject.Properties.Name })) { $o["$k"] = if ("$k" -match $script:KitLogMap.secretKey) { '[redacted]' } else { Protect-KitValue $(if ($isD) { $v[$k] } else { $v.$k }) ($d + 1) } }; return $o }
+  if ($v -is [Collections.IEnumerable] -and $d -lt 5) { return , @($v | ForEach-Object { Protect-KitValue $_ ($d + 1) }) }
+  Protect-KitText "$v"
+}
+# a stream with a durable name = that file, else audit/<date>/<stream>.jsonl
+function Get-KitLogFile([string]$Stream, [datetime]$Day = (Get-Date), [switch]$Create) {
+  if ($Stream -notin $script:KitLogMap.streams) { throw "kitlog: unknown stream '$Stream' (kit.example.json _paths.log.streams)" }
+  if ($script:KitPathMap.durable.PSObject.Properties.Name -contains $Stream) { return Get-KitPath $Stream -Create:$Create }
+  $p = Join-Path (Get-KitPath audit) "$($Day.ToString('yyyy-MM-dd'))/$Stream.jsonl"; if ($Create) { New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null }; $p
+}
+# run / agent / task: the call's -Run -Agent -Task, its -Session's board entry, the board entry claiming its -Dir / -Worktree, KIT_AGENT / KIT_RUN
+function Get-KitWho([Collections.IDictionary]$Named = @{}) {
+  $w = [ordered]@{ run = "$($Named.Run)"; agent = "$($Named.Agent)"; task = "$($Named.Task)" }
+  $b = if ($Named.Session) { try { Get-Content (Join-Path (Get-KitPath board) "$($Named.Session).json") -Raw | ConvertFrom-Json } catch {} }
+  $dir = "$(@($Named.Dir, $Named.Worktree) | Where-Object { $_ } | Select-Object -First 1)"
+  if (-not $b -and -not $w.agent -and $dir) { $d = try { [IO.Path]::GetFullPath($dir).TrimEnd('\', '/').ToLower() } catch { '' }
+    $b = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } |
+      Where-Object { $_.status -ne 'left' -and @($_.worktrees | Where-Object { $_ -and $d.StartsWith(([IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower())) }).Count })[0] }
+  if ($b) { if (-not $w.agent) { $w.agent = "$($b.agent)" }; if (-not $w.run) { $w.run = "$($b.run)" } }
+  if (-not $w.agent) { $w.agent = "$env:KIT_AGENT" }; if (-not $w.run) { $w.run = "$env:KIT_RUN" }
+  $w
+}
+# one JSON line, appended whole (concurrent writers: shared append, retried); logging never breaks a verb
+function Write-KitLog([Parameter(Mandatory)][string]$Stream, [string]$Event = '', $Fields = @{}, [Collections.IDictionary]$Who) {
+  try {
+    if (-not $Who) { $Who = if ($script:KitWho) { $script:KitWho } else { Get-KitWho } }
+    $f = Protect-KitValue $Fields; $o = [ordered]@{ at = $(if ($f.at) { $f.at } else { (Get-Date).ToString('o') }) }
+    foreach ($k in 'run', 'agent', 'task') { if ($Who[$k]) { $o[$k] = $Who[$k] } }
+    $o.script = "$script:KitScript"; $o.verb = "$script:KitVerb"; if ($Event) { $o.event = $Event }
+    foreach ($k in $f.Keys) { $o[$k] = $f[$k] }
+    $b = [Text.Encoding]::UTF8.GetBytes(($o | ConvertTo-Json -Compress -Depth 8) + "`n"); $file = Get-KitLogFile $Stream -Create
+    for ($i = 0; $i -lt 40; $i++) { try { $fs = [IO.FileStream]::new($file, 'Append', 'Write', 'ReadWrite, Delete'); try { $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() }; break } catch [IO.IOException] { Start-Sleep -Milliseconds 25 } }
+  } catch {}
+}
+# the lines of streams since a time (default 24 h), each with .stream; a bad line is skipped
+function Read-KitLog([string[]]$Stream = $script:KitLogMap.streams, [datetime]$Since = (Get-Date).AddDays(-1)) {
+  foreach ($s in $Stream) {
+    $files = if ($script:KitPathMap.durable.PSObject.Properties.Name -contains $s) { Get-KitPath $s } else { Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | Where-Object Name -ge $Since.ToString('yyyy-MM-dd') | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "$s.jsonl" } }
+    foreach ($f in @($files | Where-Object { Test-Path -LiteralPath $_ })) {
+      foreach ($l in Get-Content -LiteralPath $f) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
+    }
+  }
+}
+function ConvertTo-KitArgs([object[]]$Tokens) {
+  $hide = $false; $a = foreach ($t in $Tokens) { $s = Protect-KitText ("$t" -replace '\s+', ' '); $out = if ($hide) { '[redacted]' } elseif ($s.Length -gt 120) { $s.Substring(0, 117) + '...' } else { $s }; $hide = $s -match '^-' -and $s -match $script:KitLogMap.secretKey; $out }
+  $j = Protect-KitText (@($a) -join ' '); if ($j.Length -gt 500) { $j.Substring(0, 497) + '...' } else { $j }
+}
+
 function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
   $meta = (Get-Command $Fn).Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
+  $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
+  # call lines (calls stream): start, then end with rc (0 returned, 1 crash, 2 bad parameters; a verb's own exit: rc 'exit', its code is not visible here) and ms
+  $script:KitLogOn = $Fn -notmatch '^Invoke-Guard'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards run on every tool call: they log their denials
+  $end = { if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end @{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } } }
   # a crash exits 1 (2 = bad parameters), never 0: a statement error alone lets `pwsh -File` exit 0, a throw keeps a caller's stale $LASTEXITCODE
-  $run = { param([object[]]$pa, [hashtable]$nm) try { & $Fn @pa @nm } catch {
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
-    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } }
+  $run = { param([object[]]$pa, [hashtable]$nm)
+    $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
+    try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; & $end; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
+    $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
+    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {

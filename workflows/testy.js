@@ -30,7 +30,7 @@ export const meta = {
   model?, effort? (TEST step) }],
 } */
 // kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"cleanup-log": "logs/cleanup.log", "launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
+const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -637,7 +637,7 @@ ${JSON.stringify(all).slice(0, 60000)}
 1. One signal per notable event (failures, retries, budget stops / handoffs, NOT_TESTED causes, audit reclassifications / not-exercised splits, verify "not reproduced" or "inconclusive", anything that
  cost time or worked unusually well):
  & ${ORCH} learn -Skill <qa-kit|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
-2. & ${ORCH} cleanup -Quiet (only kit-created leftovers), then Get-Content ${rp('cleanup-log')} -Tail 15: mention what was freed.
+2. & ${ORCH} cleanup (only kit-created leftovers): mention what it freed.
 Return how many signals you recorded.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s)`)
 return retroDue(all)

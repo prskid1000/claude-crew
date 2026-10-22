@@ -36,6 +36,7 @@ function pwsh {
 }
 
 function Kd { Split-Path $k }
+function Lib { Join-Path $k 'skills/dev-kit/lib.ps1' }   # the test kit's lib.ps1
 function Px { $input | pwsh -NoProfile -File @args }
 # KIT_TESTS_TIME=1: Complete-Tests lists the slowest checks (time since the previous check)
 $script:clock = [Diagnostics.Stopwatch]::StartNew(); $script:times = [Collections.Generic.List[object]]::new()
@@ -153,6 +154,9 @@ const _mock = (fn, dflt = '') => { const calls = []; return { calls, agent: asyn
 const _pass = async (p, o) => /^record-args/.test(o.label) ? _rec() : /^(build|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : _ok('[]')
 const _err = (e) => console.log('error:' + e)
 const _n = () => {}
+// every sim's args share these; a testy item on lane `lane`, subtask T1
+const _kl = { kitDir: 'C:/kit', learn: false }
+const _item = (code, lane = 'api', x = {}) => ({ code, title: code, guideFile: 'g.md', lane, subtasks: [{ id: 'T1' }], ...x })
 const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
 const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
 '@

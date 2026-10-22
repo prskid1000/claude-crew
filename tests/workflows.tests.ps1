@@ -19,7 +19,7 @@ const mk = (envfix) => _mock((prompt, o) => {
  if (/^review:/.test(o.label)) return { findings: [] }
  if (/^ship:/.test(o.label)) return rep('PASS', _merged(1))
 }, '[]')
-const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
 const a = mk(false), b = mk(true)
 run(args, a.agent, _n, _n, pipeline).then((oa) => run(args, b.agent, _n, _n, pipeline).then((ob) => {
  const s = a.calls.find((c) => c.label === 'local-strong:X1')
@@ -41,7 +41,7 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^fix:/.test(o.label)) return rep()
  if (/^ship:/.test(o.label)) return rep(_merged(1))
 }, '[]')
-const args = { brief: 'C:/b/wave-x.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const args = { brief: 'C:/b/wave-x.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a' }], mandate: ['m'], ..._kl }
 run(args, agent, _n, _n, pipeline).then(() => {
  const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1'), si = calls.findIndex((c) => c.label === 'ship:X1')
  console.log(`re-review:${rv.length === 2 && /RE-REVIEW after the fix round/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
@@ -56,7 +56,7 @@ Expect-Each $res 'buildy: #' 're-review', 'hold' -Show 5
 Expect 'buildy: default run name = orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1)
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
-const o1 = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, _pass, _n, _n, pipeline)
+const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, _pass, _n, _n, pipeline)
 console.log(`batch-next:${!!(await run(o1.next.args, _pass, _n, _n, pipeline).catch(_err))}`)
 '@
 Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
@@ -65,14 +65,14 @@ $jsm = @'
 const mr = (r, s) => ({ url: `u/${r}/-/merge_requests/1`, repo: r, merged: false, mergeState: s }), lt = { status: 'PASS' }
 const { calls, agent } = _mock((p, o) => ({ 'build:F1': _rep(lt, { mrs: [mr('py')] }), 'build:F2': _rep(lt, { mrs: [mr('java'), mr('web')] }), 'ship:F1': _rep(lt, { mrs: [mr('py', 'WAIT')] }),
  'order:F2': { ok: true, output: 'merge-after: x' } }[o.label] || (/^review/.test(o.label) ? { findings: [] } : undefined)), '[]')
-const o = await run({ brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'F1' }, { id: 'F2', dependsOn: ['F1'] }] }, agent, _n, _n, pipeline)
+const o = await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'F1' }, { id: 'F2', dependsOn: ['F1'] }] }, agent, _n, _n, pipeline)
 const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.replace(/\/-\/merge_requests\/1/g, '')
 console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
 # buildy: mode duel is an extra (refused, names the extra); a removed arg is warned about, not silently ignored
 $jso = @'
-const logs = [], base = { brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'X1', items: 'A1' }] }
+const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const e = await run({ ...base, mode: 'duel' }, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
 await run({ ...base, review: false }, _pass, (m) => logs.push(m), _n, pipeline)
 console.log(`duel-refused:${/duel is an extra: run kittool.py extra add duel/.test(e)}`)
@@ -83,7 +83,7 @@ Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-a
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
  return _pass(p, o) }
-const base = { brief: 'C:/b/w.md', kitDir: 'C:/kit', learn: false, agents: [{ id: 'X1', items: 'A1' }] }
+const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const logs = [], seen = []
 const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipeline)
 const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
@@ -98,7 +98,7 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^retest-strong:/.test(o.label)) return _res('A1', [_ck('C1', 'PASS')])
  if (/^close/.test(o.label)) return { ok: true, output: 'published' }
 })
-const args = { runDir: 'C:/runs/R1', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A one', guideFile: 'g.md', lane: 'web', subtasks: [{ id: 'T1' }] }] }
+const args = { runDir: 'C:/runs/R1', ..._kl, items: [_item('A1', 'web')] }
 run(args, agent, _n, _n, null).then(() => {
  const s = calls.find((c) => c.label === 'retest-strong:A1'), cl = calls.find((c) => c.label === 'close:A1')
  console.log(`strong:${!!s && s.model === 'opus' && /blocked by env-data/.test(s.prompt) && /ONLY these checks: C1/.test(s.prompt)}`)
@@ -114,7 +114,7 @@ const mk = (fixWorks) => _mock((prompt, o) => {
  if (/^envfix-wait:/.test(o.label)) return { ok: true, output: 'ANSWERED e-20260101000000-qa-a1: done: refreshed' }
  if (/^envfix-retest:/.test(o.label)) return _res('A1', [_ck('C1', fixWorks ? 'PASS' : 'NOT_TESTED', { cause: 'env-data' })])
 })
-const args = { runDir: 'C:/runs/R1', kitDir: 'C:/kit', learn: false, localEnv: 'shop', items: [{ code: 'A1', title: 'A one', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const args = { runDir: 'C:/runs/R1', ..._kl, localEnv: 'shop', items: [_item('A1')] }
 const a = mk(true), b = mk(false)
 run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).then((out) => {
  const ask = a.calls.find((c) => c.label === 'envfix-ask:A1'), cl = a.calls.find((c) => c.label === 'close:A1')
@@ -130,8 +130,8 @@ $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
 })
-const args = { runDir: 'C:/runs/R2', kitDir: 'C:/kit', learn: false, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
- items: [{ code: 'P1', title: 'P one', guideFile: 'g.md', lane: 'app', subtasks: [{ id: 'T1' }] }] }
+const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
+ items: [_item('P1', 'app')] }
 run(args, agent, _n, _n, null).then(() => {
  const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release:Falcon') || {}).prompt || ''
  const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is an extra: run kittool.py extra add ${x}' }`)
@@ -149,7 +149,7 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^retest-strong:/.test(o.label)) return _res('A1', [_ck('C5', 'PASS')])
  if (/^verify:/.test(o.label)) return { verdicts: [{ id: 'C1', outcome: 'confirmed', attempts: 1, observed: 'again', evidence: [], basis: 'none' }] }
 }, 'published')
-const args = { runDir: 'C:/runs/R4', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const args = { runDir: 'C:/runs/R4', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1'), s = calls.find((c) => c.label === 'retest-strong:A1')
  console.log(`keeps-fail:${!!cl && /"id":"C1"[^}]*"result":"FAIL"/.test(cl.prompt) && /"id":"C3"[^}]*"result":"PASS"/.test(cl.prompt)}`)
@@ -161,10 +161,10 @@ Expect-Each $res 'testy retries: #' 'keeps-fail', 'guide-id' -Show 5
 $js2 = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (o.label === 'prepare') return { runDir: 'C:/rt/work/qa-runs/2026-01-01-local', items: 1, left: [{ id: 'T9', reason: 'not live' }], summary: 's' }
- if (/^load-run/.test(o.label)) return { json: JSON.stringify({ target: 'local-a', items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', target: 'local-b', subtasks: [{ id: 'T1' }] }] }) }
+ if (/^load-run/.test(o.label)) return { json: JSON.stringify({ target: 'local-a', items: [_item('A1', 'api', { target: 'local-b' })] }) }
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'PASS')])
 })
-const args = { select: { statuses: ['promoted', 'inTest'], exclude: ['T7'] }, target: 'local', kitDir: 'C:/kit', learn: false }
+const args = { select: { statuses: ['promoted', 'inTest'], exclude: ['T7'] }, target: 'local', ..._kl }
 const logs = []
 run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
  const p = calls.find((c) => c.label === 'prepare'), t = calls.find((c) => c.label === 'test:A1'), recs = calls.filter((c) => c.label === 'record-args'), orig = JSON.stringify(args)
@@ -184,7 +184,7 @@ let first
 const mk = (rec) => async (p, o) => { first = first || { l: o.label, p }
  return /^load-run/.test(o.label) ? { json: JSON.stringify({ items: [1, 2, 3, 4].map((n) => ({ code: `F${n}`, lane: 'api' })) }) }
   : /^record-args/.test(o.label) ? _ok(rec) : /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('') }
-const args = { runDir: 'C:/runs/R9', kitDir: 'C:/kit', learn: false, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
+const args = { runDir: 'C:/runs/R9', ..._kl, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
 const keep = (n, only) => !!n && n.args.lanes[0] === 'L' && n.args.instance === 'w2' && n.args.only.join() === only
 run(args, mk('RECORDED'), _n, _n, null).then(async (o) => {
  const r = await run(args, mk('RECORDED BUDGET {"cap":100,"estimate":1000}'), _n, _n, null)
@@ -201,10 +201,10 @@ const mk = () => _mock((prompt, o) => {
  if (/^(test|retest):/.test(o.label)) return _res('x', [_ck('C1', 'PASS')])
  if (/^retest-strong:/.test(o.label)) return _res('W0', [_ck('C1', 'PASS')])
 }, 'published')
-const items = Array.from({ length: 45 }, (_, i) => ({ code: `W${i}`, title: 't', guideFile: 'g.md', lane: 'web', subtasks: [{ id: 'T1' }] }))
+const items = Array.from({ length: 45 }, (_, i) => _item(`W${i}`, 'web'))
 const a = mk(), b = mk()
-run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, items }, a.agent, _n, _n, null)
- .then(() => run({ runDir: 'C:/runs/P1', kitDir: 'C:/kit', learn: false, instance: 'w1', items }, b.agent, _n, _n, null)).then(() => {
+run({ runDir: 'C:/runs/P1', ..._kl, items }, a.agent, _n, _n, null)
+ .then(() => run({ runDir: 'C:/runs/P1', ..._kl, instance: 'w1', items }, b.agent, _n, _n, null)).then(() => {
  console.log(`ports:${ports.length === 90 && ports.every(Boolean)}`)   // shared per-user Chrome (owner 2026-10-16): no per-run ports
  const s = a.calls.find((c) => c.label === 'retest-strong:W0'), cl = a.calls.find((c) => c.label === 'close:W0')
  console.log(`retry-file:${!!s && /results-retry\.json/.test(s.prompt) && /-Results results-retry\.json/.test(s.prompt) && /Never write/.test(s.prompt)}`)
@@ -219,7 +219,7 @@ const { calls, agent } = _mock((prompt, o) => {
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'FAIL', { defect: 'own', evidence: ['A1-C1_01_500.json'] }), _ck('C2', 'FAIL', { defect: 'own' }), _ck('C3', 'PASS')])
  if (/^verify:/.test(o.label)) return { verdicts: ['C1', 'C2'].map((id) => ({ id, outcome: 'refuted', attempts: 1, observed: 'fine now', evidence: [`A1-${id}_verify_01_ok.json`], basis: 'saved _verify files' })) }
 }, 'published')
-const args = { runDir: 'C:/runs/R6', kitDir: 'C:/kit', learn: false, items: [{ code: 'A1', title: 'A', guideFile: 'g.md', lane: 'api', subtasks: [{ id: 'T1' }] }] }
+const args = { runDir: 'C:/runs/R6', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1')
  console.log(`flaky:${!!cl && /"id":"C1"[^}]*"result":"FAIL"[^}]*"verify":"not reproduced \(flaky\)","flaky":true/.test(cl.prompt)}`)
@@ -236,7 +236,7 @@ const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: a
   if (/^(build|handoff):/.test(o.label)) return _rep({ status: 'PASS', env: 'e', rounds: 1, failing: [], goalsDoc: 'g' }, { mrs: [], handoff: o.label.startsWith('build') ? handoff : '' })
   if (/^(test|handoff|retest)/.test(o.label)) return { ..._res(o.label.split(':')[1], [_ck('C1', 'PASS')]), handoff: '' }
   return { ..._ok('[]'), json: '' } } } }
-const ba = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }, { id: 'X2', items: 'A2' }], mandate: ['m'], kitDir: 'C:/kit', learn: false }
+const ba = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }, { id: 'X2', items: 'A2' }], mandate: ['m'], ..._kl }
 '@
 $jsbB = @'
 const m1 = mk('{"cap":100000,"estimate":500000,"stopAt":0.8}'); const o1 = await run(ba, m1.agent, _n, _n, pipeline)
@@ -245,8 +245,8 @@ const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 0, 'C:/b/handof
 console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /resume brief C:\/b\/handoff-X1\.md/.test(c.prompt)) && !o2.next}`)
 '@
 $jsbT = @'
-const items = ['W1', 'W2', 'W3'].map((c) => ({ code: c, title: c, guideFile: 'g', lane: 'web', subtasks: [{ id: 't' }], skipClose: true }))
-const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o3 = await run({ runDir: 'C:/r/run1', kitDir: 'C:/kit', items, webParallel: 1, mandate: ['m'], learn: false, verify: false }, m3.agent, _n, _n, null)
+const items = ['W1', 'W2', 'W3'].map((c) => _item(c, 'web', { skipClose: true }))
+const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o3 = await run({ runDir: 'C:/r/run1', ..._kl, items, webParallel: 1, mandate: ['m'], verify: false }, m3.agent, _n, _n, null)
 console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.some((c) => c.label === 'budget') && !m3.calls.some((c) => c.label === 'test:W2')}`)
 '@
 Expect-Each (@(Invoke-Js wb-b "$jsb`n$jsbB" $wfd) + @(Invoke-Js wb-t "$jsb`n$jsbT" $wf)) 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
