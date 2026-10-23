@@ -122,6 +122,11 @@ if ($revs.Count) {
   if ($files.Count) {
     # pwsh piping appends CR
     $ign = @(for ($i = 0; $i -lt $files.Count; $i += 100) { git -C $root check-ignore --no-index -- @($files[$i..([math]::Min($i + 99, $files.Count - 1))]) 2>$null })
+    # an extra folded into the core (gone from origin/extras): its `# kittool extra` block stays until every worktree synced
+    $xb = @(); $xn = ''; foreach ($l in @(Get-Content -LiteralPath (git -C $root rev-parse --path-format=absolute --git-path info/exclude) -ErrorAction SilentlyContinue)) {
+      if ($l -like '# kittool extra *') { $xn = $l.Substring(16).Trim(); if ($xn -eq 'end') { $xn = '' } } elseif (-not $l.Trim()) { $xn = '' }
+      elseif ($xn) { git -C $root cat-file -e "refs/remotes/origin/extras:extras/$xn/EXTRA.md" 2>$null; if ($LASTEXITCODE) { $xb += $l.Trim().TrimStart('/') } } }
+    $ign = @($ign | Where-Object { $_ -notin $xb })
     foreach ($f in $ign) { $hits += "LOCAL FILE  $f is git-ignored or local-only (.gitignore / .git/info/exclude) but a pushed commit carries it: git rm --cached it and amend" }
   }
 }

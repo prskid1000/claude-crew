@@ -17,6 +17,17 @@ Get-ChildItem $wt -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHou
 $out = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
 Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF)' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF')
 git -C $kc worktree remove --force $wt 2>&1 | Out-Null
+# prepush: a pushed file an extra's exclude block lists = LOCAL FILE, unless that extra left origin/extras (folded into the core)
+$ad = Join-Path $kc 'skills/orchestrate/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
+Copy-Item (Join-Path $PSScriptRoot 'files/skills/orchestrate/adapters/kit_admin.ps1') $ad
+$xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
+Add-Content $xf "`n# kittool extra kit-admin`n/skills/orchestrate/adapters/kit_admin.ps1`n# kittool extra end`n# kittool extra live-x`n/notes/l.txt`n# kittool extra end`n# kittool extra gone-x`n/notes/g.txt`n# kittool extra end"
+$xr = Join-Path $root 'xr'; New-Item -ItemType Directory -Force "$xr/extras/live-x" | Out-Null; 'x' | Set-Content "$xr/extras/live-x/EXTRA.md"; Save-GitRepo $xr 'feat: live-x'
+git -C $kc fetch -q $xr '+HEAD:refs/remotes/origin/extras' 2>&1 | Out-Null
+$base = git -C $kc rev-parse HEAD; 'l' | Set-Content (Join-Path $kc 'notes/l.txt'); 'g' | Set-Content (Join-Path $kc 'notes/g.txt'); git -C $kc add -f notes/l.txt notes/g.txt; git -C $kc commit -qm 'feat: notes'
+$pp = "refs/heads/main $(git -C $kc rev-parse HEAD) refs/heads/main $base" | pwsh -NoProfile -File (Join-Path $kc 'skills/orchestrate/orch.ps1') prepush 2>&1 | Out-String
+Expect "kit-admin: prepush flags a live extra's file, not a folded extra's block ($(($pp -split "`n" | Where-Object { $_ -match 'LOCAL FILE' }) -join ' '))" ($pp -match 'LOCAL FILE\s+notes/l\.txt' -and $pp -notmatch 'notes/g\.txt')
+git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String
 Expect 'kit-admin: release prints the next SemVer and its notes' ($rel -match '^# v\d+\.\d+\.\d+')
