@@ -10,15 +10,15 @@
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (extra kit-admin)
   python -X utf8 kittool.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kittool.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: extra kit-admin
-  python -X utf8 kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]   # optional parts (origin `extras`)
+  python -X utf8 kittool.py extra list | add <name> [--auto] | remove <name> | check | sync | test [<name>] | prune [--days N] [--dry-run]
 
 lint problem codes: each message says what is wrong and the fix; skills/orchestrate/kit-admin.md (extra kit-admin) lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1155 registry ·
-  L1384 prose · L1527 sections · L1657 budget · L1675 extras · L2081 main
+Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1156 registry ·
+  L1385 prose · L1528 sections · L1658 budget · L1676 extras · L2137 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -1141,6 +1141,7 @@ def audit_main(a):
     flags, _ = parse_opts(a[1:], {'--kit', '--json'})
     # scan: the kit this file lives in (the worktree being changed); the other verbs: the live clone
     kit = osp.abspath(flags.get('--kit') or (KIT_DIR if verb == 'scan' else main_clone(KIT_DIR)))
+    stamp_fn(AUDIT_VERBS[verb])
     AUDIT_VERBS[verb](kit, flags)
     order = {'FIX': 0, 'ACT': 1, 'ASK': 2, 'WARN': 3, 'INFO': 4}
     for x in sorted(findings, key=lambda x: (order[x['level']], x['code'], x['where'])):
@@ -1668,7 +1669,7 @@ def cmd_budget(a):
         return 0
     if rest[0] == 'raise':
         raise_cap = PLUGINS.get('budget raise')
-        return raise_cap(kit, total, cap, flags) if raise_cap else need_extra('kittool.py budget raise', 'kit-admin')
+        return (stamp_fn(raise_cap) or raise_cap(kit, total, cap, flags)) if raise_cap else need_extra('kittool.py budget raise', 'kit-admin')
     print(cmd_budget.__doc__, file=sys.stderr)
     return 2
 
@@ -1794,12 +1795,12 @@ def set_listed(kit, name, on):
             fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
         os.replace(p + '.tmp', p)
 
-def extras_needed(kit):
+def extras_needed(kit, every=False):
     """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
     `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
     the value contains it), `<path>` exists (a kit file, the kit's own need), `<glob>` in a repo (a repos[].checkout tracks
-    such a file), `<os>` OS (windows, linux, macos) or origin ~ `<text>` (the kit's or a repo's origin URL); prose-only lines never install."""
-    have = set(installed_extras(kit))
+    such a file), `<os>` OS (windows, linux, macos) or origin ~ `<text>` (the kit's or a repo's origin URL); prose-only lines never install. every: installed ones too."""
+    have = set() if every else set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
     need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
     listed = configs['kit.local.json'].get('extras') or []
@@ -1889,8 +1890,9 @@ def add_extra(kit, name, installed, verb='installed'):
     for src, rel in files:
         blob = subprocess.run(['git', '-C', kit, 'show', f'{EXTRAS_REF}:{src}'], capture_output=True, timeout=60).stdout   # bytes as stored
         os.makedirs(osp.dirname(osp.join(kit, rel)), exist_ok=True)
-        with open(osp.join(kit, rel), 'wb') as fh:
+        with open(osp.join(kit, rel) + '.tmp', 'wb') as fh:   # replaced whole: a script loading it never reads half a file
             fh.write(blob)
+        os.replace(osp.join(kit, rel) + '.tmp', osp.join(kit, rel))
     set_exclude(kit, name, [rel for _, rel in files])
     print(f'extra {name}: {verb} {len(files)} file(s), local-only (never pushed): {", ".join(rel for _, rel in files)}')
     return 0
@@ -1946,6 +1948,55 @@ def drop_extra(kit, name, paths, why=''):
     print(f'extra {name}: removed {len(here)} file(s)' + (f' ({why})' if why else '') + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
     return here
 
+PRUNE_DAYS = 30   # TODO-PARAM (fixed default): extras.pruneDays; tidy prep passes the learned value as --days
+
+def use_stamp(rel):
+    """<state>/extras-used/<kit path, / as __>: touched once a day by the code that loads the file (lib.ps1 Add-KitExtraUse)."""
+    return osp.join(kit_path('extras-used', kit=KIT_DIR), rel.replace('/', '__'))
+
+def stamp_fn(fn):
+    """The usage stamp of the file that defines fn (a plugin's command, verb or adapter), when it lies in the kit."""
+    f = osp.abspath(getattr(getattr(fn, '__code__', None), 'co_filename', '') or '')
+    if f.lower().startswith(KIT_DIR.lower() + os.sep) and osp.basename(f) not in ('kittool.py', 'devtools.py'):
+        stamp_use([osp.relpath(f, KIT_DIR).replace(os.sep, '/')])
+
+def stamp_use(paths):
+    """Touch the usage stamps of extra files a command just used, at most once a day; never fails."""
+    with contextlib.suppress(OSError):
+        os.makedirs(kit_path('extras-used', kit=KIT_DIR), exist_ok=True)
+        day = datetime.datetime.combine(datetime.date.today(), datetime.time()).timestamp()
+        for rel in paths:
+            if not osp.isfile(use_stamp(rel)) or osp.getmtime(use_stamp(rel)) < day:
+                open(use_stamp(rel), 'w', encoding='utf-8').close()
+
+def extra_prune(kit, days, dry):
+    """Drop installed extras unused for more than <days> (newest stamp of their files, else when installed) that no Needed when
+    line asks for and kit.local.json `extras` does not list; one line each."""
+    try:
+        days = float(days)
+    except ValueError:
+        print(f'kittool extra prune: --days {days!r} is not a number', file=sys.stderr)
+        return 2
+    if git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]:   # no Needed when lines to read: every extra would look unneeded
+        print('kittool extra prune: the extras branch was never fetched (kittool.py extra list): nothing pruned', file=sys.stderr)
+        return 1
+    want = {n for n, _ in extras_needed(kit, every=True)}
+    listed = set(local_config(kit, 'kit.local.json').get('extras') or [])
+    now, gone = time.time(), 0
+    for name, paths in sorted(installed_extras(kit).items()):
+        if name in want or name in listed:
+            continue
+        seen = [osp.getmtime(use_stamp(p)) for p in paths if osp.isfile(use_stamp(p))] or [osp.getmtime(osp.join(kit, p)) for p in paths]
+        idle = (now - max(seen)) / 86400
+        if idle > days:
+            gone += 1
+            print(f'extra {name}: unused {idle:.0f} d, no config needs it' + (' (dry run: kept)' if dry else ''))
+            if not dry:
+                drop_extra(kit, name, paths, 'pruned')
+    if not gone:
+        print(f'kittool extra prune: nothing unused > {days:g} d')
+    return 0
+
 # an extra's tests.ps1 that dot-sources harness.ps1 beside itself gets the kit's harness; its test kits get the extra's files
 HARNESS_SHIM = """. '<kit>/tests/harness.ps1'
 $script:NewCoreTestKit = ${function:New-TestKit}
@@ -1993,8 +2044,8 @@ def extra_test(kit, names):
     print(f'{fails} failure(s)')
     return 1 if fails else 0
 
-def extra_write(kit, verb, names):
-    """extra sync | add <name> | remove <name>, under the caller's lock."""
+def extra_write(kit, verb, names, auto=False):
+    """extra sync | add <name> [--auto: unlisted] | remove <name>, under the caller's lock."""
     if verb == 'sync':
         return extra_sync(kit)
     installed = installed_extras(kit)
@@ -2004,7 +2055,7 @@ def extra_write(kit, verb, names):
         return 2
     if verb == 'add':
         rc = add_extra(kit, name, installed)
-        if rc == 0:
+        if rc == 0 and not auto:   # on demand (lib.ps1 Install-KitExtra): unlisted, so extra prune can drop it once unused
             set_listed(kit, name, True)
         return rc
     tracked_files = set(tracked(kit))
@@ -2018,11 +2069,16 @@ def extra_write(kit, verb, names):
 
 
 def cmd_extra(a):
-    """kittool.py extra list | add <name> | remove <name> | check | sync | test [<name>]"""
+    """kittool.py extra list | add <name> [--auto] | remove <name> | check | sync | test [<name>] | prune [--days N] [--dry-run]
+    (--auto: installed on demand, unlisted; prune: unused > N days, default 30, and no Needed when matches)"""
     kit = KIT_DIR
-    verb, names = (a[0] if a else 'list'), a[1:]
+    flags, rest = parse_opts(a, {'--days'})
+    verb, names = (rest[0] if rest else 'list'), rest[1:]
     want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
-    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want:
+    if verb == 'prune' and not names:
+        with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):
+            return extra_prune(kit, flags.get('--days', PRUNE_DAYS), '--dry-run' in flags)
+    if verb not in ('list', 'add', 'remove', 'check', 'sync', 'test') or len(names) != want or ('--auto' in flags and verb != 'add'):
         print(cmd_extra.__doc__, file=sys.stderr)
         return 2
     installed = installed_extras(kit)
@@ -2031,7 +2087,7 @@ def cmd_extra(a):
         git(kit, 'fetch', '-q', 'origin', f'+refs/heads/extras:{EXTRAS_REF}', timeout=60)
     if verb in ('sync', 'add', 'remove'):   # one writer at a time: the post-merge hook's background sync races a manual one
         with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
-            return extra_write(kit, verb, names)
+            return extra_write(kit, verb, names, '--auto' in flags)
     if verb == 'test':
         if names and names[0] not in (known_extras(kit) or set()):
             print(f'kittool extra test: no extra "{names[0]}" on origin/extras (kittool.py extra list)', file=sys.stderr)
@@ -2082,7 +2138,7 @@ def load_plugins():
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'extra': (set(), set(), False), 'sections': ({'--fix'}, set(), False)}
+  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'extra': ({'--auto', '--dry-run'}, {'--days'}, False), 'sections': ({'--fix'}, set(), False)}
 NAMED_ARGS = ('prose', 'budget', 'extra', 'sections', 'new', 'rename', 'remove')   # positionals are files, verbs or names, not a kit dir
 COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'extra': cmd_extra, 'sections': cmd_sections}
 
@@ -2112,7 +2168,11 @@ def check_args(cmd, rest):
     verb = rest[0] if cmd == 'audit' and rest else ''
     if (cmd == 'audit' and f'audit {verb}' in EXTRA_OF and verb not in AUDIT_VERBS) or \
        (cmd in EXTRA_OF and cmd not in PLUGINS and not (cmd == 'flow' and '--readme' in rest)):
-        return need_extra(f'kittool.py {cmd} {verb}'.strip(), EXTRA_OF[f'audit {verb}' if verb else cmd])
+        name = EXTRA_OF[f'audit {verb}' if verb else cmd]
+        if os.environ.get('KIT_EXTRA_AUTO') != '0' and os.environ.get('KIT_EXTRA_RETRY') != name and cmd_extra(['add', name, '--auto']) == 0:
+            print(f'extra {name}: installed on demand', file=sys.stderr)   # the same command again, the extra loaded
+            return subprocess.run([sys.executable, '-X', 'utf8', osp.abspath(__file__)] + sys.argv[1:], env=dict(os.environ, KIT_EXTRA_RETRY=name)).returncode
+        return need_extra(f'kittool.py {cmd} {verb}'.strip(), name)
     if cmd not in ARGS or (cmd == 'audit' and verb not in AUDIT_VERBS):
         print(__doc__)
         return 2
@@ -2143,4 +2203,6 @@ if __name__ == '__main__':
     load_plugins()
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
     rc = check_args(cmd, rest)
+    if rc is None and cmd in PLUGINS:
+        stamp_fn(PLUGINS[cmd])
     sys.exit(rc if rc is not None else audited('kittool.py', sys.argv[1:], lambda: (PLUGINS.get(cmd) or COMMANDS[cmd])(rest)))

@@ -139,6 +139,25 @@ $s7 = & $ex extra sync; $b7 = (Get-Content $xf -Raw) -match 'extra supervise-res
 Remove-Item "$w2/notes/sr.txt"; $null = & $ex extra sync; $b8 = (Get-Content $xf -Raw) -match 'extra supervise-resources'
 Expect "extra sync: a fold keeps the block while another worktree has the file untracked, then drops it ($b7 $b8)" ($b7 -and -not $b8 -and (Test-Path (Join-Path $kc 'notes/sr.txt')))
 git -C $kc worktree remove --force $w2 2>&1 | Out-Null
+# on demand (KIT_EXTRA_AUTO unset): a config-named adapter at lib load, an orch.ps1 verb, a kittool command; installed unlisted
+$fx = @{ 'tracker-zz' = @('skills/dev-kit/adapters/tracker_zz.ps1', "Register-KitAdapter 'tracker' 'zz' @{ 'view' = { param(`$a) [pscustomobject]@{ id = `$a.id; name = 'zz task'; status = 'open' } }; 'url' = { param(`$a) ""zz/`$(`$a.id)"" } }")
+  'duel' = @('skills/orchestrate/adapters/board_disputes.ps1', "function Invoke-BoardDispute { 'dispute ran' }")
+  'flow-map' = @('skills/orchestrate/kittool_flow.py', "COMMANDS = {'flow': lambda a: print('flow ran') or 0}") }
+foreach ($n in $fx.Keys) { $p = Join-Path "$xw/extras/$n/files" $fx[$n][0]; New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null; $fx[$n][1] | Set-Content $p; "# $n`n`nNeeded when: $(if ($n -eq 'tracker-zz') { '`tracker.type` = `zz`' } else { 'asked.' })" | Set-Content "$xw/extras/$n/EXTRA.md" }
+& $pushX 'feat: on-demand extras'; git -C $kc fetch -q origin '+refs/heads/extras:refs/remotes/origin/extras'
+& $J @{ tracker = @{ type = 'zz' } } $kl; $env:KIT_EXTRA_AUTO = $null
+$o1 = pwsh -NoProfile -File (Join-Path $kc 'skills/dev-kit/dev.ps1') tracker view 7 2>&1 | Out-String
+$o2 = pwsh -NoProfile -File (Join-Path $kc 'skills/orchestrate/orch.ps1') board dispute -Agent X1 -With Y1 2>&1 | Out-String
+$o3 = & $ex flow; $env:KIT_EXTRA_AUTO = '0'; $l4 = @((Read-Json $kl).extras)
+Expect "extra on demand: lib installs the config's tracker, orch.ps1 and kittool.py run the verb again with it; none listed ($(($o1 + $o2 + $o3.out) -replace '\s+', ' '))" ($o1 -match 'extra tracker-zz: installed on demand' -and $o1 -match 'zz task' -and $o2 -match 'extra duel: installed on demand' -and $o2 -match 'dispute ran' -and $o3.out -match 'flow ran' -and -not ($l4 | Where-Object { $_ -in 'tracker-zz', 'duel', 'flow-map' }))
+# usage stamps + prune: unused > N days and not needed -> dropped (dry run first); a listed or needed one stays
+$us = Join-Path (TkPath $kc extras-used) 'skills__orchestrate__adapters__board_disputes.ps1'; $old = (Get-Date).AddDays(-40)
+Expect 'extra use: running an extra''s verb stamps its file' (Test-Path $us)
+foreach ($f in (Get-ChildItem (TkPath $kc extras-used) -File) + @(Get-Item (Join-Path $kc 'skills/orchestrate/kittool_flow.py'))) { $f.LastWriteTime = $old }
+$p1 = [pscustomobject]@{ out = (pwsh -NoProfile -Command ". '$kc/skills/dev-kit/lib.ps1'; Invoke-ExtrasPrune -DryRun" 2>&1 | Out-String) }   # /tidy prep's entry point
+ $kept = Test-Path (Join-Path $kc 'skills/orchestrate/kittool_flow.py'); $p2 = & $ex extra prune --days 30; $p3 = & $ex extra prune
+Expect "extra prune (Invoke-ExtrasPrune -DryRun first): dry run lists, then drops the unused unneeded ones; the config's tracker stays ($(($p1.out + $p2.out) -replace '\s+', ' '))" ($p1.out -match 'extra duel: unused 40 d.*dry run' -and $kept -and $p2.out -match 'extra duel: unused' -and $p2.out -match 'extra flow-map: unused' -and $p2.out -notmatch 'tracker-zz' -and -not (Test-Path (Join-Path $kc 'skills/orchestrate/adapters/board_disputes.ps1')) -and $p3.out -match 'nothing unused' -and -not (git -C $kc status --porcelain))
+$null = & $ex extra remove tracker-zz; '{ "tracker": { "type": "demo" } }' | Set-Content $kl; $null = & $ex extra add demo   # the later cases use demo
 # extra sync, a real-like config (tracker clickup, gdocs reports, liquibase db commands, a node web service) -> exactly those
 # four (decoys: another tracker and report type, a listed-only extra)
 $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup`'; 'tracker-jira' = 'Needed when: `tracker.type` = `jira` | `jira-server`'

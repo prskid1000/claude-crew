@@ -13,8 +13,8 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (lbcheck: extra liquibase;
  findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L718 plugins · L732 keepboth ·
-  L751 selftest · L898 CLI
+Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L721 plugins · L735 keepboth ·
+  L754 selftest · L901 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -24,7 +24,7 @@ import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess,
 KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'orchestrate'))
-from kittool import kit_path, locked, audited   # one path map, lock and call log for every kit script
+from kittool import kit_path, locked, audited, stamp_fn   # one path map, lock, call log and extras' usage stamps for every kit script
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -682,6 +682,7 @@ def make_doc(title, path, parent=None):
     """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in."""
     ad = ADAPTERS['report'].get(REPORT_TYPE) or extra_missing(f'reports.type {REPORT_TYPE}', f'report-{REPORT_TYPE}')
     keep = parent if parent and os.path.isdir(parent) else None
+    stamp_fn(ad['publish'])
     return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep})
 
 
@@ -691,6 +692,8 @@ def make_evidence(name, files, folder=None, parent=None):
     if ad is None:   # evidence stays in the run folder; say why once
         print(f'reports.type {REPORT_TYPE} is an extra: run kittool.py extra add report-{REPORT_TYPE}', file=sys.stderr)
     fn = (ad or {}).get('evidence')
+    if fn:
+        stamp_fn(fn)
     return fn({'name': name, 'files': files, 'folder': folder, 'parent': parent}) if fn else {}
 
 
@@ -901,6 +904,7 @@ def _cli():
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
+        stamp_fn(VERBS[cmd])
         sys.exit(VERBS[cmd](a[1:]) or 0)
     if cmd == 'lbcheck':
         extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')

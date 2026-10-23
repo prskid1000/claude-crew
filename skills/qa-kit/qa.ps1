@@ -680,7 +680,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     { $_ -in 'deployed', 'annotate' } {   # extras deploys, android-swarm (adapters/)
       $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate' }[$__verb]
       if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }
-      else { [Console]::Error.WriteLine("qa.ps1 $__verb is an extra: run kittool.py extra add $(@{ deployed = 'deploys'; annotate = 'android-swarm' }[$__verb])"); exit 2 }
+      else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("qa.ps1 $__verb is an extra: run kittool.py extra add $xn"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' {   # phone lanes: extra android-swarm (adapters/ui_android.ps1)

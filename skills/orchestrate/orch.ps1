@@ -16,10 +16,10 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L25 init · L53 board · L219 budget · L247 launch · L508 recover · L592 pause · L636 resume · L694 program · L738 track ·
-  L1024 supervise report · L1065 anomalies · L1094 supervise · L1412 report · L1490 audit · L1550 storage · L1761 bugbrief ·
-  L1872 cleanup · L1999 learn · L2029 decide · L2095 health · L2157 retro due · L2167 the kit origin's main and extras ·
-  L2183 setup · L2248 guard-sendmessage
+Sections: L25 init · L54 board · L220 budget · L248 launch · L509 recover · L593 pause · L637 resume · L695 program · L739 track ·
+  L1025 supervise report · L1066 anomalies · L1095 supervise · L1413 report · L1491 audit · L1551 storage · L1762 bugbrief ·
+  L1873 cleanup · L2000 learn · L2030 decide · L2096 health · L2158 retro due · L2168 the kit origin's main and extras ·
+  L2184 setup · L2249 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -30,12 +30,13 @@ $__rest = @($args | Select-Object -Skip 1)
 foreach ($adapter in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue)) { try { . $adapter.FullName } catch { [Console]::Error.WriteLine("adapter $($adapter.Name): $_") } }
 # a feature moved to the extras branch: its function when installed, else one clear line instead of a crash
 function Assert-KitExtra([string]$Function, [string]$Feature, [string]$Extra) {
-  $fn = Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue; if ($fn) { return $fn }
+  $fn = Get-Command $Function -CommandType Function -ErrorAction SilentlyContinue; if ($fn) { Add-KitExtraUse $fn.ScriptBlock.File; return $fn }
+  Resolve-KitExtra $Extra   # on demand: installed + the verb run again
   "$Feature is an extra: run kittool.py extra add $Extra"; exit 1
 }
 # what installed extras add to a verb: every function named <Prefix>* (adapters/*.ps1); it sees the calling verb's variables
 function Invoke-KitHooks([string]$Prefix, [hashtable]$Arguments = @{}) {
-  foreach ($hook in @(Get-Command "$Prefix*" -CommandType Function -ErrorAction SilentlyContinue)) { & $hook @Arguments }
+  foreach ($hook in @(Get-Command "$Prefix*" -CommandType Function -ErrorAction SilentlyContinue)) { Add-KitExtraUse $hook.ScriptBlock.File; & $hook @Arguments }
 }
 # workflow run folders (<Claude project dir>/<session>/subagents/workflows/<run>) of every session, or of one
 function Get-KitWorkflowDirs([string]$Session) {

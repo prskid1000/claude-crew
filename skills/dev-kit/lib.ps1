@@ -3,11 +3,12 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L81 config · L161 OS · L333 leases · L548 tracker · L767 git-host · L872 kitlog · L965 entry-scripts
+Sections: L9 paths · L82 config · L162 OS · L334 leases · L585 tracker · L805 git-host · L910 kitlog · L1004 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
+$script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
 $script:KitPathMap = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths
 function Get-KitRuntime { if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir } }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
@@ -516,6 +517,7 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
   if (-not $ad -and $Name) { throw (Get-KitExtraLine $Kind $Name) }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
+  if ($f.File) { Add-KitExtraUse $f.File }   # an extra's adapter in use
   & $f $a $Verb
 }
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
@@ -540,9 +542,44 @@ $script:KitExtraOf = @{ 'tracker/jira-server' = 'tracker-jira'; 'git-host/bitbuc
   'tracker/gitlab' = 'gitlab'; 'git-host/gitlab' = 'gitlab'; 'ci/gitlab' = 'gitlab'
   'tracker/github' = 'github'; 'git-host/github' = 'github'; 'ci/github' = 'github'
   'git-host/azure' = 'azure-devops'; 'ci/azure' = 'azure-devops'; 'git-host/gitea' = 'gitea'; 'ci/gitea' = 'gitea' }
-function Get-KitExtraLine([string]$Kind, [string]$Name) {
-  $extra = if ($script:KitExtraOf["$Kind/$Name"]) { $script:KitExtraOf["$Kind/$Name"] } else { "$Kind-$Name" }
-  "$Kind $Name is an extra: run kittool.py extra add $extra"
+function Get-KitExtraName([string]$Kind, [string]$Name) { if ($script:KitExtraOf["$Kind/$Name"]) { $script:KitExtraOf["$Kind/$Name"] } else { "$Kind-$Name" } }
+function Get-KitExtraLine([string]$Kind, [string]$Name) { "$Kind $Name is an extra: run kittool.py extra add $(Get-KitExtraName $Kind $Name)" }
+# on demand: `kittool.py extra add <name> --auto` (unlisted: extra prune drops it once unused); KIT_EXTRA_AUTO=0 never; a failed try waits 1 h
+function Install-KitExtra([string]$Name) {
+  if (-not $Name -or $env:KIT_EXTRA_AUTO -eq '0' -or -not (Test-Path -LiteralPath $KitCmd.kittool)) { return $false }
+  $try = Join-Path (Get-KitPath extras-used -Create) "_try-$Name"
+  if ((Test-Path -LiteralPath $try) -and ((Get-Date) - [IO.File]::GetLastWriteTime($try)).TotalMinutes -lt 60) { return $false }   # TODO-PARAM (fixed default)
+  $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kittool, 'extra', 'add', $Name, '--auto') 180   # kittool's lock serializes two installers
+  Write-KitLog calls extra-auto @{ extra = $Name; code = $r.code }
+  if ($r.code) { [IO.File]::WriteAllText($try, ''); Write-Warning "extra ${Name}: install on demand failed ($(@("$($r.err)$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0]))"; return $false }
+  [Console]::Error.WriteLine("extra ${Name}: installed on demand"); $true
+}
+# at a verb's start (nothing ran yet): install the extra and run the entry script's verb again, once; returns only when it could not
+function Resolve-KitExtra([string]$Name) {
+  if (-not $script:KitEntry -or $env:KIT_EXTRA_RETRY -eq $Name -or -not (Install-KitExtra $Name)) { return }
+  $env:KIT_EXTRA_RETRY = $Name
+  $again = @(@($script:__verb | Where-Object { $_ }) + @($script:__rest))   # a variable: @(...) inline would pass one array
+  # each line to the host as it comes: callers capture this function's output ($null = Assert-KitExtra ...)
+  try { & $script:KitEntry @again | ForEach-Object { Write-Host $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() }) }; $code = $LASTEXITCODE } finally { $env:KIT_EXTRA_RETRY = $null }
+  exit $code
+}
+# a usage stamp per loaded extra file (<state>/extras-used/<kit path>, `/` -> `__`), touched once a day; kittool.py extra prune reads it
+function Add-KitExtraUse([string[]]$Files) {
+  try {
+    $d = Get-KitPath extras-used; if (-not [IO.Directory]::Exists($d)) { $null = [IO.Directory]::CreateDirectory($d) }; $today = [datetime]::Today
+    foreach ($f in $Files) {
+      if (-not $f -or -not $f.StartsWith($script:KitRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+      $s = Join-Path $d ($f.Substring($script:KitRoot.Length).TrimStart('\', '/') -replace '[\\/]', '__')
+      if (-not [IO.File]::Exists($s) -or [IO.File]::GetLastWriteTime($s) -lt $today) { [IO.File]::WriteAllText($s, '') }
+    }
+  } catch {}   # a stamp never fails a verb
+}
+# /tidy prep's local extras cleanup: kittool.py extra prune; -Days unset: the learned extras.pruneDays (Get-KitParam), else 30
+function Invoke-ExtrasPrune([double]$Days = 0, [switch]$DryRun) {
+  $gp = Get-Command Get-KitParam -ErrorAction SilentlyContinue   # the learned-parameter framework, when installed
+  if (-not $Days) { $Days = if ($gp) { try { [double](& $gp 'extras.pruneDays' 30) } catch { 30 } } else { 30 } }   # TODO-PARAM (fixed default)
+  $pa = @('-X', 'utf8', $KitCmd.kittool, 'extra', 'prune', '--days', "$Days") + @(if ($DryRun) { '--dry-run' })
+  & (Get-Python) @pa   # exit code in $LASTEXITCODE
 }
 
 # ---- tracker: adapter (a Register-KitAdapter block per tracker.type)
@@ -679,7 +716,8 @@ Register-KitAdapter 'tracker' 'none' @{
 }
 # adapter-end:tracker
 # plugins: every installed extra registers its trackers, git hosts and CI here (before the tracker type is resolved)
-foreach ($__plugin in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue)) { . $__plugin.FullName }
+$script:KitAdapterFiles = @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
+foreach ($__plugin in $script:KitAdapterFiles) { . $__plugin }
 Initialize-KitTracker
 
 # ----- verbs: dispatch to the tracker.type backend
@@ -929,7 +967,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
-  $meta = (Get-Command $Fn).Parameters
+  $fnc = Get-Command $Fn; if ($fnc.ScriptBlock.File) { Add-KitExtraUse $fnc.ScriptBlock.File }   # a verb an extra brings
+  $meta = $fnc.Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
   # call lines (calls stream): start, then end with rc (0 returned, 1 crash, 2 bad parameters; a verb's own exit: rc 'exit', its code is not visible here) and ms
@@ -974,3 +1013,12 @@ $KitCmd = [pscustomobject]@{
   orch     = Join-Path $KitConf.Kit 'skills/orchestrate/orch.ps1'
   kittool  = Join-Path $KitConf.Kit 'skills/orchestrate/kittool.py'
 }
+# an adapter the config names (tracker.type, the git host, ci.type) that no installed extra brings: installed on demand, then loaded
+$__hostSet = (Get-KitValue 'gitHostType' '') -or (Get-KitValue 'gitHost' '') -or @(Get-KitValue 'repos' @()).Count   # no host configured: no git-host extra to fetch
+foreach ($__need in @(@('tracker', $script:__trType), @('git-host', $(if ($__hostSet) { $script:HostType })), @('ci', ([string](Get-KitSetting 'ci.type' '')).ToLower()))) {
+  if (-not $__need[1] -or $__need[1] -in 'host', 'none' -or $KitAdapters[$__need[0]][$__need[1]] -or "$script:__verb" -match '^(guard|guard-sendmessage|health)$') { continue }   # hooks stay fast
+  if (Install-KitExtra (Get-KitExtraName $__need[0] $__need[1])) {
+    foreach ($__plugin in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName | Where-Object { $_ -notin $script:KitAdapterFiles })) { . $__plugin; $script:KitAdapterFiles += $__plugin }
+  }
+}
+Add-KitExtraUse $script:KitEntry   # an extra's entry script (localenv.ps1, swarm.ps1) in use

@@ -207,7 +207,8 @@
    "outbox": "outbox.jsonl", "pauses": "pauses/", "programs": "programs/",
    "tracker-none": "tracker-none/",
    "localenv-env": "localenv/",
-   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "storage": "storage/"
+   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "storage": "storage/",
+   "extras-used": "extras-used/"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kittool.py kitlog): every log line goes through it: at, run, agent, task, script, verb, event + fields, secrets masked. A stream with a durable name writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl. orch.ps1 audit merges them.",
    "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log"],

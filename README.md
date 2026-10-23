@@ -159,11 +159,14 @@ scaffolding, the duel mode) live on the origin's `extras` branch, one folder eac
   `remove <name>`: install / delete its files and list / unlist it in kit.local.json `extras` (always installed) · `sync`:
   installs every extra whose "Needed when" matches, updates changed ones only while the kit is not behind origin/main (then an
   extra merged into another or into the core, kittool `MERGED_EXTRAS`, is swapped: old files out, a listed old name relisted) ·
-  `test [<name>]`: installed extras' tests.
+  `test [<name>]`: installed extras' tests · `prune [--days N] [--dry-run]`: drops extras unused > N days (default 30;
+  /tidy prep passes the learned value) that no "Needed when" asks for and `extras` does not list.
 - Files install at their kit path, local-only (`.git/info/exclude`: never pushed, outside the budget). `sync` runs in
-  SessionStart `health`, `setup` and the post-merge hook.
-- A script that needs a missing extra stops with `<feature> is an extra: run kittool.py extra add <name>`: run it in `<kit>`,
-  retry.
+  SessionStart `health`, `setup` and the post-merge hook (a pull is followed by a sync: an old extra may need the new core).
+- On demand: a config-named adapter (tracker, git host, ci) missing at lib.ps1 load, or a verb that needs a missing extra, runs
+  `extra add <name> --auto` (unlisted) and runs the verb again once; a failed try waits 1 h; `KIT_EXTRA_AUTO=0` turns it off
+  (tests). Offline or refused: the stop line `<feature> is an extra: run kittool.py extra add <name>`.
+- Use: the code that runs an extra's adapter, verb, hook or command touches `<state>/extras-used/<file>` once a day.
 
 **Write one** (`kitty`):
 - Shape: `extras/<name>/files/<kit path>` (each file where it installs), `extras/<name>/EXTRA.md` (What; `Needed when:`;

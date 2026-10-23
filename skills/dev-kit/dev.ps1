@@ -705,7 +705,7 @@ if ($Step -eq 'migrations') {
   $other = @(if ($lbm) { & $lbm $top -Other }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  if (-not $lb) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit $(if ($Show) { 0 } else { 5 }) }
+  if (-not $lb) { Resolve-KitExtra liquibase; Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit $(if ($Show) { 0 } else { 5 }) }
   if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
   $rc = & $lb -Top $top -Masters $masters -Since $Since
   exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
