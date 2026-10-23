@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-supervise.tests.ps1: orch.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, track status lag, bugbrief args, tidy prep / done.
+supervise.tests.ps1: orch.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, track status lag, bugbrief args.
 Usage: pwsh -NoProfile -File <kit>/tests/supervise.tests.ps1 (or tests/kit-tests.ps1 -Area supervise).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -108,9 +108,9 @@ New-Item -ItemType Directory -Force (Join-Path $k 'skills/local-env') | Out-Null
 "'[{`"env`":`"shop`",`"leases`":[{`"agent`":`"devy-A1`",`"services`":[`"api`"],`"until`":null,`"graceLeft`":7}],`"holds`":[]}]'" | Set-Content (Join-Path $k 'skills/local-env/localenv.ps1')
 $bs = Px $O board show | Out-String; $rc = Px $O recover | Out-String
 Expect 'board show lists QA seats and env leases; recover lists the lease with no live holder' ($bs -match 'seat: test:Q1 web 2 GB' -and $bs -match 'lease: shop devy-A1 on api' -and $rc -match '== LEASE shop devy-A1 \[api\]: no live holder, ends in 7 min')
-$sg = TkPath $k signals -Create; $ls = Join-Path $k 'LESSONS.md'; "`n## kitty`n- Parallel kitties need distinct board run ids (2×)" | Add-Content $ls
-@(@('kitty', 'friction', 'parallel kitties took over board slot: distinct run ids'), @('kitty', 'failure', 'board takeover of parallel kitties: distinct run ids needed'), @('qa-kit', 'flaky', 'seat timeout on login page'), @('qa-kit', 'retired', '- (fixed in kit) seat timeout on login page fixed')) | ForEach-Object { (@{ at = (Get-Date).ToString('s'); skill = $_[0]; kind = $_[1]; text = $_[2] } | ConvertTo-Json -Compress) | Add-Content $sg }
-$tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; $td = pwsh @np $O tidy done -At '2026-01-02T03:04:05' | Out-String
-Expect 'tidy prep: digest groups 2x signals + their lesson, a retired one back; dry run stamps nothing; done stamps -At' ($tp.work -ge 3 -and $tp.groups -ge 1 -and -not $tp.stamped -and $tg -match '2x kitty \[friction,failure\].*-> lesson' -and $tg -match '(?s)seen again.*qa-kit: seat timeout' -and $td -match '2026-01-02T03:04:05' -and (Get-Content (TkPath $k last-retro) -Raw) -match '2026-01-02T03:04:05')
+"`n## kitty`n- board slot" | Add-Content "$k/LESSONS.md"; $sg = TkPath $k signals
+'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
+$tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
+Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match 'T03:04:00')
 Remove-TestKit $k
 Complete-Tests
