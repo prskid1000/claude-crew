@@ -57,7 +57,7 @@ if ($script:LE.envs) {
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
 $script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
 $script:MaxLeaseMin = [int](Opt 'maxLeaseMinutes' 120)
-$script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitSetting 'idle.graceMinutes' 10))   # a lease unused this long is released (TODO-PARAM)
+$script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitParam 'idle.graceMinutes' 10))   # a lease unused this long is released (learned unless set)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
 $script:RoomWaitMin = [int](Opt 'roomWaitMinutes' 30)   # TODO-PARAM (fixed default)
 $script:IdleOn = "$(Opt 'idle.enabled' $true)" -ne 'False'

@@ -136,7 +136,7 @@ Register-KitAdapter 'guard' 'runtimes' @{ check = { param($a)
 # ---- supervise: idle leases, kit-started runtimes
 # bossy.ps1 supervise (section 3): lease liveness, -AutoFix releases dead leases and stops a kit-started runtime nobody holds
 function Get-KitSuperviseGuardRuntimes([switch]$AutoFix) {
-  $grace = [double](Get-KitSetting 'idle.graceMinutes' 10)
+  $grace = [double](Get-KitParam 'idle.graceMinutes' 10)
   foreach ($n in Get-KitRuntimeNames) {
     if (-not (Test-Path (Get-KitRuntimeFile $n))) { continue }
     $pre = Get-KitRuntimeState $n; if (-not $pre.leases.Count -and -not $pre.startedByKit) { continue }
