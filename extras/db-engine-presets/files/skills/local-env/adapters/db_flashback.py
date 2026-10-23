@@ -17,7 +17,7 @@
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L34 binlog · L240 row events · L372 flashback · L629 touched · L665 slices · L707 structure · L800 objects · L852 guard
+Sections: L34 binlog · L246 row events · L378 flashback · L635 touched · L671 slices · L713 structure · L806 objects · L858 guard
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 

@@ -3,6 +3,7 @@
 # mysql / mariadb, gives marks (binlog positions), flashback restores and the cascade guard (db_flashback.py); other
 # engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri
+# Sections: L27 marks · L88 temp
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $script:DbPresets = @{
   postgres  = @{ port = 5432; query = "psql $q -d {N} -At -c `"{sql}`""; exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f `"{file}`""; jdbc = 'jdbc:postgresql://{H}:{P}/{N}?currentSchema={schema}'; passwordEnv = 'PGPASSWORD' }
