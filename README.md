@@ -253,7 +253,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/orchestrate/kit-
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kittool.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 220000 · all tests 36000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 220000 · all tests 40000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, an extra's in `extras/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name

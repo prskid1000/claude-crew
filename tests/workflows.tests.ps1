@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-workflows.tests.ps1: buildy.js and testy.js sims (agents mocked; node runs the real script body).
+workflows.tests.ps1: buildy.js and testy.js sims (agents mocked; node runs the real script body); recover's area states and run lineage.
 Usage: pwsh -NoProfile -File <kit>/tests/workflows.tests.ps1 (or tests/kit-tests.ps1 -Area workflows).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -285,5 +285,32 @@ const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o
 console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.some((c) => c.label === 'budget') && !m3.calls.some((c) => c.label === 'test:W2')}`)
 '@
 Expect-Each (@(Invoke-Js wb-b "$jsb`n$jsbB" $wfd) + @(Invoke-Js wb-t "$jsb`n$jsbT" $wf)) 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
+# recover, records shaped like 2026-10-23: one task over phase runs and a wave; relaunch under another run name; same item twice
+$gw = Join-Path (Kd) 'pw'; New-Item -ItemType Directory -Force $gw | Out-Null; 'a' | Set-Content "$gw/a.txt"; Save-GitRepo $gw base; git -C $gw remote add origin https://h.example/g/api.git
+$pa = Invoke-PsTest areas @'
+$null = . $args[0] 6>$null; $env:KIT_OFFLINE = '0'; $br = @{ 39 = 't-tsk1abc-5a'; 43 = 't-tsk1abc-6a'; 45 = 't-tsk2abc-rates' }
+function Invoke-HostVerb($V, $A) { if ($V -eq 'mr.list') { return @($br.Keys | Where-Object { $br[$_] -eq $A.source_branch } | ForEach-Object { @{ iid = $_ } }) }
+  if ($A.n -eq '47') { throw 'host down' }; @{ state = $(if ($A.n -in 39, 45) { 'merged' } else { 'opened' }); source_branch = $br[[int]$A.n]; description = 'Testing doc: https://d.example/1'; created_at = '2026-10-24T00:00:00Z' } }
+function Find-TaskMrs($t) { if ($t -eq 'tsk1abc') { 'g/api!39', 'g/api!43' } elseif ($t -eq 'tsk2abc') { 'g/api!45' } else { 'g/web!47' } }
+function Get-TrackerTask($t) { @{ status = 'Open' } }; function Get-TrackerComments { }; function Read-KitTracking { @{ tasks = @{ tsk1abc = @{ mrs = @('a!39') } } } }; $KitConf.RepoAliases = [pscustomobject]@{ api = 'a' }
+foreach ($c in @('tsk1abc phase 6', '', 't-tsk1abc-6a'), @('tsk1abc phase 5', 'https://h.example/g/api/-/merge_requests/39', ''), @('tsk2abc rates, surcharges', '', 't-tsk2abc-rates'), @('tsk2abc orders', '', 't-tsk2abc-orders'), @('tsk1abc phase 0', '', ''), @('tsk4abc web', '', '', 't-tsk4abc-web')) {
+  $s = Get-KitAreaState @{ id = 'A'; items = $c[0]; branch = $c[3] } @($c[1] | Where-Object { $_ }) @(if ($c[2]) { [pscustomobject]@{ dir = $args[1]; branch = $c[2]; dirty = 0; unpushed = '0' } }) ([datetime]'2026-10-23T10:00')
+  "$($s.state):$(@($s.items | ForEach-Object { $_.mrs.ref | Sort-Object }) -join ' ')" }
+'@ @($O, $gw)
+Expect 'recover: MRs by the area''s branch (worktree, checkpoint MR), task id only without one; merged + registered = done' (($pa -join '|') -eq 'open:g/api!43|done:g/api!39|merged:g/api!45 g/api!45|start:|open:g/api!39 g/api!43|unknown:g/web!47')
+$lq = TkPath $k launches -Create; Remove-Item "$lq/*.json"; $t0 = [datetime]'2026-10-23T10:00'
+$rec = { param($f, $m, $x) $r = [ordered]@{ script = "$k/workflows/buildy.js"; at = $t0.AddMinutes($m).ToString('o') }; foreach ($q in $x.Keys) { $r[$q] = $x[$q] }; & $J $r "$lq/$f.json" 10 }
+$ar = { param($b, $i) @{ brief = $b; agents = @(@{ id = 'W1'; items = $i }) } }
+& $rec wf_a1 0 @{ runId = 'wf_a1'; args = @{} }; & $rec self-buildy-p6-1 1 @{ run = 'p6'; args = (& $ar 'C:/b/p6.md' 'tsk1abc') }
+& $rec wf_b2 60 @{ runId = 'wf_b2'; args = @{} }; & $rec self-buildy-wf-a1.resume-2633-2 61 @{ run = 'wf-a1.resume-2633'; args = (& $ar "$lq/wf-a1.resume.md" 'tsk1abc') }
+& $rec self-buildy-fix-3 5 @{ run = 'fix'; args = (& $ar 'C:/b/f.md' 'tsk3abc DW1-B-T3, DW1-C-7') }; & $rec self-buildy-fix-r2-4 90 @{ run = 'fix-r2'; args = (& $ar 'C:/b/f2.md' 'tsk3abc DW1-B-T3, DW1-C-7 (fix round 2 on g/api!41)') }
+& $rec self-buildy-ph5-6 10 @{ run = 'ph5'; args = (& $ar 'C:/b/ph5.md' 'tsk5abc phase 5') }; & $rec self-buildy-ph6-7 20 @{ run = 'ph6'; args = (& $ar 'C:/b/ph6.md' 'tsk5abc phase 6') }; & $rec self-buildy-old-8 -50 @{ run = 'old'; args = (& $ar "$lq/ph6.resume.md" 'x'); completed = 'x' }
+$hl = & { . (Lib); @{ holderPid = $PID; holderStart = (Get-KitPidStart $PID) } }   # a relaunch whose session lives
+& $rec wf_c3 30 @{ runId = 'wf_c3'; args = @{} }; & $rec self-buildy-c3-9 30 @{ run = 'c3'; args = (& $ar 'C:/b/c3.md' 'tsk6abc') }; & $rec wf_d4 70 @{ runId = 'wf_d4'; args = @{} }; & $rec self-buildy-wf-c3.resume-1-10 71 (@{ run = 'wf-c3.resume-1'; args = (& $ar "$lq/wf-c3.resume.md" 'tsk6abc') } + $hl)
+$runs = { (& { . $O; Get-StoppedRuns -Hours 99999 -All | ForEach-Object run } | Sort-Object) -join ' ' }
+$l1 = & $runs; $dn = Px $O launch -Done -RunId wf_b2 | Out-String; $null = Px $O launch -Done -RunId wf_c3; $l2 = & $runs
+& $rec self-buildy-r3-5 120 @{ run = 'r3'; args = (& $ar "$lq/fix-r2.resume.md" 'tsk9abc'); completed = 'x' }; $l3 = & $runs
+Expect 'recover: a relaunch replaces its original, the same agent + items twice shows once (phases stay); launch -Done closes the lineage, never a live relaunch; a closed relaunch hides its older parent' (
+  "$l1|$l2|$l3" -eq 'fix-r2 ph5 ph6 wf-a1.resume-2633 wf-c3.resume-1|fix-r2 ph5 ph6 wf-c3.resume-1|ph5 ph6 wf-c3.resume-1' -and -not @('wf_a1', 'wf_b2', 'p6-1', 'resume-2633' | Where-Object { $dn -notmatch $_ }).Count)
 Remove-TestKit $k
 Complete-Tests

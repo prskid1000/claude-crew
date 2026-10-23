@@ -130,7 +130,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 30, "plumbing": 8, "totalTokens": 220000, "testTokens": 36000 },
+  "caps": { "content": 30, "plumbing": 8, "totalTokens": 220000, "testTokens": 40000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
