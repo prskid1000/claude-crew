@@ -4,6 +4,7 @@ env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook 
 Invoke-KitPauseLocalEnv in orch.ps1 pause.
 Exit codes: none (functions only).
 #>
+#Requires -Version 7
 # new error lines per log since its last size (ERROR SPIKE); level words case-sensitive: "WARN ... Error while" is no error
 function Get-KitLogErrors([string[]]$Files, $Sizes) {
   if (-not $Sizes) { $Sizes = @{} }   # first round: no sizes yet

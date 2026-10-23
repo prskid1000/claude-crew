@@ -28,7 +28,7 @@ feature goes to the `extras` branch, not the core.
   (today's behaviour as default), org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md`.
 
 ## Shapes
-- **Script** [SCRIPT-HEADER, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with
+- **Script** [SCRIPT-HEADER, PS-VERSION, RUNTIME-RAW, RUNTIME-MAP, DESKTOP-OPEN, SECTION-MAP, SECTION-UNMAPPED]: one entry file per area with
   verbs, each function in a `---- <name>:` section (README "Extending"); header with usage, `Sections:` and `Exit codes:` (0 ok · 1 problem · 2 usage); shared params `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`; a
   failed call is UNKNOWN, never a state; paths via `Get-KitPath` / `kit_path` / `kitPath` / `rp()`; bounded network calls; no
   desktop opens without `--open` / `-Open` ("Script header" below).
@@ -111,6 +111,7 @@ Inputs: <config keys, files, env>. Outputs: <text / JSON with -Json / files>.
 Exit codes: 0 ok · 1 problem found · 2 usage error.
 Sections: L<n> <name> · ... (kittool.py sections --fix writes it)
 #>
+#Requires -Version 7
 ```
 Extras' scripts too: lint checks installed ones, `kittool.py extra test` the branch's (fix maps on the extras branch).
 Shared parameter names: `-Env -Run -Task -Repo -Dir -Agent -Mrs -DryRun -Json -Quiet`. No silent failures: a failed call is

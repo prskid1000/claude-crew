@@ -1,3 +1,4 @@
+#Requires -Version 7
 # liquibase (extra): dev.ps1 check -Step migrations on Liquibase XML masters -> devtools.py lbcheck per master (the one under the
 # checked folder first); LBCHECK_CHANGED = changelog files touched since -Since. Returns the worst exit code (-Show: prints the commands).
 function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since, [switch]$Show) {

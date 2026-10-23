@@ -1,6 +1,7 @@
+#Requires -Version 7
 # qa-html-report (extra): the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. qa.ps1 finalize
 # writes report.html with Build-QaReport and publishes it instead of report.md when this file is present (dot-sourced).
-# Sections: L4 helpers · L28 build
+# Sections: L5 helpers · L29 build
 # ---- helpers: HTML escape, palette, chips, images
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 

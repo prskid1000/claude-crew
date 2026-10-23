@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra board-disputes (kittool.py extra add board-disputes): orch.ps1 board dispute | disputes, dot-sourced by orch.ps1.
 # An agent disagrees with another's result: the other answers once with evidence; still split after 2 rounds or silent 2 h ->
 # the owner judges through decide ask (orchestrate E4).

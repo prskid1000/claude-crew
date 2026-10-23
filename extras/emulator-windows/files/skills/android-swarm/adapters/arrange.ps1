@@ -1,3 +1,4 @@
+#Requires -Version 7
 # emulator-windows (extra): swarm.ps1 arrange + up places visible emulator windows in a row on the main monitor (Windows,
 # lanes with headless: false or up -ShowAll). Dot-sourced by swarm.ps1 from adapters/.
 # ---- arrange: place emulator windows (Windows; run by up)

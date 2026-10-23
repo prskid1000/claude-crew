@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra stack-presets: dev.ps1 stack presets for Android Gradle, .NET (SDK and legacy MSBuild), Go, Rust, CMake and Make.
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add stack-presets); dev.ps1 stack calls 'detect'
 # when no core stack (maven, gradle, angular, node, python) matches: $a.dir, $a.commands (filled) -> the stack name.

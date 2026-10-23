@@ -5,9 +5,10 @@ deploys.ps1 (extra deploys): the deploy batch of orchestrate E5, dot-sourced by 
   orch.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   orch.ps1 deploy merge ...   extra deploy-merge
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L12 helpers · L22 intest · L101 deploy · L202 supervise
+Sections: L13 helpers · L23 intest · L102 deploy · L203 supervise
 Exit codes: 0 ok · 2 usage.
 #>
+#Requires -Version 7
 
 # ---- helpers: test-env filter, MR refs
 # not a test env: deploys[].production, else productionPattern on the name; -Lanes: + laneApk

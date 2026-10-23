@@ -1,3 +1,4 @@
+#Requires -Version 7
 # app-kinds (extra): swarm.ps1 build presets for app.kind flutter, maui, capacitor, and the Expo prebuild (android/ generated
 # when missing). Dot-sourced by swarm.ps1 from adapters/; app.buildCmd + app.artifact override a preset.
 function Set-AppKindPreset($app) {

@@ -6,8 +6,9 @@ supervise report, seats and leases in board show and recover.
 Its hooks run inside the orch.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Exit codes: none (functions only).
-Sections: L11 builds · L40 supervise · L129 lines · L145 cleanup
+Sections: L12 builds · L41 supervise · L130 lines · L146 cleanup
 #>
+#Requires -Version 7
 # ---- builds: repeated failures, cache flush
 # gate history keys whose last 3 builds failed; old failures (a path since fixed) are no news: the last one must be < 24 h old
 function Get-KitBuildFailures($Hist, [datetime]$Now) {

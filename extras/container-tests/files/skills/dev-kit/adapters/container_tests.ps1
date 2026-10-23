@@ -1,3 +1,4 @@
+#Requires -Version 7
 # container-tests (extra): before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build
 # file with -AllTests), dev.ps1 check asks docker / podman `info`; none answers -> exit 4 with how to start one.
 # Dot-sourced from skills/dev-kit/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests.

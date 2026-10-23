@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra tracker-jira: Jira Cloud and Jira Server / Data Center trackers (tracker.type jira | jira-server).
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add tracker-jira); helpers come from lib.ps1.
 # helpers only this extra uses (kept out of the core lib.ps1)

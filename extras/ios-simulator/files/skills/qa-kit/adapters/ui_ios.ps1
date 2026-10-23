@@ -1,3 +1,4 @@
+#Requires -Version 7
 # ios-simulator (extra): qa.ps1 ui on iOS Simulators (devices.type ios; $env:KIT_DEVICE = udid): shot, openurl, log. qa.ps1 ui hands
 # every call to Invoke-UiIos when this file is present (dot-sourced from adapters/).
 function Invoke-UiIos {

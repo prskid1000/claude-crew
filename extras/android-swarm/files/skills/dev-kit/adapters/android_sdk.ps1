@@ -1,3 +1,4 @@
+#Requires -Version 7
 # android-swarm (extra): where the Android SDK is (ANDROID_HOME / ANDROID_SDK_ROOT, else the OS default); swarm.ps1 and ios-simulator use it.
 function Get-AndroidSdk {
   foreach ($e in $env:ANDROID_HOME, $env:ANDROID_SDK_ROOT) { if ($e) { return $e } }

@@ -2,15 +2,19 @@
 localenv.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that agents deploy branches to, test and debug
 on; a service = a start command in a folder (default dev.ps1 stack `run`). Model: local-env SKILL.md "Local testing".
   & <kit>/skills/local-env/localenv.ps1 <verb> [args]
-Verbs: envs · status · deploy · wait · use · release · promote · task · logs · events · migrations · sql -Query (read-only)
-       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · _daemon -Env <env> [-Train <id>] (controller) · _exec (service wrapper)
-In: kit.local.json localEnv, .state/localenv/<env>.env (secrets). Out: text; status -Json.
+Verbs: envs · status · doctor · deploy · wait · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
+       migrations · sql -Query (read-only)
+       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · prune [-Days <n>] ·
+       _daemon -Env <env> [-Train <id> | -Start <svc>] (controller, workers) · _exec (service wrapper)
+In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends), .state/localenv/<env>.env (secrets).
+Out: text; status -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L19 config · L47 sandbox · L174 state · L211 leases · L233 code · L265 migrations · L412 hooks · L521 processes ·
-  L681 daemon · L1099 verbs
+Sections: L23 config · L171 state · L212 leases · L283 code · L315 migrations · L457 hooks · L538 processes · L789 daemon ·
+  L1197 doctor · L1238 verbs
 #>
+#Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
 # library (dot-sourced by the CLI and _daemon); state per env: Get-KitPath localenv /<env>.json (Update-State)
@@ -18,19 +22,49 @@ $ErrorActionPreference = 'Stop'
 
 # ---- config: kit.local.json localEnv, env and service lookups
 $script:LE = Get-KitValue 'localEnv' $null
+# objects merge deep; lists of named objects merge by name (base order, then new names); anything else: the override wins
+function Merge-Cfg($base, $over) {
+  if ($null -eq $base) { return $over }; if ($null -eq $over) { return $base }
+  if ($base -is [pscustomobject] -and $over -is [pscustomobject]) {
+    $o = [ordered]@{}; foreach ($p in $base.PSObject.Properties) { $o[$p.Name] = $p.Value }
+    foreach ($p in $over.PSObject.Properties) { $o[$p.Name] = Merge-Cfg $o[$p.Name] $p.Value }
+    return [pscustomobject]$o
+  }
+  $named = { param($l) $l -is [array] -and $l.Count -and -not @($l | Where-Object { $_ -isnot [pscustomobject] -or -not $_.name }).Count }   # [] clears
+  if ((& $named $base) -and (& $named $over)) {
+    $by = [ordered]@{}; foreach ($x in @($base) + @($over)) { $by[[string]$x.name] = Merge-Cfg $by[[string]$x.name] $x }
+    return , @($by.Values)
+  }
+  $over
+}
+# envs.<env> = localEnv.defaults <- envs.<extends> <- its own keys; a copy per env (presets write into it)
+function Resolve-EnvCfg([string]$n, [string[]]$seen = @()) {
+  if ($n -in $seen) { throw "localEnv.envs.$n.extends loops ($(@($seen + $n) -join ' -> '))" }
+  $own = $script:LE.envs.$n; if (-not $own) { throw "localEnv.envs.$($seen[-1]).extends names '$n', which is no env" }
+  $base = if ($own.extends) { Resolve-EnvCfg ([string]$own.extends) (@($seen) + $n) } else { $script:LE.defaults }
+  $mine = $own | Select-Object * -ExcludeProperty extends
+  Merge-Cfg ($base | ConvertTo-Json -Depth 20 | ConvertFrom-Json) ($mine | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
+}
+if ($script:LE.envs) {
+  $__envs = [ordered]@{}; foreach ($__n in @($script:LE.envs.PSObject.Properties.Name)) { $__envs[$__n] = Resolve-EnvCfg $__n }
+  $script:LE.envs = [pscustomobject]$__envs
+}
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
-$script:LeaseMin = [int](Opt 'leaseMinutes' 30)
+$script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
 $script:MaxLeaseMin = [int](Opt 'maxLeaseMinutes' 120)
+$script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitSetting 'idle.graceMinutes' 10))   # a lease unused this long is released (TODO-PARAM)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
-$script:RoomWaitMin = [int](Opt 'roomWaitMinutes' 30)
+$script:RoomWaitMin = [int](Opt 'roomWaitMinutes' 30)   # TODO-PARAM (fixed default)
 $script:IdleOn = "$(Opt 'idle.enabled' $true)" -ne 'False'
-$script:IdleMinM = [double](Opt 'idle.minMinutes' 15)
-$script:IdleMaxM = [double](Opt 'idle.maxMinutes' 60)
+$script:IdleMinM = [double](Opt 'idle.minMinutes' 15)   # TODO-PARAM (fixed default)
+$script:IdleMaxM = [double](Opt 'idle.maxMinutes' 60)   # TODO-PARAM (fixed default)
 $script:LoopExitM = [double](Opt 'loopExitMinutes' 10)
+$script:LogMaxMB = [double](Opt 'logMaxMB' 100)   # a service log past this moves to .prev (one generation) (TODO-PARAM)
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
-# optional parts (kittool.py extra add <name>) are dot-sourced from adapters/ (db-engine-presets fills unset db / sandbox.db hooks)
+# optional parts (kittool.py extra add <name>) are dot-sourced from adapters/ (db-engine-presets fills unset db hooks)
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
-$script:FailPattern = [string](Opt 'failPattern' 'APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module')
+$script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
+$script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
 function Now { (Get-Date).ToString('o') }
 function EnvNames { if ($script:LE -and $script:LE.envs) { @($script:LE.envs.PSObject.Properties.Name) } else { @() } }
 function Get-EnvCfg([string]$e) { $c = $script:LE.envs.$e; if (-not $c) { throw "unknown env '$e' (configured: $((EnvNames) -join ', '))" }; $c }
@@ -41,51 +75,16 @@ function Get-RepoCfg([string]$name) {
 }
 function EnvServices([string]$e) { @((Get-EnvCfg $e).services | Where-Object { $_ }) }
 function Svc([string]$e, [string]$n) {
-  if ($n -match '^sb(\d+)-(.+)$') { return (SandboxSvc $e ([int]$Matches[1]) $Matches[2]) }
   $s = EnvServices $e | Where-Object name -eq $n; if (-not $s) { throw "env $e has no service '$n' ($((EnvServices $e).name -join ', '))" }; $s
-}
-# ---- sandbox: migration sandboxes (envs.<env>.sandbox), migrating branch -> sandbox k, own build + DB copy, instances sb<k>-<svc>
-function SandboxCfg([string]$e) { (Get-EnvCfg $e).sandbox }
-function SbOff($sb) { [int]$(if ($sb.portOffset) { $sb.portOffset } else { 100 }) }
-function SbMax($sb) { [int]$(if ($sb.max) { $sb.max } else { 2 }) }
-function SandboxWt([string]$e, [int]$k, $r) { Join-Path @($KitConf.WorktreeRoots)[0] "localenv-$e-sb$k-$(Split-Path $r.cfg.checkout -Leaf)" }
-function SandboxSvc([string]$e, [int]$k, [string]$base) {
-  $b = EnvServices $e | Where-Object name -eq $base; if (-not $b) { throw "env $e has no service '$base'" }
-  $sb = SandboxCfg $e; $off = (SbOff $sb) * $k
-  $o = $b | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-  $o.name = "sb$k-$base"
-  $suffix = "sb$k"
-  if ($b.port) { $o.port = [int]$b.port + $off; if ($o.health) { $o.health = ([string]$o.health).Replace(":$($b.port)", ":$($o.port)") } }
-  if ($b.debugPort) { $o.debugPort = [int]$b.debugPort + $off }
-  $o | Add-Member -NotePropertyName offset -NotePropertyValue $off -Force
-  $o | Add-Member -NotePropertyName k -NotePropertyValue $k -Force
-  $o | Add-Member -NotePropertyName suffix -NotePropertyValue $suffix -Force
-  $envMap = [ordered]@{}; foreach ($src in @($b.env, $sb.env) | Where-Object { $_ }) { foreach ($p in $src.PSObject.Properties) { $envMap[$p.Name] = [string]$p.Value } }
-  $o | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject]$envMap) -Force
-  if ($b.repo) { $o | Add-Member -NotePropertyName wtOverride -NotePropertyValue (SandboxWt $e $k ((EnvRepos $e)[(Get-RepoCfg $b.repo).name])) -Force }
-  $o | Add-Member -NotePropertyName dependsOn -NotePropertyValue @($b.dependsOn | Where-Object { $_ } | ForEach-Object { if ($_ -in @($sb.services)) { "sb$k-$_" } else { $_ } }) -Force
-  $o
 }
 function Managed($s) { -not ($s.external -and -not $s.start) }
 function Test-PortClash {
   $by = @{}
-  $add = { param($port, $who, $ext, $start) $own = if ($who -match '^([^/]+/sb\d+)') { $Matches[1] } else { $who }; if (@($by["$port"] | Where-Object { $_ -and ($_.who -eq $who -or ($_.who -match '^([^/]+/sb\d+)' -and $Matches[1] -eq $own)) }).Count) { return }; $by["$port"] = @(@($by["$port"]) + @([pscustomobject]@{ who = $who; external = $ext; start = $start }) | Where-Object { $_ }) }
   foreach ($n in EnvNames) {
-    $sb = $script:LE.envs.$n.sandbox
     foreach ($s in @($script:LE.envs.$n.services | Where-Object { $_ -and $_.port })) {
-      & $add $s.port "$n/$($s.name)" ([bool]$s.external) ([string]$s.start)
-      if ($sb -and $s.name -in @($sb.services)) {
-        foreach ($k in 1..(SbMax $sb)) {
-          $off = (SbOff $sb) * $k
-          & $add ([int]$s.port + $off) "$n/sb$k-$($s.name)" $false ''
-          if ($s.debugPort) { & $add ([int]$s.debugPort + $off) "$n/sb$k-$($s.name) (debug)" $false '' }
-        }
+      foreach ($pp in @(@{ p = $s.port; w = "$n/$($s.name)"; x = [bool]$s.external; c = [string]$s.start }, $(if ($s.debugPort) { @{ p = $s.debugPort; w = "$n/$($s.name) (debug)"; x = $false; c = '' } })) | Where-Object { $_ }) {
+        $by["$($pp.p)"] = @(@($by["$($pp.p)"]) + @([pscustomobject]@{ who = $pp.w; external = $pp.x; start = $pp.c }) | Where-Object { $_ })
       }
-      if ($s.debugPort) { & $add $s.debugPort "$n/$($s.name) (debug)" $false '' }
-    }
-    if ($sb) {
-      $text = (@(@($sb.env.PSObject.Properties.Value) + @($sb.db.PSObject.Properties.Value)) -join ' ')
-      foreach ($m in [regex]::Matches($text, '\{\+(\d+)\}')) { foreach ($k in 1..(SbMax $sb)) { & $add ([int]$m.Groups[1].Value + (SbOff $sb) * $k) "$n/sb$k {+$($m.Groups[1].Value)}" $false '' } }
     }
   }
   foreach ($port in $by.Keys) {
@@ -109,13 +108,13 @@ function EnvRepos([string]$e) {
 function RepoOf([string]$e, $s) { if ($s.repo) { (Get-RepoCfg $s.repo).name } else { $null } }
 function SvcDir([string]$e, $s) {
   if (-not $s.repo) { return $(if ($s.dir) { $s.dir } else { $KitConf.Workspace }) }
-  $wt = if ($s.wtOverride) { $s.wtOverride } else { (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt }
+  $wt = (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt
   if ($s.dir) { Join-Path $wt $s.dir } else { $wt }
 }
 function Closure([string]$e, [string[]]$names) {
   $out = [Collections.Generic.List[string]]::new(); $todo = [Collections.Generic.Queue[string]]::new()
   foreach ($n in $names) { $todo.Enqueue($n) }
-  while ($todo.Count) { $n = $todo.Dequeue(); if ($out.Contains($n)) { continue }; $out.Add($n); $s = if ($n -match '^sb\d+-(.+)$') { EnvServices $e | Where-Object name -eq $Matches[1] } else { EnvServices $e | Where-Object name -eq $n }; foreach ($d in @($s.dependsOn | Where-Object { $_ })) { $todo.Enqueue($d) } }
+  while ($todo.Count) { $n = $todo.Dequeue(); if ($out.Contains($n)) { continue }; $out.Add($n); $s = EnvServices $e | Where-Object name -eq $n; foreach ($d in @($s.dependsOn | Where-Object { $_ })) { $todo.Enqueue($d) } }
   @($out)
 }
 function Dependents([string]$e, [string[]]$names) { @(EnvServices $e | Where-Object { $n = $_.name; @(Closure $e @($n) | Where-Object { $_ -ne $n -and $_ -in $names }).Count } | ForEach-Object name) }
@@ -132,10 +131,8 @@ function LanIp {
 }
 function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$artifact) {
   if (-not $t) { return $t }
-  $wt = if ($s.wtOverride) { $s.wtOverride } elseif ($s.repo) { (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt } else { '' }
-  $off = [int]$(if ($s.offset) { $s.offset } else { 0 })
-  $t = [regex]::Replace($t, '\{\+(\d+)\}', { param($m) "$([int]$m.Groups[1].Value + $off)" })
-  $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{suffix}', "$($s.suffix)").Replace('{k}', "$($s.k)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
+  $wt = if ($s.repo) { (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt } else { '' }
+  $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
 }
 $script:stacks = @{}
 function StackOf([string]$dir) {
@@ -178,7 +175,8 @@ function Read-State([string]$e) {
   $f = StateFile $e; $st = $null
   if (Test-Path $f) { try { $st = $(if ($script:stateLocked) { Get-Content $f -Raw } else { Invoke-KitLocked $f { Get-Content $f -Raw } }) | ConvertFrom-Json -AsHashtable } catch { Write-Warning "localenv: $f unreadable, starting a fresh state ($_)" } }
   if ($st -isnot [hashtable]) { $st = @{} }
-  foreach ($k in 'services', 'leases', 'holds', 'sandboxes') { if ($st[$k] -isnot [hashtable]) { $st[$k] = @{} } }
+  $st.Remove('sandboxes')   # retired
+  foreach ($k in 'services', 'leases', 'holds', 'notices') { if ($st[$k] -isnot [hashtable]) { $st[$k] = @{} } }
   foreach ($k in 'requests', 'releases') { $st[$k] = @(@($st[$k]) | Where-Object { $_ }) }
   if ($st.release -isnot [hashtable]) { $st.release = @{ n = 0; repos = @{} } }
   if ($st.release.repos -isnot [hashtable]) { $st.release.repos = @{} }
@@ -190,8 +188,11 @@ function Update-State([string]$e, [scriptblock]$Change) {
   Invoke-KitLocked $f {
     $script:stateLocked = $true
     try { $__state = Read-State $e } finally { $script:stateLocked = $false }
+    $__was = $__state | ConvertTo-Json -Depth 10
     & $Change $__state
-    $__state | ConvertTo-Json -Depth 10 | Set-Content "$f.tmp" -Encoding utf8
+    $__json = $__state | ConvertTo-Json -Depth 10
+    if ($__json -ceq $__was -and (Test-Path $f)) { return }   # nothing changed: no write (the loop calls this every tick)
+    $__json | Set-Content "$f.tmp" -Encoding utf8
     for ($i = 0; ; $i++) { try { [IO.File]::Move("$f.tmp", $f, $true); break } catch [IO.IOException], [UnauthorizedAccessException] { if ($i -ge 100) { throw }; [Threading.Thread]::Sleep(50) } }   # an open reader (Windows: access denied) blocks the rename; a real wait
   }
 }
@@ -208,28 +209,77 @@ function EnvProcess([int]$p, [string]$e) {
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
 
-# ---- leases: holds, demand; a lease ends at its time, or with no live holder past the grace (Update-KitLease)
+# ---- leases: holds, demand; a lease ends at its time, with no live holder past the grace (Update-KitLease), or unused for leaseIdleMinutes
 function Prune($st) {
-  foreach ($a in @($st.leases.Keys)) { if (-not (Update-KitLease $st.leases[$a])) { $st.leases.Remove($a) } }
+  foreach ($a in @($st.leases.Keys)) {
+    $l = $st.leases[$a]
+    if (-not (Update-KitLease $l)) { $st.leases.Remove($a); continue }
+    if (-not $l.owner -and $l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalMinutes -ge $script:LeaseIdleMin) {   # nobody uses it: trains need not wait, services may idle
+      $st.leases.Remove($a); Set-Notice $st $(if ($l.agent) { $l.agent } else { $a }) "lease on $(@($l.services) -join ',') released: unused for $($script:LeaseIdleMin) min (use again to re-lease)"
+    }
+  }
   foreach ($a in @($st.holds.Keys)) { if (-not (Update-KitLease $st.holds[$a])) { $st.holds.Remove($a) } }
+  if ($st.notices -isnot [hashtable]) { $st.notices = @{} }
+  foreach ($a in @($st.notices.Keys)) { if (((Get-Date) - [datetime]$st.notices[$a].at).TotalHours -ge 2) { $st.notices.Remove($a) } }
   $st.requests = @($st.requests | Where-Object { $_.status -ne 'done' -or ((Get-Date) - [datetime]$_.at).TotalHours -lt 24 } | Select-Object -Last 60)
   if ($st.train -and -not (Alive $st.train.pid) -and ($st.train.pid -or ((Get-Date) - [datetime]$st.train.at).TotalSeconds -gt 60)) {
     foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($st.train.requests)) { $r.status = 'queued' } }   # worker died: the train runs again
     $st.train = $null
   }
 }
+function Set-Notice($st, [string]$agent, [string]$text) { if ($st.notices -isnot [hashtable]) { $st.notices = @{} }; $st.notices[$agent] = @{ at = (Now); text = $text } }   # status -Agent shows it
+# a use of the lease (use, status / logs / events / deploy / wait by its agent, client traffic on its services): resets its idle clock
+function Touch-Lease([string]$e, [string]$agent) {
+  $st = Read-State $e; $l = $st.leases[$agent]
+  if (-not $l -or $l.owner -or ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 30)) { return }
+  Update-State $e { param($x) if ($x.leases[$agent]) { $x.leases[$agent].lastUse = (Now) } }
+}
+# the holders' board inbox (orch.ps1 board msg) + their status -Agent notice
+function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
+  $who = @{}
+  Update-State $e { param($x) foreach ($k in $keys) { $a = if ($x.leases[$k].agent) { [string]$x.leases[$k].agent } else { ($k -split '/')[0] }; $who[$a] = $true; Set-Notice $x $a $text } }
+  foreach ($a in $who.Keys) { $null = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'board', 'msg', '-Agent', "localenv-$e", '-To', $a, '-Text', "[$e] $text") 30 }
+  Event $e 'lease-notice' @{ agents = @($who.Keys); text = $text }
+}
+# a train waits for the leases on what it changes at most leaseMinutes (one clock per train); then it tells every holder and goes on
+$script:Preempted = @(); $script:LeaseWait0 = $null
+function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
+  $said = $null
+  while ($true) {
+    $o = @{ who = @() }
+    Update-State $e { param($x)
+      Prune $x
+      $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents -and $_ -notin $script:Preempted } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
+      if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train, from the first blocking lease
+      if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { $script:LeaseWait0.ToString('o') }) }
+    }
+    if (-not $o.who.Count) { return }
+    $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
+    if ($waited -ge $script:LeaseMin) {
+      Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $($script:LeaseMin)): pause your checks there; resume after 'deploy done'"
+      $script:Preempted = @(@($script:Preempted) + @($o.who) | Select-Object -Unique)
+      "[$e] told $($o.who -join ', ') after $([int]$waited) min: deploying while their leases stay"
+      return
+    }
+    $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $($script:LeaseMin) min)"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
+    Start-Sleep 5
+  }
+}
 function Leased($why) { [bool]@($why | Where-Object { "$_" -match '^(lease|hold):' }).Count }
 function IdleWhy([double]$min, [string]$pressure) { if ($pressure) { "idle, stopped under memory pressure ($pressure)" } else { "idle: no holder for $min min (starts on the next lease)" } }
-function ClientPids([int]$port, [int[]]$exclude) {
-  $pids = if ($KitIsWindows) { @(Get-NetTCPConnection -State Established -RemotePort $port -ea 0 | ForEach-Object OwningProcess) }
+# established clients of a port from one connection snapshot per 2 s; -Any: headless browsers too (lease use, not demand)
+$script:EstabSnap = $null
+function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
+  $pids = if ($KitIsWindows) {
+      if (-not $script:EstabSnap -or ((Get-Date) - $script:EstabSnap.at).TotalSeconds -gt 2) { $script:EstabSnap = @{ at = Get-Date; c = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | Select-Object RemotePort, OwningProcess) } }
+      @($script:EstabSnap.c | Where-Object RemotePort -eq $port | ForEach-Object OwningProcess) }
     elseif (Resolve-Tool ss) { @([regex]::Matches("$(ss -tnpH state established "( dport = :$port )" 2>$null)", 'pid=(\d+)') | ForEach-Object { [int]$_.Groups[1].Value }) }
     elseif (Resolve-Tool lsof) { @(lsof -nP "-iTCP@127.0.0.1:$port" -sTCP:ESTABLISHED -Fp 2>$null | Where-Object { $_ -match '^p\d+$' } | ForEach-Object { [int]$_.Substring(1) }) }
   $pids = @($pids | Where-Object { $_ -and $_ -notin $exclude } | Select-Object -Unique)
-  if (-not $pids) { return @() }
+  if (-not $pids -or $Any) { return @($pids) }
   $ps = if ($KitIsWindows) { @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + ($pids -join ' OR ProcessId=')) -Property ProcessId, CommandLine -ErrorAction SilentlyContinue | ForEach-Object { @{ Id = $_.ProcessId; CommandLine = $_.CommandLine } }) } else { Get-SysProcs }
   @($ps | Where-Object { $_.Id -in $pids -and "$($_.CommandLine)" -notmatch '--headless' } | ForEach-Object { $_.Id })
 }
-
 # ---- code: worktrees, layers, builds
 function G([string]$d) { $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' ') in $d : $o" }; $o }
 function NoHooksDir { $d = Join-Path (Get-KitPath localenv -Create) '.no-hooks'; New-Item -ItemType Directory -Force $d | Out-Null; $d }   # local-only merges, never pushed
@@ -262,7 +312,7 @@ function Resolve-Ref([string]$d, [string]$b) {
 }
 function HasMigrations([string]$checkout, [string]$target, [string]$sha) { $d = @(git -C $checkout diff --name-only "origin/$target...$sha" 2>$null); if ($LASTEXITCODE) { return $true }; [bool]($d -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' -or $d -match $script:MigPattern) }
 
-# ---- migrations: migration classes, LIGHT = exact revert (needs db.rollback), HEAVY = sandbox / snapshot
+# ---- migrations: migration classes, LIGHT = exact revert (needs db.rollback), HEAVY = snapshot
 function MigCfg([string]$e) {
   $m = [ordered]@{ pattern = $script:MigPattern }
   $db = (Get-EnvCfg $e).db; if ($db.engine) { $m.dialect = "$($db.engine)".ToLower() }; if ($db.exec) { $m.exec = $db.exec }
@@ -314,7 +364,6 @@ function MigText($mc) {
   else { "MIGRATIONS HEAVY ($(@($mc.why)[0])$(if (@($mc.why).Count -gt 1) { " +$(@($mc.why).Count - 1) more" }))" }
 }
 function LayerLight($l) { [bool]($l.migrations -and $l.mclass -and $l.mclass.effective -eq 'light' -and $l.mclass.manifest) }
-function ReqHeavy($r, [string]$rn) { [bool]($r.migrations[$rn] -and -not ($r.mclass -and $r.mclass[$rn] -and $r.mclass[$rn].effective -eq 'light')) }
 function Get-MigRevertPlan([string]$e, [string]$rn, [object[]]$leaving, [object[]]$staying, [string]$wt, [string]$tag) {
   $out = Join-Path (MigRoot $e) "$rn/revert-$tag"
   Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
@@ -405,11 +454,26 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   $out
 }
 
-function Invoke-Shell([string]$cmd, [string]$log, $vars) {
-  With-Env $(if ($vars) { $vars } else { @{} }) { if ($KitIsWindows) { & cmd.exe /d /c $cmd *>> $log } else { & /bin/sh -c $cmd *>> $log } }
-  $LASTEXITCODE
+# ---- hooks: db snapshot / restore / prune, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
+# a shell command, time-bounded (lib Invoke-KitExe kills the tree), output appended to $log and kept in $script:ShellOut; -1 = timed out
+$script:Misconfigured = @(64, 127, 9009)   # usage error / command not found (sh, cmd): fail fast, never retried
+function Invoke-Shell([string]$cmd, [string]$log, $vars, [int]$TimeoutSec = 1800) {
+  $r = With-Env $(if ($vars) { $vars } else { @{} }) {
+    if ($KitIsWindows) { Invoke-KitExe 'cmd.exe' @() $TimeoutSec -Raw "/d /s /c `"$cmd`"" } else { Invoke-KitExe '/bin/sh' @('-c', $cmd) $TimeoutSec }
+  }
+  $script:ShellOut = @(@($r.out, $r.err) | Where-Object { $_ } | ForEach-Object { "$_" -split "`r?`n" })
+  if ($r.timedOut) { $script:ShellOut += "== timed out after $TimeoutSec s (killed)" }
+  if ($script:ShellOut.Count) { Add-Content $log $script:ShellOut }
+  if ($r.code -gt 0 -and ($script:ShellOut -match "^'[^']+' is not recognized as an internal or external command|^(/bin/)?(ba)?sh: (line )?\d*:? ?.+: (command )?not found$").Count) { return 127 }   # cmd /c says 1
+  $r.code
 }
-# ---- hooks: db snapshot / restore, smoke checks
+function Get-ShellWhy([int]$code) { if ($code -eq -1) { 'timed out' } elseif ($code -in $script:Misconfigured) { "misconfigured (exit ${code}: command not found or bad usage; localenv.ps1 doctor)" } else { "exit $code" } }
+function HookTimeout([string]$e, [string]$name) {
+  $t = (Get-EnvCfg $e).db.timeoutSec
+  if ($t -is [pscustomobject]) { $t = $t.$name }
+  if ($t) { return [int]$t }
+  if ($name -in 'query', 'tag') { 120 } elseif ($name -eq 'applied') { 300 } else { 1800 }   # TODO-PARAM (fixed default)
+}
 function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $db = (Get-EnvCfg $e).db
   $cmd = @($(if ($db.$name -and ($name -ne 'rollback' -or $vars.hook -ne 0)) { Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }),
@@ -423,99 +487,52 @@ function Invoke-Hook([string]$e, [string]$name, [hashtable]$vars = @{}) {
   if (-not $cmd) { return "no db.$name hook configured" }
   $log = LogFile $e 'db'
   Add-Content $log "== $(Now) $name : $cmd"
-  $n0 = @(Get-Content $log).Count
-  $code = Invoke-Shell $cmd $log (EnvVars $e ([pscustomobject]@{}))
-  $script:HookOut = @(Get-Content $log | Select-Object -Skip $n0)
+  $code = Invoke-Shell $cmd $log (EnvVars $e ([pscustomobject]@{})) (HookTimeout $e $name)
+  $script:HookOut = @($script:ShellOut)
   Event $e "db-$name" @{ code = $code; vars = $vars }
-  if ($code) { return "db.$name failed (exit $code): $((Get-Content $log -Tail 8) -join ' | ')" }
+  if ($code) { return "db.$name failed ($(Get-ShellWhy $code)): $((@($script:HookOut) | Select-Object -Last 8) -join ' | ')" }
   $null
 }
 function Test-Smoke([string]$e) {
   foreach ($c in @((Get-EnvCfg $e).smoke | Where-Object { $_ })) {
     if ($c.service -and -not (Healthy $e (Svc $e $c.service))) { continue }   # skip while its service is idle
-    $until = (Get-Date).AddSeconds([double]$(if ($c.timeoutSec) { $c.timeoutSec } else { 60 })); $why = 'not run'
+    $until = (Get-Date).AddSeconds([double]$(if ($c.timeoutSec) { $c.timeoutSec } else { 60 })); $why = 'not run'; $final = $false
     while ($true) {
       if ($c.url) {
         $u = Expand-Placeholders ([string]$c.url) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $want = if ($c.status) { [string]$c.status } else { '^[23]\d\d$|^401$|^403$' }
-        try { $r = Invoke-WebRequest $u -ConnectionTimeoutSeconds 15 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; if ("$($r.StatusCode)" -match $want) { $why = $null } else { $why = "$u returned $($r.StatusCode)" } } catch { $why = "$u : $($_.Exception.Message)" }
+        try { $r = Invoke-WebRequest $u -ConnectionTimeoutSeconds 15 -OperationTimeoutSeconds 30 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; if ("$($r.StatusCode)" -match $want) { $why = $null } else { $why = "$u returned $($r.StatusCode)" } } catch { $why = "$u : $($_.Exception.Message)" }
       } elseif ($c.cmd) {
         $cmd = Expand-Placeholders ([string]$c.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $slog = LogFile $e 'smoke'; Remove-Item $slog -ErrorAction SilentlyContinue
-        $code = Invoke-Shell $cmd $slog (EnvVars $e ([pscustomobject]@{}))
-        $why = if ($code) { "exit $code : $((Get-Content $slog -ErrorAction SilentlyContinue | Where-Object { $_.Trim() } | Select-Object -Last 3) -join ' | ')" } else { $null }
+        $code = Invoke-Shell $cmd $slog (EnvVars $e ([pscustomobject]@{})) ([int][math]::Max(5, ($until - (Get-Date)).TotalSeconds))
+        $final = $code -in $script:Misconfigured
+        $why = if ($code) { "$(Get-ShellWhy $code) : $((@($script:ShellOut) | Where-Object { "$_".Trim() } | Select-Object -Last 3) -join ' | ')" } else { $null }
       }
-      if (-not $why -or (Get-Date) -gt $until) { break }
+      if (-not $why -or $final -or (Get-Date) -gt $until) { break }
       Start-Sleep 5
     }
     if ($why) { Event $e 'smoke-failed' @{ check = $c.name; why = $why }; return "$($c.name): $why" }
   }
   $null
 }
-
-function New-Sandbox([string]$e, [int]$k, $r, $layer) {
-  $sb = SandboxCfg $e; $suffix = "sb$k"
-  $wt = SandboxWt $e $k $r
-  if (-not (Test-Path (Join-Path $wt '.git'))) {
-    & $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch "localenv/$e-$suffix" -Target $r.target -Name "localenv-$e-$suffix" | ForEach-Object { Write-Host "  $_" }
-  }
-  $names0 = @($sb.services | Where-Object { $_ -and ((RepoOf $e (Svc $e $_)) -eq $r.name -or -not (Svc $e $_).repo) })
-  Update-State $e { param($x) $x.sandboxes["sb$k"] = @{ k = $k; branch = $layer.branch; agent = $layer.agent; sha = $layer.sha; repo = $r.name; services = @($names0 | ForEach-Object { "sb$k-$_" }); at = (Now); lastUse = (Now); request = $layer.request } }
-  $rr = [pscustomobject]@{ name = $r.name; cfg = $r.cfg; target = $r.target; wt = $wt; live = $false }
-  $res = Sync-Repo $e $rr @($layer)
-  if ($res.dropped.Count) { return @{ ok = $false; message = "sandbox: $($res.dropped[0].why)" } }
-  $inst = @($names0 | ForEach-Object { SandboxSvc $e $k $_ })
-  foreach ($s in $inst | Where-Object { $_.build -and $_.repo }) {
-    $d = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $d ''
-    Write-Host "[$e] sandbox $suffix building $($s.name)"
-    $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue
-    With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir $d -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Out-Null }
-    if ($LASTEXITCODE) { return @{ ok = $false; message = "sandbox build of $($s.name) failed: $((@(Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -match '(?i)\berror\b|failed' -and $_ -notmatch '^WARNING:' }) | Select-Object -First 8) -join ' | ')" } }
-  }
-  if ($sb.db.clone) {
-    $cmd = Expand-Placeholders ([string]$sb.db.clone) $e ([pscustomobject]@{ suffix = $suffix; k = $k; offset = (SbOff $sb) * $k }) $KitConf.Workspace ''; $log = LogFile $e 'db'; Add-Content $log "== $(Now) clone $suffix : $cmd"
-    if (Invoke-Shell $cmd $log (EnvVars $e ([pscustomobject]@{}))) { return @{ ok = $false; message = "db clone failed: $((Get-Content $log -Tail 5) -join ' | ')" } }
-  }
-  $deps = @($inst | ForEach-Object { @($_.dependsOn) } | Where-Object { $_ -and $_ -notlike "sb$k-*" } | Select-Object -Unique)
-  if ($deps.Count) {
-    Update-State $e { param($x) $x.holds["sandbox-sb$k"] = @{ services = @(Closure $e $deps) } + (New-KitLease $layer.agent) }   # lives while its agent does
-    $until = (Get-Date).AddMinutes(10)
-    while (@($deps | Where-Object { $d = Svc $e $_; (Managed $d) -and -not (Healthy $e $d) }).Count) {
-      if ((Get-Date) -gt $until) { return @{ ok = $false; message = "sandbox dependencies not up within 10 min: $($deps -join ', ')" } }
-      Start-Sleep 5
-    }
-  }
-  foreach ($s in $inst) {
-    $art = $null
-    if ($s.artifact) {
-      $f = Get-ChildItem (Join-Path (SvcDir $e $s) $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $(if ($s.artifactExclude) { $s.artifactExclude } else { 'original|sources|javadoc|plain' }) | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-      if (-not $f) { return @{ ok = $false; message = "sandbox build of $($s.name) left no artifact matching $($s.artifact)" } }
-      $to = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)"; New-Item -ItemType Directory -Force $to | Out-Null; Copy-Item $f.FullName $to -Force; $art = Join-Path $to $f.Name
-    }
-    try { Start-Svc $e $s 0 $art | Out-Host } catch { return @{ ok = $false; message = "sandbox $($s.name) did not start: $("$_".Split("`n")[0])"; services = @($inst.name) } }
-  }
-  @{ ok = $true; services = @($inst.name); message = "sandbox $suffix : $(($inst | ForEach-Object { "$($_.name) :$($_.port)$(if ($_.debugPort) { " (debug $($_.debugPort))" })" }) -join ', ')$(if ($sb.db.clone) { "; own DB copy (db.clone)" }). Test there; promote -> it joins the main env; drop -> removed." }
-}
-function Remove-Sandbox([string]$e, [string]$key) {
-  $st = Read-State $e; $sbx = if ($st.sandboxes) { $st.sandboxes[$key] } else { $null }
-  if (-not $sbx) { return }
-  foreach ($n in @($sbx.services)) { try { Stop-Svc $e (Svc $e $n) 'sandbox removed' } catch { } }
-  $sb = SandboxCfg $e
-  if ($sb.db.drop) { $cmd = Expand-Placeholders ([string]$sb.db.drop) $e ([pscustomobject]@{ suffix = $key; k = [int]$sbx.k; offset = (SbOff $sb) * [int]$sbx.k }) $KitConf.Workspace ''; $null = Invoke-Shell $cmd (LogFile $e 'db') (EnvVars $e ([pscustomobject]@{})) }
-  $r = (EnvRepos $e)[$sbx.repo]; $wt = SandboxWt $e ([int]$sbx.k) $r
-  if ((Test-Path $wt) -and (Split-Path $wt -Leaf) -like "localenv-$e-sb*") {
-    try { & $KitCmd.dev wt remove -Dir $wt -Force *>&1 | Out-Null } catch { Write-Host "[$e] dev.ps1 wt remove $wt : $_ - removing by path" }
-    if (Test-Path $wt) {
-      git -C $r.cfg.checkout worktree prune 2>$null | Out-Null
-      foreach ($l in @(Get-DirLinks $wt 6 | Sort-Object { $_.FullName.Length } -Descending)) { try { if ($KitIsWindows) { [IO.Directory]::Delete($l.FullName) } else { Remove-DirLink $l.FullName } } catch { } }
-      if (@(Get-DirLinks $wt 6).Count) { Write-Host "[$e] $wt still holds links: left in place (never deleting through a link)" }
-      else { Remove-Item -LiteralPath $wt -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-  }
-  git -C $r.cfg.checkout branch -D "localenv/$e-$key" 2>$null | Out-Null
-  foreach ($n in @($sbx.services)) { Remove-Item (Join-Path (Get-KitPath localenv) "run/$e/$n") -Recurse -Force -ErrorAction SilentlyContinue }   # its jars
-  Update-State $e { param($x) $x.sandboxes.Remove($key); $x.holds.Remove("sandbox-$key"); foreach ($n in @($sbx.services)) { $x.services.Remove($n) } }
-  Event $e 'sandbox-removed' @{ sandbox = $key; branch = $sbx.branch }
+# snapshot retention: db.prune ({keepDays}; {keep} = a regex of names never pruned, default baseline); also forgets older state
+# snapshots and the retired migration sandboxes' logs and wrappers
+function Invoke-Prune([string]$e, [double]$days = -1) {
+  $db = (Get-EnvCfg $e).db
+  if ($days -lt 0) { $days = [double]$(if ($null -ne $db.keepDays) { $db.keepDays } else { 7 }) }
+  $keep = if ($db.keep) { [string]$db.keep } else { 'baseline' }
+  if ($db.prune) {
+    $err = Invoke-Hook $e 'prune' @{ keepDays = $days; keep = $keep }
+    if ($err) { "[$e] prune: $err" } else { "[$e] prune: snapshots older than $days day(s) removed, names matching '$keep' kept$(if (@($script:HookOut).Count) { ": $(@($script:HookOut) -join ' | ')" })" }
+  } else { "[$e] prune: no db.prune hook (envs.$e.db.prune): no snapshot removed" }
+  Update-State $e { param($x) $x.snapshots = @(@($x.snapshots) | Where-Object { $_ -and ("$($_.name)" -match $keep -or ((Get-Date) - [datetime]$_.at).TotalDays -lt $days) }); $x.prunedAt = (Now) }
+  $sb = "^$([regex]::Escape($e))-sb\d+-"
+  $old = @(Get-ChildItem (Get-KitPath localenv-logs -Create) -File -ErrorAction SilentlyContinue | Where-Object Name -match $sb) +
+    @(Get-ChildItem (Join-Path (Get-KitPath localenv -Create) 'run') -ErrorAction SilentlyContinue | Where-Object Name -match $sb) +
+    @(Get-ChildItem (Join-Path (Get-KitPath localenv -Create) "run/$e") -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^sb\d+-')
+  if ($old.Count) { $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; "[$e] prune: removed $($old.Count) leftover(s) of retired migration sandboxes" }
+  Event $e 'prune' @{ days = $days; keep = $keep }
 }
 
 # ---- processes: CPU load, port owners, service processes
@@ -531,41 +548,92 @@ function Get-SysCpu {
   $sum = (ps -A -o %cpu= 2>$null | ForEach-Object { [double]"$_".Trim() } | Measure-Object -Sum).Sum
   [math]::Min(100, [math]::Round($sum / [Environment]::ProcessorCount, 0))
 }
+# one listen-table snapshot per 2 s (Windows: Get-NetTCPConnection is slow; status and the loop check many ports); Stop-Svc drops it
+$script:ListenSnap = $null
 function Get-PortPids([int]$Port) {
-  if ($KitIsWindows) { return @(Get-NetTCPConnection -LocalPort $Port -State Listen -ea 0 | Select-Object -ExpandProperty OwningProcess -Unique) }
+  if ($KitIsWindows) {
+    if (-not $script:ListenSnap -or ((Get-Date) - $script:ListenSnap.at).TotalSeconds -gt 2) {
+      $m = @{}; foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
+      $script:ListenSnap = @{ at = Get-Date; ports = $m }
+    }
+    return @($script:ListenSnap.ports["$Port"] | Where-Object { $_ })
+  }
   if (Resolve-Tool lsof) { return @(lsof -t -nP -iTCP:$Port -sTCP:LISTEN 2>$null | ForEach-Object { [int]$_ } | Select-Object -Unique) }
   if (Resolve-Tool fuser) { return @(("$(fuser -n tcp $Port 2>$null)" -split '\s+') | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
   @()
 }
+# up = an IPv4 connect succeeds (127.0.0.1, else the LAN address of a {lanIp}-bound service); a ::1-only server is not up
 function Test-PortListening([int]$Port) {
-  if ($KitIsWindows) { return @(Get-PortPids $Port).Count -gt 0 }
-  $t = [Net.Sockets.TcpClient]::new()
-  try { $t.ConnectAsync('127.0.0.1', $Port).Wait(1000) -and $t.Connected } catch { $false } finally { $t.Dispose() }
+  if ($KitIsWindows -and -not @(Get-PortPids $Port).Count) { return $false }   # the listen table first: a refused connect costs ~2 s there
+  foreach ($ip in @('127.0.0.1', $(if ($KitIsWindows) { LanIp }) | Select-Object -Unique)) {
+    $t = [Net.Sockets.TcpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
+    try { if ($t.ConnectAsync($ip, $Port).Wait(1000) -and $t.Connected) { return $true } } catch { } finally { $t.Dispose() }
+  }
+  $false
 }
-function TreeIds([int]$root, $all) {
-  if (-not $all) { $all = Get-SysProcs -NoCommandLine }
-  $ids = [Collections.Generic.List[int]]::new(); $ids.Add($root); $i = 0
-  while ($i -lt $ids.Count) { foreach ($c in $all) { if ($c.ParentId -eq $ids[$i] -and -not $ids.Contains($c.Id)) { $ids.Add($c.Id) } }; $i++ }
+# process trees from one lib Get-KitProcSnap (children map: linear, not a scan of every process per id)
+function TreeIds([int]$root, $snap) {
+  if (-not $snap) { $snap = Get-KitProcSnap }
+  $ids = [Collections.Generic.List[int]]::new(); $ids.Add($root)
+  for ($i = 0; $i -lt $ids.Count; $i++) { foreach ($c in @($snap.kids[$ids[$i]])) { if ($null -ne $c -and -not $ids.Contains([int]$c)) { $ids.Add([int]$c) } } }
   @($ids)
 }
-function SvcPids([string]$e, $s, $st, $all) {
+function SvcPids([string]$e, $s, $st, $snap) {
   $x = $st.services[$s.name]; $ids = @()
-  if (Owned $x) { $ids += TreeIds ([int]$x.pid) $all }
+  if (Owned $x) { $ids += TreeIds ([int]$x.pid) $snap }
   if ($s.port) { $ids += @(Get-PortPids ([int]$s.port)) }
   @($ids | Where-Object { $_ } | Select-Object -Unique)
 }
-function TreeGB([int[]]$ids, $all) {
+function TreeGB([int[]]$ids, $snap) {
   if (-not $ids) { return 0 }
-  if (-not $all) { $all = Get-SysProcs -NoCommandLine }
-  [math]::Round((($all | Where-Object { $_.Id -in $ids } | Measure-Object WorkingSet -Sum).Sum) / 1GB, 2)
+  if (-not $snap) { $snap = Get-KitProcSnap }
+  [math]::Round((@($ids | Select-Object -Unique | ForEach-Object { [double]$snap.procs[$_] }) | Measure-Object -Sum).Sum / 1GB, 2)
 }
-function StartMin($s) { [double]$(if ($s.startMinutes) { $s.startMinutes } else { 10 }) }
+# the first line matching $pattern written to $f since the last call (byte offset per file in $pos; the first call starts at the end)
+function Find-NewLogLine([string]$f, [string]$pattern, [hashtable]$pos) {
+  $i = Get-Item -LiteralPath $f -ErrorAction SilentlyContinue; if (-not $i) { return $null }
+  $from = if (-not $pos.ContainsKey($f)) { $i.Length } elseif ($pos[$f] -gt $i.Length) { 0 } else { $pos[$f] }   # shorter: rotated
+  $pos[$f] = $i.Length; if ($i.Length -le $from) { return $null }
+  $t = Read-FileRange $f ([math]::Max($from, $i.Length - 4MB)) $i.Length
+  $m = [regex]::Match($t, "(?m)^.*(?:$pattern).*$"); if ($m.Success) { $m.Value.Trim() } else { $null }
+}
+function Read-FileRange([string]$f, [long]$from, [long]$to) {
+  $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')
+  try { [void]$fs.Seek($from, 'Begin'); $b = [byte[]]::new($to - $from); $n = $fs.Read($b, 0, $b.Length); [Text.Encoding]::UTF8.GetString($b, 0, $n) } finally { $fs.Dispose() }
+}
+# a log's last lines, read from the end in 1 MB steps (never the whole file): -Grep filters, -Since keeps entries whose leading
+# timestamp (yyyy-MM-dd HH:mm:ss, ISO, Z or an offset) is newer than that many minutes; untimed lines belong to the entry above
+function Read-LogTail([string]$f, [int]$tail, [string]$grep, [double]$sinceMin) {
+  $len = (Get-Item -LiteralPath $f).Length; $cut = if ($sinceMin -gt 0) { [DateTimeOffset]::Now.AddMinutes(-$sinceMin) } else { $null }
+  $lines = [Collections.Generic.List[string]]::new(); $hold = [Collections.Generic.List[string]]::new(); $end = $len; $carry = ''; $done = $false; $timed = $false
+  while ($end -gt 0 -and -not $done -and ($len - $end) -lt $(if ($cut -and -not $timed) { 16MB } else { 256MB })) {
+    $from = [math]::Max(0, $end - 1MB); $parts = ((Read-FileRange $f $from $end) + $carry) -split "`r?`n"
+    $carry = if ($from -gt 0) { $parts[0] } else { '' }; $chunk = @($parts | Select-Object -Skip ([int]($from -gt 0)))
+    [array]::Reverse($chunk)
+    foreach ($l in $chunk) {
+      if ($l -eq '' -or ($grep -and $l -notmatch $grep -and -not $cut)) { continue }
+      if ($cut) {
+        if ($l -match '^\W{0,3}(\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?)') {
+          $timed = $true; $t = [DateTimeOffset]::MinValue
+          if ([DateTimeOffset]::TryParse(($Matches[1] -replace ',', '.'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$t) -and $t -lt $cut) { $done = $true; break }
+          foreach ($h in @($hold) + $l) { if (-not $grep -or $h -match $grep) { $lines.Add($h) } }; $hold.Clear()
+        } else { $hold.Add($l) }   # kept only if its entry is new enough
+        continue
+      }
+      $lines.Add($l); if ($lines.Count -ge $tail) { $done = $true; break }
+    }
+    $end = $from
+  }
+  if ($cut -and -not $done) { foreach ($h in $hold) { if (-not $grep -or $h -match $grep) { $lines.Add($h) } } }
+  $out = @($lines); [array]::Reverse($out); @($out | Select-Object -Last $tail)
+}
+function StartMin($s) { [double]$(if ($s.startMinutes) { $s.startMinutes } else { 10 }) }   # TODO-PARAM (fixed default)
 function Healthy([string]$e, $s) {
   if ($s.port -and -not (Test-PortListening ([int]$s.port))) { return $false }   # nothing listens: no HTTP wait (status -Json stays fast)
   if ($s.health) {
-    try { $r = Invoke-WebRequest (Expand-Placeholders $s.health $e $s (SvcDir $e $s) '') -ConnectionTimeoutSeconds 5 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; return $r.StatusCode -gt 0 -and $r.StatusCode -lt 500 } catch { return $false }
+    try { $r = Invoke-WebRequest (Expand-Placeholders $s.health $e $s (SvcDir $e $s) '') -ConnectionTimeoutSeconds 5 -OperationTimeoutSeconds 10 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; return $r.StatusCode -gt 0 -and $r.StatusCode -lt 500 } catch { return $false }
   }
-  if ($s.port) { return Test-PortListening ([int]$s.port) }
+  if ($s.port) { return $true }
   Alive (Read-State $e).services[$s.name].pid
 }
 function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
@@ -576,6 +644,8 @@ function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
     else { $ids = TreeIds ([int]$x.pid); [array]::Reverse($ids); $ids | ForEach-Object { Stop-SysProcess $_ } }
   }
   if ($s.port) { foreach ($p in Get-PortPids ([int]$s.port)) { if ($p -gt 4 -and ($p -in $mine -or (EnvProcess $p $e))) { Stop-SysProcess $p } } }
+  $script:ListenSnap = $null
+  if ($x.peakGB) { Save-LocalEnvHistory "$e/$($s.name)" ([double]$x.peakGB) }   # the learned need: its peak while it ran, not its size at start
   Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts) } }
   Event $e 'stop' @{ service = $s.name; why = $why }
 }
@@ -597,7 +667,36 @@ function GraceMin([string]$e, $s) {
   $start = if ($xs.Count) { ($xs | Measure-Object -Maximum).Maximum } else { 120 }
   [math]::Min($script:IdleMaxM, [math]::Max($script:IdleMinM, [math]::Round(3 * $start / 60, 1)))
 }
-function KeepFreeGB { if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }; $m = Get-SysMem; [double](Get-KitSetting 'localEnv.keepFreeGB' (Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($m.TotalGB * 0.15, 1))))) }
+# free RAM (avail + half the file cache), one sample a minute while a controller runs, 24 h kept (localenv-history "ram")
+function Add-RamSample([double]$gb) {
+  $f = Get-KitPath localenv-history -Create
+  Invoke-KitLocked $f {
+    $h = Get-LocalEnvHistory; $now = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+    $xs = @(@($h.ram) | Where-Object { $_ -and $now - [long]$_[0] -lt 86400 })
+    if ($xs.Count -and $now - [long]$xs[-1][0] -lt 55) { return }   # another env's controller sampled
+    $h.ram = @($xs) + , @($now, [math]::Round($gb, 1)); $h | ConvertTo-Json -Depth 4 | Set-Content $f -Encoding utf8
+  }
+}
+# the keep-free floor from samples (oldest first): a sane minimum + how far free RAM falls in 10 min + how often it dipped under 6 GB
+function Get-KeepFreeFrom([double[]]$xs, [double]$total) {
+  $min = [math]::Max(3.0, [math]::Round($total * 0.05, 1))   # TODO-PARAM (fixed default)
+  if ($xs.Count -lt 60) { return @{ gb = [math]::Max(6.0, [math]::Round($total * 0.15, 1)); why = "learning ($($xs.Count)/60 free-RAM samples): max(6 GB, 15% of RAM)" } }
+  $drops = @(for ($i = 10; $i -lt $xs.Count; $i++) { [math]::Max(0, $xs[$i - 10] - $xs[$i]) }) | Sort-Object
+  $swing = [math]::Round([double]@($drops)[[int][math]::Floor(0.9 * (@($drops).Count - 1))], 1)
+  $dips = @(for ($i = 1; $i -lt $xs.Count; $i++) { if ($xs[$i] -lt 6 -and $xs[$i - 1] -ge 6) { 1 } }).Count
+  $gb = [math]::Max($min, [math]::Min([math]::Round($total * 0.25, 1), [math]::Round($min + $swing + 0.5 * [math]::Min($dips, 8), 1)))
+  @{ gb = $gb; why = "min $min + 10-min fall $swing (p90 of 24 h) + $dips dip(s) under 6 GB x 0.5" }
+}
+$script:KeepFree = $null
+function Get-KeepFree {
+  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return @{ gb = [double]$env:CLAUDE_GATE_KEEP_FREE_GB; why = 'fixed (CLAUDE_GATE_KEEP_FREE_GB)' } }
+  $fixed = Get-KitSetting 'localEnv.keepFreeGB' (Get-KitSetting 'gate.keepFreeGB' $null)
+  if ($null -ne $fixed) { return @{ gb = [double]$fixed; why = 'fixed (keepFreeGB)' } }
+  if ($script:KeepFree -and ((Get-Date) - $script:KeepFree.at).TotalSeconds -lt 60) { return $script:KeepFree }
+  $xs = @(@((Get-LocalEnvHistory).ram) | Where-Object { $_ } | ForEach-Object { [double]$_[1] })
+  $script:KeepFree = (Get-KeepFreeFrom $xs (Get-SysMem).TotalGB) + @{ at = Get-Date }; $script:KeepFree
+}
+function KeepFreeGB { [double](Get-KeepFree).gb }
 function Pressure {
   if ((Get-GateAvailGB (Get-SysMem)) -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
   $q = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue'
@@ -608,6 +707,7 @@ function Pressure {
   if ($ws.Count) { return "start(s) waiting for RAM: $($ws -join ', ')" }
   $null
 }
+function Test-Room([string]$e, $s, [double]$waitedMin) { $m = Get-SysMem; Test-GateStart ((Get-GateAvailGB $m) - (Need-GB $e $s)) (KeepFreeGB) $waitedMin $m.TotalGB }
 function Wait-Room([string]$e, $s) {
   $need = Need-GB $e $s; $keep = KeepFreeGB
   $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false
@@ -640,18 +740,26 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
   $dir = SvcDir $e $s
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact
-  Stop-Svc $e $s 'stopped before a new start'
+  $x0 = (Read-State $e).services[$s.name]
+  if ((Owned $x0) -or ($s.port -and @(Get-PortPids ([int]$s.port)).Count)) { Stop-Svc $e $s 'stopped before a new start' }   # only when it runs or holds its port
   if ($s.port -and (Test-PortListening ([int]$s.port))) {
     $holder = @(Get-PortPids ([int]$s.port)) -join ','
     Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = "port $($s.port) held by pid $holder (not started by the env)" }
     throw "[$e] $($s.name): port $($s.port) is held by pid $holder, which the env did not start: stop it or change the port"
   }
+  # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
-  $got = $false
-  try { $got = $mx.WaitOne([TimeSpan]::FromMinutes(45)) } catch [Threading.AbandonedMutexException] { $got = $true }
-  if (-not $got) { $mx.Dispose(); throw "[$e] $($s.name): another service start held the machine-wide start lock for 45 min - not started (localenv.ps1 events)" }
+  $got = $false; $tw = Get-Date
   try {
-    Wait-Room $e $s
+    for ($round = 1; ; $round++) {
+      Wait-Room $e $s
+      try { $got = $mx.WaitOne([TimeSpan]::FromMinutes(45)) } catch [Threading.AbandonedMutexException] { $got = $true }   # TODO-PARAM (fixed default)
+      if (-not $got) { throw "[$e] $($s.name): another service start held the machine-wide start lock for 45 min - not started (localenv.ps1 events)" }
+      if (Test-Room $e $s ((Get-Date) - $tw).TotalMinutes) { break }
+      $mx.ReleaseMutex(); $got = $false
+      if ($round -ge 3) { throw "[$e] $($s.name): RAM was taken while it waited for the start lock (3 rounds) - not started" }
+      "[$e] RAM fell while $($s.name) waited for the start lock: waiting for room again"
+    }
     $log = LogFile $e $s.name; if (Test-Path $log) { Move-Item $log "$log.prev" -Force }
     "[$e] starting $($s.name)$(if ($release) { " (release $release)" }): $cmd"
     $t0 = Get-Date
@@ -670,7 +778,7 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
       Start-Sleep 5
     }
     $sec = [int]((Get-Date) - $t0).TotalSeconds
-    $gb = TreeGB (@(TreeIds $p) + @(if ($s.port) { Get-PortPids ([int]$s.port) }))
+    $snap = Get-KitProcSnap; $gb = TreeGB (@(TreeIds $p $snap) + @(if ($s.port) { Get-PortPids ([int]$s.port) })) $snap
     Save-LocalEnvHistory "$e/$($s.name)" $gb; Save-LocalEnvHistory "$e/$($s.name)/startSec" $sec
     Update-State $e { param($x) $x.services[$s.name].status = 'up'; $x.services[$s.name].gb = $gb; $x.services[$s.name].upAt = (Now) }
     Event $e 'up' @{ service = $s.name; release = $release; sec = $sec; gb = $gb }
@@ -678,27 +786,13 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
-# ---- daemon: this script only; -Env = loop, -Train = worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
+# ---- daemon: this script only; -Env = loop, -Train = train worker, -Start = start worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
 function Invoke-Daemon {
-param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train)
+param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train, [string]$Start, [int]$Release, [string]$Artifact)
 $e = $EnvName
 $ErrorActionPreference = 'Stop'
 
-# ==== train worker: wait until no lease covers $services / $repos (skip this train's agents)
-function Wait-Leases([string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
-  $said = $null
-  while ($true) {
-    $o = @{ who = @() }
-    Update-State $e { param($x)
-      Prune $x
-      $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
-      if ($x.train) { $x.train.waitingFor = @($o.who) }
-    }
-    if (-not $o.who.Count) { return }
-    $msg = "waiting for lease(s) of $($o.who -join ', ') on $(@($services) + @($repos) -join ', ')"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
-    Start-Sleep 5
-  }
-}
+# ==== train worker
 function Phase([string]$p, [string[]]$blockServices = @(), [string[]]$blockRepos = @()) {
   Update-State $e { param($x) if ($x.train) { $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
   "[$e] train $Train : $p"
@@ -714,36 +808,13 @@ function Run-Train {
   $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
   $notes = [Collections.Generic.List[string]]::new(); $migNote = @{}
 
-  $sandboxed = @{}
-  $sbCfg = SandboxCfg $e
-  if ($sbCfg) {
-    foreach ($r in @($reqs | Where-Object { $_.kind -eq 'deploy' -and -not $_.noSandbox })) {
-      $rn = @($r.shas.Keys | Where-Object { $repo = $_; (ReqHeavy $r $repo) -and @($sbCfg.services | Where-Object { (RepoOf $e (Svc $e $_)) -eq $repo }).Count }) | Select-Object -First 1
-      if (-not $rn) { continue }
-      $sandboxed[$r.id] = $true
-      $live = (Read-State $e).sandboxes
-      foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Phase "replacing sandbox $key ($($r.branch))"; Remove-Sandbox $e $key }
-      $used = @((Read-State $e).sandboxes.Keys | ForEach-Object { [int]"$_".Substring(2) })
-      $k = 1..[int]$(if ($sbCfg.max) { $sbCfg.max } else { 2 }) | Where-Object { $_ -notin $used } | Select-Object -First 1
-      if (-not $k) { $results[$r.id] = @{ outcome = 'refused'; message = "all sandboxes busy ($(((Read-State $e).sandboxes.Values | ForEach-Object { "$($_.branch) ($($_.agent))" }) -join ', ')): deploy again once one is promoted or dropped" }; continue }
-      Phase "sandbox sb$k for $($r.branch) (migrations)"
-      $res = New-Sandbox $e $k $envRepos[$rn] @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; migrations = $true; request = $r.id }
-      $results[$r.id] = if ($res.ok) { @{ outcome = 'sandbox'; message = "$(if ($r.mclass) { "$(MigText $r.mclass[$rn]): " })$($res.message)" } } else { @{ outcome = 'rejected'; message = $res.message } }
-      if (-not $res.ok) { Remove-Sandbox $e "sb$k" }
-    }
-  }
-  foreach ($r in @($reqs | Where-Object { $_.kind -eq 'drop' })) {
-    $live = (Read-State $e).sandboxes
-    foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Phase "removing sandbox $key"; Remove-Sandbox $e $key; $results[$r.id].message = "sandbox $key removed" }
-  }
-
   $cur = @{}; $want = @{}; foreach ($rn in $envRepos.Keys) { $cur[$rn] = @(Layers $st $rn); $want[$rn] = @($cur[$rn]) }
   $affected = [Collections.Generic.List[string]]::new(); $byBranch = @{}
-  foreach ($r in @($reqs | Where-Object { -not $sandboxed[$_.id] })) {
+  foreach ($r in $reqs) {
     switch ($r.kind) {
       'deploy' { foreach ($rn in @($r.shas.Keys)) {
           $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; mclass = $(if ($r.mclass) { $r.mclass[$rn] }); request = $r.id }
-          if ($l.migrations) { $migNote[$r.id] = "$rn $(MigText $(if ($l.mclass) { $l.mclass } else { @{ effective = 'heavy'; why = @('promoted from its sandbox') } }))" }
+          if ($l.migrations) { $migNote[$r.id] = "$rn $(MigText $(if ($l.mclass) { $l.mclass } else { @{ effective = 'heavy'; why = @('not classified') } }))" }
           $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }) + @($l); if (-not $affected.Contains($rn)) { $affected.Add($rn) }; $byBranch["$rn|$($r.branch)"] = $r.id } }
       'drop' { foreach ($rn in $envRepos.Keys) { if (@($want[$rn].branch) -contains $r.branch) { $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }); if (-not $affected.Contains($rn)) { $affected.Add($rn) } } } }
       'refresh' { foreach ($rn in $envRepos.Keys) { if (-not $affected.Contains($rn)) { $affected.Add($rn) } } }
@@ -759,7 +830,7 @@ function Run-Train {
   $codeSvcs = @(@($liveSvcs) + $adopted | Select-Object -Unique)
   $codeBlock = @(@($codeSvcs) + @(Dependents $e $codeSvcs) | Select-Object -Unique)
   Phase 'waiting for leases (code)' $codeBlock @($affected)
-  Wait-Leases $codeBlock @($affected) $own
+  Wait-Leases $e $codeBlock @($affected) $own
   foreach ($n in $adopted) { "[$e] $n runs from its build output (started before run-from-copy): stopping it for the build"; Stop-Svc $e (Svc $e $n) 'rebuilt: restarts from a staged copy' }
   Phase 'merging and building' $codeBlock @($affected)
 
@@ -828,7 +899,7 @@ function Run-Train {
   $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and (Managed $_) -and $st2.services[$_.name].status -eq 'up' -and -not ($_.hot -and -not $_.artifact) })
   $switchNames = @($switch | ForEach-Object name)
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
-  if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $block @() $own }
+  if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $e $block @() $own }
   $reverts = @{}; $restores = @{}
   foreach ($rn in @($ok)) {
     $keepKeys = @($repoOut[$rn].layers | ForEach-Object { Key $_ })
@@ -960,21 +1031,30 @@ function Record-Train {
     foreach ($r in $x.requests) { if ($results.ContainsKey($r.id)) { $r.status = 'done'; $r.result = $results[$r.id]; $r.result.release = $(if ($results[$r.id].outcome -eq 'live') { $(if ($changed.Count) { $newN } else { $x.release.n }) }) } }
     $x.train = $null
   }
-  foreach ($r in @($reqs | Where-Object { $_.noSandbox -and $results[$_.id].outcome -eq 'live' })) {
-    $live = (Read-State $e).sandboxes
-    foreach ($key in @($live.Keys | Where-Object { $live[$_].branch -eq $r.branch })) { Remove-Sandbox $e $key; $notes.Add("sandbox $key removed: $($r.branch) is live in the main env") }
-  }
+  if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted "deploy done$(if ($changed.Count) { " (release $newN)" }): re-run your checks; your lease continues" }
   Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes) }
   $notes | ForEach-Object { "[$e] $_" }
   "[$e] train $Train done: $(if ($changed.Count) { "release $newN ($($changed -join ', '))" } else { 'no new release' })"
 }
 
+$script:SayLog = LogFile $e 'loop'
+function Say([string]$m) { $line = "$(Get-Date -Format 'HH:mm:ss') $m`n"; for ($i = 0; $i -lt 20; $i++) { try { [IO.File]::AppendAllText($script:SayLog, $line); return } catch { Start-Sleep -Milliseconds 50 } } }   # loop + start workers share it
 if ($Train) {
   for ($i = 0; $i -lt 20 -and -not ((Read-State $e).train.id -eq $Train); $i++) { Start-Sleep -Milliseconds 250 }
   try { Run-Train *>&1 | Tee-Object -FilePath (LogFile $e 'train') -Append }
   catch {
     $why = "$_"; "[$e] train $Train crashed: $why $($_.ScriptStackTrace)" | Add-Content (LogFile $e 'train')
+    if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted 'deploy ended without a release (train crashed): resume your checks; your lease continues' }
     Update-State $e { param($x) foreach ($r in $x.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($x.train.requests)) { $r.status = 'done'; $r.result = @{ outcome = 'error'; message = "train crashed: $why" } } }; $x.train = $null }
+  }
+  exit
+}
+if ($Start) {   # start worker: one service start (RAM wait, start lock, health) off the loop, so beats, prune and idle stops go on
+  $s = Svc $e $Start
+  try { if (Healthy $e $s) { Say "start of ${Start}: already up" } else { Start-Svc $e $s $Release $Artifact *>&1 | ForEach-Object { Say "$_" } } }
+  catch {
+    $why = "$_".Split("`n")[0]; Say "start of $Start failed: $why"
+    Update-State $e { param($z) if (-not $z.services[$Start]) { $z.services[$Start] = @{} }; $z.services[$Start].status = 'failed'; $z.services[$Start].why = $why }
   }
   exit
 }
@@ -984,105 +1064,123 @@ $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { "Global\kit-localenv
 $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
-$log = LogFile $e 'loop'
-function Say([string]$m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $log }
 Say "loop started (pid $PID)"
-$quietSince = Get-Date; $tick = 0; $clientNeed = @{}
+$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue
 try {
   while ($true) {
     $tick++
-    Update-State $e { param($x) Prune $x; $x.loop = @{ pid = $PID; beat = (Now) } }
-    $st = Read-State $e
-
-    # ---- trains: one worker takes all queued requests
-    $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
-    if (-not $st.train -and $queued.Count) {
-      $tid = [guid]::NewGuid().ToString('n').Substring(0, 6); $ids = @($queued.id)
-      Update-State $e { param($x) $x.train = @{ id = $tid; pid = $null; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
-      $wp = Start-Pwsh @('_daemon', '-Env', $e, '-Train', $tid) $PSScriptRoot "_daemon -Env $e -Train $tid" (LogFile $e "train-$tid")
-      Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $x.train.pid = $wp } }
-      Say "train $tid started for $($ids.Count) request(s): $(($queued | ForEach-Object { "$($_.kind) $($_.branch)" }) -join '; ')"
+    try {   # a failing tick is logged and retried with backoff; the controller keeps running
+      $beat = ((Get-Date) - $beatAt).TotalSeconds -ge 60
+      Update-State $e { param($x) Prune $x; if ($beat -or -not $x.loop -or $x.loop.pid -ne $PID) { $x.loop = @{ pid = $PID; beat = (Now) } } }   # a write only on change or once a minute
+      if ($beat) { $beatAt = Get-Date }
+      if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
-    }
 
-    # ---- demand (traffic probed every 5th tick: slow)
-    $all = Get-SysProcs -NoCommandLine
-    $envPids = @(foreach ($s in EnvServices $e) { SvcPids $e $s $st $all })
-    if ($tick % 5 -eq 1) { $clientNeed = @{}; foreach ($s in EnvServices $e | Where-Object { $_.port -and $st.services[$_.name].status -eq 'up' -and -not ($st.suppress -and $_.name -in @($st.suppress.services) -and [datetime]$st.suppress.until -gt (Get-Date)) }) { if (@(ClientPids ([int]$s.port) $envPids).Count) { $clientNeed[$s.name] = $true } } }
-    $need = @{}
-    $addNeed = { param($names, $why) foreach ($n in (Closure $e @($names))) { if (-not $need[$n]) { $need[$n] = @() }; $need[$n] += $why } }
-    foreach ($a in $st.leases.Keys) { & $addNeed @($st.leases[$a].services) "lease:$a" }
-    foreach ($a in $st.holds.Keys) { & $addNeed @($st.holds[$a].services) "hold:$a" }
-    foreach ($n in $clientNeed.Keys) { & $addNeed @($n) 'clients' }
-    $block = @($st.train.blockServices)
-    $needNames = @($need.Keys)
-    Update-State $e { param($z) foreach ($n in @($z.services.Keys)) { if ($z.services[$n].need -and $n -notin $needNames) { $z.services[$n].need = @() } } }   # reasons that ended
-
-    # ---- stop first: idle past grace, or idle under pressure
-    $pressure = Pressure
-    $running = @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block })
-    $idle = @($running | Where-Object {
-        $n = $_.name; $x = $st.services[$n]
-        $since = [datetime]$(if ($x.lastNeed) { $x.lastNeed } elseif ($x.upAt) { $x.upAt } else { (Now) })
-        $dependentsUp = @(Dependents $e @($n) | Where-Object { $st.services[$_].status -eq 'up' })
-        -not $dependentsUp.Count -and ($pressure -or ($IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
-      } | Sort-Object { -[double]$st.services[$_.name].gb })
-    if ($idle.Count) {
-      $s = $idle[0]   # one per tick, biggest first
-      $why = IdleWhy (GraceMin $e $s) $pressure
-      Say "stopping $($s.name): $why"; Stop-Svc $e $s $why
-      $st = Read-State $e
-    }
-
-    # ---- start needed, restart crashes with backoff
-    $needsBuild = $false
-    foreach ($s in EnvServices $e | Where-Object { Managed $_ }) {
-      $x = $st.services[$s.name]
-      if (-not $need[$s.name]) { continue }
-      Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{ status = 'down' } }; $z.services[$s.name].lastNeed = (Now); $z.services[$s.name].need = @($need[$s.name]) }
-      if ($s.name -in $block) { continue }
-      if (Healthy $e $s) { if ($x.status -ne 'up') { Update-State $e { param($z) $z.services[$s.name].status = 'up' } }; continue }
-      if (-not (Leased $need[$s.name])) { continue }
-      if ($x.status -eq 'starting' -and (Owned $x) -and $x.startedAt -and ((Get-Date) - [datetime]$x.startedAt).TotalMinutes -lt (StartMin $s)) { continue }
-      if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # dependencies first
-      $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
-      if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries / 30 min
-      if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
-      Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
-      try { Start-Svc $e $s ([int]$st.release.n) $x.artifact *>&1 | ForEach-Object { Say "$_" } } catch { Say "start of $($s.name) failed: $("$_".Split("`n")[0])" }
-      $st = Read-State $e
-    }
-    if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -ne 'done' }).Count) {
-      $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
-      Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'refresh'; agent = 'controller'; at = (Now); status = 'queued' }) }
-      Say 'queued a refresh: a needed service has no build yet'
-    }
-
-    # ---- sandboxes: idle > sandbox.idleHours -> drop
-    if ($st.sandboxes.Count) {
-      $sbIdleH = [double]$(if ((SandboxCfg $e).idleHours) { (SandboxCfg $e).idleHours } else { 4 })
-      foreach ($key in @($st.sandboxes.Keys)) {
-        $sbx = $st.sandboxes[$key]
-        $inUse = @($st.leases.Values | Where-Object { @($_.services | Where-Object { $_ -like "$key-*" }).Count }).Count
-        if ($inUse) { Update-State $e { param($z) if ($z.sandboxes[$key]) { $z.sandboxes[$key].lastUse = (Now) } }; continue }
-        if (((Get-Date) - [datetime]$sbx.lastUse).TotalHours -ge $sbIdleH -and -not @($st.requests | Where-Object { $_.status -ne 'done' -and $_.branch -eq $sbx.branch }).Count) {
-          $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
-          Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'drop'; branch = $sbx.branch; agent = 'controller'; at = (Now); status = 'queued' }) }
-          Say "sandbox $key ($($sbx.branch)) idle $sbIdleH h: drop queued"
-        }
+      # ---- trains: one worker takes all queued requests
+      $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
+      if (-not $st.train -and $queued.Count) {
+        $tid = [guid]::NewGuid().ToString('n').Substring(0, 6); $ids = @($queued.id)
+        Update-State $e { param($x) $x.train = @{ id = $tid; pid = $null; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
+        $wp = Start-Pwsh @('_daemon', '-Env', $e, '-Train', $tid) $PSScriptRoot "_daemon -Env $e -Train $tid" (LogFile $e "train-$tid")
+        Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $x.train.pid = $wp } }
+        Say "train $tid started for $($ids.Count) request(s): $(($queued | ForEach-Object { "$($_.kind) $($_.branch)" }) -join '; ')"
+        $st = Read-State $e
       }
-    }
-    if ((SandboxCfg $e).db.sweep -and $tick % 600 -eq 2) {
-      $keep = @($st.sandboxes.Keys) -join ','
-      $cmd = (Expand-Placeholders ([string](SandboxCfg $e).db.sweep) $e ([pscustomobject]@{}) $KitConf.Workspace '').Replace('{keep}', $(if ($keep) { $keep } else { 'none' }))
-      $null = Invoke-Shell $cmd (LogFile $e 'db') (EnvVars $e ([pscustomobject]@{}))
-    }
 
-    # ---- exit when idle
-    $st = Read-State $e
-    $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or $st.sandboxes.Count -or
-      @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
-    if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { Say 'idle: loop exits'; break }
+      # ---- demand; every 5th tick (slow): client traffic, lease use, peak RAM, out-of-memory lines of running services
+      $snap = Get-KitProcSnap
+      $envPids = @(foreach ($s in EnvServices $e) { SvcPids $e $s $st $snap })
+      if ($tick % 5 -eq 1) {
+        $clientNeed = @{}; $used = @{}
+        foreach ($s in EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' }) {
+          $x = $st.services[$s.name]
+          if ($s.port -and @(ClientPids ([int]$s.port) $envPids -Any).Count) {
+            $used[$s.name] = $true
+            if (-not ($st.suppress -and $s.name -in @($st.suppress.services) -and [datetime]$st.suppress.until -gt (Get-Date)) -and @(ClientPids ([int]$s.port) $envPids).Count) { $clientNeed[$s.name] = $true }
+          }
+          $gb = TreeGB (SvcPids $e $s $st $snap) $snap
+          if ($gb -gt [double]$x.peakGB + 0.05) { Update-State $e { param($z) if ($z.services[$s.name]) { $z.services[$s.name].peakGB = $gb } } }
+          $oom = Find-NewLogLine (LogFile $e $s.name) $script:OomPattern $logPos
+          if ($oom) {
+            Say "$($s.name) ran out of memory ($oom): restarting it"; Event $e 'oom' @{ service = $s.name; line = $oom }
+            Stop-Svc $e $s "out of memory: $oom"; Update-State $e { param($z) $z.services[$s.name].status = 'failed' }
+          }
+        }
+        $usedNames = @($used.Keys)
+        if ($usedNames.Count) { Update-State $e { param($z) foreach ($l in $z.leases.Values) { if (-not $l.owner -and @(Closure $e @($l.services) | Where-Object { $_ -in $usedNames }).Count -and -not ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 60)) { $l.lastUse = (Now) } } } }
+        $st = Read-State $e
+      }
+      $need = @{}
+      $addNeed = { param($names, $why) foreach ($n in (Closure $e @($names))) { if (-not $need[$n]) { $need[$n] = @() }; $need[$n] += $why } }
+      foreach ($a in $st.leases.Keys) { & $addNeed @($st.leases[$a].services) "lease:$a" }
+      foreach ($a in $st.holds.Keys) { & $addNeed @($st.holds[$a].services) "hold:$a" }
+      foreach ($n in $clientNeed.Keys) { & $addNeed @($n) 'clients' }
+      $block = @($st.train.blockServices)
+      $needNames = @($need.Keys)
+      Update-State $e { param($z) foreach ($n in @($z.services.Keys)) { if ($z.services[$n].need -and $n -notin $needNames) { $z.services[$n].need = @() } } }   # reasons that ended
+
+      # ---- stop first: idle past grace, or idle under pressure
+      $pressure = Pressure
+      $running = @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block })
+      $idle = @($running | Where-Object {
+          $n = $_.name; $x = $st.services[$n]
+          $since = [datetime]$(if ($x.lastNeed) { $x.lastNeed } elseif ($x.upAt) { $x.upAt } else { (Now) })
+          $dependentsUp = @(Dependents $e @($n) | Where-Object { $st.services[$_].status -eq 'up' })
+          -not $dependentsUp.Count -and ($pressure -or ($IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
+        } | Sort-Object { -[double]$st.services[$_.name].gb })
+      if ($idle.Count) {
+        $s = $idle[0]   # one per tick, biggest first
+        $why = IdleWhy (GraceMin $e $s) $pressure
+        Say "stopping $($s.name): $why"; Stop-Svc $e $s $why
+        $st = Read-State $e
+      }
+
+      # ---- start needed (a start worker each), restart crashes with backoff
+      $needsBuild = $false
+      foreach ($s in EnvServices $e | Where-Object { Managed $_ }) {
+        $x = $st.services[$s.name]
+        if (-not $need[$s.name]) { continue }
+        $nw = @($need[$s.name])
+        if (-not $x -or -not $x.lastNeed -or ((Get-Date) - [datetime]$x.lastNeed).TotalSeconds -ge 60 -or (@($x.need) -join ',') -ne ($nw -join ',')) {
+          Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{ status = 'down' } }; $z.services[$s.name].lastNeed = (Now); $z.services[$s.name].need = $nw }
+        }
+        if ($s.name -in $block) { continue }
+        if ($starters[$s.name] -and (Alive $starters[$s.name])) { continue }   # its start worker runs
+        if (Healthy $e $s) { $misses[$s.name] = 0; if ($x.status -ne 'up') { Update-State $e { param($z) $z.services[$s.name].status = 'up' } }; continue }
+        if ($x.status -eq 'up' -and (Owned $x) -and ++$misses[$s.name] -lt 3) { continue }   # a busy service: 3 health misses in a row first
+        if (-not (Leased $need[$s.name])) { continue }
+        if ($x.status -eq 'starting' -and (Owned $x) -and $x.startedAt -and ((Get-Date) - [datetime]$x.startedAt).TotalMinutes -lt (StartMin $s)) { continue }
+        if ($x.status -eq 'waiting' -and $x.waitPid -and (Alive ([int]$x.waitPid))) { continue }   # a worker of an earlier controller waits for RAM
+        if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # dependencies first
+        $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
+        if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries / 30 min
+        if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
+        Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
+        $starters[$s.name] = Start-Pwsh @('_daemon', '-Env', $e, '-Start', $s.name, '-Release', "$([int]$st.release.n)", '-Artifact', "$($x.artifact)") $PSScriptRoot "_daemon -Env $e -Start $($s.name)" (LogFile $e "start-$($s.name)")
+        Say "start of $($s.name): worker pid $($starters[$s.name])"
+        $st = Read-State $e
+      }
+      if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -ne 'done' }).Count) {
+        $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
+        Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'refresh'; agent = 'controller'; at = (Now); status = 'queued' }) }
+        Say 'queued a refresh: a needed service has no build yet'
+      }
+
+      # ---- snapshot retention, once a day
+      if (-not $st.prunedAt -or ((Get-Date) - [datetime]$st.prunedAt).TotalHours -ge 24) { Invoke-Prune $e | ForEach-Object { Say "$_" } }
+
+      # ---- exit when idle
+      $st = Read-State $e
+      $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or
+        @($starters.Values | Where-Object { Alive $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
+      if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { Say 'idle: loop exits'; break }
+    } catch {
+      $fails++; $m = "$_".Split("`n")[0]
+      if ($m -ne $lastErr) { Say "tick $tick failed ($fails in a row, retrying): $_ $($_.ScriptStackTrace)"; $lastErr = $m }
+      if ($fails -ge 30) { Say 'loop gives up after 30 failed ticks in a row (the next request starts it again)'; break }
+      Start-Sleep ([math]::Min(60, 3 * [math]::Pow(2, [math]::Min($fails, 5)))); continue
+    }
+    $fails = 0; $lastErr = $null
     Start-Sleep 3
   }
 } catch { Say "loop crashed: $_ $($_.ScriptStackTrace)" }
@@ -1096,22 +1194,63 @@ function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
+# ---- doctor: what an env needs before it runs (doctor verb; deploy stops on a FAIL): config, env file, scripts, JAVA_HOME, builds, ports, health
+function Get-Doctor([string]$e) {
+  $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
+  $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
+  foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
+  if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired (HEAVY layers: db.snapshot first): remove the key" }
+  $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$e.env" }
+  if (-not (Test-Path -LiteralPath $f)) { & $add $(if ($c.envFile) { 'FAIL' } else { 'WARN' }) "env file $f is missing$(if (-not $c.envFile) { ' (secrets go there)' })" }
+  $cmds = [ordered]@{}; $none = [pscustomobject]@{ port = '' }
+  foreach ($p in @($c.db.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|keep$)' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
+  foreach ($m in @($c.smoke | Where-Object { $_.cmd })) { $cmds["smoke '$($m.name)'"] = Expand-Placeholders ([string]$m.cmd) $e $none $KitConf.Workspace '' }
+  foreach ($s in EnvServices $e) {
+    $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
+    foreach ($k in 'start', 'build') { if ($s.$k) { $cmds["$($s.name).$k"] = Expand-Placeholders ([string]$s.$k) $e $s $dir '' } }
+    $v = try { EnvVars $e $s } catch { @{} }
+    $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
+    if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
+    if ($s.artifact -and $s.repo) {
+      if (-not (Test-Path -LiteralPath $dir)) { & $add 'WARN' "$($s.name): $dir does not exist yet (the first deploy / refresh creates it)" }
+      elseif (-not @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }
+    }
+    foreach ($u in @(@($s.health) + @($c.smoke | Where-Object { $_.url -and $_.service -eq $s.name } | ForEach-Object url) | Where-Object { $_ })) {
+      if ("$u" -match '//localhost[:/]') { & $add 'WARN' "$($s.name): $u uses localhost: use http://127.0.0.1:{port} (localhost can resolve to ::1 first)" }
+    }
+    if (-not $s.port -or -not (Managed $s)) { continue }
+    $pp = @(Get-PortPids ([int]$s.port)); if (-not $pp.Count) { continue }
+    if (-not (Test-PortListening ([int]$s.port))) { & $add 'WARN' "$($s.name): port $($s.port) listens, but not on IPv4 (127.0.0.1 or the LAN address): bind 127.0.0.1 or 0.0.0.0"; continue }
+    $x = (Read-State $e).services[$s.name]; $mine = if (Owned $x) { TreeIds ([int]$x.pid) } else { @() }
+    $foreign = @($pp | Where-Object { $_ -notin $mine -and -not (EnvProcess $_ $e) })
+    if ($foreign.Count) { & $add 'WARN' "$($s.name): port $($s.port) held by pid $($foreign -join ','), which the env did not start: a restart there fails" }
+    if ($s.health -and -not (Healthy $e $s)) { & $add 'WARN' "$($s.name): $($s.health) does not answer (< 500) while the port is up" }
+  }
+  foreach ($k in $cmds.Keys) {
+    foreach ($m in [regex]::Matches("$($cmds[$k])", '"([^"]+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))"|(?<![\w"''])((?:[A-Za-z]:[\\/]|/)[^\s"'']+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))(?=[\s"'']|$)')) {
+      $path = @($m.Groups[1].Value, $m.Groups[2].Value | Where-Object { $_ })[0]
+      if ($path -match '[{}]' -or -not [IO.Path]::IsPathRooted($path)) { continue }
+      if (-not (Test-Path -LiteralPath $path)) { & $add 'FAIL' "${k}: script $path does not exist" }
+    }
+  }
+  @($r)
+}
 # ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'prune', '_exec')][string]$Action,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [switch]$Owner,
-  [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [switch]$Json
+  [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [double]$Days = -1, [switch]$Json
 )
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
-if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
 # db.engine without its presets (extra db-engine-presets) or its own snapshot / restore hooks: stop before anything changes
 $needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets -and -not ($c.db.snapshot -and $c.db.restore)) { "env $n (db.engine): db.engine presets are an extra: run kittool.py extra add db-engine-presets" } })
@@ -1168,11 +1307,11 @@ function Wait-Up([string[]]$names) {
 
 function Show-Status([string]$env1) {
   $script:e = $env1; $st = Read-State $env1; Prune $st
-  $all = Get-SysProcs -NoCommandLine
+  $all = Get-KitProcSnap
   $svc = foreach ($s in EnvServices $env1) {
     $x = $st.services[$s.name]; $h = Healthy $env1 $s
     $ids = if ($h) { SvcPids $env1 $s $st $all } else { @() }
-    $listens = if ($h -and $KitIsWindows -and $ids) { @(Get-NetTCPConnection -State Listen -ea 0 | Where-Object { $_.OwningProcess -in $ids } | ForEach-Object LocalPort | Sort-Object -Unique) }
+    $listens = if ($h -and $KitIsWindows -and $ids) { $null = Get-PortPids 0; @($script:ListenSnap.ports.Keys | Where-Object { @($script:ListenSnap.ports[$_] | Where-Object { $_ -in $ids }).Count } | ForEach-Object { [int]$_ } | Sort-Object -Unique) }
       elseif ($h -and $ids -and (Resolve-Tool lsof)) { @(lsof -nP -a -p ($ids -join ',') -iTCP -sTCP:LISTEN -Fn 2>$null | Where-Object { $_ -match ':(\d+)$' } | ForEach-Object { [int]$Matches[1] } | Sort-Object -Unique) } else { @() }
     $idleMin = if ($h -and $x.lastNeed) { [int]((Get-Date) - [datetime]$x.lastNeed).TotalMinutes } else { $null }
     [pscustomobject]@{
@@ -1187,12 +1326,15 @@ function Show-Status([string]$env1) {
     train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); requests = @($st.train.requests).Count } })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
     services = @($svc)
-    leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = $(if ($l.owner) { ([datetime]$l.until).ToString('HH:mm') }); release = $l.release; note = $l.note; graceLeft = $l.graceLeft } })
+    leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = $(if ($l.owner) { ([datetime]$l.until).ToString('HH:mm') }); release = $l.release; note = $l.note; graceLeft = $l.graceLeft
+      ageMin = $(if ($l.at) { [int]((Get-Date) - [datetime]$l.at).TotalMinutes }); usedMinAgo = $(if ($l.lastUse) { [int]((Get-Date) - [datetime]$l.lastUse).TotalMinutes })
+      trainWaits = $(if ($st.train -and $_ -in @($st.train.waitingFor)) { "train $($st.train.id) waits $(if ($st.train.waitSince) { [int]((Get-Date) - [datetime]$st.train.waitSince).TotalMinutes } else { 0 })/$($script:LeaseMin) min" }) } })
     holds = @($st.holds.Keys | ForEach-Object { $h = $st.holds[$_]; [pscustomobject]@{ who = $_; services = @($h.services); owner = [bool]$h.owner; until = $(if ($h.until) { ([datetime]$h.until).ToString('HH:mm') }); at = $h.at; graceLeft = $h.graceLeft } })
     recent = @($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
-    sandboxes = @($st.sandboxes.Keys | Sort-Object | ForEach-Object { $x = $st.sandboxes[$_]; "$_ $($x.branch) ($($x.agent)) $(@($x.services | ForEach-Object { $s = Svc $env1 $_; "$_ :$($s.port) $(if (Healthy $env1 $s) { 'up' } else { 'down' })" }) -join ', ')$(if ($x.promoted) { ' PROMOTED' })" })
+    keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)")
     loop = $(if ($st.loop -and (Alive $st.loop.pid)) { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
   }
+  if ($Agent -and $st.notices[$Agent]) { $o | Add-Member -NotePropertyName notice -NotePropertyValue "$(([datetime]$st.notices[$Agent].at).ToString('HH:mm')) $($st.notices[$Agent].text)" }
   if ($Agent -and $Agent -ne 'main' -and $st.leases[$Agent]) {
     $l = $st.leases[$Agent]; $since = [int]$l.release
     $chg = @($st.releases | Where-Object { [int]$_.n -gt $since } | ForEach-Object { $rel = $_; @($_.changed) | ForEach-Object { "$_ in release $($rel.n)" } })
@@ -1201,7 +1343,7 @@ function Show-Status([string]$env1) {
     $o | Add-Member -NotePropertyName mine -NotePropertyValue $(if ($hits.Count) { "CHANGED since your lease started (release $since): $($hits -join '; ') - re-run the checks that touch them" } else { "unchanged since your lease started (release $since)" })
   }
   if ($Json) { return $o }
-  "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)"
+  "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)"
   if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s))" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
   foreach ($x in $o.services) {
@@ -1213,12 +1355,12 @@ function Show-Status([string]$env1) {
     '  {0,-14} {1,-16} {2,6} {3,6} GB  {4}' -f $x.service, $x.state, $(if ($x.port) { ":$($x.port)" }), $x.gb, ($extra -join ' | ')
   }
   foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { "  MIGRATIONS $($l.mclass)$(if ($l.mclass -eq 'LIGHT') { " ($($l.mcount) changeSets, exact revert on leave)" } elseif (@($l.mwhy).Count) { ": $(@($l.mwhy)[0])" } else { ' (snapshot)' })" }) } }
-  if ($o.sandboxes) { "  sandboxes: $($o.sandboxes -join '; ')" }
-  $gr = { param($x) if ($null -ne $x.graceLeft) { " ⏳ no live holder: ends in $($x.graceLeft) min" } }
-  if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] $(if ($_.until) { "owner until $($_.until)" } else { 'while live' }) (r$($_.release))$(if ($_.note) { " $($_.note)" })$(& $gr $_)" }) -join '; ')" }
+  $gr = { param($x) if ($null -ne $x.graceLeft) { " - no live holder: ends in $($x.graceLeft) min" } }
+  if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] $(if ($_.until) { "owner until $($_.until)" } else { 'while live' }) (r$($_.release)), age $($_.ageMin) min$(if ($null -ne $_.usedMinAgo) { ", used $($_.usedMinAgo) min ago" })$(if ($_.note) { " $($_.note)" })$(if ($_.trainWaits) { " - $($_.trainWaits)" })$(& $gr $_)" }) -join '; ')" }
   if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] $(if ($_.owner) { "owner until $($_.until)" } else { 'while live' })$(& $gr $_)" }) -join '; ')" }
   if ($o.recent) { "  recent: $($o.recent -join '; ')" }
   if ($o.mine) { "  YOU ($Agent): $($o.mine)" }
+  if ($o.notice) { "  NOTICE ($Agent): $($o.notice)" }
 }
 
 switch ($Action) {
@@ -1229,8 +1371,17 @@ switch ($Action) {
       if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-EnvCfg $n).tasks.PSObject.Properties.Name -join ', ')" }
     }
   }
-  'status' { $names = if ($EnvName) { @($EnvName) } else { EnvNames }; $out = foreach ($n in $names) { Show-Status $n }; if ($Json) { $out | ConvertTo-Json -Depth 8 } else { $out } }
+  'status' { $names = if ($EnvName) { @($EnvName) } else { EnvNames }; if ($Agent -ne 'main') { foreach ($n in $names) { Touch-Lease $n $Agent } }; $out = foreach ($n in $names) { Show-Status $n }; if ($Json) { $out | ConvertTo-Json -Depth 8 } else { $out } }
+  'doctor' {
+    $rows = @(foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $d = @(Get-Doctor $n); if ($d.Count) { $d } else { [pscustomobject]@{ level = 'OK'; env = $n; what = 'nothing to fix' } } })
+    if ($Json) { $rows | ConvertTo-Json -Depth 4 } else { $rows | ForEach-Object { '{0,-4} {1}: {2}' -f $_.level, $_.env, $_.what } }
+    if (@($rows | Where-Object level -eq 'FAIL').Count) { exit 1 }
+  }
+  'prune' { Invoke-Prune $e $Days }
   'deploy' {
+    $bad = @(Get-Doctor $e | Where-Object level -eq 'FAIL')
+    if ($bad.Count) { $bad | ForEach-Object { "FAIL $($_.what)" }; [Console]::Error.WriteLine("localenv.ps1: deploy stopped: fix the FAIL lines (localenv.ps1 doctor -Env $e)"); exit 1 }
+    Touch-Lease $e $Agent
     $envRepos = EnvRepos $e
     if ($Dir) {
       $Dir = (Resolve-Path $Dir).Path
@@ -1258,13 +1409,13 @@ switch ($Action) {
       $mc = $mcls[$rn]
       "[$e]   $rn $(MigText $mc) - they change the shared local DB"
       if ($mc.effective -eq 'light') { "[$e]   changeSets: $(@($mc.ids | Select-Object -First 6) -join ', ')$(if ($mc.count -gt 6) { ', ...' }); plan: localenv.ps1 migrations -Env $e -Branch $Branch" }
-      else { foreach ($w in @($mc.why | Select-Object -First 5)) { "[$e]   HEAVY because $w" }; "[$e]   -> $(if (SandboxCfg $e) { 'own sandbox (own DB copy)' } elseif ((Get-EnvCfg $e).db.snapshot) { 'main env, DB snapshot first' } else { 'main env, no restore point (no db.snapshot hook)' })" }
+      else { foreach ($w in @($mc.why | Select-Object -First 5)) { "[$e]   HEAVY because $w" }; "[$e]   -> $(if ((Get-EnvCfg $e).db.snapshot) { 'main env, DB snapshot first' } else { 'main env, no restore point (no db.snapshot hook)' })" }
     }
     Exit-Request (Wait-Request $rid)
   }
   'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
-  'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; Exit-Request (Wait-Request $Id) }
+  'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
@@ -1279,7 +1430,7 @@ switch ($Action) {
         if ($old -and $blocked.Count) {   # a train waits on it: kept, not extended
           $o.ok = $true; $o.rel = $old.release; $o.capped = $true
         } elseif (-not $blocked.Count) {
-          $x.leases[$Agent] = @{ services = $names; repos = @(); release = [int]$x.release.n; note = $Note } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
+          $x.leases[$Agent] = @{ services = $names; repos = @(); release = [int]$x.release.n; note = $Note; lastUse = (Now) } + (New-KitLease $Agent $Session $(if ($Owner) { $min }))   # no live holder: Prune frees it
           $o.ok = $true; $o.rel = $x.release.n
         } else { $o.why = "train $($x.train.id) is switching $($blocked -join ', ') ($($x.train.phase))" }
       }
@@ -1331,15 +1482,6 @@ switch ($Action) {
   }
   'promote' {
     if (-not $Branch) { throw 'promote needs -Branch' }
-    $sbs = (Read-State $e).sandboxes; $key = @($sbs.Keys | Where-Object { $sbs[$_].branch -eq $Branch }) | Select-Object -First 1
-    if ($key) {
-      $sbx = $sbs[$key]
-      Update-State $e { param($x) $x.sandboxes[$key].promoted = @{ by = $Agent; at = (Now); note = $Note } }
-      $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = @{ $sbx.repo = $sbx.sha }; migrations = @{ $sbx.repo = $true }; noSandbox = $true }
-      "[$e] $Branch promoted in sandbox $key; deploying it into the main env as request $rid (migrations: the shared DB changes)"
-      Exit-Request (Wait-Request $rid)
-      return
-    }
     $o = @{ hit = @() }
     Update-State $e { param($x) foreach ($rn in @($x.release.repos.Keys)) { foreach ($l in @($x.release.repos[$rn].layers | Where-Object { $_ })) { if ($l.branch -eq $Branch) { $l.promoted = @{ by = $Agent; at = (Now); release = $x.release.n; sha = $l.sha; note = $Note }; $o.hit += $rn } } } }
     if (-not $o.hit) { throw "[$e] $Branch is not live here: deploy it first, test, then promote" }
@@ -1392,31 +1534,44 @@ switch ($Action) {
       if (LayerLight $l) {
         $p = Get-MigRevertPlan $e $it.rn @($l) $it.staying '' "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
         "   on leave: $(MigPlanText $p)"
-      } else { "   on leave: no revert (HEAVY): $(if (SandboxCfg $e) { 'its sandbox goes; ' })the main env DB keeps it unless a snapshot from before it is restored" }
+      } else { "   on leave: no revert (HEAVY): the env DB keeps it unless a snapshot from before it is restored" }
     }
   }
   'sql' {   # read-only, through db.query (a db.engine preset or the env's hook)
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }
-  'logs' { if (-not $Services) { throw 'logs needs -Service' }; $f = LogFile $e $Services[0]; if (Test-Path $f) { Get-Content $f -Tail $Tail } else { "no log yet: $f" } }
-  'events' { $ev = @(Read-KitLog env (Get-Date).AddDays(-30) | Where-Object env -eq $e | Select-Object -Last $Tail); if ($ev) { $ev | ForEach-Object { $_ | Select-Object * -ExcludeProperty stream | ConvertTo-Json -Compress } } else { 'no events yet' } }
+  'logs' { if (-not $Services) { throw 'logs needs -Service' }; Touch-Lease $e $Agent; $f = LogFile $e $Services[0]; if (Test-Path $f) { Read-LogTail $f $Tail $Grep $Since } else { "no log yet: $f" } }
+  'events' { Touch-Lease $e $Agent; $ev = @(Read-KitLog env (Get-Date).AddDays(-30) | Where-Object env -eq $e | Select-Object -Last $Tail); if ($ev) { $ev | ForEach-Object { $_ | Select-Object * -ExcludeProperty stream | ConvertTo-Json -Compress } } else { 'no events yet' } }
   '_exec' {
     $s = Svc $e $Services[0]; $sdir = SvcDir $e $s; $log = LogFile $e $s.name
     $cmd = StartCmd $e $s $Artifact
     foreach ($kv in (EnvVars $e $s).GetEnumerator()) { [Environment]::SetEnvironmentVariable($kv.Key, $kv.Value) }
     Set-Location $sdir
     Add-Content $log "== $(Now) start in $sdir : $cmd"
-    if ($KitIsWindows) { $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-$($s.name).cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null; Set-Content -LiteralPath $bat "@echo off`r`n$cmd >> `"$log`" 2>&1" -Encoding ascii; & cmd.exe /d /c "`"$bat`"" }
-    else { & /bin/sh -c "$cmd >> '$log' 2>&1" }
-    Add-Content $log "== $(Now) exited $LASTEXITCODE"
+    # the output (stdout + stderr, merged by the shell) is copied byte for byte; past logMaxMB the log moves to .prev
+    $si = if ($KitIsWindows) {
+      $bat = Join-Path (Get-KitPath localenv -Create) "run/$e-$($s.name).cmd"; New-Item -ItemType Directory -Force (Split-Path $bat) | Out-Null
+      Set-Content -LiteralPath $bat "@echo off`r`n($cmd`r`n) 2>&1" -Encoding ascii; [Diagnostics.ProcessStartInfo]::new('cmd.exe', "/d /c `"$bat`"")
+    } else { $x = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $x.ArgumentList.Add('-c'); $x.ArgumentList.Add("{ $cmd`n} 2>&1"); $x }
+    $si.UseShellExecute = $false; $si.RedirectStandardOutput = $true; $si.WorkingDirectory = $sdir
+    $p = [Diagnostics.Process]::Start($si); $in = $p.StandardOutput.BaseStream; $buf = [byte[]]::new(65536); $cap = [long]($script:LogMaxMB * 1MB)
+    $open = { [IO.FileStream]::new($log, 'Append', 'Write', 'ReadWrite, Delete') }; $out = & $open
+    try {
+      while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+        $out.Write($buf, 0, $n); $out.Flush()
+        if ($cap -gt 0 -and $out.Length -gt $cap) { $out.Dispose(); try { Move-Item -LiteralPath $log "$log.prev" -Force } catch { }; $out = & $open }   # a reader holding it: next time
+      }
+      $p.WaitForExit()
+    } finally { $out.Dispose() }
+    Add-Content $log "== $(Now) exited $($p.ExitCode)"
   }
 }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
-elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 11 | Select-Object -Skip 1; exit 2 }
+elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 13 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -') { [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2 } }
   Invoke-KitVerb Invoke-LocalEnv @($args)

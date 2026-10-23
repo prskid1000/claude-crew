@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra tracker-clickup: ClickUp as the kit tracker through the clickup CLI (tracker.type clickup; tracker.list = the list id of
 # new tasks; tracker.statuses = the list's status names). Dot-sourced by lib.ps1 before the tracker type is resolved.
 function __TrClickupMemberId([string]$Who) {

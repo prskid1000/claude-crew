@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra ci-jenkins: Jenkins CI (ci jenkins).
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add ci-jenkins); helpers come from lib.ps1.
 # adapter:ci/jenkins: Jenkins REST (ci.url, ci.job = the multibranch job path, default "job/{repo}"; env ci.tokenEnv = JENKINS_TOKEN "user:api-token"); run id = <branch>#<build>

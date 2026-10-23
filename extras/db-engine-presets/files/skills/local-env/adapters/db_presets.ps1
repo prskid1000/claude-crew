@@ -1,5 +1,6 @@
-# db-engine-presets (extra): dot-sourced by localenv.ps1; fills the db / sandbox.db hooks an env leaves unset for envs.<env>.db.engine
-# db.engine presets fill the db / sandbox.db hooks an env leaves unset: {H} {P} {U} {N} {URI} = db host, port, user, name, uri; {snapDir}
+#Requires -Version 7
+# db-engine-presets (extra): dot-sourced by localenv.ps1; fills the db hooks an env leaves unset for envs.<env>.db.engine
+# db.engine presets fill the db hooks an env leaves unset: {H} {P} {U} {N} {URI} = db host, port, user, name, uri; {snapDir}
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'; $sf = '"{snapDir}/{snapshot}'; $sb = '{N}_{suffix}'; $o = '{U}@{H}:{P}/{N} schemas={U} directory=DATA_PUMP_DIR dumpfile={snapshot}.dmp'
 $script:DbPresets = @{
   postgres  = @{ port = 5432; snapshot = "pg_dump -Fc $q -f $sf.dump`" {N}"; restore = "pg_restore --clean --if-exists $q -d {N} $sf.dump`""; query = "psql $q -d {N} -At -c `"{sql}`""
@@ -21,10 +22,8 @@ foreach ($n in $(if ($script:LE.envs) { @($script:LE.envs.PSObject.Properties.Na
   $port = if ($db.port) { $db.port } else { $p.port }; $sd = (Join-Path (Get-KitPath localenv-env) 'snapshots').Replace('\', '/')
   $h = if ($db.host) { $db.host } else { '127.0.0.1' }; $v = @{ H = $h; P = $port; U = "$($db.user)"; N = "$($db.name)"; snapDir = $sd
           URI = $(if ($db.uri) { $db.uri } else { "mongodb://${h}:$port/$($db.name)" }) }
-  $sb = $script:LE.envs.$n.sandbox
-  foreach ($k in 'snapshot', 'restore', 'query', 'exec', 'clone', 'drop') {
-    $o = if ($k -in 'clone', 'drop') { $sb.db } else { $db }; if (-not $p.$k -or ($k -in 'clone', 'drop' -and -not $sb)) { continue }
-    if (-not $o) { $sb | Add-Member db ([pscustomobject]@{}) -Force; $o = $sb.db }
+  foreach ($k in 'snapshot', 'restore', 'query', 'exec') {
+    $o = $db; if (-not $p.$k) { continue }
     if (-not $o.$k) { $c = $p.$k; foreach ($x in $v.Keys) { $c = $c.Replace("{$x}", "$($v[$x])") }; $o | Add-Member $k $c -Force }
   }
   if ($p.snapshot) { New-Item -ItemType Directory -Force $sd | Out-Null }

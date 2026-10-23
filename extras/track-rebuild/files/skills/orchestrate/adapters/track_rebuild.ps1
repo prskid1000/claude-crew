@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra track-rebuild (kittool.py extra add track-rebuild): orch.ps1 track -Rebuild, dot-sourced by orch.ps1.
 # Recreates .state/tracking.json from MRs tagged with the tracker tag (last 14 days); runs inside Invoke-Track (its helpers).
 function Invoke-TrackRebuild {

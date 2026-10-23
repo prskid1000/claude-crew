@@ -22,15 +22,23 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   never pushed).
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch; a
   failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up while its holder is live
-  (README "Leases"), never cut by a switch-over; only a person's `-Owner` lease ends at a time. Only leases and holds start
-  (or crash-restart) services; no holder: stop after `idle.graceMinutes` + idle grace (normal idle), at once under memory
-  pressure; starts wait for RAM + CPU (the gate's floor).
+  (README "Leases") and is used (calls, traffic); unused `leaseIdleMinutes` (default `idle.graceMinutes`) it is released; only
+  a person's `-Owner` lease ends at a time. A train waits for leases on what it changes at most `leaseMinutes` (30), then tells
+  the holders ("deploy of <svc> starting, pause"; board inbox + `status -Agent` NOTICE), deploys, and tells them "deploy done,
+  re-run your checks"; their leases stay. Only leases and holds start (or crash-restart) services, each in a start worker; no
+  holder: stop after the idle grace, at once under memory pressure; an out-of-memory line in a running service's log restarts
+  it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
+  `keepFreeGB` fixes it).
 - **Migrations**: a layer with migrations changes the shared DB: `db.snapshot` runs before the switch-over, `db.restore` on
   rollback; a layer that leaves keeps its DB changes. Snapshot names, by hand too: `<tenant or env>-<purpose>-<yyyy-MM-dd>`,
-  lowercase-kebab (`ConvertTo-KitSlug`). `sandbox`: a migrating branch gets its own build + DB copy (`sb<k>-<svc>`);
-  `db.rollback`: LIGHT layers revert exactly on leave (`migrations -Env <env> [-Branch]` shows the plan; classes need the extra
+  lowercase-kebab (`ConvertTo-KitSlug`); `prune [-Days <n>]` (daily too) runs `db.prune` (`{keepDays}` = `db.keepDays`,
+  7; `{keep}` = `db.keep`, a regex of names never pruned, default `baseline`). `db.timeoutSec`: seconds per hook (a number or
+  `{ "<hook>": n }`; default 1800, query 120). `db.rollback`: LIGHT layers revert exactly on leave (`migrations -Env <env> [-Branch]` shows the plan; classes need the extra
   `migration-classify`); `tasks` (`task -Task <name>`), `sql -Query` (read-only). `db.engine` presets: extra `db-engine-presets`
   (`localenv.ps1` names the extra when the config needs one).
+- Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
+  `smoke`) merge by `name`. `localenv.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds and health; `deploy`
+  stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100).
 - Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed
   here.
 
@@ -42,13 +50,15 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals
-& $L logs -Env <env> -Service <svc>; & $L events -Env <env>             #    debug (see "Debug locally")
+& $L logs -Env <env> -Service <svc> [-Grep <re>] [-Since <min>]; & $L events -Env <env>   #    debug ("Debug locally")
 & $L promote -Env <env> -Agent <id> -Branch <branch> -Note "<goals passed>"   # 5. every goal passed (pre-staging stamp)
 & $L release -Env <env> -Agent <id>                                     # 6. always, also on early stop
 ```
 0. `orch.ps1 learn -Read -Skill local-env`.
 1-2. REFUSED: `dev.ps1 wt sync`, resolve, deploy again. REJECTED / ROLLED BACK: read the message + `logs`, fix, deploy again.
-3. Lease only the services you test; it lives while you do (README "Leases"); exit 3 = no lease yet, call again.
+3. Lease only the services you test, right before the checks; it lives while you use it (README "Leases"); exit 3 = no lease
+   yet, call again. A NOTICE "deploy of <svc> starting, pause" (board inbox or `status -Agent`): stop checks there until
+   "deploy done", then re-run the checks of that service. Release right after your last check.
    Test data: prefix with your agent id.
 
 ## Local testing (dev flow step 5)
@@ -110,13 +120,14 @@ $L = '<kit>/skills/local-env/localenv.ps1'
     "description": "API + web of the shop",
     "services": [
      { "name": "db", "external": true, "port": 5432 },
-     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://localhost:8080/health", "dependsOn": ["db"],
+     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://127.0.0.1:{port}/health", "dependsOn": ["db"],
       "build": "mvn -q package -DskipTests", "artifact": "target/api-*.jar",
       "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
      { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
     ],
-    "smoke": [ { "name": "api health", "service": "api", "url": "http://localhost:8080/health" } ],
-    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>" }
+    "smoke": [ { "name": "api health", "service": "api", "url": "http://127.0.0.1:8080/health" } ],
+    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>",
+     "prune": "<command that deletes snapshots older than {keepDays} days whose name does not match {keep}>" }
    }
   }
  }

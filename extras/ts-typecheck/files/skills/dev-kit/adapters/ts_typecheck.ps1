@@ -1,3 +1,4 @@
+#Requires -Version 7
 # ts-typecheck (extra): dev.ps1 check -Step typecheck for tsc. TS5103 (a TypeScript too new for the tsconfig) -> one retry with a
 # temp tsconfig (ignoreDeprecations); errors count only in changed files (+ config errors); > 200 baseline errors = UNRUN (exit 5).
 # Dot-sourced from skills/dev-kit/adapters/; runs inside Invoke-Check and uses its $st, $log, Hash12, Get-ChangedFiles, Get-WtTarget.

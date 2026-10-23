@@ -1,3 +1,4 @@
+#Requires -Version 7
 # annotate (extra): qa.ps1 annotate -In <image> -Rect 'x,y,w,h[,label]' [-Out <file> | -Copy]: red boxes on a PNG / JPEG
 # (Windows, System.Drawing); image px (web: CSS px x DPR). Dot-sourced by qa.ps1 from adapters/.
 function Invoke-Annotate {

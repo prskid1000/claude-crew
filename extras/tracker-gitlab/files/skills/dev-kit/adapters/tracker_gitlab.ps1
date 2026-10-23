@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra tracker-gitlab: GitLab issues as the kit tracker (tracker.type gitlab); labels, parent, subtasks as on github.
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add tracker-gitlab); helpers come from lib.ps1.
 function __TrGl([string]$Method, [string]$Path, $Body) {

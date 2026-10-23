@@ -1,6 +1,7 @@
+#Requires -Version 7
 # api-auth (extra): qa.ps1 api with auth types basic, query, cookie (+ CSRF), token, command (HMAC / SigV4 signer), client cert,
 # refresh tokens. qa.ps1 api hands every call to Invoke-ApiExtra when this file is present (dot-sourced from adapters/).
-# Sections: L4 shell · L6 request · L46 helpers · L50 login · L81 call
+# Sections: L5 shell · L7 request · L47 helpers · L51 login · L82 call
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # ---- request: target, user, URL, client cert

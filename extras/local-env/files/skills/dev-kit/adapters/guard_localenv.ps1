@@ -1,3 +1,4 @@
+#Requires -Version 7
 # local-env (extra): dev.ps1 guard rules: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by hand.
 Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
     $cmd = $a.cmd

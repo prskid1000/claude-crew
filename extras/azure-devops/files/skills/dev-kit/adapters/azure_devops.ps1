@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra azure-devops: Azure DevOps Repos git host + Azure Pipelines CI (gitHostType / ci azure).
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add azure-devops); helpers come from lib.ps1.
 # helpers only this extra uses (kept out of the core lib.ps1)

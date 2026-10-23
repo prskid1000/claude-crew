@@ -1,3 +1,4 @@
+#Requires -Version 7
 # android-swarm (extra): qa.ps1 ui on a leased Android phone and the laneApk kind of qa.ps1 deployed (dot-sourced from adapters/).
 # Test-LaneApkDeployed runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, Row, OnRef, LocalAncestor.
 

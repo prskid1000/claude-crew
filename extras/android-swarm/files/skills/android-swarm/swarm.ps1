@@ -12,8 +12,9 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs an extra) · 2 usage error.
 Extras (adapters/): app-kinds (flutter, maui, capacitor, Expo prebuild), emulator-windows (arrange), ios-simulator.
-Sections: L21 config · L101 phone · L299 build · L443 install · L469 launch · L481 avd · L567 up · L654 down · L683 slim
+Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L655 down · L684 slim
 #>
+#Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')

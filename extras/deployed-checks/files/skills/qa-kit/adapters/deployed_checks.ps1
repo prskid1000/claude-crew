@@ -1,6 +1,7 @@
+#Requires -Version 7
 # deployed-checks (extra): qa.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
-# Sections: L4 shell · L6 probe · L54 kinds · L86 deployed
+# Sections: L5 shell · L7 probe · L55 kinds · L87 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # ---- probe: version probe, memoised ssh state

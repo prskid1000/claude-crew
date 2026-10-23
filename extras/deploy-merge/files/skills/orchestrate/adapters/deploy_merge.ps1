@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra deploy-merge (kittool.py extra add deploy-merge): orch.ps1 deploy merge, dot-sourced by orch.ps1.
 # Merges the main line into a deploy branch, or tags it (deploys[].tag), in a worktree; pushes only with -Push after a clean merge.
 function Invoke-DeployMerge {

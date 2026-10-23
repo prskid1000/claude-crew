@@ -10,8 +10,9 @@ defaults to $env:CLAUDE_AGENT, else main. State: <state>/runtimes/<name>.json. C
 Dot-sourced by lib.ps1 (adapters/*.ps1): dev.ps1 gets the verb and the guard rule, orch.ps1 supervise its sweep
 (Get-KitSuperviseGuardRuntimes: a lease with no live holder for idle.graceMinutes -> released; kit-started + no lease -> down).
 Exit codes: 0 ok · 1 problem (not configured, up or down failed) · 2 usage.
-Sections: L15 state · L44 leases · L89 verb · L135 supervise
+Sections: L16 state · L45 leases · L90 verb · L136 supervise
 #>
+#Requires -Version 7
 # ---- state: names, state file, probes
 function Get-KitRuntimeNames { $r = Get-KitSetting 'runtimes' $null; if ($r) { @($r.PSObject.Properties.Name | Where-Object { $_ -notlike '_*' -and $r.$_.isUp }) } }
 function Get-KitRuntimeFile([string]$Name) { Join-Path (Get-KitPath runtimes -Create) "$Name.json" }

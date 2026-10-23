@@ -1,3 +1,4 @@
+#Requires -Version 7
 # posix (extra): lib.ps1's OS helpers on Linux and macOS (memory, processes, directory links, python, detached starts);
 # dot-sourced from skills/dev-kit/adapters/ after the Windows versions, which these replace when the OS is not Windows.
 if ($KitIsWindows) { return }

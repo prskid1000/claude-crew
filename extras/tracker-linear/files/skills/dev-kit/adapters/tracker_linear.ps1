@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Extra tracker-linear: Linear tracker (tracker.type linear).
 # Dot-sourced by lib.ps1 from skills/dev-kit/adapters/ (kittool.py extra add tracker-linear); helpers come from lib.ps1.
 # helpers only this extra uses (kept out of the core lib.ps1)
