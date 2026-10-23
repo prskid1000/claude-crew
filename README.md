@@ -195,7 +195,7 @@ scaffolding, the duel mode) live on the origin's `extras` branch, one folder eac
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept |
 | `bugfixMandate`, `localOnly`, `orgTerms`, `extras` | ["&lt;the owner's own words asking the coordinator to fix QA-raised… | words for bug waves; org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it) |
 | `localFiles` | {"skills/qa-kit/targets.local.json": {"_readme": "One entry per TEST… | example only: orch.ps1 setup -WriteLocal writes targets.local.json from it |
-| `localEnv` |  | local envs the dev flow tests on before merge (extra local-env: its SKILL.md has the shape and an example) |
+| `localEnv` |  | local envs the dev flow tests on before merge; `defaults` / `envs.&lt;env&gt;.extends` share one shape (extra local-env: its SKILL.md has the shape and an example) |
 | `runtimes` |  | machine runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match (extra runtimes: its EXTRA.md has the shape) |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |

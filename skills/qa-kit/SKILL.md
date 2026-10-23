@@ -27,7 +27,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
    `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `swarm.ps1 acquire|release` (extra `android-swarm`; keep the lease through waits < 30 min).
+   report. Phones: `swarm.ps1 acquire|release` (extra `android-swarm`; keep it through waits < 30 min). Local env
+   "pause": stop its checks; "deploy done": re-run them.
 2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
@@ -67,7 +68,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
    "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
    (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
-   `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession`, never log out); return the results.
+   `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession` or log out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**

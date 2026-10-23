@@ -144,7 +144,7 @@ Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out 
 # gate: half the file cache counts as free; the queue head starts after 20 min above a 5% RAM floor
 $gt = @'
 . $args[0]
-"kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test')"
+"kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify', 'npx tsc --noEmit -p cypress/tsconfig.json', 'npx cypress run') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test,typecheck,e2e')"
 "histcmd:$((Get-GateHistCmd 'mvn -f C:\w\a\p.xml' 'C:/W/a') -eq 'mvn -f .\p.xml' -and (Get-GateHistCmd ('x' * 200) 'C:\w').Length -eq 120)"
 "cache:$((Get-GateAvailGB ([pscustomobject]@{ AvailGB = 13.6; CacheGB = 21 })) -eq 24.1)"
 "keep:$((Test-GateStart 11 10 0 64) -and -not (Test-GateStart 9 10 5 64))"

@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 kitlog · L159 load · L535 lint · L900 README graph · L1006 lint command · L1039 audit scan ·
-  L1274 registry · L1503 prose · L1646 sections · L1776 budget · L1794 extras · L2141 main
+Sections: L31 paths · L82 kitlog · L159 load · L535 lint · L904 README graph · L1010 lint command · L1043 audit scan ·
+  L1278 registry · L1507 prose · L1650 sections · L1780 budget · L1798 extras · L2145 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -764,6 +764,10 @@ def lint(k, g=None, org_terms=None):
             bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header", extra kit-admin)')
     # ---- section maps: the "Sections:" line vs the markers; every function and verb in a section
     extra_of = {p: n for n, ps in installed_extras(k.dir).items() for p in ps if p not in counted}   # installed extras' files too
+    # Windows PowerShell 5 misreads UTF-8 without a BOM and pwsh 7 syntax: the line makes it stop with a clear message
+    for f in [x for x in list(counted) + sorted(extra_of) if x.endswith('.ps1') and not x.startswith(GENERATED)]:
+        if not re.search(r'^#requires\s+-version\s+7', read(osp.join(k.dir, f)), re.I | re.M):
+            bad('PS-VERSION', f, 'no "#Requires -Version 7" line (Windows PowerShell 5 cannot run kit scripts)' + (f' (extra {extra_of[f]}: fix it on the extras branch)' if f in extra_of else ''))
     for f in sec_files(list(counted) + sorted(extra_of)):
         for c, w, m in sec_check(f, read(osp.join(k.dir, f)))[0]:
             bad(c, w, m + (f' (extra {extra_of[f]}: fix it on the extras branch)' if f in extra_of else ''))

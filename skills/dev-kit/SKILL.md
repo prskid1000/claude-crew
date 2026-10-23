@@ -36,7 +36,8 @@ $D = '<kit>/skills/dev-kit/dev.ps1'; $O = '<kit>/skills/orchestrate/orch.ps1'; $
 & $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks run
 #   5. LOCAL TEST LOOP (local-env SKILL.md "Local testing"): deploy, lease, run every goal; failed -> back to 3 (max 3 rounds,
 #      then report FAIL with the failing goals: a stronger round follows, then the coordinator); never BLOCKED for an env
-#      reason (local-env "Unblock yourself", D2); 0 errors + every goal reached -> 6
+#      reason (local-env "Unblock yourself", D2); NOTICE "deploy of <svc> starting, pause" -> stop checks there until "deploy
+#      done", then re-run them; 0 errors + every goal reached -> release the lease -> 6
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
 python <kit>/skills/dev-kit/devtools.py mr <wt> "<title>" body.md              # 6. MR (templates.md "MR body")
 python <kit>/skills/dev-kit/devtools.py doc "<title>" testing.md               #    human testing doc -> link it on the task and in the MR

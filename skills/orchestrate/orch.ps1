@@ -15,11 +15,12 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L23 init · L51 board · L216 budget · L244 launch · L413 recover · L488 pause · L532 resume · L590 program · L634 track ·
-  L907 supervise report · L948 anomalies · L977 supervise · L1235 report · L1312 audit · L1372 bugbrief · L1482 cleanup ·
-  L1606 learn · L1636 decide · L1702 health · L1764 retro due · L1774 the kit origin's main and extras · L1790 setup ·
-  L1855 guard-sendmessage
+Sections: L24 init · L52 board · L217 budget · L245 launch · L414 recover · L489 pause · L533 resume · L591 program · L635 track ·
+  L908 supervise report · L949 anomalies · L978 supervise · L1236 report · L1313 audit · L1373 bugbrief · L1483 cleanup ·
+  L1607 learn · L1637 decide · L1703 health · L1765 retro due · L1775 the kit origin's main and extras · L1791 setup ·
+  L1856 guard-sendmessage
 #>
+#Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)

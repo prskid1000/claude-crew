@@ -3,8 +3,9 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L8 paths · L80 config · L160 OS · L295 leases · L489 tracker · L709 git-host · L844 kitlog · L937 entry-scripts
+Sections: L9 paths · L81 config · L161 OS · L296 leases · L493 tracker · L713 git-host · L848 kitlog · L941 entry-scripts
 #>
+#Requires -Version 7
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitPathMap = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths
@@ -292,7 +293,7 @@ function Test-KitPid($Id, $Start) {
   $true
 }
 function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null }; Test-KitPid $o.holderPid $o.holderStart }
-# ---- leases: liveness leases (README "Leases"), ONE rule for env services, test browsers, phones, sandboxes, builds
+# ---- leases: liveness leases (README "Leases"), ONE rule for env services, test browsers, phones, builds
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
   $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder)
@@ -317,14 +318,17 @@ function Test-KitLive($l) {
 }
 function Update-KitLease($l) {
   $now = Get-Date
-  if (Test-KitLive $l) { Set-KitProp $l seen $now.ToString('o'); Set-KitProp $l graceLeft $null; return $true }
+  if (Test-KitLive $l) {   # seen once a minute: a state that only re-confirms a live holder stays unchanged (no rewrite)
+    if (-not $l.seen -or ($now - [datetime]$l.seen).TotalSeconds -ge 60) { Set-KitProp $l seen $now.ToString('o') }
+    if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null }; return $true
+  }
   if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
   if (-not $l.seen) { Set-KitProp $l seen $now.ToString('o') }   # first seen dead: the grace starts now
   $left = [double](Get-KitSetting 'idle.graceMinutes' 10) - ($now - [datetime]$l.seen).TotalMinutes
   Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left))); $left -gt 0
 }
 
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
+function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd.CommandType -eq 'ExternalScript') { $app = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $cmd = $app } }   # an npm .ps1 shim: its .cmd keeps the timeout
@@ -335,7 +339,7 @@ function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) {
     return & $res $c ($so -join "`n") ($se -join "`n")
   }
   $si = [Diagnostics.ProcessStartInfo]::new($cmd.Source)
-  foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) }
+  if ($Raw) { $si.Arguments = $Raw } else { foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) } }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
   $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
   $p = [Diagnostics.Process]::Start($si)

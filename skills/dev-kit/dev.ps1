@@ -13,9 +13,10 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L19 init · L25 wt · L227 stack · L402 gate · L652 check · L805 pipes · L841 guard · L1197 dir · L1207 checkpoint ·
-  L1231 tracker · L1264 host
+Sections: L20 init · L26 wt · L228 stack · L403 gate · L654 check · L807 pipes · L843 guard · L1199 dir · L1209 checkpoint ·
+  L1233 tracker · L1266 host
 #>
+#Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
@@ -407,6 +408,7 @@ $script:GateKinds = [ordered]@{
   'android-test' = @('gradlew.*\btest|connectedAndroidTest|lintDebug', 6)
   'gradle' = @('gradle(w|w\.bat)?\b', 3.5)
   'rn-bundle' = @('export:embed|react-native bundle|expo export', 3)
+  'typecheck' = @('^\s*((npx|yarn|pnpm)\s+(exec\s+)?)?(vue-)?tsc\b[^&|;]*--noEmit', 2)   # before e2e: tsc -p cypress/tsconfig.json is no e2e run
   'e2e' = @('cypress|playwright', 3.5)
   'ng-test' = @('\bng test\b|\bkarma\b', 3)
   'web-build' = @('ng build|next build|vite build|webpack|npm run build|yarn build|pnpm (run )?build|bun run build', 8)

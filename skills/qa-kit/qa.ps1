@@ -12,8 +12,9 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
   api-auth, qa-html-report, ios-simulator.
-Sections: L21 report · L93 seat · L161 api · L284 finalize · L632 retest
+Sections: L22 report · L94 seat · L162 api · L285 finalize · L633 retest
 #>
+#Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'dev-kit/lib.ps1')
