@@ -5,7 +5,7 @@ kit_admin.ps1 (extra kit-admin): kitty's tools in orch.ps1, dot-sourced by orch.
   learn -Skill <s> -Lesson "<text>" [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
 Learn record, -Read and -Show stay in core.
-Sections: L12 learn · L99 health · L108 prepush · L167 precommit
+Sections: L12 learn · L99 health · L108 prepush · L172 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
