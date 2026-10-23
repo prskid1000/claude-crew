@@ -6,15 +6,16 @@ Verbs: envs · status · doctor · deploy · wait · use · release · promote �
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] ·
        seed [-Check]
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · teardown · restore -Mark <n> | -Release <n>
-       [-Schemas a,b] [-DryRun] [-UseToolRollback] · _daemon -Env <env> [-Train <id> | -Start <svc>] (controller, workers) · _exec (service wrapper)
+       [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] · cleanup [-Quick] [-DryRun] ·
+       _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends), .state/localenv/<env>.env (secrets).
 Out: text; status -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / seed not green / needs an extra · 2 usage
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
-Extras: db.engine presets, marks, slices, restore, the cascade guard = db-engine-presets (adapters/); db.rollback = any tool
+Extras: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (extra liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L25 config · L174 state · L215 leases · L286 code · L318 migrations · L436 hooks · L508 marks · L646 seed ·
-  L692 processes · L966 daemon · L1400 doctor · L1448 verbs
+Sections: L26 config · L184 state · L225 leases · L306 code · L338 migrations · L553 hooks · L625 marks · L763 seed ·
+  L809 processes · L1092 daemon · L1523 cleanup · L1595 doctor · L1643 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -50,6 +51,8 @@ function Resolve-EnvCfg([string]$n, [string[]]$seen = @()) {
 if ($script:LE.envs) {
   $__envs = [ordered]@{}; foreach ($__n in @($script:LE.envs.PSObject.Properties.Name)) { $__envs[$__n] = Resolve-EnvCfg $__n }
   $script:LE.envs = [pscustomobject]$__envs
+  # a static service runs from a staged copy of its built files, like an artifact
+  foreach ($__s in @($__envs.Values | ForEach-Object { @($_.services) } | Where-Object { $_ -and $_.static -and -not $_.artifact })) { $__s | Add-Member artifact ([string]$__s.static) -Force }
 }
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
 $script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
@@ -61,7 +64,10 @@ $script:IdleOn = "$(Opt 'idle.enabled' $true)" -ne 'False'
 $script:IdleMinM = [double](Opt 'idle.minMinutes' 15)   # TODO-PARAM (fixed default)
 $script:IdleMaxM = [double](Opt 'idle.maxMinutes' 60)   # TODO-PARAM (fixed default)
 $script:LoopExitM = [double](Opt 'loopExitMinutes' 10)
-$script:LogMaxMB = [double](Opt 'logMaxMB' 100)   # a service log past this moves to .prev (one generation) (TODO-PARAM)
+$script:LogMaxMB = [double](Opt 'logMaxMB' 100)   # a service log past this (services[].logMaxMB first) moves to .prev (one generation) (TODO-PARAM)
+$script:KeepReleases = [int](Opt 'keepReleases' 2)   # staged builds kept per service: live + the previous one (rollback) (TODO-PARAM)
+# a start's ready line (services[].readyPattern first): health is checked at once, not at the next 5 s poll (TODO-PARAM)
+$script:ReadyPattern = [string](Opt 'readyPattern' '(?i)\bStarted \S+ in [\d.]+ seconds|Application startup complete|Server running at|Compiled successfully|ready in [\d.]+ ?m?s|Now listening on|Listening on')
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
 # optional parts (kittool.py extra add <name>) are dot-sourced from adapters/ (db-engine-presets fills unset db hooks)
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
@@ -135,6 +141,10 @@ function LanIp {
 function Expand-Placeholders([string]$t, [string]$e, $s, [string]$dir, [string]$artifact) {
   if (-not $t) { return $t }
   $wt = if ($s.repo) { (EnvRepos $e)[(Get-RepoCfg $s.repo).name].wt } else { '' }
+  if ($t -match '\{aot\}') {   # the AOT cache once a training run wrote it (services[].aotUse, default the JDK 24+ option), else nothing
+    $af = AotFile $artifact; $t = $t.Replace('{aot}', $(if ($af -and (Test-Path -LiteralPath $af)) { $(if ($s.aotUse) { [string]$s.aotUse } else { '-XX:AOTCache="{aotFile}"' }).Replace('{aotFile}', $af) } else { '' }))
+  }
+  if ($t -match '\{cache\}') { $t = $t.Replace('{cache}', (Join-Path (Get-KitPath cache -Create) "localenv/$e-$($s.name)")) }   # a build cache outside the repo
   $t.Replace('{port}', "$($s.port)").Replace('{debugPort}', "$($s.debugPort)").Replace('{dir}', $dir).Replace('{wt}', $wt).Replace('{env}', $e).Replace('{kit}', $KitConf.Kit).Replace('{workspace}', $KitConf.Workspace).Replace('{artifact}', "$artifact").Replace('{lanIp}', $(if ($t -match '\{lanIp\}') { LanIp } else { '' }))
 }
 $script:stacks = @{}
@@ -144,7 +154,7 @@ function StackOf([string]$dir) {
 }
 function StartCmd([string]$e, $s, [string]$artifact) {
   $dir = SvcDir $e $s
-  $c = if ($s.start) { [string]$s.start } else { (StackOf $dir).commands.run }
+  $c = if ($s.start) { [string]$s.start } elseif ($s.static) { "node `"$(StaticServer)`" `"{artifact}`" {port}" } else { (StackOf $dir).commands.run }
   if (-not $c) { throw "service $e/$($s.name): no start command (set services[].start, or commands.run in a .claude-stack.json in $dir)" }
   Expand-Placeholders $c $e $s $dir $artifact
 }
@@ -270,6 +280,16 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
 }
 function Leased($why) { [bool]@($why | Where-Object { "$_" -match '^(lease|hold):' }).Count }
 function IdleWhy([double]$min, [string]$pressure) { if ($pressure) { "idle, stopped under memory pressure ($pressure)" } else { "idle: no holder for $min min (starts on the next lease)" } }
+# the services a train protects from idle stops: none while it only waits for leases (it changes nothing yet)
+function Get-IdleBlock($st) { if (-not $st.train -or "$($st.train.phase)" -like 'waiting for leases*') { @() } else { @($st.train.blockServices) } }
+# up, unneeded, no dependent up, past the idle grace (or any idle one under pressure); biggest first
+function Get-IdleServices([string]$e, $st, $need, [string[]]$block, [string]$pressure) {
+  @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block } | Where-Object {
+      $n = $_.name; $x = $st.services[$n]
+      $since = [datetime]$(if ($x.lastNeed) { $x.lastNeed } elseif ($x.upAt) { $x.upAt } else { (Now) })
+      -not @(Dependents $e @($n) | Where-Object { $st.services[$_].status -eq 'up' }).Count -and ($pressure -or ($script:IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
+    } | Sort-Object { -[double]$st.services[$_.name].gb })
+}
 # established clients of a port from one connection snapshot per 2 s; -Any: headless browsers too (lease use, not demand)
 $script:EstabSnap = $null
 function ClientPids([int]$port, [int[]]$exclude, [switch]$Any) {
@@ -400,37 +420,134 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
     }
     $l.sha = $sha; $kept += $l
   }
+  # services[].prepare: a local-only edit of the env worktree after every sync (a build cache path, ...): committed on localenv/<env>, never pushed
+  foreach ($s in EnvServices $e | Where-Object { $_.prepare -and $_.repo -and (Get-RepoCfg $_.repo).name -eq $r.name }) {
+    $sd = SvcDir $e $s; $cd = if ($KitIsWindows) { "cd /d `"$sd`"" } else { "cd `"$sd`"" }
+    $code = Invoke-Shell "$cd && $(Expand-Placeholders ([string]$s.prepare) $e $s $sd '')" (LogFile $e "$($s.name)-build") (EnvVars $e $s) 300   # TODO-PARAM (fixed default)
+    if ($code) { Write-Warning "[$e] $($s.name) prepare failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')"; continue }
+    if (@(git -C $d status --porcelain --untracked-files=no).Count) { G $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost commit -q -a -m "localenv prepare $($s.name) (local only)" | Out-Null }
+  }
   @{ kept = $kept; dropped = $dropped; targetSha = $base }
 }
 function Build-Repo([string]$e, [string]$rn) {
   foreach ($s in EnvServices $e | Where-Object { $_.build -and (RepoOf $e $_) -eq $rn }) {
     $dir = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $dir ''
+    if ($cmd -match '\{reactor\}') { $cmd = $cmd.Replace('{reactor}', (Write-Reactor $e $s)) }
     Write-Host "[$e] building $($s.name): $cmd"
-    $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue
+    $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue; $t0 = Get-Date
     With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest)' | ForEach-Object { Write-Host "  $_" } }
-    if ($LASTEXITCODE) {
-      $code = $LASTEXITCODE; $lines = @(Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^\[gate\]|^WARNING:' })
+    $bc = $LASTEXITCODE
+    Event $e 'build' @{ service = $s.name; repo = $rn; ok = -not $bc; code = $bc; sec = [int]((Get-Date) - $t0).TotalSeconds; sha = "$(git -C (EnvRepos $e)[$rn].wt rev-parse --short HEAD 2>$null)".Trim() }   # durations feed the learned parameters
+    if ($bc) {
+      $code = $bc; $lines = @(Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^\[gate\]|^WARNING:' })
       $errs = @($lines | Where-Object { $_ -match '(?i)\berror\b|failed|exception|cannot find|not found' } | Select-Object -First 10)
       return "$($s.name) (exit $code): $((@(if ($errs.Count) { $errs } else { $lines | Select-Object -Last 12 })) -join "`n")"
     }
   }
   $null
 }
+# a release's runnable copy per service (the env worktree builds on while it serves): the artifact file, its unpacked form
+# (services[].unpack) or the built files of a static service; keepReleases kept per service plus the ones in use
+# {reactor} in a build: services[].reactor = module folders (globs, relative to the repo) built from source in one reactor with
+# the service's module; -> '-f <aggregator> -pl <module> -am' (only what it needs; the aggregator is untracked in the env worktree)
+function Write-Reactor([string]$e, $s) {
+  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; $me = ([IO.Path]::GetRelativePath($wt, (SvcDir $e $s))).Replace('\', '/')
+  $mods = @(@($s.reactor | ForEach-Object { Get-ChildItem (Join-Path $wt $_) -Directory -ErrorAction SilentlyContinue } | Where-Object { Test-Path (Join-Path $_.FullName 'pom.xml') } | ForEach-Object { [IO.Path]::GetRelativePath($wt, $_.FullName).Replace('\', '/') }) + $me | Select-Object -Unique)
+  $f = Join-Path $wt ".localenv-reactor-$($s.name).xml"
+  Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$($s.name)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
+  "-f `"$f`" -pl $me -am"
+}
 function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   $out = @{}
-  foreach ($s in EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -eq $rn }) {
-    $dir = SvcDir $e $s
-    $excl = if ($s.artifactExclude) { [string]$s.artifactExclude } else { 'original|sources|javadoc|plain' }
-    $f = Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $f) { throw "[$e] $($s.name): no artifact matches $($s.artifact) in $dir after the build" }
+  foreach ($s in EnvServices $e | Where-Object { ($_.artifact -or $_.static) -and (RepoOf $e $_) -eq $rn }) {
+    $dir = SvcDir $e $s; $t0 = Get-Date
     $to = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)/$tag"
-    New-Item -ItemType Directory -Force $to | Out-Null
-    Copy-Item $f.FullName $to -Force
-    $out[$s.name] = Join-Path $to $f.Name
-    $inUse = @((Read-State $e).services.Values | ForEach-Object { if ($_.artifact) { Split-Path $_.artifact } })
-    Get-ChildItem (Split-Path $to) -Directory | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Where-Object { $_.FullName -notin $inUse } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    $live = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf (Split-Path $to) "$($_.artifact)" })
+    for ($i = 2; $to -in $live; $i++) { $to = Join-Path (Get-KitPath localenv) "run/$e/$($s.name)/$tag-$i" }   # a running copy is never replaced
+    Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $to | Out-Null
+    if ($s.static) {
+      $src = Join-Path $dir $s.static
+      if (-not (Test-Path -LiteralPath $src -PathType Container)) { throw "[$e] $($s.name): no built files in $src after the build (static)" }
+      Copy-Item (Join-Path $src '*') $to -Recurse -Force; $out[$s.name] = $to
+    } else {
+      $excl = if ($s.artifactExclude) { [string]$s.artifactExclude } else { 'original|sources|javadoc|plain' }
+      $f = Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      if (-not $f) { throw "[$e] $($s.name): no artifact matches $($s.artifact) in $dir after the build" }
+      if ($s.unpack) { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to } else { Copy-Item $f.FullName $to -Force; $out[$s.name] = Join-Path $to $f.Name }
+    }
+    Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack }
+    $null = Remove-OldReleases $e $s (Split-Path $to)
   }
   $out
+}
+# the release folder an artifact path lies in (artifact = a file in it, or the folder itself)
+function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
+# -> the release folders past keepReleases that no service runs from (removed; -DryRun: listed only)
+function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
+  $inUse = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf $root "$($_.artifact)" } | Where-Object { $_ })
+  $old = @(Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | Sort-Object LastWriteTime -Descending | Select-Object -Skip $script:KeepReleases | Where-Object { $_.FullName -notin $inUse })
+  if ($DryRun) { return @($old.FullName) }
+  $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; @($old.FullName)
+  $store = Join-Path $root '_lib'; if (-not (Test-Path -LiteralPath $store)) { return }
+  $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json).PSObject.Properties) { $refs["$($p.Value)"] = $true } }
+  Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
+}
+# services[].unpack: a command that unpacks {artifact} into {out} (a runnable file of the artifact's type + its libraries under
+# unpackLib, default lib); each library file is kept once by content hash in <service>/_lib and hard-linked into the release
+function Expand-Artifact([string]$e, $s, [string]$file, [string]$to) {
+  $cmd = (Expand-Placeholders ([string]$s.unpack) $e $s (SvcDir $e $s) $file).Replace('{out}', $to)
+  $code = Invoke-Shell $cmd (LogFile $e "$($s.name)-build") (EnvVars $e $s) 600   # TODO-PARAM (fixed default)
+  if ($code) { throw "[$e] $($s.name): unpack failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')" }
+  $store = Join-Path (Split-Path $to) '_lib'; New-Item -ItemType Directory -Force $store | Out-Null; $map = [ordered]@{}
+  foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $to $(if ($s.unpackLib) { [string]$s.unpackLib } else { 'lib' })) -File -Recurse -ErrorAction SilentlyContinue)) {
+    $h = (Get-FileHash -LiteralPath $j.FullName -Algorithm SHA1).Hash.ToLower(); $keep = Join-Path $store "$h$($j.Extension)"
+    if (Test-Path -LiteralPath $keep) { Remove-Item -LiteralPath $j.FullName -Force } else { Move-Item -LiteralPath $j.FullName $keep }
+    try { New-Item -ItemType HardLink -Path $j.FullName -Target $keep -ErrorAction Stop | Out-Null } catch { Copy-Item -LiteralPath $keep $j.FullName }   # no hard links there: a copy
+    $map[[IO.Path]::GetRelativePath($to, $j.FullName)] = $h
+  }
+  ConvertTo-Json -InputObject $map | Set-Content -LiteralPath (Join-Path $to '.libs.json') -Encoding utf8
+  $run = Get-ChildItem -LiteralPath $to -File | Where-Object Extension -eq ([IO.Path]::GetExtension($file)) | Select-Object -First 1
+  if (-not $run) { throw "[$e] $($s.name): unpack left no $([IO.Path]::GetExtension($file)) file in $to" }
+  $run.FullName
+}
+# the AOT cache of an artifact (services[].aotTrain): {aot} in the start command uses it once a training run wrote it
+function AotFile([string]$artifact) { if ($artifact) { Join-Path $(if (Test-Path -LiteralPath $artifact -PathType Container) { $artifact } else { Split-Path $artifact }) 'app.aot' } }
+# after a start that is up: one background training run per artifact (gated: RAM), never two at a time
+function Start-AotTrain([string]$e, $s, [string]$artifact) {
+  if (-not $s.aotTrain -or -not $artifact -or (Test-Path -LiteralPath (AotFile $artifact))) { return }
+  $x = (Read-State $e).services[$s.name]; if ($x.aotPid -and (Alive $x.aotPid)) { return }
+  $p = Start-Pwsh @('_daemon', '-Env', $e, '-Aot', $s.name, '-Artifact', $artifact) $PSScriptRoot "_daemon -Env $e -Aot $($s.name)" (LogFile $e "aot-$($s.name)")
+  Update-State $e { param($z) if ($z.services[$s.name]) { $z.services[$s.name].aotPid = $p } }
+}
+function Invoke-AotTrain([string]$e, $s, [string]$artifact) {
+  $f = AotFile $artifact; $tmp = "$f.tmp"; Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+  $cmd = (Expand-Placeholders ([string]$s.aotTrain) $e $s (SvcDir $e $s) $artifact).Replace('{aotFile}', $tmp); $t0 = Get-Date
+  $log = LogFile $e "aot-$($s.name)"; Add-Content $log "== $(Now) training: $cmd"
+  With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir (Split-Path $f) -Cmd "$cmd >> `"$log`" 2>&1" *>&1 | Out-Null }
+  $ok = -not $LASTEXITCODE -and (Test-Path -LiteralPath $tmp) -and (Get-Item -LiteralPath $tmp).Length
+  if ($ok) { Move-Item -LiteralPath $tmp $f -Force } else { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+  Event $e 'aot-train' @{ service = $s.name; ok = [bool]$ok; sec = [int]((Get-Date) - $t0).TotalSeconds; artifact = $artifact }
+}
+# the static server of services[].static (no start command): serves the staged files, unknown routes get index.html
+function StaticServer {
+  $f = Join-Path (Get-KitPath localenv -Create) 'run/static-server.mjs'
+  $js = @'
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+const [root, port, host = '::'] = process.argv.slice(2); const base = path.resolve(root);
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain', '.wasm': 'application/wasm', '.webmanifest': 'application/manifest+json' };
+const send = (res, code, f) => fs.readFile(f, (err, buf) => { if (err) { res.writeHead(404); return res.end(); } const x = path.extname(f).toLowerCase(); res.writeHead(code, { 'Content-Type': types[x] || 'application/octet-stream', 'Cache-Control': x === '.html' ? 'no-cache' : 'max-age=3600' }); res.end(buf); });
+const srv = http.createServer((req, res) => {
+  let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
+  if (p.includes('\0')) { res.writeHead(400); return res.end(); }
+  const f = path.join(base, p); if (f !== base && !f.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }
+  fs.stat(f, (err, st) => { if (!err && st.isFile()) return send(res, 200, f); if (!err && st.isDirectory()) return send(res, 200, path.join(f, 'index.html'));
+    if (path.extname(p)) { res.writeHead(404); return res.end(); } send(res, 200, path.join(base, 'index.html')); });
+});
+const up = (h) => srv.listen(+port, h, () => console.log(`Listening on ${h}:${port} (${base})`));
+srv.on('error', (e) => { if (e.code === 'EAFNOSUPPORT' && host === '::') { up('0.0.0.0'); } else { throw e; } }); up(host);
+'@
+  if (-not (Test-Path -LiteralPath $f) -or (Get-Content -LiteralPath $f -Raw) -ne $js) { New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content -LiteralPath $f $js -NoNewline -Encoding utf8 }
+  $f
 }
 
 # ---- hooks: db query / exec / rollback / applied / tag, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
@@ -747,9 +864,11 @@ function TreeGB([int[]]$ids, $snap) {
 function Find-NewLogLine([string]$f, [string]$pattern, [hashtable]$pos) {
   $i = Get-Item -LiteralPath $f -ErrorAction SilentlyContinue; if (-not $i) { return $null }
   $from = if (-not $pos.ContainsKey($f)) { $i.Length } elseif ($pos[$f] -gt $i.Length) { 0 } else { $pos[$f] }   # shorter: rotated
-  $pos[$f] = $i.Length; if ($i.Length -le $from) { return $null }
-  $t = Read-FileRange $f ([math]::Max($from, $i.Length - 4MB)) $i.Length
-  $m = [regex]::Match($t, "(?m)^.*(?:$pattern).*$"); if ($m.Success) { $m.Value.Trim() } else { $null }
+  if ($i.Length -le $from) { $pos[$f] = $i.Length; return $null }
+  $at = [math]::Max($from, $i.Length - 4MB); $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')
+  try { [void]$fs.Seek($at, 'Begin'); $bs = [byte[]]::new($i.Length - $at); $n = $fs.Read($bs, 0, $bs.Length) } finally { $fs.Dispose() }
+  $end = if ($n) { [array]::LastIndexOf($bs, [byte]10, $n - 1) } else { -1 }; $pos[$f] = $at + $end + 1   # in bytes: a line still being written is read again
+  $m = [regex]::Match([Text.Encoding]::UTF8.GetString($bs, 0, $end + 1), "(?m)^.*(?:$pattern).*$"); if ($m.Success) { $m.Value.Trim() } else { $null }
 }
 function Read-FileRange([string]$f, [long]$from, [long]$to) {
   $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')
@@ -793,6 +912,7 @@ function Healthy([string]$e, $s) {
 function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
   $st = Read-State $e; $x = $st.services[$s.name]
   $mine = @(); if (Owned $x) { $mine = TreeIds ([int]$x.pid) }
+  $ran = (Owned $x) -or ($s.port -and @(Get-PortPids ([int]$s.port)).Count)   # the stop event only when something ran
   if (Owned $x) {
     if ($KitIsWindows) { taskkill /PID $x.pid /T /F 2>&1 | Out-Null }
     else { $ids = TreeIds ([int]$x.pid); [array]::Reverse($ids); $ids | ForEach-Object { Stop-SysProcess $_ } }
@@ -800,8 +920,8 @@ function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
   if ($s.port) { foreach ($p in Get-PortPids ([int]$s.port)) { if ($p -gt 4 -and ($p -in $mine -or (EnvProcess $p $e))) { Stop-SysProcess $p } } }
   $script:ListenSnap = $null
   if ($x.peakGB) { Save-LocalEnvHistory "$e/$($s.name)" ([double]$x.peakGB) }   # the learned need: its peak while it ran, not its size at start
-  Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts) } }
-  Event $e 'stop' @{ service = $s.name; why = $why }
+  Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts); aotPid = $o.aotPid } }
+  if ($ran) { Event $e 'stop' @{ service = $s.name; why = $why } }
 }
 function Get-LocalEnvHistory { $h = try { Get-Content (Get-KitPath localenv-history) -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h -isnot [hashtable]) { $h = @{} }; $h }
 function Save-LocalEnvHistory([string]$key, [double]$v) {
@@ -941,31 +1061,37 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
     "[$e] starting $($s.name)$(if ($release) { " (release $release)" }): $cmd"
     $t0 = Get-Date
     $p = Start-Pwsh @('_exec', '-Env', $e, '-Service', $s.name, '-Artifact', "$artifact") $dir "_exec -Env $e -Service $($s.name)" "$log.wrapper"
-    Update-State $e { param($x) $o = $x.services[$s.name]; $x.services[$s.name] = @{ status = 'starting'; pid = $p; pstart = "$(if (PStart $p) { (PStart $p).ToString('o') })"; port = $s.port; startedAt = (Now); lastNeed = (Now); release = $release; artifact = $artifact; restarts = @($o.restarts) } }
+    Update-State $e { param($x) $o = $x.services[$s.name]; $x.services[$s.name] = @{ status = 'starting'; pid = $p; pstart = "$(if (PStart $p) { (PStart $p).ToString('o') })"; port = $s.port; startedAt = (Now); lastNeed = (Now); release = $release; artifact = $artifact; restarts = @($o.restarts); aotPid = $o.aotPid } }
     $limit = (Get-Date).AddMinutes((StartMin $s))
     $fail = if ($s.failPattern) { [string]$s.failPattern } else { $script:FailPattern }
-    while (-not (Healthy $e $s)) {
-      $hit = if ($fail -and (Test-Path $log)) { Select-String -LiteralPath $log -Pattern $fail -List | Select-Object -First 1 }
-      $why = if ($hit) { "failed to start (log line $($hit.LineNumber): $($hit.Line.Trim()))" } elseif (-not (Alive $p)) { 'exited while starting' } elseif ((Get-Date) -gt $limit) { "not healthy within $(StartMin $s) min" } else { $null }
+    $ready = if ($s.readyPattern) { [string]$s.readyPattern } else { $script:ReadyPattern }
+    $failPos = @{ $log = 0 }; $readyPos = @{ $log = 0 }; $seen = $false
+    # a 1 s poll: fail / ready lines every second, health every 5 s until the ready line, then every second
+    for ($i = 0; ; $i++) {
+      if (-not $seen -and $ready -and (Find-NewLogLine $log $ready $readyPos)) { $seen = $true }
+      if (($seen -or $i % 5 -eq 0) -and (Healthy $e $s)) { break }
+      $hit = if ($fail) { Find-NewLogLine $log $fail $failPos }
+      $why = if ($hit) { "failed to start (log line: $hit)" } elseif (-not (Alive $p)) { 'exited while starting' } elseif ((Get-Date) -gt $limit) { "not healthy within $(StartMin $s) min" } else { $null }
       if ($why) {
         Stop-Svc $e $s $why; Update-State $e { param($x) $x.services[$s.name].status = 'failed' }
         Event $e 'start-failed' @{ service = $s.name; why = $why; release = $release }
         throw "[$e] $($s.name) $why. Log: $log`n$((Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join "`n")"
       }
-      Start-Sleep 5
+      Start-Sleep 1
     }
     $sec = [int]((Get-Date) - $t0).TotalSeconds
     $snap = Get-KitProcSnap; $gb = TreeGB (@(TreeIds $p $snap) + @(if ($s.port) { Get-PortPids ([int]$s.port) })) $snap
     Save-LocalEnvHistory "$e/$($s.name)" $gb; Save-LocalEnvHistory "$e/$($s.name)/startSec" $sec
     Update-State $e { param($x) $x.services[$s.name].status = 'up'; $x.services[$s.name].gb = $gb; $x.services[$s.name].upAt = (Now) }
-    Event $e 'up' @{ service = $s.name; release = $release; sec = $sec; gb = $gb }
+    Event $e 'up' @{ service = $s.name; release = $release; sec = $sec; gb = $gb; aot = [bool]($artifact -and (Test-Path -LiteralPath "$(AotFile $artifact)")) }
     "[$e] $($s.name) up$(if ($s.port) { " on port $($s.port)" }) in $sec s ($gb GB)"
+    Start-AotTrain $e $s $artifact
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
 }
 
 # ---- daemon: this script only; -Env = loop, -Train = train worker, -Start = start worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
 function Invoke-Daemon {
-param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train, [string]$Start, [int]$Release, [string]$Artifact)
+param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train, [string]$Start, [string]$Aot, [int]$Release, [string]$Artifact)
 $e = $EnvName
 $ErrorActionPreference = 'Stop'
 
@@ -1142,6 +1268,7 @@ function Run-Train {
   foreach ($s in $switch) {
     $rn = RepoOf $e $s
     if ($rn -notin $ok) { continue }
+    if ((Read-State $e).services[$s.name].status -ne 'up') { "[$e] $($s.name) stopped idle while the train waited: it starts on release $newN at its next lease"; continue }
     try { Start-Svc $e $s $newN $artifacts[$s.name] }
     catch { & $rollback @($rn) "$($s.name) did not come up with it: $("$_".Split("`n")[0])" }
   }
@@ -1246,6 +1373,10 @@ if ($Train) {
   }
   exit
 }
+if ($Aot) {   # AOT training worker: one run for one artifact, gated, off the loop and the start lock
+  try { Invoke-AotTrain $e (Svc $e $Aot) $Artifact } catch { Say "aot training of $Aot failed: $("$_".Split("`n")[0])" }
+  exit
+}
 if ($Start) {   # start worker: one service start (RAM wait, start lock, health) off the loop, so beats, prune and idle stops go on
   $s = Svc $e $Start
   try { if (Healthy $e $s) { Say "start of ${Start}: already up" } else { Start-Svc $e $s $Release $Artifact *>&1 | ForEach-Object { Say "$_" } } }
@@ -1317,20 +1448,16 @@ try {
       $needNames = @($need.Keys)
       Update-State $e { param($z) foreach ($n in @($z.services.Keys)) { if ($z.services[$n].need -and $n -notin $needNames) { $z.services[$n].need = @() } } }   # reasons that ended
 
-      # ---- stop first: idle past grace, or idle under pressure
+      # ---- stop first: every service idle past its grace, or idle under pressure, in this tick (dependents first, biggest first);
+      #      a train still waiting for leases changes nothing yet: its services stop when idle too
       $pressure = Pressure
-      $running = @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block })
-      $idle = @($running | Where-Object {
-          $n = $_.name; $x = $st.services[$n]
-          $since = [datetime]$(if ($x.lastNeed) { $x.lastNeed } elseif ($x.upAt) { $x.upAt } else { (Now) })
-          $dependentsUp = @(Dependents $e @($n) | Where-Object { $st.services[$_].status -eq 'up' })
-          -not $dependentsUp.Count -and ($pressure -or ($IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
-        } | Sort-Object { -[double]$st.services[$_.name].gb })
-      if ($idle.Count) {
-        $s = $idle[0]   # one per tick, biggest first
-        $why = IdleWhy (GraceMin $e $s) $pressure
-        Say "stopping $($s.name): $why"; Stop-Svc $e $s $why
+      $idleBlock = Get-IdleBlock $st
+      for ($round = 0; $round -lt 20; $round++) {
+        $idle = @(Get-IdleServices $e $st $need $idleBlock $pressure)
+        if (-not $idle.Count) { break }
+        foreach ($s in @(if ($pressure) { $idle[0] } else { $idle })) { $why = IdleWhy (GraceMin $e $s) $pressure; Say "stopping $($s.name): $why"; Stop-Svc $e $s $why }
         $st = Read-State $e
+        if ($pressure) { break }   # under pressure the biggest idle one per tick, then pressure is measured again
       }
 
       # ---- start needed (a start worker each), restart crashes with backoff
@@ -1393,6 +1520,74 @@ finally {
 }
 }
 
+# ---- cleanup: what no configured env uses (env worktrees, logs, run files, children of localEnv.cleanup.dataRoots); -Quick also
+#      the old staged releases (keepReleases) and localEnv.cleanup.quick [ { name, paths: [globs], olderThanDays, cmd } ]
+function Get-EnvOrphans {
+  $out = [Collections.Generic.List[object]]::new(); $envs = @(EnvNames | Sort-Object Length -Descending)
+  $add = { param($kind, $path, $why, $dirty) $out.Add([pscustomobject]@{ kind = $kind; path = $path; why = $why; dirty = [bool]$dirty }) }
+  $wts = @(foreach ($n in $envs) { foreach ($r in (EnvRepos $n).Values) { [IO.Path]::GetFullPath($r.wt).TrimEnd('\', '/').ToLower() } })
+  foreach ($root in @($KitConf.WorktreeRoots)) {
+    foreach ($w in Get-ChildItem -LiteralPath $root -Directory -Filter 'localenv-*' -ErrorAction SilentlyContinue) {
+      if ($w.FullName.TrimEnd('\', '/').ToLower() -in $wts) { continue }
+      $ch = @(git -C $w.FullName status --porcelain 2>$null); $failed = $LASTEXITCODE   # an unreadable worktree counts as dirty
+      & $add 'worktree' $w.FullName 'no configured env runs it' ($ch.Count -or $failed)
+    }
+  }
+  $known = '^(loop|train(-\w+)?|db|smoke|migrations|seed|restore|events|tenant)$'
+  $mine = { param([string]$base) if ($base -eq 'cleanup-quick') { return $true }; foreach ($n in $envs) { if ($base.StartsWith("$n-")) { $rest = $base.Substring($n.Length + 1) -replace '^(start|aot|task)-', '' -replace '-build$', ''
+        return ($rest -match $known -or $rest -in @(EnvServices $n).name -or ($base -match "^$([regex]::Escape($n))-task-" -and (Get-EnvCfg $n).tasks.$rest)) } }; $false }
+  foreach ($f in Get-ChildItem -LiteralPath (Get-KitPath localenv-logs -Create) -File -ErrorAction SilentlyContinue) {
+    $b = $f.Name -replace '(\.(log|prev|wrapper|jsonl))+$', ''
+    if (-not (& $mine $b) -and ((Get-Date) - $f.LastWriteTime).TotalDays -ge 1) { & $add 'log' $f.FullName 'no configured env or service writes it' $false }
+  }
+  $run = Join-Path (Get-KitPath localenv -Create) 'run'
+  foreach ($f in Get-ChildItem -LiteralPath $run -File -Filter '*.cmd' -ErrorAction SilentlyContinue) { if (-not (& $mine $f.BaseName)) { & $add 'run' $f.FullName 'no configured env or service runs it' $false } }
+  foreach ($d in Get-ChildItem -LiteralPath $run -Directory -ErrorAction SilentlyContinue) {
+    if ($d.Name -notin $envs) { & $add 'run' $d.FullName 'no configured env' $false; continue }
+    foreach ($sd in Get-ChildItem -LiteralPath $d.FullName -Directory) { if ($sd.Name -notin @(EnvServices $d.Name).name) { & $add 'run' $sd.FullName "env $($d.Name) has no service $($sd.Name)" $false } }
+  }
+  $none = [pscustomobject]@{ port = '' }
+  $text = (@(foreach ($n in $envs) { foreach ($s in EnvServices $n) { foreach ($k in 'start', 'build', 'dataDir') { if ($s.$k) { Expand-Placeholders ([string]$s.$k) $n $s $KitConf.Workspace '' } }; foreach ($v in @($s.env.PSObject.Properties.Value)) { "$v" } } }; ($script:LE | ConvertTo-Json -Depth 20).Replace('\\', '\')) -join "`n").Replace('\', '/').ToLower()   # + every config value (db, stop, ...)
+  foreach ($root in @($script:LE.cleanup.dataRoots) | Where-Object { $_ }) {   # a folder, or { dir, match }: only children whose name matches (an install folder holds more)
+    $rp = Expand-Placeholders ([string]$(if ($root -is [string]) { $root } else { $root.dir })) '' $none $KitConf.Workspace ''; $mt = if ($root -isnot [string] -and $root.match) { [string]$root.match } else { '.' }
+    foreach ($c in Get-ChildItem -LiteralPath $rp -Directory -ErrorAction SilentlyContinue | Where-Object Name -match $mt) { if (-not $text.Contains($c.FullName.Replace('\', '/').ToLower())) { & $add 'data' $c.FullName "no env service names it (cleanup.dataRoots $rp)" $false } }
+  }
+  @($out)
+}
+function Invoke-EnvCleanup([switch]$Quick, [switch]$DryRun) {
+  $verb = if ($DryRun) { 'would remove' } else { 'removed' }
+  $size = { param($p) if (Test-Path -LiteralPath $p -PathType Leaf) { (Get-Item -LiteralPath $p).Length } else { [long](Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum } }
+  $gone = { param($p, $why) $b = & $size $p
+    if (-not $DryRun) { try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop } catch { "  FAILED $p : $($_.Exception.Message)"; return } }
+    $script:cleanFreed += $b; '  {0} {1,9:N1} MB  {2} ({3})' -f $verb, ($b / 1MB), $p, $why }
+  $script:cleanFreed = 0L
+  foreach ($o in Get-EnvOrphans) {
+    if ($o.kind -eq 'worktree') {
+      if ($o.dirty) { "  KEPT $($o.path): uncommitted files (never deleted; commit or remove by hand)"; continue }
+      $b = & $size $o.path; if (-not $DryRun) { & $KitCmd.dev wt remove -Dir $o.path | Out-Null }; $script:cleanFreed += $b; '  {0} {1,9:N1} MB  {2} (worktree: {3})' -f $verb, ($b / 1MB), $o.path, $o.why; continue
+    }
+    & $gone $o.path $o.why
+  }
+  if ($Quick) {
+    foreach ($n in EnvNames) { foreach ($s in EnvServices $n | Where-Object { $_.artifact }) { $root = Join-Path (Get-KitPath localenv -Create) "run/$n/$($s.name)"; if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($p in @(Remove-OldReleases $n $s $root -DryRun)) { & $gone $p "old release (keepReleases $($script:KeepReleases))" }; if (-not $DryRun) { $null = Remove-OldReleases $n $s $root } } }   # the second call prunes the library store
+    # never what a service runs from or writes: its staged release, its folder and dataDir while it is up or starting
+    $inUse = @(@(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $x = $st.services[$k]; if ($x.artifact) { ReleaseDirOf (Join-Path (Get-KitPath localenv) "run/$n") "$($x.artifact)" }
+          if ($x.status -in 'up', 'starting') { $sv = @(EnvServices $n | Where-Object name -eq $k)[0]; if ($sv) { if ($sv.repo -or $sv.dir) { try { SvcDir $n $sv } catch { } }; if ($sv.dataDir) { Expand-Placeholders ([string]$sv.dataDir) $n $sv $KitConf.Workspace '' } } } } }) | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') })
+    foreach ($q in @($script:LE.cleanup.quick) | Where-Object { $_ }) {
+      foreach ($g in @($q.paths | Where-Object { $_ })) {
+        $pat = Expand-Placeholders ([string]$g) '' ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
+        foreach ($i in @(Get-Item -Path $pat -Force -ErrorAction SilentlyContinue)) {
+          if ($q.olderThanDays -and ((Get-Date) - $i.LastWriteTime).TotalDays -lt [double]$q.olderThanDays) { continue }
+          if (@($inUse | Where-Object { $_ -and ($i.FullName -eq $_ -or $_.StartsWith($i.FullName + [IO.Path]::DirectorySeparatorChar) -or $i.FullName.StartsWith($_ + [IO.Path]::DirectorySeparatorChar)) }).Count) { "  KEPT $($i.FullName): a service runs from it"; continue }
+          & $gone $i.FullName "quick: $($q.name)"
+        }
+      }
+      if ($q.cmd) { if ($DryRun) { "  would run ($($q.name)): $($q.cmd)" } else { $code = Invoke-Shell (Expand-Placeholders ([string]$q.cmd) '' ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile 'cleanup' 'quick') $null 600; "  ran ($($q.name)): $(if ($code) { "FAILED ($(Get-ShellWhy $code))" } else { 'ok' })" } }
+    }
+  }
+  "localenv cleanup$(if ($Quick) { ' -Quick' }): $verb $([math]::Round($script:cleanFreed / 1MB, 1)) MB$(if ($DryRun) { ' (dry run)' })"
+}
 function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
@@ -1404,7 +1599,7 @@ function Get-Doctor([string]$e) {
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
   foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne $c.db.$_ }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
-  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e)) { & $add $x.level $x.what } }
+  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e })) { & $add $x.level $x.what } }
   if (MarksOn $e) {
     $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
     if (-not $b) { & $add 'WARN' "no baseline mark: localenv.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
@@ -1423,7 +1618,7 @@ function Get-Doctor([string]$e) {
     if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
     if ($s.artifact -and $s.repo) {
       if (-not (Test-Path -LiteralPath $dir)) { & $add 'WARN' "$($s.name): $dir does not exist yet (the first deploy / refresh creates it)" }
-      elseif (-not @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }
+      elseif (-not $(if ($s.static) { Test-Path -LiteralPath (Join-Path $dir $s.static) -PathType Container } else { @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count })) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }
     }
     foreach ($u in @(@($s.health) + @($c.smoke | Where-Object { $_.url -and $_.service -eq $s.name } | ForEach-Object url) | Where-Object { $_ })) {
       if ("$u" -match '//localhost[:/]') { & $add 'WARN' "$($s.name): $u uses localhost: use http://127.0.0.1:{port} (localhost can resolve to ::1 first)" }
@@ -1448,23 +1643,24 @@ function Get-Doctor([string]$e) {
 # ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'restore', 'seed', 'teardown', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'restore', 'seed', 'teardown', 'tenant', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Position = 1)][ValidateSet('', 'list', 'drop')][string]$Op = '',
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
+  [switch]$DryRun, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
 )
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
 # db.engine without its presets (extra db-engine-presets): stop before anything changes
 $needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets are an extra: run kittool.py extra add db-engine-presets" } })
-if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark', 'restore', 'seed', 'teardown') { [Console]::Error.WriteLine("localenv.ps1: $($needs[0])"); exit 1 }
+if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark', 'restore', 'seed', 'teardown', 'tenant') { [Console]::Error.WriteLine("localenv.ps1: $($needs[0])"); exit 1 }
 
 function Ensure-Loop {
   $st = Read-State $e
@@ -1582,7 +1778,7 @@ switch ($Action) {
   'envs' {
     foreach ($n in EnvNames) {
       "$n$(if ((Get-EnvCfg $n).description) { " - $((Get-EnvCfg $n).description)" })"
-      foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), $(if ($s.hot) { '  hot' } elseif ($s.artifact) { '  runs from artifact' }), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
+      foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), $(if ($s.hot) { '  hot' } elseif ($s.static) { '  static (built files)' } elseif ($s.artifact) { '  runs from artifact' }), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
       if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-EnvCfg $n).tasks.PSObject.Properties.Name -join ', ')" }
     }
   }
@@ -1616,6 +1812,15 @@ switch ($Action) {
     "[$e] restore to $($m.name) queued as $rid (holders are told to pause)"; Exit-Request (Wait-Request $rid)
   }
   'seed' { Invoke-Seed $e -Check:$Check; if ($script:SeedBad) { exit 1 } }
+  'tenant' {   # owner / coordinator: list = keep / drop with sizes; drop -Name a,b [-DryRun] (extra db-engine-presets)
+    if (-not (Get-Command Invoke-TenantDrop -ErrorAction SilentlyContinue)) { throw "[$e] tenant needs db.engine mysql / mariadb (extra db-engine-presets)" }
+    if ($Op -eq 'drop') {
+      $tn = @(Split-KitList $Name); if (-not $tn.Count) { throw 'tenant drop needs -Name <tenant>[,<tenant>]' }
+      Invoke-TenantDrop $e $tn -DryRun:$DryRun; return
+    }
+    foreach ($x in Get-TenantList $e) { '  {0,-5} {1,-28} {2,9:N1} MB  {3}' -f $(if ($x.keep) { 'KEEP' } else { 'DROP' }), $x.name, $x.mb, $(if ($x.keep) { $x.keep } elseif (-not $x.registry) { 'schema without a registry row' } else { 'nobody keeps it' }) }
+  }
+  'cleanup' { Invoke-EnvCleanup -Quick:$Quick -DryRun:$DryRun }   # owner / coordinator: orphans of envs no longer configured; -Quick: old releases + cleanup.quick
   'teardown' {   # owner: the cascade guard's triggers and journal schema removed (doctor installs them again)
     if (-not (MarksOn $e)) { throw "[$e] teardown: no marks here (db.engine mysql or mariadb, extra db-engine-presets)" }
     $g = Install-DbGuard $e -Remove; "[$e] cascade guard removed: $($g.removed) trigger(s), the journal schema dropped; localenv.ps1 doctor -Env $e installs it again"
@@ -1783,7 +1988,7 @@ switch ($Action) {
       Set-Content -LiteralPath $bat "@echo off`r`n($cmd`r`n) 2>&1" -Encoding ascii; [Diagnostics.ProcessStartInfo]::new('cmd.exe', "/d /c `"$bat`"")
     } else { $x = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $x.ArgumentList.Add('-c'); $x.ArgumentList.Add("{ $cmd`n} 2>&1"); $x }
     $si.UseShellExecute = $false; $si.RedirectStandardOutput = $true; $si.WorkingDirectory = $sdir
-    $p = [Diagnostics.Process]::Start($si); $in = $p.StandardOutput.BaseStream; $buf = [byte[]]::new(65536); $cap = [long]($script:LogMaxMB * 1MB)
+    $p = [Diagnostics.Process]::Start($si); $in = $p.StandardOutput.BaseStream; $buf = [byte[]]::new(65536); $cap = [long]([double]$(if ($s.logMaxMB) { $s.logMaxMB } else { $script:LogMaxMB }) * 1MB)
     $open = { [IO.FileStream]::new($log, 'Append', 'Write', 'ReadWrite, Delete') }; $out = & $open
     try {
       while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
@@ -1799,7 +2004,7 @@ switch ($Action) {
 
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
-elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 14 | Select-Object -Skip 1; exit 2 }
+elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -') { [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2 } }
   Invoke-KitVerb Invoke-LocalEnv @($args)

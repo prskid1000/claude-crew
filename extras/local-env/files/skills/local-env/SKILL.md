@@ -57,8 +57,24 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   `-Kill {id}`. Doctor WARNs: ibtmp1 without a max, temp caps above `db.tempMaxGB`, `max_execution_time` 0, slow log off, the
   datadir outside `storage.watch`.
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
-  `smoke`) merge by `name`. `localenv.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds and health; `deploy`
-  stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100).
+  `smoke`) merge by `name`. `localenv.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health and `db.expect` ({ server
+  variable: value }); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).
+- **Speed and disk** (per service): `static` = the folder its `build` writes: the train builds once per release, the kit's
+  static server serves a staged copy (unknown routes -> index.html; no dev server). `prepare` = a command after each sync whose
+  edits are committed locally on `localenv/<env>` (a build cache at `{cache}`, outside the repo). `unpack` = a command that
+  unpacks `{artifact}` into `{out}`: each library under `unpackLib` (lib) kept once by content hash, hard-linked into each
+  release; `keepReleases` (2) staged per service + the ones running. `aotTrain` ({aotFile}): one gated background run per
+  artifact after it is up; `{aot}` in `start` = `aotUse` (`-XX:AOTCache="{aotFile}"`) once it exists. `{reactor}` in `build` =
+  `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs). `readyPattern`: a ready log line checks health at
+  once (else every 5 s; fail lines every 1 s). `mvnd` on PATH replaces mvn / mvnw in every gated build. Events: `build`,
+  `stage`, `up`, `aot-train` with seconds. Idle services all stop in one tick, also while a train waits for leases.
+- **Owner upkeep:** `tenant list | drop -Name <t,..> [-DryRun]` (`tenants`: { schema, table, key, name, tables, idColumns,
+  nameColumns, users { table, key, tenantTable, tenantKey }, keep, keepFrom, verify }; mysql / mariadb): kept = `keep` or a
+  name in `keepFrom` (default kit.local.json, targets.local.json, the seed file; { file, keys }); refused while a lease, hold or
+  train is on; per tenant one transaction (the registry row, its FK children, `tables` rows by id / name column, users no
+  staying tenant has), then the schema; 0 references left checked, smoke + `verify` ({tenant}) per kept tenant. `cleanup
+  [-Quick] [-DryRun]`: env worktrees (uncommitted ones kept), logs, run files and `cleanup.dataRoots` children no env uses;
+  `-Quick` adds old releases and `cleanup.quick` [ { name, paths, olderThanDays, cmd } ] (never what runs).
 - Secrets: `<kit>/.state/localenv/<env>.env` (dotenv) only. Dependencies are linked from one install per target, never installed
   here.
 
@@ -125,7 +141,7 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
   yourself"; it runs `seed` or `restore -Mark <n>`), never repair the shared DB by hand.
 - `up` (only named services), `unhold`, `restart -Services` (keeps leases; `down` ends them), `down`, `drop`, `refresh`,
-  `restore`, `teardown`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed; report it,
+  `restore`, `teardown`, `tenant`, `cleanup`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed; report it,
   never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.
 
@@ -144,7 +160,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
      { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://127.0.0.1:{port}/health", "dependsOn": ["db"],
       "build": "mvn -q package -DskipTests", "artifact": "target/api-*.jar",
       "start": "java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address={debugPort} -jar \"{artifact}\" --server.port={port}", "debugPort": 5005 },
-     { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
+     { "name": "web", "repo": "frontend", "port": 4200, "dependsOn": ["api"], "build": "npx ng build", "static": "dist/app",
+      "prepare": "npx ng config cli.cache.enabled true && npx ng config cli.cache.path \"{cache}\"" }
     ],
     "smoke": [ { "name": "api health", "service": "api", "url": "http://127.0.0.1:8080/health" } ],
     "db": { "engine": "mysql", "user": "root", "schemas": ["shop"], "schemasQuery": "<SELECT that lists more env schemas, one per row>",

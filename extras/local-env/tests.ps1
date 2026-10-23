@@ -152,6 +152,66 @@ $rv = & { . $L3; $f1 = (Read-State tl).services.gone; $null = @(Wait-Leases tl @
   $code = Invoke-Shell 'echo Status: not found&& exit 1' (Join-Path (Kd) 'nf.log') @{}; "$($f1.status)/$($f1.why -match 'does not exist')|$c0|$code" }
 $null = Px $L3 _exec -Env t -Service cmp 2>&1; $cl = Get-Content (& { . (Join-Path $k3 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath localenv-logs) 't-cmp.log' }) -Raw
 Expect "review: worker failure -> failed; no lease = no clock; compound stderr kept; 'not found' output != misconfigured ($rv)" ($rv -eq 'failed/True|True|1' -and $cl -match 'out1' -and $cl -match 'err1' -and $cl -match 'done1')
+# idle stops: every idle service in one tick (a dependent first keeps its dependency); a train waiting for leases blocks none
+& $J @{ localEnv = @{ idle = @{ minMinutes = 1; maxMinutes = 1 }; envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo a'; port = 41011 }, @{ name = 'web'; start = 'echo w'; port = 41012; dependsOn = @('api') }, @{ name = 'job'; start = 'echo j'; port = 41013 }) } } } } $cf3 8
+$id = & { . $L3; $old = (Get-Date).AddMinutes(-30).ToString('o')
+  $st = @{ services = @{ api = @{ status = 'up'; lastNeed = $old; gb = 1 }; web = @{ status = 'up'; lastNeed = $old; gb = 7 }; job = @{ status = 'up'; lastNeed = $old; gb = 2 } }; train = @{ phase = 'waiting for leases (code)'; blockServices = @('web', 'api') } }
+  $a = @(Get-IdleServices t $st @{} @(Get-IdleBlock $st) '' | ForEach-Object name) -join ','
+  $st.train.phase = 'switching over'; $b = @(Get-IdleServices t $st @{} @(Get-IdleBlock $st) '' | ForEach-Object name) -join ','
+  $st.services.web.status = 'down'; $c = @(Get-IdleServices t $st @{ job = @('lease:x') } @() '' | ForEach-Object name) -join ','; "$a|$b|$c" }
+Expect "idle: all idle services at once, biggest first, a dependency after its dependent; a train waiting for leases blocks none ($id)" ($id -eq 'web,job|job|api')
+# starts: the ready line triggers health at once; a fail line half written is read again when complete; no stop event when nothing ran
+$rl = Join-Path (Kd) 'ready.log'; Set-Content $rl 'boot' -NoNewline
+$rd = & { . $L3; $pos = @{ $rl = 0 }; $a = Find-NewLogLine $rl 'Started \S+ in' $pos; Add-Content $rl "`nStarted App in 3.2 sec" -NoNewline; $b = Find-NewLogLine $rl 'Started \S+ in' $pos; Add-Content $rl 'onds'
+  $c = Find-NewLogLine $rl 'Started \S+ in [\d.]+ seconds' $pos; [IO.File]::AppendAllBytes($rl, [byte[]](0xE9, 0xFF, 10) + [Text.Encoding]::UTF8.GetBytes("Started B in 1.0 seconds`n")); $d = Find-NewLogLine $rl 'Started B in' $pos
+  "$([bool]$a)|$([bool]$b)|$($c -match 'seconds' -and [bool]$d)|$('Started MposApp in 41.2 seconds (process running for 43)' -match $script:ReadyPattern)" }
+Expect "start: a line still being written is read again; the default ready line matches Spring Boot ($rd)" ($rd -eq 'False|False|True|True')
+$se = & { . $L3; Update-State t { param($x) $x.services = @{ job = @{ status = 'down' } } }; $script:ev = 0; function Event { $script:ev++ }; Stop-Svc t (Svc t job) 'idle'; $script:ev }
+Expect "stop: nothing ran -> no stop event ($se)" ("$se" -eq '0')
+# staging: unpack keeps each library once (hard links, content hash), keepReleases + the ones in use stay, unlinked store files go;
+# a static service stages its built files and runs the kit's static server; {aot} only once a training run wrote the cache
+$ud = Kd; $wtd = Join-Path $ud 'wt'; New-Item -ItemType Directory -Force (Join-Path $wtd 'api/target'), (Join-Path $wtd 'web/dist/app') | Out-Null
+'fat' | Set-Content (Join-Path $wtd 'api/target/app-1.jar'); '<html>i</html>' | Set-Content (Join-Path $wtd 'web/dist/app/index.html'); 'x' | Set-Content (Join-Path $wtd 'web/dist/app/main.js')
+$unp = "pwsh -NoProfile -Command `"New-Item -ItemType Directory -Force '{out}/lib' | Out-Null; 'thin' | Set-Content '{out}/app.jar'; 'L1' | Set-Content '{out}/lib/a.jar'; Set-Content '{out}/lib/b.jar' `$(if (Test-Path '$ud/v2') { 'L3' } elseif (Test-Path '$ud/mid') { 'L4' } else { 'L2' })`""
+& $J @{ localEnv = @{ keepReleases = 2; envs = @{ t = @{ services = @(@{ name = 'api'; dir = (Join-Path $wtd 'api'); artifact = 'target/app-*.jar'; unpack = $unp; port = 41014; start = 'java {aot} -jar "{artifact}"'; aotTrain = 'echo t' }, @{ name = 'web'; dir = (Join-Path $wtd 'web'); static = 'dist/app'; port = 41015 }) } } } } $cf3 8
+$sg = & { . $L3; function RepoOf { 'r' }
+  $r1 = Stage-Artifacts t r 'r1-a'; Update-State t { param($x) $x.services = @{ api = @{ status = 'up'; artifact = $r1.api } } }; Start-Sleep -Milliseconds 50
+  Set-Content "$ud/mid" 1; $null = Stage-Artifacts t r 'r2-b'; Start-Sleep -Milliseconds 50; Set-Content "$ud/v2" 1; $null = Stage-Artifacts t r 'r3-c'; Start-Sleep -Milliseconds 50
+  $r3 = Stage-Artifacts t r 'r4-d'; $root = Split-Path (Split-Path $r1.api)
+  $dirs = @(Get-ChildItem $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object Name | Sort-Object) -join ','; $store = @(Get-ChildItem (Join-Path $root '_lib') -File).Count
+  $links = (Get-Item (Join-Path (Split-Path $r3.api) 'lib/a.jar')).LinkType
+  $a0 = StartCmd t (Svc t api) $r3.api; Set-Content (AotFile $r3.api) 'aot'; $a1 = StartCmd t (Svc t api) $r3.api
+  Update-State t { param($x) $x.services.web = @{ status = 'up'; artifact = $r3.web } }; $again = Stage-Artifacts t r 'r4-d'; $keep = Test-Path (Join-Path $r3.web 'main.js')
+  Update-State t { param($x) $x.services.api = @{ status = 'up'; artifact = $again.api } }; $old = @(Remove-OldReleases t (Svc t api) $root -DryRun | ForEach-Object { Split-Path $_ -Leaf }) -join ','
+  Update-State t { param($x) $x.services.web = @{ status = 'down' } }
+  "$($again.web -like '*r4-d-2')/$keep/$old|$dirs|$store|$links|$(Split-Path $r3.api -Leaf)|$(Test-Path (Join-Path $r3.web 'main.js'))|$((StartCmd t (Svc t web) $r3.web) -match 'static-server\.mjs')|$($a0 -notmatch 'AOTCache')|$($a1 -match '-XX:AOTCache=')" }
+Expect "stage: libraries once (hard links), 2 releases + the one in use kept, store pruned; a running copy is never replaced (-2), old ones listed by -DryRun; static files staged + served by the kit; {aot} once cached ($sg)" ($sg -eq 'True/True/r1-a|r1-a,r3-c,r4-d|3|HardLink|app.jar|True|True|True|True')
+$sv = & { . $L3; $port = 41016; $srv = Start-Process node -ArgumentList "`"$(StaticServer)`" `"$(Join-Path $wtd 'web/dist/app')`" $port" -PassThru -WindowStyle Hidden
+  try { for ($i = 0; $i -lt 40 -and -not (Test-PortListening $port); $i++) { Start-Sleep -Milliseconds 250 }
+    $g = { param($u) try { $x = Invoke-WebRequest "http://127.0.0.1:$port$u" -SkipHttpErrorCheck -TimeoutSec 5; "$($x.StatusCode):$("$($x.Content)".Trim())" } catch { 'ERR' } }
+    "$(& $g '/')|$(& $g '/orders/7')|$(& $g '/main.js')|$((& $g '/nope.js') -replace ':.*')|$((& $g '/..%2f..%2fwt') -replace ':.*')|$((& $g '/%00') -replace ':.*')|$(-not $srv.HasExited)" } finally { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } }
+Expect "static server: index at /, unknown routes -> index.html, files as they are, a missing file 404, no way out of the root, a NUL path 400 and it keeps serving ($sv)" ($sv -match '^200:<html>i</html>\|200:<html>i</html>\|200:x\|404\|(403|404)\|400\|True$')
+# builds: {reactor} = one aggregator of the module folders + the service's module, -pl it -am; prepare edits are committed locally
+$rx = & { . $L3; New-Item -ItemType Directory -Force (Join-Path $wtd 'lib/m1'), (Join-Path $wtd 'lib/m2') | Out-Null; 'p' | Set-Content (Join-Path $wtd 'lib/m1/pom.xml')
+  function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }; function RepoOf { 'r' }
+  $a = Write-Reactor t ([pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); reactor = @('lib/*') }); $x = Get-Content (Join-Path $wtd '.localenv-reactor-api.xml') -Raw
+  "$($a -match '-pl api -am$')|$($x -match '<module>lib/m1</module><module>api</module></modules>')|$($x -notmatch 'm2')" }
+Expect "build: {reactor} -> -f <aggregator> -pl <service module> -am over the module folders with a pom ($rx)" ($rx -eq 'True|True|True')
+# cleanup: logs / run files / data folders / env worktrees no configured env uses are orphans; -DryRun deletes nothing
+& $J @{ localEnv = @{ cleanup = @{ dataRoots = @(@{ dir = (Join-Path $ud 'data'); match = 'sb1|^t$' }); quick = @(@{ name = 'old q'; paths = @("$ud/q/*"); olderThanDays = 1; cmd = 'echo q' }) }; envs = @{ t = @{ db = @{ datadir = (Join-Path $ud 'data/keepsb1') }; services = @(@{ name = 'api'; start = "run -Epath.data=$(Join-Path $ud 'data/t')"; port = 41017 }) } } } } $cf3 8
+$co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }
+  New-Item -ItemType Directory -Force (Join-Path $ud 'data/t'), (Join-Path $ud 'data/tsb1'), (Join-Path $ud 'data/jdk'), (Join-Path $ud 'data/keepsb1') | Out-Null; 'd' | Set-Content (Join-Path $ud 'data/tsb1/x')
+  New-Item -ItemType Directory -Force "$ud/q/old", "$ud/q/new" | Out-Null; (Get-Item "$ud/q/old").LastWriteTime = (Get-Date).AddDays(-3)
+  $o = @(Get-EnvOrphans | ForEach-Object { Split-Path $_.path -Leaf } | Sort-Object) -join ','; $dry = Invoke-EnvCleanup -Quick -DryRun; $dq = ($dry -join ' ') -match 'q[\\/]old \(quick: old q\)' -and ($dry -join ' ') -notmatch 'q[\\/]new' -and ($dry -join ' ') -match 'would run \(old q\): echo q'
+  "$o|$((Test-Path (Join-Path $ud 'data/tsb1')) -and ($dry -join ' ') -match 'would remove' -and $dq)" }
+Expect "cleanup: orphan logs (unknown env or service), run folders and data folders (dataRoots match only) found; -Quick adds cleanup.quick items past olderThanDays; -DryRun deletes nothing ($co)" ($co -match '^(.*,)?t-sb1-api\.log,(.*,)?tsb1,(.*,)?x-web\.log(,.*)?\|True$' -and $co -notmatch '(^|,)t-api\.log|t-loop|(^|,)t,|jdk|keepsb1')
+# prepare: a local-only edit after each sync, committed on the env branch (never pushed); a failed prepare only warns
+$gr = Kd; $go = Join-Path $gr 'o'; git init -q -b main $go; Set-Content (Join-Path $go 'f.txt') 'v1'; git -C $go add .; git -C $go -c user.name=t -c user.email=t@t commit -qm init; git clone -q $go (Join-Path $gr 'c') 2>$null
+& $J @{ repos = @(@{ name = 'r'; checkout = (Join-Path $gr 'c'); target = 'main' }); localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'web'; repo = 'r'; port = 41018; prepare = "pwsh -NoProfile -Command `"Set-Content f.txt '{cache}'`"" }) } } } } $cf3 8
+$pp = & { . $L3; $c = Join-Path $gr 'c'; function SvcDir { $c }; function Sync-DepLinks { }
+  $res = Sync-Repo t ([pscustomobject]@{ name = 'r'; wt = $c; target = 'main'; cfg = [pscustomobject]@{ checkout = $c } }) @() -NoFetch
+  "$((Get-Content (Join-Path $c 'f.txt') -Raw).Trim() -like '*localenv*t-web')|$(git -C $c log -1 --format=%s)|$(@(git -C $c status --porcelain).Count)|$($res.targetSha -eq (git -C $go rev-parse HEAD))" }
+Expect "prepare: its edit (here {cache}: outside the repo) is committed on the env worktree, the target sha stays the base ($pp)" ($pp -eq 'True|localenv prepare web (local only)|0|True')
 Remove-TestKit $k3
 # supervise rows from this extra (skills/orchestrate/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/orchestrate/adapters'); Copy-Item (Join-Path $src 'skills/orchestrate/adapters/localenv_supervise.ps1') $ad

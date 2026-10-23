@@ -194,6 +194,49 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
   & $J @{ storage = @{ watch = @('', "$((Q 'SELECT @@datadir') -join '')".Replace('\\', '/').TrimEnd('/')) }; localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') } } } } } (Join-Path $k3 'skills/dev-kit/kit.local.json') 8
   $dt = @(& { . $L3; Get-DbTempDoctor s } | ForEach-Object what)
   Expect "doctor: after the caps only ibtmp1 (a restart setting) is left ($($dt -join ' / '))" ($dt.Count -eq 1 -and $dt[0] -match 'ibtmp1 has no max')
+  # tenant drop: registry row + FK children (a cycle too) + listed tables by id / name column, users no staying tenant has, the schema;
+  # kept tenants and a lease refuse it; a dry run changes nothing; 0 references left; db.expect doctor rows
+  Q @"
+CREATE DATABASE adm; CREATE DATABASE t1; CREATE DATABASE t2; CREATE DATABASE t3keep; CREATE DATABASE orph;
+CREATE TABLE adm.reg (id int primary key, name varchar(40), det_id int null);
+CREATE TABLE adm.det (id int primary key, reg_id int, foreign key (reg_id) references adm.reg (id));
+ALTER TABLE adm.reg ADD FOREIGN KEY (det_id) REFERENCES adm.det (id);
+CREATE TABLE adm.det_prof (id int primary key, det_id int, foreign key (det_id) references adm.det (id));
+CREATE TABLE adm.log (id int primary key auto_increment, tenant_name varchar(40)); CREATE TABLE adm.stat (id int primary key auto_increment, tenant_id int);
+CREATE TABLE adm.users (id int primary key, login varchar(40)); CREATE TABLE adm.user_auth (user_id int, role varchar(10), foreign key (user_id) references adm.users (id));
+INSERT INTO adm.reg (id, name) VALUES (1, 't1'), (2, 't2'), (3, 't3keep'); INSERT INTO adm.det VALUES (11, 1), (12, 2); UPDATE adm.reg SET det_id = 11 WHERE id = 1; UPDATE adm.reg SET det_id = 12 WHERE id = 2;
+INSERT INTO adm.det_prof VALUES (21, 11), (22, 12); INSERT INTO adm.log (tenant_name) VALUES ('t1'), ('t2'); INSERT INTO adm.stat (tenant_id) VALUES (1), (2), (3);
+INSERT INTO adm.users VALUES (1, 'alice'), (2, 'bob'), (3, 'carol'); INSERT INTO adm.user_auth VALUES (1, 'a'), (2, 'b'), (3, 'c');
+CREATE TABLE t1.u (login varchar(40)); INSERT INTO t1.u VALUES ('alice'), ('bob'); CREATE TABLE t2.u (login varchar(40)); INSERT INTO t2.u VALUES ('bob');
+CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol'); CREATE TABLE orph.x (a int);
+"@
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb'); expect = @{ max_connections = '151'; sort_buffer_size = '1M' } }
+          tenants = @{ schema = 'adm'; table = 'reg'; key = 'id'; name = 'name'; tables = @('log', 'stat', 'nosuch'); users = @{ table = 'users'; key = 'login'; tenantTable = 'u' }; keep = @('t3keep'); verify = 'echo {tenant}' } } } } } (Join-Path $k3 'skills/dev-kit/kit.local.json') 8
+  $tl = Px $L3 tenant list -Env s 2>&1 | Out-String
+  $kr = Px $L3 tenant drop -Env s -Name t3keep 2>&1 | Out-String; $krc = $LASTEXITCODE
+  $dry = Px $L3 tenant drop -Env s -Name t1 -DryRun 2>&1 | Out-String; $cnt = { "$(Q 'SELECT (SELECT COUNT(*) FROM adm.reg) + (SELECT COUNT(*) FROM adm.det) + (SELECT COUNT(*) FROM adm.det_prof) + (SELECT COUNT(*) FROM adm.log) + (SELECT COUNT(*) FROM adm.stat) + (SELECT COUNT(*) FROM adm.users) + (SELECT COUNT(*) FROM adm.user_auth)')" }
+  $c0 = & $cnt
+  $sf3 = & { . (Join-Path $k3 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath localenv -Create) 's.json' }; $s0 = if (Test-Path $sf3) { Get-Content $sf3 -Raw }
+  '{"leases":{"L9":{"services":["api"],"agent":"L9","owner":true,"until":"2999-01-01T00:00:00"}}}' | Set-Content $sf3
+  $lr = Px $L3 tenant drop -Env s -Name t1 2>&1 | Out-String; $lrc = $LASTEXITCODE; Remove-Item $sf3
+  $d1 = Px $L3 tenant drop -Env s -Name t1 2>&1 | Out-String; $d1c = $LASTEXITCODE
+  $after = "$(Q "SELECT GROUP_CONCAT(name ORDER BY id) FROM adm.reg")|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det')|$(Q 'SELECT GROUP_CONCAT(id ORDER BY id) FROM adm.det_prof')|$(Q "SELECT GROUP_CONCAT(tenant_name) FROM adm.log")|$(Q 'SELECT GROUP_CONCAT(tenant_id ORDER BY tenant_id) FROM adm.stat')|$(Q 'SELECT GROUP_CONCAT(login ORDER BY id) FROM adm.users')|$(Q 'SELECT GROUP_CONCAT(user_id ORDER BY user_id) FROM adm.user_auth')|$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 't1'")"
+  $d2 = Px $L3 tenant drop -Env s -Name t2 2>&1 | Out-String; $users2 = "$(Q 'SELECT GROUP_CONCAT(login ORDER BY id) FROM adm.users')"
+  $ex = @(& { . $L3; Get-DbExpectDoctor s } | ForEach-Object what)
+  # refusals that keep data: a composite FK to a planned table, a staying tenant whose users cannot be read, a keepFrom file missing
+  Q "CREATE TABLE adm.cp (id int primary key, n varchar(40), unique key (id, n)); CREATE TABLE adm.cc (a int, b varchar(40), foreign key (a, b) references adm.cp (id, n)); INSERT INTO adm.reg (id, name) VALUES (5, 'tc'); CREATE DATABASE tc; CREATE TABLE adm.cpref (id int primary key, reg_id int, foreign key (reg_id) references adm.reg (id)); INSERT INTO adm.cpref VALUES (1, 5)"
+  Q "ALTER TABLE adm.cp ADD COLUMN reg_id int, ADD FOREIGN KEY (reg_id) REFERENCES adm.reg (id); INSERT INTO adm.cp VALUES (7, 'x', 5)"
+  $cf = (Px $L3 tenant drop -Env s -Name tc 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $cfc = $LASTEXITCODE; $tcLeft = "$(Q "SELECT COUNT(*) FROM adm.reg WHERE name = 'tc'")"
+  Q "DROP TABLE adm.cc; CREATE DATABASE tu; RENAME TABLE t3keep.u TO t3keep.u0; CREATE VIEW t3keep.u AS SELECT login FROM t3keep.u0; DROP TABLE t3keep.u0"
+  $uf = (Px $L3 tenant drop -Env s -Name tc 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $ufc = $LASTEXITCODE
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; schemas = @('fa', 'fb') }; tenants = @{ schema = 'adm'; table = 'reg'; keepFrom = @('{kit}/no-such-file.txt') } } } } } (Join-Path $k3 'skills/dev-kit/kit.local.json') 8
+  $kf = (Px $L3 tenant list -Env s 2>&1 | Out-String) -replace '\s*\|?\s+', ' '; $kfc = $LASTEXITCODE
+  Expect "tenant drop refuses (data kept): a composite FK ($cfc, tc rows $tcLeft), unreadable users of a staying tenant ($ufc), a missing keepFrom file ($kfc)" ($cfc -eq 1 -and $cf -match 'composite key' -and $tcLeft -eq '1' -and $ufc -eq 1 -and $uf -match 'users of t3keep are unreadable' -and $kfc -eq 1 -and $kf -match 'tenants\.keepFrom .*does not exist')
+  Expect "tenant list: keep / drop with sizes, a schema without a registry row shown ($(($tl -split "`n" | Where-Object { $_ -match 't1|t3keep|orph' }) -join ' / '))" ($tl -match 'DROP\s+t1\s' -and $tl -match 'KEEP\s+t3keep\s.*tenants\.keep' -and $tl -match 'DROP\s+orph\s.*schema without a registry row' -and $tl -notmatch '\sadm\s|\sfa\s.*registry')
+  Expect "tenant drop: a kept tenant and a lease refuse it (exit $krc/$lrc); a dry run changes nothing ($c0)" ($krc -eq 1 -and $kr -match 'kept \(tenants\.keep\)' -and $lrc -eq 1 -and $lr -match 'in use \(L9\)' -and $dry -match 'tenant t1 : schema .* admin rows: reg 1.*det 1.*det_prof 1' -and $dry -match 'not in adm : nosuch' -and $c0 -eq '18')
+  Expect "tenant drop: registry + FK children (cycle) + listed tables + only users no staying tenant has + schema; 0 left; kept tenants verified ($after)" ($d1c -eq 0 -and $after -eq 't2,t3keep|12|22|t2|2,3|bob,carol|2,3|0' -and $d1 -match '0 references left' -and $d1 -match 'kept tenant t3keep : verify ok')
+  Expect "tenant drop: a user goes once no staying tenant has it ($users2)" ($users2 -eq 'carol' -and $d2 -match 'tenant t2 dropped')
+  Expect "doctor: db.expect differs -> WARN with the server setting; equal -> nothing ($($ex -join ' / '))" ($ex.Count -eq 1 -and $ex[0] -match 'db sort_buffer_size = 262144, db\.expect 1M')
 } finally {
   if ($srv -and -not $srv.HasExited) { & mysqladmin -h 127.0.0.1 -P $port -u root shutdown 2>&1 | Out-Null; $null = $srv.WaitForExit(30000); if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force } }
   Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue
