@@ -16,10 +16,10 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L25 init · L53 board · L219 budget · L247 launch · L449 recover · L526 pause · L570 resume · L628 program · L672 track ·
-  L945 supervise report · L986 anomalies · L1015 supervise · L1270 report · L1347 audit · L1407 storage · L1621 bugbrief ·
-  L1731 cleanup · L1855 learn · L1885 decide · L1951 health · L2013 retro due · L2023 the kit origin's main and extras ·
-  L2039 setup · L2104 guard-sendmessage
+Sections: L25 init · L53 board · L219 budget · L247 launch · L465 recover · L548 pause · L592 resume · L650 program · L694 track ·
+  L967 supervise report · L1008 anomalies · L1037 supervise · L1292 report · L1369 audit · L1429 storage · L1640 bugbrief ·
+  L1750 cleanup · L1874 learn · L1904 decide · L1970 health · L2032 retro due · L2042 the kit origin's main and extras ·
+  L2058 setup · L2123 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -336,6 +336,18 @@ $script:KitArgs = @{}   # self file -> args, read once
 function Get-KitRunArgs($S) { if ($S.selfFile) { if (-not $script:KitArgs.ContainsKey($S.selfFile)) { $script:KitArgs[$S.selfFile] = try { (Get-Content -LiteralPath $S.selfFile -Raw | ConvertFrom-Json).args } catch { $null } }; $script:KitArgs[$S.selfFile] } elseif ($S.record) { $S.record.args } }
 # agent id|item per item, notes in () dropped: 'tsk1 phase 5' and 'tsk1 phase 6' differ, 'a, b (fix round 2)' repeats 'a, b'
 function Get-KitAgentKeys($A) { @(foreach ($g in @($A.agents | Where-Object { $_ })) { foreach ($i in "$($g.items)" -split ',(?![^()]*\))') { $i = (($i -replace '\([^()]*\)', '') -replace '\s+', ' ').Trim().ToLower(); if ($i) { "$("$($g.id)".ToLower())|$i" } } }) | Select-Object -Unique }
+# a relaunch's ancestors (brief = <run>.resume.md): run names, ids, the first launch
+function Get-KitLineage($S, $WfDirs = @()) {
+  $all = @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.script -and $_.at }); $o = @{ since = $S.at; runs = @($S.run); ids = @($S.runId | Where-Object { $_ }) }; $a = Get-KitRunArgs $S; $before = [datetime]$S.at
+  for ($n = 0; $n -lt 10 -and ($pk = Get-KitParentKey $a); $n++) {
+    $par = @($all | Where-Object { [datetime]$_.at -lt $before -and @(@($_.runId, $_.run) | Where-Object { $_ } | ForEach-Object { "$(ConvertTo-KitSlug $_).resume.md" }) -contains $pk } | Sort-Object { [datetime]$_.at } | Select-Object -Last 2); if (-not $par.Count) { break }; $a = $null
+    foreach ($p in $par) { $t = [datetime]$p.at; if ($p.runId) { $o.ids += $p.runId }
+      # a typed launch record names no run: the self record its transcript ran (never the nearest by time: runs start in the same minute)
+      $m = if ($p.run) { $p } elseif ($p.runId) { @($all | Where-Object { $_.run -and $_.file -like '*self-*' -and [math]::Abs(([datetime]$_.at - $t).TotalMinutes) -le 30 -and (Resolve-KitRunId ([pscustomobject]@{ selfFile = $_.file; leaf = (Split-Path ([string]$_.script) -Leaf); run = $_.run }) $WfDirs -FnvOnly) -eq $p.runId })[0] }
+      foreach ($x in @($p, $m) | Where-Object { $_ }) { if ([datetime]$x.at -lt $o.since) { $o.since = [datetime]$x.at }; if ([datetime]$x.at -lt $before) { $before = [datetime]$x.at } }; if ($m) { $o.runs += $m.run; if (-not $a) { $a = $m.args } } }
+  }
+  $o.runs = @($o.runs | Where-Object { $_ } | Select-Object -Unique); $o.ids = @($o.ids | Select-Object -Unique); $o
+}
 # self records alone have no runId; a later launch of the same run (a relaunch, a fix round) supersedes it: one entry per run
 function Get-StoppedRuns([int]$Hours = 24, [switch]$All, [switch]$Raw) {
   $dir = Get-KitPath launches -Create; $since = (Get-Date).AddHours(-$Hours)
@@ -380,13 +392,16 @@ function Get-StoppedRunsOf($records, $selfs, [datetime]$since, [bool]$All) {
   }
 }
 # the workflow run id of a self record: the transcript that ran its launch -Self (its args hash first: one run name, several launches)
-function Resolve-KitRunId($S, $WfDirs) {
+$script:KitRunIds = @{}
+function Resolve-KitRunId($S, $WfDirs, [switch]$FnvOnly) {   # -FnvOnly: the exact launch only; a bare run name in 2+ transcripts = unknown
+  $k = "$($S.selfFile)|$FnvOnly"; if ($script:KitRunIds.ContainsKey($k)) { return $script:KitRunIds[$k] }
   $fnv = if ($S.selfFile) { "$((Get-Content -LiteralPath $S.selfFile -Raw | ConvertFrom-Json).fnv)" }
-  $base = [regex]::Escape("launch -Self -Script $($S.leaf) -Run '$($S.run)' ")
-  foreach ($rx in @(if ($fnv) { "$base.*-Fnv $fnv" }) + $base) {
-    $hit = $WfDirs | Where-Object { @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $rx -Quiet }).Count } | Select-Object -First 1
-    if ($hit) { return $hit.Name }
+  $base = [regex]::Escape("launch -Self -Script $($S.leaf) -Run '$($S.run)' "); $id = $null
+  foreach ($rx in @(if ($fnv) { "$base.*-Fnv $fnv" }) + @(if (-not $FnvOnly) { $base })) {
+    $hit = @($WfDirs | Where-Object { @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $rx -Quiet }).Count } | Select-Object -First 2)
+    if ($hit.Count -eq 1 -or ($hit.Count -and $rx -ne $base)) { $id = $hit[0].Name; break }
   }
+  $script:KitRunIds[$k] = $id; $id
 }
 # per-item steps done of a buildy area: host MRs (stored refs, refs in the items, worktree branches, task ids in titles and
 # branches), the task (status, testing doc link), worktrees; a failed call = unknown, never a state. An area skips the steps
@@ -396,11 +411,12 @@ $script:KitSteps = 'build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'
 $script:KitTasks = @{}   # per recover: tasks, comments, task MRs, MRs (one call each)
 function Get-KitOnce([string]$Key, [scriptblock]$Get) { if (-not $script:KitTasks.ContainsKey($Key)) { $script:KitTasks[$Key] = & $Get }; $script:KitTasks[$Key] }
 function Test-KitOnlineOnce { if ($null -eq $script:KitOnline) { $script:KitOnline = [bool](Test-KitOnline) }; $script:KitOnline }
-function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $null) {   # $Since: the run's launch; older found MRs are earlier work
+function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $null, [string[]]$Others = @(), [string[]]$Reported = @()) {   # Stored: the checkpoint's MRs; Reported: the wave report's   # $Since: the run's launch; older found MRs are earlier work
   $txt = "$($Ag.items) $($Ag.note)"; $tid = { param($x) Get-KitItemTasks $x }
   $tasks = @(& $tid "$($Ag.items)" | Select-Object -Unique); $c = @{}; $fail = $false   # task ids from the items only (a note has words like oauth2)
   $add = { param($repo, $n, $by) if ($repo -and $n -and $c["$repo!$n"].by -ne 'pin') { if (-not $c["$repo!$n"] -or $by -ne 'task') { $c["$repo!$n"] = @{ repo = $repo; n = "$n"; by = $by } } } }
-  foreach ($u in @($Stored | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n pin }   # the run's own refs (wave report, checkpoint)
+  foreach ($u in @($Stored | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n pin }
+  foreach ($u in @($Reported | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n report }   # the run's own refs (wave report, checkpoint)
   foreach ($m in [regex]::Matches($txt, '([\w./-]+)!(\d+)')) { & $add (Get-HostProject $m.Groups[1].Value -Raw) $m.Groups[2].Value pin }
   $kb = @{}   # repo -> the area's branches there
   if ((Test-KitOnlineOnce)) {
@@ -413,12 +429,12 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
     $fail = [bool]$global:KitHostFailed
   } elseif ($c.Count -or $tasks.Count -or @($Wts | Where-Object branch).Count) { $fail = $true }
   $mrs = @(foreach ($k in $c.Keys) { $h = if ((Test-KitOnlineOnce)) { Get-KitOnce "mr:$k" { try { Invoke-HostVerb 'mr.get' $c[$k] } catch { $null } } }
-      [pscustomobject]@{ ref = $k; url = $(if ($h.web_url) { $h.web_url } else { $k }); repo = ($c[$k].repo -split '/')[-1]; state = $(if ($h.state) { "$($h.state)" } else { 'UNKNOWN' }); text = "$($h.source_branch) $($h.title)"; body = "$($h.description)$($h.body)"; pin = $c[$k].by -eq 'pin'; by = $c[$k].by; branch = "$($h.source_branch)"; rp = $c[$k].repo; created = $h.created_at } })
-  # in a repo where the area has a branch it owns only that branch's MRs (one task id spans phases and areas); task-id MRs only
-  # where it has none yet; an MR the host could not read stays (unknown, never a state)
-  foreach ($m in @($mrs | Where-Object { $_.by -ne 'task' -and $_.branch })) { $kb[$m.rp] = @($kb[$m.rp]) + $m.branch }
+      [pscustomobject]@{ ref = $k; url = $(if ($h.web_url) { $h.web_url } else { $k }); repo = ($c[$k].repo -split '/')[-1]; state = $(if ($h.state) { "$($h.state)" } else { 'UNKNOWN' }); text = "$($h.source_branch) $($h.title)"; body = "$($h.description)$($h.body)"; pin = $c[$k].by -in 'pin', 'report'; by = $c[$k].by; branch = "$($h.source_branch)"; rp = $c[$k].repo; created = $h.created_at } })
+  # in a repo where the area has a branch (worktree, checkpoint MR) it owns only that branch's MRs: one task id spans phases and
+  # areas, a wave report can carry a sibling's MR; else task-id / reported MRs not on a sibling's branch; an unreadable MR stays (unknown)
+  foreach ($m in @($mrs | Where-Object { $_.by -in 'pin', 'branch' -and $_.branch })) { $kb[$m.rp] = @($kb[$m.rp]) + $m.branch }
   $any = @(@($Ag.branch) + @($Ag.branches) | Where-Object { $_ })
-  $mrs = @($mrs | Where-Object { $b = @(@($kb[$_.rp]) + $any | Where-Object { $_ }); $_.by -ne 'task' -or -not $_.branch -or -not $b.Count -or $_.branch -in $b })
+  $mrs = @($mrs | Where-Object { $b = @(@($kb[$_.rp]) + $any | Where-Object { $_ }); $_.by -in 'pin', 'branch' -or -not $_.branch -or $_.branch -in $b -or (-not $b.Count -and $_.branch -notin $Others) })
   $mrs = @($mrs | Where-Object { $_.state -ne 'closed' -and ($_.pin -or -not $Since -or -not $_.created -or [datetimeoffset]$_.created -ge ([datetimeoffset]$Since).AddMinutes(-10)) })   # offsets: host times are UTC, launches local
   $wip = @($Wts | Where-Object { $_.dirty -or $_.unpushed -ne '0' }).Count   # merged work ignores it: a squash leaves the branch ahead
   $prev = ''; $its = @("$($Ag.items)" -split ',(?![^()]*\))' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { $t = @(& $tid $_)[0]; if ($t) { $prev = $t } else { $t = $prev }; [pscustomobject]@{ item = $_; task = $t } })   # '<task> a, b': b is the same task
@@ -453,7 +469,7 @@ $Run = @(Split-KitList $Run)
 $runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]($RunId -or $Run.Count)) | Where-Object { (-not $RunId -or $_.runId -eq $RunId) -and (-not $Run.Count -or $_.run -in $Run) })
 if ($RunId -and -not $runs.Count) { "no launch record for $RunId within $Hours h (orch.ps1 launch -List)"; exit 0 }
 $wfDirs = @(Get-KitWorkflowDirs | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
-foreach ($s in $runs) { if (-not $s.runId) { $s.runId = Resolve-KitRunId $s $wfDirs } }
+foreach ($s in $runs) { if ($s.selfFile) { $r = Resolve-KitRunId $s $wfDirs -FnvOnly:([bool]$s.runId); if ($r) { $s.runId = $r } } }   # its transcript beats pairing by time
 $runs = @(@($runs | Where-Object { -not $_.runId }) + @($runs | Where-Object runId | Group-Object runId | ForEach-Object { $_.Group | Sort-Object at | Select-Object -Last 1 }) | Sort-Object at)   # one entry per run id: the latest args win
 $script:KitOnline = $null; $script:KitTasks = @{}
 foreach ($s in $runs) {
@@ -461,21 +477,27 @@ foreach ($s in $runs) {
   $aj = Get-LaunchArgsJson $lr; if (-not $a.runDir -and $lr.runDir) { $a | Add-Member -Force NoteProperty runDir $lr.runDir }
   "== $($s.leaf) run $(if ($s.runId) { $s.runId } else { '<id unknown>' }) ($($s.run)), launched $($s.at.ToString('yyyy-MM-dd HH:mm'))"
   "  args: $(if ($s.selfFile) { "$($s.selfFile) (.args, written by the workflow: exact)" } else { "$($s.file) (.args, typed by the coordinator: a missing field breaks resumeFromRunId)" })"
-  $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $s.run })
+  $lin = Get-KitLineage $s $wfDirs; $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -in $lin.runs })   # a relaunch continues its ancestors' agents
   foreach ($b in $board | Where-Object { $_.status -ne 'left' -or $_.paused -or $_.crashed } | Sort-Object agent) { "  board: $($b.agent) $(if ($b.paused) { 'paused' } elseif ($b.crashed) { 'crashed' } else { $b.status }), last beat $(([datetime]$b.beat).ToString('dd MMM HH:mm'))$(if ((Test-KitHolder $b) -eq $false) { ', session gone' }) | $($b.area)" }
   if (@($board | Where-Object status -eq 'left').Count) { "  board: $(@($board | Where-Object status -eq 'left').Count) entr(ies) left" }
   $wts = @(); $brief = @(); $resume = [ordered]@{}
-  $wv = if ($s.runId) { Join-Path (Get-KitPath waves) "$($s.runId).json" }; $wave = if ($wv -and (Test-Path $wv)) { (Get-Content $wv -Raw | ConvertFrom-Json).agents }   # orch.ps1 report: agents.<id>.mrs[].url
+  $waves = @($lin.ids | ForEach-Object { Join-Path (Get-KitPath waves) "$_.json" } | Where-Object { Test-Path $_ } | ForEach-Object { (Get-Content $_ -Raw | ConvertFrom-Json).agents })   # orch.ps1 report: agents.<id>.mrs[].url
   $agents = if ($a.agents) { @($a.agents) } else { @($board | Group-Object agent | ForEach-Object { [pscustomobject]@{ id = $_.Name; items = $_.Group[0].items } }) }
-  foreach ($ag in $agents) {
-    $pre = "$($ag.id)".ToLower(); $mine = @()
-    $ck = Get-KitCheckpoint $ag.id; $ours = $ck -and (-not $ck.run -or $ck.run -eq $s.run)   # the area's own refs and worktrees: wave report, checkpoint, board
-    $own = @(@($wave.($ag.id).mrs.url) + @(if ($ours) { $ck.steps | Where-Object step -eq 'mr' | ForEach-Object evidence }) | Where-Object { $_ })
-    $dirs = @(@(foreach ($root in $KitConf.WorktreeRoots) { Get-ChildItem $root -Directory -Filter "$pre-*" -ErrorAction SilentlyContinue | ForEach-Object FullName }) + @($board | Where-Object agent -eq $ag.id | ForEach-Object { $_.worktrees }) + @(if ($ours) { $ck.worktrees }) |
-      Where-Object { $d = "$_"; $d -and (Test-Path -LiteralPath $d -PathType Container) -and @($KitConf.WorktreeRoots | Where-Object { $d.Replace('\', '/').TrimEnd('/') -like "$("$_".Replace('\', '/').TrimEnd('/'))/*" }).Count } | ForEach-Object { (Get-Item -LiteralPath "$_").FullName.TrimEnd('\', '/') } | Sort-Object -Unique)   # linked worktrees only, never a main checkout
+  # every area's refs and worktrees first: an MR on a sibling's branch is the sibling's
+  $own = @{}; $rep = @{}; $dirs = @{}; $ours = @{}; $cks = @{}; $sib = @{}
+  for ($ix = 0; $ix -lt $agents.Count; $ix++) { $ag = $agents[$ix]
+    $ck = Get-KitCheckpoint $ag.id; $cks[$ix] = $ck; $ours[$ix] = $ck -and (-not $ck.run -or $ck.run -in $lin.runs); $pre = "$($ag.id)".ToLower()
+    $own[$ix] = @(@(if ($ours[$ix]) { $ck.steps | Where-Object step -eq 'mr' | ForEach-Object evidence }) | Where-Object { $_ }); $rep[$ix] = @($waves | ForEach-Object { $_.($ag.id).mrs.url } | Where-Object { $_ })
     $at = @(Get-KitItemTasks "$($ag.items)")   # a worktree on another task's branch is another run's (agent ids repeat)
-    foreach ($w in @($dirs | ForEach-Object { Get-Item -LiteralPath $_ })) {
-      $br = "$(git -C $w.FullName branch --show-current 2>$null)".Trim(); if (-not $br -or ($at.Count -and -not @($at | Where-Object { $br -match "(?i)(?<![a-z0-9])$([regex]::Escape($_))(?![a-z0-9])" }).Count)) { continue }
+    $dirs[$ix] = @(@(@(foreach ($root in $KitConf.WorktreeRoots) { Get-ChildItem $root -Directory -Filter "$pre-*" -ErrorAction SilentlyContinue | ForEach-Object FullName }) + @($board | Where-Object agent -eq $ag.id | ForEach-Object { $_.worktrees }) + @(if ($ours[$ix]) { $ck.worktrees }) |
+      Where-Object { $d = "$_"; $d -and (Test-Path -LiteralPath $d -PathType Container) -and @($KitConf.WorktreeRoots | Where-Object { $d.Replace('\', '/').TrimEnd('/') -like "$("$_".Replace('\', '/').TrimEnd('/'))/*" }).Count } | ForEach-Object { (Get-Item -LiteralPath "$_").FullName.TrimEnd('\', '/') } | Sort-Object -Unique) |   # linked worktrees only, never a main checkout
+      ForEach-Object { [pscustomobject]@{ dir = $_; branch = "$(git -C $_ branch --show-current 2>$null)".Trim() } } | Where-Object { $b = $_.branch; $b -and (-not $at.Count -or @($at | Where-Object { $b -match "(?i)(?<![a-z0-9])$([regex]::Escape($_))(?![a-z0-9])" }).Count) })
+    $sib[$ix] = @($dirs[$ix].branch)
+  }
+  for ($ix = 0; $ix -lt $agents.Count; $ix++) { $ag = $agents[$ix]
+    $mine = @(); $ck = $cks[$ix]
+    foreach ($w in @($dirs[$ix] | ForEach-Object { Get-Item -LiteralPath $_.dir | Add-Member -PassThru NoteProperty br $_.branch })) {
+      $br = $w.br
       $gd = "$(git -C $w.FullName rev-parse --absolute-git-dir 2>$null)".Trim(); $tg = if ($gd -and (Test-Path "$gd/claude-target")) { "$(Get-Content "$gd/claude-target")".Trim() } else { '' }
       $dirty = @(git -C $w.FullName status --porcelain 2>$null).Count
       $ahead = if ($tg) { "$(git -C $w.FullName rev-list --count "origin/$tg..HEAD" 2>$null)".Trim() } else { '?' }
@@ -484,7 +506,7 @@ foreach ($s in $runs) {
       $line = "$($ag.id) $($w.FullName): branch $br (target $(if ($tg) { $tg } else { '?' })), $ahead commit(s) not on the target, $dirty uncommitted file(s); last: $last"
       $wts += "  worktree: $line"; $brief += "- $line"; $mine += [pscustomobject]@{ dir = $w.FullName; branch = $br; dirty = $dirty; unpushed = $up }
     }
-    $st = Get-KitAreaState $ag $own $mine $s.at
+    $st = Get-KitAreaState $ag $own[$ix] $mine $lin.since @($sib.Keys | Where-Object { $_ -ne $ix } | ForEach-Object { $sib[$_] }) $rep[$ix]
     $sl = "$($ag.id) state: $($st.state)$(if ($st.skip.Count) { " (skip: $($st.skip -join ', '))" })"; $wts += "  $sl"; $brief += "- $sl"
     $brief += @('', "| $($ag.id) item | State | Done: skipped | Missing: runs | MRs | Tracker | Testing doc | Deployed |", '|---|---|---|---|---|---|---|---|')
     foreach ($i in $st.items) {
@@ -494,7 +516,7 @@ foreach ($s in $runs) {
     }
     $brief += ''
     $resume[$ag.id] = [ordered]@{ state = $st.state; skip = $st.skip; doc = "$(@($st.items.doc | Where-Object { $_ })[0])"; mrs = @($st.mrs | ForEach-Object { [ordered]@{ url = $_.url; repo = $_.repo; merged = $_.state -eq 'merged' } }); worktrees = @($mine.dir) }
-    if ($ours -and -not $ck.done) { $l = "$($ag.id) checkpoint: next $($ck.next); done: $(@($ck.steps | ForEach-Object { "$($_.step) $($_.evidence)".Trim() }) -join '; ')"; $wts += "  $l"; $brief += "- $l (start there; dev.ps1 checkpoint -Agent $($ag.id) -Read)" }
+    if ($ours[$ix] -and -not $ck.done) { $l = "$($ag.id) checkpoint: next $($ck.next); done: $(@($ck.steps | ForEach-Object { "$($_.step) $($_.evidence)".Trim() }) -join '; ')"; $wts += "  $l"; $brief += "- $l (start there; dev.ps1 checkpoint -Agent $($ag.id) -Read)" }
   }
   $wts
   foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ -and $_.run -eq $s.run })) { "  decision pending: $($d.id) $($d.agent) item $($d.item): $($d.question)" }
@@ -1404,14 +1426,13 @@ if ($Json) { ConvertTo-Json @($out) -Depth 4; return }
 foreach ($e in $out) { '{0:MM-dd HH:mm:ss} {1,-10} {2} -> {3}{4}' -f $e.at, $e.agent, $e.what, $e.result, $(if ($null -ne $e.ms) { ' ' + $(if ($e.ms -ge 60000) { "$([math]::Round($e.ms / 60000, 1)) min" } elseif ($e.ms -ge 1000) { "$([math]::Round($e.ms / 1000)) s" } else { "$($e.ms) ms" }) }) }
 }
 
-# ---- storage: free space per drive each minute (.state/storage), trend verdict, folder scans on a drop, the rescue (kit.example.json storage)
-# thresholds and cadences: storage.* (defaults below; TODO-PARAM: to be learned per drive)
+# ---- storage: free space per drive each minute, trend verdict, folder scans, the rescue (kit.example.json storage; TODO-PARAM)
 function Get-KitStorageConf {
   $d = [ordered]@{ watch = @(); sampleSeconds = 60; keepDays = 30; watchFreeGB = 50; actHours = 1; factor = 10; minRateGBh = 5; scanDropGB = 1; scanCooldownMin = 30; scanHours = 24; drillGB = 1; flatDays = 7; holdMinutes = 60 }
   foreach ($k in @($d.Keys)) { $d[$k] = Get-KitSetting "storage.$k" $d[$k] }
   $d.actFreeGB = [double](Get-KitSetting 'supervise.minDiskFreeGB' 30); $d.db = Get-KitSetting 'storage.db' $null; [pscustomobject]$d
 }
-# fixed drives (no snap / tmpfs / overlay / iso mounts); kit = it holds the workspace, .runtime, temp, the profile (build caches), a worktree root or a watched folder
+# fixed drives (no snap / tmpfs / overlay / iso); kit = holds the workspace, .runtime, temp, the profile, a worktree root or watch[]
 function Get-KitDrives {
   $ds = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady -and $_.TotalSize -gt 1GB -and "$($_.DriveFormat)" -notmatch '^(squashfs|tmpfs|overlay|iso9660|udf|devtmpfs|ramfs)$' })
   $kp = @(@($KitConf.Workspace, (Get-KitRuntime), [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('UserProfile')) + @($KitConf.WorktreeRoots) + @(Get-KitSetting 'storage.watch' @()) | Where-Object { $_ } | ForEach-Object { try { [IO.Path]::GetFullPath("$_") } catch {} })
@@ -1432,8 +1453,7 @@ function Get-KitDiskNormal($Xs) {
   $v = @($h.Values); $r = @(for ($i = 1; $i -lt $v.Count - 1; $i++) { ($v[$i - 1].free - $v[$i].free) / [math]::Max(1.0, ($v[$i].t - $v[$i - 1].t) / 3600) }) | Where-Object { $_ -gt 0.01 } | Sort-Object
   if ($r.Count) { [math]::Max(0.1, [math]::Round($r[[int][math]::Floor($r.Count / 2)], 2)) } else { 0.1 }
 }
-# pure: samples (t, free) + config + normal -> fill rate (last 10 min, sustained over both halves), drop since the last heartbeat, hours to full,
-# level; the static floors (actFreeGB, watchFreeGB) only on a kit drive, the rescue only on a sustained fill
+# pure: samples -> fill rate (10 min, both halves), drop since the last heartbeat, hours to full, level (floors: kit drives only)
 function Get-KitDiskVerdict($Xs, $C, [double]$Normal = 0.1, [bool]$Kit = $true) {
   $xs = @($Xs | Sort-Object t); if (-not $xs.Count) { return $null }; $cur = $xs[-1]
   $rt = { param($s) $w = @($xs | Where-Object { $_.t -ge $cur.t - $s })[0]; $hrs = ($cur.t - $w.t) / 3600; if ($hrs -ge $s / 3600 * 0.5) { ($w.free - $cur.free) / $hrs } else { 0.0 } }
@@ -1446,7 +1466,7 @@ function Get-KitDiskVerdict($Xs, $C, [double]$Normal = 0.1, [bool]$Kit = $true) 
   $lvl = if ($rescue -or ($Kit -and $cur.free -lt $C.actFreeGB)) { 'ACT' } elseif ($anom -or ($Kit -and $cur.free -lt $C.watchFreeGB)) { 'WATCH' } else { 'OK' }
   [pscustomobject]@{ free = $cur.free; rate = $rate; drop = $drop; ttf = $ttf; normal = $Normal; anomaly = $anom; rescue = $rescue; level = $lvl; scan = $drop -ge $C.scanDropGB }
 }
-# top writers: bytes each process wrote between two snapshots 2 s apart (a real rate, not a lifetime total)
+# top writers: bytes written between two snapshots 2 s apart (a rate, not a lifetime total)
 function Get-KitTopWriters([int]$N = 3) {
   $snap = { $h = @{}
     if ($KitIsWindows) { foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, Name, WriteTransferCount -ErrorAction SilentlyContinue) { $h[[int]$p.ProcessId] = @($p.Name, [double]$p.WriteTransferCount) } }
@@ -1455,11 +1475,10 @@ function Get-KitTopWriters([int]$N = 3) {
   $a = & $snap; Start-Sleep -Seconds 2; $b = & $snap
   @($b.Keys | Where-Object { $a[$_] } | ForEach-Object { [pscustomobject]@{ pid = $_; name = $b[$_][0]; mbs = [math]::Round(($b[$_][1] - $a[$_][1]) / 2MB, 2) } } | Where-Object mbs -gt 0 | Sort-Object mbs -Descending | Select-Object -First $N)
 }
-# space of deleted files still open: Windows <root>\$Extend\$Deleted when readable (rarely); else the scan's unexplained space shows it
+# deleted-but-open space: <root>\$Extend\$Deleted when readable (rarely; else the scan's unexplained)
 function Get-KitHeldDeletedGB([string]$Root) { if (-not $KitIsWindows) { return $null }; try { [math]::Round((Get-ChildItem -LiteralPath (Join-Path $Root '$Extend\$Deleted') -Force -Recurse -File -ErrorAction Stop | Measure-Object Length -Sum).Sum / 1GB, 2) } catch { $null } }
 function Invoke-KitShellLine([string]$Cmd, [int]$Sec = 5) { if ($KitIsWindows) { Invoke-KitExe 'cmd.exe' @() $Sec "/d /s /c `"$Cmd`"" } else { Invoke-KitExe '/bin/sh' @('-c', $Cmd) $Sec } }
-# storage.db.use: a command printing one line per running query: <id> <temp GB> <seconds> <text>; storage.db.kill: a command with {id}
-# 5 s at most (a db on a full disk hangs): a timeout skips the db for 5 min
+# storage.db.use / kill (kit.example.json); 5 s at most (a db on a full disk hangs): a timeout skips the db 5 min
 function Get-KitDbQueries($C) {
   if (-not $C.db.use) { return @() }; $st = Get-KitStorageState; if ($st.dbDownAt -and ((Get-Date) - [datetime]$st.dbDownAt).TotalMinutes -lt 5) { return @() }
   $r = Invoke-KitShellLine $C.db.use; if ($r.timedOut) { Set-KitStorageState { param($s) $s.dbDownAt = (Get-Date).ToString('o') }; return @() }
@@ -1471,7 +1490,7 @@ function Stop-KitDbQuery($C, $Q, [string]$Why) {
   Write-KitLog disk db-kill ([ordered]@{ id = $Q.id; gb = $Q.gb; secs = $Q.secs; query = $Q.query; why = $Why; code = $r.code })
   "killed db query $($Q.id) ($($Q.gb) GB temp, $($Q.secs) s, $Why): $($Q.query)"
 }
-# one sample per fixed drive, at most once per sampleSeconds machine-wide (board beats and supervise both call it); the db temp watchdog
+# one sample a drive, once per sampleSeconds machine-wide (beats, supervise); the db temp watchdog
 function Invoke-KitStorageTick([switch]$Force) {
   $c = Get-KitStorageConf; $now = [DateTimeOffset]::Now.ToUnixTimeSeconds(); $stamp = Join-Path (Get-KitPath storage -Create) 'last-sample.txt'
   $go = Invoke-KitLocked $stamp { $l = if (Test-Path -LiteralPath $stamp) { "$(Get-Content -LiteralPath $stamp -Raw)".Trim() }; if (-not $Force -and $l -match '^\d+$' -and $now - [long]$l -lt $c.sampleSeconds) { $false } else { [IO.File]::WriteAllText($stamp, "$now"); $true } }
@@ -1487,7 +1506,7 @@ function Invoke-KitStorageTick([switch]$Force) {
   foreach ($v in $out | Where-Object rescue) { Invoke-KitDiskRescue $c $v $q }
   $out
 }
-# a sustained fill only, once per 10 min per drive: the db query using temp killed, new builds held (dev.ps1 gate), extras' Stop-KitDiskWriter* hooks
+# a sustained fill, once per 10 min a drive: the db query holding temp killed, builds held, extras' Stop-KitDiskWriter* hooks
 function Invoke-KitDiskRescue($C, $V, $Q) {
   $why = "disk $($V.drive): $($V.free) GB free, filling $($V.rate) GB/h, full in $($V.ttf) h"
   $go = Set-KitStorageState { param($s) if (-not $s.rescues) { $s.rescues = @{} }; $h = $s.rescues[$V.drive]
@@ -1499,7 +1518,7 @@ function Invoke-KitDiskRescue($C, $V, $Q) {
   Write-KitLog disk rescue ([ordered]@{ drive = $V.drive; free = $V.free; rate = $V.rate; ttf = "$($V.ttf)"; lines = $lines })
   Start-KitStorageScan $V.drive
 }
-# folder sizes in the background: the tracked set per drive (defaults from the OS and profile, storage.watch, learned children)
+# the default tracked folders of a drive
 function Get-KitStorageDefaults([string]$Root) {
   $h = [Environment]::GetFolderPath('UserProfile'); $la = [Environment]::GetFolderPath('LocalApplicationData'); $ra = [Environment]::GetFolderPath('ApplicationData')
   $c = @($h, $la, $ra, [IO.Path]::GetTempPath(), [Environment]::GetFolderPath('CommonApplicationData'), (Get-KitRuntime)) + @($KitConf.WorktreeRoots) +
@@ -1518,7 +1537,7 @@ function Start-KitStorageScan([string]$Drive) {
   $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru }
   try { $p.PriorityClass = 'Idle' } catch {}; Write-KitAtomic $lk (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id) } | ConvertTo-Json)
 }
-# one pass: bytes per directory, rolled up to every tracked folder and to each of its direct children (drill-down); no MFT, no per-file prefix checks
+# one pass: bytes per directory, rolled up to each tracked folder and its direct children
 function Measure-KitFolders([string]$Root, [string[]]$Tracked) {
   $opt = [IO.EnumerationOptions]@{ RecurseSubdirectories = $true; IgnoreInaccessible = $true; AttributesToSkip = [IO.FileAttributes]::ReparsePoint }
   $dir = @{}; foreach ($f in [IO.DirectoryInfo]::new($Root).EnumerateFiles('*', $opt)) { $dir[$f.DirectoryName] = [double]$dir[$f.DirectoryName] + $f.Length }
@@ -1530,7 +1549,7 @@ function Measure-KitFolders([string]$Root, [string[]]$Tracked) {
   }
   [pscustomobject]@{ sizes = $tot; kids = $kids; rootFiles = [double]$dir[$Root] + [double]$dir[$Root.TrimEnd('\', '/')] }
 }
-# pure on its inputs: the grown folder's grown child becomes tracked (one level deeper per scan); learned folders flat for flatDays drop out
+# the grown folder's grown child becomes tracked (one level a scan); learned folders flat flatDays drop out
 function Update-KitTracked($Fo, $Scan, $Prev, $C, [datetime]$Now = (Get-Date)) {
   if (-not $Prev) { return @() }; $sz = $Scan.sizes
   $grew = @($sz.Keys | Where-Object { $Prev.sizes.ContainsKey($_) } | ForEach-Object { [pscustomobject]@{ path = $_; gb = [math]::Round($sz[$_] - [double]$Prev.sizes[$_], 2) } } | Where-Object gb -ge $C.drillGB | Sort-Object gb -Descending)   # a folder new to the set has no growth yet
@@ -1561,7 +1580,7 @@ function Invoke-KitStorageScan([string]$Drive) {
     "scan ${Drive}: used $used GB, unexplained $($scan.unexplained) GB$(if ($null -ne $scan.deleted) { ", deleted-but-open $($scan.deleted) GB" }); grew: $(if ($grew.Count) { @($grew | Select-Object -First 5 | ForEach-Object { "$($_.path) +$($_.gb) GB" }) -join '; ' } else { 'nothing above ' + $c.drillGB + ' GB' })"
   } finally { Remove-Item -LiteralPath (Get-KitStorageFile $Drive 'scan.lock') -ErrorAction SilentlyContinue }
 }
-# the folders that grew between the last two scans, each against its own normal (GB/day over the history)
+# folders grown between the last two scans, against their normal (GB/day)
 function Get-KitFolderGrowth([string]$Drive, [int]$Top = 3) {
   $fo = try { Get-Content -LiteralPath (Get-KitStorageFile $Drive 'folders.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; $s = @($fo.scans); if ($s.Count -lt 2) { return @() }
   $a = $s[-2]; $b = $s[-1]; $days = [math]::Max(0.01, ($b.t - $a.t) / 86400); $span = [math]::Max(0.01, ($b.t - $s[0].t) / 86400)
@@ -1569,7 +1588,7 @@ function Get-KitFolderGrowth([string]$Drive, [int]$Top = 3) {
       [pscustomobject]@{ path = $_; gb = [double]$now; grew = [math]::Round([double]$now - [double]$was, 2); perDay = [math]::Round(([double]$now - [double]$was) / $days, 2); normal = [math]::Round([math]::Abs([double]$now - [double]$first) / $span, 2) } } |
     Where-Object { $_.grew -gt 0 } | Sort-Object grew -Descending | Select-Object -First $Top)
 }
-# the supervise lines and flags: one line per drive; ACT names the top writer, held deleted space, the db's heaviest query, the grown folders
+# supervise: one line per drive; ACT names the top writers, the db query's temp, the grown folders
 function Get-KitStorageRound {
   $c = Get-KitStorageConf; $vs = @(Invoke-KitStorageTick -Force); $st = Get-KitStorageState
   if (-not $st.normalAt -or ((Get-Date) - [datetime]$st.normalAt).TotalHours -ge 1) {   # hourly: the learned normal (14 days), retention

@@ -293,11 +293,11 @@ function Invoke-HostVerb($V, $A) { if ($V -eq 'mr.list') { return @($br.Keys | W
   if ($A.n -eq '47') { throw 'host down' }; @{ state = $(if ($A.n -in 39, 45) { 'merged' } else { 'opened' }); source_branch = $br[[int]$A.n]; description = 'Testing doc: https://d.example/1'; created_at = '2026-10-24T00:00:00Z' } }
 function Find-TaskMrs($t) { if ($t -eq 'tsk1abc') { 'g/api!39', 'g/api!43' } elseif ($t -eq 'tsk2abc') { 'g/api!45' } else { 'g/web!47' } }
 function Get-TrackerTask($t) { @{ status = 'Open' } }; function Get-TrackerComments { }; function Read-KitTracking { @{ tasks = @{ tsk1abc = @{ mrs = @('a!39') } } } }; $KitConf.RepoAliases = [pscustomobject]@{ api = 'a' }
-foreach ($c in @('tsk1abc phase 6', '', 't-tsk1abc-6a'), @('tsk1abc phase 5', 'https://h.example/g/api/-/merge_requests/39', ''), @('tsk2abc rates, surcharges', '', 't-tsk2abc-rates'), @('tsk2abc orders', '', 't-tsk2abc-orders'), @('tsk1abc phase 0', '', ''), @('tsk4abc web', '', '', 't-tsk4abc-web')) {
-  $s = Get-KitAreaState @{ id = 'A'; items = $c[0]; branch = $c[3] } @($c[1] | Where-Object { $_ }) @(if ($c[2]) { [pscustomobject]@{ dir = $args[1]; branch = $c[2]; dirty = 0; unpushed = '0' } }) ([datetime]'2026-10-23T10:00')
+foreach ($c in @('tsk1abc phase 6', '', 't-tsk1abc-6a'), @('tsk1abc phase 5', 'https://h.example/g/api/-/merge_requests/39', ''), @('tsk2abc rates, surcharges', '', 't-tsk2abc-rates'), @('tsk2abc orders', '', 't-tsk2abc-orders'), @('tsk1abc phase 0', '', ''), @('tsk4abc web', '', '', 't-tsk4abc-web'), @('tsk1abc phase 6', '', 't-tsk1abc-6a', '', '', 'https://h.example/g/api/-/merge_requests/39'), @('tsk1abc phase 0', '', '', '', 't-tsk1abc-6a')) {
+  $s = Get-KitAreaState @{ id = 'A'; items = $c[0]; branch = $c[3] } @($c[1] | Where-Object { $_ }) @(if ($c[2]) { [pscustomobject]@{ dir = $args[1]; branch = $c[2]; dirty = 0; unpushed = '0' } }) ([datetime]'2026-10-23T10:00') @($c[4] | Where-Object { $_ }) @($c[5] | Where-Object { $_ })
   "$($s.state):$(@($s.items | ForEach-Object { $_.mrs.ref | Sort-Object }) -join ' ')" }
 '@ @($O, $gw)
-Expect 'recover: MRs by the area''s branch (worktree, checkpoint MR), task id only without one; merged + registered = done' (($pa -join '|') -eq 'open:g/api!43|done:g/api!39|merged:g/api!45 g/api!45|start:|open:g/api!39 g/api!43|unknown:g/web!47')
+Expect 'recover: MRs by the area''s branch (worktree, checkpoint MR; a reported one on another branch dropped), task id only without one, never a sibling''s branch; merged + registered = done' (($pa -join '|') -eq 'open:g/api!43|done:g/api!39|merged:g/api!45 g/api!45|start:|open:g/api!39 g/api!43|unknown:g/web!47|open:g/api!43|done:g/api!39')
 $lq = TkPath $k launches -Create; Remove-Item "$lq/*.json"; $t0 = [datetime]'2026-10-23T10:00'
 $rec = { param($f, $m, $x) $r = [ordered]@{ script = "$k/workflows/buildy.js"; at = $t0.AddMinutes($m).ToString('o') }; foreach ($q in $x.Keys) { $r[$q] = $x[$q] }; & $J $r "$lq/$f.json" 10 }
 $ar = { param($b, $i) @{ brief = $b; agents = @(@{ id = 'W1'; items = $i }) } }
@@ -308,8 +308,10 @@ $ar = { param($b, $i) @{ brief = $b; agents = @(@{ id = 'W1'; items = $i }) } }
 $hl = & { . (Lib); @{ holderPid = $PID; holderStart = (Get-KitPidStart $PID) } }   # a relaunch whose session lives
 & $rec wf_c3 30 @{ runId = 'wf_c3'; args = @{} }; & $rec self-buildy-c3-9 30 @{ run = 'c3'; args = (& $ar 'C:/b/c3.md' 'tsk6abc') }; & $rec wf_d4 70 @{ runId = 'wf_d4'; args = @{} }; & $rec self-buildy-wf-c3.resume-1-10 71 (@{ run = 'wf-c3.resume-1'; args = (& $ar "$lq/wf-c3.resume.md" 'tsk6abc') } + $hl)
 $runs = { (& { . $O; Get-StoppedRuns -Hours 99999 -All | ForEach-Object run } | Sort-Object) -join ' ' }
+$ln = & { . $O; $l = Get-KitLineage @(Get-StoppedRuns -Hours 99999 -All | Where-Object run -eq 'wf-a1.resume-2633')[0]; "$($l.since.ToString('HH:mm'))|$($l.runs -join ',')|$($l.ids -join ',')" }
 $l1 = & $runs; $dn = Px $O launch -Done -RunId wf_b2 | Out-String; $null = Px $O launch -Done -RunId wf_c3; $l2 = & $runs
 & $rec self-buildy-r3-5 120 @{ run = 'r3'; args = (& $ar "$lq/fix-r2.resume.md" 'tsk9abc'); completed = 'x' }; $l3 = & $runs
+Expect 'recover: a relaunch''s lineage: the first launch, its ancestors'' run names and ids' ($ln -eq '10:00|wf-a1.resume-2633|wf_b2,wf_a1')   # a typed launch's run name only from its transcript (none here)
 Expect 'recover: a relaunch replaces its original, the same agent + items twice shows once (phases stay); launch -Done closes the lineage, never a live relaunch; a closed relaunch hides its older parent' (
   "$l1|$l2|$l3" -eq 'fix-r2 ph5 ph6 wf-a1.resume-2633 wf-c3.resume-1|fix-r2 ph5 ph6 wf-c3.resume-1|ph5 ph6 wf-c3.resume-1' -and -not @('wf_a1', 'wf_b2', 'p6-1', 'resume-2633' | Where-Object { $dn -notmatch $_ }).Count)
 Remove-TestKit $k
