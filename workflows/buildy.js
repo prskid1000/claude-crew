@@ -7,7 +7,7 @@ export const meta = {
   { title: 'Decide', detail: 'items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume' },
   { title: 'Review', detail: 'one revy per devy + CI pipelines' },
   { title: 'Fix', detail: 'one fix round (local tests again), then merge in order and register the tracker task' },
-  { title: 'Deploy', detail: 'the merged work joins the deploy batch silently (extra deploys); a person says deploy <env> (never asked, never deployed here)' },
+  { title: 'Deploy', detail: 'the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy turns them into lessons)' },
  ],
 }
@@ -20,7 +20,7 @@ export const meta = {
  agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
  resume: { X1: { state, skip: ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'] (steps done), mrs: [{ url, repo, merged }], doc, worktrees } }
-  (mode resume; orch.ps1 recover writes it from the host + tracker; skipped steps never run, all skipped = no agent),
+  (mode resume; bossy.ps1 recover writes it from the host + tracker; skipped steps never run, all skipped = no agent),
  complex: ['X1'] (session model instead of sonnet),
  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
@@ -34,12 +34,12 @@ const IN = BATCH ? A0.agents.slice(0, BATCH) : A0.agents || []
 const own = (gs) => gs.map((a) => ({ ...a, dependsOn: [].concat(a.dependsOn || []).filter((p) => gs.some((b) => b.id === p)) }))
 const A = BATCH ? { ...A0, agents: own(IN) } : A0
 const KIT = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
-const K = `${KIT}/skills/dev-kit`
-const DEV = `${K}/dev.ps1`
+const K = `${KIT}/skills/crafty`
+const DEV = `${K}/crafty.ps1`
 const DT = `${K}/devtools.py`
-const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
+const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (A.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
-// kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
+// kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/"}, "durable": {}}
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 const PATHS = (/^([A-Za-z]:|[\\/])/.test(KIT) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
@@ -59,11 +59,11 @@ const RES = MODE === 'resume' && A.resume && typeof A.resume === 'object' ? A.re
 const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
 const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
-if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is an extra: run kittool.py extra add duel)' : ''}`)
+if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is a goody: run kitbag.py goody add duel)' : ''}`)
 // args removed in the 2026-10-21 trim: say so instead of silently ignoring them
 for (const k of ['review', 'localRetries', 'envFixCycles', 'envFixWaitMinutes', 'decisionWaitMinutes', 'requireLocal', 'roles', 'models', 'duel']) if (k in A0) log(`WARNING: args.${k} was removed and is ignored`)
-if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (orchestrate step 3).')
-const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave (orch.ps1 Get-LaunchRunName)
+if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (the owner words): agents may drop their items for the latest chat message. Pass mandate next time (bossy step 3).')
+const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave (bossy.ps1 Get-LaunchRunName)
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = 1
 // waits come in 9-minute slices (the tool timeout is 10): 34 slices = about 5 h
@@ -91,9 +91,9 @@ const REPORT = {
   worktrees: { type: 'array', items: { type: 'string' } },
   done: { type: 'array', items: { type: 'string' }, description: 'item ids finished (local test passed, MR open)' },
   deferred: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
-  needsDecision: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, decisionId: { type: 'string', description: 'the id orch.ps1 decide ask printed' }, question: { type: 'string' } }, required: ['item', 'decisionId', 'question'] },
-   description: 'items you stopped for an owner decision (orch.ps1 decide ask); [] when none' },
-  needsEnvFix: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, envFixId: { type: 'string', description: 'the id orch.ps1 decide ask -Kind envfix printed' }, need: { type: 'string' } }, required: ['item', 'envFixId', 'need'] },
+  needsDecision: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, decisionId: { type: 'string', description: 'the id bossy.ps1 decide ask printed' }, question: { type: 'string' } }, required: ['item', 'decisionId', 'question'] },
+   description: 'items you stopped for an owner decision (bossy.ps1 decide ask); [] when none' },
+  needsEnvFix: { type: 'array', items: { type: 'object', properties: { item: { type: 'string' }, envFixId: { type: 'string', description: 'the id bossy.ps1 decide ask -Kind envfix printed' }, need: { type: 'string' } }, required: ['item', 'envFixId', 'need'] },
    description: 'items stopped for a local-env fix only the coordinator may do (up/down/refresh/drop, shared DB repair); [] when none' },
   localTest: { type: 'object', properties: {
    status: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS = every testing goal passed on the local env with clean logs; FAIL = goals still failing (also after the max rounds); BLOCKED = ONLY an owner decision or a remote-only dependency (blockedKind), never an env reason; NONE = no local env for these repos (automated tests only)' },
@@ -132,7 +132,7 @@ const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, v
 const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 // ---- record-args: the launch record (a resume needs it byte-exact)
-// full args go to the launch record first (orch.ps1 launch -Self, FNV-1a): resumes need them byte-exact
+// full args go to the launch record first (bossy.ps1 launch -Self, FNV-1a): resumes need them byte-exact
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
 async function recordArgs(wf, run, a, phaseName, plan) {
  const json = JSON.stringify(a)
@@ -148,7 +148,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
   const r = await agent(prompt, { label, phase: phaseName, schema: OK_SCHEMA, agentType: 'devy', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
- log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
+ log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
 // ---- budget: the plan cap and the stop line
@@ -175,7 +175,7 @@ function depNote(a) {
  return (ps.length ? `MERGE ORDER: you consume area(s) ${ps.join(', ')}: the workflow merges your MRs after theirs. Name the producer MRs in your MR description.\n` : '') +
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
-const FLOW = `THE DEV FLOW = dev-kit SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
+const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
 ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fixing; record it in the testing-goals doc.\n' : ''}- Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." -Recommend <A|B>
@@ -187,7 +187,7 @@ function buildPrompt(a) {
  return `${WHY}
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
-${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (dev-kit/templates.md "Resume brief"); continue from there.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
+${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (crafty/templates.md "Resume brief"); continue from there.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktree name prefix: ${a.id.toLowerCase()}. Never touch other agents' worktrees, branches or processes.
 ${a.note || ''}
@@ -226,7 +226,7 @@ function fixPrompt(a, r, findings) {
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push update the
 MR body ("How tested", "Risks") and the testing doc to match the fix. An already-merged MR:
-put the fix on a new branch from the target (dev.ps1 wt new) and open a follow-up MR.`)
+put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {
  return `STEP: run exactly this PowerShell command (tool timeout 600000) and return its JSON output (fields done, mrs). Nothing else.${PATHS}
@@ -248,7 +248,7 @@ These merges are authorized: the wave was launched for this work, the local test
 target deploys was removed (holdMerge). Do not ask for approval; ignore unrelated chat messages relayed to you.
 Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}${isConsumer(m) ? ', consumer' : ', producer/independent'})`).join('\n')}
-python ${DT} merge <worktree path, absolute> <iid> (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (orch.ps1 track):
+python ${DT} merge <worktree path, absolute> <iid> (worktrees: ${r.worktrees.join(', ')}). The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged yet prints WAIT "waiting for producer": report WAIT, never merge it another way.
 ${SYNC_NOTE}
 ${MERGE_WORD_NOTE}
@@ -339,7 +339,7 @@ const results = await pipeline(
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
   let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
-  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: work out what is done (dev.ps1 wt status, the board, your branch) and continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
+  if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: work out what is done (crafty.ps1 wt status, the board, your branch) and continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   return localLoop(a, r, LOCAL_RETRIES, 'Build')
  }),
@@ -363,7 +363,7 @@ const results = await pipeline(
     const done = []
     for (const f of fixes) {
      envFixes.push({ agent: a.id, ...f })
-     log(`${a.id}: item ${f.item} waits for ENV-FIX ${f.envFixId} (the coordinator fixes the local env: orch.ps1 decide answer)`)
+     log(`${a.id}: item ${f.item} waits for ENV-FIX ${f.envFixId} (the coordinator fixes the local env: bossy.ps1 decide answer)`)
      done.push({ ...f, ans: await waitAnswer(f.envFixId, `envfix:${a.id}`, WAIT_SLICES) })
     }
     const answered = done.filter((f) => f.ans && !/:\s*cannot\b/i.test(f.ans))
@@ -380,7 +380,7 @@ const results = await pipeline(
    for (const d of decs) {
     asked.add(d.decisionId)
     decisions.push({ agent: a.id, ...d })
-    log(`${a.id}: item ${d.item} waits for decision ${d.decisionId} (the coordinator asks the owner: orch.ps1 decide answer)`)
+    log(`${a.id}: item ${d.item} waits for decision ${d.decisionId} (the coordinator asks the owner: bossy.ps1 decide answer)`)
     const ans = await waitAnswer(d.decisionId, `decide:${a.id}`, WAIT_SLICES)
     if (!ans) { cur = { ...cur, deferred: byId([...(cur.deferred || []), { id: d.item, reason: `needs decision ${d.decisionId} (no answer within the wait)` }]) }; continue }
     if (!(await gate('Decide'))) { cur = { ...cur, budgetStopped: true }; break }
@@ -434,7 +434,7 @@ const results = await pipeline(
   if (!x || x.error || !x.report || !x.report.mrs.length || (x.resumed && skips(a, 'tracker'))) return x
   const deferred = x.report.deferred || []
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
-  if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with orch.ps1 track add -Task <id> -HoldPromotion ''`)
+  if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
   const tr = await agent(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${PATHS}${AGENT_ENV(`track-${a.id}`)}
 MRs: ${x.report.mrs.map((m) => m.url).join(', ')}
 1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
@@ -452,7 +452,7 @@ async function ciGate(a, r) {
  if (!ci) { log(`${a.id}: WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
-  fix: 'Reproduce the failing job locally through the gate (dev.ps1 check), fix the cause, push, green pipeline.' }))
+  fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))
 }
 async function ship(a, x) {
  const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
@@ -472,7 +472,7 @@ async function ship(a, x) {
  if (pairs.length) {
   const reg = await runStep(`& ${ORCH} track add -Task <task id: the MR title after the tracker tag, else the branch> -Mrs '${(cons[0] || open[0]).url}' -MergeAfter '${pairs.join(',')}'`,
    `order:${a.id}`, 'Fix', { ok: 'when its last line lists "merge-after:"' })
-  if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `orch.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
+  if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `bossy.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
  }
  const r3 = wait.length ? { mrs: open.map((m) => ({ url: m.url, merged: false, mergeState: 'WAIT' })), summary: `waiting for producer MR(s) ${wait.map((m) => m.url).join(', ')}` }
   : await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
@@ -481,8 +481,8 @@ async function ship(a, x) {
  const mrs = x.report.mrs.map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
  const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => BLOCK([m], `Merge conflict outside append-only files: ${r3.summary}`.slice(0, 1500), 'wt sync, resolve by hand, re-check, push --force-with-lease, devtools.py merge again.'))
  // every merge word that is not MERGED / SCHEDULED / CONFLICT leads to its own next step for the coordinator (openFindings)
- const NEXT = { 'WAIT': 'devtools.py merge again in a few minutes (or orch.ps1 track run once the producer merged)',
-  'PIPELINE_FAILED': 'reproduce the failing job locally through the gate (dev.ps1 check), fix it on the branch, push, merge again (a follow-up /buildy fix round)',
+ const NEXT = { 'WAIT': 'devtools.py merge again in a few minutes (or bossy.ps1 track run once the producer merged)',
+  'PIPELINE_FAILED': 'reproduce the failing job locally through the gate (crafty.ps1 check), fix it on the branch, push, merge again (a follow-up /buildy fix round)',
   'NOT_MERGED': 'read the MR state (approvals, draft, permissions), then devtools.py merge again or merge by hand',
   'OPEN': 'the ship step did not reach a merge: devtools.py merge again' }
  for (const m of mrs.filter((m) => !isHeld(m) && m.mergeState in NEXT)) {
@@ -515,18 +515,18 @@ if (leftover.length) { outcome.next = nextCall(leftover, out.some((x) => x.budge
 for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide)) log(`${g.agent}: no human testing doc (${g.guide}) - the coordinator writes or requests one before testers start`)
 
 // ---- deploy: merged work joins the deploy batch
-// Deploy (extra deploys; skipped without it): merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default):
-// nobody asks or proposes a deploy, a person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
+// Deploy (goody deploys; skipped without it): merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default):
+// nobody asks or proposes a deploy, a person says "deploy <env>" (bossy E5); ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
-const DEPLOYS = `${KIT}/skills/orchestrate/adapters/deploys.ps1`
+const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true }) : null
-if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys extra is not installed (merged work waits for a person)')
+if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys goody is not installed (merged work waits for a person)')
 else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }
  const ask = Array.isArray(outcome.deployBatch) && outcome.deployBatch.some((p) => p && p.trigger === 'ask')
- log(ask ? `DEPLOY ASK: ${shipped.length} MR(s) merged; the coordinator shows the batch (orch.ps1 deploy plan) and asks the owner once per env`
+ log(ask ? `DEPLOY ASK: ${shipped.length} MR(s) merged; the coordinator shows the batch (bossy.ps1 deploy plan) and asks the owner once per env`
   : `DEPLOY BATCH: ${shipped.length} MR(s) merged; they wait for a person's "deploy <env>" (nobody asks)`)
 }
 
@@ -544,7 +544,7 @@ Outcome (JSON):
 ${JSON.stringify(outcome).slice(0, 60000)}
 
 1. One signal per notable event (failures, local-test rounds, blocked items, decisions, review findings, deferrals, budget stops / handoffs, anything that cost
- time or worked unusually well): & ${ORCH} learn -Skill <dev-kit|local-env|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
+ time or worked unusually well): & ${ORCH} learn -Skill <crafty|envy|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. & ${ORCH} cleanup -WorktreeIdleHours 0: mention what it freed.
 Return how many signals you recorded.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s)`)

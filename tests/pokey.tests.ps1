@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-qa.tests.ps1: qa.ps1 finalize (result rule), seats, api, retest; browser.mjs.
-Usage: pwsh -NoProfile -File <kit>/tests/qa.tests.ps1 (or tests/kit-tests.ps1 -Area qa).
+pokey.tests.ps1: pokey.ps1 finalize (result rule), seats, api, retest; browser.mjs.
+Usage: pwsh -NoProfile -File <kit>/tests/pokey.tests.ps1 (or tests/kit-tests.ps1 -Area pokey).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit qa; $Q = Join-Path $k 'skills/qa-kit/qa.ps1'; $store = Join-Path $k '.state/tracker-none'
+$k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $store = Join-Path $k '.state/tracker-none'
 $env:KIT_TRACKER_TYPE = 'none'; $env:KIT_REPORT_TYPE = 'markdown'
 function New-Run($name, $items) {
   $d = Join-Path (Kd) "runs/$name"; New-Item -ItemType Directory -Force $d | Out-Null
@@ -43,7 +43,7 @@ Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 
 $rb = Get-Content "$b/B1/report.md" -Raw; $rc1 = Get-Content "$c/C1/report.md" -Raw
 Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observed only in the table' ($rb -match '\| \[details\]\(#c2--s\) \|' -and ([regex]::Matches($rb, 'o C2')).Count -eq 1 -and
   $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
-Copy-Item (Join-Path $src 'skills/dev-kit/templates.md') (Join-Path $k 'skills/dev-kit/')   # the prose limits
+Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
 $rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) x'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
 $po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
@@ -67,7 +67,7 @@ Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -j
 $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
 Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
 # finalize, fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest real
-$dt = Join-Path $k 'skills/dev-kit'
+$dt = Join-Path $k 'skills/crafty'
 function Use-FakeUploader([string]$Evidence, [scriptblock]$Run) {
   Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
   Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy, ctypes`nhere = os.path.dirname(os.path.abspath(__file__)); a = sys.argv`nif a[1:2] == ['evidence']:`n$Evidence`nelse:`n    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')"
@@ -95,7 +95,7 @@ $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 $fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String }
 Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
-# ---- review batch 2: qa.ps1, testy, browser.mjs
+# ---- review batch 2: pokey.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
 $me = Get-Process -Id $PID
@@ -144,31 +144,31 @@ $ro = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-S
 $arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
 # tracker.bugPrefix; a check without evidence; guideId is a Docs URL only for gdocs
-$kl = "$k/skills/dev-kit/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
+$kl = "$k/skills/crafty/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
 foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }
 $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'new') })
 (Get-Content "$by/run.json" -Raw) -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
 (Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
 $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
 Expect 'bugPrefix: bug reused, renamed, stripped by retest; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (2)' -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
-& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/qa-kit/targets.local.json') 5
+& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
-$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the extra android-swarm
+$uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deploys' -and $xo[1] -match '(?s)^2 .*extra add android-swarm' -and $wo -match 'no api URL')
+Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
 $api = Start-TestApi; $P = $api.port
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
-& $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6
+& $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
 $xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
-Expect "api auth login + none; other kinds name their extra ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is an extra: run kittool\.py extra add api-auth')
+Expect "api auth login + none; other kinds name their goody ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is a goody: run kitbag\.py goody add api-auth')
 foreach ($e in 'pdf', 'txt', 'empty') { $null = Px $Q api -Target tt -Path "/$e" -Save "S-$e" -OutDir (Kd) 2>&1 }; $bo = @(Get-ChildItem (Kd) -Filter 'S-*.body*').Name -join ' '
 Expect "api -Save: octet-stream sniffed, empty body: no file ($bo)" ($bo -ceq 'S-pdf.body.pdf S-txt.body.txt')
 Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
 $api.proc.Kill()
 # browser.mjs: mocks, then local fixture servers
-$qk = "$k/skills/qa-kit"
+$qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
     "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
@@ -215,21 +215,21 @@ await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs
 '@
   Expect-Each $res 'browser.mjs tabs: #' 'waits', 'ninth', 'fails', 'orphans', 'sweep'
   Expect 'browser.mjs: never logs out' ((Get-Content "$qk/browser.mjs" -Raw) -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
-  # fixture app: form login, relogin (Chrome); sso-steps / other engines name their extra
+  # fixture app: form login, relogin (Chrome); sso-steps / other engines name their goody
   $res = NodeT auth ($LoginApp + @'
 const [TF, SLOW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '123456' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
   sso: { web, webLogin: { type: 'sso-steps', steps }, users: U }, ff: { web, browser: { engine: 'firefox' }, webLogin: {}, users: U } } }))
 const { b, home, out } = await login()
-await out('extras', async () => /extra add browser-engines/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
+await out('goodies', async () => /goody add browser-engines/.test(await b.session({ target: 'ff' }).then(() => '', (e) => e.message)))
 process.env.KIT_QA_TARGETS = 'x'; await out('pin', () => b.session({ target: 'form' }).then(() => false, (e) => /QA run's target/.test(e.message))); delete process.env.KIT_QA_TARGETS
 // a real headless Chrome only with KIT_TESTS_SLOW (seconds each)
-if (SLOW) await out('webext', async () => /extra add web-login-types/.test(await b.session({ target: 'sso' }).then(() => '', (e) => e.message)))
+if (SLOW) await out('webext', async () => /goody add web-login-types/.test(await b.session({ target: 'sso' }).then(() => '', (e) => e.message)))
 if (SLOW) await out('chrome', async () => { const s = await b.session({ tenant: 'a' }), r = s.key === 'form|a|admin' && await home(s) && posts === 1; gen++; await b.go(s.page, '/'); const r2 = r && await home(s) && posts === 2; await s.done(); await b.killSession(s.port); return r2 })
 process.exit(0)
 '@) "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
-  Expect-Each $res 'browser.mjs login: #' (@('extras', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' }))
-} else { 'SKIP browser.mjs (no puppeteer-core in skills/qa-kit)' }
+  Expect-Each $res 'browser.mjs login: #' (@('goodies', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' }))
+} else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
 $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'

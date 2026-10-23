@@ -1,9 +1,9 @@
 // browser.mjs: headless-browser library for testing any web app (import it; usage below). Exit codes: none (a library).
 // targets.local.json: web, webLogin, users, browser: one shared headless Chrome (puppeteer) per target+tenant+user, a tab each.
 // Logins shared via the session file (web storage + cookies), locked; never log out.
-// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Extras (adapters/, kittool.py extra
+// webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Goodies (adapters/, kitbag.py goody
 // add): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
-//   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/qa-kit/browser.mjs'
+//   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
 // Sections: L17 config · L41 login · L125 browsers · L168 tabs · L242 session · L281 actions · L375 evidence
@@ -19,7 +19,7 @@ const TF = new globalThis.URL('./targets.local.json', import.meta.url)
 const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {} }
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
-const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'dev-kit', 'kit.example.json'), 'utf8'))._paths
+const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'kit.example.json'), 'utf8'))._paths
 export const runtimeDir = () => process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir)
 export function kitPath(name, { create = false } = {}) {
   const [rel, base] = name === 'runtime' ? ['/', runtimeDir()] : name in MAP.runtime ? [MAP.runtime[name], runtimeDir()] : name in MAP.durable ? [MAP.durable[name], join(KIT, MAP.stateDir)] : []
@@ -58,10 +58,10 @@ function watch(page, apiPattern) {
 }
 
 const fill = (s, user, pass, tenant) => String(s).replace(/\{(user|pass|tenant)\}/g, (_, k) => ({ user, pass, tenant })[k] || '')
-// an optional part from adapters/ (kittool.py extra add <extra>), else one clear line
-async function adapter(file, what, extra) {
+// an optional part from adapters/ (kitbag.py goody add <goody>), else one clear line
+async function adapter(file, what, goody) {
   const f = join(__HERE, 'adapters', file)
-  if (!existsSync(f)) throw new Error(`${what} is an extra: run kittool.py extra add ${extra}`)
+  if (!existsSync(f)) throw new Error(`${what} is a goody: run kitbag.py goody add ${goody}`)
   return import(pathToFileURL(f).href)
 }
 const nav = (page, u, waitUntil = 'domcontentloaded') => page.goto(u, { waitUntil, timeout: 90000 }).catch(() => {})
@@ -92,7 +92,7 @@ async function step(page, s, f) {
 async function login(page, t, tenant, as) {
   const L = t.webLogin, type = L.type || 'form', [user, pass, otp] = t.users[as] || []
   if (!user) throw new Error(`no user "${as}" in this target`)
-  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: the extra
+  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types and TOTP codes: the goody
     const ext = await adapter('web-login.mjs', `webLogin.type ${type}${type === 'form' ? ' with {totp}' : ''}`, 'web-login-types')
     await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
   } else {
@@ -180,7 +180,7 @@ const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = 
 // a learned kit parameter, as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, kit.local.json <key> / <key>.<ctx> (a pin), a param pin, the learned value, else def
 export function kitParam(key, def, ctx = '') {
   const env = process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()]; if (env) return +env
-  const cfg = readJson(join(__HERE, '..', 'dev-kit', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
+  const cfg = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
   for (const p of ctx ? [key, `${key}.${ctx}`] : [key]) { const v = at(p); if (v != null && v !== '' && typeof v !== 'object') return v }
   const s = readJson(kitPath('param-state'), {}), pin = s.pins?.[`${key}|${ctx}`]
   if (pin) return pin.value
@@ -373,7 +373,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // ---- evidence: marks, network logs, screenshots, token
-// evidence names (qa-kit SKILL.md "Evidence"); same literal as qa.ps1 $script:EvidenceName
+// evidence names (pokey SKILL.md "Evidence"); same literal as pokey.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
 function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" is not <CODE>-<check>_<nn>_<what>.<ext> (F2-T4_01_order-saved.jpeg)`)

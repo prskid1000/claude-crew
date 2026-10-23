@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-supervise.tests.ps1: orch.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, track status lag, bugbrief args.
+supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, track status lag, bugbrief args.
 Usage: pwsh -NoProfile -File <kit>/tests/supervise.tests.ps1 (or tests/kit-tests.ps1 -Area supervise).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit supervise; $O = Join-Path $k 'skills/orchestrate/orch.ps1'
+$k = New-TestKit supervise; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $bw = pwsh -NoProfile -Command ". '$O'; foreach (`$c in `$false, `$true) { Get-BugWfArgs b r B1 'T1 C1, C2, C3' 's1; s2; s3' @() `$c 'C:\k' 3>`$null | ConvertTo-Json -Compress -Depth 4 }"
 Expect 'bugbrief args: sonnet for 3 checks unless -Complex, kitDir, a placeholder mandate (never a stored one)' ($bw[0] -notmatch 'complex' -and $bw[1] -match '"complex":true' -and $bw[0] -match '"kitDir":"C:/k"' -and $bw[0] -match "owner's words of this request" -and $bw[0] -notmatch 'review|roles')
 $cx = pwsh -NoProfile -Command ". '$O'; Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from the shared /tmp (fixed from history); halted the push'; Test-KitCollision 'Halted: another agent is editing the same worktree'"
@@ -54,8 +54,8 @@ $null = pwsh @np $O launch -RunId wf_r5 -Script testy.js -ArgsJson '{"runDir":"C
 foreach ($i in 1, 2) { $null = pwsh @np $O pause -Run r5 -Wait 0 2>&1 }
 $sg = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { "$($_.source)" -like 'stop:*' })
 $s4 = @($sg | Where-Object ref -eq r4); $s5 = @($sg | Where-Object ref -eq r5)
-Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once, the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'dev-kit' }).Count -and
-  $s5.Count -eq 1 -and $s5[0].skill -eq 'qa-kit' -and $s5[0].text -eq 'test:A1: seat lost' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
+Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once, the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'crafty' }).Count -and
+  $s5.Count -eq 1 -and $s5[0].skill -eq 'pokey' -and $s5[0].text -eq 'test:A1: seat lost' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
 # worktree prune: remote branch gone + clean + idle worktreeDays -> the worktree goes, its local branch stays; uncommitted files: reported only
 $wr = Join-Path (Kd) 'wtr'; $bo = Join-Path (Kd) 'wto.git'; git init -q --bare -b main $bo; git clone -q $bo "$wr-main" 2>$null; 'a' | Set-Content "$wr-main/a.txt"; Save-GitRepo "$wr-main" init; git -C "$wr-main" push -q origin main 2>$null
 foreach ($n in 'gone', 'dirty') { git -C "$wr-main" worktree add -q -b "f/$n" "$wr/$n" 2>$null; "$n" | Set-Content "$wr/$n/$n.txt"; Save-GitRepo "$wr/$n" $n; git -C "$wr/$n" push -q -u origin "f/$n" 2>$null; git -C "$wr-main" push -q origin --delete "f/$n" 2>$null }
@@ -64,9 +64,9 @@ $wp = pwsh @np $O cleanup -WorktreesOnly -WorktreeRoot $wr 2>&1 | Out-String
 Expect "cleanup: a clean worktree whose remote branch is gone goes after worktreeDays (branch kept); one with uncommitted files is only reported" (-not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'remote branch gone' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
 Remove-Item Env:KIT_TRANSCRIPTS
 Remove-TestKit $k
-# ---- resources (was the extra supervise-resources)
+# ---- resources (was the goody supervise-resources)
 $k = New-TestKit sres
-$O = Join-Path $k 'skills/orchestrate/orch.ps1'
+$O = Join-Path $k 'skills/bossy/bossy.ps1'
 # gate.cacheFlush: a starved gate + a big file cache -> one flush per 30 min; a failing command = one WATCH
 $cft = @'
 $env:KIT_TRACKER_TYPE = 'none'
@@ -103,9 +103,9 @@ $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix: a gone session''s QA seat + claims freed in ONE line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count -and $sr -match 'gate: \d+ running')
 $sd = Join-Path $qs 'seats'; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
-# the env's leases come from localenv.ps1 status -Json (a stub here): never its state files
-New-Item -ItemType Directory -Force (Join-Path $k 'skills/local-env') | Out-Null
-"'[{`"env`":`"shop`",`"leases`":[{`"agent`":`"devy-A1`",`"services`":[`"api`"],`"until`":null,`"graceLeft`":7}],`"holds`":[]}]'" | Set-Content (Join-Path $k 'skills/local-env/localenv.ps1')
+# the env's leases come from envy.ps1 status -Json (a stub here): never its state files
+New-Item -ItemType Directory -Force (Join-Path $k 'skills/envy') | Out-Null
+"'[{`"env`":`"shop`",`"leases`":[{`"agent`":`"devy-A1`",`"services`":[`"api`"],`"until`":null,`"graceLeft`":7}],`"holds`":[]}]'" | Set-Content (Join-Path $k 'skills/envy/envy.ps1')
 $bs = Px $O board show | Out-String; $rc = Px $O recover | Out-String
 Expect 'board show lists QA seats and env leases; recover lists the lease with no live holder' ($bs -match 'seat: test:Q1 web 2 GB' -and $bs -match 'lease: shop devy-A1 on api' -and $rc -match '== LEASE shop devy-A1 \[api\]: no live holder, ends in 7 min')
 "`n## kitty`n- board slot" | Add-Content "$k/LESSONS.md"; $sg = TkPath $k signals

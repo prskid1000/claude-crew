@@ -1,10 +1,10 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): every kit script dot-sources it once:
- . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
+ . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L83 config · L163 OS · L335 leases · L593 tracker · L813 git-host · L918 kitlog · L1030 params ·
-  L1185 entry-scripts
+Sections: L10 paths · L83 config · L164 OS · L336 leases · L594 tracker · L814 git-host · L919 kitlog · L1031 params ·
+  L1186 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -17,7 +17,7 @@ function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }
   elseif ($m.runtime.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.runtime.$Name; $p = Join-Path (Get-KitRuntime) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
   elseif ($m.durable.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.durable.$Name; $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
-  else { throw "Get-KitPath: unknown name '$Name' (see skills/dev-kit/kit.example.json _paths)" }
+  else { throw "Get-KitPath: unknown name '$Name' (see skills/crafty/kit.example.json _paths)" }
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
@@ -42,7 +42,7 @@ function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text) {
   [IO.File]::WriteAllText($t, $Text, [Text.UTF8Encoding]::new($false))
   for ($i = 0; ; $i++) { try { [IO.File]::Move($t, $p, $true); return } catch { if ($i -ge 40) { [IO.File]::Delete($t); throw }; Start-Sleep -Milliseconds 50 } }
 }
-# names the kit makes (dev.ps1 dir, briefs, checkpoints, snapshots): lowercase-kebab
+# names the kit makes (crafty.ps1 dir, briefs, checkpoints, snapshots): lowercase-kebab
 function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
 # -Strict: bad JSON -> <file>.bad-<time> + throw (never {} over all tasks)
 function Read-KitTracking([switch]$Strict) {
@@ -88,8 +88,9 @@ $__cfg = $null
 $__cfgFile = Join-Path $__devkit 'kit.local.json'
 if (-not (Test-Path $__cfgFile)) {
   $__cd = "$(git -C $__devkit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
-  if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/dev-kit/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
+  if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/crafty/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
 }
+foreach ($__old in @(@($__kit) + @(if ($__cd) { Split-Path $__cd }) | ForEach-Object { Join-Path $_ 'skills/dev-kit/kit.local.json' })) { if (-not (Test-Path $__cfgFile) -and (Test-Path $__old)) { $__cfgFile = $__old } }   # shim: remove after 2026-11-23 (before kitbag.py goody sync moved it)
 if (Test-Path $__cfgFile) { try { $__cfg = Get-Content $__cfgFile -Raw | ConvertFrom-Json } catch { Write-Warning "ignoring $__cfgFile (invalid JSON): $_" } }
 function Get-KitValue([string]$Name, $Default) { if ($__cfg -and $null -ne $__cfg.$Name -and "$($__cfg.$Name)" -ne '') { return $__cfg.$Name }; $Default }   # arrays stay whole
 function Get-KitSetting([string]$Path, $Default) {
@@ -200,9 +201,9 @@ function Get-KitKeepFreeGB {
   if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
   [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
 }
-# the system file cache stays resident until something needs RAM, which a gate never allows: half of it counts (dev.ps1 gate, local env)
+# the system file cache stays resident until something needs RAM, which a gate never allows: half of it counts (crafty.ps1 gate, local env)
 function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
-# the disk rescue's hold on a drive with kit paths (orch.ps1 storage): new builds wait (dev.ps1 gate; extras may check it too), storage.holdMinutes
+# the disk rescue's hold on a drive with kit paths (bossy.ps1 storage): new builds wait (crafty.ps1 gate; goodies may check it too), storage.holdMinutes
 function Get-KitDiskHold { $hs = try { (Get-Content -LiteralPath (Join-Path (Get-KitPath storage) 'state.json') -Raw -ErrorAction Stop | ConvertFrom-Json).rescues } catch { $null }; @($hs.PSObject.Properties.Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
 # a start that waited 20 min goes when it still leaves a hard floor (5% of RAM, at least 3 GB)
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
@@ -256,7 +257,7 @@ function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLin
 
 function Stop-SysProcess([int]$Id) { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0) {
-  $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json).budget
+  $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
   $row = { param($n) $o = Get-KitSetting "budget.defaults.$n" $null; if ($o) { $o } else { $ex.defaults.$n } }
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
   if (-not $Tool) {
@@ -501,7 +502,7 @@ function Resolve-Tool {
 function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
-  $kt = $KitCmd.kittool; if (-not $kt -or -not (Test-Path $kt)) { return @() }
+  $kt = $KitCmd.kitbag; if (-not $kt -or -not (Test-Path $kt)) { return @() }
   $tmp = $null
   if (-not $Path) { $tmp = Join-Path (Get-KitTemp) "kit-prose-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 6)).md"; [IO.File]::WriteAllText($tmp, $Text); $Path = $tmp }
   try { $r = & (Get-Python) -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
@@ -525,7 +526,7 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
   $ad = $KitAdapters[$Kind][$Name]; $f = if (-not $ad) { $null } elseif ($ad.ContainsKey($Verb)) { $ad[$Verb] } else { $ad['*'] }
   if (-not $ad -and $Name) { throw (Get-KitExtraLine $Kind $Name) }
   if (-not $f) { Write-Warning "$Kind ($Name): no adapter or verb $Verb (README ""Adapters"")"; return $null }
-  if ($f.File) { Add-KitExtraUse $f.File }   # an extra's adapter in use
+  if ($f.File) { Add-KitExtraUse $f.File }   # a goody's adapter in use
   & $f $a $Verb
 }
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
@@ -545,24 +546,24 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
 }
-# ----- extras (kittool.py extra add <name>): adapters a config names but the kit does not ship; the files land in skills/dev-kit/adapters/
+# ----- goodies (kitbag.py goody add <name>): adapters a config names but the kit does not ship; the files land in skills/crafty/adapters/
 $script:KitExtraOf = @{ 'tracker/jira-server' = 'tracker-jira'; 'git-host/bitbucket' = 'bitbucket'; 'ci/bitbucket' = 'bitbucket'
   'tracker/gitlab' = 'gitlab'; 'git-host/gitlab' = 'gitlab'; 'ci/gitlab' = 'gitlab'
   'tracker/github' = 'github'; 'git-host/github' = 'github'; 'ci/github' = 'github'
   'git-host/azure' = 'azure-devops'; 'ci/azure' = 'azure-devops'; 'git-host/gitea' = 'gitea'; 'ci/gitea' = 'gitea' }
 function Get-KitExtraName([string]$Kind, [string]$Name) { if ($script:KitExtraOf["$Kind/$Name"]) { $script:KitExtraOf["$Kind/$Name"] } else { "$Kind-$Name" } }
-function Get-KitExtraLine([string]$Kind, [string]$Name) { "$Kind $Name is an extra: run kittool.py extra add $(Get-KitExtraName $Kind $Name)" }
-# on demand: `kittool.py extra add <name> --auto` (unlisted: extra prune drops it once unused); KIT_EXTRA_AUTO=0 never; a failed try waits 1 h
+function Get-KitExtraLine([string]$Kind, [string]$Name) { "$Kind $Name is a goody: run kitbag.py goody add $(Get-KitExtraName $Kind $Name)" }
+# on demand: `kitbag.py goody add <name> --auto` (unlisted: goody prune drops it once unused); KIT_EXTRA_AUTO=0 never; a failed try waits 1 h
 function Install-KitExtra([string]$Name) {
-  if (-not $Name -or $env:KIT_EXTRA_AUTO -eq '0' -or -not (Test-Path -LiteralPath $KitCmd.kittool)) { return $false }
+  if (-not $Name -or $env:KIT_EXTRA_AUTO -eq '0' -or -not (Test-Path -LiteralPath $KitCmd.kitbag)) { return $false }
   $try = Join-Path (Get-KitPath extras-used -Create) "_try-$Name"
   if ((Test-Path -LiteralPath $try) -and ((Get-Date) - [IO.File]::GetLastWriteTime($try)).TotalMinutes -lt 60) { return $false }   # TODO-PARAM (fixed default)
-  $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kittool, 'extra', 'add', $Name, '--auto') 180   # kittool's lock serializes two installers
+  $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'goody', 'add', $Name, '--auto') 180   # kitbag's lock serializes two installers
   Write-KitLog calls extra-auto @{ extra = $Name; code = $r.code }
-  if ($r.code) { [IO.File]::WriteAllText($try, ''); Write-Warning "extra ${Name}: install on demand failed ($(@("$($r.err)$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0]))"; return $false }
-  [Console]::Error.WriteLine("extra ${Name}: installed on demand"); $true
+  if ($r.code) { [IO.File]::WriteAllText($try, ''); Write-Warning "goody ${Name}: install on demand failed ($(@("$($r.err)$($r.out)" -split "`n" | Where-Object { $_.Trim() })[0]))"; return $false }
+  [Console]::Error.WriteLine("goody ${Name}: installed on demand"); $true
 }
-# at a verb's start (nothing ran yet): install the extra and run the entry script's verb again, once; returns only when it could not
+# at a verb's start (nothing ran yet): install the goody and run the entry script's verb again, once; returns only when it could not
 function Resolve-KitExtra([string]$Name) {
   if (-not $script:KitEntry -or $env:KIT_EXTRA_RETRY -eq $Name -or -not (Install-KitExtra $Name)) { return }
   $env:KIT_EXTRA_RETRY = $Name
@@ -571,7 +572,7 @@ function Resolve-KitExtra([string]$Name) {
   try { & $script:KitEntry @again | ForEach-Object { Write-Host $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() }) }; $code = $LASTEXITCODE } finally { $env:KIT_EXTRA_RETRY = $null }
   exit $code
 }
-# a usage stamp per loaded extra file (<state>/extras-used/<kit path>, `/` -> `__`), touched once a day; kittool.py extra prune reads it
+# a usage stamp per loaded goody file (<state>/extras-used/<kit path>, `/` -> `__`), touched once a day; kitbag.py goody prune reads it
 function Add-KitExtraUse([string[]]$Files) {
   try {
     $d = Get-KitPath extras-used; if (-not [IO.Directory]::Exists($d)) { $null = [IO.Directory]::CreateDirectory($d) }; $today = [datetime]::Today
@@ -582,11 +583,11 @@ function Add-KitExtraUse([string[]]$Files) {
     }
   } catch {}   # a stamp never fails a verb
 }
-# /tidy prep's local extras cleanup: kittool.py extra prune; -Days unset: the learned extras.pruneDays (Get-KitParam), else 30
+# /tidy prep's local goodies cleanup: kitbag.py goody prune; -Days unset: the learned goodies.pruneDays (Get-KitParam), else 30
 function Invoke-ExtrasPrune([double]$Days = 0, [switch]$DryRun) {
   $gp = Get-Command Get-KitParam -ErrorAction SilentlyContinue   # the learned-parameter framework, when installed
-  if (-not $Days) { $Days = if ($gp) { try { [double](& $gp 'extras.pruneDays' 30) } catch { 30 } } else { 30 } }   # TODO-PARAM (fixed default)
-  $pa = @('-X', 'utf8', $KitCmd.kittool, 'extra', 'prune', '--days', "$Days") + @(if ($DryRun) { '--dry-run' })
+  if (-not $Days) { $Days = if ($gp) { try { [double](& $gp 'goodies.pruneDays' 30) } catch { 30 } } else { 30 } }   # TODO-PARAM (fixed default)
+  $pa = @('-X', 'utf8', $KitCmd.kitbag, 'goody', 'prune', '--days', "$Days") + @(if ($DryRun) { '--dry-run' })
   & (Get-Python) @pa   # exit code in $LASTEXITCODE
 }
 
@@ -694,7 +695,7 @@ function __TrOsFullName {
   ([string]$n).Trim()
 }
 # ----- backends: $a = id, text, status (tracker name), logical, name, list, parent, assignee, priority, file, leaf
-# tracker clickup, github: extras tracker-clickup, github (skills/dev-kit/adapters/)
+# tracker clickup, github: goodies tracker-clickup, github (skills/crafty/adapters/)
 # adapter:tracker/command: tracker.commands.<verb> = a CLI line, {placeholders} = $a keys; prints the kit's JSON
 Register-KitAdapter 'tracker' 'command' @{ '*' = { param($a, $v)
     $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not $c.$v) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
@@ -723,7 +724,7 @@ Register-KitAdapter 'tracker' 'none' @{
   'owner' = { param($a) $a.name }
 }
 # adapter-end:tracker
-# plugins: every installed extra registers its trackers, git hosts and CI here (before the tracker type is resolved)
+# plugins: every installed goody registers its trackers, git hosts and CI here (before the tracker type is resolved)
 $script:KitAdapterFiles = @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
 foreach ($__plugin in $script:KitAdapterFiles) { . $__plugin }
 Initialize-KitTracker
@@ -747,7 +748,7 @@ function Add-KitOutbox([string]$Op, [string]$Id, [string]$Arg, [string]$Why) {
   $f = Get-KitPath outbox -Create
   $line = [ordered]@{ at = (Get-Date).ToString('o'); op = $Op; id = $Id; arg = $Arg; tracker = $__trType; tries = 0; why = $Why } | ConvertTo-Json -Compress
   Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
-  Write-Warning "tracker ($__trType): $Op $Id failed on the network ($Why): queued; orch.ps1 supervise replays it"
+  Write-Warning "tracker ($__trType): $Op $Id failed on the network ($Why): queued; bossy.ps1 supervise replays it"
   "QUEUED $Op $Id (network; outbox replays it)"
 }
 function Invoke-TrackerWrite([string]$Op, [string]$Id, [string]$Arg, [scriptblock]$Call) {
@@ -857,8 +858,8 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 
-# git hosts: extras gitlab, github, bitbucket, azure-devops, gitea (skills/dev-kit/adapters/)
-# MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (extras github, gitea)
+# git hosts: goodies gitlab, github, bitbucket, azure-devops, gitea (skills/crafty/adapters/)
+# MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (goodies github, gitea)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null; created_at = $null
     updated_at = $null; draft = $false; has_conflicts = $false; detailed_merge_status = ''; merge_when_pipeline_succeeds = $false; web_url = ''; head_pipeline = $null }
@@ -993,7 +994,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $Tokens = @($Tokens)
   $src = $MyInvocation.PSCommandPath
   $help = { if ($src -and (Test-Path $src)) { (Get-Content $src -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1' | Write-Output }; exit 0 }
-  $fnc = Get-Command $Fn; if ($fnc.ScriptBlock.File) { Add-KitExtraUse $fnc.ScriptBlock.File }   # a verb an extra brings
+  $fnc = Get-Command $Fn; if ($fnc.ScriptBlock.File) { Add-KitExtraUse $fnc.ScriptBlock.File }   # a verb a goody brings
   $meta = $fnc.Parameters
   $own = @($meta.Keys | Where-Object { $_ -notin [System.Management.Automation.PSCmdlet]::CommonParameters })
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
@@ -1108,8 +1109,8 @@ function Invoke-ParamLearn {
       if ($e.watch -and $o.r -in 'timeout', 'oom') { $e.watch.bad++ }; if ($e.watch) { $e.watch.n++ }   # the failure a value governs; a failed build is not one
       if ($e.watch -and $e.watch.bad -ge 2) {
         $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $st.cursor; key = $o.key; ctx = $ctx; from = $e.value; to = $e.watch.prev; why = "reverted: $($e.watch.bad) of $($e.watch.n) failed after the change" } | Select-Object -Last 200)
-        & $flag 'ACT' "param $($o.key) [$ctx] reverted $($e.value) -> $(if ($null -ne $e.watch.prev) { $e.watch.prev } else { 'default' }): $($e.watch.bad) of the next $($e.watch.n) failed; frozen 7 d" "Find why (orch.ps1 param show $($o.key)); param reset $($o.key) to learn again."
-        Write-KitLog signals '' ([ordered]@{ skill = 'orchestrate'; kind = 'failure'; text = "learned param $($o.key) [$ctx] = $($e.value) failed $($e.watch.bad) of $($e.watch.n): reverted, frozen 7 d"; ref = "param:$($o.key)"; source = 'param' })
+        & $flag 'ACT' "param $($o.key) [$ctx] reverted $($e.value) -> $(if ($null -ne $e.watch.prev) { $e.watch.prev } else { 'default' }): $($e.watch.bad) of the next $($e.watch.n) failed; frozen 7 d" "Find why (bossy.ps1 param show $($o.key)); param reset $($o.key) to learn again."
+        Write-KitLog signals '' ([ordered]@{ skill = 'bossy'; kind = 'failure'; text = "learned param $($o.key) [$ctx] = $($e.value) failed $($e.watch.bad) of $($e.watch.n): reverted, frozen 7 d"; ref = "param:$($o.key)"; source = 'param' })
         $e.value = $e.watch.prev; $e.rec = $e.watch.prev; $e.frozen = $now.AddDays(7).ToString('o'); $e.watch = $null
       } elseif ($e.watch -and $e.watch.n -ge 5) { $e.watch = $null }
     }
@@ -1129,12 +1130,12 @@ function Invoke-ParamLearn {
         $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
         $val = if ($mode -eq 'on' -and $null -ne $e.rec -and ($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5 -and $acc) { [double]$e.rec } else { $null }
         if ($null -ne $val -and $val -gt 2 * $d -and -not $st.approved["$key|$(if ($ctx -ne '_') { $ctx })"] -and -not $st.approved["$key|"]) {
-          if (-not $e.ask) { $e.ask = $now.ToString('o'); & $flag 'WATCH' "param $key [$ctx] learned $val, past 2x its default ${d}: held at $(2 * $d)" "Owner decision (orch.ps1 decide ask); yes -> orch.ps1 param approve $key$(if ($ctx -ne '_') { " -Context '$ctx'" })" }
+          if (-not $e.ask) { $e.ask = $now.ToString('o'); & $flag 'WATCH' "param $key [$ctx] learned $val, past 2x its default ${d}: held at $(2 * $d)" "Owner decision (bossy.ps1 decide ask); yes -> bossy.ps1 param approve $key$(if ($ctx -ne '_') { " -Context '$ctx'" })" }
           $val = 2 * $d
         }
         if ("$val" -ne "$($e.value)") {
           $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $now.ToString('o'); key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" } | Select-Object -Last 200)
-          & $flag 'INFO' "param $key [$ctx]: $(if ($null -ne $e.value) { $e.value } else { "default $d" }) -> $(if ($null -ne $val) { $val } else { "default $d" }) ($($e.why); n $($e.n))" 'Nothing to do (orch.ps1 param show).'
+          & $flag 'INFO' "param $key [$ctx]: $(if ($null -ne $e.value) { $e.value } else { "default $d" }) -> $(if ($null -ne $val) { $val } else { "default $d" }) ($($e.why); n $($e.n))" 'Nothing to do (bossy.ps1 param show).'
           Write-KitLog params change ([ordered]@{ key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" })
           $e.watch = @{ prev = $e.value; n = 0; bad = 0 }; $e.value = $val
         }
@@ -1144,7 +1145,7 @@ function Invoke-ParamLearn {
   }
   $script:KitParamMemo.Clear(); $flags
 }
-# observations orch.ps1 records: a finished agent's spend (board leave), minutes between new ACTs (supervise); setup -WriteLocal
+# observations bossy.ps1 records: a finished agent's spend (board leave), minutes between new ACTs (supervise); setup -WriteLocal
 # leaves learned keys out of a new kit.local.json (a value there pins)
 function Add-KitSpendObs($E) { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type -Default $d } }
 function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
@@ -1152,7 +1153,7 @@ function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
   $State.acts = $Acts
 }
 function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @($script:KitExample._manifest.params.PSObject.Properties.Name)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
-# orch.ps1 param show / history / pin / unpin / freeze / reset / approve (audited in history)
+# bossy.ps1 param show / history / pin / unpin / freeze / reset / approve (audited in history)
 function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [string]$Context, [switch]$Json) {
   $st = Read-KitParams; $reg = @($script:KitExample._manifest.params.PSObject.Properties.Name)
   if ($Action -eq 'history') { $h = @($st.history | Where-Object { -not $Key -or $_.key -eq $Key } | Select-Object -Last 30); if ($Json) { return ConvertTo-Json @($h) -Depth 4 -Compress }; return @($h | ForEach-Object { "$(([datetime]$_.at).ToString('yyyy-MM-dd HH:mm')) $($_.key) [$($_.ctx)] $(if ($null -ne $_.from) { $_.from } else { 'default' }) -> $(if ($null -ne $_.to) { $_.to } else { 'default' }): $($_.why)" }) }
@@ -1184,22 +1185,22 @@ function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [str
 }
 # ---- entry-scripts: one per area
 $KitCmd = [pscustomobject]@{
-  dev = Join-Path $KitConf.Kit 'skills/dev-kit/dev.ps1'
-  devtools = Join-Path $KitConf.Kit 'skills/dev-kit/devtools.py'
-  spec     = Join-Path $KitConf.Kit 'skills/dev-kit/spec.mjs'
-  qa       = Join-Path $KitConf.Kit 'skills/qa-kit/qa.ps1'
-  browser  = Join-Path $KitConf.Kit 'skills/qa-kit/browser.mjs'
-  swarm    = Join-Path $KitConf.Kit 'skills/android-swarm/swarm.ps1'
-  local    = Join-Path $KitConf.Kit 'skills/local-env/localenv.ps1'
-  orch     = Join-Path $KitConf.Kit 'skills/orchestrate/orch.ps1'
-  kittool  = Join-Path $KitConf.Kit 'skills/orchestrate/kittool.py'
+  dev = Join-Path $KitConf.Kit 'skills/crafty/crafty.ps1'
+  devtools = Join-Path $KitConf.Kit 'skills/crafty/devtools.py'
+  spec     = Join-Path $KitConf.Kit 'skills/crafty/spec.mjs'
+  qa       = Join-Path $KitConf.Kit 'skills/pokey/pokey.ps1'
+  browser  = Join-Path $KitConf.Kit 'skills/pokey/browser.mjs'
+  swarm    = Join-Path $KitConf.Kit 'skills/phoney/phoney.ps1'
+  local    = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
+  orch     = Join-Path $KitConf.Kit 'skills/bossy/bossy.ps1'
+  kitbag  = Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'
 }
-# an adapter the config names (tracker.type, the git host, ci.type) that no installed extra brings: installed on demand, then loaded
-$__hostSet = (Get-KitValue 'gitHostType' '') -or (Get-KitValue 'gitHost' '') -or @(Get-KitValue 'repos' @()).Count   # no host configured: no git-host extra to fetch
+# an adapter the config names (tracker.type, the git host, ci.type) that no installed goody brings: installed on demand, then loaded
+$__hostSet = (Get-KitValue 'gitHostType' '') -or (Get-KitValue 'gitHost' '') -or @(Get-KitValue 'repos' @()).Count   # no host configured: no git-host goody to fetch
 foreach ($__need in @(@('tracker', $script:__trType), @('git-host', $(if ($__hostSet) { $script:HostType })), @('ci', ([string](Get-KitSetting 'ci.type' '')).ToLower()))) {
   if (-not $__need[1] -or $__need[1] -in 'host', 'none' -or $KitAdapters[$__need[0]][$__need[1]] -or "$script:__verb" -match '^(guard|guard-sendmessage|health)$') { continue }   # hooks stay fast
   if (Install-KitExtra (Get-KitExtraName $__need[0] $__need[1])) {
     foreach ($__plugin in @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName | Where-Object { $_ -notin $script:KitAdapterFiles })) { . $__plugin; $script:KitAdapterFiles += $__plugin }
   }
 }
-Add-KitExtraUse $script:KitEntry   # an extra's entry script (localenv.ps1, swarm.ps1) in use
+Add-KitExtraUse $script:KitEntry   # a goody's entry script (envy.ps1, phoney.ps1) in use

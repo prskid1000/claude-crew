@@ -1,4 +1,4 @@
-# Publishes the interactive kit map (kittool.py flow --public) to GitHub Pages on every push to main.
+# Publishes the interactive kit map (kitbag.py flow --public) to GitHub Pages on every push to main.
 name: kit map
 on:
   push:
@@ -21,10 +21,10 @@ jobs:
           python-version: '3.12'
       - name: 'Lint with the flow checks (0 problems: an unresolved verb or a cycle gap fails here, not on the page)'
         run: |
-          python -X utf8 skills/orchestrate/kittool.py extra add flow-map
-          python -X utf8 skills/orchestrate/kittool.py lint
-      - name: Build the page (public files only; the page is the flow-map extra)
-        run: python -X utf8 skills/orchestrate/kittool.py flow --public --out _site/index.html
+          python -X utf8 skills/bossy/kitbag.py goody add flow-map
+          python -X utf8 skills/bossy/kitbag.py lint
+      - name: Build the page (public files only; the page is the flow-map goody)
+        run: python -X utf8 skills/bossy/kitbag.py flow --public --out _site/index.html
       - name: Org-term scan (only when the ORG_TERMS secret is set)
         env:
           ORG_TERMS: ${{ secrets.ORG_TERMS }}

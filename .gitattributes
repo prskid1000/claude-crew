@@ -3,7 +3,7 @@
 *.mjs text eol=lf
 # git hooks run under sh: LF only
 .githooks/* text eol=lf
-# kittool.py port writes LF: generated ports stay LF in a core.autocrlf checkout (no line-ending-only diffs)
+# kitbag.py port writes LF: generated ports stay LF in a core.autocrlf checkout (no line-ending-only diffs)
 .codex/** text eol=lf
 .agents/** text eol=lf
 GEMINI.md text eol=lf

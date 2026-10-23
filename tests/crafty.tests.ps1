@@ -1,11 +1,11 @@
 #Requires -Version 7
 <#
-devkit.tests.ps1: dev.ps1 wt / check / gate / guard, lib.ps1 git host + tracker adapters, devtools.py.
-Usage: pwsh -NoProfile -File <kit>/tests/devkit.tests.ps1 (or tests/kit-tests.ps1 -Area devkit).
+crafty.tests.ps1: crafty.ps1 wt / check / gate / guard, lib.ps1 git host + tracker adapters, devtools.py.
+Usage: pwsh -NoProfile -File <kit>/tests/crafty.tests.ps1 (or tests/kit-tests.ps1 -Area crafty).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit dev; $D = Join-Path $k 'skills/dev-kit/dev.ps1'; $O = Join-Path $k 'skills/orchestrate/orch.ps1'
+$k = New-TestKit dev; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $r = Join-Path (Kd) 'git'; New-Item -ItemType Directory -Force "$r/outer/inner" | Out-Null
 $env:CLAUDE_WT_ROOT = "$r/wt"
 try {
@@ -22,19 +22,19 @@ try {
   $null = pwsh @np $D wt remove -Name a 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host adapters: type command, MR URLs, a missing extra (github; gitlab: an unknown host's default)
+# git-host adapters: type command, MR URLs, a missing goody (github; gitlab: an unknown host's default)
 $gh = @'
 . $args[0]
 $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
 "mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
 $m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
-$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # an unknown host = gitlab: an extra too
-"extra-line:$($e -eq 'git-host github is an extra: run kittool.py extra add github' -and $g -eq 'git-host gitlab is an extra: run kittool.py extra add gitlab')"
+$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # an unknown host = gitlab: a goody too
+"extra-line:$($e -eq 'git-host github is a goody: run kitbag.py goody add github' -and $g -eq 'git-host gitlab is a goody: run kitbag.py goody add gitlab')"
 '@
 $ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
-& $J @{ gitHost = 'git.example'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/dev-kit/kit.local.json') 5
+& $J @{ gitHost = 'git.example'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
 $f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
-$res = @(pwsh @np $f (Join-Path $ka 'skills/dev-kit/lib.ps1') 2>&1)
+$res = @(pwsh @np $f (Join-Path $ka 'skills/crafty/lib.ps1') 2>&1)
 Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line'
 Remove-TestKit $ka
 $env:KIT_TRACKER_TYPE = 'none'
@@ -75,9 +75,9 @@ Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} cases need a kit clone
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
 Expect 'guard self-test' ($out -match '(\d+)/\1 passed'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
-$out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') selftest 2>&1 | Out-String
+$out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
-$DT = Join-Path $k 'skills/dev-kit/devtools.py'
+$DT = Join-Path $k 'skills/crafty/devtools.py'
 $th = & $py -X utf8 $DT comment --help 2>&1 | Out-String; $thc = $LASTEXITCODE; $null = & $py -X utf8 $DT comment T1 --bogus 2>&1; $tbc = $LASTEXITCODE; $null = & $py -X utf8 $DT finish T1 2>&1; $tmc = $LASTEXITCODE
 $fk = Join-Path (Kd) 'flaky.py'; [IO.File]::WriteAllText($fk, "import sys, subprocess as sp; sys.path.insert(0, sys.argv[1]); import devtools as d`nn = []; hang = [0]`ndef fake(cmd, **kw):`n    n.append(cmd)`n    if hang[0]: raise sp.TimeoutExpired(cmd, 1)`n    return sp.CompletedProcess(cmd, 1 if len(n) == 1 else 0, 'connection reset' if len(n) == 1 else 'ok', '')`nd.subprocess.run = fake`nr = d._tracker('view', 'T1'); a = len(n); n.clear()`ntry: d._tracker('create', 'x')`nexcept SystemExit: pass`nw = len(n); n.clear(); hang[0] = 1; d._run(['glab', 'api', 'x']); print(r, a, w, len(n))`n")
 $rt = & $py -X utf8 $fk (Split-Path $DT) 2>$null | Out-String
@@ -110,7 +110,7 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 '@
 $res = Invoke-PsTest 'pipes-test' $pt @((Lib), $D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
-# migrations: the repo's own check, Liquibase (extra), any other tool UNRUN; $mig: add files (path = text), commit, check
+# migrations: the repo's own check, Liquibase (goody), any other tool UNRUN; $mig: add files (path = text), commit, check
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
 Save-GitRepo $ud init
@@ -120,7 +120,7 @@ Expect-Cases @(
       { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 2 migration file\(s\) of another tool' -and $r.out -match '000000_x\.php' -and $r.out -notmatch 'CHANGELOG' })
   , @('check: Flyway, Alembic and Prisma files are UNRUN too', { & $mig @{ 'alembic/versions/a1_x.py' = 'x'; 'prisma/migrations/1_x/migration.sql' = 'x'; 'db/migration/V1__x.sql' = 'x' } },
       { param($r) $r.code -eq 5 -and $r.out -match 'UNRUN: 5 migration file\(s\) of another tool' })
-  , @('check: Liquibase without the extra is UNRUN with the extra line', { & $mig @{ 'config/liquibase/master.xml' = '<databaseChangeLog/>' } }, { param($r) $r.code -eq 5 -and $r.out -match 'extra add liquibase' })
+  , @('check: Liquibase without the goody is UNRUN with the goody line', { & $mig @{ 'config/liquibase/master.xml' = '<databaseChangeLog/>' } }, { param($r) $r.code -eq 5 -and $r.out -match 'goody add liquibase' })
 )
 $tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
 'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
@@ -129,12 +129,12 @@ Expect 'check -Touched: Audit.ts is no test (case-sensitive Test suffix); its sp
 $wd = Join-Path (Kd) 'web-no-tests'; New-Item -ItemType Directory -Force $wd | Out-Null
 '{ "name": "w", "devDependencies": { "typescript": "5" } }' | Set-Content "$wd/package.json"; '{}' | Set-Content "$wd/tsconfig.json"
 $out = pwsh -NoProfile -File $D check -Dir $wd -Step test -Tests x.spec.ts 2>&1 | Out-String
-Expect 'check: no test target and no extra node-spec = UNRUN with the extra line' ($LASTEXITCODE -eq 5 -and $out -match 'extra add node-spec')
+Expect 'check: no test target and no goody node-spec = UNRUN with the goody line' ($LASTEXITCODE -eq 5 -and $out -match 'goody add node-spec')
 $sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
 $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
-Expect 'gate: runs the command; no heap cap without the extra build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
+Expect 'gate: runs the command; no heap cap without the goody build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 # gate: half the file cache counts as free; the queue head starts after 20 min above a 5% RAM floor
 $gt = @'
 . $args[0]
@@ -151,21 +151,21 @@ $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
 $gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
-Expect 'guard: a write off the kit layout gets a note naming dev.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
+Expect 'guard: a write off the kit layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
 $gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
-Expect 'guard: a Write of a body file to the shared temp root is denied, naming dev.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
-# an extra's guard rule may return a note (additionalContext, the call not decided); no runtimes extra: one line
-$na = Join-Path $k 'skills/dev-kit/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
+Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
+# a goody's guard rule may return a note (additionalContext, the call not decided); no runtimes goody: one line
+$na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
 $rt = Invoke-TestScript $D runtime status
-Expect "guard: an extra's note is context, no decision; runtime without its extra exits 1 ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision' -and $rt.code -eq 1 -and $rt.out -match 'extra add runtimes')
+Expect "guard: a goody's note is context, no decision; runtime without its goody exits 1 ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision' -and $rt.code -eq 1 -and $rt.out -match 'goody add runtimes')
 $lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' } }
-$tt = pwsh -NoProfile -Command ". '$lw/skills/dev-kit/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
+$tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
 Expect 'lib: a deleted tracker task leaves tracking (an outage page does not); a pid reused after a reboot holds nothing' ($gt -eq 'True False False True|False True')
-# orch.ps1 storage: verdicts on minute samples, the learned normal, one-pass folder sizes, drill-down, the db watchdog and the rescue hold
+# bossy.ps1 storage: verdicts on minute samples, the learned normal, one-pass folder sizes, drill-down, the db watchdog and the rescue hold
 $sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
 'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
 $sto = Invoke-PsTest storage @'
@@ -194,8 +194,13 @@ Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contai
 Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
+# the #7 rename (shim: remove after 2026-11-23): lib reads the config at its old path until goody sync moves it
+$fk = Join-Path (Kd) 'fb/.claude'; New-Item -ItemType Directory -Force "$fk/skills/crafty", "$fk/skills/dev-kit" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" "$fk/skills/crafty"   # shim: remove after 2026-11-23
+& $J @{ tracker = @{ bugPrefix = '[Old]' } } "$fk/skills/dev-kit/kit.local.json"   # shim: remove after 2026-11-23
+$fb = pwsh -NoProfile -Command ". '$fk/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.bugPrefix' 'none'" 2>&1 | Out-String
+Expect "lib: the config at its old path still loads ($($fb.Trim()))" ($fb.Trim() -eq '[Old]')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
-$pk = Join-Path (Kd) 'pk/.claude/skills/dev-kit'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/dev-kit/kit.example.json" $pk
+$pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
 $pr = Invoke-PsTest params @'
 . $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()
@@ -214,13 +219,13 @@ Expect 'params: shadow = default; then a step a day toward p95 x1.5; held at 2x'
 Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4:1:0' -and $pr -contains 'ok:8')
 Expect 'params: > 10% timeouts step up; 2 timeouts after the change revert it (ACT), frozen' ($pr -contains 'rev:60:1:True')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
-Expect 'orch.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
+Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
 Remove-TestKit $k
-# ---- OS helpers on Linux / macOS (was the extra posix)
+# ---- OS helpers on Linux / macOS (was the goody posix)
 $k = New-TestKit posix
 if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
-  $r = pwsh -NoProfile -Command ". '$k/skills/dev-kit/lib.ps1'; `$m = Get-SysMem; `$p = @(Get-SysProcs | Where-Object Id -eq `$PID); `$d = Join-Path '$(Kd)' 'l'; New-DirLink `$d '$(Kd)'; ""`$(`$m.TotalGB -gt 0 -and `$m.AvailGB -gt 0)|`$(`$p.Count)|`$(@(Get-DirLinks '$(Kd)' 1).Count)""" 2>&1 | Out-String
+  $r = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; `$m = Get-SysMem; `$p = @(Get-SysProcs | Where-Object Id -eq `$PID); `$d = Join-Path '$(Kd)' 'l'; New-DirLink `$d '$(Kd)'; ""`$(`$m.TotalGB -gt 0 -and `$m.AvailGB -gt 0)|`$(`$p.Count)|`$(@(Get-DirLinks '$(Kd)' 1).Count)""" 2>&1 | Out-String
   Expect "posix: memory, own process, a directory link ($($r.Trim()))" ($r.Trim() -match '^True\|1\|1$')
 }
 Remove-TestKit $k

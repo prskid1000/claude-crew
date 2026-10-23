@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/dev-kit/dev.ps1 guard",
+            "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/crafty/crafty.ps1 guard",
             "timeout": 10
           }
         ]
@@ -19,12 +19,12 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/orch.ps1 health",
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 health",
         "timeout": 15
       },
       {
         "type": "command",
-        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/orchestrate/orch.ps1 cleanup -IfDue -Quiet",
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 cleanup -IfDue -Quiet",
         "timeout": 600
       }
     ]

@@ -53,20 +53,20 @@
      {
       "type": "command",
       "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "health"],
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/bossy/bossy.ps1", "health"],
       "timeout": 15
      },
      {
       "type": "command",
       "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "cleanup", "-IfDue", "-Quiet"],
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/bossy/bossy.ps1", "cleanup", "-IfDue", "-Quiet"],
       "timeout": 600,
       "async": true
      },
      {
       "type": "command",
       "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "health", "-Flow", "-Fetch"],
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/bossy/bossy.ps1", "health", "-Flow", "-Fetch"],
       "timeout": 120,
       "async": true
      }
@@ -80,7 +80,7 @@
      {
       "type": "command",
       "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/dev-kit/dev.ps1", "guard"],
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/crafty/crafty.ps1", "guard"],
       "timeout": 10
      }
     ]
@@ -91,7 +91,7 @@
      {
       "type": "command",
       "command": "pwsh",
-      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/orchestrate/orch.ps1", "guard-sendmessage"],
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${CLAUDE_PROJECT_DIR}/.claude/skills/bossy/bossy.ps1", "guard-sendmessage"],
       "timeout": 10
      }
     ]

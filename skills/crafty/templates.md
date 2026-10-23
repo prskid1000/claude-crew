@@ -1,12 +1,12 @@
-# Templates (dev-kit)
+# Templates (crafty)
 
 Every brief, doc, body and report the flows fill. Copy the section you need into a file in the scratchpad or run folder,
 fill the `<...>` parts, delete what does not apply. Which step fills which section: the Files index of the skill that uses it.
 
 ## Writing standards (every artefact the kit reads or writes)
-The rules: AGENTS.md "Writing". Every limit is a ceiling, not a target. `kittool.py prose --kind <kind> <file>` measures a text
-(exit 1 = findings); the generators (`devtools.py mr/comment/finish`, `dev.ps1 wt commit`, `orch.ps1 bugbrief/decide`,
-`qa.ps1 finalize`) run it and print findings, never truncate. A finding is fixed by rewriting.
+The rules: AGENTS.md "Writing". Every limit is a ceiling, not a target. `kitbag.py prose --kind <kind> <file>` measures a text
+(exit 1 = findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
+`pokey.ps1 finalize`) run it and print findings, never truncate. A finding is fixed by rewriting.
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space). Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
@@ -45,8 +45,8 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 ## Wave brief
 ```markdown
 # Wave brief: <wave name>, <date>
-Read <kit>/skills/dev-kit/SKILL.md first. This brief wins where they differ.
-Items: <tracker epic / sheet>. Decisions: <decisions doc>; final, don't re-ask (a NEW choice -> a decision request, dev-kit D1).
+Read <kit>/skills/crafty/SKILL.md first. This brief wins where they differ.
+Items: <tracker epic / sheet>. Decisions: <decisions doc>; final, don't re-ask (a NEW choice -> a decision request, crafty D1).
 Local env: <env name in kit.local.json localEnv, or "none: <why>">. Test env after deploy: <name> (never production).
 
 | Repo | Main checkout | Target | Link deps from | Migrations |
@@ -65,10 +65,10 @@ Rule changes during the wave are appended below and in <brief>.contracts.md: re-
 ```
 
 ## Bug-fix brief
-`orch.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos). A bug brief adds to the wave brief:
+`bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos). A bug brief adds to the wave brief:
 ```markdown
-1. Read the bug: dev.ps1 tracker view <id> + comments (the QA comment of a failedTesting task carries the failed and untested checks).
-2. Reproduce LOCALLY first (local-env SKILL.md "Debug locally"): the checks' steps on the local env, logs, DB state, debugger.
+1. Read the bug: crafty.ps1 tracker view <id> + comments (the QA comment of a failedTesting task carries the failed and untested checks).
+2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps on the local env, logs, DB state, debugger.
    Record steps + evidence in the testing-goals doc. Cannot reproduce locally -> say why, then reproduce on the test env.
 3. Classify each check: real bug (root cause + regression test red before, green after) · stale deploy (name the missing commit)
    · expected (cite the decision) · config/data (what to set where).
@@ -79,16 +79,16 @@ Rule changes during the wave are appended below and in <brief>.contracts.md: re-
 ## Resume brief
 ```markdown
 A stopped agent's work is in worktrees <root>/<prefix>-*. Join the board with its id + -Resume (TAKEOVER, not DUPLICATE).
-Before editing: dev.ps1 wt status -Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it
+Before editing: crafty.ps1 wt status -Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it
 stopped (testing goals, local test loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.
 ```
-`orch.ps1 recover` adds one table per area: each item's done steps (skipped) and missing steps (run), MRs, tracker, testing doc.
+`bossy.ps1 recover` adds one table per area: each item's done steps (skipped) and missing steps (run), MRs, tracker, testing doc.
 
 ## Testing goals
-Written by devy BEFORE testing (dev-kit step 4); the local test loop runs it; the human testing doc grows out of it.
+Written by devy BEFORE testing (crafty step 4); the local test loop runs it; the human testing doc grows out of it.
 ```markdown
 # Testing goals: <task id> <title>
-Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (localenv.ps1 status), services <the leased ones>.
+Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.ps1 status), services <the leased ones>.
 ## Goals (what must be true)
 | # | Goal | Check (steps) | Expected | Proof: automated test / local manual check | Result |
 |---|---|---|---|---|---|
@@ -97,7 +97,7 @@ Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (locale
 ## Test plan (automated)
 - Unit: <new/changed logic -> test names> · Regression: <each fixed bug -> test, red before / green after>
 - Integration/API: <endpoints touched -> tests> · UI/component: <screens touched -> specs, where the stack supports it>
-- Run: dev.ps1 check -Step test -Tests <names> -Touched   (targeted + every test of the touched classes/modules)
+- Run: crafty.ps1 check -Step test -Tests <names> -Touched   (targeted + every test of the touched classes/modules)
 ## Data needed
 <fixtures / seed records / settings / roles / feature switches ON; created through the API, prefixed with your agent id>
 ## Reproduction (bugs)
@@ -108,7 +108,7 @@ Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (locale
 ```
 
 ## Human testing doc
-Published at dev-kit step 6 (`devtools.py doc`), linked on the task and in the MR; testers follow it (qa-kit H1-H3).
+Published at crafty step 6 (`devtools.py doc`), linked on the task and in the MR; testers follow it (pokey H1-H3).
 ```markdown
 # Testing: <feature / change>
 | | |
@@ -161,7 +161,7 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 ```
 
 ## Decision request
-Written by `orch.ps1 decide ask` into the contracts file; the coordinator relays it, the owner answers.
+Written by `bossy.ps1 decide ask` into the contracts file; the coordinator relays it, the owner answers.
 ```markdown
 ## DECISION NEEDED <id> (<agent>, item <item>)
 <the question: which behaviour / design / data handling / migration strategy / UX>

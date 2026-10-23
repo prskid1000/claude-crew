@@ -1,5 +1,5 @@
-"""devtools.py: tracker / git-host / docs helpers for agents (dev-kit steps 6-7). Host and project come from the worktree's
-`origin` remote, the MR target from its dev.ps1 wt record. Tracker reads and status changes: dev.ps1 tracker.
+"""devtools.py: tracker / git-host / docs helpers for agents (crafty steps 6-7). Host and project come from the worktree's
+`origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
  python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
  python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top, one solution comment (+ guide link), status
@@ -10,21 +10,21 @@
  python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
  python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python devtools.py selftest   offline self-test (and each installed plugin's)
-Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (lbcheck: extra liquibase;
- findings: extra module-audit).
-Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
+Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
+ findings: goody module-audit).
+Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L721 plugins · L735 keepboth ·
   L754 selftest · L901 CLI
-Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
+Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
 import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
 
-KIT = os.path.dirname(os.path.abspath(__file__))  # dev-kit skill folder
+KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
-sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'orchestrate'))
-from kittool import kit_path, locked, audited, stamp_fn   # one path map, lock, call log and extras' usage stamps for every kit script
+sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
+from kitbag import kit_path, locked, audited, stamp_fn   # one path map, lock, call log and goodies' usage stamps for every kit script
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -35,7 +35,7 @@ def _cfg_file():
     try:   # linked kit worktree: the main clone's
         cd = subprocess.run(['git', '-C', KIT, 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True,
              text=True, encoding='utf-8', timeout=10).stdout.strip()
-        alt = os.path.join(os.path.dirname(cd), 'skills', 'dev-kit', 'kit.local.json') if cd else ''
+        alt = os.path.join(os.path.dirname(cd), 'skills', 'crafty', 'kit.local.json') if cd else ''
         return alt if alt and os.path.exists(alt) else own
     except Exception:
         return own
@@ -53,12 +53,12 @@ VERBS = {}                  # plugin CLI verbs: name -> fn(argv) -> exit code
 
 
 def _todo(verb):
-    raise SystemExit(f'adapter verb {verb} is a stub (kittool.py new adapter): implement it first')
+    raise SystemExit(f'adapter verb {verb} is a stub (kitbag.py new adapter): implement it first')
 
 
 def extra_missing(feature, name):
-    """The one line an agent acts on: install the extra, retry."""
-    print(f'{feature} is an extra: run kittool.py extra add {name}', file=sys.stderr)
+    """The one line an agent acts on: install the goody, retry."""
+    print(f'{feature} is a goody: run kitbag.py goody add {name}', file=sys.stderr)
     sys.exit(3)
 
 # ---- run: CLI calls and their arguments
@@ -145,14 +145,14 @@ def _body(arg):
     raise SystemExit(f'file not found: {arg} - write it first (nothing was created)')
 
 
-# ---- tracker: dev.ps1 tracker
-DEV = os.path.join(KIT, 'dev.ps1')   # tracker adapter
+# ---- tracker: crafty.ps1 tracker
+DEV = os.path.join(KIT, 'crafty.ps1')   # tracker adapter
 PWSH = shutil.which('pwsh') or shutil.which('powershell')
 TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {}).get('type') or 'none').lower()
 
 
 def _tracker(*args):
-    """dev.ps1 tracker <verb>; long texts go via a temp file."""
+    """crafty.ps1 tracker <verb>; long texts go via a temp file."""
     tmp = []
     try:
         argv = []
@@ -180,8 +180,8 @@ def task(tid):
 
 
 def prose(kind, text):
-    """Print kittool.py prose findings for a text about to be published; never truncates."""
-    tool = os.path.join(KIT_DIR, 'skills', 'orchestrate', 'kittool.py')
+    """Print kitbag.py prose findings for a text about to be published; never truncates."""
+    tool = os.path.join(KIT_DIR, 'skills', 'bossy', 'kitbag.py')
     if not os.path.isfile(tool):
         return []
     try:
@@ -220,7 +220,7 @@ def finish(tid, guide_url, solution_md, status='review'):
     set_status(tid, status)
 
 
-# ---- git host: lib.ps1 git-host adapters via dev.ps1 host
+# ---- git host: lib.ps1 git-host adapters via crafty.ps1 host
 GITLAB_HOST = CFG.get('gitHost') or 'gitlab.com'
 GITHUB_HOST = CFG.get('githubHost') or 'github.com'
 if CFG.get('gitHost') and not os.environ.get('GITLAB_HOST'):   # else glab api outside a checkout hits gitlab.com
@@ -250,7 +250,7 @@ def remote(worktree):
 
 
 def _host(verb, **a):
-    """One git-host / ci verb via dev.ps1 host; JSON from the last line (ci.log: text); unknown = {'raw': output}."""
+    """One git-host / ci verb via crafty.ps1 host; JSON from the last line (ci.log: text); unknown = {'raw': output}."""
     fd, p = tempfile.mkstemp(suffix='.json')
     with os.fdopen(fd, 'w', encoding='utf-8') as fh:
         json.dump(a, fh)
@@ -272,7 +272,7 @@ def _mr_api(host, proj, iid):
 
 
 def target_of(worktree):
-    """MR target: the worktree's record (dev.ps1 wt new), else kit.local.json repos[].target, else origin/HEAD.
+    """MR target: the worktree's record (crafty.ps1 wt new), else kit.local.json repos[].target, else origin/HEAD.
     A fallback is printed (stderr) with its source; None when all three are missing."""
     gd = _run(['git', '-C', worktree, 'rev-parse', '--git-dir'])
     gd = gd if os.path.isabs(gd) else os.path.join(worktree, gd)
@@ -294,11 +294,11 @@ def target_of(worktree):
         same = bool(co and main and os.path.normcase(os.path.abspath(co)) == main)
         names = [str(n).lower() for n in [r.get('name') or ''] + list(r.get('aliases') or []) if n]
         if same or (name and name in names):
-            print(f"[mr] target {r['target']} (no dev.ps1 wt record; kit.local.json repos[].target of {r.get('name') or co})", file=sys.stderr)
+            print(f"[mr] target {r['target']} (no crafty.ps1 wt record; kit.local.json repos[].target of {r.get('name') or co})", file=sys.stderr)
             return r['target']
     head = _run(['git', '-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
     if head.startswith('origin/') and '\n' not in head:
-        print(f'[mr] target {head[7:]} (no dev.ps1 wt record, no kit.local.json repos[].target; origin/HEAD)', file=sys.stderr)
+        print(f'[mr] target {head[7:]} (no crafty.ps1 wt record, no kit.local.json repos[].target; origin/HEAD)', file=sys.stderr)
         return head[7:]
     return None
 
@@ -348,7 +348,7 @@ def mr_create(worktree, title, body_md, tgt=None):
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
     tgt = tgt or target_of(worktree)
     if not tgt:
-        raise SystemExit('no target: no dev.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
+        raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
                   ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
     ui = _ui_line_missing(worktree, tgt, body_md)
     if ui:
@@ -369,7 +369,7 @@ def mr_create(worktree, title, body_md, tgt=None):
 # ---- merge: merge now or arm merge-when-green; producers first
 def _remember_automerge(ref):
     """GitLab drops merge-when-green on a new push (e.g. a rebase): record the intent in the durable tracking file ("automerge");
-    orch.ps1 track run re-arms it every supervise round until the MR merges."""
+    bossy.ps1 track run re-arms it every supervise round until the MR merges."""
     path = kit_path('tracking')
     try:
         with locked(path):
@@ -387,7 +387,7 @@ def _remember_automerge(ref):
 
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
-RESOLVE = 'dev.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
+RESOLVE = 'crafty.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
 
 
 def merge_word(res):
@@ -429,7 +429,7 @@ def _final(H, iid, put, st, proj):
     hp = (m.get('head_pipeline') or {}).get('status')
     if m.get('state') == 'merged':
         return f'merged !{iid}\nMERGED'
-    if m.get('merge_when_pipeline_succeeds') or put.get('merge_when_pipeline_succeeds') or put.get('auto_merge') == 'kit':   # kit: emulated (orch.ps1 track run)
+    if m.get('merge_when_pipeline_succeeds') or put.get('merge_when_pipeline_succeeds') or put.get('auto_merge') == 'kit':   # kit: emulated (bossy.ps1 track run)
         _remember_automerge(f'{proj}!{iid}')
         return f'scheduled: !{iid} merges automatically when the pipeline ({st}) succeeds\nSCHEDULED'
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
@@ -442,7 +442,7 @@ def _final(H, iid, put, st, proj):
 
 
 def _norm_ref(ref):
-    """'web!12', quoted ref, MR/PR URL or alias -> (repo, iid) as orch.ps1 track stores them."""
+    """'web!12', quoted ref, MR/PR URL or alias -> (repo, iid) as bossy.ps1 track stores them."""
     r = str(ref or '').strip().strip('\'"')
     group = CFG.get('gitlabGroup') or ''
     m = re.search(r'://[^/]+/(?P<p>[\w./-]+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(?P<i>\d+)', r)
@@ -466,7 +466,7 @@ def _same_repo(repo, proj):
 
 
 def _host_mr_state(host, proj, repo, iid):
-    """State of <repo>!<iid> ('' = unknown), path resolved like orch.ps1 track."""
+    """State of <repo>!<iid> ('' = unknown), path resolved like bossy.ps1 track."""
     if '/' in repo:
         path = repo
     else:
@@ -478,7 +478,7 @@ def _host_mr_state(host, proj, repo, iid):
 
 
 def unmerged_producers(proj, iid, state_of, tracking=None):
-    """Unmerged producers of this MR (<proj>!<iid>): tracking-file mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', orch.ps1
+    """Unmerged producers of this MR (<proj>!<iid>): tracking-file mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', bossy.ps1
     track add -MergeAfter). state_of(repo, iid) -> 'merged'/'opened'/'closed'/''. Returns [(producer ref, state, task id)]."""
     path = tracking or kit_path('tracking')
     try:
@@ -536,8 +536,8 @@ def _auto_merge(worktree, iid, max_wait):
     if waiting:
         lines =[f'waiting for producer {ref} ({st}; task {tid}): {proj}!{iid} merges only after it' for ref, st, tid in waiting]
         if any(st == 'closed' for _, st, _ in waiting):
-            return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (orch.ps1 track mergeAfter) with the coordinator\nNOT_MERGED'
-        return '\n'.join(lines) + '\nnot merged now: orch.ps1 track run (supervise) merges it once the producer merged\nWAIT'
+            return '\n'.join(lines) + '\nproducer MR closed: fix the merge order (bossy.ps1 track mergeAfter) with the coordinator\nNOT_MERGED'
+        return '\n'.join(lines) + '\nnot merged now: bossy.ps1 track run (supervise) merges it once the producer merged\nWAIT'
     H = _mr_api(host, proj, iid)
     for i in range(2):   # one retry: a blip must not cost an agent round
         raw = H('mr.get')
@@ -690,14 +690,14 @@ def make_evidence(name, files, folder=None, parent=None):
     """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder."""
     ad = ADAPTERS['report'].get(REPORT_TYPE)
     if ad is None:   # evidence stays in the run folder; say why once
-        print(f'reports.type {REPORT_TYPE} is an extra: run kittool.py extra add report-{REPORT_TYPE}', file=sys.stderr)
+        print(f'reports.type {REPORT_TYPE} is a goody: run kitbag.py goody add report-{REPORT_TYPE}', file=sys.stderr)
     fn = (ad or {}).get('evidence')
     if fn:
         stamp_fn(fn)
     return fn({'name': name, 'files': files, 'folder': folder, 'parent': parent}) if fn else {}
 
 
-R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): extra report-gdocs
+R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): goody report-gdocs
 # adapter:report/markdown: the file, kept
 R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'])}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept
@@ -718,9 +718,9 @@ R['command'] = {'publish': _command}
 # adapter-end:report
 
 
-# ---- plugins: skills/dev-kit/adapters/*.py (installed extras)
+# ---- plugins: skills/crafty/adapters/*.py (installed goodies)
 def load_plugins(folder=os.path.join(KIT, 'adapters')):
-    """Each skills/dev-kit/adapters/*.py (an installed extra) gets this module in register(dt) and adds adapters or verbs."""
+    """Each skills/crafty/adapters/*.py (an installed goody) gets this module in register(dt) and adds adapters or verbs."""
     this = sys.modules[__name__]
     for path in sorted(glob.glob(os.path.join(folder, '*.py'))):
         spec = importlib.util.spec_from_file_location('kit_plugin_' + os.path.splitext(os.path.basename(path))[0], path)
@@ -890,7 +890,7 @@ def _report_selftest(expect):
             with _c.redirect_stderr(err):
                 make_doc('T', md)
         except SystemExit as e:
-            expect('a report type that is not installed: exit 3 + the extra add line', e.code == 3 and 'kittool.py extra add report-no-such-type' in err.getvalue())
+            expect('a report type that is not installed: exit 3 + the goody add line', e.code == 3 and 'kitbag.py goody add report-no-such-type' in err.getvalue())
         for name, adapter in ADAPTERS['report'].items():
             if adapter.get('selftest'):
                 use(name, {}); adapter['selftest'](expect, tmp, md)

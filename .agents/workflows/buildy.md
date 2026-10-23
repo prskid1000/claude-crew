@@ -12,7 +12,7 @@ Antigravity has no workflow engine: you are the coordinator. Per phase, in order
 2. **Decide** -- items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume
 3. **Review** -- one revy per devy + CI pipelines
 4. **Fix** -- one fix round (local tests again), then merge in order and register the tracker task
-5. **Deploy** -- the merged work joins the deploy batch silently (extra deploys); a person says deploy <env> (never asked, never deployed here)
+5. **Deploy** -- the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)
 6. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
 
-Arguments and step details: `.claude/workflows/buildy.js` (its header comment) and the `orchestrate` skill.
+Arguments and step details: `.claude/workflows/buildy.js` (its header comment) and the `bossy` skill.

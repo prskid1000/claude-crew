@@ -1,11 +1,11 @@
 <#
-supervise_resources.ps1 (core): the machine's shared resources in orch.ps1, dot-sourced by orch.ps1
-(skills/orchestrate/adapters/): build gate holders and queue, repeated build failures, the file cache flush (gate.cacheFlush),
+supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
+(skills/bossy/adapters/): build gate holders and queue, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of the
 supervise report, seats and leases in board show and recover.
-Its hooks run inside the orch.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
+Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
-Usage: dot-sourced by orch.ps1 (adapters/*.ps1), not run on its own.
+Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L13 builds · L42 supervise · L131 lines · L156 cleanup
 #>
@@ -40,7 +40,7 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
 }
 
 # ---- supervise: resource flags and report rows
-# supervise: flags, sweep lines, report rows and the largest waiting build (orch.ps1 supervise section 3: before the slow sections)
+# supervise: flags, sweep lines, report rows and the largest waiting build (bossy.ps1 supervise section 3: before the slow sections)
 function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }
   $rows = [Collections.Generic.List[object]]::new(); $graceRows = @{}
@@ -59,13 +59,13 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $oldest = $queue | Sort-Object { [datetime]$_.since } | Select-Object -First 1
   $wait = if ($oldest) { [int]($now - [datetime]$oldest.since).TotalMinutes } else { 0 }
   "gate: $($builds.Count) running ($((@($builds | ForEach-Object { "$($_.kind)" }) -join ', '))), $($queue.Count) queued, longest wait $wait min"
-  if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run orch.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
+  if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
   foreach ($k in Get-KitBuildFailures $hist $now) { & $flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; it may need help or a brief fix.' }
   if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))) }
 
-  # phone leases whose holder is gone (swarm.ps1 shuts lanes down; dead emulators reboot on acquire)
+  # phone leases whose holder is gone (phoney.ps1 shuts lanes down; dead emulators reboot on acquire)
   foreach ($lf in @(Get-ChildItem (Get-KitPath phones) -Filter '*.json' -ErrorAction SilentlyContinue)) {
     $ls = try { Get-Content $lf.FullName -Raw | ConvertFrom-Json } catch { continue }; $age = [int]($now - [datetime]$ls.since).TotalMinutes
     if ($ls.agent -eq 'manual') {
@@ -91,8 +91,8 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     if ($AutoFix) { $g.Group | ForEach-Object { Remove-Item $_.file -Force }; & $flag 'INFO' "auto-fixed: freed $what" 'Nothing to do.' }
     else { & $flag 'WATCH' $what 'supervise -AutoFix frees them.' }
   }
-  if ($AutoFix -and (Within 'browser tabs') -and (Test-Path (Join-Path $KitConf.Kit 'skills/qa-kit/node_modules/puppeteer-core')) -and @(Get-ChildItem (Get-KitPath sessions) -Filter 'tabs-*.json' -ErrorAction SilentlyContinue).Count) {
-    $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/qa-kit/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll())") (Left)
+  if ($AutoFix -and (Within 'browser tabs') -and (Test-Path (Join-Path $KitConf.Kit 'skills/pokey/node_modules/puppeteer-core')) -and @(Get-ChildItem (Get-KitPath sessions) -Filter 'tabs-*.json' -ErrorAction SilentlyContinue).Count) {
+    $r = Invoke-KitExe 'node' @('--input-type=module', '-e', "const m = await import('$([Uri]::new((Join-Path $KitConf.Kit 'skills/pokey/browser.mjs')).AbsoluteUri)'); console.log(await m.sweepAll())") (Left)
     if ($r.code -eq 0 -and "$($r.out)".Trim() -match '^[1-9]\d*$') { & $flag 'INFO' "auto-fixed: closed $($r.out.Trim()) orphan browser tab(s) (holder gone or left the board)" 'Nothing to do.' }
   }
   "qa seats: $(@(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count) taken"
@@ -111,7 +111,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     }
     $rows.Add([pscustomobject]@{ name = "browser $(($k -split '\|' | Where-Object { $_ }) -join '·')"; by = (@($tabs.PSObject.Properties | Where-Object { $_.Name -ne '_key' -and $_.Value.agent } | ForEach-Object { $_.Value.agent }) | Select-Object -Unique) -join ', '; gb = & $tree $b })
   }
-  $lanes = try { (Get-Content (Join-Path $KitConf.Kit 'skills/android-swarm/swarm.config.json') -Raw | ConvertFrom-Json).lanes } catch { @() }
+  $lanes = try { (Get-Content (Join-Path $KitConf.Kit 'skills/phoney/swarm.config.json') -Raw | ConvertFrom-Json).lanes } catch { @() }
   foreach ($p in @($ps | Where-Object { $_.Name -match '^emulator' -and $_.CommandLine -match '-port\s+(\d+)' })) {
     $port = $Matches[1]; $ln = @($lanes | Where-Object { "$($_.port)" -eq $port })[0]; $nm = if ($ln) { $ln.name } else { "emulator-$port" }
     $ls = try { Get-Content (Join-Path (Get-KitPath phones) "$nm.json") -Raw | ConvertFrom-Json } catch { $null }
@@ -125,7 +125,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($t in @($builds | Where-Object { $_.kind -ne 'emulator' })) { $p = $byId[[int]$t.pid]; $rows.Add([pscustomobject]@{ name = "build $(Split-Path "$($t.dir)" -Leaf) $($t.kind)"; by = $t.owner; gb = $(if ($p) { [math]::Max((& $tree $p), 0.1) } else { [double]$t.need }) }) }
   foreach ($r in $rows) { if ($graceRows.ContainsKey($r.name)) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }; $r }
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
-  if ($need) { [pscustomobject]@{ ramNeed = $need } }   # orch.ps1 names the biggest rows of every extra
+  if ($need) { [pscustomobject]@{ ramNeed = $need } }   # bossy.ps1 names the biggest rows of every goody
 }
 
 # ---- lines: board show and recover
@@ -134,7 +134,7 @@ function Get-KitBoardLinesResources {
   foreach ($o in @(Read-KitJsonFiles (Join-Path (Get-KitPath qa-seats) 'seats'))) { "  seat: $($o.agent) $($o.kind) $($o.need) GB since $($o.since)$(if ((Test-KitHolder $o) -eq $false) { ' (holder gone)' })" }
   foreach ($ev in @(Get-KitLocalEnvStatus)) { foreach ($l in @($ev.leases | Where-Object { $_ })) { "  lease: $($ev.env) $($l.agent) on $(@($l.services) -join ', ') $(if ($l.until) { "until $($l.until)" } else { 'while live' })" } }
 }
-# localenv.ps1 status -Json (extra local-env): the env state as the env reports it, never its files
+# envy.ps1 status -Json (goody local-env): the env state as the env reports it, never its files
 function Get-KitLocalEnvStatus {
   if (-not $KitCmd.local -or -not (Test-Path $KitCmd.local)) { return }
   $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') 60
@@ -144,12 +144,12 @@ function Get-KitLocalEnvStatus {
 # recover: env and phone leases with no live holder (README "Leases")
 function Get-KitRecoverLinesResources {
   foreach ($ev in @(Get-KitLocalEnvStatus)) {
-    foreach ($l in @(@($ev.leases) + @($ev.holds) | Where-Object { $_ -and $null -ne $_.graceLeft })) { $a = if ($l.agent) { $l.agent } else { $l.who }; "== LEASE $($ev.env) $a [$(@($l.services) -join ',')]: no live holder, ends in $($l.graceLeft) min (now: localenv.ps1 release|unhold -Env $($ev.env) -Agent $a)" }
+    foreach ($l in @(@($ev.leases) + @($ev.holds) | Where-Object { $_ -and $null -ne $_.graceLeft })) { $a = if ($l.agent) { $l.agent } else { $l.who }; "== LEASE $($ev.env) $a [$(@($l.services) -join ',')]: no live holder, ends in $($l.graceLeft) min (now: envy.ps1 release|unhold -Env $($ev.env) -Agent $a)" }
   }
   foreach ($o in @(Read-KitJsonFiles (Get-KitPath phones))) {
     $name = [IO.Path]::GetFileNameWithoutExtension($o.file)
     $ls = @{}; if ($o.lane) { $ls[$o.agent] = $o } else { foreach ($p in @($o.leases.PSObject.Properties) + @($o.holds.PSObject.Properties) | Where-Object { $_ }) { $ls[$p.Name] = $p.Value } }
-    foreach ($k in @($ls.Keys)) { if ($k -notin '__stopping__', 'manual' -and -not (Test-KitLive $ls[$k])) { "== LEASE $name $k [$(@($ls[$k].services) -join ',')]: no live holder, ends after idle.graceMinutes (now: $(if ($o.lane) { "swarm.ps1 release -Agent $k" } else { "localenv.ps1 release|unhold -Env $name -Agent $k" }))" } }
+    foreach ($k in @($ls.Keys)) { if ($k -notin '__stopping__', 'manual' -and -not (Test-KitLive $ls[$k])) { "== LEASE $name $k [$(@($ls[$k].services) -join ',')]: no live holder, ends after idle.graceMinutes (now: $(if ($o.lane) { "phoney.ps1 release -Agent $k" } else { "envy.ps1 release|unhold -Env $name -Agent $k" }))" } }
   }
 }
 

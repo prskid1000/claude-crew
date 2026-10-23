@@ -1,21 +1,21 @@
 {
- "_readme": "Every key is optional (missing = the README 'Configuration' default). orch.ps1 setup -WriteLocal writes kit.local.json from this file (minus localFiles and _ sections) and each localFiles entry to its path, all git-ignored. Fill the <...> values; forward slashes work on every OS.",
- "_doc": { "_readme": "README Configuration rows of keys without a _readme (kittool.py generates the table)",
+ "_readme": "Every key is optional (missing = the README 'Configuration' default). bossy.ps1 setup -WriteLocal writes kit.local.json from this file (minus localFiles and _ sections) and each localFiles entry to its path, all git-ignored. Fill the <...> values; forward slashes work on every OS.",
+ "_doc": { "_readme": "README Configuration rows of keys without a _readme (kitbag.py generates the table)",
   "gitHost, gitHostType, githubHost, gitlabGroup": "the git host (type from the host) and the group / owner for short refs <repo>!<iid>",
   "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop)",
   "commitStyle, locale.testCommentPattern, locale.proseTerms": "subject rule conventional (free / a regex); English defaults: testing comment, prose required words ({expected: regex, ...})",
-  "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: extra ios-simulator",
+  "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: goody ios-simulator",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
-  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deploys",
+  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: goody liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: goody deploys",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
   "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round); heartbeatMinutes (15) = the base of the NEXT <n> min each round prints (5 to 30 by state; manyAgents 8)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: browser profiles kept; worktreeDays (7): a clean worktree whose remote branch is gone goes after that idle time (local branch kept), one with uncommitted files is only reported",
-  "localOnly, orgTerms, extras": "org-only kit paths kept out of git; words the pre-push gate blocks; extras kittool.py extra sync always installs (extra add lists one, remove unlists it)",
-  "localFiles": "example only: orch.ps1 setup -WriteLocal writes targets.local.json from it",
-  "localEnv": "local envs the dev flow tests on before merge; `defaults` / `envs.<env>.extends` share one shape (extra local-env: its SKILL.md has the shape and an example)",
-  "runtimes": "machine runtimes agents lease (container engine, WSL distro, VM): <name>: isUp, up, down, match (extra runtimes: its EXTRA.md has the shape)" },
+  "localOnly, orgTerms, goodies": "org-only kit paths kept out of git; words the pre-push gate blocks; goodies kitbag.py goody sync always installs (goody add lists one, remove unlists it)",
+  "localFiles": "example only: bossy.ps1 setup -WriteLocal writes targets.local.json from it",
+  "localEnv": "local envs the dev flow tests on before merge; `defaults` / `envs.<env>.extends` share one shape (goody local-env: its SKILL.md has the shape and an example)",
+  "runtimes": "machine runtimes agents lease (container engine, WSL distro, VM): <name>: isUp, up, down, match (goody runtimes: its GOODY.md has the shape)" },
  "gitHost": "gitlab.com",
  "gitHostType": "gitlab",
  "gitHostApi": { "commands": {} },
@@ -30,7 +30,7 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: extras (kittool.py extra list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
+  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
@@ -46,28 +46,28 @@
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
- "reports": { "_readme": "type: markdown, html (a kept file) | command (command '<cli> {title} {path} {parent}' printing the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: extras. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
+ "reports": { "_readme": "type: markdown, html (a kept file) | command (command '<cli> {title} {path} {parent}' printing the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: goodies. share (gdocs): anyone (default) | domain:<domain> | none", "type": "markdown" },
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. a chat app, email delivery, an error tracker>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
- "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds orch.ps1 deploy plan; productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
+ "deploy": { "_readme": "trigger: owner (default: nobody asks or proposes a deploy; a person says deploy <env> and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds bossy.ps1 deploy plan; productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 180 },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them)", "timeoutSec": 60 },
- "tests": { "_readme": "Per stack (dev.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
+ "tests": { "_readme": "Per stack (crafty.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": ["staging"],
  "cleanup": { "maxBrowserProfiles": 4, "worktreeDays": 7 },
- "guard": { "_readme": "layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (dev.ps1 dir gives its place; kit scripts are exempt).", "layout": "warn" },
+ "guard": { "_readme": "layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt).", "layout": "warn" },
  "memory": { "_readme": "keepDefault: false = Claude Code auto memory lives in <kit>/memory/ (git-ignored); true = keep the user's own setting.", "keepDefault": false },
  "devices": { "type": "android" },
  "kitAudit": { "_readme": "everyDays: the SessionStart nudge asks for a kitty audit when the last audit is older (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
- "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: extra build-heap; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min)." },
+ "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: goody build-heap; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min)." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 25, "heartbeatMinutes": 15, "manyAgents": 8 },
- "storage": { "_readme": "orch.ps1 storage: free space per fixed drive each sampleSeconds in .state/storage (keepDays). ACT + rescue: a fill sustained 10 min, full within actHours or factor x the learned normal (>= minRateGBh) below watchFreeGB; floors (watchFreeGB, supervise.minDiskFreeGB) on drives with kit paths only. Rescue: the db query holding temp killed, builds held holdMinutes. Folder scans (background): a drop >= scanDropGB (scanCooldownMin), scanHours, ACT; defaults + watch[] (org paths) + learned children (drillGB, flatDays). db.use prints <id> <temp GB> <seconds> <query> per query; db.kill uses {id}; a query above db.maxGB (5) is killed. TODO-PARAM.",
+ "storage": { "_readme": "bossy.ps1 storage: free space per fixed drive each sampleSeconds in .state/storage (keepDays). ACT + rescue: a fill sustained 10 min, full within actHours or factor x the learned normal (>= minRateGBh) below watchFreeGB; floors (watchFreeGB, supervise.minDiskFreeGB) on drives with kit paths only. Rescue: the db query holding temp killed, builds held holdMinutes. Folder scans (background): a drop >= scanDropGB (scanCooldownMin), scanHours, ACT; defaults + watch[] (org paths) + learned children (drillGB, flatDays). db.use prints <id> <temp GB> <seconds> <query> per query; db.kill uses {id}; a query above db.maxGB (5) is killed. TODO-PARAM.",
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
   "db": { "use": "", "kill": "", "maxGB": 5 } },
  "idle": { "graceMinutes": 10, "beatMinutes": 20 },
- "params": { "_readme": "Learned parameters (orch.ps1 param show): each _manifest.params key starts at its fixed default and learns slowly from live observations (.state/params.json, per machine) within default/4..default x4; shadowDays shown only, then applied; past 2x the default: an owner yes (param approve). An explicit kit.local.json value of the key = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
- "budget": { "_readme": "An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item",
+ "params": { "_readme": "Learned parameters (bossy.ps1 param show): each _manifest.params key starts at its fixed default and learns slowly from live observations (.state/params.json, per machine) within default/4..default x4; shadowDays shown only, then applied; past 2x the default: an owner yes (param approve). An explicit kit.local.json value of the key = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
+ "budget": { "_readme": "An agent's budget = its tool's default compaction point (bossy.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item",
   "handoffAt": 0.8, "runStopAt": 0.8,
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "step": 15000, "item": 30000 },
   "defaults": {
@@ -88,11 +88,11 @@
    "linkPaths": ["<git-ignored file or folder every worktree needs, e.g. local credentials or local.properties>"] }
  ],
  "localOnly": ["skills/<org-only-skill>", "<another org-only path>"],
- "extras": [],
+ "goodies": [],
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
-  "skills/qa-kit/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for qa.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: extra api-auth; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+  "skills/pokey/targets.local.json": {
+   "_readme": "One entry per TEST environment (never production), the local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: goody api-auth; api may hold {tenant}. browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000 },
    "targets": {
@@ -107,22 +107,22 @@
   }
  },
  "_manifest": {
-  "_readme": "The kit's registry (never copied into kit.local.json): crew, skills, workflows, Router / Events rows, caps. Names live only here: lint checks files against it, kittool.py new / rename / remove edit it, port writes Character blocks and the Crew table. renamed: old -> new (setup -Migrate applies it).",
+  "_readme": "The kit's registry (never copied into kit.local.json): crew, skills, workflows, Router / Events rows, caps. Names live only here: lint checks files against it, kitbag.py new / rename / remove edit it, port writes Character blocks and the Crew table. renamed: old -> new (setup -Migrate applies it).",
   "agents": {
-   "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "dev-kit", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
+   "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "crafty", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
     "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
-   "revy": { "job": "reviewer: reviews anything and suggests concrete changes", "kinds": ["mr", "kit", "doc", "qa", "plan", "module", "config"], "roles": [], "skill": "dev-kit", "tools": "Read, Grep, Glob, Bash", "usedIn": ["/buildy", "R13", "R14"], "cant": "edit anything (suggests only)",
+   "revy": { "job": "reviewer: reviews anything and suggests concrete changes", "kinds": ["mr", "kit", "doc", "qa", "plan", "module", "config"], "roles": [], "skill": "crafty", "tools": "Read, Grep, Glob, Bash", "usedIn": ["/buildy", "R13", "R14"], "cant": "edit anything (suggests only)",
     "character": { "traits": "sceptical, blunt", "bias": "assumes a bug until the evidence proves otherwise", "catchphrase": "Show me the test.", "never": "reports a problem without its fix, or edits the artefact itself" } },
-   "checky": { "job": "tester: tests or verifies anything, always with evidence", "kinds": ["task", "smoke", "regression", "repro", "data", "perf", "claim"], "roles": ["lead", "test", "verify"], "skill": "qa-kit", "tools": "all", "usedIn": ["/testy", "R10"], "cant": "edit code, leave its target, load shared envs",
+   "checky": { "job": "tester: tests or verifies anything, always with evidence", "kinds": ["task", "smoke", "regression", "repro", "data", "perf", "claim"], "roles": ["lead", "test", "verify"], "skill": "pokey", "tools": "all", "usedIn": ["/testy", "R10"], "cant": "edit code, leave its target, load shared envs",
     "character": { "traits": "paranoid, evidence-obsessed", "bias": "a PASS is unproven until its evidence exists", "catchphrase": "Screenshot or it didn't happen.", "never": "trusts a PASS without proof or hides a defect in a note" } },
    "kitty": { "job": "kit caretaker: the kit and the machine setup", "kinds": ["build", "fix", "audit", "retro", "setup", "env", "recover", "docs"], "roles": [], "skill": "", "tools": "Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent", "usedIn": ["/tidy", "R2", "R3"], "cant": "touch product repos",
     "character": { "traits": "tidy and frugal", "bias": "one file, one fact, the smaller diff", "catchphrase": "Measure before and after.", "never": "adds a file, a key or a rule another one already covers" } }
   },
-  "skills": ["dev-kit", "orchestrate", "qa-kit"],
+  "skills": ["crafty", "bossy", "pokey"],
   "workflows": {
    "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels", "crew": ["devy", "revy", "kitty"], "router": "R5" },
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
-   "tidy": { "covers": "kit upkeep in 2-5 min: `orch.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
+   "tidy": { "covers": "kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
   },
   "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14"],
@@ -138,14 +138,16 @@
    "supervise.heartbeatMinutes": "quantile q=.5 k=.5 min=10", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
-   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect", "names": "command" },
-   "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "markdown html command" },
-   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "command none", "values": "host" }
+   "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
+   "git-host": { "config": "gitHostType", "file": "skills/crafty/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect", "names": "command" },
+   "report": { "config": "reports.type", "file": "skills/crafty/devtools.py", "verbs": "publish", "names": "markdown html command" },
+   "ci": { "config": "ci.type", "file": "skills/crafty/lib.ps1", "verbs": "runs jobs log status config", "names": "command none", "values": "host" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
-   "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",
-   "CONTRIBUTING.md": "README.md", "examples/rules.md": "README.md", "multi-agent.md": "AGENTS.md" }
+   "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "bossy.ps1", "kitflow.py": "kitbag.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",
+   "CONTRIBUTING.md": "README.md", "examples/rules.md": "README.md", "multi-agent.md": "AGENTS.md",
+   "orchestrate": "bossy", "dev-kit": "crafty", "qa-kit": "pokey", "orch.ps1": "bossy.ps1", "dev.ps1": "crafty.ps1", "qa.ps1": "pokey.ps1", "kittool.py": "kitbag.py",
+   "localenv.ps1": "envy.ps1", "swarm.ps1": "phoney.ps1" }
  },
  "_paths": {
   "_readme": "The one map of local state (never copied into kit.local.json): scripts resolve names (Get-KitPath, kit_path, kitPath, rp(); lint RUNTIME-RAW / -MAP). runtime: under $CLAUDE_RUNTIME, else <kit>/.runtime, disposable (work/ runs, cache/, logs/ append-only); durable: <kit>/.state/, survives a runtime wipe. Folders end in '/'. setup -Migrate moves old layouts.",
@@ -213,13 +215,13 @@
    "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "storage": "storage/",
    "extras-used": "extras-used/", "param-state": "params.json"
   },
-  "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kittool.py kitlog): every log line goes through it: at, run, agent, task, script, verb, event + fields, secrets masked. A stream with a durable name writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl. orch.ps1 audit merges them.",
+  "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line goes through it: at, run, agent, task, script, verb, event + fields, secrets masked. A stream with a durable name writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl. bossy.ps1 audit merges them.",
    "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log", "params"],
    "secretKey": "(?i)token|passw|secret|api[-_]?key|authoriz|cookie|credential|private[-_]?key|^pwd$|^pass$",
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
-  "keep": { "_readme": "orch.ps1 cleanup: hours a top-level entry of that path stays after its last write ([hours, newest N always kept]); an entry the map does not name goes after 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (durable state: listed, never removed). Agents write only under dev.ps1 dir (agents/<id>/, evidence/<item>/).",
+  "keep": { "_readme": "bossy.ps1 cleanup: hours a top-level entry of that path stays after its last write ([hours, newest N always kept]); an entry the map does not name goes after 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (durable state: listed, never removed). Agents write only under crafty.ps1 dir (agents/<id>/, evidence/<item>/).",
    "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 336, "waves": 336, "board": 336,
    "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160 }
  }

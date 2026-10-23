@@ -11,7 +11,7 @@ Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + s
 foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }   # test repos commit without a git config
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
-$env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_SCAN = '0'; $env:KIT_EXTRA_AUTO = '0'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM; no drive scans; no extra installed on demand
+$env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_SCAN = '0'; $env:KIT_EXTRA_AUTO = '0'   # Wait-KitPoll fake clock; test builds are tiny: never queue for RAM; no drive scans; no goody installed on demand
 $env:TEMP = $env:TMP = Join-Path ([IO.Path]::GetTempPath()) "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # own temp: never the machine's build-gate queue
 # `pwsh -NoProfile -File <kit script>` runs in this process (0.07 s, not 0.7 s), seen as a child sees it (streams, exit code, cwd,
 # env, globals); stdin readers, gate / check / guard and KIT_TESTS_SPAWN=1: real processes
@@ -36,7 +36,7 @@ function pwsh {
 }
 
 function Kd { Split-Path $k }
-function Lib { Join-Path $k 'skills/dev-kit/lib.ps1' }   # the test kit's lib.ps1
+function Lib { Join-Path $k 'skills/crafty/lib.ps1' }   # the test kit's lib.ps1
 function Px { $input | pwsh -NoProfile -File @args }
 # KIT_TESTS_TIME=1: Complete-Tests lists the slowest checks (time since the previous check)
 $script:clock = [Diagnostics.Stopwatch]::StartNew(); $script:times = [Collections.Generic.List[object]]::new()
@@ -70,15 +70,15 @@ function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git 
 # a throw-away kit copy (the scripts the tests run) in %TEMP%; one per area file
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
-  foreach ($f in 'skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json', 'skills/dev-kit/dev.ps1', 'skills/dev-kit/devtools.py', 'skills/qa-kit/qa.ps1',
-      'skills/orchestrate/orch.ps1', 'skills/orchestrate/adapters/supervise_resources.ps1', 'skills/orchestrate/kittool.py', 'LESSONS.md') {
+  foreach ($f in 'skills/crafty/lib.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
+      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/kitbag.py', 'LESSONS.md') {
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k
 }
-function TkPath($tkDir, $tkName, [switch]$Create) { & { . (Join-Path $tkDir 'skills/dev-kit/lib.ps1'); Get-KitPath $tkName -Create:$Create } }
+function TkPath($tkDir, $tkName, [switch]$Create) { & { . (Join-Path $tkDir 'skills/crafty/lib.ps1'); Get-KitPath $tkName -Create:$Create } }
 function Remove-TestKit($k) {
-  $nm = Get-Item "$k/skills/qa-kit/node_modules" -ErrorAction SilentlyContinue; if ($nm.LinkType) { [IO.Directory]::Delete($nm.FullName) }   # the link only, never the kit's packages
+  $nm = Get-Item "$k/skills/pokey/node_modules" -ErrorAction SilentlyContinue; if ($nm.LinkType) { [IO.Directory]::Delete($nm.FullName) }   # the link only, never the kit's packages
   Remove-Item (Kd) -Recurse -Force -ErrorAction SilentlyContinue
 }
 # every tracked kit file copied to $To (no git)
@@ -96,12 +96,12 @@ function New-GitKitCopy([string]$Dir, [switch]$Push) {
 # git repo <Kd>/<Name>: lib.ps1, kit.example.json, $Files; kit.local.json = $Local (uncommitted); returns its worktree '<Name> wt'
 function New-LinkedKit([string]$Name, [hashtable]$Local, [string[]]$Files = @()) {
   $mk = Join-Path (Kd) $Name
-  foreach ($f in @('skills/dev-kit/lib.ps1', 'skills/dev-kit/kit.example.json') + $Files) { $d = New-Item -ItemType Directory -Force (Join-Path $mk (Split-Path $f)); Copy-Item (Join-Path $k $f) $d }
+  foreach ($f in @('skills/crafty/lib.ps1', 'skills/crafty/kit.example.json') + $Files) { $d = New-Item -ItemType Directory -Force (Join-Path $mk (Split-Path $f)); Copy-Item (Join-Path $k $f) $d }
   Save-GitRepo $mk init
-  & $J $Local "$mk/skills/dev-kit/kit.local.json"
+  & $J $Local "$mk/skills/crafty/kit.local.json"
   git -C $mk worktree add -q --detach "$mk wt" 2>$null; "$mk wt"
 }
-# a local JSON API for qa.ps1 api: /login gives tokens + cookies; each other path answers 200 only with its auth; /v returns $Sha
+# a local JSON API for pokey.ps1 api: /login gives tokens + cookies; each other path answers 200 only with its auth; /v returns $Sha
 function Start-TestApi([string]$Sha = '') {
   $sv = "$(Kd)/s.cjs"; $port = 18000 + $PID % 1000
   Set-Content $sv @'
@@ -116,8 +116,8 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
 }
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
-  $nm = "$src/skills/qa-kit/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
-  Copy-Item "$src/skills/qa-kit/browser.mjs" "$k/skills/qa-kit"; New-Item -ItemType Junction -Path "$k/skills/qa-kit/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
+  $nm = "$src/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
+  Copy-Item "$src/skills/pokey/browser.mjs" "$k/skills/pokey"; New-Item -ItemType Junction -Path "$k/skills/pokey/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
 }
 # NodeT head: login app at `web` (/login form; /sso-app -> /idp on localhost; a 6-digit c logs in; posts counted; gen++ logs out)
 $LoginApp = @'
@@ -136,12 +136,12 @@ await new Promise((r) => app.listen(0, r))
 const web = `http://127.0.0.1:${app.address().port}`, U = { admin: ['qa', '', 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'] }
 const login = async () => { const b = await import(BM + '?a'); return { b, home: async (s) => (await b.text(s.page)).includes('home'), out: async (k, f) => console.log(k + ':' + await f().catch((e) => e.message)) } }
 '@ + "`n"
-function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = '$([Uri]::new("$k/skills/qa-kit/browser.mjs").AbsoluteUri)', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
+function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = '$([Uri]::new("$k/skills/pokey/browser.mjs").AbsoluteUri)', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
 # workflow sims: Invoke-Js <name> <js> <workflow>: $jsLib + $js in node, run() = the workflow body (agents mocked)
 $jsLib = @'
 const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
 const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })
-const _rep = (localTest, extra = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...extra })
+const _rep = (localTest, goody = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...goody })
 const _merged = (n) => ({ mrs: [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: true, mergeState: 'MERGED' }] })
 const _rec = () => ({ ok: true, output: 'RECORDED' })
 const _ok = (output) => ({ ok: true, output, signals: 0, lessonsChanged: [] })

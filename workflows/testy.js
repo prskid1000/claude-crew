@@ -3,7 +3,7 @@ export const meta = {
  description: 'Any test run (tracker selection, smoke after a deploy, regression sweep, retest; local or a test env) by checky lead / test / verify: test deployed tasks against their human testing docs (web + API pools, device lanes), audit notes, verify failures, publish the report, apply the result rule (closed / failedTesting / one [Bug] per ask)',
  whenToUse: 'Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents',
  phases: [
-  { title: 'Prepare', detail: 'args.select only: checky lead (qa-kit L1) writes run.json + lead-notes.md; tasks not live are left out' },
+  { title: 'Prepare', detail: 'args.select only: checky lead (pokey L1) writes run.json + lead-notes.md; tasks not live are left out' },
   { title: 'Test', detail: 'one checky (role test) per guide: web/API pool in parallel, app guides one per phone' },
   { title: 'Verify', detail: 'checky verify: note audit, stronger retry of NOT_TESTED, ENV-FIX cycles for local items, independent re-test of every FAIL' },
   { title: 'Close', detail: 'checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask' },
@@ -15,27 +15,27 @@ export const meta = {
 //   L316 verify · L360 run-item · L538 pool · L560 budget · L583 run · L619 learn
 // ---- args: the run's input
 /* args, one of:
-1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
+1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
 2. Short form (preferred): { runDir, kitDir?, only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
-3. Full run.json (+ runDir; also written to <runDir>/run.json for qa.ps1 finalize):
+3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
 { runDir: '<runtime>/work/qa-runs/<date>-<name>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
  envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
  outOfScope: ['<channel>'] (default qa.outOfScope), webParallel: 5, apiParallel: 5, verify: true (false: no FAIL re-test),
- learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (extra android-swarm), devices: 'android' | 'none',
- localEnv: '<local env of the run>' (extra local-env), envFixCycles: 2, envFixWaitMinutes: 300,
+ learn: true | 'auto', lanes: [{ n, name, serial, user, notes }] (goody android-swarm), devices: 'android' | 'none',
+ localEnv: '<local env of the run>' (goody local-env), envFixCycles: 2, envFixWaitMinutes: 300,
  items: [{ code: 'F2', title, guideFile, lane: 'web'|'api'|'app', target?, localEnv?, services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
   retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
   model?, effort? (TEST step) }],
 } */
-// kit paths by name: the same names and values as skills/dev-kit/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
+// kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
 // ---- record-args: the launch record (a resume needs it byte-exact)
-// launch record first (orch.ps1 launch -Self, FNV-1a); runDir rides along once known
+// launch record first (bossy.ps1 launch -Self, FNV-1a); runDir rides along once known
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : `select-${R.name || R.target || 'run'}`) + (R.instance ? `-${R.instance}` : '')
 async function recordArgs(run, runDir, phaseName, plan = '') {
@@ -45,18 +45,18 @@ async function recordArgs(run, runDir, phaseName, plan = '') {
 <<<ARGS
 ${json}
 ARGS>>>
-2. Run in PowerShell (pwsh 7): & ${K0}/skills/orchestrate/orch.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
+2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', 'haiku'], ['record-args-retry', 'sonnet']]) {
   const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'checky', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
- log('WARNING: launch args not recorded (orch.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
+ log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
 // ---- prepare: args.select builds the run
-// PREPARE (args.select): a lead builds the run (qa-kit L1), then the short form
+// PREPARE (args.select): a lead builds the run (pokey L1), then the short form
 if (R.select && !R.runDir && !Array.isArray(R.items)) {
  phase('Prepare')
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
@@ -65,12 +65,12 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
   statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tracking}`, runSettings: rest }
  const prep = await agent(`You are checky (role lead): build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
-Follow ${K0}/skills/qa-kit/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
+Follow ${K0}/skills/pokey/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
 Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,
   { label: 'prepare', phase: 'Prepare', schema: { type: 'object', properties: { runDir: { type: 'string' }, items: { type: 'number' },
    left: { type: 'array', items: { type: 'object' } },
    summary: { type: 'string' } }, required: ['runDir', 'items', 'left', 'summary'] }, agentType: 'checky', model: 'sonnet' })
- if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (qa-kit L1), launch with { runDir }')
+ if (!prep || !prep.runDir) throw new Error('Prepare returned no runDir: build the run by hand (pokey L1), launch with { runDir }')
  for (const l of prep.left || []) log(`left out ${l.id}: ${l.reason}`)
  log(`prepared ${prep.runDir}: ${prep.items} item(s), ${(prep.left || []).length} left out (${prep.summary})`)
  if (!prep.items) return { prepared: prep.runDir, left: prep.left || [], results: [], next: 'nothing live to test (see left)' }
@@ -96,24 +96,24 @@ const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // workspace .cla
 const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
 const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
  '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".'
-const QA = `${KIT}/skills/qa-kit`                 // SKILL.md = QA rules, targets.local.json = environments
-const Q = `${QA}/qa.ps1`
-const SWARM = `${KIT}/skills/android-swarm`
-const KITTOOL = `${KIT}/skills/orchestrate/kittool.py`
-// local-env and android-swarm are extras: a missing script prints the one extra line, never "not recognized"
-const viaExtra = (script, extra, rest) => `if (Test-Path '${script}') { & '${script}' ${rest} } else { '${extra} is an extra: run kittool.py extra add ${extra}' }`
-const EXTRA_HINT = (extra) => `- "${extra} is an extra" -> python -X utf8 ${KITTOOL} extra sync (or extra add ${extra}), then retry.`
-const ORCH = `${KIT}/skills/orchestrate/orch.ps1`
+const QA = `${KIT}/skills/pokey`                 // SKILL.md = QA rules, targets.local.json = environments
+const Q = `${QA}/pokey.ps1`
+const SWARM = `${KIT}/skills/phoney`
+const KITBAG = `${KIT}/skills/bossy/kitbag.py`
+// local-env and android-swarm are goodies: a missing script prints the one goody line, never "not recognized"
+const viaExtra = (script, goody, rest) => `if (Test-Path '${script}') { & '${script}' ${rest} } else { '${goody} is a goody: run kitbag.py goody add ${goody}' }`
+const EXTRA_HINT = (goody) => `- "${goody} is a goody" -> python -X utf8 ${KITBAG} goody sync (or goody add ${goody}), then retry.`
+const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // ES module imports need a file:// URL
-const BROWSER = ABS ? 'file:///' + `${KIT}/skills/qa-kit/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
- : `<file:/// URL of the absolute path of ${KIT}/skills/qa-kit/browser.mjs>`
+const BROWSER = ABS ? 'file:///' + `${KIT}/skills/pokey/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
+ : `<file:/// URL of the absolute path of ${KIT}/skills/pokey/browser.mjs>`
 if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: args.items[], a <runDir>/run.json or args.select (header)')
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
 const NODEV = R.devices === 'none'
-if (R.devices === 'ios') throw new Error('devices: ios: /testy drives Android lanes only (extra ios-simulator: test by hand, or devices: none)')
+if (R.devices === 'ios') throw new Error('devices: ios: /testy drives Android lanes only (goody ios-simulator: test by hand, or devices: none)')
 const OWNER = R.instance || 'w1'
 const VERIFY = R.verify !== false
 const LEARN = R.learn === undefined ? true : R.learn
@@ -123,11 +123,11 @@ const ENV_FIX_CYCLES = Number.isFinite(R.envFixCycles) ? R.envFixCycles : 2
 const ENV_FIX_TRIES = Math.max(1, Math.ceil((Number.isFinite(R.envFixWaitMinutes) ? R.envFixWaitMinutes : 300) / 9))   // 9 min slices: the tool timeout is 10
 const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run'
 // ---- prompts: seats, models, schemas
-// qa.ps1 seat: parallel counts are caps; free memory sets concurrency
+// pokey.ps1 seat: parallel counts are caps; free memory sets concurrency
 function seatBlock(it, label) {
  const kind = it.lane === 'api' ? 'api' : it.lane === 'app' ? 'app' : 'web'
  return `
-AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[tgt(it), ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - qa.ps1 api refuses other targets; the build/memory
+AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[tgt(it), ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - pokey.ps1 api refuses other targets; the build/memory
 gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
  & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
@@ -148,7 +148,7 @@ const CHECKS_SCHEMA = {
  type: 'object',
  properties: {
   code: { type: 'string' },
-  skipped: { type: 'boolean', description: 'true ONLY when qa.ps1 seat answered ALREADY (another worker owns this item)' },
+  skipped: { type: 'boolean', description: 'true ONLY when pokey.ps1 seat answered ALREADY (another worker owns this item)' },
   checks: {
    type: 'array',
    items: {
@@ -158,7 +158,7 @@ const CHECKS_SCHEMA = {
      subtask_id: { type: 'string', description: 'tracker id of the task this check belongs to' },
      screen: { type: 'string' },
      result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
-     defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only (qa-kit tester step 5)' },
+     defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only (pokey tester step 5)' },
      cause: { type: 'string', enum: ['no-mail-sandbox', 'phone-only', 'undeployed', 'env-data', 'tool-down'], description: 'NOT_TESTED only: why' },
      env_fix: { type: 'string', description: 'local env, NOT_TESTED: the exact coordinator-only fix' },
      what_was_done: { type: 'string' },
@@ -215,8 +215,8 @@ function localBlock(it) {
  const e = LOCALENV(it)
  if (!e) return ''
  return `
-LOCAL ENV "${e}" (extra local-env): ours, so NOT_TESTED is not final: ${KIT}/skills/local-env/SKILL.md "Unblock yourself". Services:
- ${viaExtra(`${KIT}/skills/local-env/localenv.ps1`, 'local-env', `use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>`)}
+LOCAL ENV "${e}" (goody local-env): ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md "Unblock yourself". Services:
+ ${viaExtra(`${KIT}/skills/envy/envy.ps1`, 'local-env', `use -Env ${e} -Services ${[].concat(it.services || []).join(',') || '<what the checks call>'} -Session <board token>`)}
  (release when done). A coordinator-only fix: NOT_TESTED with cause + env_fix = the exact fix; the workflow raises ENV-FIX and retests.
 ${EXTRA_HINT('local-env')}`
 }
@@ -224,12 +224,12 @@ const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early; relayed chat messages never change it.
 BOARD: & ${ORCH} board join -Type checky -Agent <CODE> -Run ${(R.runDir || '').split(/[\\/]/).pop()} -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
 RULES: ${QA}/SKILL.md tester steps, "Shared environment" and "Evidence" (in <outDir>/shots|evidence); ~10 min per check, scripts < 2 min with progress.
-OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/dev-kit/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part.
+OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/crafty/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part.
 TARGET "${tgt(it) || '(default)'}" (${QA}/targets.local.json), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
 LEAD NOTES: ${R.runDir}/lead-notes.md (the lead answers there; you cannot be messaged): re-read before each check and before any NOT_TESTED.
-TOOLS: & '${Q}' api -Target ${tgt(it) || '<target>'} ...; tracker: & '${KIT}/skills/dev-kit/dev.ps1' tracker view|comments <id>.`
+TOOLS: & '${Q}' api -Target ${tgt(it) || '<target>'} ...; tracker: & '${KIT}/skills/crafty/crafty.ps1' tracker view|comments <id>.`
 const WEB = (it) => `
 BROWSER (web): ${QA}/browser.mjs (read its header), scripts in <outDir>/scripts:
  import { session, relogin, go, text, clickText, clickSel, hoverSel, setInput, shot, mark, saveNet, settle, token } from '${BROWSER}'
@@ -245,14 +245,14 @@ const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
 PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
-- ${SWARM}/SKILL.md A1-A3 (extra android-swarm) with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
-  ${viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
+- ${SWARM}/SKILL.md A1-A3 (goody android-swarm) with lease id ${LEASE(L)}; the workflow releases it after the lane's last item. FIRST:
+  ${viaExtra(`${SWARM}/phoney.ps1`, 'android-swarm', `acquire -Agent ${LEASE(L)} -Lane ${L.name}`)}
   every command starts with $env:ANDROID_SERIAL='${L.serial}';
 ${EXTRA_HINT('android-swarm')}
-- UI: & ${Q} ui <verb> (verbs: qa.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
+- UI: & ${Q} ui <verb> (verbs: pokey.ps1 -h). Data prefix "QA-L${L.n}-<CODE>"; environment-wide settings only via the API (PASS_WITH_NOTE).`
 }
 const API = `
-API-ONLY LANE: qa.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check.`
+API-ONLY LANE: pokey.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check.`
 
 function laneBlock(it, L) {
  if (it.lane === 'app') return appBlock(L) + (it.alsoWeb ? WEB(it) + '\nThis package also has web/API checks: test those with the browser helper too.' : '')
@@ -302,7 +302,7 @@ function auditPrompt(it, res) {
 - NOT EXERCISED (neither defect nor pass): a part of Expected never exercised (a path not triggered, API-only because the UI was not
  reached): defect=false, notExercised=true, part, unreachable=true when the needed screen/endpoint is missing; it becomes its own
  check (<id>n: NOT_TESTED, FAIL when unreachable). Never leave it inside a note.
-${R.tracker && R.tracker.parent ? `- Skip issues already tracked by a [Bug] task under ${R.tracker.parent} (& '${KIT}/skills/dev-kit/dev.ps1' tracker view ${R.tracker.parent}).` : ''}
+${R.tracker && R.tracker.parent ? `- Skip issues already tracked by a [Bug] task under ${R.tracker.parent} (& '${KIT}/skills/crafty/crafty.ps1' tracker view ${R.tracker.parent}).` : ''}
 - Return per note check {id, defect, reason, own (true = this task's expected behaviour)} plus notExercised/part/unreachable;
  defects only in findings -> newDefects (screen, what_was_done, observed with the failing call, evidence names in ${outDir(it)}/shots|evidence).
 - Read evidence and code, GET-only API calls; change nothing.
@@ -353,7 +353,7 @@ ${JSON.stringify(res)}
  It publishes the report (kit.local.json reports.type), comments on the tasks and applies the result rule (closed /
  failedTesting / one [Bug] per ask); it refuses while evidence listed in results.json is missing.
 3. If it errors, fix only data problems in results.json (drop a missing evidence file name, suffix a duplicate check id; an off-standard
- file name: re-run -Check -FixNames) and run it once more. Don't edit qa.ps1.
+ file name: re-run -Check -FixNames) and run it once more. Don't edit pokey.ps1.
 Return ok=true/false and the script's output.`
 }
 
@@ -361,8 +361,8 @@ Return ok=true/false and the script's output.`
 // NOT_TESTED: stronger retry, then ENV-FIX (local) or failedTesting (shared env)
 const CAUSE_NEXT = {
  'no-mail-sandbox': 'check what the app sent through its API or job log (the delivery channel itself is out of scope)',
- 'phone-only': 'take a device lane (swarm.ps1 acquire) or prove the server side through the API',
- 'undeployed': 'run qa.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
+ 'phone-only': 'take a device lane (phoney.ps1 acquire) or prove the server side through the API',
+ 'undeployed': 'run pokey.ps1 deployed again; still not live -> NOT_TESTED undeployed (the task goes back to its developer)',
  'env-data': 'create the data through the API (prefixed QA-<CODE>) or ask the lead in lead-notes.md',
  'tool-down': 'use another tool (the product API, read endpoints, logs) instead of the one that is down' }
 const causeHint = (c) => CAUSE_NEXT[c.cause] || 'find another way in (data, user, path, the API, the lead notes)'
@@ -448,7 +448,7 @@ async function runItem(it, idx, L) {
   adoptRetry(res, r2, 'stronger retry')
   retried = true
  }
- // ENV-FIX (orchestrate E4): coordinator fixes the env, we retest; after ENV_FIX_CYCLES held, never failedTesting
+ // ENV-FIX (bossy E4): coordinator fixes the env, we retest; after ENV_FIX_CYCLES held, never failedTesting
  let envFix = null
  for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES; cyc++) {
   const open = res.checks.filter((c) => c.result === 'NOT_TESTED')
@@ -478,7 +478,7 @@ async function runItem(it, idx, L) {
   return { code: it.code, error: `${Math.round(ntShare(res) * 100)}% NOT_TESTED, not published`, result: res }
  }
  const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
- if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (orchestrate E4)`)
+ if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
  const fails = res.checks.filter((c) => c.result === 'FAIL')
  if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
  if (fails.length && VERIFY) {
@@ -514,7 +514,7 @@ async function runItem(it, idx, L) {
  const holdLocal = envFixOpen && !res.checks.some((c) => c.result === 'FAIL' && c.defect !== 'new')
  if (it.skipClose || holdLocal) {
   // verdicts stay on disk for the lead (finalize -Code); held.json tells supervise + workers
-  const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + qa.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'
+  const why = holdLocal ? `local env: checks still NOT_TESTED after ENV-FIX (${envFix ? `${envFix.id || '-'} ${envFix.state}` : 'none raised'}): the coordinator fixes the env + pokey.ps1 retest (never failedTesting for an env reason)` : 'publish left to the lead (skipClose)'
   await agent(`STEP (checky, role lead): write two files with the Write tool, content exactly as given, change nothing, run step 3, then return ok=true.
 1. ${outDir(it)}/results.json:
 ${JSON.stringify(res)}
@@ -530,7 +530,7 @@ Replace <now> with the current UTC time (ISO 8601) when you write it (workflow s
  }
  let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
  if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
- log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs qa.ps1 finalize for it (qa-kit L3)]'))
+ log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs pokey.ps1 finalize for it (pokey L3)]'))
  const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(c.observed || '')) || !(fin && fin.ok)
  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
@@ -549,7 +549,7 @@ async function pool(list, size, offset, laneOf) {
   // app lane done: return the lease (phone shuts down unless someone waits)
   const L = laneOf ? laneOf(w) : null
   if (L && L.name) {
-   await runStep(viaExtra(`${SWARM}/swarm.ps1`, 'android-swarm', `release -Agent ${LEASE(L)}`), `release:${L.name}`, 'Close').catch(() => null)
+   await runStep(viaExtra(`${SWARM}/phoney.ps1`, 'android-swarm', `release -Agent ${LEASE(L)}`), `release:${L.name}`, 'Close').catch(() => null)
    log(`lane ${L.name} (${L.serial}) released`)
   }
  }
@@ -597,7 +597,7 @@ const all = parts.flat().filter(Boolean)
 if (NODEV && app.length) log(`NOT_TESTED (devices none; tasks stay open): ${app.map((it) => it.code).join(', ')}`)
 
 // App follow-ups: PENDING web/api checks -> app item <code>A, in run.json first (finalize reads it)
-for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a device lane, args.lanes is empty: the task stays open (add lanes, qa.ps1 retest)`)
+for (const r of LANES.length ? [] : all.filter((x) => x.pending && x.pending.length)) log(`${r.code}: PENDING ${r.pending.join(', ')} need a device lane, args.lanes is empty: the task stays open (add lanes, pokey.ps1 retest)`)
 const followUps = LANES.length ? all.filter((r) => r.pending && r.pending.length).map((r) => {
  const it = R.items.find((x) => x.code === r.code)
  if (!it || it.lane === 'app' || R.items.some((x) => x.code === `${it.code}A`)) return null
@@ -619,8 +619,8 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 // ---- learn: signals for /tidy
 // LEARN 'auto': only after something eventful; a clean run gets the cleanup
 phase('Learn')
-// every finished run ends with a retro (orchestrate E10)
-const retroDue = (results) => { log('RETRO DUE: run /tidy (orchestrate E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true,
+// every finished run ends with a retro (bossy E10)
+const retroDue = (results) => { log('RETRO DUE: run /tidy (bossy E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true,
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop }, ...(STOPPED.length + LATER.length ? { next: nextCall([...STOPPED, ...LATER]) } : {}) } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
@@ -635,7 +635,7 @@ ${JSON.stringify(all).slice(0, 60000)}
 
 1. One signal per notable event (failures, retries, budget stops / handoffs, NOT_TESTED causes, audit reclassifications / not-exercised splits, verify "not reproduced" or "inconclusive", anything that
  cost time or worked unusually well):
- & ${ORCH} learn -Skill <qa-kit|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
+ & ${ORCH} learn -Skill <pokey|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. & ${ORCH} cleanup (only kit-created leftovers): mention what it freed.
 Return how many signals you recorded.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s)`)

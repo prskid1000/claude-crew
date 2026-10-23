@@ -1,43 +1,43 @@
 ---
-name: qa-kit
-description: "Load when: testing deployed work on a test env (checky test / verify, or one change checked directly), checky lead setting up a test-only run, or a person testing by hand from a human testing doc. Not when: agents test a batch of deployed tasks -> /testy via orchestrate; before merge -> local-env; static audit -> revy agent; phone lanes -> android-swarm."
+name: pokey
+description: "Load when: testing deployed work on a test env (checky test / verify, or one change checked directly), checky lead setting up a test-only run, or a person testing by hand from a human testing doc. Not when: agents test a batch of deployed tasks -> /testy via bossy; before merge -> envy; static audit -> revy agent; phone lanes -> phoney."
 ---
 
 **Load when** (all must hold): the work is testing DEPLOYED changes on a test environment (never production): you are a
 `checky` (test / verify), the main session checking one change, `checky` lead preparing a test-only run, or a person testing by
 hand.
-**Not when:** several deployed tasks tested by agents -> `/testy` (load `orchestrate`); before merge -> `local-env`
-(dev flow step 5); booting phones -> `android-swarm`; fixing what failed -> `dev-kit` (bugfix wave).
-**Hands off to:** `qa.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator (failedTesting
+**Not when:** several deployed tasks tested by agents -> `/testy` (load `bossy`); before merge -> `envy`
+(dev flow step 5); booting phones -> `phoney`; fixing what failed -> `crafty` (bugfix wave).
+**Hands off to:** `pokey.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator (failedTesting
 tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
 |---|---|
-| `<kit>/LESSONS.md` | step 0 (and H0, L0): `orch.ps1 learn -Read -Skill qa-kit` |
-| `qa.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the extras: `deploys`, `android-swarm`, `api-auth`, `report-gdocs`, `ios-simulator`) |
-| `<kit>/skills/dev-kit/dev.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `localenv.ps1 status -Env`, extra `local-env`) |
+| `<kit>/LESSONS.md` | step 0 (and H0, L0): `bossy.ps1 learn -Read -Skill pokey` |
+| `pokey.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the goodies: `deploys`, `android-swarm`, `api-auth`, `report-gdocs`, `ios-simulator`) |
+| `<kit>/skills/crafty/crafty.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`, goody `local-env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. `orch.ps1 learn -Read -Skill qa-kit`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
+0. `bossy.ps1 learn -Read -Skill pokey`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
    Check the SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
-   Only the run's target (run.json `target`, `alsoTargets`; `qa.ps1 api` refuses others): a local run never calls a shared env;
+   Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
-1. **Seat + board:** `qa.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
-   `orch.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
-   report. Phones: `swarm.ps1 acquire|release` (extra `android-swarm`; keep it through waits < 30 min). Local env
+1. **Seat + board:** `pokey.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
+   `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
+   report. Phones: `phoney.ps1 acquire|release` (goody `android-swarm`; keep it through waits < 30 min). Local env
    "pause": stop its checks; "deploy done": re-run them.
-2. **Deployed?** Before any FAIL: `qa.ps1 deployed -Mrs <repo>!<iid>,...` for every repo of the task; not deployed -> NOT_TESTED
+2. **Deployed?** Before any FAIL: `pokey.ps1 deployed -Mrs <repo>!<iid>,...` per repo of the task; not deployed -> NOT_TESTED
    "not deployed yet"; MANUAL -> the lead notes say whether it is live; unresolved -> NOT_TESTED, never FAIL.
 3. **Test each check:** API
-   `qa.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
+   `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / 4xx / 5xx; status and body still print);
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
-   app `qa.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
+   app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
-   `qa.ps1 annotate`: extra `android-swarm`). Each verdict: `dev.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
+   `pokey.ps1 annotate`: goody `android-swarm`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
    -Next <next check id> -Evidence "<verdict> <file>"` (a restart starts at that check; a beat's PAUSE line says what to do).
 5. **Verdict per check — defects are never notes:**
    - **PASS**: expected behaviour seen. **PASS_WITH_NOTE** only for: (a) guide text stale from later intended work, intent holds,
@@ -46,7 +46,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
      behaviour failed (failedTesting -> back to dev);
-     `new` = regression outside change (extra checks `X1`, `X2`... -> [Bug] task).
+     `new` = regression outside change (goody checks `X1`, `X2`... -> [Bug] task).
    - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
      health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
@@ -56,7 +56,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
      NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still
      NOT_TESTED -> the task goes to failedTesting: never use it for "no time" (shared test envs).
-   - **Local env item** (`localEnv`): no cause is final (local-env "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
+   - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
      `attempts` and `window`; a verifier must recreate them to refute.
@@ -65,8 +65,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
-6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `dev-kit/templates.md`
-   "Writing standards"), run `qa.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
+6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `crafty/templates.md`
+   "Writing standards"), run `pokey.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
    (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
    `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession` or log out); return the results.
 
@@ -93,26 +93,26 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   mask real customer data.
 
 ## Human testing doc (a person tests by hand)
-- H0. `orch.ps1 learn -Read -Skill qa-kit`; the doc is the task's testing doc (written by its developer at dev-kit step 6:
-  `dev-kit/templates.md` "Human testing doc"). Missing or incomplete for this change: write it from that template first.
+- H0. `bossy.ps1 learn -Read -Skill pokey`; the doc is the task's testing doc (written by its developer at crafty step 6:
+  `crafty/templates.md` "Human testing doc"). Missing or incomplete for this change: write it from that template first.
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
-- H3. Result rule (above): all pass -> close the task (`dev.ps1 tracker status <task> closed` + a comment with the evidence);
+- H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);
   own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
-  -> `dev.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
+  -> `crafty.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
 
-## Lead steps (a test-only run; orchestrate T1-T4)
-- L0. Machine setup once: `orch.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
+## Lead steps (a test-only run; bossy T1-T4)
+- L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
   passwords), `npm install` in this folder, `swarm.config.json` for app lanes, auth checks (tracker, `gws` when `reports.type` =
   gdocs, git host).
 - L1. Run folder `<runtime>/work/qa-runs/<date>-<name>/` + `run.json` (shape: the header of `workflows/testy.js`; one
   item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, services? (local: leased),
   subtasks:[{id,name,mrs}], retest?, only?}`),
-  guides exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
+  guides exported to text. Deploy check: `pokey.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos: `lead-notes.md`; not
   deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
-  local env: `seed -Check`, extra `local-env`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
+  local env: `seed -Check`, goody `local-env`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (the workflow's Prepare agent, from its job JSON; the same by hand):
-  1. Folder = `runFolder` with today's date (taken -> `-2`, `-3`). Candidates: `dev.ps1 tracker list <container> <status>` per
+  1. Folder = `runFolder` with today's date (taken -> `-2`, `-3`). Candidates: `crafty.ps1 tracker list <container> <status>` per
      `lists` (empty: `trackerLists`, else `tracker.list` / `tracker.repo`) x `statuses` (logical names via `tracker.statuses`;
      `in test` = `inTest`; other names pass through); plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the
      `tracker owner`'s.
@@ -122,14 +122,14 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none
      -> left out.
-  4. Live: test env -> `qa.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved) -> in; local env (`localEnv`)
-     -> `localenv.ps1 status -Env <env>` (extra `local-env`), every MR commit in the running release -> in. Else left out
+  4. Live: test env -> `pokey.ps1 deployed -Mrs <its MRs> -Target <t>`, all DEPLOYED (MANUAL resolved): in; local env (`localEnv`)
+     -> `envy.ps1 status -Env <env>` (goody `local-env`), every MR commit in the running release -> in. Else left out
      with the state.
   5. `run.json` = `{ title, target, kitDir, runDir, mandate, tracker: { list }, items, left: [{ id, name, reason }] }` +
      `runSettings`; then `lead-notes.md`. Return `{ runDir, items, left, summary }`.
 - L2. Launch `/testy { runDir, kitDir }`, or let it select: `{ select: { statuses, lists?, tasks?, exclude? }, target,
-  kitDir, mandate }` (Prepare = L1 Selection); `launch` record (orchestrate). Lead notes are the only channel to running testers.
-- L3. After the run: items the workflow could not publish -> `qa.ps1 finalize -RunDir <run> -Code <code>` (results.json on disk);
-  a fix went live and needs a retest -> `qa.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.
+  kitDir, mandate }` (Prepare = L1 Selection); `launch` record (bossy). Lead notes are the only channel to running testers.
+- L3. After the run: items the workflow could not publish -> `pokey.ps1 finalize -RunDir <run> -Code <code>` (results.json);
+  a fix went live and needs a retest -> `pokey.ps1 retest -RunDir <run> -Task <id> -Code <code>R -Mrs <refs>`.
 
-**Learn:** `orch.ps1 learn -Skill qa-kit -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.
+**Learn:** `bossy.ps1 learn -Skill pokey -Kind <kind> -Text "<what + fix>" -Ref <CODE-check>`.

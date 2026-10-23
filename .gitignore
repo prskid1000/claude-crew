@@ -1,23 +1,26 @@
 # This repo IS a workspace's .claude folder (git clone ... <workspace>/.claude). Everything below stays local.
-# Org-only paths not covered here go in skills/dev-kit/kit.local.json "localOnly": orch.ps1 setup writes them into
-# .git/info/exclude (orch.ps1 health runs it at SessionStart), so they never show in git status.
+# Org-only paths not covered here go in skills/crafty/kit.local.json "localOnly": bossy.ps1 setup writes them into
+# .git/info/exclude (bossy.ps1 health runs it at SessionStart), so they never show in git status.
 
 # runtime (disposable: work/ cache/ logs/) and durable local state (tracking, learning, deploy log, tracker-none, local env secrets)
 /.runtime/
 /.state/
-# the old layout (orch.ps1 setup -Migrate moves it)
+# the old layout (bossy.ps1 setup -Migrate moves it)
 /.claude-runtime/
 /.claude/
 
-# local config, org rules and lessons (orch.ps1 setup -WriteLocal writes the config files from kit.example.json)
+# local config, org rules and lessons (bossy.ps1 setup -WriteLocal writes the config files from kit.example.json)
 *.local.*
 *.local/
 settings.local.json
+skills/phoney/swarm.config.json
+skills/phoney/swarm.json
+# shim: remove after 2026-11-23 (the lane files before goody sync moves them)
 skills/android-swarm/swarm.config.json
 skills/android-swarm/swarm.json
 rules/*.local.md
 
-# harness state Claude Code writes into .claude (auto memory: orch.ps1 setup points autoMemoryDirectory at /memory)
+# harness state Claude Code writes into .claude (auto memory: bossy.ps1 setup points autoMemoryDirectory at /memory)
 /memory/
 /agent-memory-local/
 /scheduled_tasks.lock

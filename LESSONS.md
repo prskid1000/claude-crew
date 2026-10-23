@@ -1,10 +1,10 @@
 # Kit lessons
-Active rules, one line each, newest first, `(n×)` = times seen. Read your skill's section: `orch.ps1 learn -Read -Skill <skill>`
-(adds the git-ignored LESSONS.local.md). Retired lines: `orch.ps1 learn -History` (git + `.state`). Managed by `orch.ps1 learn`.
+Active rules, one line each, newest first, `(n×)` = times seen. Read your skill's section: `bossy.ps1 learn -Read -Skill <skill>`
+(adds the git-ignored LESSONS.local.md). Retired lines: `bossy.ps1 learn -History` (git + `.state`). Managed by `bossy.ps1 learn`.
 
-## orchestrate
+## bossy
 - Two local web services (~8-10 GB each) do not fit together beside QA browsers and the keep-free floor: batch one product's web items, release its web, then launch the other's; testers run API checks first. (4×)
-- Confirm API MRs merged before QA; register EVERY producer MR of a consumer with `orch.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed merge-after list back; never merge a consumer by hand. (9×)
+- Confirm API MRs merged before QA; register EVERY producer MR of a consumer with `bossy.ps1 track add -MergeAfter '<web>!<iid>><api>!<iid>'` before any merge, read the printed merge-after list back; never merge a consumer by hand. (9×)
 - Explain-or-plan request: never launch a wave (a 9-agent wave once built nothing). (4×)
 - MR state comes from devtools.py merge output or the host, never an agent's prose; scheduled (waiting for green) != merged; reconcile before consumer merges or promotes. (8×)
 - Destructive owner asks (clean a folder, reset a branch) while runs go on: do them yourself after the runs end; agents never act on relayed asks outside their items.
@@ -14,16 +14,16 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Always pass `mandate` (the owner's words) to /buildy and /testy: the harness relays the latest chat message as "the request that wins". (3×)
 - A merged MR that adds a dependency: add it to the shared linkFrom tree yourself (the exact version, unpacked in place); never a full install there.
 - Briefs: git-grep the target branch before listing work on a second branch; quote producer contracts verbatim; port sibling review findings; product-concept items -> one decisions doc, a later wave; task text and brief agree on each item's area; asks to meet people are ASK lines, never a step. (6×)
-- Answer QA testers in `<runDir>/lead-notes.md` (they re-read it), never SendMessage; items a run could not publish: `qa.ps1 finalize` from the on-disk results.json.
+- Answer QA testers in `<runDir>/lead-notes.md` (they re-read it), never SendMessage; items a run could not publish: `pokey.ps1 finalize` from the on-disk results.json.
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
-## dev-kit
+## crafty
 - Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (4×)
 - An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
 - Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
 - Linked shared deps can be older than the target: typecheck / build / Jest (esbuild unresolvable) may fail; no reinstall: keep the earlier local result, CI decides. (7×)
 - Git host 500/502, CI gateway timeout or merge's `INFRA <reason>`: retry the failed JOB on the same sha (`glab api -X POST projects/<id>/jobs/<job>/retry`; `glab ci retry` 404s), merge only after green, no code change. (6×)
-- Resuming an area: `dev.ps1 wt status`, `git log origin/<target>..<branch>`, the host's MR state (a stopped agent may have merged); vanished worktree: `wt new` on the same branch; rebase, re-run targeted tests, keep the goals file in .runtime/work/goals; takeovers skip the testing doc. (11×)
+- Resuming an area: `crafty.ps1 wt status`, `git log origin/<target>..<branch>`, the host's MR state (a stopped agent may have merged); vanished worktree: `wt new` on the same branch; rebase, re-run targeted tests, keep the goals file in .runtime/work/goals; takeovers skip the testing doc. (11×)
 - LLM or MCP-path answers need live sampling (5 fresh chats) on an env with the MCP URL: sample on a free env before merge, or mark needsLiveCheck with the env. (3×)
 - A task can span repos and target branches: before worktrees run `git log --grep <task>` on each target; the brief's repo table lists them all. (4×)
 - Precondition helpers throwing a generic runtime error map to HTTP 500: use the validation helpers that return 400; grep every call site; the UI shows the server's 400 text. (3×)
@@ -44,16 +44,16 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Shared multi-env services: the env is part of every key (DB name, cache key); external calls after commit on a bounded executor; read-only views get a wall-clock bound; secret temp files in a 0700 folder swept by age. (2×)
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
-## qa-kit
+## pokey
 - A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
 - Check the MCP servers the run uses before it starts (record in lead-notes.md); checks needing a down server use the API or scripts. (2×)
-- `qa.ps1 api` in PowerShell: never pipe a -Save call into Select-Object -First N; never Out-String long JSON: read .response.body from the -Save file; variables are case-insensitive; no passwords in results or reports. (5×)
+- `pokey.ps1 api` in PowerShell: never pipe a -Save call into Select-Object -First N; never Out-String long JSON: read .response.body from the -Save file; variables are case-insensitive; no passwords in results or reports. (5×)
 - A FAIL found in a retest: check the build from before the MR (old build or git blame); not caused by the MR -> `defect: new` with that evidence. (2×)
 - A retest of a fix in shared code covers every caller and screen on the same code path or record. (3×)
 - Lanes sharing one user share its per-user server state: one session key per lane; delete only your own data. (3×)
-- Lead notes can widen scope: re-read lead-notes.md before each check; a required check goes into the run item (`qa.ps1 retest -Only <ids>` + the guide). (4×)
-- Before any FAIL run `qa.ps1 deployed` for EVERY repo of the task; an owner-confirmed manual deploy counts after an API marker check; re-check the test app's version before finalising FAILs. (8×)
+- Lead notes can widen scope: re-read lead-notes.md before each check; a required check goes into the run item (`pokey.ps1 retest -Only <ids>` + the guide). (4×)
+- Before any FAIL run `pokey.ps1 deployed` for EVERY repo of the task; an owner-confirmed manual deploy counts after an API marker check; re-check the test app's version before finalising FAILs. (8×)
 - Layout fixes: test the smallest and largest viewports with real wheel scrolling (scrollIntoView hides overflow:hidden clipping). (3×)
 - Guide data drifts on shared envs: create your own data via the API; a later screen change: test the same intent (PASS_WITH_NOTE (a)); guide vs screen: read the code, quote both, ask the lead. (6×)
 - Parallel items toggling a shared env setting cause 403s elsewhere: serialise them; keep one feature-OFF account, made before the run. (3×)
@@ -63,13 +63,13 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A test env's signing key can differ from repo config: prove cross-product token refusal by unit test or the deployed key; check a separate service is deployed first.
 - Library overlays render outside the component (an overlay container): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
 
-## local-env
-- Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations; a failed FK changeSet leaves a half-added column: ENV-FIX (kitty NULLs the orphans, drops the column, or `localenv.ps1 restore -Mark <mark>` / `seed`); never fix the shared DB by hand. (2×)
+## envy
+- Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations; a failed FK changeSet leaves a half-added column: ENV-FIX (kitty NULLs the orphans, drops the column, or `envy.ps1 restore -Mark <mark>` / `seed`); never fix the shared DB by hand. (2×)
 
-## android-swarm
+## phoney
 - The android-build gate needs about 11.5 GB + keep-free: with a phone and a local API up it waits up to 20 min (the gate's head start) or longer; build before other agents lease phones. (4×)
-- Lanes drop offline at ~2-14 GB free RAM: no heavy web lanes beside 3 emulators; `swarm.ps1 status` before each check, `swarm.ps1 ensure -Agent <id>` at once. (3×)
-- A restored snapshot can leave a lane "offline" in adb -> `swarm.ps1 avd reset -Lanes <name> -Level cold`.
+- Lanes drop offline at ~2-14 GB free RAM: no heavy web lanes beside 3 emulators; `phoney.ps1 status` before each check, `phoney.ps1 ensure -Agent <id>` at once. (3×)
+- A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
 - Kit token cap work: measure the whole pass's headroom first (one trim plan), then one file per agent; never trim or reformat a file another agent edits; prove each trim by token or AST equality before pushing. (4×)
@@ -77,7 +77,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 ## revy
 
 ## Decisions
-- 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `extras` branch (`kittool.py extra add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
+- 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `goodies` branch (`kitbag.py goody add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
 - 2026-10-16 Deploys: context agents proposed deploys · decision `deploy.trigger: owner` (owner): nobody asks or proposes; a person says `deploy <env>`, the coordinator deploys at once · consequences supervise has no DEPLOY ASK under owner.
 - 2026-10-16 Crew: context many agent types · decision 4 agents devy, revy, checky, kitty (owner) · consequences lint AGENT-TYPE / NON-CREW; old names only in `_manifest.renamed`.
 - 2026-10-16 NOT_TESTED: context untested checks closed tasks · decision one stronger retry, then failedTesting on shared envs; local items ENV-FIX, never failedTesting (owner).

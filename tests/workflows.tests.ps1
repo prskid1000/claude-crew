@@ -5,7 +5,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/workflows.tests.ps1 (or tests/kit-tests
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit workflows; $O = Join-Path $k 'skills/orchestrate/orch.ps1'
+$k = New-TestKit workflows; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # buildy local loop: BLOCKED = FAIL; still FAIL -> ONE stronger round; ENV-FIX waits
 $wfd = Join-Path $src 'workflows/buildy.js'
 $jsd = @'
@@ -53,7 +53,7 @@ run(args, agent, _n, _n, pipeline).then(() => {
 $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
 Expect-Each $res 'buildy: #' 're-review', 'hold' -Show 5
-Expect 'buildy: default run name = orch.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
+Expect 'buildy: default run name = bossy.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
 const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, _pass, _n, _n, pipeline)
@@ -70,16 +70,16 @@ const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.r
 console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
-# buildy: mode duel is an extra (refused, names the extra); a removed arg is warned about, not silently ignored
+# buildy: mode duel is a goody (refused, names the goody); a removed arg is warned about, not silently ignored
 $jso = @'
 const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const e = await run({ ...base, mode: 'duel' }, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
 await run({ ...base, review: false }, _pass, (m) => logs.push(m), _n, pipeline)
-console.log(`duel-refused:${/duel is an extra: run kittool.py extra add duel/.test(e)}`)
+console.log(`duel-refused:${/duel is a goody: run kitbag.py goody add duel/.test(e)}`)
 console.log(`removed-arg:${logs.some((l) => /args.review was removed/.test(l))}`)
 '@
 Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
-# buildy deploy batch: skipped without the deploys extra (the step checks for it), parsed with it
+# buildy deploy batch: skipped without the deploys goody (the step checks for it), parsed with it
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
  return _pass(p, o) }
@@ -87,7 +87,7 @@ const base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const logs = [], seen = []
 const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipeline)
 const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
-console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys extra is not installed/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/orchestrate/adapters/deploys.ps1'")}`)
+console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys goody is not installed/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
 '@
 Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
@@ -161,7 +161,7 @@ run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).th
 '@
 $res = Invoke-Js tc-envfix $js3 $wf
 Expect-Each $res 'testy local: #' 'envfix-ask', 'envfix-pass', 'envfix-held' -Show 5
-# testy: localenv.ps1 / swarm.ps1 calls guarded (extras): a missing one prints the extra line; the prompt names extra sync
+# testy: envy.ps1 / phoney.ps1 calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
@@ -170,13 +170,13 @@ const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', la
  items: [_item('P1', 'app')] }
 run(args, agent, _n, _n, null).then(() => {
  const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release:Falcon') || {}).prompt || ''
- const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is an extra: run kittool.py extra add ${x}' }`)
- console.log(`local-guard:${guard('local-env/localenv.ps1', 'local-env') && /extra sync \(or extra add local-env\)/.test(tp)}`)
- console.log(`phone-guard:${guard('android-swarm/swarm.ps1', 'android-swarm') && /extra sync \(or extra add android-swarm\)/.test(tp)}`)
- console.log(`release-guard:${/Test-Path 'C:\/kit\/skills\/android-swarm\/swarm\.ps1'.*release -Agent qa-w1-Falcon.*extra add android-swarm/.test(rel)}`)
+ const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is a goody: run kitbag.py goody add ${x}' }`)
+ console.log(`local-guard:${guard('envy/envy.ps1', 'local-env') && /goody sync \(or goody add local-env\)/.test(tp)}`)
+ console.log(`phone-guard:${guard('phoney/phoney.ps1', 'android-swarm') && /goody sync \(or goody add android-swarm\)/.test(tp)}`)
+ console.log(`release-guard:${/Test-Path 'C:\/kit\/skills\/phoney\/phoney\.ps1'.*release -Agent qa-w1-Falcon.*goody add android-swarm/.test(rel)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy extras: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
+Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
 # testy retries per check: fewer checks keep the first FAIL; a duplicate (C5b) retries as C5
 $js4 = @'
 const { calls, agent } = _mock((prompt, o) => {
