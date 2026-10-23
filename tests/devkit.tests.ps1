@@ -22,25 +22,20 @@ try {
   $null = pwsh @np $D wt remove -Name a 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host + ci adapters: glab replies, type command, MR URLs, a missing extra
+# git-host adapters: type command, MR URLs, a missing extra (github; gitlab: an unknown host's default)
 $gh = @'
-$script:calls = [Collections.Generic.List[string]]::new()
-function glab { $script:calls.Add("glab $($args -join ' ')"); $global:LASTEXITCODE = 0; '{"iid":5,"state":"merged"}' }
 . $args[0]
-$script:HostType = 'gitlab'
-$m = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; "gl-get:$($script:calls[-1] -eq 'glab api projects/g%2Fr/merge_requests/5' -and $m.state -eq 'merged')"
-$null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5/merge' -Method PUT -Fields @{ squash = 'true' }; "gl-put:$($script:calls[-1] -like 'glab api -X PUT projects/g%2Fr/merge_requests/5/merge -f *squash=true*' -and $script:calls[-1] -like '*should_remove_source_branch=true*')"
-$null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; $n = $script:calls.Count; $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; "memo:$($script:calls.Count -eq $n)"
 $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
 "mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
 $m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
-$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; "extra-line:$($e -eq 'git-host github is an extra: run kittool.py extra add github')"
+$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # an unknown host = gitlab: an extra too
+"extra-line:$($e -eq 'git-host github is an extra: run kittool.py extra add github' -and $g -eq 'git-host gitlab is an extra: run kittool.py extra add gitlab')"
 '@
 $ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
 & $J @{ gitHost = 'git.example'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/dev-kit/kit.local.json') 5
 $f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
 $res = @(pwsh @np $f (Join-Path $ka 'skills/dev-kit/lib.ps1') 2>&1)
-Expect-Each $res 'git host: #' 'gl-get', 'gl-put', 'memo', 'mr-urls', 'command', 'extra-line'
+Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line'
 Remove-TestKit $ka
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
@@ -113,16 +108,6 @@ $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinut
 "no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
 "unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
 '@
-$gp = @'
-. $args[0]; $global:post = ''
-function glab { $p = "$($args -join ' ')"; $global:LASTEXITCODE = 0
-  if ($p -match '-X POST') { $global:post = $p; return '{}' }
-  switch -Regex ($p) { 'branches/main$' { '{"allow_force_push":false}'; break } 'branches/dev$' { '{"allow_force_push":true}'; break }
-    'branches/(\w+)$' { $global:LASTEXITCODE = 1; Write-Error "glab: $(@{ extras = '404 Not Found'; locked = '403 Forbidden' }[$Matches[1]] ?? '401 Unauthorized')" } } }
-$v = foreach ($b in 'main', 'dev', 'extras', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo)" }
-"protect:$(($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;extras=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')"
-'@
-Expect-Each (Invoke-PsTest 'gitlab-protect' $gp @(Lib)) 'gitlab branch.protect: ok, force allowed, set, no admin, auth failure' 'protect'
 $res = Invoke-PsTest 'pipes-test' $pt @((Lib), $D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
 # migrations: the repo's own check, Liquibase (extra), any other tool UNRUN; $mig: add files (path = text), commit, check
@@ -211,5 +196,12 @@ Expect 'storage: the grown folder''s grown child becomes tracked; a learned fold
 Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
 Expect 'orch.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
+Remove-TestKit $k
+# ---- OS helpers on Linux / macOS (was the extra posix)
+$k = New-TestKit posix
+if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
+  $r = pwsh -NoProfile -Command ". '$k/skills/dev-kit/lib.ps1'; `$m = Get-SysMem; `$p = @(Get-SysProcs | Where-Object Id -eq `$PID); `$d = Join-Path '$(Kd)' 'l'; New-DirLink `$d '$(Kd)'; ""`$(`$m.TotalGB -gt 0 -and `$m.AvailGB -gt 0)|`$(`$p.Count)|`$(@(Get-DirLinks '$(Kd)' 1).Count)""" 2>&1 | Out-String
+  Expect "posix: memory, own process, a directory link ($($r.Trim()))" ($r.Trim() -match '^True\|1\|1$')
+}
 Remove-TestKit $k
 Complete-Tests

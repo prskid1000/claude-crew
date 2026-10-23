@@ -176,7 +176,7 @@ switch ($Action) {
     $w = @(Warnings $me @(Active)); if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" }; exit 1 }
   }
   'show' { $act = @(Active | Where-Object { -not $Run -or $_.run -eq $Run }); Print $act; @($act | ForEach-Object { Warnings $_ $act }) | Sort-Object -Unique | ForEach-Object { "  ! $_" }
-    Invoke-KitHooks Get-KitBoardLines }   # extra supervise-resources: QA seats, local-env leases
+    Invoke-KitHooks Get-KitBoardLines }   # adapters/supervise_resources.ps1: QA seats, local-env leases; extras
   'check' {
     if (-not $Worktree) { 'usage: board check -Worktree <dir> -Session <token>'; exit 2 }
     $mine = Norm $Worktree
@@ -583,7 +583,7 @@ foreach ($s in $runs) {
 }
 if (-not $runs.Count) { 'no stopped workflow runs' }
 foreach ($q in Get-OrphanQaItems -Hours $Hours) { "== QA $($q.run): tested, never published: $($q.codes -join ', ')$(if ($q.fails) { " (unverified FAIL in $($q.fails -join ', '): checky first)" })"; foreach ($c in $q.codes) { "  & $($KitCmd.qa) finalize -RunDir '$($q.dir)' -Code $c" } }
-Invoke-KitHooks Get-KitRecoverLines   # extra supervise-resources: env and phone leases with no live holder
+Invoke-KitHooks Get-KitRecoverLines   # adapters/supervise_resources.ps1: env and phone leases with no live holder
 foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (orch.ps1 supervise -AutoFix replays it)" }
 "== heartbeat: a new session has none; arm ONE timer in $(Get-KitBeatMinutes) min, then re-arm it to the NEXT <n> min each supervise prints (orchestrate E1), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (orchestrate E1)"""
@@ -1266,7 +1266,7 @@ $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_F
 # flag, { name, by, gb } = a report row, { info } = an owner line, { ramNeed } = GB a waiting build needs, a string = a sweep line
 $res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(); $script:ramNeed = 0
 function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Flag $x.level $x.what $x.action } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
-# machine guards first, inside the sweep budget (build gate, cache flush, phones, QA seats: extra supervise-resources)
+# machine guards first, inside the sweep budget (build gate, cache flush, phones, QA seats: adapters/supervise_resources.ps1)
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix })) { Add-KitResult $x }
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run orch.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
@@ -1897,7 +1897,7 @@ function Old($item, $hours) {
 $notes = @()
 
 if (-not $WorktreesOnly) {
-Invoke-KitHooks Invoke-KitCleanup   # extra supervise-resources: test browsers, their profiles, idle Gradle / Kotlin daemons
+Invoke-KitHooks Invoke-KitCleanup   # adapters/supervise_resources.ps1: test browsers, their profiles, idle Gradle / Kotlin daemons
 
 # retention: kit.example.json _paths.keep (hours, [hours, newest N kept]); tab registries + locks belong to live browsers, pending decisions wait
 $pm = $script:KitPathMap
@@ -2269,7 +2269,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
   if ($__verb -in '-h', '--help', 'help', '-?') { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
   switch ($__verb) {
     'board' {
-      if ($__rest[0] -in 'dispute', 'disputes') { $null = Assert-KitExtra Invoke-BoardDispute 'board dispute' 'board-disputes'; Invoke-KitVerb Invoke-BoardDispute $__rest }
+      if ($__rest[0] -in 'dispute', 'disputes') { $null = Assert-KitExtra Invoke-BoardDispute 'board dispute' 'duel'; Invoke-KitVerb Invoke-BoardDispute $__rest }
       else { Invoke-KitVerb Invoke-Board $__rest }
     }
     'learn' { Invoke-KitVerb Invoke-Learn $__rest }

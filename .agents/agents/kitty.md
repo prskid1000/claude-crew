@@ -19,7 +19,7 @@ never: adds a file, a key or a rule another one already covers.
 the scope.
 Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/orchestrate/kit-admin.md` (extra `kit-admin`; step 0: how to change the kit,
 steps 1-6 detail, script pitfalls); `<kit>/skills/orchestrate/kittool.py` (steps 1-3 `audit setup|config|recover` on the live
-clone, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `audit scan`, `lint`; 9 `audit
+clone, 4 `audit scan`, `cost`, `release`, `budget raise`: extra `kit-admin`; `port`: extra `ports`; 4 and 8 `lint`; 9 `audit
 stamp`; `extra list|add|remove|sync` for optional parts); `<kit>/skills/dev-kit/templates.md` (step 6 "Writing
 standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
 `<kit>/skills/local-env/SKILL.md` (extra `local-env`; owner steps `up -Services`, `unhold`, `restart`, `down`, `refresh`, `drop`),

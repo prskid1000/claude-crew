@@ -697,14 +697,14 @@ if ($Step -eq 'migrations') {
   $main = Split-Path (git -C $top rev-parse --path-format=absolute --git-common-dir).Trim()
   $chk = (@(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and "$((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path)".TrimEnd('\', '/') -in $main, $top } | Select-Object -First 1).migrations.check
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
-  $all = @(git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' })
-  $masters = @($all | Where-Object { $_ -match '\.xml$' })
+  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue   # extra liquibase: its XML masters (+ the rest UNRUN)
+  $lbm = Get-Command Get-LiquibaseMasters -ErrorAction SilentlyContinue
+  $masters = @(if ($lbm) { & $lbm $top } else { git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' } })
   # migrations of another tool (Flyway, Alembic, Prisma, ...): no kit check
   $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(migrations?|migrate|flyway|alembic|prisma)/(.+/)?[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$|\.Designer\.cs$|ModelSnapshot\.cs$' })
-  $other = @($all | Where-Object { $_ -notmatch '\.xml$' }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
+  $other = @(if ($lbm) { & $lbm $top -Other }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
   if (-not $masters) { if ($other.Count) { exit 5 }; Write-Host '[check] no migrations in this repo - nothing to check'; exit 0 }
-  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue
   if (-not $lb) { Write-Host '[check] migrations UNRUN: the Liquibase check is an extra: run kittool.py extra add liquibase'; exit $(if ($Show) { 0 } else { 5 }) }
   if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
   $rc = & $lb -Top $top -Masters $masters -Since $Since
@@ -755,7 +755,7 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # extra container-tests
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # extra runtimes
   if ($ct) {
     $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }

@@ -157,7 +157,8 @@ scaffolding, the duel mode) live on the origin's `extras` branch, one folder eac
 **Use** (`python -X utf8 skills/orchestrate/kittool.py extra <verb>`):
 - `list`: the extras on `origin/extras` (`*` = installed) · `check`: config that needs a missing extra · `add <name>` /
   `remove <name>`: install / delete its files and list / unlist it in kit.local.json `extras` (always installed) · `sync`:
-  installs every extra whose "Needed when" matches, updates changed ones only while the kit is not behind origin/main ·
+  installs every extra whose "Needed when" matches, updates changed ones only while the kit is not behind origin/main (then an
+  extra merged into another or into the core, kittool `MERGED_EXTRAS`, is swapped: old files out, a listed old name relisted) ·
   `test [<name>]`: installed extras' tests.
 - Files install at their kit path, local-only (`.git/info/exclude`: never pushed, outside the budget). `sync` runs in
   SessionStart `health`, `setup` and the post-merge hook.
@@ -166,10 +167,11 @@ scaffolding, the duel mode) live on the origin's `extras` branch, one folder eac
 
 **Write one** (`kitty`):
 - Shape: `extras/<name>/files/<kit path>` (each file where it installs), `extras/<name>/EXTRA.md` (What; `Needed when:`;
-  Wiring), `extras/<name>/tests.ps1` (`tests/harness.ps1` helpers).
+  Wiring), `extras/<name>/tests.ps1` (`tests/harness.ps1` helpers; runs the `tests-*.ps1` of extras merged into it).
 - `Needed when:` forms, `,` = any: `` `key` = `v` | `w` `` (`` = `*` ``: set; `*` in a key walks keys and list items:
   `repos.*.ci`), `` `key` ~ `v` `` (contains), `` `<path>` exists ``, `` `<glob>` in a repo `` (a `repos[].checkout` tracks one),
-  `` `<os>` OS `` (windows, linux, macos); `Needed when (<file>.json):` reads that file. Listed in `extras`: always installed.
+  `` `<os>` OS `` (windows, linux, macos), `` origin ~ `v` `` (the kit's or a repo's origin URL); `Needed when (<file>.json):` reads that
+  file. Listed in `extras`: always installed.
 - Seam: core calls the extra when it is loaded, else prints the stop line; never a broken reference (lint and tests pass without
   it).
 - Move a core part out: `git grep` its callers, a seam at each, its files + tests to `extras/<name>/`, README / Files rows /
@@ -190,7 +192,7 @@ scaffolding, the duel mode) live on the origin's `extras` branch, one folder eac
 | `devices` | {"type": "android"} | type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: extra ios-simulator |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deployed-checks |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deploys |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round); heartbeatMinutes (15) = the base of the NEXT &lt;n&gt; min each round prints (5 to 30 by state; manyAgents 8) |
 | `idle` | {"graceMinutes": 10, "beatMinutes": 20} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
@@ -225,9 +227,9 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
 | Kind | Selected by | Interface (verbs) | Built in | Code |
 |---|---|---|---|---|
 | tracker | `tracker.type` | view url status comment comments create describe rename attach list owner | command, none | `skills/dev-kit/lib.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect | gitlab, command | `skills/dev-kit/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect | command | `skills/dev-kit/lib.ps1` |
 | report | `reports.type` | publish | markdown, html, command | `skills/dev-kit/devtools.py` |
-| ci | `ci.type` | runs jobs log status config | gitlab, command, none | `skills/dev-kit/lib.ps1` |
+| ci | `ci.type` | runs jobs log status config | command, none | `skills/dev-kit/lib.ps1` |
 <!-- kit-graph:end -->
 
 ## Layout, state and safety
@@ -322,6 +324,7 @@ flowchart LR
   skills_orchestrate_SKILL_md["orchestrate"]
   skills_orchestrate_SKILL_md -->|"step 0: orch.ps1 learn -Read -Skill orchestrate"| LESSONS_md["LESSONS.md"]
   skills_orchestrate_SKILL_md -->|"every event row (verbs: its header); hooks:…"| skills_orchestrate_orch_ps1["orch.ps1"]
+  skills_orchestrate_SKILL_md -->|"E1 heartbeat (supervise), board show, recover,…"| skills_orchestrate_adapters_supervise_resources_ps1["supervise_resources.ps1"]
   skills_orchestrate_SKILL_md -->|"K3: run by git (orch.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]
   skills_orchestrate_SKILL_md -->|"K3: run by git (orch.ps1 setup sets…"| _githooks_pre_push["pre-push"]
   skills_orchestrate_SKILL_md -->|"K3: run by git (orch.ps1 setup sets…"| _githooks_post_merge["post-merge"]

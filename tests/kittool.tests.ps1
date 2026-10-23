@@ -7,13 +7,13 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit kittool
 # sweeps over every kit .ps1: a keyword / unknown Verb-Noun run as a command ((if ...) without $); a helper nested in one
-# function, called outside it (Update-BoardEntry in Invoke-Board)
+# function, called outside it (Update-BoardEntry in Invoke-Board; adapters' hooks use their verb's helpers)
 $FD = [Management.Automation.Language.FunctionDefinitionAst]; $Up = { param($n) $p = $n.Parent; while ($p -and $p -isnot $FD) { $p = $p.Parent }; $p }
 $asts = @(git -C $src ls-files '*.ps1' ':!tests' | ForEach-Object { , @($_, [Management.Automation.Language.Parser]::ParseFile((Join-Path $src $_), [ref]$null, [ref]$null)) })
 $defs = @{}; foreach ($x in $asts) { foreach ($d in $x[1].FindAll({ $args[0] -is $FD }, $true)) { if (-not $defs.ContainsKey($d.Name)) { $defs[$d.Name] = [Collections.ArrayList]::new() }; $pa = & $Up $d; $null = $defs[$d.Name].Add($(if ($pa) { $pa } else { 'top' })) } }
 $bad = foreach ($x in $asts) { foreach ($c in $x[1].FindAll({ $args[0] -is [Management.Automation.Language.CommandAst] }, $true)) { $n = $c.GetCommandName(); if (-not $n) { continue }
   if ($n -in 'if', 'foreach', 'switch', 'while', 'for', 'do', 'try' -or ($n -match '^[A-Z][a-z]+-[A-Z]\w+$' -and -not $defs[$n] -and -not (Get-Command $n -CommandType Cmdlet, Function, Alias -ErrorAction SilentlyContinue))) { "$($x[0]):$($c.Extent.StartLineNumber) $n" }
-  elseif ($defs[$n] -and 'top' -notin $defs[$n]) { $p = $c; $ok = $false; while ($p = & $Up $p) { if ($defs[$n] -contains $p) { $ok = $true; break } }; if (-not $ok) { "$($x[0]):$($c.Extent.StartLineNumber) $n outside its function" } } } }
+  elseif ($defs[$n] -and 'top' -notin $defs[$n] -and $x[0] -notmatch '/adapters/') { $p = $c; $ok = $false; while ($p = & $Up $p) { if ($defs[$n] -contains $p) { $ok = $true; break } }; if (-not $ok) { "$($x[0]):$($c.Extent.StartLineNumber) $n outside its function" } } } }
 Expect "static: no keyword / unknown command, no nested helper called outside its function ($($bad -join ', '))" (-not $bad)
 $hx = foreach ($sc in 'skills/dev-kit/dev.ps1', 'skills/qa-kit/qa.ps1') { $null = Px (Join-Path $src $sc) --help 2>&1; "$LASTEXITCODE" }
 Expect "dev.ps1 / qa.ps1 --help exit 0 ($($hx -join ','))" (($hx -join ',') -eq '0,0')
@@ -63,7 +63,14 @@ ok_main = kt.main_clone(str(tmp)) == str(tmp)
 # lint measures PROSE against the linted kit's templates.md (k.dir), not the script's kit
 src = open(sys.argv[1], encoding='utf-8').read()
 ok_prose = 'writing_standards(k.dir)' in src and 'writing_standards(KIT)' not in src
-print(f'kittool-misc:{ok_main and ok_prose}')
+# the repos' git host extra: an unrecognised self-hosted host = gitlab, a github host = github, gitHostType set = config decides
+cfg = {'repos': [{'checkout': str(tmp)}]}
+kt.ORIGINS[:] = ['github.com', 'git.acme.example']; h1 = kt.host_extra(str(tmp), cfg)
+kt.ORIGINS[:] = ['github.com', 'github.acme.example']; h2 = kt.host_extra(str(tmp), cfg)
+ok_host = (h1, h2, kt.host_extra(str(tmp), dict(cfg, gitHostType='gitlab')), kt.host_extra(str(tmp), {})) == ('gitlab', 'github', None, None)
+hosts = [kt.HOST_RE.match(u).group(1) for u in ('git@github.com:o/r.git', 'https://gitlab.acme.example/g/github-mirror.git', 'ssh://git@ssh.dev.azure.com/v3/o/p/r')]
+ok_host = ok_host and hosts == ['github.com', 'gitlab.acme.example', 'dev.azure.com']   # origin ~ `v`: the host only
+print(f'kittool-misc:{ok_main and ok_prose and ok_host}')
 '@
 $kf = Join-Path ([IO.Path]::GetTempPath()) "kt-test-$PID.py"; Set-Content $kf $ktt -Encoding utf8
 $res = @(& $py -X utf8 $kf (Join-Path $src 'skills/orchestrate/kittool.py') 2>&1); Remove-Item $kf -Force
@@ -115,6 +122,23 @@ Expect "extra sync: its own old file list is updated, not refused; two syncs at 
 $kl = Join-Path $kc 'skills/dev-kit/kit.local.json'; $a1 = & $ex extra add never; $l1 = (Read-Json $kl).extras
 Remove-Item (Join-Path $kc 'notes/never.txt'); $s4 = & $ex extra sync; $null = & $ex extra remove never; $l2 = (Read-Json $kl).extras
 Expect 'extra add lists it in kit.local.json extras (a fresh clone''s sync reinstalls it), remove unlists it; a prose need never installs' ($a1.code -eq 0 -and 'never' -in $l1 -and $s4.out -match 'extra never: installed' -and 'never' -notin $l2 -and $s1.out -notmatch 'extra never')
+# MERGED_EXTRAS: a listed, installed extra merged into another -> sync swaps it (old files out, the new one listed + installed)
+New-Item -ItemType Directory -Force "$xw/extras/annotate/files/notes" | Out-Null; "# annotate`n`nNeeded when: listed." | Set-Content "$xw/extras/annotate/EXTRA.md"; 'a1' | Set-Content "$xw/extras/annotate/files/notes/annotate.txt"
+& $pushX 'feat: annotate'; $null = & $ex extra add annotate
+git -C $xw rm -rq extras/annotate; New-Item -ItemType Directory -Force "$xw/extras/android-swarm/files/notes" | Out-Null; "# android-swarm`n`nNeeded when: phones." | Set-Content "$xw/extras/android-swarm/EXTRA.md"
+'a2' | Set-Content "$xw/extras/android-swarm/files/notes/annotate.txt"; 'p' | Set-Content "$xw/extras/android-swarm/files/notes/phones.txt"; & $pushX 'feat: annotate merged into android-swarm'
+$s6 = & $ex extra sync; $l3 = (Read-Json $kl).extras; $a2 = & $ex extra add annotate
+Expect "extra sync: a merged extra is swapped for its new one, listed and installed; add of the old name names the new one ($($s6.out.Trim() -replace '\s+', ' '))" ($s6.out -match 'extra annotate: removed 1 file\(s\) \(merged into android-swarm\)' -and $s6.out -match 'extra android-swarm: installed 2' -and 'android-swarm' -in $l3 -and 'annotate' -notin $l3 -and (Get-Content (Join-Path $kc 'notes/annotate.txt') -Raw) -match 'a2' -and $a2.code -eq 2 -and $a2.out -match 'part of android-swarm now' -and -not (git -C $kc status --porcelain))
+$null = & $ex extra remove android-swarm
+# a fold into the core: the block stays while another worktree has the file loose (else its pull refuses), then goes
+$xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude; $w2 = Join-Path (Split-Path $kc) 'w2'
+New-Item -ItemType Directory -Force (Join-Path $kc 'notes') | Out-Null; 'sr' | Set-Content (Join-Path $kc 'notes/sr.txt'); Add-Content $xf "`n# kittool extra supervise-resources`n/notes/sr.txt`n# kittool extra end"
+git -C $kc worktree add -q $w2 HEAD 2>&1 | Out-Null; New-Item -ItemType Directory -Force "$w2/notes" | Out-Null; 'sr' | Set-Content "$w2/notes/sr.txt"
+git -C $kc add -f notes/sr.txt; git -C $kc commit -qm 'feat: sr in core'
+$s7 = & $ex extra sync; $b7 = (Get-Content $xf -Raw) -match 'extra supervise-resources'
+Remove-Item "$w2/notes/sr.txt"; $null = & $ex extra sync; $b8 = (Get-Content $xf -Raw) -match 'extra supervise-resources'
+Expect "extra sync: a fold keeps the block while another worktree has the file untracked, then drops it ($b7 $b8)" ($b7 -and -not $b8 -and (Test-Path (Join-Path $kc 'notes/sr.txt')))
+git -C $kc worktree remove --force $w2 2>&1 | Out-Null
 # extra sync, a real-like config (tracker clickup, gdocs reports, liquibase db commands, a node web service) -> exactly those
 # four (decoys: another tracker and report type, a listed-only extra)
 $needs = [ordered]@{ 'tracker-clickup' = 'Needed when: `tracker.type` = `clickup`'; 'tracker-jira' = 'Needed when: `tracker.type` = `jira` | `jira-server`'

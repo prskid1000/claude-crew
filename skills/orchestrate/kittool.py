@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""kittool.py: the kit's own tooling in one file - lint, README graph, audit scan, prose, budget, extras (and their commands).
+"""kittool.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget, extras (and their commands).
 
   python -X utf8 kittool.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kittool.py flow --readme [<kit>]       # README graph sections (the interactive page: extra flow-map)
   python -X utf8 kittool.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (extra ports)
-  python -X utf8 kittool.py audit scan|stamp [--kit <dir>] [--json <file>]   # kitty audit candidates; stamp resets the nudge
+  python -X utf8 kittool.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: extra kit-admin
   python -X utf8 kittool.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (extra kit-admin)
   python -X utf8 kittool.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kittool.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (extra kit-admin)
@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 kitlog · L162 load · L538 lint · L907 README graph · L1013 lint command · L1046 audit scan ·
-  L1281 registry · L1510 prose · L1653 sections · L1783 budget · L1801 extras · L2148 main
+Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1155 registry ·
+  L1384 prose · L1527 sections · L1657 budget · L1675 extras · L2081 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -321,7 +321,8 @@ def load(kit):
         return False
 
     allf, junk, repo_files = [], [], []
-    extras = {f for files in installed_extras(k.dir).values() for f in files}   # local-only plugins: not kit files
+    # local-only plugins: not kit files (a path the core tracks stays one: an extra folded into the core before sync swapped it)
+    extras = {f for files in installed_extras(k.dir).values() for f in files} - set(tracked(k.dir))
     for d, dirs, fs in os.walk(k.dir):
         top = osp.relpath(d, k.dir) == '.'
         skip = SKIP_DIRS if top else SKIP_DIRS - {'.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}   # runtime, harness worktrees, memory: kit root only
@@ -1043,14 +1044,13 @@ def cmd_lint(a):
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
     return 1 if problems and '--warn' not in flags else 0
 
-# ---- audit scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each)
+# ---- audit: findings, shared helpers, stamp (scan: consistency and pitfall candidates, extra kit-admin)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
   'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets')
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
    'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
-LIBS = ('lib.ps1',)   # dot-sourced: an exit there ends the caller
-AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'stamp': lambda kit, flags: cmd_stamp(kit)}   # extras add more
+AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # extra kit-admin adds setup, config, recover, scan
 findings = []
 
 def out(level, code, where, what, fix=''):
@@ -1099,90 +1099,6 @@ def strip_ps_comments(text):
     text = re.sub(r'<#.*?#>', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
     return '\n'.join(re.sub(r'(^|\s)#(?![>{]).*$', r'\1', l) if not re.search(r"""['"][^'"]*#""", l) else l for l in text.split('\n'))
 
-def config_doc_keys(kit):
-    doc = section(read(osp.join(kit, 'README.md')), 'Configuration') or ''
-    keys = set(re.findall(r'`([A-Za-z][\w]*(?:\.[\w]+)*)', doc))
-    for row in doc.split('\n'):   # sub-keys named in a row's Meaning cell -> tracker.statuses
-        cells = row.split('|')
-        if len(cells) > 3:
-            heads = re.findall(r'`([A-Za-z][\w.]*)', cells[1])
-            for w in re.findall(r'`([A-Za-z]\w*)', '|'.join(cells[2:])):
-                keys.update(f'{h}.{w}' for h in heads)
-    return doc, keys
-
-def script_config_keys(kit, files):
-    """Top-level kit.local.json keys the scripts read (Get-KitSetting / Get-KitValue / CFG.get / $cfg.<key>)."""
-    keys = {}
-    pats = [re.compile(r"Get-Kit(?:Setting|Value)\s+'([\w.]+)'"), re.compile(r"""CFG\.get\(\s*['"](\w+)"""),
-      re.compile(r"""CFG\[['"](\w+)"""), re.compile(r'\$cfg\.(\w+)')]
-    for f in files:
-        if not f.endswith(('.ps1', '.py')) or f.endswith('kittool.py'):
-            continue
-        text = read(osp.join(kit, f))
-        use = pats if re.search(r"""Join-Path[^\n]*kit\.local\.json['"]""", text) else pats[:3]   # $cfg.<key> only where kit.local.json is loaded
-        for ln, line in enumerate(text.split('\n'), 1):
-            for rx in use:
-                for m in rx.finditer(line):
-                    keys.setdefault(m.group(1), f'{f}:{ln}')
-    return keys
-
-def cmd_scan(kit):
-    files = tracked(kit) or []
-    k = load(kit)
-    local = osp.join(main_clone(kit), 'skills', 'dev-kit', 'kit.local.json')
-    terms = (load_json(local)[0] or {}).get('orgTerms') if osp.isfile(local) else None
-    for code, where, problem in lint(k, graph(k), terms):
-        out('ACT', ('GENERIC-' if code == 'ORG-TERM' else 'LINT-') + code, where, problem)
-    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (extra ports) are checked for the kit this file lives in
-        with contextlib.redirect_stdout(io.StringIO()) as said:
-            stale = PLUGINS['port'](['--check'])
-        if stale:
-            out('ACT', 'PORT-DRIFT', 'kittool.py port --check', said.getvalue().strip()[:300], 'python -X utf8 skills/orchestrate/kittool.py port')
-    texts = {f: read(osp.join(kit, f)) for f in files}
-    for f in sec_files(files):
-        for ln, nm, n in sec_sizes(f, texts[f]):
-            out('WARN', 'SECTION-BIG', f'{f}:{ln}', f'section "{nm}" is {n} lines (> {SEC_BIG})', 'split it with another ---- marker')
-    for f in files:
-        if re.match(r'agents/[^/]+\.md$', f):
-            tools = re.search(r'^tools:\s*(.+)$', texts[f], re.M)
-            sk = re.search(r'skills/([\w-]+)/SKILL\.md', texts[f])
-            if tools and sk:
-                st, tl = read(osp.join(kit, f'skills/{sk.group(1)}/SKILL.md')), tools.group(1)
-                if re.search(r'\.ps1\b', st) and not re.search(r'\b(Bash|PowerShell)\b', tl):
-                    out('ACT', 'AGENT-TOOLS', f, f'its skill {sk.group(1)} runs scripts, but tools ({tl}) has neither Bash nor PowerShell')
-                if re.search(r'\b(Edit|Write)\b', st) and 'never edits' not in texts[f].lower() and not re.search(r'\b(Edit|Write)\b', tl) and 'read-only' not in texts[f].lower():
-                    out('WARN', 'AGENT-TOOLS', f, f'its skill mentions editing files, tools ({tl}) cannot edit')
-    # config: example keys documented, documented keys read
-    doc, documented = config_doc_keys(kit)
-    ex, _ = load_json(osp.join(kit, PATHS_JSON))
-    for p in key_paths(ex or {}):
-        if '.' in p and not any(p.startswith(m + '.') for m in USER_MAPS) and p not in documented and f'`{p}' not in doc:
-            out('ACT', 'CONFIG-UNDOC', f'kit.example.json {p}', 'not documented in README "Configuration"')
-    code = '\n'.join(t for f, t in texts.items() if f.endswith(('.ps1', '.py', '.mjs', '.js')))
-    for key in sorted(set(re.findall(r'^\| `([A-Za-z][\w.]*)`', doc.split('### Tracker')[0], re.M))):
-        if not re.search(r'[\'".]' + re.escape(key.split('.')[-1]) + r'\b', code):
-            out('WARN', 'CONFIG-UNUSED', f'README Configuration {key}', 'documented, but no script seems to read it (dead key, or read under another name?)')
-    for key, where in sorted(script_config_keys(kit, files).items()):
-        top = key.split('.')[0]
-        if top not in documented and f'`{top}' not in doc:
-            out('ACT', 'CONFIG-UNDOC', where, f'script reads kit.local.json "{key}", not documented in README "Configuration"')
-        elif ex is not None and top not in ex:
-            out('WARN', 'CONFIG-EXAMPLE', where, f'"{top}" is documented but missing from kit.example.json')
-    for f, t in texts.items():
-        if not f.startswith(('examples/',) + GENERATED) and f.endswith(('.ps1', '.py', '.js', '.mjs', '.md', '.json')):
-            for ln, line in enumerate(t.split('\n'), 1):
-                if re.search(r'(?<![\w/])[A-Za-z]:[\\/](?:Users|Codebase|src|work|Projects)\b|/home/\w+/|/Users/\w+/', line) and not re.search(r'e\.g\.|example|<|//|^\s*#|Windows:', line):
-                    out('WARN', 'GENERIC-PATH', f'{f}:{ln}', 'absolute machine path: config key or derived path instead?')
-        if f.endswith('.ps1'):
-            ps_pitfalls(f, t)
-        elif f.endswith('.py'):
-            for ln, line in enumerate(t.split('\n'), 1):
-                if re.match(r'\s*except\s*:', line):
-                    out('WARN', 'PY-BARE-EXCEPT', f'{f}:{ln}', 'bare except: hides real errors (KeyboardInterrupt too)')
-                if re.search(r'(?<![\w.])open\(', line) and 'encoding' not in line and not re.search(r"""['"][rwax+]*b[rwax+]*['"]""", line):
-                    out('WARN', 'PY-ENCODING', f'{f}:{ln}', 'open() without encoding= reads cp1252 on Windows')
-    doc_flags(texts)
-
 def ps_case(t):
     """One variable assigned under two spellings ($L, $l) in one function (or the script body): [(line, b, a, line_a)]."""
     code = re.sub(r"""@'.*?'@|@".*?"@""", lambda m: '\n' * m.group(0).count('\n'), strip_ps_comments(t), flags=re.S)
@@ -1213,48 +1129,6 @@ def ps_case(t):
                 hits.append((lb, b, a, la))
     return sorted(hits)
 
-def ps_pitfalls(f, t):
-    code = strip_ps_comments(t)
-    lines = code.split('\n')
-    for lb, b, a, la in ps_case(t):   # the second spelling overwrites the first
-        out('WARN', 'PS-CASE', f'{f}:{lb}', f'${b} (line {lb}) is the same variable as ${a} (line {la}): PowerShell names are case-insensitive')
-    for ln, line in enumerate(lines, 1):
-        m = re.search(r'\$(\w+)\s*=(?![=~])', line)
-        if m and m.group(1).lower() in AUTOMATIC - {'lastexitcode'} and not re.search(r'\[(ref)\]', line):
-            out('WARN', 'PS-AUTOVAR', f'{f}:{ln}', f'assigns automatic variable ${m.group(1)} (silently overwritten / ignored)')
-        if re.search(r'\.Substring\(\s*[^,()]+,\s*\d+\s*\)', line) and not re.search(r'Min\(|\.Length\s*-g[te]|-g[te]\s*\d|ToString\(|GetBytes|Guid', line):
-            out('WARN', 'PS-SUBSTRING', f'{f}:{ln}', '.Substring(i, n) with a fixed n and no length guard on the line: throws on short strings')
-        if osp.basename(f) in LIBS and re.match(r'\s*exit\b', line):
-            out('WARN', 'PS-LIB-EXIT', f'{f}:{ln}', 'exit in a dot-sourced library ends the CALLER')
-    pm = re.search(r'(?is)^\s*param\s*\((.*?)\)\s*$', code, re.M)
-    if pm:
-        for m in re.finditer(r'\[string\[\]\]\s*\$(\w+)', pm.group(1)):
-            v = m.group(1)
-            if not re.search(r'Split-KitList[^\n]*\$' + v + r'\b|\$' + v + r'\b[^\n]*-split', code, re.I):
-                out('WARN', 'PS-FILE-ARRAY', f, f'[string[]]${v}: `pwsh -File` passes "a,b" as ONE string; use Split-KitList')
-        for m in re.finditer(r'\$(input|args|host|error|matches|pid|home)\b', pm.group(1), re.I):
-            out('ACT', 'PS-AUTOVAR', f, f'parameter ${m.group(1)} shadows an automatic variable')
-
-def doc_flags(texts):
-    """`<script>.ps1 -Flag` in Markdown where the script has no such parameter (docs that contradict scripts)."""
-    params = {}
-    for f, t in texts.items():
-        if f.endswith('.ps1'):   # any verb's param block taking the flag counts
-            for m in re.finditer(r'(?is)\bparam\s*\((.*?)\)\s*\n', strip_ps_comments(t)):
-                ps = {x.lower() for x in re.findall(r'\$(\w+)', m.group(1))} | {x.lower() for x in re.findall(r"Alias\('([^']+)'", m.group(1))}
-                params.setdefault(osp.basename(f), set()).update(ps)
-    for f, t in texts.items():
-        if not f.endswith('.md') or f.startswith(GENERATED) or f.endswith('LESSONS.md'):
-            continue
-        for ln, line in enumerate(t.split('\n'), 1):
-            for span in re.findall(r'`([^`]+)`', line):
-                for m in re.finditer(r'([\w-]+\.ps1)((?:\s+[^\s|;]+)*)', span):
-                    s = m.group(1)
-                    for flag in re.findall(r'(?<![\w-])-([A-Za-z]\w+)', m.group(2)) if s in params else []:
-                        fl = flag.lower()
-                        if fl not in ('file', 'noprofile', 'command', 'whatif', 'verbose', 'erroraction') and not any(p.startswith(fl) for p in params[s]):
-                            out('WARN', 'DOC-FLAG', f'{f}:{ln}', f'`{s} -{flag}`: {s} has no such parameter')
-
 def cmd_stamp(kit):
     p = kit_path('last-kitty-audit', create=True, kit=kit)
     now = datetime.datetime.now().isoformat(timespec='seconds')
@@ -1280,7 +1154,7 @@ def audit_main(a):
 
 # ---- registry: _manifest registers every crew part and cap, lint checks the files against it; front matter
 # validates against a small JSON Schema subset
-TODO = 'TODO(new)'   # a stub the scaffold extra leaves; lint TODO-STUB refuses it
+TODO = 'TODO(new)'   # a stub kittool.py new (extra kit-admin) leaves; lint TODO-STUB refuses it
 SCHEMAS = {
  'skill': {'type': 'object', 'required': ['name', 'description'], 'additionalProperties': False,
    'properties': {'name': {'type': 'string', 'pattern': r'^[a-z][a-z0-9-]*$'},
@@ -1498,7 +1372,7 @@ def registry_lint(k, bad):
         if m:
             bad('NON-CREW', ln(m), f'"{m.group(0)}": only crew agents ({", ".join(sorted(crew))}) are spawned')
 
-def _sub_file(kit, rel, fn):   # extras (scaffold, kit-admin) edit kit files with it, keeping each file's line endings
+def _sub_file(kit, rel, fn):   # extra kit-admin (scaffold, admin) edits kit files with it, keeping each file's line endings
     p = osp.join(kit, rel)
     with open(p, encoding='utf-8', newline='') as fh:
         raw = fh.read()
@@ -1804,10 +1678,14 @@ EXTRAS_REF = 'refs/remotes/origin/extras'
 EXCLUDE_MARK = '# kittool extra '
 OS_NAME = {'win32': 'windows', 'darwin': 'macos'}.get(sys.platform, 'linux')   # `<os>` OS in a Needed when line
 EXTRA_NOTE = re.compile(r'\bextra `([\w-]+)`')   # core text citing an extra's part names it: lint skips that line's paths
-EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'scaffold', 'rename': 'scaffold', 'remove': 'scaffold', 'cost': 'kit-admin',
-  'release': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
+EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'kit-admin', 'rename': 'kit-admin', 'remove': 'kit-admin', 'cost': 'kit-admin',
+  'release': 'kit-admin', 'audit scan': 'kit-admin', 'audit setup': 'kit-admin', 'audit config': 'kit-admin', 'audit recover': 'kit-admin'}
 PLUGINS = {}      # command -> handler, from installed kittool extras (skills/orchestrate/kittool_<name>.py)
 LINT_HOOKS = []   # (kit, problems, flags) -> None: adds problems
+# extras merged into another (old -> new) or folded into the core / retired (None): sync swaps the installed and listed old ones
+MERGED_EXTRAS = {'annotate': 'android-swarm', 'emulator-windows': 'android-swarm', 'app-kinds': 'android-swarm', 'deployed-checks': 'deploys',
+  'deploy-merge': 'deploys', 'container-tests': 'runtimes', 'qa-html-report': 'report-gdocs', 'board-disputes': 'duel', 'scaffold': 'kit-admin',
+  'tracker-gitlab': 'gitlab', 'supervise-resources': None, 'posix': None, 'migration-classify': None}
 
 def known_extras(kit):
     """Names of the extras on the fetched extras branch; None when it was never fetched."""
@@ -1920,7 +1798,7 @@ def extras_needed(kit):
     """[(name, feature)]: extras this install asks for that are not installed: kit.local.json `extras`, and EXTRA.md "Needed when[ (<file>, ...)]:" lines:
     `<key>` = `<value>` [| `<value>`] (the file's config, default kit.local.json; value `*` = the key is set; `~` instead of `=`:
     the value contains it), `<path>` exists (a kit file, the kit's own need), `<glob>` in a repo (a repos[].checkout tracks
-    such a file) or `<os>` OS (windows, linux, macos); prose-only lines never install."""
+    such a file), `<os>` OS (windows, linux, macos) or origin ~ `<text>` (the kit's or a repo's origin URL); prose-only lines never install."""
     have = set(installed_extras(kit))
     rc, o, _ = git(kit, 'grep', '-n', '--full-name', '-e', '^Needed when', EXTRAS_REF, '--', 'extras/')
     need, configs = [], {'kit.local.json': local_config(kit, 'kit.local.json')}
@@ -1943,7 +1821,32 @@ def extras_needed(kit):
                  if any(osp.exists(osp.join(base, p)) for base in (kit, main_clone(kit)))]
         need += [(name, f'{p} in a repo') for p in re.findall(r'`([^`\s]+)`\s+in a repo', rule) if repo_tracks(configs['kit.local.json'], p)]
         need += [(name, f'{x} OS') for x in re.findall(r'`(\w+)`\s+OS\b', rule) if x == OS_NAME]
+        need += [(name, f'origin ~ {x}') for x in re.findall(r'(?<![`\w])origin\s*~\s*`([^`]+)`', rule) if any(x.lower() in u for u in origins(kit, configs['kit.local.json']))]
+    hx = host_extra(kit, configs['kit.local.json'])   # an unrecognised self-hosted origin still needs the gitlab adapter
+    need += [(hx, "the repos' git host")] if hx and hx not in have and extra_files(kit, hx) else []
     return sorted(set(need))
+
+ORIGINS = []   # the kit's and the configured repos' origin URLs, lowercase: read once per run
+
+HOST_RE = re.compile(r'^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)')   # lib.ps1 reads the origin host the same way
+
+def origins(kit, cfg):
+    """The origin hosts of the kit and the configured repos (the host only: a path that names another host never matches)."""
+    if not ORIGINS:
+        dirs = [kit] + [c for c in config_values(cfg, 'repos.*.checkout') if isinstance(c, str) and osp.isdir(c)]
+        urls = [git(d, 'remote', 'get-url', 'origin', timeout=20)[1].lower() for d in dirs]
+        ORIGINS.extend(m.group(1) if m else '' for m in (HOST_RE.match(u) for u in urls))   # one per dir, the kit first
+    return ORIGINS
+
+HOST_EXTRA = (('github', 'github'), ('bitbucket', 'bitbucket'), ('dev.azure.com', 'azure-devops'), ('visualstudio.com', 'azure-devops'),
+  ('gitea', 'gitea'), ('forgejo', 'gitea'), ('codeberg', 'gitea'))   # lib.ps1 Get-HostKind; any other host = gitlab
+
+def host_extra(kit, cfg):
+    """The git-host extra of the product repos when config leaves the type to the host (lib.ps1: unknown host = gitlab); None without repos."""
+    if cfg.get('gitHostType') or not config_values(cfg, 'repos.*.checkout'):
+        return None
+    host = str(cfg.get('gitHost') or next(iter(origins(kit, cfg)[1:]), '')).lower()
+    return next((x for h, x in HOST_EXTRA if h in host), 'gitlab') if host else None
 
 REPO_FILES = {}   # checkout -> its tracked paths: one git ls-files per repo and run, however many globs ask
 
@@ -1998,13 +1901,50 @@ def extra_sync(kit):
     if git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]:
         print('kittool extra sync: the extras branch was never fetched (offline?): nothing installed', file=sys.stderr)
         return 1
+    current = git(kit, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD')[0] == 0
+    if current:
+        migrate_extras(kit)
     rc, installed = 0, installed_extras(kit)
     for name in sorted({n for n, _ in extras_needed(kit)}):
         rc = max(rc, add_extra(kit, name, installed))
-    if git(kit, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD')[0] == 0:
+    if current:
         for name in stale_extras(kit, installed):
             rc = max(rc, add_extra(kit, name, installed, 'updated'))
     return rc
+
+def migrate_extras(kit):
+    """MERGED_EXTRAS gone from the extras branch: the old files go, a listed old name is listed as the new one (sync installs it)."""
+    known, blocks = known_extras(kit) or set(), exclude_blocks(kit)
+    listed = local_config(kit, 'kit.local.json').get('extras') or []
+    for old, new in MERGED_EXTRAS.items():
+        if old in known or (old not in blocks and old not in listed):
+            continue
+        if old in blocks:
+            drop_extra(kit, old, blocks[old], f'merged into {new}' if new else 'now in the core')
+        set_listed(kit, old, False)
+        if new and (old in listed or old in blocks):   # installed by hand (unlisted) too: its new home stays installed
+            set_listed(kit, new, True)
+
+def drop_extra(kit, name, paths, why=''):
+    """Delete an extra's untracked files here (and the folders it brought); its exclude block goes once no worktree has them
+    untracked (a worktree behind a core fold still needs the block: an unignored file there would block its pull)."""
+    tracked_files = set(tracked(kit))   # another block's files (the extra it merged into) are never this one's to delete
+    mine = [x for x in paths if x not in {p for n, b in exclude_blocks(kit).items() if n != name for p in b}]
+    here = [x for x in mine if x not in tracked_files and osp.isfile(osp.join(kit, x))]
+    for rel in here:
+        os.remove(osp.join(kit, rel))
+        d = osp.dirname(osp.join(kit, rel))
+        while d != kit and osp.isdir(d) and not os.listdir(d):
+            os.rmdir(d)
+            d = osp.dirname(d)
+    loose = lambda w, x: osp.isfile(osp.join(w, x)) and git(w, 'ls-files', '--error-unmatch', '--', x)[0] != 0
+    elsewhere = [w for w in worktrees(kit) if any(loose(w, x) for x in mine)]
+    if not elsewhere:
+        set_exclude(kit, name, None)
+    elif not here and why:   # a migration another worktree still has to run: nothing to say here
+        return here
+    print(f'extra {name}: removed {len(here)} file(s)' + (f' ({why})' if why else '') + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
+    return here
 
 # an extra's tests.ps1 that dot-sources harness.ps1 beside itself gets the kit's harness; its test kits get the extra's files
 HARNESS_SHIM = """. '<kit>/tests/harness.ps1'
@@ -2059,6 +1999,9 @@ def extra_write(kit, verb, names):
         return extra_sync(kit)
     installed = installed_extras(kit)
     name = names[0]
+    if name in MERGED_EXTRAS and name not in (known_extras(kit) or set()):
+        print(f'kittool extra {verb}: {name} is ' + (f'part of {MERGED_EXTRAS[name]} now: kittool.py extra {verb} {MERGED_EXTRAS[name]}' if MERGED_EXTRAS[name] else 'in the core now'), file=sys.stderr)
+        return 2
     if verb == 'add':
         rc = add_extra(kit, name, installed)
         if rc == 0:
@@ -2066,21 +2009,11 @@ def extra_write(kit, verb, names):
         return rc
     tracked_files = set(tracked(kit))
     paths = [x for x in exclude_blocks(kit).get(name) or [rel for _, rel in extra_files(kit, name)] if x not in tracked_files]
-    here = [x for x in paths if osp.isfile(osp.join(kit, x))]
     set_listed(kit, name, False)
-    if not here:
+    if not any(osp.isfile(osp.join(kit, x)) for x in paths):
         print(f'kittool extra remove: {name} is not installed in {kit}', file=sys.stderr)
         return 1
-    for rel in here:
-        os.remove(osp.join(kit, rel))
-        d = osp.dirname(osp.join(kit, rel))
-        while d != kit and osp.isdir(d) and not os.listdir(d):   # folders the extra brought
-            os.rmdir(d)
-            d = osp.dirname(d)
-    elsewhere = [w for w in worktrees(kit) if any(osp.isfile(osp.join(w, x)) for x in paths)]
-    if not elsewhere:   # the shared exclude keeps the block while another worktree still has the files
-        set_exclude(kit, name, None)
-    print(f'extra {name}: removed {len(here)} file(s)' + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
+    drop_extra(kit, name, paths)
     return 0
 
 

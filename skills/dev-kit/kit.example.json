@@ -7,7 +7,7 @@
   "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: extra ios-simulator",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
-  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deployed-checks",
+  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: extra liquibase; another tool: UNRUN); deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: extra deploys",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
   "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round); heartbeatMinutes (15) = the base of the NEXT <n> min each round prints (5 to 30 by state; manyAgents 8)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
@@ -136,9 +136,9 @@
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/dev-kit/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },
-   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect", "names": "gitlab command" },
+   "git-host": { "config": "gitHostType", "file": "skills/dev-kit/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url repo.base repo.commit repo.compare branch.protect", "names": "command" },
    "report": { "config": "reports.type", "file": "skills/dev-kit/devtools.py", "verbs": "publish", "names": "markdown html command" },
-   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "gitlab command none", "values": "host" }
+   "ci": { "config": "ci.type", "file": "skills/dev-kit/lib.ps1", "verbs": "runs jobs log status config", "names": "command none", "values": "host" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",
    "dev-wave": "buildy", "test-and-close": "testy", "kit-retro": "tidy", "kit.ps1": "orch.ps1", "kitflow.py": "kittool.py", "paths.json": "kit.example.json", "migrations.py": "devtools.py", "tech-audit.py": "devtools.py",

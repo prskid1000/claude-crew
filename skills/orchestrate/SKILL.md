@@ -15,6 +15,7 @@ row.
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `orch.ps1 learn -Read -Skill orchestrate` |
 | `orch.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (extra `kit-admin`; `.githooks` install it) |
+| `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`: dot-sourced by orch.ps1 (build gate, phones, QA seats, browsers) |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge` | K3: run by git (`orch.ps1 setup` sets core.hooksPath) |
 | `kittool.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 

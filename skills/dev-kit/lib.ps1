@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L81 config · L161 OS · L298 leases · L500 tracker · L720 git-host · L855 kitlog · L948 entry-scripts
+Sections: L9 paths · L81 config · L161 OS · L333 leases · L548 tracker · L767 git-host · L872 kitlog · L965 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -158,25 +158,41 @@ function Invoke-GitFetch([string]$Dir, [int]$TimeoutSec = 60, [string[]]$Refs = 
     [bool](-not $r.timedOut -and $r.code -eq 0)
   }
 }
-# ---- OS: helpers (Windows; on Linux / macOS the extra posix replaces them)
+# ---- OS: helpers (Windows, Linux, macOS)
 $KitIsWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $KitIsMac = (-not $KitIsWindows) -and ($PSVersionTable.OS -match 'Darwin' -or ((Test-Path variable:IsMacOS) -and $IsMacOS))
-if (-not $KitIsWindows -and -not (Test-Path (Join-Path $PSScriptRoot 'adapters/os_posix.ps1'))) { Write-Warning 'Linux / macOS support is an extra: run kittool.py extra add posix' }
 
 function Get-KitTemp { [IO.Path]::GetTempPath().TrimEnd([char]'\', [char]'/') }
 
 function Get-ExeName([string]$Name) { if ($KitIsWindows) { "$Name.exe" } else { $Name } }
 
 function Get-SysMem {
-  $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
-  $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, CacheBytes
-  $cache = $pm.CacheBytes / 1GB   # system file cache: resident, trimmed only under pressure
-  $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
-  $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
-  [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1); CacheGB = [math]::Round($cache, 1) }
+  $kv = { param($lines, $re) $h = @{}; foreach ($l in $lines) { if ($l -match $re) { $h[$Matches[1]] = [double]$Matches[2] } }; $h }
+  if ($KitIsWindows) {
+    $total = (Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory).TotalPhysicalMemory / 1GB
+    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -Property AvailableMBytes, CacheBytes
+    $cache = $pm.CacheBytes / 1GB   # system file cache: resident, trimmed only under pressure
+    $avail = $pm.AvailableMBytes / 1KB   # Available = free + standby (the cache is not "used")
+    $free = (Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory).FreePhysicalMemory / 1MB
+  }
+  elseif ($KitIsMac) {
+    $total = [double](sysctl -n hw.memsize) / 1GB
+    $vm = vm_stat
+    $page = if (($vm | Select-Object -First 1) -match 'page size of (\d+)') { [double]$Matches[1] } else { 4096 }
+    $n = & $kv $vm '^(Pages [^:]+):\s+(\d+)'
+    $free = ($n['Pages free'] + $n['Pages speculative']) * $page / 1GB
+    $avail = $free + ($n['Pages inactive'] + $n['Pages purgeable']) * $page / 1GB
+  }
+  else {
+    $m = & $kv (Get-Content /proc/meminfo) '^(\w+):\s+(\d+)'
+    $total = $m['MemTotal'] / 1MB
+    $free = $m['MemFree'] / 1MB
+    $avail = $(if ($m.ContainsKey('MemAvailable')) { $m['MemAvailable'] } else { $m['MemFree'] + $m['Cached'] + $m['Buffers'] }) / 1MB
+  }
+  [pscustomobject]@{ TotalGB = [math]::Round($total, 1); AvailGB = [math]::Round($avail, 1); FreeGB = [math]::Round($free, 1); CacheGB = [math]::Round([double]$cache, 1) }
 }
 
-function Get-FreeGB { (Get-SysMem).FreeGB }
+function Get-FreeGB { $m = Get-SysMem; if ($KitIsWindows) { $m.FreeGB } else { $m.AvailGB } }
 # RAM every build, phone and QA seat leaves free: env, gate.keepFreeGB, else 15% of RAM (at least 6 GB)
 function Get-KitKeepFreeGB {
   if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
@@ -209,10 +225,29 @@ function Get-KitTreeGB([int]$Root, $Snap = $(Get-KitProcSnap)) {
   }
   $sum / 1GB
 }
-function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster, no CommandLine/Created
-  $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
-  $all = foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
-    [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; Path = $p.ExecutablePath; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
+function ConvertFrom-PsElapsed([string]$e) {
+  if ($e -notmatch '^(\d+-)?(\d+:){1,2}\d+$') { return $null }
+  $d = 0; if ($e -match '^(\d+)-(.*)$') { $d = [int]$Matches[1]; $e = $Matches[2] }
+  $s = 0; foreach ($x in $e -split ':') { $s = $s * 60 + [int]$x }
+  (Get-Date).AddSeconds(-($s + 86400 * $d))
+}
+function Get-SysProcs([string]$Name, [switch]$NoCommandLine) {   # -NoCommandLine: faster on Windows, no CommandLine/Created
+  $all = if ($KitIsWindows) {
+    $props = if ($NoCommandLine) { 'ProcessId', 'ParentProcessId', 'Name', 'WorkingSetSize' } else { 'ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'ExecutablePath', 'WorkingSetSize', 'CreationDate', 'PrivatePageCount', 'KernelModeTime', 'UserModeTime' }
+    foreach ($p in Get-CimInstance Win32_Process -Property $props -ErrorAction SilentlyContinue) {   # Private: bytes; Cpu: seconds used
+      [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Name = $p.Name; CommandLine = $p.CommandLine; Path = $p.ExecutablePath; WorkingSet = [double]$p.WorkingSetSize; Created = $p.CreationDate; Private = [double]$p.PrivatePageCount; Cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
+    }
+  }
+  else {
+    $names = @{}
+    foreach ($l in (ps -A -o pid= -o comm= 2>$null)) { if ($l -match '^\s*(\d+)\s+(.*)$') { $names[[int]$Matches[1]] = Split-Path $Matches[2].Trim() -Leaf } }
+    foreach ($l in (ps -A -o pid= -o ppid= -o rss= -o etime= -o args= 2>$null)) {
+      if ($l -notmatch '^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s?(.*)$') { continue }
+      $id = [int]$Matches[1]; $cl = $Matches[5]; $n = [string]$names[$id]
+      $exe = Split-Path (($cl -split '\s+')[0]) -Leaf
+      if ($n.Length -ge 15 -and $exe.StartsWith($n)) { $n = $exe }
+      [pscustomobject]@{ Id = $id; ParentId = [int]$Matches[2]; Name = $n; CommandLine = $cl; Path = ($cl -split '\s+')[0]; WorkingSet = [double]$Matches[3] * 1KB; Created = (ConvertFrom-PsElapsed $Matches[4]); Private = [double]$Matches[3] * 1KB; Cpu = $null }
+    }
   }
   if ($Name) { @($all | Where-Object { $_.Name -match $Name }) } else { @($all) }
 }
@@ -377,10 +412,14 @@ function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TR
 }
 
 function New-DirLink([string]$Path, [string]$Target) {
-  cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" }
+  if ($KitIsWindows) { cmd /c mklink /J "$Path" "$Target" | Out-Null; if ($LASTEXITCODE) { throw "New-DirLink: mklink /J $Path -> $Target failed ($LASTEXITCODE)" } }
+  else { New-Item -ItemType SymbolicLink -Path $Path -Value $Target | Out-Null }
 }
 
-function Remove-DirLink([string]$Path) { cmd /c rmdir "$Path" | Out-Null }
+function Remove-DirLink([string]$Path) {
+  if ($KitIsWindows) { cmd /c rmdir "$Path" | Out-Null }
+  else { & /bin/rm -f -- "$($Path.TrimEnd('/'))" }
+}
 
 function Set-NodeModules([string]$To, [string]$From, [string]$SrcRoot, [string]$WtRoot) {
   $norm = { param($x) [IO.Path]::GetFullPath($x).TrimEnd('\', '/') }   # a\.\x == a\x
@@ -440,14 +479,17 @@ function Remove-NodeModules([string]$Path) {
   }
   Remove-Item -LiteralPath $Path -Force
 }
-function Get-DirLinks([string]$Dir, [int]$Depth = 4) { Get-ChildItem $Dir -Recurse -Depth $Depth -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue }
+function Get-DirLinks([string]$Dir, [int]$Depth = 4) {
+  if ($KitIsWindows) { Get-ChildItem $Dir -Recurse -Depth $Depth -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue }
+  else { Get-ChildItem $Dir -Recurse -Depth $Depth -Force -ErrorAction SilentlyContinue | Where-Object { $_.LinkType -eq 'SymbolicLink' -and (Test-Path -PathType Container $_.FullName) } }
+}
 
 function Resolve-Tool {
   foreach ($n in $args) { $c = Get-Command $n -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { return $c.Source } }
   $null
 }
 
-function Get-Python { 'python' }
+function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
 
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $kt = $KitCmd.kittool; if (-not $kt -or -not (Test-Path $kt)) { return @() }
@@ -459,7 +501,12 @@ function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $found
 }
 function Start-Detached([string]$FilePath, [string[]]$ArgumentList = @(), [string]$WorkingDirectory = (Get-Location).Path, [string]$Log) {
-  $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden
+  if ($KitIsWindows) { $null = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden; return }
+  if (-not $Log) { $Log = Join-Path (Get-KitTemp) "kit-bg-$([IO.Path]::GetFileNameWithoutExtension($FilePath))-$PID.log" }
+  $psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh'); $psi.UseShellExecute = $false
+  $script = 'cd "$1" || exit 1; log=$2; shift 2; s=; command -v setsid >/dev/null 2>&1 && s=setsid; $s nohup "$@" >"$log" 2>&1 </dev/null &'
+  foreach ($a in @('-c', $script, 'sh', $WorkingDirectory, $Log, $FilePath) + @($ArgumentList)) { $psi.ArgumentList.Add([string]$a) }
+  ([Diagnostics.Process]::Start($psi)).WaitForExit()
 }
 
 # ----- adapters (README "Adapters"): kind -> name -> verb -> { param($a, $verb) }; '*' = any verb
@@ -490,6 +537,7 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
 }
 # ----- extras (kittool.py extra add <name>): adapters a config names but the kit does not ship; the files land in skills/dev-kit/adapters/
 $script:KitExtraOf = @{ 'tracker/jira-server' = 'tracker-jira'; 'git-host/bitbucket' = 'bitbucket'; 'ci/bitbucket' = 'bitbucket'
+  'tracker/gitlab' = 'gitlab'; 'git-host/gitlab' = 'gitlab'; 'ci/gitlab' = 'gitlab'
   'tracker/github' = 'github'; 'git-host/github' = 'github'; 'ci/github' = 'github'
   'git-host/azure' = 'azure-devops'; 'ci/azure' = 'azure-devops'; 'git-host/gitea' = 'gitea'; 'ci/gitea' = 'gitea' }
 function Get-KitExtraLine([string]$Kind, [string]$Name) {
@@ -503,7 +551,6 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
   $script:__trType = ([string]$(if ($Type) { $Type } elseif ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { $KitConf.TrackerType })).ToLower()
   $script:__trDry = [bool]($DryRun -or $env:KIT_TRACKER_DRYRUN -eq '1')
 
-  if ($script:__trType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }
 }
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
 $__trNoneDir = Get-KitPath tracker-none
@@ -721,7 +768,6 @@ function Get-TrackerTasks([string]$List, [string]$Status) {
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
 if (-not (Get-KitValue 'gitHost' '') -and ($__o = @(@(Get-KitValue 'repos' @()).checkout | Where-Object { $_ -and (Test-Path $_) })[0]) -and "$(git -C $__o remote get-url origin 2>$null)" -match '^(?:\w+://)?(?:[^@/]+@)?(?:ssh\.)?([^/:]+)') { $KitConf.GitHost = $Matches[1] }
 $script:HostType = ([string](Get-KitValue 'gitHostType' (Get-HostKind $KitConf.GitHost))).ToLower()
-if ($script:HostType -eq 'gitlab' -and -not $env:GITLAB_HOST -and $KitConf.GitHost -ne 'gitlab.com') { $env:GITLAB_HOST = $KitConf.GitHost }   # self-hosted GitLab for glab
 $script:MrSegRx = '(?:-/merge_requests|pulls?|pull-requests|pullrequest)'
 function ConvertFrom-MrUrl([string]$Url) {
   if ($Url -notmatch '^https?://(?<h>[^/\s]+)/(?<p>[^\s?#]+?)/(?<s>-/merge_requests|pulls?|pull-requests|pullrequest)/(?<n>\d+)') { return $null }
@@ -754,7 +800,6 @@ function __Cli([string]$Exe, [string]$Path, [string]$Method = 'GET', [hashtable]
   if ($Path -match '/(trace|logs)$') { return $r.out }
   __HostJson $r.out
 }
-function __Gp($a, [string]$Rest, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$Json, [switch]$Res) { __Cli glab "projects/$(__Enc $a.repo)$Rest" $Method $Fields -Json:$Json -Res:$Res }
 function __Files($files) { @($files | ForEach-Object { [pscustomobject]@{ new_path = $_.filename; old_path = $(if ($_.previous_filename) { $_.previous_filename } else { $_.filename }) } }) }
 function __CiWord([string]$w) {
   switch -Regex ($w) { '^(success|successful|succeeded|neutral|passed)$' { 'success' } '^(skipped|not_built|not_executed)$' { 'skipped' } '^(cancel+ed|aborted|stopped)$' { 'canceled' }
@@ -766,26 +811,7 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 
-# adapter:git-host/gitlab: glab api
-Register-KitAdapter 'git-host' 'gitlab' @{
-  'mr.get' = { param($a) __Gp $a "/merge_requests/$($a.n)" }
-  'mr.list' = { param($a) @(__Gp $a "/merge_requests?$(($a.Keys | Where-Object { $_ -notin 'repo', 'type' } | Sort-Object | ForEach-Object { "$_=$(__Enc $a[$_])" }) -join '&')") }
-  'mr.changes' = { param($a) __Gp $a "/merge_requests/$($a.n)/changes" }
-  'mr.create' = { param($a) __Gp $a "/merge_requests" 'POST' @{ source_branch = $a.source; target_branch = $a.target; title = $a.title; description = $a.body; remove_source_branch = (__Del $a); squash = $a.method -eq 'squash' } -Json }
-  'mr.merge' = { param($a) $f = @{ squash = "$($a.method -eq 'squash')".ToLower(); should_remove_source_branch = "$((__Del $a))".ToLower() }; if ($a.sha) { $f.sha = $a.sha }; if ($a.auto) { $f.merge_when_pipeline_succeeds = 'true' }; __Gp $a "/merge_requests/$($a.n)/merge" 'PUT' $f }
-  'mr.unauto' = { param($a) __Gp $a "/merge_requests/$($a.n)/cancel_merge_when_pipeline_succeeds" 'POST' }
-  'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/-/merge_requests/$($a.n)" }
-  'repo.base' = { param($a) __Gp $a "/repository/merge_base?refs[]=$(__Enc $a.a)&refs[]=$(__Enc $a.b)" }
-  'repo.commit' = { param($a) __Gp $a "/repository/commits/$(__Enc $a.ref)" }
-  'repo.compare' = { param($a) __Gp $a "/repository/compare?from=$(__Enc $a.from)&to=$(__Enc $a.to)$(if ($a.straight) { '&straight=true' })" }
-  # the kit origin (orch.ps1 setup): ok | set | skip: no admin rights | failed: <why>; never loosens or overwrites a rule
-  'branch.protect' = { param($a) $r = __Gp $a "/protected_branches/$(__Enc $a.branch)" -Res; $no = "skip: no admin rights on $($a.repo)"
-    if (-not $r) { return 'failed: glab not found' }
-    if (-not $r.code) { return $(if ((__HostJson $r.out).allow_force_push) { 'failed: protected but force push allowed: turn it off by hand' } else { 'ok' }) }
-    $why = "$($r.out) $($r.err)".Trim(); if ($why -match '\b403\b') { return $no }; if ($why -notmatch '404 (Branch )?Not Found') { return "failed: $why" }
-    $s = __Gp $a '/protected_branches' 'POST' @{ name = $a.branch; push_access_level = 40; merge_access_level = 40; allow_force_push = 'false' } -Res
-    if (-not $s.code) { 'set' } elseif ("$($s.out) $($s.err)" -match '\b40[34]\b') { $no } else { "failed: $("$($s.out) $($s.err)".Trim())" } }
-}
+# git hosts: extras gitlab, github, bitbucket, azure-devops, gitea (skills/dev-kit/adapters/)
 # MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (extras github, gitea)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null; created_at = $null
@@ -802,15 +828,6 @@ function __GhMr($p) {
 Register-KitAdapter 'git-host' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'git-host' (__HostSet 'commands' $null) $v $a } }
 # adapter-end:git-host
 
-# adapter:ci/gitlab
-Register-KitAdapter 'ci' 'gitlab' @{
-  'runs' = { param($a) @(__Gp $a "/pipelines?ref=$(__Enc $a.ref)$(if ($a.sha) { "&sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)") }
-  'jobs' = { param($a) @(__Gp $a "/pipelines/$($a.id)/jobs?per_page=100") }
-  'log' = { param($a) __Gp $a "/jobs/$($a.id)/trace" }
-  'status' = { param($a) $p = @(__Gp $a "/pipelines?sha=$($a.sha)&per_page=1")[0]; if ($p.id) { __CiStat $p.id $p.status } }
-  'config' = { param($a) $p = __Gp $a ''; if (-not $p.id) { return $null }; if ($p.only_allow_merge_if_pipeline_succeeds -or $p.ci_config_path -or $p.auto_devops_enabled) { return $true }
-    $r = __Gp $a "/repository/files/.gitlab-ci.yml?ref=$(__Enc $a.ref)" -Res; if (-not $r.code) { $true } elseif ("$($r.out)$($r.err)" -match '\b404\b' -and "$($r.out)$($r.err)" -notmatch 'file_name') { $false } else { $null } }
-}
 # adapter:ci/command: ci.commands.<verb>
 Register-KitAdapter 'ci' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'ci' (Get-KitSetting 'ci.commands' $null) $v $a } }
 # adapter:ci/none

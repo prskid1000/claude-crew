@@ -156,7 +156,7 @@ $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LA
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the extra android-swarm
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
-Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deployed-checks' -and $xo[1] -match '(?s)^2 .*extra add annotate' -and $wo -match 'no api URL')
+Expect 'api: no answer exits 1 (status printed); ui, deployed, annotate without their extras exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'extra add android-swarm' -and $xo[0] -match '(?s)^2 .*extra add deploys' -and $xo[1] -match '(?s)^2 .*extra add android-swarm' -and $wo -match 'no api URL')
 $api = Start-TestApi; $P = $api.port
 $T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
 & $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/qa-kit/targets.local.json') 6

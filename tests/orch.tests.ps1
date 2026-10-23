@@ -86,6 +86,7 @@ $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
 $global:sets = @(); $global:cmts = @()
 $global:q = 0; function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { if ($Path -match 'search=') { $global:q++ }; [pscustomobject]@{ state = 'merged' } }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }   # no git-host adapter in the core
 function Get-TrackerTask($id) { [pscustomobject]@{ status = 'promoted'; subtasks = @() } }
 function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
 function Add-TrackerComment($id, $text) { $global:cmts += [pscustomobject]@{ id = $id; text = $text } }
@@ -176,7 +177,7 @@ $dx = Invoke-TestScript $O board dispute -Agent X7 -With R7
 $ad = Join-Path $k 'skills/orchestrate/adapters'; New-Item -ItemType Directory -Force $ad | Out-Null
 'function Invoke-TrackRebuild { "fake rebuild $Force" }' | Set-Content (Join-Path $ad 'fake.ps1'); 'this is { not powershell' | Set-Content (Join-Path $ad 'broken.ps1')
 $ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item $ad -Recurse -Force
-Expect 'extras: a missing one = its one line, exit 1; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 1 -and $dx.out.Trim() -eq 'board dispute is an extra: run kittool.py extra add board-disputes' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
+Expect 'extras: a missing one = its one line, exit 1; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 1 -and $dx.out.Trim() -eq 'board dispute is an extra: run kittool.py extra add duel' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
 $bj = { param([string[]]$a) Px $O budget @a -Json | ConvertFrom-Json }
 $cx = Join-Path (Kd) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
 '{"models":[{"slug":"gpt-5.5","context_window":272000,"effective_context_window_percent":95}]}' | Set-Content "$cx/models_cache.json"; 'model = "gpt-5.5"' | Set-Content "$cx/config.toml"

@@ -1,17 +1,17 @@
 <#
 qa.ps1: qa-kit commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/qa-kit/qa.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
-  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env? (extra deployed-checks)
+  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env? (extra deploys)
   api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
-  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (extra annotate)
+  annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (extra android-swarm)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL; extra android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
-Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
-  api-auth, qa-html-report, ios-simulator.
+Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
+  api-auth, report-gdocs (the styled HTML report), ios-simulator.
 Sections: L22 report · L94 seat · L162 api · L285 finalize · L635 retest
 #>
 #Requires -Version 7
@@ -456,7 +456,7 @@ function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] -and [IO.Path]::GetExtension([string]$_) -match $script:EvidenceExt } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited but not uploaded - nothing was published: $($missing -join '; '). Check the upload output above, then re-run." }
-$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # extra qa-html-report: the styled HTML goes to gdocs
+$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # extra report-gdocs: the styled HTML goes to gdocs
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
 $null = Test-KitProse -Kind result-note -Path "$D/results.json"
@@ -677,10 +677,10 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
     'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1: Invoke-KitVerb
-    { $_ -in 'deployed', 'annotate' } {   # extras deployed-checks, annotate (adapters/)
+    { $_ -in 'deployed', 'annotate' } {   # extras deploys, android-swarm (adapters/)
       $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate' }[$__verb]
       if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }
-      else { [Console]::Error.WriteLine("qa.ps1 $__verb is an extra: run kittool.py extra add $(@{ deployed = 'deployed-checks'; annotate = 'annotate' }[$__verb])"); exit 2 }
+      else { [Console]::Error.WriteLine("qa.ps1 $__verb is an extra: run kittool.py extra add $(@{ deployed = 'deploys'; annotate = 'android-swarm' }[$__verb])"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'ui' {   # phone lanes: extra android-swarm (adapters/ui_android.ps1)
