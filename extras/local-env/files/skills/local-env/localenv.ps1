@@ -11,8 +11,8 @@ Out: text; status -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
   localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L23 config · L171 state · L212 leases · L283 code · L315 migrations · L457 hooks · L538 processes · L789 daemon ·
-  L1197 doctor · L1238 verbs
+Sections: L23 config · L171 state · L212 leases · L283 code · L315 migrations · L457 hooks · L538 processes · L812 daemon ·
+  L1220 doctor · L1261 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -736,7 +736,30 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   Start-Detached -FilePath $pwsh -ArgumentList $a -WorkingDirectory $dir -Log $log
   Start-Sleep 1; (Get-SysProcs | Where-Object { $_.CommandLine -match [regex]::Escape($match) } | Select-Object -First 1).Id
 }
+# a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile); a start that fails on a dependency
+# connection waits for them again and retries once, before the train rolls back
+$script:DepFailPattern = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'   # TODO-PARAM (fixed default)
+function Wait-Deps([string]$e, $s) {
+  foreach ($d in @($s.dependsOn | Where-Object { $_ })) {
+    $ds = Svc $e $d; if (-not $ds) { continue }; $until = (Get-Date).AddMinutes((StartMin $ds)); $said = $false
+    while (-not (Healthy $e $ds)) {
+      if ((Get-Date) -gt $until) { throw "[$e] $($s.name): its dependency $d was not healthy within $(StartMin $ds) min - not started" }
+      if (-not $said) { "[$e] $($s.name) waits for $d to be healthy"; $said = $true }; Wait-KitPoll 5
+    }
+  }
+}
 function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
+  Wait-Deps $e $s
+  try { Start-SvcOnce $e $s $release $artifact }
+  catch {
+    if ("$_" -notmatch $script:DepFailPattern) { throw }
+    "[$e] $($s.name) failed on a dependency connection: waiting for $(if (@($s.dependsOn).Count) { @($s.dependsOn) -join ', ' } else { '30 s (no dependsOn)' }), then one retry"
+    Event $e 'start-retry' @{ service = $s.name; why = "$_".Split("`n")[0] }
+    if (@($s.dependsOn | Where-Object { $_ }).Count) { Wait-Deps $e $s } else { Wait-KitPoll 30 }
+    Start-SvcOnce $e $s $release $artifact
+  }
+}
+function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
   $dir = SvcDir $e $s
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact

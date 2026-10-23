@@ -28,7 +28,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   re-run your checks"; their leases stay. Only leases and holds start (or crash-restart) services, each in a start worker; no
   holder: stop after the idle grace, at once under memory pressure; an out-of-memory line in a running service's log restarts
   it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
-  `keepFreeGB` fixes it).
+  `keepFreeGB` fixes it). A start waits for its `dependsOn` to be healthy; one failing on a dependency connection waits
+  again and retries once before a train rolls back.
 - **Migrations**: a layer with migrations changes the shared DB: `db.snapshot` runs before the switch-over, `db.restore` on
   rollback; a layer that leaves keeps its DB changes. Snapshot names, by hand too: `<tenant or env>-<purpose>-<yyyy-MM-dd>`,
   lowercase-kebab (`ConvertTo-KitSlug`); `prune [-Days <n>]` (daily too) runs `db.prune` (`{keepDays}` = `db.keepDays`,

@@ -99,6 +99,12 @@ $ss = & { . $L3; $script:log = @(); $script:rooms = 0
   try { Start-Svc t (Svc t api) 0 '' | Out-Null } catch { $script:err = "$_" }
   "$($script:log -join ',')|$($script:err -match 'exited while starting')" }
 Expect "start: room, lock, room again when RAM fell; no stop of a stopped service ($ss)" ($ss -like 'room,room,stop:exited while starting|True')
+# dependsOn healthy first; a start failing on a dependency connection waits for it again and retries once; another failure throws
+$dr = & { . $L3; $script:h = 0; $script:n = 0; function Svc { [pscustomobject]@{ name = $args[1]; dependsOn = $(if ($args[1] -eq 'api') { @('es') }) } }
+  function Healthy { ++$script:h -gt 2 -and $script:h -ne 4 }; function Start-SvcOnce { if (++$script:n -eq 1) { throw '[t] api failed to start. Unhandled exception caught whilst connecting to ES client' }; 'up' }
+  $o = @(Start-Svc t (Svc t api) 0 ''); $script:n = 1; function Start-SvcOnce { throw '[t] api failed to start: port 1 in use' }
+  try { Start-Svc t (Svc t api) 0 '' | Out-Null } catch { $e2 = "$_" }; "$($o -join ' / ')|$($e2 -match 'port 1 in use')" }
+Expect "start: waits for dependsOn healthy, retries once on a dependency connection failure, throws others ($dr)" ($dr -match '^\[t\] api waits for es to be healthy / \[t\] api failed on a dependency connection: waiting for es, then one retry / .*up\|True$')
 $pk = & { . $L3; Update-State t { param($x) $x.services = @{ api = @{ status = 'up'; peakGB = 4 } } }; Stop-Svc t (Svc t api) 'test'; Need-GB t (Svc t api) }
 Expect "need: a stop saves the service's peak RAM; the next start needs it + 15% ($pk)" ($pk -eq 4.6)
 # keep-free floor: learning -> static; steady -> the minimum; falls and dips under 6 GB raise it, with the why
@@ -198,10 +204,20 @@ $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path 
 $O = Join-Path $k 'skills/orchestrate/orch.ps1'
 $er = & { . $O; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web') }); holds = @() }) (Get-Date) }
 Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and -not @($er.flags).Count)
+$sh = & { . $O; (Get-KitEnvRows @(foreach ($n in 'rm', 'hm') { [pscustomobject]@{ env = $n; services = @([pscustomobject]@{ service = 'mysql'; state = 'up (external)'; port = 3306; gb = 1.6 }); leases = @([pscustomobject]@{ agent = "a-$n"; services = @('mysql') }); holds = @() } }) (Get-Date)).rows | ForEach-Object { "$($_.name)|$($_.by)|$($_.gb)" } }
+Expect "supervise rows: one service on one port shared by several envs = one row, holders merged, RAM once ($sh)" (@($sh).Count -eq 1 -and $sh -eq 'mysql (rm, hm)|a-rm, a-hm|1.6')
 $lg = Join-Path (Split-Path $k) 'an.log'; 'ok' | Set-Content $lg; $s1 = @(& { . $O; Get-KitLogErrors @($lg) @{} })
 Add-Content $lg "ERROR one`nTraceback (most recent call last)`nWARN cache: Error while deleting x`nTypeError: x is not a function`nGET /a status: 503`nfine"
 $s2 = @(& { . $O; Get-KitLogErrors @($lg) @{ (Resolve-Path $lg).Path = $s1[0].size } })
 Expect 'supervise anomalies: only new log error lines count; level words case-sensitive (WARN ... Error while is none)' ($s1[0].errors -eq 0 -and $s2[0].errors -eq 4)
+$sl = Join-Path (Split-Path $k) 'shop-api.log'; 'ok' | Set-Content $sl; $z = (Get-Item $sl).Length
+Add-Content $sl "2026-10-23 ERROR c.d.LoggingAspect - bad.request: order not found`nWARN slow"
+$sp = @(& { . $O; Get-KitLogErrors @($sl) @{ (Resolve-Path $sl).Path = $z } })[0]
+Add-Content $sl "ERROR o.s.boot.SpringApplication - Application run failed`n2026-10-23 12:34:56 Caused by: java.net.ConnectException: Connection refused: localhost:19"
+$ss = @(& { . $O; Get-KitLogErrors @($sl) @{ (Resolve-Path $sl).Path = $sp.size } })[0]
+$ev = { param($l) @([pscustomobject]@{ env = 'shop'; release = 7; leases = $l }) }
+$sf = & { . $O; function Left { 30 }; @(Get-KitSpikeFlag $sp (& $ev @(@{ agent = 'q1' })) -AutoFix).Count; (Get-KitSpikeFlag $sp (& $ev @())).level; Get-KitSpikeFlag $ss (& $ev @(@{ agent = 'q1' })) -AutoFix | ForEach-Object { "$($_.level) $($_.what)" } }
+Expect "ERROR SPIKE classes: an expected 4xx while a lease tests = no flag (else WATCH); a startup failure with its dependency down = ACT naming env, release, dependency ($($sf -join ' | '))" ($sp.errors -eq 0 -and $sp.expected -eq 1 -and $sf[0] -eq 0 -and $sf[1] -eq 'WATCH' -and $ss.cls -eq 'startup' -and $ss.dep -eq 'localhost:19' -and $sf[2] -match '^ACT ERROR SPIKE: shop api \(release r7\) failed to start: localhost:19 is down: ERROR o\.s\.boot\.SpringApplication - Application run failed')
 $st = TkPath $k localenv -Create; Set-JsonFile (Join-Path $st 'shop.json') @{ services = @{ api = @{ restarts = @(@((Get-Date).ToString('o')) * 3) } } }
 $hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[]}]' } }
   @(Get-KitSuperviseFlagsLocalEnv) | ForEach-Object { "$($_.what)$($_.name)" } }) -join "`n"
