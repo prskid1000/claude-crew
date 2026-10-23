@@ -85,8 +85,17 @@ Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/dev-kit/devtools.py'
 $th = & $py -X utf8 $DT comment --help 2>&1 | Out-String; $thc = $LASTEXITCODE; $null = & $py -X utf8 $DT comment T1 --bogus 2>&1; $tbc = $LASTEXITCODE; $null = & $py -X utf8 $DT finish T1 2>&1; $tmc = $LASTEXITCODE
 $fk = Join-Path (Kd) 'flaky.py'; [IO.File]::WriteAllText($fk, "import sys, subprocess as sp; sys.path.insert(0, sys.argv[1]); import devtools as d`nn = []; hang = [0]`ndef fake(cmd, **kw):`n    n.append(cmd)`n    if hang[0]: raise sp.TimeoutExpired(cmd, 1)`n    return sp.CompletedProcess(cmd, 1 if len(n) == 1 else 0, 'connection reset' if len(n) == 1 else 'ok', '')`nd.subprocess.run = fake`nr = d._tracker('view', 'T1'); a = len(n); n.clear()`ntry: d._tracker('create', 'x')`nexcept SystemExit: pass`nw = len(n); n.clear(); hang[0] = 1; d._run(['glab', 'api', 'x']); print(r, a, w, len(n))`n")
-$rt = & $py -X utf8 $fk (Split-Path $DT) 2>&1 | Out-String
+$rt = & $py -X utf8 $fk (Split-Path $DT) 2>$null | Out-String
 Expect "devtools: --help 0, bad args 2, reads retried, writes never, hung read once ($thc $tbc $tmc $($rt.Trim()))" ($thc -eq 0 -and $th -match 'devtools\.py comment <taskId>' -and $th -notmatch 'finish' -and $tbc -eq 2 -and $tmc -eq 2 -and $rt.Trim() -eq 'ok 2 1 2')
+$se = & $py -X utf8 $DT mr (Kd) main nobody-wrote-this.md 2>&1 | Out-String; $sec = $LASTEXITCODE
+Expect "devtools: a sys.exit('<why>') prints its why (exit $sec)" ($sec -eq 1 -and $se -match 'file not found: nobody-wrote-this\.md')
+if ($IsWindows) {   # npm .cmd shim: user text with cmd characters reaches the program intact; another shim refuses it
+  $sh = Join-Path (Kd) 'shim'; New-Item -ItemType Directory -Force "$sh/node_modules/c" | Out-Null; 'console.log(JSON.stringify(process.argv.slice(2)))' | Set-Content "$sh/node_modules/c/run.js"
+  "@ECHO off`r`nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & ""%_prog%""  ""%dp0%\node_modules\c\run.js"" %*" | Set-Content "$sh/g.cmd"; '@echo %*' | Set-Content "$sh/p.cmd"
+  $sq = "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d`nprint(d._run([sys.argv[2], 'RM<>HM |&^% ""q""']))`ntry: d._run([sys.argv[3], 'a<b'])`nexcept SystemExit as e: print('REFUSED', e)"
+  [IO.File]::WriteAllText("$sh/t.py", $sq); $so = & $py -X utf8 "$sh/t.py" (Split-Path $DT) "$sh\g.cmd" "$sh\p.cmd" 2>&1 | Out-String
+  Expect "devtools: a .cmd shim gets RM<>HM |&^% intact (node direct), another shim refuses it ($so)" ($so -match [regex]::Escape('["RM<>HM |&^% \"q\""]') -and $so -match 'REFUSED p\.cmd is a cmd\.exe shim')
+}
 # pipes: busy only with a head pipeline
 $pt = @'
 . $args[0]
@@ -158,6 +167,8 @@ Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"
 $gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
 Expect 'guard: a write off the kit layout gets a note naming dev.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
+$gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
+Expect 'guard: a Write of a body file to the shared temp root is denied, naming dev.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
 # an extra's guard rule may return a note (additionalContext, the call not decided); no runtimes extra: one line
 $na = Join-Path $k 'skills/dev-kit/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na

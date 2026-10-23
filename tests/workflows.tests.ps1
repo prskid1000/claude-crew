@@ -137,10 +137,11 @@ const args = { runDir: 'C:/runs/R1', ..._kl, items: [_item('A1', 'web')] }
 run(args, agent, _n, _n, null).then(() => {
  const s = calls.find((c) => c.label === 'retest-strong:A1'), cl = calls.find((c) => c.label === 'close:A1')
  console.log(`strong:${!!s && s.model === 'opus' && /blocked by env-data/.test(s.prompt) && /ONLY these checks: C1/.test(s.prompt)}`)
+ console.log(`test-sonnet:${calls.find((c) => c.label === 'test:A1').model === 'sonnet'}`)
  console.log(`closed-pass:${!!cl && /"id":"C1"[^}]*"result":"PASS"/.test(cl.prompt) && /\(stronger retry\)"[^}]*"firstAttempt":/.test(cl.prompt)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-retry $js $wf) 'testy NOT_TESTED retry: #' 'strong', 'closed-pass'
+Expect-Each (Invoke-Js tc-retry $js $wf) 'testy NOT_TESTED retry: #' 'strong', 'closed-pass', 'test-sonnet'
 # testy local: NOT_TESTED -> ENV-FIX + retest; 2 cycles: held
 $js3 = @'
 const mk = (fixWorks) => _mock((prompt, o) => {

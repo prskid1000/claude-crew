@@ -51,8 +51,9 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 0. `orch.ps1 learn -Read -Skill orchestrate`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
 2. **Brief:** `dev-kit/templates.md` "Wave brief" in the scratchpad (limits: "Writing standards", kinds `wave-brief`,
-   `owner-message`) (bugs: `orch.ps1 bugbrief -Task <id> ...` per task).
-3. **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?}], mode, kitDir, mandate, holdMerge? }`; then
+   `owner-message`) (bugs: `orch.ps1 bugbrief -Task <id> -Mandate '<the owner's words>' [-Complex]` per task).
+3. **Status:** before the first agent of ANY task (spikes, analysis, docs too): `dev.ps1 tracker status <task> inProgress`.
+   **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?}], mode, kitDir, mandate, holdMerge? }`; then
    `orch.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its exact args itself); then E1.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook
    blocks it).
@@ -66,7 +67,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 | # | Event | Action |
 |---|---|---|
 | E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat every 10 min: CronCreate `*/10 * * * *` (or `/loop 10m`), prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste output verbatim (own line only when ACT needs action), act on flags; 2nd session supervisor steps aside. Stop when nothing runs |
-| E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone |
+| E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone; answered or false: `supervise -Ack '<flag start>' -Reason '<why>'` (hidden 24 h) |
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `orch.ps1 pause -All` (or `-Run <run>`, `-Reason`) until "safe to power off"; the machine stays on: stop the workflow runs and the heartbeat. Back or after a crash: `orch.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `qa.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `orch.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (extra `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `qa.ps1 retest` |
 | E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, end to end, no question back: the steps in `<kit>/skills/orchestrate/deploys.md` (extra `deploys`); then in test: testers, or /testy on request |
@@ -74,7 +75,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 | E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (timeline: `audit -Run <id>`); `next` (budget stop, batch, refusal) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); then E10 |
 | E8 | The owner changes a rule or scope mid-run | append to brief AND contracts file (QA: `lead-notes.md`); agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
-| E10 | A run finished (`retroDue`), supervise says "retro due", or signals piled up | /tidy once no other workflow of this session runs (one retro covers several runs) |
+| E10 | A run finished or stopped (pause, `launch -Done`: their signals are recorded then), supervise says "retro due", or signals piled up | launch /tidy yourself, no owner ask, once no other workflow of this session runs (one retro covers several runs) |
 | E11 | HEAL: guard block wrong, script crash, workaround, kit friction; a line `<feature> is an extra: run kittool.py extra add <name>` | the extra line: `kittool.py extra sync` (between runs) or the line's `extra add`, retry. Else spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
 | E12 | LEARN: something cost time, failed or surprised you | `orch.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "... (n×)"`, extra `kit-admin`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |

@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L212 local · L240 app · L263 test-prompt ·
-//   L317 verify · L361 run-item · L539 pool · L561 budget · L584 run · L620 learn
+// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L211 local · L239 app · L262 test-prompt ·
+//   L316 verify · L360 run-item · L538 pool · L560 budget · L583 run · L619 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, qa-kit L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -135,14 +135,13 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
  exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
  Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
-// close, hold, release, follow-ups, learn = haiku
-const MODELS = { verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' }
+// test (+ lead prepare) = sonnet, never the session model; close, hold, release, follow-ups, learn = haiku
+const MODELS = { test: 'sonnet', verify: 'sonnet', audit: 'sonnet', close: 'haiku', hold: 'haiku', learn: 'haiku', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
-// it.model/effort win; web/API retest -> sonnet; else the default model
+// it.model/effort win; else MODELS.test
 function modelFor(it) {
  if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
- if (it.retest && it.lane !== 'app') return { model: 'sonnet' }
- return it.effort ? { effort: it.effort } : {}
+ return { model: MODELS.test, ...(it.effort ? { effort: it.effort } : {}) }
 }
 
 const CHECKS_SCHEMA = {

@@ -93,6 +93,8 @@ $rj = Read-Json "$ur/U1/results.json"; $rj.checks[0].evidence = @('U1-C1_01_scre
 $uo = Use-FakeUploader "    print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String; "rc=$LASTEXITCODE" }
 $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
+$fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String }
+Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
 # ---- review batch 2: qa.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null

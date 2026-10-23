@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing extra in `extra check`) · 2 usage
 error or a command that needs an extra not installed (one line: `<feature> is an extra: run kittool.py extra add <name>`).
 
-Sections: L31 paths · L82 kitlog · L159 load · L535 lint · L904 README graph · L1010 lint command · L1043 audit scan ·
-  L1278 registry · L1507 prose · L1650 sections · L1780 budget · L1798 extras · L2145 main
+Sections: L31 paths · L82 kitlog · L162 load · L538 lint · L907 README graph · L1013 lint command · L1046 audit scan ·
+  L1281 registry · L1510 prose · L1653 sections · L1783 budget · L1801 extras · L2148 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -147,13 +147,16 @@ def audited(script, argv, cli):
         out.append('[redacted]' if hide else mask(re.sub(r'\s+', ' ', x))[:120])
         hide = x.startswith('-') and bool(re.search(LOG['secretKey'], x))
     kitlog('calls', 'start', {'pid': os.getpid(), 'args': ' '.join(out)[:500]})
-    t0, rc = time.time(), 1
+    t0, rc, err = time.time(), 1, None
     try:
         rc = cli() or 0
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+        if rc and not isinstance(e.code, int):   # sys.exit('<why>') caught here printed nothing: callers saw a bare exit 1
+            err = str(e.code)
+            print(err, file=sys.stderr)
     finally:
-        kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000)})
+        kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000), **({'err': err[:300]} if err else {})})
     return rc
 
 # ---- load: kit files, the reach graph

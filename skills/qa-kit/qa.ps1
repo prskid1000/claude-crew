@@ -12,7 +12,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing extra · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Extras (kittool.py extra add <name>, loaded from adapters/): android-swarm (ui, deploys[] laneApk), deployed-checks, annotate,
   api-auth, qa-html-report, ios-simulator.
-Sections: L22 report · L94 seat · L162 api · L285 finalize · L633 retest
+Sections: L22 report · L94 seat · L162 api · L285 finalize · L635 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -437,8 +437,10 @@ if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.js
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
 $lf = [IO.Path]::GetTempFileName()   # a list file: 80+ long paths broke the command-line limit
 [IO.File]::WriteAllLines($lf, [string[]]@($files | Where-Object { -not $map.files[$_.Name] } | ForEach-Object FullName))
-$ev = & (Get-Python) -X utf8 $KitCmd.devtools @ea --files-from $lf; $evRc = $LASTEXITCODE; Remove-Item -LiteralPath $lf -ErrorAction SilentlyContinue
-if ($evRc) { throw "evidence upload ($rtype) failed (above) - nothing was published" }
+$evAll = @(& (Get-Python) -X utf8 $KitCmd.devtools @ea --files-from $lf 2>&1); $evRc = $LASTEXITCODE; Remove-Item -LiteralPath $lf -ErrorAction SilentlyContinue
+$ev = @($evAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] }); $evErr = @($evAll | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+if ($evErr) { $evErr | ForEach-Object { [Console]::Error.WriteLine($_) } }
+if ($evRc) { throw "evidence upload ($rtype) failed (exit $evRc): $((@($evErr) + @($ev) | Select-Object -Last 4) -join ' | ') - nothing was published" }
 $ev = ($ev | Out-String) | ConvertFrom-Json
 if ($ev.folderId) {
   $map.folderId = $ev.folderId; $map.label = $ev.label; if ($ev.folderLink) { $map.folderLink = $ev.folderLink }

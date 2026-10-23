@@ -13,8 +13,8 @@
 Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
  lbcheck: extra liquibase; findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
-Sections: L30 config · L64 run · L121 tracker · L196 git host · L279 MR · L342 merge · L574 docs · L691 plugins · L705 keepboth ·
-  L724 selftest · L871 CLI
+Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L718 plugins · L732 keepboth ·
+  L751 selftest · L898 CLI
 Config (..\\kit.local.json): "tracker" (dev.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -73,11 +73,36 @@ def _is_write(cmd):
     return m.upper() != 'GET' or any(w in s[:4] for w in ('create', 'merge', 'update', 'comment', 'note', 'edit', 'close', 'upload', 'delete'))
 
 
+CMD_META = re.compile(r'[<>|&^%!"()]')
+
+
+def _argv(cmd):
+    """cmd.exe re-parses a .cmd / .bat shim's args (< > | & ^ % in user text redirect or vanish): run an npm shim's target directly."""
+    exe = str(cmd[0])
+    if os.name != 'nt' or not exe.lower().endswith(('.cmd', '.bat')):
+        return cmd
+    try:
+        shim = open(exe, encoding='utf-8', errors='replace').read()
+    except OSError:
+        shim = ''
+    dp0, m = os.path.dirname(exe), re.search(r'"%dp0%\\([^"%]+\.(js|mjs|cjs|exe))"\s+%\*', shim)
+    if m:
+        target = os.path.join(dp0, m.group(1))
+        node = os.path.join(dp0, 'node.exe') if os.path.isfile(os.path.join(dp0, 'node.exe')) else shutil.which('node')
+        return [target, *cmd[1:]] if m.group(2) == 'exe' else [node, target, *cmd[1:]]
+    bad = next((str(c) for c in cmd[1:] if CMD_META.search(str(c))), None)
+    if bad:
+        raise SystemExit(f'{os.path.basename(exe)} is a cmd.exe shim and this argument has cmd characters (< > | & ^ % ! " ( )): {bad[:80]}'
+                         ' - nothing was run; call the real program instead')
+    return cmd
+
+
 def _run(cmd, cwd=None, check=False, write=None):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
+    write = _is_write(cmd) if write is None else write   # on the CLI's own words, before the shim swap shifts them
+    cmd = _argv(cmd)
     sec = min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))   # the whole deadline
-    write = _is_write(cmd) if write is None else write
     tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
     end = min(time.time() + sec, STOP_AT[0] or float('inf'))
     for i in range(1, tries + 1):
@@ -95,6 +120,8 @@ def _run(cmd, cwd=None, check=False, write=None):
         raise SystemExit(f'timed out after {sec} s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
     if check and rc:
         raise SystemExit(f'failed (exit {rc}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
+    if rc:   # never a silent failure: the caller's own error then has the cause above it
+        print(f'[cli] {os.path.basename(str(cmd[0]))} {" ".join(str(c) for c in cmd[1:3])[:60]}: exit {rc}: {out[-400:]}', file=sys.stderr)
     return out
 
 
