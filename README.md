@@ -14,8 +14,10 @@ The owner talks to the coordinator; it routes each request to a workflow or one 
 flowchart LR
   OW(["owner"]) -->|"asks, says deploy env"| CO["coordinator: Router + Events"]
   CO -->|"R5"| W_buildy[/"buildy"/]
+  W_buildy -->|"spawns"| A_rechy("rechy")
   W_buildy -->|"spawns"| A_devy("devy")
   W_buildy -->|"spawns"| A_revy("revy")
+  W_buildy -->|"spawns"| A_datay("datay")
   W_buildy -->|"spawns"| A_kitty("kitty")
   CO -->|"R8"| W_testy[/"testy"/]
   W_testy -->|"spawns"| A_checky("checky")
@@ -26,6 +28,11 @@ flowchart LR
   CO -->|"R13, R14"| A_revy("revy")
   CO -->|"R10"| A_checky("checky")
   CO -->|"R2, R3"| A_kitty("kitty")
+  CO -->|"R5"| A_briefy("briefy")
+  CO -->|"R17"| A_rechy("rechy")
+  CO -->|"R15"| A_datay("datay")
+  CO -->|"R7"| A_opsy("opsy")
+  CO -->|"R16"| A_watchy("watchy")
 ```
 <!-- kit-graph:end -->
 <!-- kit-graph:start table-crew -->
@@ -35,6 +42,11 @@ flowchart LR
 | `revy` | reviewer: reviews anything and suggests concrete changes | mr · kit · doc · qa · plan · module · config | /buildy, R13, R14 | edit anything (suggests only) | sceptical, blunt: "Show me the test." |
 | `checky` | tester: tests or verifies anything, always with evidence | task · smoke · regression · repro · data · perf · claim (roles: lead / test / verify) | /testy, R10 | edit code, leave its target, load shared envs | paranoid, evidence-obsessed: "Screenshot or it didn't happen." |
 | `kitty` | kit caretaker: the kit and the machine setup | build · fix · audit · retro · setup · env · recover · docs | /tidy, R2, R3 | touch product repos | tidy and frugal: "Measure before and after." |
+| `briefy` | brief writer: /buildy brief, contracts, impact check, rule changes | brief · bugfix · rule-change | R5, E8 | write code, launch runs | exacting planner: "Who owns this field?" |
+| `rechy` | researcher: cited answers before building or deciding | question · compare · library · licence · spike | /buildy, R17 | edit anything but its findings | skeptical librarian: "Cite it or drop it." |
+| `datay` | data guardian: test data, local DB, migration data, backfills | cleanup · fixture · migration · localdb · backfill · check | /buildy, R15, E2, E7 | write production, edit code or the kit | meticulous archivist: "Mark it, count it, then touch it." |
+| `opsy` | deploy pilot: deploys on a person's word, verifies, rolls back | deploy · rollback · status · secret | R7, E5 | deploy without a person's word, edit code | cautious pilot: "Checklist first." |
+| `watchy` | on-call watcher: errors of deployed envs, one [Bug] per issue | window · sweep · triage | R16, E15 | change systems, deploy, move tasks | calm on-call engineer: "What changed, and since when?" |
 <!-- kit-graph:end -->
 Board and disagreements: AGENTS.md "Crew".
 
@@ -58,7 +70,7 @@ flowchart TD
   R5 -->|"no"| R6
   R6{"R6: Coding: one small change in one repo"} -->|"yes"| T6["direct, crafty steps"]
   R6 -->|"no"| R7
-  R7{"R7: A person says deploy env, or deployed…"} -->|"yes"| T7["direct: bossy E5"]
+  R7{"R7: A person says deploy env, deployed…"} -->|"yes"| T7["opsy agent"]
   R7 -->|"no"| R8
   R8{"R8: Deployed tasks on a test environment,…"} -->|"yes"| T8["/testy"]
   R8 -->|"no"| R9
@@ -74,7 +86,13 @@ flowchart TD
   R13 -->|"no"| R14
   R14{"R14: Static audit of one module's code for…"} -->|"yes"| T14["revy agent"]
   R14 -->|"no"| R15
-  R15{"R15: A question, an explanation, an…"} -->|"yes"| T15["direct"]
+  R15{"R15: Data work: a run's test data to clean…"} -->|"yes"| T15["datay agent"]
+  R15 -->|"no"| R16
+  R16{"R16: Watch a deployed env: errors, logs or…"} -->|"yes"| T16["watchy agent"]
+  R16 -->|"no"| R17
+  R17{"R17: Research before building or deciding:…"} -->|"yes"| T17["rechy agent"]
+  R17 -->|"no"| R18
+  R18{"R18: A question, an explanation, an…"} -->|"yes"| T18["direct"]
 ```
 <!-- kit-graph:end -->
 
@@ -88,7 +106,7 @@ flowchart TD
 <!-- kit-graph:start table-workflows -->
 | Workflow | Covers | Crew | Router row |
 |---|---|---|---|
-| `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels | `devy`, `revy`, `kitty` | R5 |
+| `/buildy` | any multi-item build: features, fixes, refactors, migrations, bug waves, resume, duels | `rechy`, `devy`, `revy`, `datay`, `kitty` | R5 |
 | `/testy` | any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env | `checky`, `kitty` | R8 |
 | `/tidy` | kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates | `kitty` | R4 |
 <!-- kit-graph:end -->
@@ -209,7 +227,7 @@ scaffolding, the duel mode) live on the origin's `goodies` branch, one folder ea
 | `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command (command '&lt;cli&gt; {title} {path} {parent}' printing the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: goodies. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none |
 | `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (their steps are OUT_OF_SCOPE: reported, never counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule whose lists / repos / nameRegex / pathRegex match gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind. |
-| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and the coordinator deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds bossy.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
+| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: nobody asks or proposes a deploy; a person says deploy &lt;env&gt; and opsy deploys at once) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds bossy.ps1 deploy plan; productionPattern ((?i)prod/critical): production by name when production is unset. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry, lost tracker writes wait in .state/outbox.jsonl (supervise replays them) |
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (crafty.ps1 stack names): the test names -Touched looks for, from a changed source file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
 | `guard` | {"layout": "warn"} | layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). |
@@ -262,7 +280,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 6600 · tests 8000 · total 242000 · all tests 48000 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 8000 · total 266000 · all tests 48000 · files: 30 content + 8 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -278,34 +296,48 @@ Generated by `kitbag.py flow --readme` (pre-commit); interactive: the `flow-map`
 ```mermaid
 flowchart LR
   CLAUDE_md["CLAUDE.md"] -->|"import"| AGENTS_md["AGENTS.md Router"]
+  agents_briefy_md("briefy")
   agents_checky_md("checky")
+  agents_datay_md("datay")
   agents_devy_md("devy")
   agents_kitty_md("kitty")
+  agents_opsy_md("opsy")
+  agents_rechy_md("rechy")
   agents_revy_md("revy")
+  agents_watchy_md("watchy")
   skills_bossy_SKILL_md["bossy"]
   skills_crafty_SKILL_md["crafty"]
   skills_pokey_SKILL_md["pokey"]
   workflows_buildy_js[/"buildy"/]
   workflows_testy_js[/"testy"/]
   workflows_tidy_js[/"tidy"/]
+  AGENTS_md --> agents_briefy_md
   AGENTS_md --> agents_checky_md
+  AGENTS_md --> agents_datay_md
   AGENTS_md --> agents_devy_md
   AGENTS_md --> agents_kitty_md
+  AGENTS_md --> agents_opsy_md
+  AGENTS_md --> agents_rechy_md
   AGENTS_md --> agents_revy_md
+  AGENTS_md --> agents_watchy_md
   AGENTS_md --> skills_bossy_SKILL_md
   AGENTS_md --> skills_crafty_SKILL_md
   AGENTS_md --> skills_pokey_SKILL_md
   AGENTS_md --> workflows_buildy_js
   AGENTS_md --> workflows_testy_js
   AGENTS_md --> workflows_tidy_js
+  workflows_buildy_js -->|"spawns"| agents_datay_md
   workflows_buildy_js -->|"spawns"| agents_devy_md
   workflows_buildy_js -->|"spawns"| agents_kitty_md
+  workflows_buildy_js -->|"spawns"| agents_rechy_md
   workflows_buildy_js -->|"spawns"| agents_revy_md
   workflows_testy_js -->|"spawns"| agents_checky_md
   workflows_testy_js -->|"spawns"| agents_kitty_md
   workflows_tidy_js -->|"spawns"| agents_kitty_md
   agents_checky_md -->|"loads"| skills_pokey_SKILL_md
   agents_devy_md -->|"loads"| skills_crafty_SKILL_md
+  agents_opsy_md -->|"loads"| skills_bossy_SKILL_md
+  agents_watchy_md -->|"loads"| skills_pokey_SKILL_md
 ```
 <!-- kit-graph:end -->
 

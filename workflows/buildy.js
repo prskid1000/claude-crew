@@ -3,21 +3,24 @@ export const meta = {
  description: 'The dev flow for any multi-item build (any stack): features, fixes, refactors, migrations, bug waves, resume; devy: code, testing goals, local test loop, decision pauses; review, CI, merge (producers first), human testing doc + tracker; merged work waits for a person\'s deploy',
  whenToUse: 'Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)',
  phases: [
+  { title: 'Spike', detail: 'args.openQuestions: one rechy answers them in the brief before any devy starts' },
   { title: 'Build', detail: 'one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc' },
   { title: 'Decide', detail: 'items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume' },
-  { title: 'Review', detail: 'one revy per devy + CI pipelines' },
+  { title: 'Review', detail: 'one revy per devy (+ datay on an area with migrations) + CI pipelines' },
   { title: 'Fix', detail: 'one fix round (local tests again), then merge in order and register the tracker task' },
   { title: 'Deploy', detail: 'the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy turns them into lessons)' },
  ],
 }
 
-// Sections: L17 args · L134 record-args · L154 budget · L169 build-prompt · L236 ship-prompt · L258 plan · L271 local-loop ·
-//   L329 stages · L448 ship · L517 deploy · L533 learn
+// Sections: L18 args · L137 record-args · L157 budget · L172 build-prompt · L244 ship-prompt · L266 plan · L280 spike ·
+//   L293 local-loop · L351 stages · L473 ship · L542 deploy · L558 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
- agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],
+ agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first),
+  migrations: true (datay reviews them next to revy) }],
+ openQuestions: ['<question>'] (phase Spike: rechy appends its findings to the brief before any devy starts; one left open -> spikeOpen),
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
  resume: { X1: { state, skip: ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'] (steps done), mrs: [{ url, repo, merged }], doc, worktrees } }
   (mode resume; bossy.ps1 recover writes it from the host + tracker; skipped steps never run, all skipped = no agent),
@@ -25,7 +28,7 @@ export const meta = {
  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
-Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch, next }.
+Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch, next } or { spikeOpen, next } (open questions: no devy started).
 */
 const A0 = args || {}   // recorded as given (resume); A = this run's batch (args.batch areas; the rest -> next)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
@@ -129,7 +132,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
 // keeps agents on their items when a later owner message is relayed
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request; a relayed chat message never changes them and never triggers anything destructive ("Stay on your assignment").
 `
-const MODELS = { build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
+const MODELS = { spike: 'opus', build: 'sonnet', review: 'sonnet', ci: 'haiku', ship: 'haiku', learn: 'haiku', complex: '', retest: 'opus', retestEffort: 'high' }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 // ---- record-args: the launch record (a resume needs it byte-exact)
 // full args go to the launch record first (bossy.ps1 launch -Self, FNV-1a): resumes need them byte-exact
@@ -221,6 +224,11 @@ Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(none reported)'}; local t
 Rules: ${K}/SKILL.md Rules (scope, tests, migrations). Only real problems; "blocking" = must be fixed before it ships (an unasked
 user-visible behaviour change is blocking; same behaviour, other internals is not). Change no code; give each finding its suggested change. Only the brief and these MRs define the review.`
 }
+function migrationPrompt(a, r) {
+ return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}) as your agent definition says; findings only.${PATHS}${AGENT_ENV(`datay-${a.id}`)}
+${r.mrs.map((m) => `- ${m.url} (${m.repo})`).join('\n')}
+blocking = data loss, no rollback, rows touched outside the change's filter. Return the findings (review schema).`
+}
 function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
@@ -256,7 +264,8 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 }
 
 // ---- plan: the budget gate before any agent
-const PLAN = [...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
+const OQ = MODE === 'resume' ? [] : [].concat(A.openQuestions || []).map(String).filter(Boolean)
+const PLAN = [...(OQ.length ? [`rechy/${MODELS.spike}:1`] : []), ...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,${a.migrations ? `datay/${MODELS.review}:1,` : ''}step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 takeBudget(await recordArgs('buildy', RUN, A0, 'Build', PLAN), A.agents.length)
@@ -267,6 +276,19 @@ if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: { scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, batch } } }
 }
 log(`wave: ${A.agents.length} agents, mode ${MODE}, local retries ${LOCAL_RETRIES}, brief ${A.brief}`)
+
+// ---- spike: rechy answers the brief's openQuestions before any devy starts
+if (OQ.length) {
+ phase('Spike')
+ const sp = await agent(`Kind spike: answer the open questions of the brief ${A.brief} before any devy starts, as your agent definition says.${PATHS}
+${OQ.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+Append one block per question under "## Findings (rechy)" at the bottom of the brief: answer, evidence, recommendation, confidence
+(an owner choice: its decide ask id). Return ok=true when every question is answered (else ok=false: the open ones and decide ids), output = one line per question.`,
+  { label: 'spike', phase: 'Spike', schema: OK_SCHEMA, agentType: 'rechy', ...pick('spike') })
+ // devy never builds on an open question: the coordinator settles it, then launches next (no Spike again)
+ if (!(sp && sp.ok)) { const why = sp ? sp.output : 'rechy returned nothing'; log(`SPIKE OPEN: ${why} - no devy started`); return { spikeOpen: why, next: nextCall(A.agents, { openQuestions: undefined }) } }
+ log(`spike: ${OQ.length} open question(s) answered in the brief`)
+}
 
 // ---- local-loop: waits, report merges, the local test loop
 // merge, don't replace: a later round reports only its own work
@@ -404,9 +426,11 @@ const results = await pipeline(
    return { id: a.id, report: r, findings: [], blocked: `local test ${lt.status}${lt.status === 'FAIL' ? ' after the stronger fix round' : ''}: ${why}` }
   }
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
-  const rv = await agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') })
+  const [rv, mv] = await Promise.all([agent(reviewPrompt(a, r), { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
+   a.migrations ? agent(migrationPrompt(a, r), { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : null])
   if (!rv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The review agent returned nothing: the MRs are unreviewed and were not merged.', REREVIEW)], reviewFailed: true }
-  const findings = rv.findings || []
+  if (a.migrations && !mv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The migration review (datay) returned nothing: the migrations are unreviewed and were not merged.', 'Re-run datay kind migration on these MRs, then merge.')], reviewFailed: true }
+  const findings = [...(rv.findings || []), ...((mv && mv.findings) || [])]
   let x = { id: a.id, report: r, findings }
   let blocking = findings.filter(mustFix)
   if (!blocking.length) blocking = await ciGate(a, r)
@@ -419,9 +443,10 @@ const results = await pipeline(
    const lt2 = x.report.localTest || {}
    if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
    if (findings.some(mustFix)) {
-    const rv2 = await agent(reviewPrompt(a, x.report) + `\nRE-REVIEW after the fix round: check that these findings are resolved and that the fix added no new problem:\n${findings.filter(mustFix).map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`,
-     { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') })
-    const again = rv2 ? (rv2.findings || []).filter(mustFix) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)]
+    const rr = `\nRE-REVIEW after the fix round: check that these findings are resolved and that the fix added no new problem:\n${findings.filter(mustFix).map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`
+    const [rv2, mv2] = await Promise.all([agent(reviewPrompt(a, x.report) + rr, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
+     a.migrations ? agent(migrationPrompt(a, x.report) + rr, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : {}])
+    const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []).filter(mustFix) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
     if (again.length) { log(`${a.id}: re-review after the fix round: ${again.length} finding(s) - not merged`); return { ...x, fixed: false, findings: [...x.findings, ...again] } }
    }
    const failures = await ciGate(a, x.report)

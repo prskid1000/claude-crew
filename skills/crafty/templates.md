@@ -61,6 +61,10 @@ Overlaps: <who touches what in a shared file>. Contracts: <field / endpoint X1 a
 Branch `f/<tag><task>-<slug>`, worktree name = agent id. Tracker task under <epic> in <list>, assigned to <user>.
 Rule changes during the wave are appended below and in <brief>.contracts.md: re-read both before every push.
 
+## openQuestions
+<question> · blocks <item> · answers: rechy | owner (or "none")
+## Findings (rechy)
+<the Spike phase appends one block per question>
 ## Rule changes during the wave (newest last)
 ```
 

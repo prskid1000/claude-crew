@@ -91,6 +91,17 @@ console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys goody is 
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
 '@
 Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
+# buildy: rechy spike first, open -> no devy; datay reviews migrations twice, none = no merge
+$jssp = @'
+const M = 'migration-review:X1', ok = (p, o) => /^(build|ship|fix):/.test(o.label) ? _rep({ status: 'PASS' }, /^sh/.test(o.label) ? _merged(1) : {}) : /review:/.test(o.label) ? { findings: [] } : undefined
+const go = async (x, f = ok) => { const m = _mock(f), ty = {}; const r = await run({ brief: 'w.md', ..._kl, agents: [{ id: 'X1', migrations: 1 }], ...x }, (p, o) => { ty[o.label] = o.agentType; return o.label === M && x.no ? null : m.agent(p, o) }, _n, _n, pipeline); return { r, ty, L: m.calls.map((c) => c.label) } }
+const n = (L, l) => L.filter((x) => x === l).length, a = await go({ openQuestions: ['q'] })
+const b = await go({ openQuestions: ['q'] }, (p, o) => o.label === 'spike' ? { ok: false, output: 'D-7' } : ok(p, o)), z = await go({ no: 1 })
+let k = 0; const f = await go({}, (p, o) => o.label === M && !k++ ? { findings: [{ mr: '1', file: 'm', severity: 'blocking', problem: 'p', fix: 'f' }] } : ok(p, o))
+console.log(`spike:${a.ty.spike === 'rechy' && a.L.indexOf('spike') < a.L.indexOf('build:X1') && b.r.spikeOpen === 'D-7' && !n(b.L, 'build:X1') && !b.r.next.args.openQuestions}`)
+console.log(`migration:${a.ty[M] === 'datay' && !n(z.L, 'ship:X1') && n(f.L, 'fix:X1') + n(f.L, M) + n(f.L, 'ship:X1') === 4}`)
+'@
+Expect-Each (Invoke-Js dw-spike $jssp $wfd) 'buildy: #' 'spike', 'migration' -Show 5
 # buildy resume: each area skips the steps recover found done; all done -> no agent at all
 $jsrs = @'
 const S = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'], m = (n, merged) => [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged }]

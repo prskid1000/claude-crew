@@ -19,9 +19,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L27 init · L56 board · L223 budget · L251 launch · L512 recover · L596 pause · L640 resume · L698 program · L742 param ·
-  L748 track · L1034 supervise report · L1075 anomalies · L1104 supervise · L1424 report · L1502 audit · L1562 storage ·
-  L1773 bugbrief · L1884 cleanup · L2011 learn · L2042 decide · L2108 health · L2170 retro due · L2180 tidy ·
-  L2250 the kit origin's main and goodies · L2266 setup · L2332 guard-sendmessage
+  L748 track · L1034 supervise report · L1076 anomalies · L1105 supervise · L1425 report · L1503 audit · L1563 storage ·
+  L1774 bugbrief · L1885 cleanup · L2012 learn · L2043 decide · L2109 health · L2171 retro due · L2181 tidy ·
+  L2251 the kit origin's main and goodies · L2267 setup · L2333 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1038,7 +1038,8 @@ function Get-KitLabelType([string]$Label) {
   if ($p -match '^(build|fix|local|local-strong|resume|envfix-resume|duel|debate|ship|track|ci|record-args|deploy-batch|duel-ask|duel-close|decide)') { 'devy' }
   elseif ($p -match '^(review|duel-compare|duel-moderate)') { 'revy' }
   elseif ($p -match '^(test|retest|verify|audit|close|hold|prepare|load-run|envfix|release|add-followups)') { 'checky' }
-  elseif ($p -match '^(learn|cleanup|analyse|apply|stamp)') { 'kitty' } else { 'other' }
+  elseif ($p -match '^(learn|cleanup|analyse|apply|stamp)') { 'kitty' }
+  elseif ($p -eq 'spike') { 'rechy' } elseif ($p -eq 'migration-review') { 'datay' } else { 'other' }
 }
 function Format-KitReport($d, [switch]$Agents) {   # -Agents: the coordinator's agent table first
   $g1 = { param($x) [math]::Round([double]$x, 1) }
@@ -1047,7 +1048,7 @@ function Format-KitReport($d, [switch]$Agents) {   # -Agents: the coordinator's 
   if ($Agents) {
     $reportLines.Add('| Agent | Doing |'); $reportLines.Add('|---|---|')
     $all = @($d.agents)
-    foreach ($t in @('devy', 'revy', 'checky', 'kitty', 'other')) {
+    foreach ($t in @('devy', 'revy', 'checky', 'kitty', 'briefy', 'rechy', 'datay', 'opsy', 'watchy', 'other')) {
       $as = @($all | Where-Object { $_.type -eq $t }); if (-not $as.Count) { continue }
       $doing = (@($as | Group-Object mode | ForEach-Object { "$(if (@($_.Group | Where-Object wait).Count -eq $_.Count) { 'waiting: ' })$($_.Name) $($_.Count) ($((@($_.Group | ForEach-Object name) -join ', ')))" }) -join ' · ')
       $added = @($as | Where-Object { $null -ne $_.spend } | ForEach-Object { [math]::Max(0, [double]$_.spend - [double]$_.prevSpend) })

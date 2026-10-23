@@ -8,11 +8,12 @@ Antigravity has no workflow engine: you are the coordinator. Per phase, in order
 
 ## Phases
 
-1. **Build** -- one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc
-2. **Decide** -- items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume
-3. **Review** -- one revy per devy + CI pipelines
-4. **Fix** -- one fix round (local tests again), then merge in order and register the tracker task
-5. **Deploy** -- the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)
-6. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
+1. **Spike** -- args.openQuestions: one rechy answers them in the brief before any devy starts
+2. **Build** -- one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc
+3. **Decide** -- items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume
+4. **Review** -- one revy per devy (+ datay on an area with migrations) + CI pipelines
+5. **Fix** -- one fix round (local tests again), then merge in order and register the tracker task
+6. **Deploy** -- the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)
+7. **Learn** -- signals from this wave, cleanup (/tidy turns them into lessons)
 
 Arguments and step details: `.claude/workflows/buildy.js` (its header comment) and the `bossy` skill.

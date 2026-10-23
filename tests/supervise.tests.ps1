@@ -112,5 +112,8 @@ Expect 'board show lists QA seats and env leases; recover lists the lease with n
 'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
 Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match 'T03:04:00')
+# label prefixes map to the new crew types
+$nc = & { . $O; ((Get-KitLabelType 'spike'), (Get-KitLabelType 'migration-review:X1'), (Get-KitLabelType 'review:X1')) -join ','; Format-KitReport @{ agents = @(@{ type = 'rechy'; name = 'spike'; mode = 'spike' }); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1 } -Agents }
+Expect 'supervise: spike = rechy, migration-review = datay, their rows show' ($nc[0] -eq 'rechy,datay,revy' -and ($nc -join "`n") -match '\| 1 × rechy \| spike 1 \(spike\) \|')
 Remove-TestKit $k
 Complete-Tests

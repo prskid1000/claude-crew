@@ -21,7 +21,7 @@ only here.
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,
   human testing doc, tracker promoted (no user gate) -> merged work waits: nobody asks or proposes a deploy; a person says `deploy
-  <env>` and the coordinator deploys at once (`deploy.trigger`) -> in test -> testers close it, or it fails testing and comes
+  <env>` and `opsy` deploys at once (`deploy.trigger`) -> in test -> testers close it, or it fails testing and comes
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc -> all pass: closed · own check failed or
   incomplete: failedTesting (back to dev) · a new defect: one [Bug] task under the original ask.
@@ -40,23 +40,28 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R0 | The request matches a row of "Org router rows" in `rules/*.local.md` (org-only skills and needs) | that org row's target | — |
 | R1 | A coordinator event: a workflow notification, a supervise flag, stopped or restarted agents or workflows, a decision request, a person's `deploy <env>` or a finished deploy, QA results (failedTesting or new [Bug] tasks), the owner changing a rule mid-run, a SessionStart kit line | `bossy` → its Events table | — |
 | R2 | Kit friction or a kit change: a kit script, hook, rule or workflow failed, blocked wrongly or needed a workaround, or a kit part or config key is added or changed | `kitty` agent (kind fix / build / docs) | — (the agent holds its steps) |
-| R3 | The owner asks to audit, review, recover or repair the whole kit, set it up or fix missing config, or the local env or the phone lanes need admin (start, stop, refresh, wiring, seed data, DB marks and restores, create or reset lanes) or an ENV-FIX | `kitty` agent (one at a time; kind audit / recover / setup / env) | — (the agent holds its steps) |
+| R3 | The owner asks to audit, review, recover or repair the whole kit, set it up or fix missing config, or the local env or the phone lanes need admin (start, stop, refresh, wiring, create or reset lanes) or an ENV-FIX | `kitty` agent (one at a time; kind audit / recover / setup / env) | — (the agent holds its steps) |
 | R4 | A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective | `/tidy` | `bossy` |
 | R5 | Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens) | `/buildy` | `bossy` |
 | R6 | Coding: one small change in one repo (one screen, file or endpoint, a quick fix, a config edit) | direct, crafty steps | `crafty` |
-| R7 | A person says `deploy <env>` (or approves an ask under `deploy.trigger: ask`), or deployed tasks are to move to in test | direct: bossy E5 (`bossy.ps1 deploy`) | `bossy` |
+| R7 | A person says `deploy <env>` (or approves an ask under `deploy.trigger: ask`), deployed tasks are to move to in test, a deploy is to be rolled back, or a deploy secret is to be moved or rotated | `opsy` agent (kind deploy / rollback / status / secret; bossy E5) | — (the agent loads `bossy`) |
 | R8 | Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents | `/testy` | `bossy` |
 | R9 | A person tests by hand from a human testing doc | `pokey` → H steps | — |
-| R10 | Test, check or verify one thing outside a running workflow: a deployed change, one screen or endpoint, a smoke after a deploy, a regression sweep, a user-report reproduction, a data or migration check, perf on the local env, an "is X live / true?" claim | `checky` agent (role test; kind task / smoke / regression / repro / data / perf / claim) | — (the agent loads `pokey`) |
+| R10 | Test, check or verify one thing outside a running workflow: a deployed change, one screen or endpoint, a smoke after a deploy, a regression sweep, a user-report reproduction, perf on the local env, an "is X live / true?" claim | `checky` agent (role test; kind task / smoke / regression / repro / perf / claim) | — (the agent loads `pokey`) |
 | R11 | The local env outside a running flow: inspect, reproduce or debug on it | `envy` skill (goody `local-env`) | — |
 | R12 | Phones or APKs outside a running flow: build the lane or local-env APK, a manual lease | `phoney` skill (goody `android-swarm`) | — |
 | R13 | Review something already written, outside a running workflow: open merge/pull requests, a kit commit, a brief, a testing or QA doc, a plan, a config, tracker texts | `revy` agent (kind mr / kit / doc / qa / plan / config) | — (the agent loads `crafty` Rules) |
 | R14 | Static audit of one module's code for bugs, performance or tech debt, without changing code | `revy` agent (kind module) | — |
-| R15 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
+| R15 | Data work: a run's test data to clean up, a build or test failing on setup data, a migration's data review, local DB marks / restores / seed, a backfill, a data check | `datay` agent (kind cleanup / fixture / migration / localdb / backfill / check) | — (the agent holds its steps) |
+| R16 | Watch a deployed env: errors, logs or monitoring after a deploy, a nightly error sweep, an owner's error screenshot or report | `watchy` agent (kind window / sweep / triage) | — (the agent loads `pokey`) |
+| R17 | Research before building or deciding: compare options, pick a library, is X free / licensed / supported, how Y works; no code change | `rechy` agent (kind question / compare / library / licence / spike) | — (the agent holds its steps) |
+| R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
   `_manifest`): `devy` builds (by /buildy, one per brief area), `revy` reviews (by /buildy, R13, R14),
-  `checky` tests (by /testy as lead / test / verify, R10), `kitty` keeps the kit and the machine (R2, R3, /tidy).
+  `checky` tests (by /testy as lead / test / verify, R10), `kitty` keeps the kit and the machine (R2, R3, /tidy), `briefy` writes briefs and contracts (R5, E8), `rechy` researches (R17,
+  /buildy Spike), `opsy` deploys on a person's word (R7, E5), `watchy` watches deployed envs (R16, E15), `datay` guards test and
+  local data (R15, /buildy migrations, E2, E7).
   Each loads its skill first; its Character shapes judgement and tone, never a rule or the Writing standards. Step 0 of every
   agent reads the board (who is alive on this machine); a disagreement with another agent's result: `board msg` it, still
   split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the same agents are ported
@@ -64,7 +69,7 @@ the **Target**. A mixed request is split and each part routed on its own.
   `.agents/workflows/*.md` by hand.
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI, and merging) without pausing for approvals. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
-  the person says `deploy <env>`, then it runs end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
+  the person says `deploy <env>`, then `opsy` runs it end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
   into the main line after review, CI and the local test loop need none.
 
 ## Multi-agent work, builds and testing (every repo of the workspace)

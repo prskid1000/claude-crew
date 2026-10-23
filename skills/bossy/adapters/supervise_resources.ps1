@@ -62,7 +62,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-  foreach ($k in Get-KitBuildFailures $hist $now) { & $flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; it may need help or a brief fix.' }
+  foreach ($k in Get-KitBuildFailures $hist $now) { & $flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else it may need help or a brief fix.' }
   if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))) }
 
   # phone leases whose holder is gone (phoney.ps1 shuts lanes down; dead emulators reboot on acquire)

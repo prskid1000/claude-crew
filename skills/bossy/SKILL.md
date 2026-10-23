@@ -52,10 +52,11 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 ## Steps (you = the coordinator)
 0. `bossy.ps1 learn -Read -Skill bossy`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
-2. **Brief:** `crafty/templates.md` "Wave brief" in the scratchpad (limits: "Writing standards", kinds `wave-brief`,
-   `owner-message`) (bugs: `bossy.ps1 bugbrief -Task <id> -Mandate '<the owner's words>' [-Complex]` per task).
+2. **Brief:** spawn `briefy` (kind brief, bugs: bugfix; the owner's words verbatim): brief, `<brief>.contracts.md`, impact check,
+   openQuestions, launch args; then one `revy` (kind plan) on it; openQuestions -> `/buildy` args `openQuestions` (phase Spike).
 3. **Status:** before the first agent of ANY task (spikes, analysis, docs too): `crafty.ps1 tracker status <task> inProgress`.
-   **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?}], mode, kitDir, mandate, holdMerge? }`; then
+   **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?, migrations?}], mode, kitDir, mandate, holdMerge?,
+   openQuestions? }`; then
    `bossy.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its exact args itself); then E1.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (a hook
    blocks it).
@@ -69,19 +70,20 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 | # | Event | Action |
 |---|---|---|
 | E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, one-shot: a timer in `supervise.heartbeatMinutes` (15, learned) min, prompt: run `bossy.ps1 supervise -AutoFix -Brief`, paste output verbatim (own line only when ACT needs action), act on flags, then re-arm the timer to its last line `NEXT <n> min` (one-shot schedule or cron update: 5 on an ACT / ENV-FIX, 30 when nothing runs); 2nd session supervisor steps aside. Stop when nothing runs |
-| E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone; answered or false: `supervise -Ack '<flag start>' -Reason '<why>'` (hidden 24 h) |
+| E2 | supervise prints ACT / WATCH | do the printed action (builds failing on setup data -> `datay` kind fixture); leave healthy agents alone; answered or false: `supervise -Ack '<flag start>' -Reason '<why>'` (hidden 24 h) |
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `bossy.ps1 pause -All` (or `-Run <run>`, `-Reason`) until "safe to power off"; the machine stays on: stop the workflow runs and the heartbeat. Back or after a crash: `bossy.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `pokey.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
-| E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `bossy.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (goody `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB: `envy.ps1 seed` / `restore -Mark`; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `pokey.ps1 retest` |
-| E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, end to end, no question back: the steps in `<kit>/skills/bossy/deploys.md` (goody `deploys`); then in test: testers, or /testy on request |
+| E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `bossy.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (goody `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, service starts only from live lease; shared DB data: `datay` kind localdb); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `pokey.ps1 retest` |
+| E5 | A person says `deploy <env>`, or supervise DEPLOY ASK | at once, no question back: one `opsy` per env (kind deploy, the person's words quoted; `<kit>/skills/bossy/deploys.md`, goody `deploys`, plus pre-checks, verify, rollback); its `watch` -> E15; then in test: testers, or /testy on request |
 | E6 | QA results: failedTesting tasks or new [Bug] tasks (supervise) | `bossy.ps1 bugbrief -Task <id> -Agent B-<code> -Repos <r>` per task, then ONE /buildy `mode: 'bugfix'` for all (reproduce locally first) |
-| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (timeline: `audit -Run <id>`); `next` (budget stop, batch, refusal) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); then E10 |
-| E8 | The owner changes a rule or scope mid-run | append to brief AND contracts file (QA: `lead-notes.md`); agents re-read before every push / check |
+| E7 | A workflow finished (notification) | `launch -Done -RunId <id>`; `report -Run <id>` (timeline: `audit -Run <id>`); `next` (budget stop, batch, refusal; `spikeOpen`: answer its questions / decisions first) -> launch it; MR states from report; open findings -> follow-up wave; `deployBatch` waits for person's word (E5); test data the run left -> `datay` kind cleanup; then E10 |
+| E8 | The owner changes a rule or scope mid-run | `briefy` kind rule-change: appends to brief AND contracts file (QA: `lead-notes.md`), `board msg` to each agent it touches; agents re-read before every push / check |
 | E9 | The owner asks for something destructive while runs go on | do it yourself after they finish |
 | E10 | A run finished or stopped (pause, `launch -Done`: their signals are recorded then), supervise says "retro due", or signals piled up | launch /tidy yourself, no owner ask, once no other workflow of this session runs (one retro covers several runs) |
 | E11 | HEAL: guard block wrong, script crash, workaround, kit friction; a line `<feature> is a goody: run kitbag.py goody add <name>` | the goody line: `kitbag.py goody sync` (between runs) or the line's `goody add`, retry. Else spawn `kitty` (kind fix; K1-K3); re-tests, gets `revy` review, pushes and retires lesson (`learn -Fixed`) |
 | E12 | LEARN: something cost time, failed or surprised you | `bossy.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-Lesson "... (n×)"`, goody `kit-admin`); 3x -> script check / default |
 | E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `crafty.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
+| E15 | opsy reported `watch` (a deploy recorded), the nightly timer, or a watchy `ROLLBACK?` board msg | `watch`: one-shot timers +15 min, +2 h, +24 h, each spawning `watchy` kind window; nightly: one `watchy` kind sweep (model haiku); `ROLLBACK?` -> `decide ask` (roll back / fix forward / keep); the owner's answer -> `opsy` kind rollback |
 
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
