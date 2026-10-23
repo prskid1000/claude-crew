@@ -1,14 +1,15 @@
-"""kittool extra kit-admin: kitty's tools - the install, config and recovery checks of agents/kitty.md steps 1-3, token cost,
-releases and the budget raise.
+"""kittool extra kit-admin: kitty's tools - the install, config and recovery checks of agents/kitty.md steps 1-3, the step 4
+scan, token cost, releases and the budget raise.
 
-  python -X utf8 skills/orchestrate/kittool.py audit setup [--fix] | config [--fill] | recover [--fix] [--kit <dir>] [--json <file>]
+  python -X utf8 skills/orchestrate/kittool.py audit setup [--fix] | config [--fill] | recover [--fix] | scan [--kit <dir>] [--json <file>]
   python -X utf8 skills/orchestrate/kittool.py cost [<kit>] [--steps] [--json]   # start tokens per agent type, workflow prompts
   python -X utf8 skills/orchestrate/kittool.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
   python -X utf8 skills/orchestrate/kittool.py budget raise -Reason "<why>"     # the token cap x1.1, only while over it
 
 Installed by `kittool.py extra add kit-admin` (or `extra sync`); kittool.py loads it and shares its own names (out, run, git,
 load_json, key_paths, manifest, cap_next, _sub_file).
-Sections: L17 helpers · L59 setup · L168 config · L320 recover · L465 release · L516 budget-raise · L538 cost · L653 registry
+Sections: L18 helpers · L60 setup · L169 config · L321 recover · L466 release · L517 budget-raise · L539 cost · L654 registry ·
+  L658 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
 import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -654,7 +655,135 @@ def cmd_cost(a):
 def aread(kit, rel):
     return read(osp.join(kit, rel))
 
-AUDIT_VERBS = {'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags),
+# ---- scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each; moved from kittool.py)
+LIBS = ('lib.ps1',)   # dot-sourced: an exit there ends the caller
+def config_doc_keys(kit):
+    doc = section(read(osp.join(kit, 'README.md')), 'Configuration') or ''
+    keys = set(re.findall(r'`([A-Za-z][\w]*(?:\.[\w]+)*)', doc))
+    for row in doc.split('\n'):   # sub-keys named in a row's Meaning cell -> tracker.statuses
+        cells = row.split('|')
+        if len(cells) > 3:
+            heads = re.findall(r'`([A-Za-z][\w.]*)', cells[1])
+            for w in re.findall(r'`([A-Za-z]\w*)', '|'.join(cells[2:])):
+                keys.update(f'{h}.{w}' for h in heads)
+    return doc, keys
+
+def script_config_keys(kit, files):
+    """Top-level kit.local.json keys the scripts read (Get-KitSetting / Get-KitValue / CFG.get / $cfg.<key>)."""
+    keys = {}
+    pats = [re.compile(r"Get-Kit(?:Setting|Value)\s+'([\w.]+)'"), re.compile(r"""CFG\.get\(\s*['"](\w+)"""),
+      re.compile(r"""CFG\[['"](\w+)"""), re.compile(r'\$cfg\.(\w+)')]
+    for f in files:
+        if not f.endswith(('.ps1', '.py')) or f.endswith('kittool.py'):
+            continue
+        text = read(osp.join(kit, f))
+        use = pats if re.search(r"""Join-Path[^\n]*kit\.local\.json['"]""", text) else pats[:3]   # $cfg.<key> only where kit.local.json is loaded
+        for ln, line in enumerate(text.split('\n'), 1):
+            for rx in use:
+                for m in rx.finditer(line):
+                    keys.setdefault(m.group(1), f'{f}:{ln}')
+    return keys
+
+def cmd_scan(kit):
+    files = tracked(kit) or []
+    k = load(kit)
+    local = osp.join(main_clone(kit), 'skills', 'dev-kit', 'kit.local.json')
+    terms = (load_json(local)[0] or {}).get('orgTerms') if osp.isfile(local) else None
+    for code, where, problem in lint(k, graph(k), terms):
+        out('ACT', ('GENERIC-' if code == 'ORG-TERM' else 'LINT-') + code, where, problem)
+    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (extra ports) are checked for the kit this file lives in
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            stale = PLUGINS['port'](['--check'])
+        if stale:
+            out('ACT', 'PORT-DRIFT', 'kittool.py port --check', said.getvalue().strip()[:300], 'python -X utf8 skills/orchestrate/kittool.py port')
+    texts = {f: read(osp.join(kit, f)) for f in files}
+    for f in sec_files(files):
+        for ln, nm, n in sec_sizes(f, texts[f]):
+            out('WARN', 'SECTION-BIG', f'{f}:{ln}', f'section "{nm}" is {n} lines (> {SEC_BIG})', 'split it with another ---- marker')
+    for f in files:
+        if re.match(r'agents/[^/]+\.md$', f):
+            tools = re.search(r'^tools:\s*(.+)$', texts[f], re.M)
+            sk = re.search(r'skills/([\w-]+)/SKILL\.md', texts[f])
+            if tools and sk:
+                st, tl = read(osp.join(kit, f'skills/{sk.group(1)}/SKILL.md')), tools.group(1)
+                if re.search(r'\.ps1\b', st) and not re.search(r'\b(Bash|PowerShell)\b', tl):
+                    out('ACT', 'AGENT-TOOLS', f, f'its skill {sk.group(1)} runs scripts, but tools ({tl}) has neither Bash nor PowerShell')
+                if re.search(r'\b(Edit|Write)\b', st) and 'never edits' not in texts[f].lower() and not re.search(r'\b(Edit|Write)\b', tl) and 'read-only' not in texts[f].lower():
+                    out('WARN', 'AGENT-TOOLS', f, f'its skill mentions editing files, tools ({tl}) cannot edit')
+    # config: example keys documented, documented keys read
+    doc, documented = config_doc_keys(kit)
+    ex, _ = load_json(osp.join(kit, PATHS_JSON))
+    for p in key_paths(ex or {}):
+        if '.' in p and not any(p.startswith(m + '.') for m in USER_MAPS) and p not in documented and f'`{p}' not in doc:
+            out('ACT', 'CONFIG-UNDOC', f'kit.example.json {p}', 'not documented in README "Configuration"')
+    code = '\n'.join(t for f, t in texts.items() if f.endswith(('.ps1', '.py', '.mjs', '.js')))
+    for key in sorted(set(re.findall(r'^\| `([A-Za-z][\w.]*)`', doc.split('### Tracker')[0], re.M))):
+        if not re.search(r'[\'".]' + re.escape(key.split('.')[-1]) + r'\b', code):
+            out('WARN', 'CONFIG-UNUSED', f'README Configuration {key}', 'documented, but no script seems to read it (dead key, or read under another name?)')
+    for key, where in sorted(script_config_keys(kit, files).items()):
+        top = key.split('.')[0]
+        if top not in documented and f'`{top}' not in doc:
+            out('ACT', 'CONFIG-UNDOC', where, f'script reads kit.local.json "{key}", not documented in README "Configuration"')
+        elif ex is not None and top not in ex:
+            out('WARN', 'CONFIG-EXAMPLE', where, f'"{top}" is documented but missing from kit.example.json')
+    for f, t in texts.items():
+        if not f.startswith(('examples/',) + GENERATED) and f.endswith(('.ps1', '.py', '.js', '.mjs', '.md', '.json')):
+            for ln, line in enumerate(t.split('\n'), 1):
+                if re.search(r'(?<![\w/])[A-Za-z]:[\\/](?:Users|Codebase|src|work|Projects)\b|/home/\w+/|/Users/\w+/', line) and not re.search(r'e\.g\.|example|<|//|^\s*#|Windows:', line):
+                    out('WARN', 'GENERIC-PATH', f'{f}:{ln}', 'absolute machine path: config key or derived path instead?')
+        if f.endswith('.ps1'):
+            ps_pitfalls(f, t)
+        elif f.endswith('.py'):
+            for ln, line in enumerate(t.split('\n'), 1):
+                if re.match(r'\s*except\s*:', line):
+                    out('WARN', 'PY-BARE-EXCEPT', f'{f}:{ln}', 'bare except: hides real errors (KeyboardInterrupt too)')
+                if re.search(r'(?<![\w.])open\(', line) and 'encoding' not in line and not re.search(r"""['"][rwax+]*b[rwax+]*['"]""", line):
+                    out('WARN', 'PY-ENCODING', f'{f}:{ln}', 'open() without encoding= reads cp1252 on Windows')
+    doc_flags(texts)
+
+def ps_pitfalls(f, t):
+    code = strip_ps_comments(t)
+    lines = code.split('\n')
+    for lb, b, a, la in ps_case(t):   # the second spelling overwrites the first
+        out('WARN', 'PS-CASE', f'{f}:{lb}', f'${b} (line {lb}) is the same variable as ${a} (line {la}): PowerShell names are case-insensitive')
+    for ln, line in enumerate(lines, 1):
+        m = re.search(r'\$(\w+)\s*=(?![=~])', line)
+        if m and m.group(1).lower() in AUTOMATIC - {'lastexitcode'} and not re.search(r'\[(ref)\]', line):
+            out('WARN', 'PS-AUTOVAR', f'{f}:{ln}', f'assigns automatic variable ${m.group(1)} (silently overwritten / ignored)')
+        if re.search(r'\.Substring\(\s*[^,()]+,\s*\d+\s*\)', line) and not re.search(r'Min\(|\.Length\s*-g[te]|-g[te]\s*\d|ToString\(|GetBytes|Guid', line):
+            out('WARN', 'PS-SUBSTRING', f'{f}:{ln}', '.Substring(i, n) with a fixed n and no length guard on the line: throws on short strings')
+        if osp.basename(f) in LIBS and re.match(r'\s*exit\b', line):
+            out('WARN', 'PS-LIB-EXIT', f'{f}:{ln}', 'exit in a dot-sourced library ends the CALLER')
+    pm = re.search(r'(?is)^\s*param\s*\((.*?)\)\s*$', code, re.M)
+    if pm:
+        for m in re.finditer(r'\[string\[\]\]\s*\$(\w+)', pm.group(1)):
+            v = m.group(1)
+            if not re.search(r'Split-KitList[^\n]*\$' + v + r'\b|\$' + v + r'\b[^\n]*-split', code, re.I):
+                out('WARN', 'PS-FILE-ARRAY', f, f'[string[]]${v}: `pwsh -File` passes "a,b" as ONE string; use Split-KitList')
+        for m in re.finditer(r'\$(input|args|host|error|matches|pid|home)\b', pm.group(1), re.I):
+            out('ACT', 'PS-AUTOVAR', f, f'parameter ${m.group(1)} shadows an automatic variable')
+
+def doc_flags(texts):
+    """`<script>.ps1 -Flag` in Markdown where the script has no such parameter (docs that contradict scripts)."""
+    params = {}
+    for f, t in texts.items():
+        if f.endswith('.ps1'):   # any verb's param block taking the flag counts
+            for m in re.finditer(r'(?is)\bparam\s*\((.*?)\)\s*\n', strip_ps_comments(t)):
+                ps = {x.lower() for x in re.findall(r'\$(\w+)', m.group(1))} | {x.lower() for x in re.findall(r"Alias\('([^']+)'", m.group(1))}
+                params.setdefault(osp.basename(f), set()).update(ps)
+    for f, t in texts.items():
+        if not f.endswith('.md') or f.startswith(GENERATED) or f.endswith('LESSONS.md'):
+            continue
+        for ln, line in enumerate(t.split('\n'), 1):
+            for span in re.findall(r'`([^`]+)`', line):
+                for m in re.finditer(r'([\w-]+\.ps1)((?:\s+[^\s|;]+)*)', span):
+                    s = m.group(1)
+                    for flag in re.findall(r'(?<![\w-])-([A-Za-z]\w+)', m.group(2)) if s in params else []:
+                        fl = flag.lower()
+                        if fl not in ('file', 'noprofile', 'command', 'whatif', 'verbose', 'erroraction') and not any(p.startswith(fl) for p in params[s]):
+                            out('WARN', 'DOC-FLAG', f'{f}:{ln}', f'`{s} -{flag}`: {s} has no such parameter')
+
+AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
 COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'budget raise': budget_raise}   # 'budget raise': called by kittool.py budget
 ARGS = {'audit': ({'--fix', '--fill'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),

@@ -16,9 +16,8 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 | `<kit>/skills/qa-kit/adapters/ui_android.ps1` | never read: `qa.ps1 ui` and the `deploys[]` `laneApk` check of `qa.ps1 deployed` (this extra) |
 
 Lanes and the app: `swarm.config.json` (git-ignored; an example: "Config" below; keys and defaults: `Get-SwarmConfig`
-in `swarm.ps1`). `kit.local.json` `devices.type`: android (default) · none (verbs refuse; app checks NOT_TESTED). Extras
-(`kittool.py extra add`): `ios-simulator`, `app-kinds` (flutter, maui, capacitor, Expo), `emulator-windows` (visible windows
-in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
+in `swarm.ps1`). `kit.local.json` `devices.type`: android (default) · none (verbs refuse; app checks NOT_TESTED). Also here:
+`app.kind` presets (flutter, maui, capacitor, Expo), `swarm.ps1 arrange` (visible windows in a row); extra `ios-simulator`. Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` overrides). Two APKs:
 - **lane APK** `apk/app.apk` (+ `app.json` stamp): the merged branch, installed on every lane at acquire (test-only runs).
 - **local-env APK** `apk/app-local.apk` (+ `app-local.json`): `swarm.ps1 build -Local [-AppDir <worktree>]` = a JS-bundled
   release build with the app's cleartext manifest overlay (`app.localManifests`, first that exists) for the local env's http
@@ -57,7 +56,7 @@ in a row). Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (
 ```json
 {
  "swarm.config.json": {
-   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp; flutter, maui, capacitor: extra app-kinds. localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "_readme": "Lanes = AVD names (swarm.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag}. app.kind: react-native | native | kmp; flutter, maui, capacitor (adapters/app_kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,

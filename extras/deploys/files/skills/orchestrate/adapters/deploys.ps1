@@ -3,7 +3,7 @@ deploys.ps1 (extra deploys): the deploy batch of orchestrate E5, dot-sourced by 
   orch.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>]   merged-not-deployed MRs per test env, trigger, window
   orch.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   orch.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
-  orch.ps1 deploy merge ...   extra deploy-merge
+  orch.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
 Sections: L13 helpers · L23 intest · L102 deploy · L203 supervise
 Exit codes: 0 ok · 2 usage.
@@ -104,7 +104,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @())
-  if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploy-merge'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
+  if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task; return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create

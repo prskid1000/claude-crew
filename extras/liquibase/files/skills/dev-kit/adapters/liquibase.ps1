@@ -1,6 +1,10 @@
 #Requires -Version 7
 # liquibase (extra): dev.ps1 check -Step migrations on Liquibase XML masters -> devtools.py lbcheck per master (the one under the
 # checked folder first); LBCHECK_CHANGED = changelog files touched since -Since. Returns the worst exit code (-Show: prints the commands).
+# the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
+function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
+  @(git -C $Top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' -and ($_ -match '\.xml$') -ne $Other })
+}
 function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since, [switch]$Show) {
   $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
   $env:LBCHECK_CHANGED = (@(git -C $Top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $Top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique) -join '|'

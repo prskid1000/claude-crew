@@ -2,7 +2,7 @@
 Read by `kitty` at step 0 and by `revy` (kind kit). README "Extending" points here; `[CODE]` = the lint code that enforces a rule.
 
 ## Parts
-Parts are added, renamed or removed with the `scaffold` extra (`kittool.py new | rename | remove <kind> <name>`, `new adr <title>`:
+Parts are added, renamed or removed with this extra's scaffold (`kittool.py new | rename | remove <kind> <name>`, `new adr <title>`:
 template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. An optional
 feature goes to the `extras` branch, not the core.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,

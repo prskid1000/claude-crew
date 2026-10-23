@@ -43,4 +43,5 @@ $sv = pwsh @np $O supervise -AutoFix 2>&1 | Out-String
 Expect "runtimes: supervise -AutoFix releases a dead lease and stops the kit-started runtime" ($sv -match 'released the lease of ghost' -and $sv -match 'stopped' -and -not (Test-Path $flag) -and (Log) -eq 'down')
 
 Remove-TestKit $k
+foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the extras merged into this one
 Complete-Tests

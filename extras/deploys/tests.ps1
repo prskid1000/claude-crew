@@ -55,4 +55,5 @@ $o = Invoke-MarkInTest -Apply | Out-String
 '@
 Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on (#)' @('gone')
 Remove-TestKit $k
+foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the extras merged into this one
 Complete-Tests

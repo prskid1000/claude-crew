@@ -11,7 +11,7 @@ swarm.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.t
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs an extra) · 2 usage error.
-Extras (adapters/): app-kinds (flutter, maui, capacitor, Expo prebuild), emulator-windows (arrange), ios-simulator.
+Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); extra ios-simulator.
 Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L655 down · L684 slim
 #>
 #Requires -Version 7
@@ -31,9 +31,9 @@ function Get-SwarmConfig {
   if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'react-native' }
   if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
-  # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: extra app-kinds (Set-AppKindPreset)
+  # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: adapters/app_kinds.ps1 (Set-AppKindPreset)
   if ($c.app.kind -notin 'react-native', 'native', 'kmp' -and -not ($c.app.buildCmd -and $c.app.artifact)) {
-    if ($ext = Get-Command Set-AppKindPreset -ErrorAction SilentlyContinue) { & $ext $c.app } else { throw "app.kind $($c.app.kind) is an extra: run kittool.py extra add app-kinds" }
+    if ($ext = Get-Command Set-AppKindPreset -ErrorAction SilentlyContinue) { & $ext $c.app } else { throw "app.kind $($c.app.kind) is an extra: run kittool.py extra add android-swarm" }
   }
   foreach ($k in @{ permissions = @(); localReverse = @(); localManifests = @('src/debugOptimized/AndroidManifest.xml', 'src/debug/AndroidManifest.xml') }.GetEnumerator()) { if (-not $c.app.($k.Key)) { $c.app | Add-Member -Force $k.Key $k.Value } }
   $sdk = Get-AndroidSdk
@@ -317,8 +317,8 @@ if (-not $PSBoundParameters.ContainsKey('BuildArgs')) { $BuildArgs = [string]$c.
 $gate = ({ & $KitCmd.dev gate @args })
 $gw = if ($KitIsWindows) { 'gradlew.bat' } else { 'gradlew' }   # the gate runs .\gradlew.bat or ./gradlew
 $cmd = [string]$c.app.buildCmd   # a non-Gradle kind (Get-SwarmConfig presets) or a custom command: no Gradle / Java steps
-if (-not $cmd -and ($ext = Get-Command Invoke-AppPrebuild -ErrorAction SilentlyContinue)) { & $ext $AppDir $gw }   # extra app-kinds: Expo apps generate android/
-$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: kittool.py extra add app-kinds)" }
+if (-not $cmd -and ($ext = Get-Command Invoke-AppPrebuild -ErrorAction SilentlyContinue)) { & $ext $AppDir $gw }   # adapters/app_kinds.ps1: Expo apps generate android/
+$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: kittool.py extra add android-swarm)" }
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()
 $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count
@@ -725,7 +725,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'up' { Invoke-KitVerb Invoke-Up $__rest }
     'down' { Invoke-KitVerb Invoke-Down $__rest }
     'slim' { Invoke-KitVerb Invoke-Slim $__rest }
-    'arrange' { if (Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) { Invoke-KitVerb 'Invoke-Arrange' $__rest } else { [Console]::Error.WriteLine('arrange is an extra: run kittool.py extra add emulator-windows'); exit 1 } }
+    'arrange' { if (Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) { Invoke-KitVerb 'Invoke-Arrange' $__rest } else { [Console]::Error.WriteLine('arrange is an extra: run kittool.py extra add android-swarm'); exit 1 } }
     { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 0 }
     default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }
   }

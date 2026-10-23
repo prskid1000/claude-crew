@@ -40,4 +40,5 @@ run(args, agent, _n, _n, pipeline, parallel).then((o) => {
 '@
 Expect-Each (Invoke-Js dw-duel $jsu $wfd) 'buildy duel: #' 'duel-pocs', 'duel-debate', 'duel-judge', 'duel-ships-winner', 'crew-only' -Show 5
 Remove-TestKit $k
+foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the extras merged into this one
 Complete-Tests

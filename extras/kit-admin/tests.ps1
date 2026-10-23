@@ -56,4 +56,5 @@ Expect 'kit-admin: learn -Lesson generic -> LESSONS.md, org term -> LESSONS.loca
 $null = & $lo -Skill revy -Fixed 'a generic lesson'; $hi = & $lo -History -Grep 'a generic lesson'; $st = & $lo -Stats
 Expect 'kit-admin: learn -Fixed moves the line out, -History lists it, -Stats counts signals' ((Get-Content (Join-Path $kc 'LESSONS.md') -Raw) -notmatch 'a generic lesson' -and $hi -match '\(fixed in kit\) \(2×\) a generic lesson' -and $st -match 'signals since last retro')
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the extras merged into this one
 Complete-Tests

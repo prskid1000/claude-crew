@@ -7,6 +7,6 @@
   (`db.migrateSql` output or migration files); mysql: the temp watchdog (`db.tempMaxGB`), `dbtemp`, temp-cap doctor rows;
   `db.expect` doctor rows; `tenant list | drop` (`tenants`: local tenants dropped with their admin rows, users and schema).
   Other engines: marks unsupported.
-Needed when: `localEnv.envs.*.db.engine` = `*`, `localEnv.defaults.db.engine` = `*`
+Needed when: `localEnv.envs.*.db` = `*`, `localEnv.defaults.db` = `*`
 - Wiring: `skills/local-env/adapters/db_presets.ps1` (dot-sourced by `localenv.ps1`, extra `local-env`) + `db_flashback.py`
   (`plan|apply|slice|structure|objects|guard|touched`). Tests: `tests.ps1` (a scratch mysqld of its own when `mysqld` is on PATH).
