@@ -17,9 +17,9 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L25 init · L53 board · L219 budget · L247 launch · L508 recover · L592 pause · L636 resume · L694 program · L738 track ·
-  L1024 supervise report · L1065 anomalies · L1094 supervise · L1394 report · L1472 audit · L1532 storage · L1743 bugbrief ·
-  L1854 cleanup · L1978 learn · L2008 decide · L2074 health · L2136 retro due · L2146 the kit origin's main and extras ·
-  L2162 setup · L2227 guard-sendmessage
+  L1024 supervise report · L1065 anomalies · L1094 supervise · L1412 report · L1490 audit · L1550 storage · L1761 bugbrief ·
+  L1872 cleanup · L1999 learn · L2029 decide · L2095 health · L2157 retro due · L2167 the kit origin's main and extras ·
+  L2183 setup · L2248 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -586,7 +586,7 @@ foreach ($q in Get-OrphanQaItems -Hours $Hours) { "== QA $($q.run): tested, neve
 Invoke-KitHooks Get-KitRecoverLines   # extra supervise-resources: env and phone leases with no live holder
 foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (orch.ps1 supervise -AutoFix replays it)" }
-"== heartbeat: a new session has none; arm ONE: CronCreate (cron */10 * * * *), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (orchestrate E1)"""
+"== heartbeat: a new session has none; arm ONE timer in $(Get-KitBeatMinutes) min, then re-arm it to the NEXT <n> min each supervise prints (orchestrate E1), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (orchestrate E1)"""
 }
 
 # ---- pause: agents checkpoint, commit WIP, release leases, stop; a .state record lets resume start each at its next step
@@ -1121,6 +1121,19 @@ function Get-SuperviseOwner([string]$Session) {
 }
 # a workflow label -> the board names its agent may use (X1, X1-review, review-X1)
 function LabelNames($l) { $p = $l -split ':'; $n = ($p[-1] -split '@')[0]; @($n) + $(if ($p.Count -gt 1) { "$n-$($p[0])"; "$($p[0])-$n" }) }
+# the next heartbeat (min; the coordinator re-arms its timer to it): 5 with an open ACT or ENV-FIX; half the base (>= 5) with a
+# storage anomaly, 3+ failed builds in a row or many live agents; 30 when nothing runs, 22 when every agent is idle; else halfway
+# back to the base (supervise.heartbeatMinutes, 15). TODO-PARAM: learn the base from how often ACTs appear between beats
+function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, [bool]$Storage, [int]$BuildFails, [int]$Agents, [int]$Live, [int]$Running) {
+  $many = [int](Get-KitSetting 'supervise.manyAgents' 8)   # TODO-PARAM (fixed default)
+  $r = if ($Act -or $EnvFix) { @(5, $(if ($EnvFix) { "$EnvFix ENV-FIX open" } else { "$Act ACT open" })) }
+    elseif ($Storage -or $BuildFails -ge 3 -or $Agents -ge $many) { @([math]::Round($Base / 2), $(if ($Storage) { 'storage anomaly' } elseif ($BuildFails -ge 3) { "$BuildFails failed builds in a row" } else { "$Agents live agents" })) }
+    elseif (-not $Running -and -not $Agents) { @(30, 'nothing runs') }
+    elseif (-not $Live) { @([math]::Round(($Base + 30) / 2), 'every agent idle') }
+    elseif ([math]::Abs($Prev - $Base) -le 2) { @($Base, 'normal') }
+    else { @([math]::Round(($Prev + $Base) / 2), "back toward $Base") }
+  [pscustomobject]@{ min = [int][math]::Min(30, [math]::Max(5, $r[0])); why = $r[1] }
+}
 function Invoke-Supervise {
 param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [switch]$Agents, [string]$Ack, [string]$Reason = '')
 $ErrorActionPreference = 'SilentlyContinue'
@@ -1143,10 +1156,10 @@ $me = Get-SuperviseOwner $Session
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
-  if (-not $Takeover -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt 30) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }
+  if (-not $Takeover -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15, [math]::Min(45, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }   # 1.5 beats: a live heartbeat elsewhere
   Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('s'); pid = $PID } | ConvertTo-Json)
 }
-if ($script:aside) { $script:aside; return }
+if ($script:aside) { $script:aside; "NEXT $(Get-KitBeatMinutes) min (another session supervises)"; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 }
 $script:skipped = @(); $deadline = (Get-Date).AddSeconds($budgetSeconds)
 function Within($name) { if ((Get-Date) -lt $deadline) { $true } else { if ($name -notin $script:skipped) { $script:skipped += $name }; $false } }
@@ -1375,19 +1388,24 @@ $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.lev
 $state.acks = @{}; $a0 = $(try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }).acks   # re-read: an -Ack during this sweep
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
+$fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }   # the failed-build streak, newest first
+$base = [double](Get-KitSetting 'supervise.heartbeatMinutes' 15)
+$next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($active.Count + $wfAgents.Count) ($liveLabels.Count + $active.Count) $runTotal
+$state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 $state.report = @{ spend = $spendNow; at = $now.ToString('s') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ agents = @($ags); mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $script:ownerInfo; detailFile = (Get-KitPath supervise-report) }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 if ($script:skipped.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $($script:skipped -join ', ')" 'Partial result: the skipped sections run next round.' }
 L "sweep: $secs s"
-if ($Json) { [pscustomobject]@{ at = $now.ToString('s'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report } | ConvertTo-Json -Depth 5; exit 0 }
+if ($Json) { [pscustomobject]@{ at = $now.ToString('s'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # the final markdown the coordinator pastes verbatim; the long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report -Agents:$Agents)
   @("# supervise $($now.ToString('s'))") + $md + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
-  $md; $nAct = @($flags | Where-Object level -eq 'ACT').Count; if ($nAct) { "ACT: $nAct line(s): act on each now (orchestrate E2); the next heartbeat re-checks" }; $global:LASTEXITCODE = 0; exit 0
+  $md; $nAct = @($flags | Where-Object level -eq 'ACT').Count; if ($nAct) { "ACT: $nAct line(s): act on each now (orchestrate E2); the next heartbeat re-checks" }; $nextLine; $global:LASTEXITCODE = 0; exit 0
 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }
+$nextLine
 $global:LASTEXITCODE = 0
 }
 
@@ -1556,12 +1574,12 @@ function Get-KitDiskNormal($Xs) {
   $v = @($h.Values); $r = @(for ($i = 1; $i -lt $v.Count - 1; $i++) { ($v[$i - 1].free - $v[$i].free) / [math]::Max(1.0, ($v[$i].t - $v[$i - 1].t) / 3600) }) | Where-Object { $_ -gt 0.01 } | Sort-Object
   if ($r.Count) { [math]::Max(0.1, [math]::Round($r[[int][math]::Floor($r.Count / 2)], 2)) } else { 0.1 }
 }
-# pure: samples -> fill rate (10 min, both halves), drop since the last heartbeat, hours to full, level (floors: kit drives only)
-function Get-KitDiskVerdict($Xs, $C, [double]$Normal = 0.1, [bool]$Kit = $true) {
+# pure: samples -> fill rate (10 min, both halves), drop since the last heartbeat ($BeatSec), hours to full, level (floors: kit drives only)
+function Get-KitDiskVerdict($Xs, $C, [double]$Normal = 0.1, [bool]$Kit = $true, [double]$BeatSec = 840) {
   $xs = @($Xs | Sort-Object t); if (-not $xs.Count) { return $null }; $cur = $xs[-1]
   $rt = { param($s) $w = @($xs | Where-Object { $_.t -ge $cur.t - $s })[0]; $hrs = ($cur.t - $w.t) / 3600; if ($hrs -ge $s / 3600 * 0.5) { ($w.free - $cur.free) / $hrs } else { 0.0 } }
   $rate = [math]::Round((& $rt 660), 2); $late = & $rt 330
-  $prev = @($xs | Where-Object { $_.t -le $cur.t - 540 })[-1]; $drop = if ($prev) { [math]::Round($prev.free - $cur.free, 2) } else { 0 }
+  $prev = @($xs | Where-Object { $_.t -le $cur.t - $BeatSec })[-1]; $drop = if ($prev) { [math]::Round($prev.free - $cur.free, 2) } else { 0 }
   $ttf = if ($rate -gt 0) { [math]::Round($cur.free / $rate, 1) } else { [double]::PositiveInfinity }
   $sust = $rate -ge $C.minRateGBh -and $late -ge $C.minRateGBh / 2   # a 2 GB burst early in the window is no fill
   $anom = $sust -and $rate -ge $C.factor * [math]::Max(0.1, $Normal)
@@ -1601,7 +1619,7 @@ function Invoke-KitStorageTick([switch]$Force) {
   $out = @(); $st = Get-KitStorageState
   foreach ($d in Get-KitDrives) {
     $f = Get-KitStorageFile $d.name; Invoke-KitLocked $f { [IO.File]::AppendAllText($f, (@{ t = $now; free = $d.free; size = $d.size } | ConvertTo-Json -Compress) + "`n") }
-    $v = Get-KitDiskVerdict (Get-KitStorageSamples $d.name 40) $c ([double]$(if ($st.normal -and $st.normal[$d.name]) { $st.normal[$d.name] } else { 0.1 })) $d.kit
+    $v = Get-KitDiskVerdict (Get-KitStorageSamples $d.name 40) $c ([double]$(if ($st.normal -and $st.normal[$d.name]) { $st.normal[$d.name] } else { 0.1 })) $d.kit ((Get-KitBeatMinutes) * 60 - 60)
     $out += $v | Add-Member -PassThru NoteProperty drive $d.name | Add-Member -PassThru NoteProperty root $d.root | Add-Member -PassThru NoteProperty kit $d.kit
   }
   $q = @(Get-KitDbQueries $c); $max = [double]$(if ($c.db.maxGB) { $c.db.maxGB } else { 5 })   # owner: no query above 5 GB of temp
@@ -1922,6 +1940,7 @@ function MergedTip($repo, $br) {
   $mrs = Invoke-HostVerb 'mr.list' @{ repo = $path; type = $type; source_branch = $br; state = 'merged'; per_page = 20 }
   return @($mrs | ForEach-Object sha)
 }
+$wtDays = [double](Get-KitSetting 'cleanup.worktreeDays' 7)   # a gone branch / uncommitted files: idle this long (TODO-PARAM)
 $repos = @{}; $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalHours -lt 24 } | ForEach-Object { $_.worktrees } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
 foreach ($root in $WorktreeRoot) {
   foreach ($w in Get-ChildItem $root -Directory) {
@@ -1929,8 +1948,9 @@ foreach ($root in $WorktreeRoot) {
     if (-not (git -C $d rev-parse --is-inside-work-tree 2>$null)) { continue }
     $br = git -C $d rev-parse --abbrev-ref HEAD 2>$null
     if (-not $br -or $br -eq 'HEAD' -or $br -match $keepBranches) { continue }
-    if (git -C $d status --porcelain 2>$null) { continue }
     $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $old = $newest -and ($now - $newest).TotalDays -ge $wtDays
+    if (git -C $d status --porcelain 2>$null) { if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($now - $newest).TotalDays) d: kept (never deleted; commit or remove it by hand)" }; continue }
     if ($newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
     if (-not (Invoke-GitFetch -Dir $d)) { continue }
     $main = "$(git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
@@ -1938,10 +1958,11 @@ foreach ($root in $WorktreeRoot) {
     # its MR merged at this tip (host state: squash merges too), or the tip already in origin's default branch: nothing is lost
     # (contained: idle 24 h+, a fresh worktree has no commits yet; a claimed one is in use)
     $why = if (-not $main -or $d.ToLower() -in $claimed) { $null } elseif ($tip -in @(MergedTip $main $br)) { 'MR merged at its tip' } elseif ($ob -and (-not $newest -or ($now - $newest).TotalHours -ge 24) -and $(git -C $d merge-base --is-ancestor $tip $ob 2>$null; $LASTEXITCODE -eq 0)) { "contained in $ob" }
+      elseif ($old -and "$(git -C $d for-each-ref --format='%(upstream:track)' "refs/heads/$br" 2>$null)".Trim() -eq '[gone]') { "remote branch gone, idle $wtDays d+ (local branch kept)" }
     if (-not $why) { continue }
     $sz = [long](Size $d); $script:freed += $sz
     [void]$actions.Add([pscustomobject]@{ mb = $sz / 1MB; why = "worktree + local branch: $why (clean, idle)"; path = "$d ($br)" })
-    if (-not $DryRun) { & $KitCmd.dev wt remove -Dir $d | Out-Null; if (-not (Test-Path $d)) { git -C $main branch -D $br 2>$null | Out-Null } }
+    if (-not $DryRun) { & $KitCmd.dev wt remove -Dir $d | Out-Null; if (-not (Test-Path $d) -and $why -notmatch 'branch kept') { git -C $main branch -D $br 2>$null | Out-Null } }
     if ($main) { $repos[$main] = $true }
   }
 }
@@ -2116,7 +2137,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
   $crashed = @(Set-KitBoardCrashed)
   foreach ($s in @(Get-StoppedRuns -Hours 72 | Where-Object { -not $_.paused })) { foreach ($x in @($s.file, $s.selfFile) | Where-Object { $_ }) { try { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if (-not $j.crashed) { $j | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); Write-KitAtomic $x ($j | ConvertTo-Json -Depth 30) } } } catch {} } }
   $stopped = @(& $KitCmd.orch launch -List -Brief -Hours 72 2>$null)
-  if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; orchestrate E3); finished ones: orch.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (orchestrate E1: CronCreate */10 * * * *, orch.ps1 supervise -AutoFix -Brief)" }
+  if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; orchestrate E3); finished ones: orch.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (orchestrate E1: a one-shot timer in $(Get-KitBeatMinutes) min, orch.ps1 supervise -AutoFix -Brief, re-armed to each NEXT <n> min)" }
 }
 if ($py) {
   $lint =& $py -X utf8 $KitCmd.kittool lint $kit --summary --warn --no-flow 2>$null

@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L81 config · L161 OS · L298 leases · L495 tracker · L715 git-host · L850 kitlog · L943 entry-scripts
+Sections: L9 paths · L81 config · L161 OS · L298 leases · L500 tracker · L720 git-host · L855 kitlog · L948 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -315,9 +315,14 @@ function Test-KitLive($l) {
     Where-Object { $_.status -ne 'left' -and $(if ($l.session) { $_.session -eq $l.session } else { $_.agent -and $_.agent -in @($a, $l.holder) }) })
   if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart)) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
-  if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt $bm) { return $true } }
+  if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt [math]::Max($bm, (Get-KitBeatMinutes) + 5)) { return $true } }   # its heartbeat writes it
   (Test-KitHolder $l) -eq $true
 }
+# the coordinator's heartbeat interval now (min): the NEXT its last supervise printed, else supervise.heartbeatMinutes (15)
+function Get-KitBeatMinutes {   # a NEXT older than 2 beats (the coordinator stopped) falls back to the base
+  $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitSetting 'supervise.heartbeatMinutes' 15) }
+}   # TODO-PARAM (fixed default)
 function Update-KitLease($l) {
   $now = Get-Date
   if (Test-KitLive $l) {   # seen once a minute: a state that only re-confirms a live holder stays unchanged (no rewrite)

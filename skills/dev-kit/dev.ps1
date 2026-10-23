@@ -13,8 +13,8 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L228 stack · L403 gate · L656 check · L809 pipes · L845 guard · L1213 dir · L1223 checkpoint ·
-  L1247 tracker · L1280 host
+Sections: L20 init · L26 wt · L228 stack · L403 gate · L658 check · L810 pipes · L846 guard · L1214 dir · L1224 checkpoint ·
+  L1248 tracker · L1281 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -461,6 +461,8 @@ if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) {
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
 $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
+# a Maven daemon on PATH keeps a warm JVM between builds (checks and local env builds)
+if ($Cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $Cmd = $Cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
 # runners fork a worker per core
 if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = "$Cmd --maxWorkers=2" }
 if ($Cmd -match '\bvitest\b' -and $Cmd -notmatch 'maxWorkers|maxThreads') { $Cmd = "$Cmd --maxWorkers=2" }
@@ -783,7 +785,6 @@ foreach ($s in $steps) {
   for ($bi = 0; $bi -lt $batches.Count; $bi++) {
   $cmd = $batches[$bi]
   if ($batches.Count -gt 1) { Write-Host "[check] $s batch $($bi + 1)/$($batches.Count)" }
-  if ($cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $cmd = $cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
   if ($cmd -match '\btsc\b' -and $cmd -notmatch 'incremental|tsBuildInfoFile') {
     $hash = Hash12 $st.dir.ToLower()
     $tsb = Get-KitPath tsbuild -Create
