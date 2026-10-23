@@ -6,6 +6,7 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   recover [-RunId <id> | -Run <runs>] [-Hours 48]   stopped runs: state, resume brief, exact resume call
   pause -Run <run> | -All [-Reason] [-Wait 10] · resume -Run <run> | -All [-Wait <min>]   stop at checkpoints; paused / crashed runs back
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
+  param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail]   task <-> MRs; promoted when all merged
   supervise [-AutoFix] [-Brief] [-Agents] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
@@ -17,10 +18,10 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L26 init · L55 board · L221 budget · L249 launch · L510 recover · L594 pause · L638 resume · L696 program · L740 track ·
-  L1026 supervise report · L1067 anomalies · L1096 supervise · L1414 report · L1492 audit · L1552 storage · L1763 bugbrief ·
-  L1874 cleanup · L2001 learn · L2031 decide · L2097 health · L2159 retro due · L2169 tidy ·
-  L2239 the kit origin's main and extras · L2255 setup · L2320 guard-sendmessage
+Sections: L27 init · L56 board · L223 budget · L251 launch · L512 recover · L596 pause · L640 resume · L698 program · L742 param ·
+  L748 track · L1034 supervise report · L1075 anomalies · L1104 supervise · L1424 report · L1502 audit · L1562 storage ·
+  L1773 bugbrief · L1884 cleanup · L2011 learn · L2041 decide · L2107 health · L2169 retro due · L2179 tidy ·
+  L2249 the kit origin's main and extras · L2265 setup · L2331 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -192,6 +193,7 @@ switch ($Action) {
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-Date).ToString('o'); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
     $cf = Get-KitCheckpointFile $script:leftEntry.agent
+    if (-not $paused -and -not $Handoff) { Add-KitSpendObs $script:leftEntry }
     if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # finished: the next join starts fresh
     if ($paused) {
       $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
@@ -224,7 +226,7 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
   foreach ($p in @("$Plan" -split ',' | Where-Object { $_ -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$' })) {
     $null = $p -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$'; $role = $Matches[1]; $m = $Matches[2]; $n = [int]$Matches[3]; $hasM = $p -match '/'
     if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
-    $est += $n * [double](Get-KitSetting "budget.estimate.$role" $ex.estimate.$role)
+    $est += $n * [double](Get-KitParam 'budget.estimate' ([double]$ex.estimate.$role) $role)
   }
   [pscustomobject]@{ cap = [int]$cap; estimate = [int]$est; perModel = $memo }
 }
@@ -737,6 +739,12 @@ function NormTask($id) {
   $id
 }
 
+# ---- param: learned parameters (lib.ps1 params: reader, learner, verbs)
+function Invoke-Param {
+param([Parameter(Position = 0)][ValidateSet('show', 'history', 'learn', 'pin', 'unpin', 'freeze', 'reset', 'approve')][string]$Action = 'show', [Parameter(Position = 1)][string]$Key, [Parameter(Position = 2)][string]$Value, [string]$Context = '', [switch]$Json)
+if ($Action -eq 'learn') { foreach ($f in @(Invoke-ParamLearn)) { "[$($f.level)] $($f.what) -> $($f.action)" }; return }
+$o = @(Invoke-KitParamVerb $Action $Key $Value $Context -Json:$Json); $o; if ("$($o[0])" -like 'ERROR*') { exit 2 }
+}
 # ---- track: task <-> MRs; promoted once all merge
 # MR / PR URL -> <repo>!<iid>
 function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $null } }
@@ -1125,7 +1133,7 @@ function Get-SuperviseOwner([string]$Session) {
 function LabelNames($l) { $p = $l -split ':'; $n = ($p[-1] -split '@')[0]; @($n) + $(if ($p.Count -gt 1) { "$n-$($p[0])"; "$($p[0])-$n" }) }
 # the next heartbeat (min; the coordinator re-arms its timer to it): 5 with an open ACT or ENV-FIX; half the base (>= 5) with a
 # storage anomaly, 3+ failed builds in a row or many live agents; 30 when nothing runs, 22 when every agent is idle; else halfway
-# back to the base (supervise.heartbeatMinutes, 15). TODO-PARAM: learn the base from how often ACTs appear between beats
+# back to the base (learned supervise.heartbeatMinutes, 15: how often new ACTs appear)
 function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, [bool]$Storage, [int]$BuildFails, [int]$Agents, [int]$Live, [int]$Running) {
   $many = [int](Get-KitSetting 'supervise.manyAgents' 8)   # TODO-PARAM (fixed default)
   $r = if ($Act -or $EnvFix) { @(5, $(if ($EnvFix) { "$EnvFix ENV-FIX open" } else { "$Act ACT open" })) }
@@ -1389,9 +1397,11 @@ $cur = @{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get
 $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
 $state.acks = @{}; $a0 = $(try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }).acks   # re-read: an -Ack during this sweep
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
+if ($AutoFix -and (Within 'param learn')) { try { foreach ($x in @(Invoke-ParamLearn)) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (orch.ps1 param show); the heartbeat goes on.' } }
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }   # the failed-build streak, newest first
-$base = [double](Get-KitSetting 'supervise.heartbeatMinutes' 15)
+$base = [double](Get-KitParam 'supervise.heartbeatMinutes' 15); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })
+Add-KitActObs $state $acts $now
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($active.Count + $wfAgents.Count) ($liveLabels.Count + $active.Count) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 $state.report = @{ spend = $spendNow; at = $now.ToString('s') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
@@ -2307,6 +2317,7 @@ foreach ($n in 'work', 'cache', 'logs') { $null = Get-KitPath $n -Create }
 Say "runtime: $(Get-KitPath runtime) (work/ cache/ logs/; disposable)"
 $ex = Get-Content (Join-Path $kit 'skills/dev-kit/kit.example.json') -Raw | ConvertFrom-Json
 $want = [ordered]@{ 'skills/dev-kit/kit.local.json' = ($ex | Select-Object -Property * -ExcludeProperty localFiles, _paths, _manifest, _doc) }
+Remove-KitLearnedKeys $want['skills/dev-kit/kit.local.json']
 foreach ($p in $ex.localFiles.PSObject.Properties) { $want[$p.Name] = $p.Value }
 foreach ($k in $want.Keys) {
   $f = Join-Path $kit $k; if (Test-Path $f) { continue }
@@ -2360,6 +2371,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'pause' { Invoke-KitVerb Invoke-Pause $__rest }
     'resume' { Invoke-KitVerb Invoke-Resume $__rest }
     'program' { Invoke-KitVerb Invoke-Program $__rest }
+    'param' { Invoke-KitVerb Invoke-Param $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }

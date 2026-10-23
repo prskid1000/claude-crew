@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/qa-kit/browser.mjs'
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
-// Sections: L17 config · L41 login · L125 browsers · L168 tabs · L232 session · L271 actions · L365 evidence
+// Sections: L17 config · L41 login · L125 browsers · L168 tabs · L242 session · L281 actions · L375 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -177,7 +177,17 @@ function leftBoard(agent) {   // all its board entries say left
   return es.length > 0 && es.every((e) => e.status === 'left')
 }
 const tabId = async (p) => p.__tid || (p.__tid = await (async () => { const c = await p.createCDPSession(); try { return (await c.send('Target.getTargetInfo')).targetInfo.targetId } finally { await c.detach().catch(() => {}) } })())
-const GRACE_MS = 60000 * ((() => { try { return JSON.parse(readFileSync(new globalThis.URL('../dev-kit/kit.local.json', import.meta.url), 'utf8')).idle?.graceMinutes } catch {} })() ?? 10)
+// a learned kit parameter, as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, kit.local.json <key> / <key>.<ctx> (a pin), a param pin, the learned value, else def
+export function kitParam(key, def, ctx = '') {
+  const env = process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()]; if (env) return +env
+  const cfg = readJson(join(__HERE, '..', 'dev-kit', 'kit.local.json'), {}), at = (p) => p.split('.').reduce((o, k) => o?.[k], cfg)
+  for (const p of ctx ? [key, `${key}.${ctx}`] : [key]) { const v = at(p); if (v != null && v !== '' && typeof v !== 'object') return v }
+  const s = readJson(kitPath('param-state'), {}), pin = s.pins?.[`${key}|${ctx}`]
+  if (pin) return pin.value
+  const v = (cfg.params?.learning ?? 'on') === 'on' ? s.byKey?.[key]?.[ctx || '_']?.value : null
+  return v ?? def
+}
+const GRACE_MS = 60000 * kitParam('idle.graceMinutes', 10)
 // close tabs with no live holder for idle.graceMinutes (caller holds the tabs lock); an unregistered tab counts from first sight
 async function sweep(browser, key) {
   const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'

@@ -194,6 +194,26 @@ Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contai
 Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
+# learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
+$pk = Join-Path (Kd) 'pk/.claude/skills/dev-kit'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/dev-kit/kit.example.json" $pk
+& $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
+$pr = Invoke-PsTest params @'
+. $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()
+function F($y, $v, $n, $h, $c = '', $r = 'ok', $d = 10) { for ($i = 0; $i -lt $n; $i++) { $env:KIT_NOW = $t.AddHours($h + $i).ToString('o'); Add-KitParamObs $y $v $c $r $d } }
+function L($h) { $env:KIT_NOW = $t.AddHours($h).ToString('o'); $script:KitParamMemo.Clear(); $script:fl += @(Invoke-ParamLearn) }
+foreach ($w in 0..6) { $h = 24 * $w; F idle.graceMinutes 30 4 $h; if ($w -le 3) { F net.timeoutSec 4 6 $h gh -d 60 }; if (!$w) { F net.timeoutSec 60 1 7 gh timeout 60 }; F gate.needGB 9 5 $h 'w|a' -d 2; L ($h + 8); if ($w -eq 2) { "d2:$(Get-KitParam idle.graceMinutes 10)" } }
+"slow:$(Get-KitParam idle.graceMinutes 10):$((Read-KitParams).byKey['idle.graceMinutes']['_'].rec)"
+"ask:$(Get-KitParam gate.needGB 3.0 'w|a'):$(@($fl | Where-Object what -match 'needGB.*past 2x').Count):$(@((Read-KitParams).history | Where-Object { !$_ }).Count)"
+$null = Invoke-KitParamVerb approve gate.needGB '' 'w|a'; L 200; "ok:$(Get-KitParam gate.needGB 3.0 'w|a')"
+F net.timeoutSec 75 2 210 gh timeout 60; L 215; "rev:$(Get-KitParam net.timeoutSec 60 gh):$(@($fl | Where-Object level -eq 'ACT').Count):$([bool](Read-KitParams).byKey['net.timeoutSec']['gh'].frozen)"
+$env:KIT_PARAM_IDLE_GRACEMINUTES = 7; $a = Get-KitParam idle.graceMinutes 10; $env:KIT_PARAM_IDLE_GRACEMINUTES = ''
+$null = Invoke-KitParamVerb pin idle.graceMinutes 9; $null = Invoke-KitParamVerb pin gate.needGB 5; $script:KitParamMemo.Clear()
+"pin:${a}:$(Get-KitParam idle.graceMinutes 10):$(Get-KitParam supervise.heartbeatMinutes 15):$(Get-KitParam gate.needGB 3.0 'w|a')"; Invoke-KitParamVerb pin no.such 1
+'@ @("$pk/lib.ps1")
+Expect 'params: shadow = default; then a step a day toward p95 x1.5; held at 2x' ($pr -contains 'd2:10' -and "$pr" -match 'slow:20:3[78]\.')
+Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4:1:0' -and $pr -contains 'ok:8')
+Expect 'params: > 10% timeouts step up; 2 timeouts after the change revert it (ACT), frozen' ($pr -contains 'rev:60:1:True')
+Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
 Expect 'orch.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
 Remove-TestKit $k

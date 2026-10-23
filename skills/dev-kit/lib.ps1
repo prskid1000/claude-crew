@@ -3,13 +3,14 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L82 config · L162 OS · L334 leases · L585 tracker · L805 git-host · L910 kitlog · L1022 entry-scripts
+Sections: L10 paths · L83 config · L163 OS · L335 leases · L593 tracker · L813 git-host · L918 kitlog · L1030 params ·
+  L1185 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
-$script:KitPathMap = (Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json)._paths
+$script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
 function Get-KitRuntime { if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir } }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
@@ -357,17 +358,18 @@ function Test-KitLive($l) {
 # the coordinator's heartbeat interval now (min): the NEXT its last supervise printed, else supervise.heartbeatMinutes (15)
 function Get-KitBeatMinutes {   # a NEXT older than 2 beats (the coordinator stopped) falls back to the base
   $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
-  if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitSetting 'supervise.heartbeatMinutes' 15) }
-}   # TODO-PARAM (fixed default)
+  if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitParam 'supervise.heartbeatMinutes' 15) }
+}
 function Update-KitLease($l) {
   $now = Get-Date
   if (Test-KitLive $l) {   # seen once a minute: a state that only re-confirms a live holder stays unchanged (no rewrite)
+    if ($null -ne $l.graceLeft -and $l.seen) { Add-KitParamObs 'idle.graceMinutes' ($now - [datetime]$l.seen).TotalMinutes -Default 10 }   # quiet, then alive again: how long a live holder goes silent
     if (-not $l.seen -or ($now - [datetime]$l.seen).TotalSeconds -ge 60) { Set-KitProp $l seen $now.ToString('o') }
     if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null }; return $true
   }
   if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
   if (-not $l.seen) { Set-KitProp $l seen $now.ToString('o') }   # first seen dead: the grace starts now
-  $left = [double](Get-KitSetting 'idle.graceMinutes' 10) - ($now - [datetime]$l.seen).TotalMinutes
+  $left = [double](Get-KitParam 'idle.graceMinutes' 10) - ($now - [datetime]$l.seen).TotalMinutes
   Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left))); $left -gt 0
 }
 
@@ -401,7 +403,13 @@ function Test-KitTransient($Text, [switch]$Connect) {
   }
   "$(if ($Text.Exception) { $Text.Exception.Message } else { $Text })" -match $(if ($Connect) { $script:KitNoConnect } else { $script:KitTransient })
 }
-function Get-KitNetTimeout { if ($env:KIT_NET_TIMEOUT_SEC) { [int]$env:KIT_NET_TIMEOUT_SEC } else { [int](Get-KitSetting 'net.timeoutSec' 60) } }
+function Get-KitNetTimeout([string]$Cli = '') { if ($env:KIT_NET_TIMEOUT_SEC) { [int]$env:KIT_NET_TIMEOUT_SEC } else { [int](Get-KitParam 'net.timeoutSec' 60 $Cli) } }
+# one network CLI call, timed per CLI for net.timeoutSec (a timeout counts only under the learned value, not a caller's own cap)
+function Invoke-KitNetExe([string]$Exe, [string[]]$A) {
+  $cli = [IO.Path]::GetFileNameWithoutExtension($Exe).ToLower(); $t = Get-KitNetTimeout $cli; $sw = [Diagnostics.Stopwatch]::StartNew(); $r = Invoke-KitExe $Exe $A $t
+  if (-not $r.timedOut -and $r.code -ne 127) { Add-KitParamObs 'net.timeoutSec' $sw.Elapsed.TotalSeconds $cli -Default 60 } elseif ($r.timedOut -and -not $env:KIT_NET_TIMEOUT_SEC) { Add-KitParamObs 'net.timeoutSec' $t $cli 'timeout' 60 }
+  $r
+}
 function Wait-KitPoll([int]$Seconds) { Start-Sleep -Milliseconds $(if ($env:KIT_POLL_MS) { [int]$env:KIT_POLL_MS } else { 1000 * $Seconds }) }   # KIT_POLL_MS: the tests' fake clock
 function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
   $delay = 2
@@ -523,7 +531,7 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
   $line = [string]$(if ($Commands) { $Commands.$Verb }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
   $t = @([regex]::Matches($line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) })
-  $r = Invoke-KitRetry { Invoke-KitExe $t[0] @($t | Select-Object -Skip 1) (Get-KitNetTimeout) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
+  $r = Invoke-KitRetry { Invoke-KitNetExe $t[0] @($t | Select-Object -Skip 1) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
   if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
   $o = "$($r.out)".Trim(); if ($o -match '^[\[{]') { try { return ($o | ConvertFrom-Json) } catch {} }; $o
 }
@@ -619,7 +627,7 @@ function __TrCli([string]$Exe, [string[]]$A) {
   $h2 = "$($A[0..1] -join ' ')"; $all = "$($A -join ' ')"
   $write = ($h2 -match '(?i)\b(comment|create|add|edit|attach|upload|new)\b' -and $h2 -notmatch '(?i)status') -or ($all -match '(?i)(^|\s)(-X|--method)\s+(POST|PUT|PATCH|DELETE)\b' -and $all -notmatch '(?i)status')
   $enc = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-  try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $A (Get-KitNetTimeout) } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
+  try { $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $A } -Connect:$write } finally { [Console]::OutputEncoding = $enc }
   $out = (@($r.out, $r.err) | Where-Object { $_ }) -join "`n"
   if ($r.code -and $out -notmatch 'no matching status') { throw "tracker ($__trType): $Exe $h2 failed (exit $($r.code)): $(__TrShort $out)" }
   $out
@@ -832,7 +840,7 @@ function __Cli([string]$Exe, [string]$Path, [string]$Method = 'GET', [hashtable]
   $a = @('api'); if ($Method -ne 'GET') { $a += @('-X', $Method) }; $a += $Path; $f = $null
   if ($Json) { $f = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllText($f, ($Fields | ConvertTo-Json -Compress -Depth 10)); $a += @('-H', 'Content-Type: application/json', '--input', $f) }
   else { foreach ($k in $Fields.Keys) { $a += @('-f', "$k=$($Fields[$k])") } }
-  try { $r = Invoke-KitRetry { Invoke-KitExe $Exe $a (Get-KitNetTimeout) } -Connect:($Method -ne 'GET') } finally { if ($f) { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
+  try { $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $a } -Connect:($Method -ne 'GET') } finally { if ($f) { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
   if ($Res) { return $r }
   if ($r.code) { $global:KitHostFailed = $true; if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: $Exe api $Path failed on the network: $($r.err)" }; return $null }
   if ($Path -match '/(trace|logs)$') { return $r.out }
@@ -1018,6 +1026,161 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
     } else { $pos.Add($Tokens[$i]); $i++ }
   }
   & $run $pos.ToArray() $named
+}
+# ---- params: learned parameters (README "Configuration" params; kit.example.json _manifest.params = which keys learn and how)
+function Get-KitNow { if ($env:KIT_NOW) { [datetime]$env:KIT_NOW } else { Get-Date } }   # KIT_NOW: the tests' fake clock
+function Get-KitParamSpec([string]$Key) {   # '<how> q=.95 k=1.5 up=.25 down=.25 min=5 gate=accuracy'
+  $s = "$($script:KitExample._manifest.params.$Key)"; if (-not $s) { return $null }
+  $w = @($s -split '\s+'); $o = @{ how = $w[0]; q = 0.95; k = 1.5; up = 0.25; down = 0.25; min = 5; gate = '' }
+  foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } }; $o
+}
+function Read-KitParams([switch]$Strict) {   # -Strict (writers): only a missing file reads as empty; a broken one throws, never overwritten
+  $f = Get-KitPath param-state; if ($Strict -and -not (Test-Path -LiteralPath $f)) { return @{} }
+  try { $s = Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($s) { $s } else { @{} } } catch { if ($Strict) { throw "param state $f unreadable: $_" }; @{} }
+}
+# value + source; precedence: KIT_PARAM_<KEY> > kit.local.json <key> or <key>.<context> (a pin) > param pin > learned (params.learning on) > default
+function Resolve-KitParam([string]$Key, $Default, [string]$Context, $St) {
+  $ev = [Environment]::GetEnvironmentVariable('KIT_PARAM_' + ($Key -replace '\W', '_').ToUpper()); if ($ev) { return @([double]$ev, 'env') }
+  foreach ($p in @($Key) + @(if ($Context) { "$Key.$Context" })) { $c = Get-KitSetting $p $null; if ($null -ne $c -and ($c -is [ValueType] -or $c -is [string])) { return @($c, 'pin (kit.local.json)') } }
+  $pn = $St.pins."$Key|$Context"; if ($null -eq $pn) { $pn = $St.pins."$Key|" }; if ($null -ne $pn) { return @($pn.value, 'pin') }   # a pin without context: every context
+  $e = $St.byKey.$Key.$(if ($Context) { $Context } else { '_' })
+  if ($null -ne $e.value -and "$(Get-KitSetting 'params.learning' 'on')" -eq 'on') { return @([double]$e.value, 'learned') }
+  @($Default, $(if ($null -ne $e.rec) { 'default (learned in shadow)' } else { 'default' }))
+}
+$script:KitParamMemo = @{}
+# the reader every call site uses: never throws, the default on any error, state cached 60 s
+function Get-KitParam([Parameter(Mandatory)][string]$Key, $Default, [string]$Context = '') {
+  try { (Resolve-KitParam $Key $Default $Context (Get-KitMemo $script:KitParamMemo state 60 { Read-KitParams }))[0] } catch { $Default }
+}
+# one observation (kitlog params): $Default = the fixed default the call site used (clamps); Result ok | fail | timeout (censored) | oom
+function Add-KitParamObs([string]$Key, [double]$Value, [string]$Context = '', [string]$Result = 'ok', [double]$Default = 0) {
+  if (-not (Get-KitParamSpec $Key) -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
+  Write-KitLog params obs ([ordered]@{ at = (Get-KitNow).ToString('o'); key = $Key; ctx = $Context; v = [math]::Round($Value, 3); r = $Result; d = $Default })
+}
+function Get-KitQuantile([double[]]$V, [double]$Q, [double[]]$W) {
+  if (-not $V.Count) { return $null }; if (-not $W) { $W = @(foreach ($x in $V) { 1.0 }) }
+  $ix = @(0..($V.Count - 1) | Sort-Object { $V[$_] }); $tot = ($W | Measure-Object -Sum).Sum; $acc = 0.0
+  foreach ($i in $ix) { $acc += $W[$i]; if ($acc -ge $Q * $tot - 1e-9) { return $V[$i] } }; $V[$ix[-1]]
+}
+# a key's recommendation from its window: quantile (q of ok samples x k; > 10% timed out: step up) | peak (decaying q95 x k, half-life
+# 7 d; an OOM: 1.2 x its peak) | ewma (mean + k sigma); spikes > median + 5 MAD dropped; last 5 off the median by 3 MAD: the window restarts
+function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now) {
+  $all = @($Obs); $ok = @($all | Where-Object { $_[2] -eq 'ok' })
+  if ($Spec.how -eq 'quantile' -and $all.Count -ge $Spec.min -and @($all | Where-Object { $_[2] -eq 'timeout' }).Count -gt 0.1 * $all.Count) { return @{ v = $Cur * (1 + $Spec.up); n = $all.Count; conf = 1; why = 'over 10% timed out: step up' } }
+  $v = [double[]]@($ok | ForEach-Object { [double]$_[1] }); if ($v.Count -lt $Spec.min) { return $null }
+  $med = Get-KitQuantile $v 0.5; $mad = Get-KitQuantile ([double[]]@($v | ForEach-Object { [math]::Abs($_ - $med) })) 0.5; $why = ''
+  if ($mad -gt 0) {
+    $keep = @(0..($v.Count - 1) | Where-Object { $v[$_] -le $med + 5 * $mad }); if ($keep.Count -lt $v.Count) { $why = "$($v.Count - $keep.Count) spike(s) dropped; " }
+    $ok = @($keep | ForEach-Object { , $ok[$_] }); $v = [double[]]@($keep | ForEach-Object { $v[$_] })
+    if ($v.Count -ge 10 -and [math]::Abs((Get-KitQuantile ([double[]]@($v | Select-Object -Last 5)) 0.5) - $med) -gt 3 * $mad) { $ok = @($ok | Select-Object -Last 5); $v = [double[]]@($v | Select-Object -Last 5); $why += 'drift: window restarted; ' }
+  }
+  $x = switch ($Spec.how) {
+    'peak' {
+      $w = [double[]]@($ok | ForEach-Object { [math]::Pow(0.5, [math]::Max(0, ($Now - [datetime]$_[0]).TotalDays) / 7) })
+      $p = (Get-KitQuantile $v 0.95 $w) * $Spec.k; $oom = @($all | Where-Object { $_[2] -eq 'oom' } | ForEach-Object { [double]$_[1] })
+      if ($oom.Count) { $p = [math]::Max($p, 1.2 * ($oom | Measure-Object -Maximum).Maximum); $why += 'OOM bump; ' }; $p; $why += "peak q95 x$($Spec.k)" }
+    'ewma' { $m = $v[0]; $var = 0.0; foreach ($y in $v) { $dl = $y - $m; $m += 0.3 * $dl; $var = 0.7 * ($var + 0.3 * $dl * $dl) }; $m + $Spec.k * [math]::Sqrt($var); $why += "ewma + $($Spec.k) sigma" }
+    default { (Get-KitQuantile $v $Spec.q) * $Spec.k; $why += "p$([int](100 * $Spec.q)) x$($Spec.k)" }
+  }
+  $mean = ($v | Measure-Object -Average).Average; $sd = [math]::Sqrt((($v | ForEach-Object { ($_ - $mean) * ($_ - $mean) }) | Measure-Object -Sum).Sum / $v.Count)
+  $conf = $v.Count / ($v.Count + 5) * $(if ($Spec.how -eq 'quantile' -or -not $mean) { 1 } else { 1 - [math]::Min(1, $sd / $mean) })
+  @{ v = $x; n = $v.Count; conf = [math]::Round($conf, 2); p50 = $med; p90 = (Get-KitQuantile $v 0.9); max = ($v | Measure-Object -Maximum).Maximum; why = $why }
+}
+# the one writer (supervise -AutoFix each heartbeat; tidy prep): new observations into .state/params.json, then each key / context's
+# learned value: slow (one change a day within up / down, 10% hysteresis), default/4..default x4, shadow params.shadowDays, past 2x the
+# default an owner yes (param approve); after a change 2 timeouts / OOMs in the next 5 observations revert it (frozen 7 d). Returns flags.
+function Invoke-ParamLearn {
+  $mode = "$(Get-KitSetting 'params.learning' 'on')"; if ($mode -eq 'off') { return }
+  $now = Get-KitNow; $file = Get-KitPath param-state -Create; $flags = [Collections.Generic.List[object]]::new()
+  $shadow = [double](Get-KitSetting 'params.shadowDays' 14)
+  $flag = { param($l, $w, $a) $flags.Add([pscustomobject]@{ level = $l; what = $w; action = $a }) }
+  Invoke-KitLocked $file {
+    $st = Read-KitParams -Strict; foreach ($n in 'byKey', 'pins', 'approved') { if (-not $st[$n]) { $st[$n] = @{} } }
+    $since = if ($st.cursor) { [datetime]$st.cursor } else { $now.AddDays(-30) }
+    foreach ($o in @(Read-KitLog params $since.AddDays(-1) | Where-Object { $_.event -eq 'obs' -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })) {
+      $st.cursor = ([datetime]$o.at).ToString('o'); $sp = Get-KitParamSpec $o.key; if (-not $sp) { continue }
+      $ctx = if ($o.ctx) { "$($o.ctx)" } else { '_' }; if (-not $st.byKey[$o.key]) { $st.byKey[$o.key] = @{} }
+      $e = $st.byKey[$o.key][$ctx]; if (-not $e) { $e = $st.byKey[$o.key][$ctx] = @{ since = $st.cursor; obs = @() } }
+      if ([double]$o.d) { $e.d = [double]$o.d }
+      if ($sp.gate -eq 'accuracy' -and $o.r -eq 'ok' -and [double]$o.v) { $est = if ($null -ne $e.rec) { [double]$e.rec } else { [double]$e.d }; $e.errs = @(@($e.errs) + [math]::Round([math]::Abs($est - [double]$o.v) / [double]$o.v, 3) | Where-Object { $null -ne $_ } | Select-Object -Last 10) }
+      $w = [Collections.Generic.List[object]]::new(); foreach ($x in @($e.obs)) { if (($now - [datetime]$x[0]).TotalDays -le 30) { $w.Add($x) } }   # a List: @() would flatten a lone [at, v, r]
+      $w.Add(@($st.cursor, [double]$o.v, "$($o.r)")); while ($w.Count -gt 50) { $w.RemoveAt(0) }; $e.obs = $w.ToArray()
+      if ($e.watch -and $o.r -in 'timeout', 'oom') { $e.watch.bad++ }; if ($e.watch) { $e.watch.n++ }   # the failure a value governs; a failed build is not one
+      if ($e.watch -and $e.watch.bad -ge 2) {
+        $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $st.cursor; key = $o.key; ctx = $ctx; from = $e.value; to = $e.watch.prev; why = "reverted: $($e.watch.bad) of $($e.watch.n) failed after the change" } | Select-Object -Last 200)
+        & $flag 'ACT' "param $($o.key) [$ctx] reverted $($e.value) -> $(if ($null -ne $e.watch.prev) { $e.watch.prev } else { 'default' }): $($e.watch.bad) of the next $($e.watch.n) failed; frozen 7 d" "Find why (orch.ps1 param show $($o.key)); param reset $($o.key) to learn again."
+        Write-KitLog signals '' ([ordered]@{ skill = 'orchestrate'; kind = 'failure'; text = "learned param $($o.key) [$ctx] = $($e.value) failed $($e.watch.bad) of $($e.watch.n): reverted, frozen 7 d"; ref = "param:$($o.key)"; source = 'param' })
+        $e.value = $e.watch.prev; $e.rec = $e.watch.prev; $e.frozen = $now.AddDays(7).ToString('o'); $e.watch = $null
+      } elseif ($e.watch -and $e.watch.n -ge 5) { $e.watch = $null }
+    }
+    foreach ($key in @($st.byKey.Keys)) {
+      $sp = Get-KitParamSpec $key; if (-not $sp) { continue }
+      foreach ($ctx in @($st.byKey[$key].Keys)) {
+        $e = $st.byKey[$key][$ctx]; $d = [double]$e.d; if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { continue }
+        $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = Get-KitParamRec $sp @($e.obs) $cur $now
+        if ($r) {
+          foreach ($n in 'n', 'conf', 'p50', 'p90', 'max') { $e[$n] = $(if ($r[$n] -is [double]) { [math]::Round($r[$n], 3) } else { $r[$n] }) }
+          $t = [math]::Min(4 * $d, [math]::Max($d / 4, $r.v)); $e.clamp = $t -ne $r.v
+          if (-not $e.changed -or ($now - [datetime]$e.changed).TotalHours -ge 24) {
+            $t = [math]::Round([math]::Min($cur * (1 + $sp.up), [math]::Max($cur * (1 - $sp.down), $t)), 2)
+            if ($t -ne $cur -and [math]::Abs($t - $cur) -ge 0.99 * $cur * [math]::Min(0.1, $(if ($t -gt $cur) { $sp.up } else { $sp.down }))) { $e.rec = $t; $e.changed = $now.ToString('o'); $e.why = $r.why }   # 10% hysteresis (a smaller step: that step)
+          }
+        }
+        $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
+        $val = if ($mode -eq 'on' -and $null -ne $e.rec -and ($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5 -and $acc) { [double]$e.rec } else { $null }
+        if ($null -ne $val -and $val -gt 2 * $d -and -not $st.approved["$key|$(if ($ctx -ne '_') { $ctx })"] -and -not $st.approved["$key|"]) {
+          if (-not $e.ask) { $e.ask = $now.ToString('o'); & $flag 'WATCH' "param $key [$ctx] learned $val, past 2x its default ${d}: held at $(2 * $d)" "Owner decision (orch.ps1 decide ask); yes -> orch.ps1 param approve $key$(if ($ctx -ne '_') { " -Context '$ctx'" })" }
+          $val = 2 * $d
+        }
+        if ("$val" -ne "$($e.value)") {
+          $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $now.ToString('o'); key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" } | Select-Object -Last 200)
+          & $flag 'INFO' "param $key [$ctx]: $(if ($null -ne $e.value) { $e.value } else { "default $d" }) -> $(if ($null -ne $val) { $val } else { "default $d" }) ($($e.why); n $($e.n))" 'Nothing to do (orch.ps1 param show).'
+          Write-KitLog params change ([ordered]@{ key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" })
+          $e.watch = @{ prev = $e.value; n = 0; bad = 0 }; $e.value = $val
+        }
+      }
+    }
+    Write-KitAtomic $file ($st | ConvertTo-Json -Depth 8 -Compress)
+  }
+  $script:KitParamMemo.Clear(); $flags
+}
+# observations orch.ps1 records: a finished agent's spend (board leave), minutes between new ACTs (supervise); setup -WriteLocal
+# leaves learned keys out of a new kit.local.json (a value there pins)
+function Add-KitSpendObs($E) { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type -Default $d } }
+function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
+  if (@($Acts | Where-Object { $_ -notin @($State.acts) }).Count) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes -Default 15 }; $State.lastAct = $Now.ToString('o') }
+  $State.acts = $Acts
+}
+function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @($script:KitExample._manifest.params.PSObject.Properties.Name)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
+# orch.ps1 param show / history / pin / unpin / freeze / reset / approve (audited in history)
+function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [string]$Context, [switch]$Json) {
+  $st = Read-KitParams; $reg = @($script:KitExample._manifest.params.PSObject.Properties.Name)
+  if ($Action -eq 'history') { $h = @($st.history | Where-Object { -not $Key -or $_.key -eq $Key } | Select-Object -Last 30); if ($Json) { return ConvertTo-Json @($h) -Depth 4 -Compress }; return @($h | ForEach-Object { "$(([datetime]$_.at).ToString('yyyy-MM-dd HH:mm')) $($_.key) [$($_.ctx)] $(if ($null -ne $_.from) { $_.from } else { 'default' }) -> $(if ($null -ne $_.to) { $_.to } else { 'default' }): $($_.why)" }) }
+  if ($Action -eq 'show') {
+    $rows = foreach ($k in @($reg | Where-Object { -not $Key -or $_ -eq $Key })) {
+      $cs = @(if ($st.byKey.$k) { $st.byKey.$k.Keys | Where-Object { -not $Context -or $_ -eq $Context } }); if (-not $cs.Count) { [pscustomobject]@{ key = $k; ctx = '_'; how = "$($script:KitExample._manifest.params.$k)"; source = 'default'; n = 0 }; continue }
+      foreach ($c in $cs) { $e = $st.byKey.$k[$c]; $rv = Resolve-KitParam $k $e.d $(if ($c -ne '_') { $c }) $st
+        [pscustomobject]@{ key = $k; ctx = $c; how = "$($script:KitExample._manifest.params.$k)"; default = $e.d; learned = $e.rec; effective = $rv[0]; source = $rv[1]; n = [int]$e.n; conf = $e.conf; p50 = $e.p50; p90 = $e.p90; max = $e.max; clamp = [bool]$e.clamp; changed = $e.changed; why = $e.why; frozen = $e.frozen; shadowLeft = [math]::Max(0, [math]::Ceiling([double](Get-KitSetting 'params.shadowDays' 14) - ((Get-KitNow) - [datetime]$e.since).TotalDays)) } } }
+    if ($Json) { return ConvertTo-Json @($rows) -Depth 4 -Compress }
+    return @($rows | ForEach-Object { if (-not $_.n -and $null -eq $_.default) { "$($_.key): no observations yet ($($_.how))" } else { "$($_.key) [$($_.ctx)]: $($_.effective) ($($_.source)); default $($_.default), learned $(if ($null -ne $_.learned) { $_.learned } else { '-' })$(if ($_.shadowLeft) { ", shadow $($_.shadowLeft) d left" })$(if ($_.n) { "; n $($_.n) conf $($_.conf) p50 $($_.p50) p90 $($_.p90) max $($_.max)" })$(if ($_.clamp) { ' (clamped)' })$(if ($_.frozen) { "; frozen to $(([datetime]$_.frozen).ToString('MM-dd'))" })$(if ($_.why) { "; $($_.why)" })" } })
+  }
+  if ($Key -notin $reg) { return "ERROR unknown param '$Key' (kit.example.json _manifest.params: $($reg -join ', '))" }
+  if ($Action -eq 'pin' -and $Value -notmatch '^-?[\d.]+$') { return 'ERROR param pin <key> <number> [-Context <ctx>]' }
+  $file = Get-KitPath param-state -Create; $ck = "$Key|$Context"; $cx = if ($Context) { $Context } else { '_' }
+  Invoke-KitLocked $file {
+    $s = Read-KitParams -Strict; foreach ($n in 'byKey', 'pins', 'approved') { if (-not $s[$n]) { $s[$n] = @{} } }
+    $es = @(@(if ($s.byKey[$Key]) { if ($Context) { $s.byKey[$Key][$cx] } else { $s.byKey[$Key].Values } }) | Where-Object { $_ })   # no -Context: every context of the key
+    switch ($Action) {
+      'pin' { $s.pins[$ck] = @{ value = [double]$Value; at = (Get-KitNow).ToString('o') } }
+      'unpin' { $s.pins.Remove($ck) }
+      'approve' { $s.approved[$ck] = (Get-KitNow).ToString('o'); foreach ($e in $es) { $e.ask = $null } }
+      'freeze' { foreach ($e in $es) { $e.frozen = (Get-KitNow).AddYears(10).ToString('o') } }
+      'reset' { if ($s.byKey[$Key]) { if ($Context) { $s.byKey[$Key].Remove($cx) } else { $s.byKey.Remove($Key) } } }
+    }
+    $s.history = @(@($s.history | Where-Object { $_ }) + @{ at = (Get-KitNow).ToString('o'); key = $Key; ctx = $cx; from = $null; to = $(if ($Action -eq 'pin') { [double]$Value }); why = "$Action by $((Get-KitWho).agent)" } | Select-Object -Last 200)
+    Write-KitAtomic $file ($s | ConvertTo-Json -Depth 8 -Compress)
+  }
+  "param $Key$(if ($Context) { " [$Context]" }): $Action$(if ($Action -eq 'pin') { " $Value" }) done"
 }
 # ---- entry-scripts: one per area
 $KitCmd = [pscustomobject]@{

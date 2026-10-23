@@ -27,7 +27,8 @@ synced; never only in the session: a heartbeat after a restart reads it). Both
 workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they differ only in their steps.
 What happened when, who called what: `orch.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
 line per step, kit call, build, guard block, signal, decision, deploy; supervise and retros read it, never journals or log
-files). Launch by path:
+files). Tunables (lease grace, timeouts, gate memory, heartbeat base, budget estimates) learn from live data:
+`orch.ps1 param show` (value, source, shadow; supervise -AutoFix learns: INFO per change, ACT on a revert). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
 Invoking the coordinator is the only action needed: all steps run autonomously to completion without asking confirmation.
 
@@ -67,7 +68,7 @@ unpublished items -> `qa.ps1 finalize` (`orch.ps1 recover`).
 ## Events (check this table whenever something happens)
 | # | Event | Action |
 |---|---|---|
-| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, one-shot: a timer in `supervise.heartbeatMinutes` (15) min, prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste output verbatim (own line only when ACT needs action), act on flags, then re-arm the timer to its last line `NEXT <n> min` (one-shot schedule or cron update: 5 on an ACT / ENV-FIX, 30 when nothing runs); 2nd session supervisor steps aside. Stop when nothing runs |
+| E1 | Workflow/agent launched or active runs found, and no heartbeat runs | ONE heartbeat, one-shot: a timer in `supervise.heartbeatMinutes` (15, learned) min, prompt: run `orch.ps1 supervise -AutoFix -Brief`, paste output verbatim (own line only when ACT needs action), act on flags, then re-arm the timer to its last line `NEXT <n> min` (one-shot schedule or cron update: 5 on an ACT / ENV-FIX, 30 when nothing runs); 2nd session supervisor steps aside. Stop when nothing runs |
 | E2 | supervise prints ACT / WATCH | do the printed action; leave healthy agents alone; answered or false: `supervise -Ack '<flag start>' -Reason '<why>'` (hidden 24 h) |
 | E3 | Agents/workflow stopped (crash, limits, restart, power loss), budget handoff, or the owner pauses (power off, offline) | pause: `orch.ps1 pause -All` (or `-Run <run>`, `-Reason`) until "safe to power off"; the machine stays on: stop the workflow runs and the heartbeat. Back or after a crash: `orch.ps1 resume -All` (network first; a brief per agent from its checkpoint; then `recover`'s exact `Workflow({ scriptPath, resumeFromRunId, args })`, refused -> its RELAUNCH line (`mode: 'resume'`, per-area `resume` skip list from host + tracker: done steps skipped, all done = no agent); unpublished QA -> `qa.ps1 finalize` lines); then E1. You stopped it: `launch -Done -RunId <id>` |
 | E4 | DECISION <id> (supervise, decisions, duel debate) · ENV-FIX <id> (local-env fix for kitty/coordinator; `envFixes`) | DECISION: ask owner with options + recommendation (owner judges a duel); `orch.ps1 decide answer -Id <id> -Answer '<words>'`; evidence settles -> a duel (extra `duel`). ENV-FIX: you or `kitty` (kind env) fix (config, paths, hung train, shared DB: `localenv.ps1 seed` / `restore -Mark`; service starts only from live lease); fixer answers `decide answer -Id <id> -By kitty -Answer 'done: <what>'`; never ask owner. Item resumes; held after cycles: fix + `qa.ps1 retest` |

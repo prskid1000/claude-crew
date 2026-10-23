@@ -13,8 +13,8 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L228 stack · L403 gate · L658 check · L810 pipes · L846 guard · L1214 dir · L1224 checkpoint ·
-  L1248 tracker · L1281 host
+Sections: L20 init · L26 wt · L228 stack · L403 gate · L662 check · L814 pipes · L850 guard · L1218 dir · L1228 checkpoint ·
+  L1252 tracker · L1285 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -432,11 +432,12 @@ function Invoke-Gate {
 param(
   [Parameter(Mandatory)][string]$Cmd,
   [string]$Dir = (Get-Location).Path,
-  [int]$WaitMinutes = 90,
+  [int]$WaitMinutes = -1,   # -1 = learned gate.waitMinutes (90); 0 = no wait
   [double]$KeepFreeGB = -1,   # -1 = Get-KitKeepFreeGB
   [double]$NeedGB = 0,
   [int]$MaxParallel = 0
 )
+$waitLearned = $WaitMinutes -lt 0; if ($waitLearned) { $WaitMinutes = Get-KitParam 'gate.waitMinutes' 90 }
 $keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
 if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
@@ -499,7 +500,8 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
   $recentMax = (@($Peaks) | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
   [math]::Round([math]::Min($TotalGB * 0.6, [math]::Max(0.75, $recentMax * 1.15)), 1)
 }
-$need = if ($NeedGB -gt 0) { $NeedGB } else { Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB }
+$estimate = Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB   # the default of the learned gate.needGB per kind|project
+$need = if ($NeedGB -gt 0) { $NeedGB } else { [math]::Min((Get-SysMem).TotalGB * 0.6, [double](Get-KitParam 'gate.needGB' $estimate $histKey)) }
 
 # heap caps (extra build-heap): a JVM / Node build gets a cap from its learned peak; under memory pressure the cap shrinks to its floor
 $heap = 0; $heapFloor = 0; $heapTool = $null
@@ -613,6 +615,7 @@ while ((Get-Date) -lt $deadline) {
         $proc = [Diagnostics.Process]::Start($psi)
       }
       Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
+      if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' ($waitSec / 60) -Default 90 }
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
       Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json)
@@ -628,7 +631,7 @@ while ((Get-Date) -lt $deadline) {
   Start-Sleep -Seconds 20
 }
 } finally { Remove-Item $myTicket -ErrorAction SilentlyContinue }
-if (-not $proc) { Write-Host "[gate] could not start within $WaitMinutes min"; exit 3 }
+if (-not $proc) { if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes '' 'timeout' 90 }; Write-Host "[gate] could not start within $WaitMinutes min"; exit 3 }
 $sw = [Diagnostics.Stopwatch]::StartNew(); $peak = 0.0   # double: Max(int, double) would truncate
 try {
   $null = $proc.Handle   # keeps ExitCode readable
@@ -637,6 +640,7 @@ try {
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
+  if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } else { 'fail' }) $estimate }
   # builds finish together; an unreadable file is never reset
   $got = $false
   try {
