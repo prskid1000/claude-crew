@@ -109,8 +109,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   item per testing doc: `{code, title, guideFile, lane: web|api|app, target?, services? (local: leased),
   subtasks:[{id,name,mrs}], retest?, only?}`),
   guides exported to text. Deploy check: `qa.ps1 deployed -Mrs <every item's MRs>`; MANUAL repos resolved in `lead-notes.md`; not
-  deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, the baseline data (reuse
-  it: verify by id before creating), reindex, server config; what the lead cannot unblock -> item `skip` with the reason.
+  deployed -> left out. Prerequisites per guide in `lead-notes.md`: feature flags, accounts and roles, baseline data (by id;
+  local env: `seed -Check`, extra `local-env`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (the workflow's Prepare agent, from its job JSON; the same by hand):
   1. Folder = `runFolder` with today's date (taken -> `-2`, `-3`). Candidates: `dev.ps1 tracker list <container> <status>` per
      `lists` (empty: `trackerLists`, else `tracker.list` / `tracker.repo`) x `statuses` (logical names via `tracker.statuses`;

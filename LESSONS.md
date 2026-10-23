@@ -64,7 +64,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Library overlays render outside the component (an overlay container): hover dropdowns need `hoverSel`; date pickers need a cell click; virtual lists need the overlay scrolled; paginate and wait for the first row's id to change. (2×)
 
 ## local-env
-- Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations; a failed FK changeSet leaves a half-added column: ENV-FIX (kitty NULLs the orphans, drops the column or restores the qa-baseline snapshot, restarts the api); never fix the shared DB by hand. (2×)
+- Local DB drift (leftover table, missing definer or grant, orphan FK refs) fails migrations; a failed FK changeSet leaves a half-added column: ENV-FIX (kitty NULLs the orphans, drops the column, or `localenv.ps1 restore -Mark <mark>` / `seed`); never fix the shared DB by hand. (2×)
 
 ## android-swarm
 - The android-build gate needs about 11.5 GB + keep-free: with a phone and a local API up it waits up to 20 min (the gate's head start) or longer; build before other agents lease phones. (4×)

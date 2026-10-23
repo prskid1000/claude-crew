@@ -10,8 +10,8 @@
  python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
  python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python devtools.py selftest   offline self-test (and each installed plugin's)
-Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (migrations: extra migration-classify;
- lbcheck: extra liquibase; findings: extra module-audit).
+Plugins: skills/dev-kit/adapters/*.py (kittool.py extra add <name>) register report adapters and verbs (lbcheck: extra liquibase;
+ findings: extra module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is an extra that is not installed.
 Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L718 plugins · L732 keepboth ·
   L751 selftest · L898 CLI
@@ -902,8 +902,6 @@ def _cli():
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
         sys.exit(VERBS[cmd](a[1:]) or 0)
-    if cmd == 'migrations':
-        extra_missing('devtools.py migrations (migration classes)', 'migration-classify')
     if cmd == 'lbcheck':
         extra_missing('devtools.py lbcheck (Liquibase check)', 'liquibase')
     if cmd == 'findings':
