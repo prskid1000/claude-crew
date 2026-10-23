@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L83 config · L164 OS · L336 leases · L594 tracker · L814 git-host · L919 kitlog · L1031 params ·
-  L1186 entry-scripts
+Sections: L10 paths · L83 config · L164 OS · L336 leases · L608 tracker · L828 git-host · L933 kitlog · L1045 params ·
+  L1208 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -336,7 +336,7 @@ function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null 
 # ---- leases: liveness leases (README "Leases"), ONE rule for env services, test browsers, phones, builds
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
-  $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder)
+  $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder); Test-KitLeaseBack $Agent
   if ($OwnerMinutes) { $l.owner = $true; $l.until = (Get-Date).AddMinutes($OwnerMinutes).ToString('o') }   # only owner holds keep minutes
   if ($ProcessId) { $l.pid = $ProcessId; $l.pidStart = Get-KitPidStart $ProcessId }; $l
 }
@@ -366,12 +366,26 @@ function Update-KitLease($l) {
   if (Test-KitLive $l) {   # seen once a minute: a state that only re-confirms a live holder stays unchanged (no rewrite)
     if ($null -ne $l.graceLeft -and $l.seen) { Add-KitParamObs 'idle.graceMinutes' ($now - [datetime]$l.seen).TotalMinutes -Default 10 }   # quiet, then alive again: how long a live holder goes silent
     if (-not $l.seen -or ($now - [datetime]$l.seen).TotalSeconds -ge 60) { Set-KitProp $l seen $now.ToString('o') }
-    if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null }; return $true
+    if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null; Set-KitProp $l graceMin $null; Set-KitProp $l released $null }; return $true
   }
   if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
   if (-not $l.seen) { Set-KitProp $l seen $now.ToString('o') }   # first seen dead: the grace starts now
-  $left = [double](Get-KitParam 'idle.graceMinutes' 10) - ($now - [datetime]$l.seen).TotalMinutes
-  Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left))); $left -gt 0
+  if ($null -eq $l.graceMin) { Set-KitProp $l graceMin ([double](Get-KitParam 'idle.graceMinutes' 10)) }   # read once: a running grace keeps its value
+  $left = [double]$l.graceMin - ($now - [datetime]$l.seen).TotalMinutes
+  Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left)))
+  if ($left -le 0 -and "$($l.agent)" -and -not $l.released) { Set-KitProp $l released $true; Set-KitLeaseReleased "$($l.agent)" @{ at = (Get-KitNow).ToString('o'); quiet = [math]::Round(($now - [datetime]$l.seen).TotalMinutes, 1); grace = $l.graceMin } }
+  $left -gt 0
+}
+# releases by grace (params.json released.<agent>); never fails a lease
+function Set-KitLeaseReleased([string]$Agent, $R) {
+  if ("$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
+  try { $f = Get-KitPath param-state -Create; Invoke-KitLocked $f { $s = Read-KitParams -Strict; if (-not $s.released) { $s.released = @{} }; if ($R) { $s.released[$Agent] = $R } else { $s.released.Remove($Agent) }; Write-KitAtomic $f ($s | ConvertTo-Json -Depth 8 -Compress) } } catch {}
+}
+# the same agent leasing again within 3 graces of a release by grace: it was alive, the grace too short (failure signal), counted once
+function Test-KitLeaseBack([string]$Agent) {
+  $r = if ($Agent) { (Read-KitParams).released.$Agent }; if (-not $r) { return }; $now = Get-KitNow; $gap = ($now - [datetime]$r.at).TotalMinutes
+  if ($gap -le 3 * [double]$r.grace) { Add-KitParamObs 'idle.graceMinutes' ([double]$r.quiet + $gap) '' 'short' 10 }
+  Set-KitLeaseReleased $Agent $null
 }
 
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
@@ -1030,10 +1044,11 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
 }
 # ---- params: learned parameters (README "Configuration" params; kit.example.json _manifest.params = which keys learn and how)
 function Get-KitNow { if ($env:KIT_NOW) { [datetime]$env:KIT_NOW } else { Get-Date } }   # KIT_NOW: the tests' fake clock
-function Get-KitParamSpec([string]$Key) {   # '<how> q=.95 k=1.5 up=.25 down=.25 min=5 gate=accuracy'
+function Get-KitParamSpec([string]$Key) {   # '<how> q=.95 k=1.5 up=.25 down=.1 min=5 safe=up gate=accuracy'; up = a safe step, down = a risky one
   $s = "$($script:KitExample._manifest.params.$Key)"; if (-not $s) { return $null }
-  $w = @($s -split '\s+'); $o = @{ how = $w[0]; q = 0.95; k = 1.5; up = 0.25; down = 0.25; min = 5; gate = '' }
-  foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } }; $o
+  $w = @($s -split '\s+'); $o = @{ how = $w[0]; q = 0.95; k = 1.5; up = 0.25; down = 0.1; min = 5; safe = 'up'; gate = '' }
+  foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } }
+  $o.down = [math]::Min(0.1, $o.down); $o   # a risky step (toward failures): at most 10%
 }
 function Read-KitParams([switch]$Strict) {   # -Strict (writers): only a missing file reads as empty; a broken one throws, never overwritten
   $f = Get-KitPath param-state; if ($Strict -and -not (Test-Path -LiteralPath $f)) { return @{} }
@@ -1065,9 +1080,9 @@ function Get-KitQuantile([double[]]$V, [double]$Q, [double[]]$W) {
 }
 # a key's recommendation from its window: quantile (q of ok samples x k; > 10% timed out: step up) | peak (decaying q95 x k, half-life
 # 7 d; an OOM: 1.2 x its peak) | ewma (mean + k sigma); spikes > median + 5 MAD dropped; last 5 off the median by 3 MAD: the window restarts
-function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now) {
-  $all = @($Obs); $ok = @($all | Where-Object { $_[2] -eq 'ok' })
-  if ($Spec.how -eq 'quantile' -and $all.Count -ge $Spec.min -and @($all | Where-Object { $_[2] -eq 'timeout' }).Count -gt 0.1 * $all.Count) { return @{ v = $Cur * (1 + $Spec.up); n = $all.Count; conf = 1; why = 'over 10% timed out: step up' } }
+function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now, $Since) {   # Since: the last change (its timeouts already stepped)
+  $all = @($Obs); $ok = @($all | Where-Object { $_[2] -in 'ok', 'short' }); $new = @($all | Where-Object { -not $Since -or [datetime]$_[0] -gt [datetime]$Since })
+  if ($Spec.how -eq 'quantile' -and $new.Count -ge $Spec.min -and @($new | Where-Object { $_[2] -eq 'timeout' }).Count -gt 0.1 * $new.Count) { return @{ v = $Cur * (1 + $Spec.up); n = $all.Count; conf = 1; why = 'over 10% timed out: step up' } }
   $v = [double[]]@($ok | ForEach-Object { [double]$_[1] }); if ($v.Count -lt $Spec.min) { return $null }
   $med = Get-KitQuantile $v 0.5; $mad = Get-KitQuantile ([double[]]@($v | ForEach-Object { [math]::Abs($_ - $med) })) 0.5; $why = ''
   if ($mad -gt 0) {
@@ -1088,8 +1103,9 @@ function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now) {
   @{ v = $x; n = $v.Count; conf = [math]::Round($conf, 2); p50 = $med; p90 = (Get-KitQuantile $v 0.9); max = ($v | Measure-Object -Maximum).Maximum; why = $why }
 }
 # the one writer (supervise -AutoFix each heartbeat; tidy prep): new observations into .state/params.json, then each key / context's
-# learned value: slow (one change a day within up / down, 10% hysteresis), default/4..default x4, shadow params.shadowDays, past 2x the
-# default an owner yes (param approve); after a change 2 timeouts / OOMs in the next 5 observations revert it (frozen 7 d). Returns flags.
+# learned value: slow (one change a day: a safe step within up, a risky one at most 10% after 5 fresh observations; 10% hysteresis),
+# default/4..default x4, shadow params.shadowDays, past 2x the default an owner yes (param approve); a failure signal steps to the safe
+# side at once and holds risky steps 7 d. Each use reads the value when it starts (a running one keeps its own). Returns flags.
 function Invoke-ParamLearn {
   $mode = "$(Get-KitSetting 'params.learning' 'on')"; if ($mode -eq 'off') { return }
   $now = Get-KitNow; $file = Get-KitPath param-state -Create; $flags = [Collections.Generic.List[object]]::new()
@@ -1106,29 +1122,34 @@ function Invoke-ParamLearn {
       if ($sp.gate -eq 'accuracy' -and $o.r -eq 'ok' -and [double]$o.v) { $est = if ($null -ne $e.rec) { [double]$e.rec } else { [double]$e.d }; $e.errs = @(@($e.errs) + [math]::Round([math]::Abs($est - [double]$o.v) / [double]$o.v, 3) | Where-Object { $null -ne $_ } | Select-Object -Last 10) }
       $w = [Collections.Generic.List[object]]::new(); foreach ($x in @($e.obs)) { if (($now - [datetime]$x[0]).TotalDays -le 30) { $w.Add($x) } }   # a List: @() would flatten a lone [at, v, r]
       $w.Add(@($st.cursor, [double]$o.v, "$($o.r)")); while ($w.Count -gt 50) { $w.RemoveAt(0) }; $e.obs = $w.ToArray()
-      if ($e.watch -and $o.r -in 'timeout', 'oom') { $e.watch.bad++ }; if ($e.watch) { $e.watch.n++ }   # the failure a value governs; a failed build is not one
-      if ($e.watch -and $e.watch.bad -ge 2) {
-        $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $st.cursor; key = $o.key; ctx = $ctx; from = $e.value; to = $e.watch.prev; why = "reverted: $($e.watch.bad) of $($e.watch.n) failed after the change" } | Select-Object -Last 200)
-        & $flag 'ACT' "param $($o.key) [$ctx] reverted $($e.value) -> $(if ($null -ne $e.watch.prev) { $e.watch.prev } else { 'default' }): $($e.watch.bad) of the next $($e.watch.n) failed; frozen 7 d" "Find why (bossy.ps1 param show $($o.key)); param reset $($o.key) to learn again."
-        Write-KitLog signals '' ([ordered]@{ skill = 'bossy'; kind = 'failure'; text = "learned param $($o.key) [$ctx] = $($e.value) failed $($e.watch.bad) of $($e.watch.n): reverted, frozen 7 d"; ref = "param:$($o.key)"; source = 'param' })
-        $e.value = $e.watch.prev; $e.rec = $e.watch.prev; $e.frozen = $now.AddDays(7).ToString('o'); $e.watch = $null
-      } elseif ($e.watch -and $e.watch.n -ge 5) { $e.watch = $null }
+      $e.fresh = [int]$e.fresh + 1
+      # a failure signal (the value was too tight: timeout, oom, short): one step to the safe side now (x1.5, or the need x k when
+      # higher), used from the next use; no risky step for 7 d. A failed build is not one.
+      if ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) {
+        $cur = if ($null -ne $e.value) { [double]$e.value } else { [double]$e.d }; $dn = $sp.safe -eq 'down'
+        $need = switch ($o.r) { 'oom' { 1.2 * [double]$o.v } 'short' { $sp.k * [double]$o.v } default { $null } }
+        $t = if ($dn) { [math]::Min($cur / 1.5, $(if ($null -ne $need) { $need } else { $cur })) } else { [math]::Max($cur * 1.5, [double]$need) }
+        $t = [math]::Round([math]::Min(4 * [double]$e.d, [math]::Max([double]$e.d / 4, $t)), 2)
+        $e.hold = ([datetime]$st.cursor).AddDays(7).ToString('o'); $e.live = $true; $e.fresh = 0
+        if ($t -ne $cur) { $e.rec = $t; $e.changed = $st.cursor; $e.dir = $(if ($dn) { 'down' } else { 'up' }); $e.why = "failure: $($o.r) at $($o.v)" }
+      }
     }
     foreach ($key in @($st.byKey.Keys)) {
       $sp = Get-KitParamSpec $key; if (-not $sp) { continue }
       foreach ($ctx in @($st.byKey[$key].Keys)) {
         $e = $st.byKey[$key][$ctx]; $d = [double]$e.d; if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { continue }
-        $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = Get-KitParamRec $sp @($e.obs) $cur $now
+        $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = Get-KitParamRec $sp @($e.obs) $cur $now $e.changed
         if ($r) {
           foreach ($n in 'n', 'conf', 'p50', 'p90', 'max') { $e[$n] = $(if ($r[$n] -is [double]) { [math]::Round($r[$n], 3) } else { $r[$n] }) }
           $t = [math]::Min(4 * $d, [math]::Max($d / 4, $r.v)); $e.clamp = $t -ne $r.v
-          if (-not $e.changed -or ($now - [datetime]$e.changed).TotalHours -ge 24) {
-            $t = [math]::Round([math]::Min($cur * (1 + $sp.up), [math]::Max($cur * (1 - $sp.down), $t)), 2)
-            if ($t -ne $cur -and [math]::Abs($t - $cur) -ge 0.99 * $cur * [math]::Min(0.1, $(if ($t -gt $cur) { $sp.up } else { $sp.down }))) { $e.rec = $t; $e.changed = $now.ToString('o'); $e.why = $r.why }   # 10% hysteresis (a smaller step: that step)
+          $up = $t -gt $cur; $risky = $up -eq ($sp.safe -eq 'down'); $f = if ($risky) { $sp.down } else { $sp.up }
+          if ((-not $e.changed -or ($now - [datetime]$e.changed).TotalHours -ge 24) -and -not ($risky -and ([int]$e.fresh -lt 5 -or ($e.hold -and [datetime]$e.hold -gt $now)))) {
+            $t = [math]::Round($(if ($up) { [math]::Min($cur * (1 + $f), $t) } else { [math]::Max($cur * (1 - $f), $t) }), 2)
+            if ($t -ne $cur -and [math]::Abs($t - $cur) -ge 0.99 * $cur * [math]::Min(0.1, $f)) { $e.rec = $t; $e.changed = $now.ToString('o'); $e.why = $r.why; $e.dir = $(if ($up) { 'up' } else { 'down' }); $e.fresh = 0 }   # 10% hysteresis (a smaller step: that step)
           }
         }
         $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
-        $val = if ($mode -eq 'on' -and $null -ne $e.rec -and ($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5 -and $acc) { [double]$e.rec } else { $null }
+        $val = if ($mode -eq 'on' -and $null -ne $e.rec -and $acc -and ($e.live -or (($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5))) { [double]$e.rec } else { $null }
         if ($null -ne $val -and $val -gt 2 * $d -and -not $st.approved["$key|$(if ($ctx -ne '_') { $ctx })"] -and -not $st.approved["$key|"]) {
           if (-not $e.ask) { $e.ask = $now.ToString('o'); & $flag 'WATCH' "param $key [$ctx] learned $val, past 2x its default ${d}: held at $(2 * $d)" "Owner decision (bossy.ps1 decide ask); yes -> bossy.ps1 param approve $key$(if ($ctx -ne '_') { " -Context '$ctx'" })" }
           $val = 2 * $d
@@ -1137,7 +1158,7 @@ function Invoke-ParamLearn {
           $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $now.ToString('o'); key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" } | Select-Object -Last 200)
           & $flag 'INFO' "param $key [$ctx]: $(if ($null -ne $e.value) { $e.value } else { "default $d" }) -> $(if ($null -ne $val) { $val } else { "default $d" }) ($($e.why); n $($e.n))" 'Nothing to do (bossy.ps1 param show).'
           Write-KitLog params change ([ordered]@{ key = $key; ctx = $ctx; from = $e.value; to = $val; why = "$($e.why)" })
-          $e.watch = @{ prev = $e.value; n = 0; bad = 0 }; $e.value = $val
+          $e.value = $val
         }
       }
     }
@@ -1147,9 +1168,10 @@ function Invoke-ParamLearn {
 }
 # observations bossy.ps1 records: a finished agent's spend (board leave), minutes between new ACTs (supervise); setup -WriteLocal
 # leaves learned keys out of a new kit.local.json (a value there pins)
-function Add-KitSpendObs($E) { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type -Default $d } }
+function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
 function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
-  if (@($Acts | Where-Object { $_ -notin @($State.acts) }).Count) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes -Default 15 }; $State.lastAct = $Now.ToString('o') }
+  $new = @($Acts | Where-Object { $_ -notin @($State.acts) }).Count   # 2+ new ACTs in one sweep piled up between beats: short (the beat was too long)
+  if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
   $State.acts = $Acts
 }
 function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @($script:KitExample._manifest.params.PSObject.Properties.Name)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
@@ -1161,9 +1183,9 @@ function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [str
     $rows = foreach ($k in @($reg | Where-Object { -not $Key -or $_ -eq $Key })) {
       $cs = @(if ($st.byKey.$k) { $st.byKey.$k.Keys | Where-Object { -not $Context -or $_ -eq $Context } }); if (-not $cs.Count) { [pscustomobject]@{ key = $k; ctx = '_'; how = "$($script:KitExample._manifest.params.$k)"; source = 'default'; n = 0 }; continue }
       foreach ($c in $cs) { $e = $st.byKey.$k[$c]; $rv = Resolve-KitParam $k $e.d $(if ($c -ne '_') { $c }) $st
-        [pscustomobject]@{ key = $k; ctx = $c; how = "$($script:KitExample._manifest.params.$k)"; default = $e.d; learned = $e.rec; effective = $rv[0]; source = $rv[1]; n = [int]$e.n; conf = $e.conf; p50 = $e.p50; p90 = $e.p90; max = $e.max; clamp = [bool]$e.clamp; changed = $e.changed; why = $e.why; frozen = $e.frozen; shadowLeft = [math]::Max(0, [math]::Ceiling([double](Get-KitSetting 'params.shadowDays' 14) - ((Get-KitNow) - [datetime]$e.since).TotalDays)) } } }
+        [pscustomobject]@{ key = $k; ctx = $c; how = "$($script:KitExample._manifest.params.$k)"; default = $e.d; learned = $e.rec; effective = $rv[0]; source = $rv[1]; n = [int]$e.n; conf = $e.conf; p50 = $e.p50; p90 = $e.p90; max = $e.max; clamp = [bool]$e.clamp; changed = $e.changed; dir = $e.dir; why = $e.why; frozen = $e.frozen; nextRisky = @(@($(if ($e.changed) { ([datetime]$e.changed).AddDays(1) }), $(if ($e.hold) { [datetime]$e.hold }), (Get-KitNow)) | Sort-Object)[-1].ToString('o'); obsNeeded = [math]::Max(0, 5 - [int]$e.fresh); shadowLeft = [math]::Max(0, [math]::Ceiling([double](Get-KitSetting 'params.shadowDays' 14) - ((Get-KitNow) - [datetime]$e.since).TotalDays)) } } }
     if ($Json) { return ConvertTo-Json @($rows) -Depth 4 -Compress }
-    return @($rows | ForEach-Object { if (-not $_.n -and $null -eq $_.default) { "$($_.key): no observations yet ($($_.how))" } else { "$($_.key) [$($_.ctx)]: $($_.effective) ($($_.source)); default $($_.default), learned $(if ($null -ne $_.learned) { $_.learned } else { '-' })$(if ($_.shadowLeft) { ", shadow $($_.shadowLeft) d left" })$(if ($_.n) { "; n $($_.n) conf $($_.conf) p50 $($_.p50) p90 $($_.p90) max $($_.max)" })$(if ($_.clamp) { ' (clamped)' })$(if ($_.frozen) { "; frozen to $(([datetime]$_.frozen).ToString('MM-dd'))" })$(if ($_.why) { "; $($_.why)" })" } })
+    return @($rows | ForEach-Object { if (-not $_.n -and $null -eq $_.default) { "$($_.key): no observations yet ($($_.how))" } else { "$($_.key) [$($_.ctx)]: $($_.effective) ($($_.source)); default $($_.default), learned $(if ($null -ne $_.learned) { $_.learned } else { '-' })$(if ($_.shadowLeft) { ", shadow $($_.shadowLeft) d left" })$(if ($_.n) { "; n $($_.n) conf $($_.conf) p50 $($_.p50) p90 $($_.p90) max $($_.max)" })$(if ($_.clamp) { ' (clamped)' })$(if ($_.frozen) { "; frozen to $(([datetime]$_.frozen).ToString('MM-dd'))" })$(if ($_.changed) { "; last change $(([datetime]$_.changed).ToString('MM-dd HH:mm')) $($_.dir): $($_.why)" })$(if ($null -ne $_.nextRisky) { "; next risky step from $(([datetime]$_.nextRisky).ToString('MM-dd HH:mm'))$(if ($_.obsNeeded) { " + $($_.obsNeeded) obs" })" })" } })
   }
   if ($Key -notin $reg) { return "ERROR unknown param '$Key' (kit.example.json _manifest.params: $($reg -join ', '))" }
   if ($Action -eq 'pin' -and $Value -notmatch '^-?[\d.]+$') { return 'ERROR param pin <key> <number> [-Context <ctx>]' }

@@ -28,7 +28,7 @@ workflows return `{ agents|results, deployBatch?, decisions?, retroDue }`; they 
 What happened when, who called what: `bossy.ps1 audit -Run <run|wf id> | -Agent <id> | -Task <id> [-Since 2h]` (one
 line per step, kit call, build, guard block, signal, decision, deploy; supervise and retros read it, never journals or log
 files). Tunables (lease grace, timeouts, gate memory, heartbeat base, budget estimates) learn from live data:
-`bossy.ps1 param show` (value, source, shadow; supervise -AutoFix learns: INFO per change, ACT on a revert). Launch by path:
+`bossy.ps1 param show` (value, default, last change, next risky step; supervise -AutoFix learns: INFO per change). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
 Invoking the coordinator is the only action needed: all steps run autonomously to completion without asking confirmation.
 

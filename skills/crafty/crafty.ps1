@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L228 stack · L403 gate · L662 check · L814 pipes · L850 guard · L1218 dir · L1228 checkpoint ·
-  L1252 tracker · L1285 host
+Sections: L20 init · L26 wt · L228 stack · L403 gate · L664 check · L816 pipes · L852 guard · L1220 dir · L1230 checkpoint ·
+  L1254 tracker · L1287 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -606,6 +606,7 @@ while ((Get-Date) -lt $deadline) {
     $dh = Get-KitDiskHold
     if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
+      $reserved = $need   # what this build got: an OOM is a failure near it
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
@@ -640,7 +641,8 @@ try {
 } finally { Remove-Item $entry -ErrorAction SilentlyContinue }
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
-  if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } else { 'fail' }) $estimate }
+  # out of memory (a failure signal): killed / aborted (137, 134) near the reservation it started with
+  if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } elseif ($code -in 134, 137 -and $peak -ge 0.9 * $reserved) { 'oom' } else { 'fail' }) $estimate }
   # builds finish together; an unreadable file is never reset
   $got = $false
   try {

@@ -206,18 +206,22 @@ $pr = Invoke-PsTest params @'
 . $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()
 function F($y, $v, $n, $h, $c = '', $r = 'ok', $d = 10) { for ($i = 0; $i -lt $n; $i++) { $env:KIT_NOW = $t.AddHours($h + $i).ToString('o'); Add-KitParamObs $y $v $c $r $d } }
 function L($h) { $env:KIT_NOW = $t.AddHours($h).ToString('o'); $script:KitParamMemo.Clear(); $script:fl += @(Invoke-ParamLearn) }
-foreach ($w in 0..6) { $h = 24 * $w; F idle.graceMinutes 30 4 $h; if ($w -le 3) { F net.timeoutSec 4 6 $h gh -d 60 }; if (!$w) { F net.timeoutSec 60 1 7 gh timeout 60 }; F gate.needGB 9 5 $h 'w|a' -d 2; L ($h + 8); if ($w -eq 2) { "d2:$(Get-KitParam idle.graceMinutes 10)" } }
+foreach ($w in 0..6) { $h = 24 * $w; F idle.graceMinutes 30 4 $h; F net.timeoutSec 4 6 $h gh -d 60; if (!$w) { F net.timeoutSec 60 1 7 gh timeout 60; L 7.5; "fail:$(Get-KitParam net.timeoutSec 60 gh)" }; F gate.needGB 9 5 $h 'w|a' -d 2; L ($h + 8); if ($w -eq 2) { "d2:$(Get-KitParam idle.graceMinutes 10)" } }
+$g = { Get-KitParam net.timeoutSec 60 gh }; "hold:$(& $g)"; F net.timeoutSec 4 6 176 gh -d 60; L 183; "down1:$(& $g)"; F net.timeoutSec 4 2 208 gh -d 60; L 209; "wait5:$(& $g)"; F net.timeoutSec 4 3 210 gh -d 60; L 211; "down2:$(& $g)"
+F supervise.heartbeatMinutes 20 1 220 '' short 15; L 221; "beat:$((Read-KitParams).byKey['supervise.heartbeatMinutes']['_'].rec)"; $env:KIT_NOW = $t.AddHours(222).ToString('o')
+$l = [ordered]@{ agent = 'zz-1'; at = (Get-Date).ToString('o'); seen = (Get-Date).AddMinutes(-90).ToString('o') }; $u = Update-KitLease $l; $null = New-KitLease 'zz-1'; $null = New-KitLease 'zz-1'
+"back:${u}:$(@(Read-KitLog params $t | Where-Object { $_.event -eq 'obs' -and $_.key -eq 'idle.graceMinutes' -and $_.r -eq 'short' }).Count)"; (Invoke-KitParamVerb show net.timeoutSec) -join ' '
 "slow:$(Get-KitParam idle.graceMinutes 10):$((Read-KitParams).byKey['idle.graceMinutes']['_'].rec)"
 "ask:$(Get-KitParam gate.needGB 3.0 'w|a'):$(@($fl | Where-Object what -match 'needGB.*past 2x').Count):$(@((Read-KitParams).history | Where-Object { !$_ }).Count)"
 $null = Invoke-KitParamVerb approve gate.needGB '' 'w|a'; L 200; "ok:$(Get-KitParam gate.needGB 3.0 'w|a')"
-F net.timeoutSec 75 2 210 gh timeout 60; L 215; "rev:$(Get-KitParam net.timeoutSec 60 gh):$(@($fl | Where-Object level -eq 'ACT').Count):$([bool](Read-KitParams).byKey['net.timeoutSec']['gh'].frozen)"
 $env:KIT_PARAM_IDLE_GRACEMINUTES = 7; $a = Get-KitParam idle.graceMinutes 10; $env:KIT_PARAM_IDLE_GRACEMINUTES = ''
 $null = Invoke-KitParamVerb pin idle.graceMinutes 9; $null = Invoke-KitParamVerb pin gate.needGB 5; $script:KitParamMemo.Clear()
 "pin:${a}:$(Get-KitParam idle.graceMinutes 10):$(Get-KitParam supervise.heartbeatMinutes 15):$(Get-KitParam gate.needGB 3.0 'w|a')"; Invoke-KitParamVerb pin no.such 1
 '@ @("$pk/lib.ps1")
 Expect 'params: shadow = default; then a step a day toward p95 x1.5; held at 2x' ($pr -contains 'd2:10' -and "$pr" -match 'slow:20:3[78]\.')
 Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4:1:0' -and $pr -contains 'ok:8')
-Expect 'params: > 10% timeouts step up; 2 timeouts after the change revert it (ACT), frozen' ($pr -contains 'rev:60:1:True')
+Expect 'params: a timeout steps up x1.5 at once; no risky step for 7 d; then -10% a day, only after 5 new observations' ($pr -contains 'fail:90' -and $pr -contains 'hold:90' -and $pr -contains 'down1:81' -and $pr -contains 'wait5:81' -and $pr -contains 'down2:72.9')
+Expect 'params: 2+ new ACTs step the beat down; a holder back after its grace = short (once); show: last change + next risky step' ($pr -contains 'beat:10' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
 Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
