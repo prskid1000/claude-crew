@@ -169,5 +169,36 @@ $tt = pwsh -NoProfile -Command ". '$lw/skills/dev-kit/lib.ps1'; Get-KitSetting '
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
 Expect 'lib: a deleted tracker task leaves tracking (an outage page does not); a pid reused after a reboot holds nothing' ($gt -eq 'True False False True|False True')
+# orch.ps1 storage: verdicts on minute samples, the learned normal, one-pass folder sizes, drill-down, the db watchdog and the rescue hold
+$sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
+'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
+$sto = Invoke-PsTest storage @'
+$null = . $args[0] 6>$null; $sd = $args[1]
+$c = [pscustomobject]@{ watchFreeGB = 50; actHours = 1; factor = 10; minRateGBh = 5; scanDropGB = 1; actFreeGB = 30; drillGB = 1; flatDays = 7; holdMinutes = 60; sampleSeconds = 60; watch = @()
+  db = @{ use = "pwsh -NoProfile -File `"$sd/use.ps1`""; kill = "pwsh -NoProfile -File `"$sd/kill.ps1`" {id}"; maxGB = 5 } }
+function Get-KitStorageConf { $c }
+$xs = { param($f, $pm) @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = $f + $pm * (20 - $_) } }) }
+foreach ($x in @(40, 0.12, 0.2), @(600, 0.12, 0.2), @(3, 0.12, 0.2), @(600, 0.12, 2), @(600, 0, 0.2), @(20, 0, 0.2, 0)) { $v = Get-KitDiskVerdict (& $xs $x[0] $x[1]) $c $x[2] ($x.Count -lt 4); "v:$($v.level),$($v.rescue),$($v.scan)" }
+$b = @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = 8 + [math]::Max(0, 2 - 0.7 * $_) } }); $v = Get-KitDiskVerdict $b $c; "burst:$($v.level),$($v.rescue)"
+"normal:$(Get-KitDiskNormal @(0..10 | ForEach-Object { [pscustomobject]@{ t = 3600 * $_; free = 100 - 0.5 * $_ } }))"
+$m = Measure-KitFolders $sd @("$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar)); $ak = "$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar).ToLower()
+"folders:$($m.sizes[$ak] / 1MB):$((@($m.kids[$ak].Values) | Sort-Object) -join ',')"
+$fo = @{ tracked = @{ R = @{ src = 'default' }; L = @{ src = 'learned'; flat = (Get-Date).AddDays(-8).ToString('s') } } }
+$g = Update-KitTracked $fo @{ sizes = @{ R = 13; L = 2 }; kids = @{ R = @{ 'R/a' = 1.2; 'R/b' = 7.8 } } } @{ sizes = @{ R = 10; L = 2 }; kids = @{ R = @{ 'R/a' = 1; 'R/b' = 5 } } } $c
+"drill:$($g[0].path)+$($g[0].gb):$(@($fo.tracked.Keys | Sort-Object) -join ',')"
+$q = @(Get-KitDbQueries $c); $null = Invoke-KitStorageTick -Force; $env:USE10 = '1'; $null = Invoke-KitStorageTick -Force; $z = [pscustomobject]@{ drive = 'Z'; kit = $true; free = 3; rate = 9; ttf = 0.3 }
+Invoke-KitDiskRescue $c $z @($q | Where-Object id -ne 43); Invoke-KitDiskRescue $c $z $q; $h1 = (Get-KitDiskHold).drive
+Set-KitStorageState { param($s) $s.rescues.Z.at = (Get-Date).AddHours(-2).ToString('o') }
+"db:$($q.Count):$((Get-Content "$sd/killed.txt") -join ','):hold $h1/$([bool](Get-KitDiskHold))"
+[IO.File]::WriteAllText((Get-KitStorageFile Q), (@(0..2 | ForEach-Object { '{"t":' + ([DateTimeOffset]::Now.ToUnixTimeSeconds() - 60 * $_) + ',"free":' + (50 + $_) + ',"size":100}' }) -join "`n") + "`n")
+Invoke-Storage -Drive Q -Since 1h
+'@ @($O, $sd)
+Expect 'storage verdict: anomalous fill below watchFreeGB = ACT + rescue; far from full = WATCH; full within 1 h = rescue; a normal rate or none = OK; 1 GB per heartbeat = scan; floors only on a kit drive; a burst = no rescue' ((($sto | Where-Object { $_ -like 'v:*' -or $_ -like 'burst:*' }) -join ' ') -eq 'v:ACT,True,True v:WATCH,False,True v:ACT,True,True v:OK,False,True v:OK,False,False v:OK,False,False burst:ACT,False')
+Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contains 'normal:0.5')
+Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
+Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
+Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
+Expect 'orch.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
+
 Remove-TestKit $k
 Complete-Tests

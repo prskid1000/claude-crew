@@ -13,8 +13,8 @@ dev.ps1: dev-kit commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/dev-kit/d
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (extra runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L228 stack · L403 gate · L654 check · L807 pipes · L843 guard · L1199 dir · L1209 checkpoint ·
-  L1233 tracker · L1266 host
+Sections: L20 init · L26 wt · L228 stack · L403 gate · L656 check · L809 pipes · L845 guard · L1201 dir · L1211 checkpoint ·
+  L1235 tracker · L1268 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -599,7 +599,8 @@ while ((Get-Date) -lt $deadline) {
         $left = $s.Avail - $s.Promised - $need
       }
     }
-    if ((Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
+    $dh = Get-KitDiskHold
+    if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
@@ -617,6 +618,7 @@ while ((Get-Date) -lt $deadline) {
     }
     $waits++; Add-KitMemSample $s.Avail
     $msg = "[gate] waiting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> would leave $([math]::Round($left,1)) GB (< $KeepFreeGB)"
+    if ($dh) { $msg = "[gate] waiting: disk hold since $(([datetime]$dh.at).ToString('HH:mm')) ($($dh.reason)); orch.ps1 storage -Drive $($dh.drive)" }
     if ($waits % 15 -eq 1) { $msg += ". Biggest users: $(Top-Users $s.Snap)" }
     Write-Host $msg
     }

@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L81 config · L161 OS · L296 leases · L493 tracker · L713 git-host · L848 kitlog · L941 entry-scripts
+Sections: L9 paths · L81 config · L161 OS · L298 leases · L495 tracker · L715 git-host · L850 kitlog · L943 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -184,6 +184,8 @@ function Get-KitKeepFreeGB {
 }
 # the system file cache stays resident until something needs RAM, which a gate never allows: half of it counts (dev.ps1 gate, local env)
 function Get-GateAvailGB($Mem) { [math]::Round([double]$Mem.AvailGB + 0.5 * [double]$Mem.CacheGB, 1) }
+# the disk rescue's hold on a drive with kit paths (orch.ps1 storage): new builds wait (dev.ps1 gate; extras may check it too), storage.holdMinutes
+function Get-KitDiskHold { $hs = try { (Get-Content -LiteralPath (Join-Path (Get-KitPath storage) 'state.json') -Raw -ErrorAction Stop | ConvertFrom-Json).rescues } catch { $null }; @($hs.PSObject.Properties.Value | Where-Object { $_.kit -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt [double](Get-KitSetting 'storage.holdMinutes' 60) })[0] }
 # a start that waited 20 min goes when it still leaves a hard floor (5% of RAM, at least 3 GB)
 function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [double]$TotalGB) {
   $Left -ge $KeepFree -or ($WaitedMin -ge 20 -and $Left -ge [math]::Max(3, $TotalGB * 0.05))

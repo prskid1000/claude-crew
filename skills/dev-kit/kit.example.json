@@ -62,6 +62,9 @@
  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: extra build-heap; cacheFlush (unset) = a command line supervise -AutoFix runs when a gate head waited 10+ min and the file cache holds 25%+ of RAM (at most every 30 min)." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 25 },
+ "storage": { "_readme": "orch.ps1 storage: free space per fixed drive every sampleSeconds (board beats, supervise) into .state/storage, keepDays kept. ACT + rescue when full within actHours, or filling at factor x the drive's learned normal (and >= minRateGBh) below watchFreeGB; WATCH below watchFreeGB or on such a rate; ACT below supervise.minDiskFreeGB. Rescue (a fill sustained over 10 min, once per 10 min a drive): the db query holding the most temp killed, new builds held holdMinutes on a drive with kit paths (dev.ps1 gate, lib Get-KitDiskHold), extras' Stop-KitDiskWriter* hooks. The static floors count only on drives with kit paths. Folder sizes in the background: a drop >= scanDropGB since the last heartbeat (once per scanCooldownMin unless the rate rises), every scanHours, on ACT; tracked = the drive's top folders, profile, AppData, temp and cache dirs, worktrees, .runtime, service temp dirs, watch[] (org paths, e.g. a db datadir) + learned children of a folder that grew >= drillGB (dropped after flatDays flat). db.use: a command printing '<id> <temp GB> <seconds> <query>' per running query (5 s at most; a timeout skips it 5 min); db.kill: one with {id}; a query above db.maxGB of temp (default 5) is killed. Thresholds: TODO-PARAM, to be learned.",
+  "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
+  "db": { "use": "", "kill": "", "maxGB": 5 } },
  "idle": { "graceMinutes": 10, "beatMinutes": 20 },
  "budget": { "_readme": "An agent's budget = its tool's default compaction point (orch.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split, at runStopAt x cap no new item starts (the rest = next). estimate: per agent / item",
   "handoffAt": 0.8, "runStopAt": 0.8,
@@ -205,10 +208,10 @@
    "outbox": "outbox.jsonl", "pauses": "pauses/", "programs": "programs/",
    "tracker-none": "tracker-none/",
    "localenv-env": "localenv/",
-   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/"
+   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "storage": "storage/"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kittool.py kitlog): every log line goes through it: at, run, agent, task, script, verb, event + fields, secrets masked. A stream with a durable name writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl. orch.ps1 audit merges them.",
-   "streams": ["calls", "builds", "env", "guard", "signals", "decisions-log", "deploy-log"],
+   "streams": ["calls", "builds", "env", "guard", "disk", "signals", "decisions-log", "deploy-log"],
    "secretKey": "(?i)token|passw|secret|api[-_]?key|authoriz|cookie|credential|private[-_]?key|^pwd$|^pass$",
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],
