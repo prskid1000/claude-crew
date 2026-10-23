@@ -10,16 +10,17 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail]   task <-> MRs; promoted when all merged
   supervise [-AutoFix] [-Brief] [-Agents] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
+  tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task -Agent -Repos [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... (extra deploys) · decide ask|list|answer|wait ...   deploy batch; decision pauses
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L25 init · L54 board · L220 budget · L248 launch · L509 recover · L593 pause · L637 resume · L695 program · L739 track ·
-  L1025 supervise report · L1066 anomalies · L1095 supervise · L1413 report · L1491 audit · L1551 storage · L1762 bugbrief ·
-  L1873 cleanup · L2000 learn · L2030 decide · L2096 health · L2158 retro due · L2168 the kit origin's main and extras ·
-  L2184 setup · L2249 guard-sendmessage
+Sections: L26 init · L55 board · L221 budget · L249 launch · L510 recover · L594 pause · L638 resume · L696 program · L740 track ·
+  L1026 supervise report · L1067 anomalies · L1096 supervise · L1414 report · L1492 audit · L1552 storage · L1763 bugbrief ·
+  L1874 cleanup · L2001 learn · L2031 decide · L2097 health · L2159 retro due · L2169 tidy ·
+  L2239 the kit origin's main and extras · L2255 setup · L2320 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -2165,6 +2166,76 @@ function Get-KitRetroDue([switch]$RunFinished) {
   if ($n + $g -ge 15 -or ($RunFinished -and $n)) { "$n signal(s) + $g guard block(s) since the last retro" }
 }
 
+# ---- tidy: /tidy's script step (digest + upkeep, no LLM) and its retro stamp
+function Invoke-Tidy {
+param([Parameter(Position = 0)][string]$Action, [string]$At, [switch]$DryRun, [switch]$Json)
+if ($Action -eq 'done') {   # the judgment step finished: signals up to the prep time count as reviewed
+  $t = try { [datetime]$At } catch { $null }; if (-not $t) { 'usage: tidy done -At <time>'; exit 2 }
+  $m = Get-KitPath last-retro -Create
+  if (-not $DryRun) { Set-Content $m $t.ToString('s'); Remove-Item "$m.start" -ErrorAction SilentlyContinue }   # .start: the old workflow's marker
+  "last retro = $($t.ToString('s'))"; return
+}
+if ($Action -ne 'prep') { 'usage: tidy prep [-DryRun] [-Json] | tidy done -At <time> [-DryRun]'; exit 2 }
+$t0 = Get-Date; $since = Get-KitRetroSince; $from = if ($since -gt $t0.AddDays(-14)) { $since } else { $t0.AddDays(-14) }   # TODO-PARAM (fixed default)
+$cut = { param($s, [int]$n = 140) $s = "$s" -replace '\s+', ' '; if ($s.Length -gt $n) { $s.Substring(0, $n - 3) + '...' } else { $s } }
+$steps = [Collections.Generic.List[object]]::new()
+$run = { param([string]$Name, [scriptblock]$Body) $s0 = Get-Date; $st = 'ok'
+  $o = @(try { & $Body *>&1 | ForEach-Object { if ($_.what) { "$($_.level) $($_.what)" } else { "$_" } } | Where-Object { "$_".Trim() } } catch { $st = 'failed'; "$($_.Exception.Message)" })
+  if ($o.Count -and "$($o[0])" -like 'skip:*') { $st = 'skip' }
+  $steps.Add([pscustomobject]@{ step = $Name; state = $st; sec = [math]::Round(((Get-Date) - $s0).TotalSeconds, 1); out = @($o | Select-Object -Last 12) }) }
+$py = { param([string[]]$A) $o = @(& (Get-Python) -X utf8 $KitCmd.kittool @A 2>&1 | ForEach-Object { "$_" }); if ($LASTEXITCODE) { throw "kittool $($A[0..1] -join ' ') rc $LASTEXITCODE`: $($o | Select-Object -Last 1)" }; $o }
+$busy = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($t0 - [datetime]$_.beat).TotalMinutes -lt 20 })
+$idle = if ($busy) { "skip: $($busy.Count) live board agent(s) ($(@($busy.agent | Select-Object -First 4) -join ', ')): waits for an idle kit" }
+$opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandType Function -ErrorAction SilentlyContinue; if ($c) { & $Call $c } else { "skip: $Fn not in this kit yet" } }   # another kit change's function, once on main
+
+# mechanical upkeep: each step times itself; a failed one is listed, the rest still run
+& $run 'extras sync' { if ($idle) { $idle } elseif ($DryRun) { 'skip: dry run' } else { & $py 'extra', 'sync' } }
+& $run 'extras prune' { if ($idle) { $idle } else { & $opt Invoke-ExtrasPrune { param($c) & $c -DryRun:$DryRun } } }
+& $run 'param learn' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-ParamLearn { param($c) & $c } } }
+& $run 'cleanup' { Invoke-Cleanup -DryRun:$DryRun | Select-Object -First 6 }
+& $run 'worktree prune' { $ga = @('-C', $KitConf.Kit, 'worktree', 'prune', '-v') + @(if ($DryRun) { '-n' }); git @ga 2>&1; if (-not $?) { throw 'git worktree prune failed' } }
+& $run 'lint' { $l = @(& (Get-Python) -X utf8 $KitCmd.kittool lint --warn --no-flow 2>&1 | ForEach-Object { "$_" }); @($l | Where-Object { $_ -like 'kittool lint:*' }) + @($l | Where-Object { $_ -notlike 'kittool lint:*' } | Select-Object -First 10) }   # the count first: the digest keeps the head
+& $run 'extras' { @(& $py 'extra', 'list' | Where-Object { $_ -match '^\*\s+(\S+)' } | ForEach-Object { $Matches[1] }) -join ', ' }
+
+# the digest: signals (grouped, counted), regressions, guard blocks, errors, builds, env, runs, QA runs
+$sig = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} })
+$new = @($sig | Where-Object { $_.kind -ne 'retired' -and [datetime]$_.at -gt $since })
+$lessons = @(foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) { $sk = ''; foreach ($l in (Read-KitLessonLines $f)) { if ($l -match '^## (.+)$') { $sk = $Matches[1].Trim() } elseif ($l -match '^- (.+)$' -and $sk) { [pscustomobject]@{ skill = $sk; text = $Matches[1] } } } })
+$groups = @(Get-KitSignalGroups $new $lessons | Sort-Object n -Descending)
+$retired = @($sig | Where-Object kind -eq 'retired' | ForEach-Object { [pscustomobject]@{ skill = $_.skill; text = $_.text; words = (Get-KitWordSet $_.text) } })
+$back = @(foreach ($s in $new) { $w = Get-KitWordSet $s.text; $r = @($retired | Where-Object { $_.skill -eq $s.skill -and (Get-KitOverlap $_.words $w) -ge 0.4 } | Select-Object -First 1); if ($r) { "$($s.skill): $(& $cut $s.text 100) <- retired: $(& $cut $r[0].text 100)" } })   # TODO-PARAM (fixed default)
+$log = @(Read-KitLog -Since $from | Where-Object { [datetime]$_.at -gt $since })
+$by = { param($S, $E) @($log | Where-Object { $_.stream -eq $S -and $_.event -match $E }) }; $deny = & $by guard '^deny$'
+$errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error' -or "$($_.rc)" -eq '2') })
+$bld = & $by builds '^end$'
+$envF = & $by env 'fail'
+$runs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })
+$qa = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)
+$lp = if ("$(@($steps | Where-Object step -eq 'lint').out)" -match '(\d+) problem') { [int]$Matches[1] } else { 0 }
+$work = $new.Count + $deny.Count + $errs.Count + $back.Count + $lp + @($steps | Where-Object state -eq 'failed').Count   # a failed step or lint problem: the judge sees it
+$min = 3; $gp = Get-Command Get-KitParam -CommandType Function -ErrorAction SilentlyContinue; if ($gp) { $min = [double](& $gp 'tidy.judgeMinutes' 3) }   # TODO-PARAM (fixed default)
+$hit = { param($g) "$(& $cut $g.text)$(if ($g.refs) { " refs $($g.refs -join ',')" })$(if ($g.lesson) { " -> lesson ($($g.score)): $(& $cut $g.lesson 90)" })" }
+$top = { param($Items, [scriptblock]$Key, [int]$Max = 10) @($Items | Group-Object $Key | Sort-Object Count -Descending | Select-Object -First $Max | ForEach-Object { "$($_.Count)x $($_.Name)" }) }
+$d = [Collections.Generic.List[string]]::new(); $part = { param($T, $Lines) if ($Lines) { $d.Add(''); $d.Add("## $T"); foreach ($x in $Lines) { $d.Add("- $x") } } }
+$d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the last retro ($(if ($since -eq [datetime]::MinValue) { "never; logs from $($from.ToString('yyyy-MM-dd'))" } else { $since.ToString('yyyy-MM-dd HH:mm') })): $($new.Count) signal(s), $($deny.Count) guard block(s), $($errs.Count) script error(s), $($runs.Count) run(s), $($qa.Count) QA run(s).")
+& $part 'Signal groups (2+ = lesson candidate; a matched lesson = bump it)' @($groups | Where-Object n -ge 2 | Select-Object -First 25 | ForEach-Object { "$($_.n)x $($_.skill) [$($_.kinds)] $(& $hit $_)" })
+& $part 'Single signals' @($groups | Where-Object n -lt 2 | Select-Object -First 30 | ForEach-Object { "$($_.skill) [$($_.kinds)] $(& $hit $_)" })
+& $part 'Retired lessons seen again (regression candidates)' @($back | Select-Object -First 10)
+& $part 'Guard blocks' (& $top $deny { & $cut $_.why 110 })
+& $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(& $cut $_.error 90)" })
+& $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
+& $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
+& $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(if (-not (Test-Path (Join-Path $_.FullName 'report.md'))) { ', no report' })" }))
+& $part 'Upkeep (no LLM)' @(@($steps | ForEach-Object { "$($_.step): $($_.state) ($($_.sec) s)$(if ($_.out) { ': ' + (& $cut ($_.out -join ' | ') 400) })" }) + @(Invoke-KitHooks Get-KitHealthLinesAudit))
+$file = Join-Path (Get-KitPath retros -Create) "digest-$($t0.ToString('yyyy-MM-dd-HHmm')).md"
+[IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
+$stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
+if ($stamped) { $null = Invoke-Tidy done -At $t0.ToString('s') }   # nothing to judge: reviewed now
+$o = [ordered]@{ digest = $file; at = $t0.ToString('s'); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
+if ($Json) { $o | ConvertTo-Json -Compress; return }
+"DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
+}
+
 # ---- the kit origin's main and extras: force push and deletion off, direct push on (host verb branch.protect; never product repos)
 function Set-KitOriginProtection {
   $kit = $KitConf.Kit; $gl, $gh = $env:GITLAB_HOST, $env:GH_HOST
@@ -2282,6 +2353,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'audit' { Invoke-KitVerb Invoke-Audit $__rest }
     'bugbrief' { Invoke-KitVerb Invoke-BugBrief $__rest }
     'cleanup' { Invoke-KitVerb Invoke-Cleanup $__rest }
+    'tidy' { Invoke-KitVerb Invoke-Tidy $__rest }
     'deploy' { $null = Assert-KitExtra Invoke-Deploy 'orch.ps1 deploy' 'deploys'; Invoke-KitVerb Invoke-Deploy $__rest }
     'decide' { Invoke-KitVerb Invoke-Decide $__rest }
     'recover' { Invoke-KitVerb Invoke-Recover $__rest }

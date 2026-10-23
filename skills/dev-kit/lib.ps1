@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/dev-kit/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L9 paths · L82 config · L162 OS · L334 leases · L585 tracker · L805 git-host · L910 kitlog · L1004 entry-scripts
+Sections: L9 paths · L82 config · L162 OS · L334 leases · L585 tracker · L805 git-host · L910 kitlog · L1022 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -956,6 +956,24 @@ function Read-KitLog([string[]]$Stream = $script:KitLogMap.streams, [datetime]$S
     foreach ($f in @($files | Where-Object { Test-Path -LiteralPath $_ })) {
       foreach ($l in Get-Content -LiteralPath $f) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
     }
+  }
+}
+# a text's words (4+ letters, common ones dropped); two word sets' overlap (Jaccard)
+$script:KitTidyCommon = 'that this with from then when what they have were been into only also than after which there does fixed'.Split(' ')
+function Get-KitWordSet([string]$Text) { $h = [Collections.Generic.HashSet[string]]::new(); foreach ($m in [regex]::Matches("$Text".ToLower(), '[a-z][a-z0-9_-]{3,}')) { if ($m.Value -notin $script:KitTidyCommon) { [void]$h.Add($m.Value) } }; , $h }
+function Get-KitOverlap($A, $B) { if (-not $A.Count -or -not $B.Count) { return 0 }; $i = 0; foreach ($w in $A) { if ($B.Contains($w)) { $i++ } }; $i / ($A.Count + $B.Count - $i) }
+# signals of one skill joined when any two overlap >= $Min; each group with its closest lesson (bump candidate)
+function Get-KitSignalGroups($Signals, $Lessons, [double]$Min = 0.3) {   # TODO-PARAM (fixed default)
+  $groups = [Collections.Generic.List[object]]::new()
+  foreach ($s in $Signals) {
+    $w = Get-KitWordSet $s.text; $hit = $null
+    foreach ($g in $groups) { if ($g.skill -eq $s.skill -and @($g.words | Where-Object { (Get-KitOverlap $_ $w) -ge $Min }).Count) { $hit = $g; break } }
+    if ($hit) { $hit.items.Add($s); $hit.words.Add($w) } else { $groups.Add([pscustomobject]@{ skill = $s.skill; items = [Collections.Generic.List[object]]@($s); words = [Collections.Generic.List[object]]@(, $w) }) }
+  }
+  foreach ($g in $groups) {
+    $best = $null; $bs = 0
+    foreach ($l in @($Lessons | Where-Object skill -eq $g.skill)) { $lw = Get-KitWordSet $l.text; $sc = @($g.words | ForEach-Object { Get-KitOverlap $_ $lw } | Measure-Object -Maximum).Maximum; if ($sc -gt $bs) { $bs = $sc; $best = $l } }
+    [pscustomobject]@{ skill = $g.skill; n = $g.items.Count; kinds = @($g.items.kind | Select-Object -Unique) -join ','; text = $g.items[0].text; refs = @($g.items.ref | Where-Object { $_ } | Select-Object -Unique); lesson = $(if ($bs -ge $Min) { $best.text }); score = [math]::Round($bs, 2) }
   }
 }
 function ConvertTo-KitArgs([object[]]$Tokens) {
