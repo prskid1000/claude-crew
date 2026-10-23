@@ -17,3 +17,17 @@ function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since,
   }
   if (-not $Show) { $rc }
 }
+# local env (extra local-env dot-sources this file): the Liquibase CLI on one env schema. db.migrateSql unset -> update-sql (the
+# pending changeSets' SQL: the tables a release slices); db.rollback "liquibase" (opt-in) -> tag release-<n> before a release's
+# migrations, rollback to it on restore. The changelog = the repo's master under the service folder (as check finds it).
+function Get-LiquibaseMaster([string]$Dir) {
+  if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return $null }
+  $rel = @(git -C $Dir ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' 2>$null | Where-Object { $_ -match '(?i)liquibase|changelog' })[0]
+  if ($rel) { [IO.Path]::GetFullPath((Join-Path $Dir $rel)) }
+}
+# -> the command line ($null: no master or no CLI); the password comes from LIQUIBASE_COMMAND_PASSWORD
+function Get-LiquibaseCmd([string]$Dir, [string]$Jdbc, [string]$User, [string]$Verb) {
+  $m = Get-LiquibaseMaster $Dir; $exe = 'liquibase'   # TODO-PARAM (fixed default)
+  if (-not $m -or -not (Get-Command $exe -ErrorAction SilentlyContinue)) { return $null }
+  "$exe --search-path=`"$(Split-Path $m)`" --changelog-file=`"$(Split-Path $m -Leaf)`" --url=`"$Jdbc`" --username=`"$User`" $Verb"
+}

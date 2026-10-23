@@ -60,7 +60,7 @@ DOC_LOOP = re.compile(r'\b(repeat\w*|re-?run\w*|loop(?:s|ing)?)\b|\b(?:at most|m
 DOC_BOUND = re.compile(r'(?:at most|max(?:imum)?|up to|<=|≤)\s*(\d+)\s*(\w+)|(\d+)\s+(rounds?|times|tries|retries|attempts|cycles?)\b|'
      r'every\s+(\d+)\s*(\w+)|\b(weekly|daily|hourly|once|twice)\b', re.I)
 OUTCOMES = ('PASS', 'FAIL', 'BLOCKED', 'NONE', 'NOT_TESTED', 'PASS_WITH_NOTE', 'OUT_OF_SCOPE', 'LIVE', 'REFUSED', 'REJECTED', 'ROLLED BACK',
-   'NOTICE', 'ACT', 'WATCH', 'INFO', 'HEAVY', 'LIGHT', 'MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED',
+   'NOTICE', 'ACT', 'WATCH', 'INFO', 'MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED',
    'closed', 'failedTesting', 'failed testing', 'in test', 'promoted', '[Bug]', 'merged', 'held', 'deferred', 'blocked')
 TERMINAL = {'PASS', 'closed', 'merged', 'MERGED', 'promoted', 'in test', 'LIVE', 'INFO', 'OUT_OF_SCOPE', 'NONE', 'PASS_WITH_NOTE'}
 OUT_RX = re.compile(r'(?<![\w-])(' + '|'.join(re.escape(o) for o in sorted(OUTCOMES, key=len, reverse=True)) + r')(?![\w-])')

@@ -30,13 +30,32 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
   `keepFreeGB` fixes it). A start waits for its `dependsOn` to be healthy; one failing on a dependency connection waits
   again and retries once before a train rolls back.
-- **Migrations**: a layer with migrations changes the shared DB: `db.snapshot` runs before the switch-over, `db.restore` on
-  rollback; a layer that leaves keeps its DB changes. Snapshot names, by hand too: `<tenant or env>-<purpose>-<yyyy-MM-dd>`,
-  lowercase-kebab (`ConvertTo-KitSlug`); `prune [-Days <n>]` (daily too) runs `db.prune` (`{keepDays}` = `db.keepDays`,
-  7; `{keep}` = `db.keep`, a regex of names never pruned, default `baseline`). `db.timeoutSec`: seconds per hook (a number or
-  `{ "<hook>": n }`; default 1800, query 120). `db.rollback`: LIGHT layers revert exactly on leave (`migrations -Env <env> [-Branch]` shows the plan; classes need the extra
-  `migration-classify`); `tasks` (`task -Task <name>`), `sql -Query` (read-only). `db.engine` presets: extra `db-engine-presets`
-  (`localenv.ps1` names the extra when the config needs one).
+- **DB marks, restore, seed** (`db.engine` mysql / mariadb: extra `db-engine-presets`; nothing is ever dumped whole): a mark = a
+  binlog position + the code live then (zero bytes): `mark -Name <n>` by hand, `release-<n>` before each release's code first
+  runs, `use-<agent>` at each new lease, `baseline-<date>` after a green `seed`. A release with migrations (layers or the
+  target) also keeps **slices**: the CREATE text of each table its migrations touch (`db.migrateSql` = the tool's dry-run SQL;
+  unset + extra `liquibase`: `liquibase update-sql`; else the changed migration files' text), the rows its DDL destroys (a
+  dropped / retyped column: primary key + column; a dropped table: its rows) and every view / routine / trigger / event
+  definition. `restore -Mark <n> | -Release <n> [-DryRun]` (owner / coordinator): holders told to pause, the mark's code built,
+  writers stopped, renames undone, each touched table back to its CREATE text (newest slice first), object definitions back,
+  the row changes after the mark flashed back newest first (FK orphans / duplicate keys checked per batch), AUTO_INCREMENT reset,
+  started, "restore done". A statement group on a table with triggers is undone as inverted binlog row events (no trigger
+  fires); the **cascade guard** (`doctor` installs it, again after migrations; `teardown` removes it) journals the child rows
+  of CASCADE / SET NULL foreign keys, which come back the same way. A table it cannot bring back exactly (structure changed with
+  no slice, a cascade before the guard, a failed batch, FLOAT after DDL) falls back to its `seed` items (`tables`), named in the
+  summary; refused only when the binlog lacks the rows (statement-format DML).
+  `db.rollback` (a tool's rollback command; `liquibase`: tag `release-<n>` before each release's migrations, rollback to it)
+  runs only with `db.restoreVia: tool-then-kit` or `-UseToolRollback`; `restore.after` [ { name, cmd } ] ({mark}) runs after
+  it: reindex, cache clears, leftover lists. Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60); doctor
+  checks binlog ROW / FULL images / FULL metadata / retention. `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON
+  `items` [ { name, check: { sql, expect } | { cmd }, create: { cmd }, how, needs, tables } ], default
+  `<state>/localenv/<env>.seed.json`): each check gates its create. `db.timeoutSec`: seconds per hook (a number or `{ "<hook>":
+  n }`; default 1800, query 120); `tasks` (`task -Task <name>`), `sql -Query` (read-only).
+- **DB temp** (mysql): once a minute the controller kills the connection with the most temp on disk (session temp tablespaces +
+  TempTable mmap files) above `db.tempMaxGB` (5); `dbtemp [-Kill <id>]` lists / kills them with the env file's credential: set
+  `storage.db.use` = `pwsh -NoProfile -File <kit>/skills/local-env/localenv.ps1 dbtemp -Env <env>`, `storage.db.kill` = the same
+  `-Kill {id}`. Doctor WARNs: ibtmp1 without a max, temp caps above `db.tempMaxGB`, `max_execution_time` 0, slow log off, the
+  datadir outside `storage.watch`.
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
   `smoke`) merge by `name`. `localenv.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds and health; `deploy`
   stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100).
@@ -65,8 +84,8 @@ $L = '<kit>/skills/local-env/localenv.ps1'
 ## Local testing (dev flow step 5)
 1. The testing-goals doc (`skills/dev-kit/templates.md`) lists every goal with its check, Expected and proof.
    Deploy your branch (step 2).
-2. Data: reuse the env's baseline fixtures (the org's baseline file / seeded test tenant or account named in org rules or the
-   brief); verify by id before creating anything; create only what is missing through the env's API (`qa.ps1 api -Target <local
+2. Data: `seed -Check -Env <env>` (the baseline fixtures; drift -> ENV-FIX: the coordinator runs `seed`); verify by id before
+   creating anything; create only what is missing through the env's API (`qa.ps1 api -Target <local
    target>`), never SQL; prefix it with your agent id; note what you created in the goals doc.
 3. Run each goal with the tool its proof names: API -> `qa.ps1 api -Target <local target> -Save`; web -> `browser.mjs`
    (headless); app -> a phone with the local-env APK: `swarm.ps1 build -Local [-AppDir <your app worktree>]`,
@@ -104,16 +123,17 @@ $L = '<kit>/skills/local-env/localenv.ps1'
   there.
 - A migration layer changes the shared local DB for every layer: say so.
 - Local DB drift (a leftover table, a missing user or grant) breaking a deploy: ENV-FIX to the coordinator ("Unblock
-  yourself"), never repair the shared DB by hand.
-- `up` (only named services), `unhold`, `restart -Services` (keeps leases; `down` ends them), `down`, `drop`, `refresh`: owner /
-  coordinator only. Out of RAM: starts wait, then fail with the biggest users listed; report it, never kill other processes.
+  yourself"; it runs `seed` or `restore -Mark <n>`), never repair the shared DB by hand.
+- `up` (only named services), `unhold`, `restart -Services` (keeps leases; `down` ends them), `down`, `drop`, `refresh`,
+  `restore`, `teardown`: owner / coordinator only. Out of RAM: starts wait, then fail with the biggest users listed; report it,
+  never kill other processes.
 - Learn: `orch.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.
 
 ## Config (`kit.local.json` `localEnv`; an example)
 ```json
 {
  "localEnv": {
-  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db.snapshot / restore: commands ({snapshot} = the name) run around migration layers. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
+  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Any shape: a service is a start command in a folder; envs.<env>.db: engine (marks + restore), schemas, seed. Secrets: <kit>/.state/localenv/<env>.env (dotenv), never here.",
   "maxLeaseMinutes": 120,
   "idle": { "minMinutes": 15, "maxMinutes": 60 },
   "envs": {
@@ -127,8 +147,9 @@ $L = '<kit>/skills/local-env/localenv.ps1'
      { "name": "web", "repo": "frontend", "port": 4200, "hot": true, "dependsOn": ["api"], "start": "npx ng serve --port {port}" }
     ],
     "smoke": [ { "name": "api health", "service": "api", "url": "http://127.0.0.1:8080/health" } ],
-    "db": { "snapshot": "<command that saves the shop DB as {snapshot}>", "restore": "<command that loads snapshot {snapshot}>",
-     "prune": "<command that deletes snapshots older than {keepDays} days whose name does not match {keep}>" }
+    "db": { "engine": "mysql", "user": "root", "schemas": ["shop"], "schemasQuery": "<SELECT that lists more env schemas, one per row>",
+     "migrateSql": "<the migration tool's dry-run SQL command, run in the service folder>" },
+    "seed": "<kit>/.state/localenv/shop.seed.json"
    }
   }
  }

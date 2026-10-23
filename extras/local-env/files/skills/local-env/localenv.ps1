@@ -3,16 +3,18 @@ localenv.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) t
 on; a service = a start command in a folder (default dev.ps1 stack `run`). Model: local-env SKILL.md "Local testing".
   & <kit>/skills/local-env/localenv.ps1 <verb> [args]
 Verbs: envs · status · doctor · deploy · wait · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
-       migrations · sql -Query (read-only)
-       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · prune [-Days <n>] ·
-       _daemon -Env <env> [-Train <id> | -Start <svc>] (controller, workers) · _exec (service wrapper)
+       migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] ·
+       seed [-Check]
+       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · teardown · restore -Mark <n> | -Release <n>
+       [-Schemas a,b] [-DryRun] [-UseToolRollback] · _daemon -Env <env> [-Train <id> | -Start <svc>] (controller, workers) · _exec (service wrapper)
 In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends), .state/localenv/<env>.env (secrets).
 Out: text; status -Json.
-Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / needs an extra · 2 usage (unknown env, no
-  localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
-Extras: db.engine presets = db-engine-presets (adapters/); LIGHT / HEAVY migration classes = migration-classify (devtools.py).
-Sections: L23 config · L171 state · L212 leases · L283 code · L315 migrations · L457 hooks · L538 processes · L812 daemon ·
-  L1220 doctor · L1261 verbs
+Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / seed not green / needs an extra · 2 usage
+  (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
+Extras: db.engine presets, marks, slices, restore, the cascade guard = db-engine-presets (adapters/); db.rollback = any tool
+  command or "liquibase" (extra liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
+Sections: L25 config · L174 state · L215 leases · L286 code · L318 migrations · L436 hooks · L508 marks · L646 seed ·
+  L692 processes · L966 daemon · L1400 doctor · L1448 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -63,6 +65,7 @@ $script:LogMaxMB = [double](Opt 'logMaxMB' 100)   # a service log past this move
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
 # optional parts (kittool.py extra add <name>) are dot-sourced from adapters/ (db-engine-presets fills unset db hooks)
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
+$__lb = Join-Path (Split-Path $PSScriptRoot) 'dev-kit/adapters/liquibase.ps1'; if (Test-Path -LiteralPath $__lb) { . $__lb }   # extra liquibase: db.migrateSql default, db.rollback "liquibase"
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
 $script:FailPattern = [string](Opt 'failPattern' "APPLICATION FAILED TO START|Application run failed|EADDRINUSE|Address already in use|Port \d+ is already in use|Failed to bind to|Unhandled exception. System\.|Traceback \(most recent call last\)|panic: |Error: Cannot find module|$script:OomPattern|java\.lang\.OutOfMemoryError")
 function Now { (Get-Date).ToString('o') }
@@ -242,7 +245,7 @@ function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
   Event $e 'lease-notice' @{ agents = @($who.Keys); text = $text }
 }
 # a train waits for the leases on what it changes at most leaseMinutes (one clock per train); then it tells every holder and goes on
-$script:Preempted = @(); $script:LeaseWait0 = $null
+$script:Preempted = @(); $script:LeaseWait0 = $null; $script:DoneWord = 'deploy'
 function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
   $said = $null
   while ($true) {
@@ -312,91 +315,67 @@ function Resolve-Ref([string]$d, [string]$b) {
 }
 function HasMigrations([string]$checkout, [string]$target, [string]$sha) { $d = @(git -C $checkout diff --name-only "origin/$target...$sha" 2>$null); if ($LASTEXITCODE) { return $true }; [bool]($d -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' -or $d -match $script:MigPattern) }
 
-# ---- migrations: migration classes, LIGHT = exact revert (needs db.rollback), HEAVY = snapshot
-function MigCfg([string]$e) {
-  $m = [ordered]@{ pattern = $script:MigPattern }
-  $db = (Get-EnvCfg $e).db; if ($db.engine) { $m.dialect = "$($db.engine)".ToLower() }; if ($db.exec) { $m.exec = $db.exec }
-  foreach ($src in @($script:LE.migrations, (Get-EnvCfg $e).migrations) | Where-Object { $_ }) { foreach ($p in $src.PSObject.Properties) { if ($p.Name -notlike '_*') { $m[$p.Name] = $p.Value } } }
-  $m
+# ---- migrations: a layer or a target change with migrations changes the shared DB; its release mark keeps what its DDL destroys
+#      (slices: the CREATE text of each touched table, + the rows of a dropped / retyped column or a dropped table); restore undoes it
+function MigRoot([string]$e) { Join-Path (Get-KitPath localenv -Create) "slices/$e" }
+# tables / columns the migrations between $base and $head of repo $rn change: db.migrateSql (the tool's dry-run SQL, run in the
+# repo's service folder of the env worktree), else every table the changed migration files name (a superset)
+function Get-MigTouched([string]$e, [string]$rn, [string]$base, [string]$head) {
+  $r = (EnvRepos $e)[$rn]; $db = (Get-EnvCfg $e).db; $files = @()
+  $s = @(EnvServices $e | Where-Object { $_.repo -and (RepoOf $e $_) -eq $rn })[0]; $dir = if ($s) { SvcDir $e $s } else { $r.wt }
+  $lbs = if (-not $db.migrateSql -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) { @(LiquibaseSchemas $e)[0] }
+  if ($lbs) {   # extra liquibase: the pending changeSets' SQL of the first schema Liquibase manages (the others run the same changelog)
+    $f = Join-Path (MigRoot $e) "pending-$rn.sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+    $err = Invoke-EnvLiquibase $e $dir @($lbs) 'update-sql' $f
+    if (-not $err -and (Test-Path $f) -and (Get-Item $f).Length) { $files = @($f) }
+  } elseif ($db.migrateSql) {
+    $f = Join-Path (MigRoot $e) "pending-$rn.sql"; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+    $code = Invoke-Shell "$(Expand-Placeholders ([string]$db.migrateSql) $e $(if ($s) { $s } else { [pscustomobject]@{ port = '' } }) $dir '') > `"$f`"" (LogFile $e 'migrations') (EnvVars $e ([pscustomobject]@{})) 600
+    if (-not $code -and (Test-Path $f)) { $files = @($f) }
+  }
+  if (-not $files.Count) {
+    $files = @(git -C $r.wt diff --name-only "$base...$head" 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '(^|/)((deploy|revert)/[^/]+|\d+[_.-][^/]*)\.sql$|(^|/)versions/\w+\.py$' } | ForEach-Object { Join-Path $r.wt $_ } | Where-Object { Test-Path -LiteralPath $_ })
+  }
+  if (-not $files.Count) { return @{ items = @(); unknown = $true; via = 'nothing found' } }
+  $j = Invoke-DbFb $e 'touched' @('--files', ($files -join ','))
+  @{ items = @($j.items); unknown = -not @($j.items).Count; via = $(if ($files[0] -like '*pending-*') { if ($lbs) { 'liquibase update-sql' } else { 'db.migrateSql' } } else { "$($files.Count) migration file(s)" }) }
 }
-function MigMode([string]$e) { if ("$((MigCfg $e).mode)" -ne 'snapshot') { 'classify' } else { 'snapshot' } }
-function MigRoot([string]$e) { Join-Path (Get-KitPath localenv -Create) "migrations/$e" }
-function MigCfgFile([string]$e) {
-  $t = (MigCfg $e) | ConvertTo-Json -Depth 8
-  $f = Join-Path (MigRoot $e) "config-$([BitConverter]::ToString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($t))).Replace('-', '').Substring(0, 8)).json"
-  if (-not (Test-Path $f)) { New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content $f $t -Encoding utf8 }
-  $f
+# the env schemas Liquibase manages (a DATABASECHANGELOG table)
+function LiquibaseSchemas([string]$e) {
+  $in = @(EnvSchemas $e | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '; if (-not $in) { return @() }
+  @(Invoke-DbSql $e "SELECT TABLE_SCHEMA FROM information_schema.TABLES WHERE LOWER(TABLE_NAME) = 'databasechangelog' AND TABLE_SCHEMA IN ($in) ORDER BY 1" | ForEach-Object { $_[0] })
 }
-function MigUnder([string]$e, [string]$rn) {
-  $s = @(EnvServices $e | Where-Object { $_.repo -and (Get-RepoCfg $_.repo).name -eq $rn })
-  if (-not $s.Count -or @($s | Where-Object { -not $_.dir }).Count) { return @() }
-  @($s | ForEach-Object { "$($_.dir)".Replace('\', '/').Trim('/') } | Select-Object -Unique)
-}
-function Invoke-MigPy([string]$e, [string[]]$a) {
-  $errF = LogFile $e 'migrations'
-  $out = & (Get-Python) -X utf8 $KitCmd.devtools migrations @a 2>> $errF
-  if ($LASTEXITCODE) { throw "devtools.py migrations $($a[0]) failed (exit $LASTEXITCODE): $((Get-Content $errF -Tail 3) -join ' | ')" }
-  ($out -join "`n") | ConvertFrom-Json -AsHashtable
-}
-function Get-MigClass([string]$e, $r, [string]$sha) {
-  try {
-    $cf = MigCfgFile $e
-    $s12 = if ($sha.Length -ge 12) { $sha.Substring(0, 12) } else { $sha }
-    $cfBase = [IO.Path]::GetFileNameWithoutExtension($cf); $cf7 = if ($cfBase.Length -ge 7) { $cfBase.Substring(7) } else { $cfBase }
-    $d = Join-Path (MigRoot $e) "$($r.name)/$s12-$cf7"
-    $m = Join-Path $d 'manifest.json'
-    if (-not (Test-Path $m)) {
-      $a = @('classify', '--repo', $r.cfg.checkout, '--base', "origin/$($r.target)", '--head', $sha, '--config', $cf, '--save', $d)
-      $u = MigUnder $e $r.name; if ($u.Count) { $a += @('--under', ($u -join ',')) }
-      $null = Invoke-MigPy $e $a
-    }
-    $j = Get-Content $m -Raw | ConvertFrom-Json -AsHashtable
-  } catch { return @{ class = 'heavy'; effective = 'heavy'; why = @("classification failed: $("$_".Split("`n")[0])"); count = 0; manifest = $null; ids = @() } }
-  if ($j.class -eq 'none') { return $null }
-  $eff = $j.class; $why = @($j.reasons)
-  if ($eff -eq 'light' -and ((MigMode $e) -ne 'classify' -or (-not (Get-EnvCfg $e).db.rollback -and @($j.changesets | Where-Object { -not $_.x -or ($_.x.tool -eq 'sql' -and -not (MigCfg $e).exec) }).Count))) {
-    $eff = 'heavy'; $why = @('no revert command (db.rollback, a tool preset, migrations.exec) or mode snapshot: LIGHT is handled as HEAVY') }
-  @{ class = $j.class; effective = $eff; why = $why; count = @($j.changesets).Count; manifest = $m; ids = @($j.changesets | ForEach-Object { "$($_.file)::$($_.id)" }) }
-}
-function MigText($mc) {
-  if (-not $mc) { return '' }
-  if ($mc.effective -eq 'light') { "MIGRATIONS LIGHT ($($mc.count) changeSets: no snapshot, exact revert when the layer leaves)" }
-  else { "MIGRATIONS HEAVY ($(@($mc.why)[0])$(if (@($mc.why).Count -gt 1) { " +$(@($mc.why).Count - 1) more" }))" }
-}
-function LayerLight($l) { [bool]($l.migrations -and $l.mclass -and $l.mclass.effective -eq 'light' -and $l.mclass.manifest) }
-function Get-MigRevertPlan([string]$e, [string]$rn, [object[]]$leaving, [object[]]$staying, [string]$wt, [string]$tag) {
-  $out = Join-Path (MigRoot $e) "$rn/revert-$tag"
-  Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
-  Get-ChildItem (Split-Path $out) -Directory -Filter 'revert-*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-  $a = @('plan', '--config', (MigCfgFile $e), '--out', $out, '--leaving', (@($leaving | ForEach-Object { $_.mclass.manifest }) -join ','))
-  $st = @($staying | Where-Object { $_.mclass.manifest }); if ($st.Count) { $a += @('--staying', (@($st | ForEach-Object { $_.mclass.manifest }) -join ',')) }
-  if ($wt) { $a += @('--repo', $wt) }
-  $p = Invoke-MigPy $e $a
-  $p.branches = @($leaving.branch); $p.tag = @($leaving | ForEach-Object { $_.mtag } | Where-Object { $_ })[0]
-  $rw = "$((EnvRepos $e)[$rn].wt)"; $cd = if ($KitIsWindows) { 'cd /d' } else { 'cd' }
-  $p.vars = @{ manifest = $p.manifest; count = $p.count; searchPath = $p.searchPath; changelog = $p.changelog; tag = "$($p.tag)"; repo = $rn; repoWt = $rw; branch = ($p.branches -join ','); hook = $p.hook
-    commands = (@($p.commands | ForEach-Object { "$cd `"$(if ($rw) { Join-Path $rw $_.cwd } else { $_.cwd })`" && $($_.cmd)" }) -join ' && ') }
-  $p.cmd = if ($p.count) { Get-HookCmd $e 'rollback' $p.vars } else { $null }
-  $p
-}
-function Invoke-MigRevertPlan([string]$e, $p) {
-  if (-not $p.count) { return $null }
-  $err = Invoke-Hook $e 'rollback' $p.vars
-  if ($err) { return $err }
-  if (-not (Get-EnvCfg $e).db.applied) { return $null }
-  $err = Invoke-Hook $e 'applied' $p.vars
-  if ($err) { return "revert ran, check failed: $err" }
-  $left = @($p.revert | Where-Object { $k = "$($_.file)::$($_.id)::$($_.author)"; @($script:HookOut | Where-Object { "$_".Contains($k) }).Count })
-  if ($left.Count) { return "revert ran but db.applied still lists $(@($left | ForEach-Object { "$($_.file)::$($_.id)" }) -join ', ')" }
+# the Liquibase CLI (extra liquibase) in $dir on each schema; -Out: stdout of the first schema to that file -> $null or the error
+function Invoke-EnvLiquibase([string]$e, [string]$dir, [string[]]$schemas, [string]$verb, [string]$out) {
+  $db = (Get-EnvCfg $e).db; $v = EnvVars $e ([pscustomobject]@{})
+  if ($db.passwordEnv -and $v[[string]$db.passwordEnv]) { $v['LIQUIBASE_COMMAND_PASSWORD'] = $v[[string]$db.passwordEnv] }
+  $done = @()
+  foreach ($sc in $schemas) {
+    $cmd = Get-LiquibaseCmd $dir ("$($db.jdbc)".Replace('{schema}', $sc)) "$($db.user)" $verb
+    if (-not $cmd) { return "liquibase: no master changelog under $dir or no liquibase CLI on PATH" }
+    $log = LogFile $e 'db'; Add-Content $log "== $(Now) liquibase $verb ($sc)"
+    $redir = if ($out) { " > `"$out`"" } else { '' }
+    $code = Invoke-Shell "$cmd$redir" $log $v 1800
+    if ($code) { return "liquibase $verb on $sc failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')$(if ($done.Count) { "; PARTLY: already done on $($done -join ', ')" })" }
+    $out = ''; $done += $sc
+  }
   $null
 }
-function MigPlanText($p) {
-  if (-not $p) { return '' }
-  if ($p.blocked.Count) { return "revert blocked: $(@($p.blocked | ForEach-Object { "$($_.key) uses $(@($_.uses) -join ', ')" }) -join '; ')" }
-  if (-not $p.count) { return "nothing to revert ($(@($p.kept).Count) changeSets stay in the release)" }
-  "revert $($p.count) changeSets newest first ($(@($p.revert | Select-Object -First 4 | ForEach-Object { "$($_.file | Split-Path -Leaf)::$($_.id)" }) -join ', ')$(if ($p.count -gt 4) { ', ...' })): $(if ($p.cmd) { $p.cmd } else { 'no db.rollback hook' })"
+# the dir of the first service whose folder holds a Liquibase master (tags and rollbacks run there)
+function LiquibaseDir([string]$e) { @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { SvcDir $e $_ } catch { } } | Where-Object { $_ -and (Get-LiquibaseMaster $_) })[0] }
+# before a release's migrations run: the slices of every touched table in every env schema -> the mark's slices
+function Save-Slices([string]$e, [string]$mark, [hashtable]$byRepo) {
+  $items = @($byRepo.Values | ForEach-Object { @($_.items) } | Where-Object { $_ }); $unknown = @($byRepo.Keys | Where-Object { $byRepo[$_].unknown })
+  $dir = Join-Path (MigRoot $e) $mark; Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+  $spec = @(foreach ($s in EnvSchemas $e) { foreach ($i in $items) { @{ schema = $s; table = $i.table; kind = $i.kind; columns = @($i.columns) } } })
+  $res = @{ dir = $dir; bytes = 0; unknown = $unknown; tables = @($items | ForEach-Object table | Select-Object -Unique); objects = $true }
+  New-Item -ItemType Directory -Force $dir | Out-Null; $sf = Join-Path $dir 'spec.json'; ConvertTo-Json -InputObject @($spec) -Depth 5 | Set-Content $sf -Encoding utf8
+  $j = Invoke-DbFb $e 'slice' @('--spec', $sf, '--out', $dir, '--objects', (@(EnvSchemas $e) -join ',')) -Fail; $res.bytes = [long]$j.bytes; $res.noPk = @($j.noPk)   # + view / routine / trigger / event definitions
+  Update-State $e { param($x) foreach ($m in @($x.marks)) { if ($m -and $m.name -eq $mark) { $m.slices = $res } } }
+  $res
 }
-function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch) {
+function Remove-MarkSlices([string]$e, [string[]]$names) { foreach ($n in $names) { if ($n) { Remove-Item (Join-Path (MigRoot $e) $n) -Recurse -Force -ErrorAction SilentlyContinue } } }
+function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]$Base) {   # -Base: a target commit (restore), else origin/<target>
   Ensure-Worktree $e $r
   Sync-DepLinks $e $r
   $d = $r.wt
@@ -405,13 +384,13 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch) {
   $dirty = @(git -C $d status --porcelain --untracked-files=no)
   if ($dirty.Count) { Write-Host "[$e] $d had $($dirty.Count) uncommitted edits: discarded (the env worktree is never edited by hand)"; G $d reset -q --hard HEAD | Out-Null }
   if (-not $NoFetch) { G $d fetch -q origin $r.target | Out-Null }
-  G $d reset -q --hard "origin/$($r.target)" | Out-Null
+  $tref = if ($Base) { $Base } else { "origin/$($r.target)" }; G $d reset -q --hard $tref | Out-Null
   $base = "$(git -C $d rev-parse HEAD)".Trim()
   $kept = @(); $dropped = @(); $nh = NoHooksDir
   foreach ($l in $layers) {
     $sha = if ($l.sha -and $(git -C $d cat-file -e "$($l.sha)^{commit}" 2>$null; $LASTEXITCODE -eq 0)) { $l.sha } else { Resolve-Ref $d $l.branch }
     if (-not $sha) { $dropped += @{ layer = $l; why = 'branch and commit gone' }; continue }
-    git -C $d merge-base --is-ancestor $sha "origin/$($r.target)" 2>$null
+    git -C $d merge-base --is-ancestor $sha $tref 2>$null
     if ($LASTEXITCODE -eq 0) { $dropped += @{ layer = $l; why = "merged into $($r.target)" }; continue }
     $out = git -C $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost merge -q --no-ff --no-edit -m "localenv layer $($l.branch) ($($l.agent))" $sha 2>&1
     if ($LASTEXITCODE) {
@@ -454,7 +433,7 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
   $out
 }
 
-# ---- hooks: db snapshot / restore / prune, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
+# ---- hooks: db query / exec / rollback / applied / tag, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
 # a shell command, time-bounded (lib Invoke-KitExe kills the tree), output appended to $log and kept in $script:ShellOut; -1 = timed out
 $script:Misconfigured = @(64, 127, 9009)   # usage error / command not found (sh, cmd): fail fast, never retried
 function Invoke-Shell([string]$cmd, [string]$log, $vars, [int]$TimeoutSec = 1800) {
@@ -476,8 +455,7 @@ function HookTimeout([string]$e, [string]$name) {
 }
 function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $db = (Get-EnvCfg $e).db
-  $cmd = @($(if ($db.$name -and ($name -ne 'rollback' -or $vars.hook -ne 0)) { Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }),
-    $(if ($name -eq 'rollback') { $vars.commands }) | Where-Object { $_ }) -join ' && '
+  $cmd = if ($db.$name) { Expand-Placeholders ([string]$db.$name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' }
   if (-not $cmd) { return $null }
   foreach ($k in $vars.Keys) { $cmd = $cmd.Replace("{$k}", "$($vars[$k])") }
   $cmd
@@ -502,6 +480,17 @@ function Test-Smoke([string]$e) {
         $u = Expand-Placeholders ([string]$c.url) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $want = if ($c.status) { [string]$c.status } else { '^[23]\d\d$|^401$|^403$' }
         try { $r = Invoke-WebRequest $u -ConnectionTimeoutSeconds 15 -OperationTimeoutSeconds 30 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; if ("$($r.StatusCode)" -match $want) { $why = $null } else { $why = "$u returned $($r.StatusCode)" } } catch { $why = "$u : $($_.Exception.Message)" }
+      } elseif ($c.login) {   # POST login.body (JSON; ${VAR} = env file values) to login.url: a token in the reply passes; login.get: then a GET with it
+        $lv = EnvVars $e ([pscustomobject]@{}); $none = [pscustomobject]@{ port = '' }
+        $x = { param($t) [regex]::Replace((Expand-Placeholders "$t" $e $none $KitConf.Workspace ''), '\$\{(\w+)\}', { param($mm) "$($lv[$mm.Groups[1].Value])" }) }
+        $body = [ordered]@{}; foreach ($pp in @($c.login.body.PSObject.Properties)) { $body[$pp.Name] = if ($pp.Value -is [string]) { & $x $pp.Value } else { $pp.Value } }
+        $u = & $x $c.login.url
+        try {
+          $r = Invoke-RestMethod $u -Method Post -Body ($body | ConvertTo-Json -Compress) -ContentType 'application/json' -TimeoutSec 30 -SkipCertificateCheck
+          $tok = @($(if ($c.login.token) { $r.$($c.login.token) } else { $r.id_token; $r.access_token; $r.token }) | Where-Object { $_ })[0]
+          $why = if (-not $tok) { "$u : login returned no token" } else { $null }
+          if ($tok -and $c.login.get) { $null = Invoke-RestMethod (& $x $c.login.get) -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 30 -SkipCertificateCheck }
+        } catch { $why = "$u : $($_.Exception.Message)" }
       } elseif ($c.cmd) {
         $cmd = Expand-Placeholders ([string]$c.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace ''
         $slog = LogFile $e 'smoke'; Remove-Item $slog -ErrorAction SilentlyContinue
@@ -516,23 +505,188 @@ function Test-Smoke([string]$e) {
   }
   $null
 }
-# snapshot retention: db.prune ({keepDays}; {keep} = a regex of names never pruned, default baseline); also forgets older state
-# snapshots and the retired migration sandboxes' logs and wrappers
-function Invoke-Prune([string]$e, [double]$days = -1) {
-  $db = (Get-EnvCfg $e).db
-  if ($days -lt 0) { $days = [double]$(if ($null -ne $db.keepDays) { $db.keepDays } else { 7 }) }
-  $keep = if ($db.keep) { [string]$db.keep } else { 'baseline' }
-  if ($db.prune) {
-    $err = Invoke-Hook $e 'prune' @{ keepDays = $days; keep = $keep }
-    if ($err) { "[$e] prune: $err" } else { "[$e] prune: snapshots older than $days day(s) removed, names matching '$keep' kept$(if (@($script:HookOut).Count) { ": $(@($script:HookOut) -join ' | ')" })" }
-  } else { "[$e] prune: no db.prune hook (envs.$e.db.prune): no snapshot removed" }
-  Update-State $e { param($x) $x.snapshots = @(@($x.snapshots) | Where-Object { $_ -and ("$($_.name)" -match $keep -or ((Get-Date) - [datetime]$_.at).TotalDays -lt $days) }); $x.prunedAt = (Now) }
-  $sb = "^$([regex]::Escape($e))-sb\d+-"
-  $old = @(Get-ChildItem (Get-KitPath localenv-logs -Create) -File -ErrorAction SilentlyContinue | Where-Object Name -match $sb) +
-    @(Get-ChildItem (Join-Path (Get-KitPath localenv -Create) 'run') -ErrorAction SilentlyContinue | Where-Object Name -match $sb) +
-    @(Get-ChildItem (Join-Path (Get-KitPath localenv -Create) "run/$e") -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^sb\d+-')
-  if ($old.Count) { $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; "[$e] prune: removed $($old.Count) leftover(s) of retired migration sandboxes" }
-  Event $e 'prune' @{ days = $days; keep = $keep }
+# ---- marks: a named binlog position + the code live then (zero bytes); restore = the row changes after it flashed back, the
+# migrations recorded after it rolled back, its code started (db.engine mysql / mariadb: extra db-engine-presets)
+$script:MarkMax = [int](Opt 'marks.max' 60)   # TODO-PARAM (fixed default)
+function MarksOn([string]$e) { [bool](Get-Command Test-DbMarks -ErrorAction SilentlyContinue) -and (Test-DbMarks $e) }
+# the env's schemas: db.schemas (names) + db.schemasQuery (one name per row), else db.name
+function EnvSchemas([string]$e) {
+  $db = (Get-EnvCfg $e).db; $s = @($db.schemas | Where-Object { $_ } | ForEach-Object { "$_" })
+  if ($db.schemasQuery) { $s += @(Invoke-DbSql $e ([string]$db.schemasQuery) | ForEach-Object { $_[0] }) }
+  if (-not $s.Count -and $db.name) { $s = @("$($db.name)") }
+  @($s | Where-Object { $_ } | Select-Object -Unique)
+}
+# kind: release | use | owner | baseline; $repos = the code it stands for (default: the live release)
+function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$release = -1) {
+  if (-not (MarksOn $e)) { return $null }
+  $pos = Get-DbPos $e; $name = ConvertTo-KitSlug $name
+  Update-State $e { param($x)
+    $code = if ($repos) { $repos } else { $x.release.repos }
+    $m = @{ name = $name; kind = $kind; at = (Now); pos = $pos; release = $(if ($release -ge 0) { $release } else { [int]$x.release.n }); repos = ($code | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) }
+    $all = @(@($x.marks) | Where-Object { $_ -and $_.name -ne $name }) + @($m)
+    $x.marks = @(@($all | Where-Object { $_.kind -ne 'baseline' } | Select-Object -Last $script:MarkMax) + @($all | Where-Object kind -eq 'baseline' | Select-Object -Last 2) | Sort-Object { [datetime]$_.at })
+  }
+  Event $e 'mark' @{ name = $name; kind = $kind; pos = $pos }
+  $name
+}
+# daily: marks whose binlog file is gone expire; the binlog retention is kept for status and doctor
+function Update-Marks([string]$e) {
+  if (-not (MarksOn $e)) { return }
+  $logs = @(Get-DbBinlogs $e); $sec = [double]@(Invoke-DbSql $e "SHOW GLOBAL VARIABLES LIKE 'binlog_expire_logs_seconds'")[0][1]; $o = @{ gone = @() }
+  Update-State $e { param($x)
+    $o.gone = @(@($x.marks) | Where-Object { $_ -and ($_.pos -split ':(?=\d+$)')[0] -notin $logs })
+    if ($o.gone.Count) { $x.expiredMarks = @(@($x.expiredMarks) + @($o.gone.name) | Where-Object { $_ } | Select-Object -Last 10); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $o.gone.name }) }
+    $x.undone = @(@($x.undone) | Where-Object { $_ -and (($_ -split '~')[1] -split ':(?=\d+$)')[0] -in $logs })
+    $x.binlog = @{ days = [math]::Round($sec / 86400, 1); oldest = $logs[0]; checkedAt = (Now) }
+  }
+  "[$e] marks: $(@((Read-State $e).marks).Count) kept$(if ($o.gone.Count) { ", expired (binlog gone): $(@($o.gone.name) -join ', ')" }); the binlog keeps $([math]::Round($sec / 86400, 1)) d"
+}
+function Find-Mark($st, [string]$mark, [int]$release) {
+  $n = if ($mark) { ConvertTo-KitSlug $mark } else { "release-$release" }
+  $m = @($st.marks | Where-Object { $_ -and $_.name -eq $n })[0]
+  if (-not $m) { throw "no mark $n$(if ($n -in @($st.expiredMarks)) { ' (expired: its binlog is gone)' }) - marks: $(@($st.marks | Where-Object { $_ } | ForEach-Object name) -join ', ')" }
+  $m
+}
+# what a restore to mark $m changes (read-only): the row flashback plan, the tables whose structure changed (binlog DDL) and how
+# each comes back (the slices of a mark at or after $m taken before that DDL; created after $m: dropped; renamed: renamed back)
+function Get-RestorePlan([string]$e, $m, [string[]]$schemas, [string]$tag) {
+  $st = Read-State $e; $to = Get-DbPos $e
+  $p = Invoke-DbFlashback $e -From $m.pos -To $to -Schemas $schemas -Skip @($st.undone)
+  $p.to = $to; $p.steps = @(); $p.drops = @(); $p.objects = @(); $p.objectDrops = @(); $p.renames = @(@($p.ddl | Where-Object { $_.kind -eq 'rename' }) | Sort-Object { DbPosKey $_.at } -Descending)
+  $p.fallback = @($p.fallback | Where-Object { $_ })
+  $later = @($st.marks | Where-Object { $_ -and $_.slices -and -not (Test-DbPosBefore $_.pos $m.pos) } | Sort-Object { DbPosKey $_.pos })
+  $first = @{}; foreach ($d in @($p.ddl | Where-Object { $_.table -and $_.kind -ne 'object' })) { $k = "$($d.schema).$($d.table)"; if (-not $first[$k]) { $first[$k] = $d } }
+  # views / routines / triggers / events changed after the mark: back to the oldest later mark's definitions, else dropped when created after it
+  $objFirst = [ordered]@{}; foreach ($d in @($p.ddl | Where-Object { $_.kind -eq 'object' -and $_.table -notlike 'kit_cg_*' })) { $k = "$($d.object):$($d.schema).$($d.table)"; if (-not $objFirst[$k]) { $objFirst[$k] = $d } }
+  $objBy = [ordered]@{}
+  foreach ($k in $objFirst.Keys) {
+    $d = $objFirst[$k]; $mk = @($later | Where-Object { $_.slices.objects -and -not (Test-DbPosBefore $d.at $_.pos) })[0]
+    if ($mk) { if (-not $objBy[$mk.name]) { $objBy[$mk.name] = @{ mark = $mk.name; dir = $mk.slices.dir; names = @() } }; $objBy[$mk.name].names += $k }
+    elseif ($d.op -eq 'CREATE' -and $d.sql -notmatch '(?i)^\s*CREATE\s+OR\s+REPLACE') { $p.objectDrops = @($p.objectDrops) + $k }
+    else { $p.warnings = @($p.warnings) + "$k : changed after the mark ($($d.op) at $($d.at)) and no mark kept its definition: left as it is now" }
+  }
+  $p.objects = @($objBy.Values)
+  $cover = @{}
+  foreach ($k in $first.Keys) {
+    $d = $first[$k]; $tb = ($k -split '\.', 2)[1]
+    $mk = @($later | Where-Object { $tb -in @($_.slices.tables) -and -not (Test-DbPosBefore $d.at $_.pos) })[0]   # the oldest mark kept before that DDL
+    if ($mk) { $cover[$k] = $mk.name; continue }
+    if ($d.kind -eq 'create') { $p.drops = @($p.drops) + $k; continue }
+    if (@($p.renames | Where-Object { $_.to -eq $k }).Count) { continue }   # renamed into place: renamed back
+    $why = @($later | Where-Object { -not (Test-DbPosBefore $d.at $_.pos) -and @($_.slices.unknown).Count } | ForEach-Object { "$($_.name): the migrations' tables were not found" })
+    $p.fallback = @(@($p.fallback | Where-Object { $_.table -ne $k }) + @{ table = $k; why = "structure changed after the mark ($($d.kind) at $($d.at)) and no mark kept its slice$(if ($why) { " ($($why -join '; '))" }): it keeps today's structure" })
+  }
+  foreach ($mk in @($later | Sort-Object { DbPosKey $_.pos } -Descending)) {   # newest first: each step = the structure at that mark
+    $tabs = @(foreach ($k in @($cover.Keys | Sort-Object)) {
+        if (($k -split '\.', 2)[1] -notin @($mk.slices.tables)) { continue }
+        $after = @($p.ddl | Where-Object { "$($_.schema).$($_.table)" -eq $k -and -not (Test-DbPosBefore $_.at $mk.pos) })
+        if ($after.Count) { $k }
+      })
+    if ($tabs.Count) { $p.steps = @($p.steps) + @{ mark = $mk.name; dir = $mk.slices.dir; tables = $tabs } }
+  }
+  $p.bytes = [long](@($later | ForEach-Object { [long]$_.slices.bytes }) | Measure-Object -Sum).Sum
+  $p
+}
+function RestorePlanText($p) {
+  $t = @($p.tables.Keys | Sort-Object | ForEach-Object { $c = $p.tables[$_]; "  $_ : $($c.insert) insert(s) -> delete, $($c.update) update(s) -> back, $($c.delete) delete(s) -> back in" })
+  @("rows: $($p.statements) change(s) undone in $(@($p.tables.Keys).Count) table(s)") + $t +
+    @($p.renames | ForEach-Object { "structure: $($_.to) renamed back to $($_.schema).$($_.table)" }) +
+    @($p.steps | ForEach-Object { "structure: $(@($_.tables) -join ', ') back to mark $($_.mark) (its CREATE text + slices)" }) +
+    @($p.drops | ForEach-Object { "structure: $_ dropped (created after the mark)" }) +
+    @($p.objects | ForEach-Object { "objects: $(@($_.names) -join ', ') back to mark $($_.mark)" }) + @($p.objectDrops | ForEach-Object { "objects: $_ dropped (created after the mark)" }) +
+    @($p.fallback | ForEach-Object { "FALLBACK $($_.table) : $($_.why) -> seed" }) +
+    @($p.warnings | ForEach-Object { "WARN $_" }) + @($p.refused | ForEach-Object { "REFUSED $_" })
+}
+# the DB part of a restore (writers stopped by the caller): [db.rollback, opt-in] renames back, structure per mark newest first,
+# created tables dropped, object definitions back, the row flashback; tables it cannot bring back exactly -> $script:RestoreFallback
+# (Invoke-RestoreFallback seeds them); the range is recorded undone and the marks inside it dropped; $null = ok
+function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
+  $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ })
+  $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
+  foreach ($x in $ev) { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` DISABLE" }   # no writer while it runs
+  try {
+    if ($UseTool -or "$($db.restoreVia)" -eq 'tool-then-kit') {
+      if (-not $db.rollback) { return 'restoreVia tool-then-kit needs db.rollback' }
+      $err = if ("$($db.rollback)" -eq 'liquibase' -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) { Invoke-EnvLiquibase $e (LiquibaseDir $e) @(LiquibaseSchemas $e) "rollback --tag=release-$($m.release)" }
+        else { Invoke-Hook $e 'rollback' @{ mark = $m.name; release = "$($m.release)"; tag = "release-$($m.release)" } }
+      if ($err) { return $(if ($err -match '; PARTLY: ') { "db.rollback failed part way (the DB is partly rolled back; restore again or seed): $err" } else { "db.rollback failed, the DB is unchanged by the kit: $err" }) }
+    }
+    foreach ($r in @($plan.renames)) { try { $null = Invoke-DbSql $e "RENAME TABLE ``$(($r.to -split '\.', 2) -join '`.`')`` TO ``$($r.schema)``.``$($r.table)``" } catch { } }
+    foreach ($s in @($plan.steps)) {
+      $j = Invoke-DbFb $e 'structure' @('--dir', $s.dir, '--tables', (@($s.tables) -join ','), '--apply')
+      $script:RestoreFallback += @($j.fallback | Where-Object { $_ })
+      if ($j.error -or -not $j.verified) { return "structure back to mark $($s.mark) failed: $(if ($j.error) { $j.error } else { "still differs: $(@($j.differs) -join ', ')" })" }
+    }
+    foreach ($k in @($plan.drops)) { $null = Invoke-DbSql $e "DROP TABLE IF EXISTS ``$(($k -split '\.', 2) -join '`.`')``" }
+    foreach ($k in @($plan.objectDrops)) { $t, $n = $k -split ':', 2; $null = Invoke-DbSql $e "DROP $t IF EXISTS ``$(($n -split '\.', 2) -join '`.`')``" }
+    foreach ($o in @($plan.objects)) { $null = Invoke-DbFb $e 'objects' @('--dir', $o.dir, '--names', (@($o.names) -join ','), '--apply') -Fail }
+    $ex = @($script:RestoreFallback | ForEach-Object table)
+    try { $fb = Invoke-DbFlashback $e -From $m.pos -To $plan.to -Schemas $schemas -Skip @($st.undone) -Exclude $ex -Apply } catch { return "row flashback failed: $("$_".Split("`n")[0])" }
+    $script:RestoreFallback += @($fb.fallback | Where-Object { $_ -and $_.table -notin $ex })
+    if (@($fb.refused).Count) { return "row flashback refused: $(@($fb.refused | Select-Object -First 3) -join '; ')" }
+    if (-not $fb.applied) { return "row flashback failed: $($fb.error)" }
+  } finally {
+    foreach ($x in $ev) { try { $null = Invoke-DbSql $e "ALTER EVENT ``$($x[0])``.``$($x[1])`` ENABLE" } catch { } }
+    $end = Get-DbPos $e
+    $gone = @()
+    Update-State $e { param($x) $x.undone = @(@($x.undone | Where-Object { $_ }) + "$($m.pos)~$end"); $script:goneMarks = @(@($x.marks) | Where-Object { $_ -and (Test-DbPosBefore $m.pos $_.pos) } | ForEach-Object name); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $script:goneMarks }) }
+    Remove-MarkSlices $e $script:goneMarks
+    Event $e 'restore-db' @{ mark = $m.name; end = $end; fallback = @($script:RestoreFallback | ForEach-Object table) }
+  }
+  $null
+}
+# the tables a restore could not bring back exactly: the seed items that name them (seed item tables), else the whole seed -> a note
+function Invoke-RestoreFallback([string]$e) {
+  $t = @($script:RestoreFallback | ForEach-Object table | Select-Object -Unique); if (-not $t.Count) { return $null }
+  $script:SeedBad = $false
+  $out = try { @(Invoke-Seed $e -Tables $t) } catch { @("seed failed: $("$_".Split("`n")[0])"); $script:SeedBad = $true }
+  "fallback (not restored exactly, seeded): $(@($script:RestoreFallback | ForEach-Object { "$($_.table) ($($_.why))" }) -join '; ') -> seed $(if ($script:SeedBad) { 'NOT green' } else { 'green' }): $(@($out | Select-Object -First 1))"
+}
+
+# ---- seed: the env's baseline data, declared in envs.<env>.seed (JSON { "items": [ { name, check: { sql, expect } | { cmd }, create:
+# { cmd }, how, needs: [names] } ] }; default <state>/localenv/<env>.seed.json); every create is idempotent through its check
+function SeedFile([string]$e) { $f = (Get-EnvCfg $e).seed; if ($f) { Expand-Placeholders ([string]$f) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '' } else { Join-Path (Get-KitPath localenv-env) "$e.seed.json" } }
+# -> ok | missing | drift (the value differs from expect) | error
+function Test-SeedItem([string]$e, $it) {
+  $log = LogFile $e 'seed'
+  if ($it.check.cmd) {
+    $code = Invoke-Shell (Expand-Placeholders ([string]$it.check.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') $log (EnvVars $e ([pscustomobject]@{})) 120
+    return @{ state = $(switch ($code) { 0 { 'ok' } 1 { 'missing' } default { 'error' } }); got = "exit $code" }
+  }
+  if (-not $it.check.sql) { return @{ state = 'error'; got = 'no check' } }
+  $err = Invoke-Hook $e 'query' @{ sql = [string]$it.check.sql }
+  if ($err) { return @{ state = 'error'; got = $err } }
+  $v = "$(@($script:HookOut | Where-Object { "$_".Trim() })[0])".Trim()
+  $want = if ($it.check.expect) { [string]$it.check.expect } else { '^[1-9]\d*$' }
+  @{ state = $(if (-not $v -or $v -eq '0') { 'missing' } elseif ($v -notmatch $want) { 'drift' } else { 'ok' }); got = $v }
+}
+# -Tables (a restore's fallback): only the items whose tables name one of them (schema.table or table) and what they need; none named: all
+function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
+  $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
+  $items = @((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).items | Where-Object { $_ })
+  if ($Tables) {
+    $short = @($Tables | ForEach-Object { ($_ -split '\.', 2)[-1] })
+    $pick = @($items | Where-Object { @($_.tables | Where-Object { $_ -in $Tables -or $_ -in $short }).Count } | ForEach-Object name)
+    for ($i = 0; $i -lt 10; $i++) { $pick = @($pick + @($items | Where-Object { $_.name -in $pick } | ForEach-Object { @($_.needs) }) | Where-Object { $_ } | Select-Object -Unique) }   # TODO-PARAM (fixed default)
+    if ($pick.Count) { $items = @($items | Where-Object { $_.name -in $pick }) }
+  }
+  $res = [ordered]@{}; $lines = [Collections.Generic.List[string]]::new()
+  foreach ($it in $items) {
+    $blocked = @($it.needs | Where-Object { $_ -and $res[$_] -ne 'ok' })
+    $r = if ($blocked.Count) { @{ state = 'blocked'; got = "needs $($blocked -join ', ')" } } else { Test-SeedItem $e $it }
+    if (-not $Check -and $r.state -eq 'missing' -and $it.create.cmd) {
+      $code = Invoke-Shell (Expand-Placeholders ([string]$it.create.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'seed') (EnvVars $e ([pscustomobject]@{})) 600
+      $r = if ($code) { @{ state = 'error'; got = "create $(Get-ShellWhy $code): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } } else { $x = Test-SeedItem $e $it; $x.created = $true; $x }
+    }
+    $res[[string]$it.name] = $r.state
+    $lines.Add(('  {0,-8} {1}{2}' -f $r.state.ToUpper(), $it.name, $(if ($r.created) { ' (created)' } elseif ($r.state -ne 'ok') { " - $($r.got)$(if ($r.state -eq 'missing' -and -not $it.create.cmd -and $it.how) { "; how: $($it.how)" })" })))
+  }
+  $bad = @($res.Keys | Where-Object { $res[$_] -ne 'ok' })
+  if (-not $Tables) { Update-State $e { param($x) $x.seed = @{ at = (Now); ok = (-not $bad.Count); missing = @($bad | Where-Object { $res[$_] -in 'missing', 'blocked' }); drift = @($bad | Where-Object { $res[$_] -in 'drift', 'error' }) } } }
+  Event $e 'seed' @{ check = [bool]$Check; bad = $bad }
+  "[$e] seed$(if ($Check) { ' -Check' })$(if ($Tables) { " ($(@($items).Count) item(s) for $($Tables -join ', '))" }): $($items.Count - $bad.Count)/$($items.Count) ok ($f)"; $lines
+  if (-not $bad.Count -and -not $Check -and -not $Tables) { $n = New-Mark $e "baseline-$(Get-Date -Format yyyy-MM-dd)" 'baseline'; if ($n) { "[$e] mark ${n}: restore -Mark $n brings the env back to this seed" } }
+  if ($bad.Count) { $script:SeedBad = $true }
 }
 
 # ---- processes: CPU load, port owners, service processes
@@ -826,6 +980,7 @@ function Run-Train {
   $st = Read-State $e
   if (-not $st.train -or $st.train.id -ne $Train) { "[$e] train $Train is not the env's current train: nothing to do"; return }
   $reqs = @($st.requests | Where-Object { $_.id -in @($st.train.requests) })
+  if ($reqs.Count -eq 1 -and $reqs[0].kind -eq 'restore') { Run-Restore $st $reqs[0]; return }
   $own = @($reqs.agent | Where-Object { $_ } | Select-Object -Unique)
   $envRepos = EnvRepos $e
   $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
@@ -836,8 +991,8 @@ function Run-Train {
   foreach ($r in $reqs) {
     switch ($r.kind) {
       'deploy' { foreach ($rn in @($r.shas.Keys)) {
-          $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; mclass = $(if ($r.mclass) { $r.mclass[$rn] }); request = $r.id }
-          if ($l.migrations) { $migNote[$r.id] = "$rn $(MigText $(if ($l.mclass) { $l.mclass } else { @{ effective = 'heavy'; why = @('not classified') } }))" }
+          $l = @{ branch = $r.branch; agent = $r.agent; sha = $r.shas[$rn]; at = $r.at; migrations = [bool]$r.migrations[$rn]; request = $r.id }
+          if ($l.migrations) { $migNote[$r.id] = "$rn MIGRATIONS: they change the shared DB$(if (MarksOn $e) { ' (the release mark keeps what their DDL destroys: restore -Release undoes them)' })" }
           $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }) + @($l); if (-not $affected.Contains($rn)) { $affected.Add($rn) }; $byBranch["$rn|$($r.branch)"] = $r.id } }
       'drop' { foreach ($rn in $envRepos.Keys) { if (@($want[$rn].branch) -contains $r.branch) { $want[$rn] = @($want[$rn] | Where-Object { $_.branch -ne $r.branch }); if (-not $affected.Contains($rn)) { $affected.Add($rn) } } } }
       'refresh' { foreach ($rn in $envRepos.Keys) { if (-not $affected.Contains($rn)) { $affected.Add($rn) } } }
@@ -865,7 +1020,7 @@ function Run-Train {
     foreach ($d in $res.dropped) {
       $rid = $byBranch["$rn|$($d.layer.branch)"]
       if ($rid -and (& $isNew $d.layer)) { $results[$rid] = @{ outcome = 'refused'; message = "$rn : $($d.why)" } }
-      else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if (LayerLight $d.layer) { ' - its LIGHT migrations are reverted with this release' } elseif ($d.layer.migrations) { ' - it had HEAVY migrations: the local DB keeps them' })") }
+      else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if ($d.layer.migrations) { " - the DB keeps its migrations$(if ((MarksOn $e) -and $d.layer.since) { " (restore -Release $($d.layer.since) undoes them)" })" })") }
     }
     $kept = @($res.kept); $targetSha = $res.targetSha
     $live = $st.release.repos[$rn]
@@ -923,46 +1078,21 @@ function Run-Train {
   $switchNames = @($switch | ForEach-Object name)
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
   if ($switch.Count) { Phase 'waiting for leases (switch-over)' $block @($affected); Wait-Leases $e $block @() $own }
-  $reverts = @{}; $restores = @{}
+  $undo = { param($l) if ((MarksOn $e) -and $l.since) { " (localenv.ps1 restore -Env $e -Release $($l.since) undoes it)" } else { '' } }
   foreach ($rn in @($ok)) {
     $keepKeys = @($repoOut[$rn].layers | ForEach-Object { Key $_ })
-    foreach ($l in @($cur[$rn] | Where-Object { $_.migrations -and -not (LayerLight $_) -and (Key $_) -notin $keepKeys })) { $notes.Add("HEAVY migration layer $($l.branch) left $rn : the DB keeps its changes (no exact revert; restore a snapshot from before it to undo)") }
-    $leaving = @($cur[$rn] | Where-Object { (LayerLight $_) -and (Key $_) -notin $keepKeys })
-    if (-not $leaving.Count) { continue }
-    try { $p = Get-MigRevertPlan $e $rn $leaving @($repoOut[$rn].layers | Where-Object { $_.migrations -and $_.mclass }) $envRepos[$rn].wt $tag }
-    catch { $notes.Add("revert plan for $($leaving.branch -join ', ') in $rn failed, the DB keeps their changeSets: $("$_".Split("`n")[0])"); continue }
-    if ($p.blocked.Count) {
-      $since = [int](@($leaving | ForEach-Object { if ($_.since) { [int]$_.since } else { [int]$st.release.n } }) | Measure-Object -Minimum).Minimum
-      $sn = @($st.snapshots | Where-Object { $_ -and [int]$_.release -le $since }) | Select-Object -Last 1
-      if ($sn -and (Get-EnvCfg $e).db.restore) { $restores[$rn] = $sn.name; $notes.Add("$rn : $(MigPlanText $p) -> restoring snapshot $($sn.name) instead (the services re-apply the live layers' migrations on start)") }
-      else { $notes.Add("$rn : $(MigPlanText $p); no snapshot from before $($leaving.branch -join ', '): the DB keeps their changeSets") }
-      continue
-    }
-    if ($p.count -and -not $p.cmd) { $notes.Add("$rn : $(MigPlanText $p)"); continue }
-    if ($p.count) { $reverts[$rn] = $p; Phase "planned db revert in $rn : $($p.count) changeSets of $($leaving.branch -join ', ')" $block @($affected) }
+    foreach ($l in @($cur[$rn] | Where-Object { $_.migrations -and (Key $_) -notin $keepKeys })) { $notes.Add("migration layer $($l.branch) left $rn : the DB keeps its changes$(& $undo $l)") }
   }
-  $snap = $null
-  $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations }).Count })
-  $lightNew = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { LayerLight $_ }) })
-  if ($lightNew.Count) {
-    $notes.Add("LIGHT migration layers $(@($lightNew.branch) -join ', '): no snapshot; their changeSets are reverted exactly when they leave")
-    if ((Get-EnvCfg $e).db.tag) { $mt = "$e-$tag"; $err = Invoke-Hook $e 'tag' @{ tag = $mt }; if ($err) { $notes.Add("db.tag failed: $err") } else { foreach ($l in $lightNew) { $l.mtag = $mt } } }
-  }
-  $mig = @($migRepos | ForEach-Object { @($newLayers[$_] | Where-Object { $_.migrations -and -not (LayerLight $_) }) })
-  $migRepos = @($ok | Where-Object { @($newLayers[$_] | Where-Object { $_.migrations -and -not (LayerLight $_) }).Count })
-  if ($mig.Count -and (Get-EnvCfg $e).db.snapshot) {
-    Phase 'db snapshot (migration layers)' $block @($affected)
-    $snap = ConvertTo-KitSlug "$e-before-$tag-$(Get-Date -Format yyyy-MM-dd)"   # <tenant / env>-<purpose>-<date>, lowercase-kebab
-    $err = Invoke-Hook $e 'snapshot' @{ snapshot = $snap }
-    if ($err) { $notes.Add("db snapshot failed, release goes on without a restore point: $err"); $snap = $null }
-    else { Update-State $e { param($x) $x.snapshots = @(@($x.snapshots) + @(@{ name = $snap; at = (Now); release = $newN; layers = @($mig.branch) }) | Where-Object { $_ } | Select-Object -Last 10) } }
-  } elseif ($mig.Count) { $notes.Add("migration layers ($(@($mig.branch) -join ', ')) change the shared DB: no db.snapshot hook, no restore point") }
+  $relMark = $null
+  # repos whose release brings migrations: new layers with migrations, or a target that moved past migration files
+  $migRepos = @($ok | Where-Object { $rn = $_; @($newLayers[$rn] | Where-Object { $_.migrations }).Count -or ($st.release.repos[$rn].targetSha -and $st.release.repos[$rn].targetSha -ne $repoOut[$rn].targetSha -and (HasMigrations $envRepos[$rn].cfg.checkout $envRepos[$rn].target $st.release.repos[$rn].targetSha)) })
+  if ($migRepos.Count -and -not (MarksOn $e)) { $notes.Add("migrations in $($migRepos -join ', ') change the shared DB: no marks (db.engine mysql / mariadb), no way back") }
 
   $prevSvc = @{}; foreach ($s in $switch) { $prevSvc[$s.name] = $st2.services[$s.name] }
   $flag = @{ restored = $false; reverted = @() }
   $rollback = { param([string[]]$repos, $why)
     $set = [Collections.Generic.List[string]]::new(); foreach ($x in $repos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } }
-    if ($snap -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) { foreach ($x in $migRepos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } } }
+    if ($relMark -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) { foreach ($x in $migRepos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } } }
     foreach ($rn in $set) {
       "[$e] rolling back $rn : $why"
       foreach ($l in @($newLayers[$rn])) { if ($l.request) { $results[$l.request] = @{ outcome = 'rolled back'; message = $why } } }
@@ -970,18 +1100,12 @@ function Run-Train {
       foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }
     }
     $svcs = @($switch | Where-Object { (RepoOf $e $_) -in $set })
-    if ($snap -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) {
+    if ($relMark -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) {
       foreach ($s in $svcs) { Stop-Svc $e $s 'rollback: DB restore' }
-      $err = Invoke-Hook $e 'restore' @{ snapshot = $snap }; $notes.Add($(if ($err) { "db restore of $snap FAILED: $err" } else { "db restored from $snap" })); $flag.restored = $true
+      $rm = Find-Mark (Read-State $e) $relMark 0; $sch = @(EnvSchemas $e)
+      $err = try { $rp = Get-RestorePlan $e $rm $sch "rb-$tag"; if (@($rp.refused).Count) { "refused: $(@($rp.refused | Select-Object -First 3) -join '; ')" } else { Invoke-RestoreDb $e $rm $sch $rp } } catch { "$_".Split("`n")[0] }
+      $notes.Add($(if ($err) { "db restore to mark $relMark FAILED, the DB keeps the migrations' changes: $err" } else { "db restored to mark $relMark (structure from its slices, rows by flashback)" })); $flag.restored = $true; $flag.fallback = -not $err -and @($script:RestoreFallback).Count
     }
-    foreach ($rn in $set) {
-      if ($flag.restored -and $rn -in $migRepos) { continue }
-      $nl = @($newLayers[$rn] | Where-Object { LayerLight $_ }); if (-not $nl.Count) { continue }
-      foreach ($s in @($svcs | Where-Object { (RepoOf $e $_) -eq $rn })) { Stop-Svc $e $s 'rollback: db revert' }
-      try { $p = Get-MigRevertPlan $e $rn $nl @($cur[$rn] | Where-Object { $_.migrations -and $_.mclass }) '' "rb-$tag"; $err = if ($p.blocked.Count) { MigPlanText $p } else { Invoke-MigRevertPlan $e $p } } catch { $err = "$_".Split("`n")[0] }
-      $notes.Add($(if ($err) { "db revert of $(@($nl.branch) -join ', ') in $rn FAILED, the DB may keep their changeSets: $err" } else { "db revert of $(@($nl.branch) -join ', ') in $rn : $($p.count) changeSets reverted" }))
-    }
-    foreach ($rn in @($set | Where-Object { $_ -in $flag.reverted })) { $notes.Add("$rn rolled back after its leaving layers' changeSets were reverted: the previous release re-applies them when it starts") }
     foreach ($rn in $set) {
       $rs = @($svcs | Where-Object { (RepoOf $e $_) -eq $rn })
       $noCopy = @($rs | Where-Object { $_.artifact -and -not ($prevSvc[$_.name].artifact -and (Test-Path $prevSvc[$_.name].artifact)) })
@@ -999,25 +1123,20 @@ function Run-Train {
       }
     }
   }
-  foreach ($rn in @(@($reverts.Keys) + @($restores.Keys) | Select-Object -Unique)) {
-    if ($rn -notin $ok) { continue }
-    foreach ($s in @($switch | Where-Object { (RepoOf $e $_) -eq $rn })) { Stop-Svc $e $s 'db revert of leaving migration layers' }
-    if ($restores[$rn]) {
-      Phase "db restore $($restores[$rn]) ($rn)" $block @($affected)
-      $err = Invoke-Hook $e 'restore' @{ snapshot = $restores[$rn] }
-      if ($err) { & $rollback @($rn) "db restore of $($restores[$rn]) failed: $err"; continue }
-      $notes.Add("db restored from $($restores[$rn])"); $flag.reverted += $rn; continue
+  if ($ok.Count -and (MarksOn $e)) {   # the DB before this release's code first runs: restore -Release / a rollback come back here
+    $code = @{}; foreach ($k in $st2.release.repos.Keys) { $code[$k] = $st2.release.repos[$k] }; foreach ($k in $repoOut.Keys) { $code[$k] = $repoOut[$k] }
+    $relMark = try { New-Mark $e "release-$newN" 'release' $code $newN } catch { $notes.Add("mark release-$newN failed (no restore point): $("$_".Split("`n")[0])"); $null }
+    if ($relMark -and $migRepos.Count -and "$((Get-EnvCfg $e).db.rollback)" -eq 'liquibase' -and (Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue)) {   # opt-in tool rollback: its tag
+      $te = Invoke-EnvLiquibase $e (LiquibaseDir $e) @(LiquibaseSchemas $e) "tag --tag=release-$newN"; if ($te) { $notes.Add("liquibase tag release-$newN failed (restore -UseToolRollback cannot use it): $te") }
     }
-    $p = $reverts[$rn]
-    Phase "db revert in $rn : $($p.count) changeSets of $($p.branches -join ', ')" $block @($affected)
-    $err = Invoke-MigRevertPlan $e $p
-    if ($err) {
-      & $rollback @($rn) "db revert failed: $err"
-      foreach ($q in @($reqs | Where-Object { $_.kind -eq 'drop' -and $_.branch -in $p.branches })) { $results[$q.id] = @{ outcome = 'rolled back'; message = "db revert failed, the layer stays: $err" } }
-      continue
+    if ($relMark -and $migRepos.Count) {
+      Phase "slices before the migrations of $($migRepos -join ', ')" $block @($affected)
+      try {
+        $by = @{}; foreach ($rn in $migRepos) { $by[$rn] = Get-MigTouched $e $rn "$(if ($st.release.repos[$rn].targetSha) { $st.release.repos[$rn].targetSha } else { "origin/$($envRepos[$rn].target)" })" (git -C $envRepos[$rn].wt rev-parse HEAD) }
+        $sl = Save-Slices $e $relMark $by
+        $notes.Add("mark ${relMark}: $(@($sl.tables).Count) touched table(s) sliced ($([math]::Round($sl.bytes / 1KB)) KB; via $(@($by.Values | ForEach-Object via | Select-Object -Unique) -join ', '))$(if (@($sl.unknown).Count) { "; tables not found in $($sl.unknown -join ', '): a restore past their DDL is refused (seed restores the data)" })")
+      } catch { $notes.Add("slices for $relMark failed: a restore past this release's DDL is refused ($("$_".Split("`n")[0]))") }
     }
-    $flag.reverted += $rn
-    $notes.Add("db revert in $rn : $($p.count) changeSets of $($p.branches -join ', ') reverted$(if ((Get-EnvCfg $e).db.applied) { ', verified (db.applied)' } else { ' (not verified: no db.applied hook)' })")
   }
   Phase 'switching over' $block @($affected)
   foreach ($s in $switch) {
@@ -1031,6 +1150,61 @@ function Run-Train {
     $sf = Test-Smoke $e
     if ($sf) { & $rollback @($ok) "smoke check failed: $sf" }
   }
+  if ($migRepos.Count -and (MarksOn $e)) {   # migrations may add / change cascading foreign keys or the child columns the guard copies
+    try { $g = Install-DbGuard $e; if ($g.installed -or $g.removed) { $notes.Add("cascade guard after the migrations: $($g.installed) trigger(s) installed, $($g.removed) removed") } }
+    catch { $notes.Add("cascade guard re-install failed (a restore past a cascading delete seeds the child tables): $("$_".Split("`n")[0])") }
+  }
+  if ($flag.fallback) { $fbn = Invoke-RestoreFallback $e; if ($fbn) { $notes.Add($fbn) } }
+  Record-Train
+}
+
+# a restore train (its request alone): holders told to pause, the mark's code built, writers stopped, the DB restored, started
+function Run-Restore($st, $req) {
+  $script:DoneWord = 'restore'
+  $results = @{}; $results[$req.id] = @{ outcome = 'live'; message = '' }
+  $notes = [Collections.Generic.List[string]]::new(); $migNote = @{}; $repoOut = @{}; $artifacts = @{}
+  $newN = [int]$st.release.n + 1; $tag = "r$newN-$Train"; $envRepos = EnvRepos $e
+  $back = { foreach ($k in @($repoOut.Keys)) { $null = Sync-Repo $e $envRepos[$k] @(Layers $st $k) -NoFetch -Base "$($st.release.repos[$k].targetSha)" }; $repoOut.Clear(); $artifacts.Clear() }
+  $refuse = { param($why) & $back; $results[$req.id] = @{ outcome = 'refused'; message = "nothing changed: $why" }; Record-Train }
+  $m = try { Find-Mark $st $req.mark 0 } catch { & $refuse "$_"; return }
+  $schemas = @($req.schemas | Where-Object { $_ }); if (-not $schemas.Count) { $schemas = @(EnvSchemas $e) }
+  Phase "restore to $($m.name): plan"
+  $plan = try { Get-RestorePlan $e $m $schemas $tag } catch { & $refuse "plan failed: $("$_".Split("`n")[0])"; return }
+  if (@($plan.refused).Count) { & $refuse (@($plan.refused | Select-Object -First 3) -join '; '); return }
+  $all = @(EnvServices $e | Where-Object { Managed $_ } | ForEach-Object name)
+  $holders = @($st.leases.Keys | Where-Object { $_ -ne $req.agent -and $_ -ne "$($req.agent)/task" })
+  if ($holders.Count) { Send-LeaseNotice $e $holders "restore of $e to mark $($m.name) starting: pause your checks; resume after 'restore done'"; $script:Preempted = $holders }
+  Phase "restore to $($m.name): code" $all @($envRepos.Keys)
+  foreach ($rn in @($envRepos.Keys)) {
+    $mr = $m.repos[$rn]; $live = $st.release.repos[$rn]
+    if (-not $mr -or ($live -and "$($live.targetSha)" -eq "$($mr.targetSha)" -and (@($live.layers | Where-Object { $_ } | ForEach-Object { Key $_ }) -join '|') -eq (@($mr.layers | Where-Object { $_ } | ForEach-Object { Key $_ }) -join '|'))) { continue }   # not deployed then, or the same code
+    $res = Sync-Repo $e $envRepos[$rn] @($mr.layers | Where-Object { $_ }) -Base "$($mr.targetSha)"
+    foreach ($d in $res.dropped) { $notes.Add("$rn : layer $($d.layer.branch) of the mark left out: $($d.why)") }
+    $repoOut[$rn] = @{ target = $envRepos[$rn].target; targetSha = $res.targetSha; layers = @($res.kept) }
+    $err = Build-Repo $e $rn
+    if ($err) { & $refuse "the code of mark $($m.name) does not build in $rn : $err"; return }
+    $artifacts += (Stage-Artifacts $e $rn $tag)
+  }
+  $stop = @(EnvServices $e | Where-Object { $_.repo -and (Managed $_) -and (Healthy $e $_) }); [array]::Reverse($stop)   # dependents first
+  Phase "restore to $($m.name): stopping $(@($stop.name) -join ', ')" $all @($envRepos.Keys)
+  foreach ($s in $stop) { Stop-Svc $e $s "restore to $($m.name)" }
+  Phase "restore to $($m.name): $(@($plan.steps).Count + @($plan.drops).Count + @($plan.renames).Count) structure step(s), $($plan.statements) row change(s)" $all @($envRepos.Keys)
+  $p2 = try { Get-RestorePlan $e $m $schemas $tag } catch { $null }   # writers stopped: the end position is final
+  $err = if (-not $p2 -or @($p2.refused).Count) { "plan after stopping the writers: $(if ($p2) { @($p2.refused | Select-Object -First 3) -join '; ' } else { 'failed' }); the DB is unchanged by the kit" } else { $plan = $p2; Invoke-RestoreDb $e $m $schemas $plan -UseTool:([bool]$req.useTool) }
+  if ($err -match 'the DB is unchanged') { & $back }   # the live code runs on the unchanged DB again
+  [array]::Reverse($stop)
+  foreach ($s in $stop) {
+    $art = if ($artifacts[$s.name]) { $artifacts[$s.name] } else { (Read-State $e).services[$s.name].artifact }
+    try { Start-Svc $e $s $(if ($repoOut[(RepoOf $e $s)]) { $newN } else { [int](Read-State $e).services[$s.name].release }) $art } catch { $notes.Add("$($s.name) did not come up after the restore: $("$_".Split("`n")[0])") }
+  }
+  $sf = if ($stop.Count -and (Get-EnvCfg $e).smoke) { Test-Smoke $e }
+  if ($sf) { $notes.Add("smoke check failed after the restore: $sf") }
+  $fbn = if (-not $err) { Invoke-RestoreFallback $e }; if ($fbn) { $notes.Add($fbn) }
+  foreach ($h in @((Get-EnvCfg $e).restore.after | Where-Object { $_.cmd })) {   # derived state outside the DB: reindex, cache clears, leftovers lists
+    $code = Invoke-Shell (Expand-Placeholders ([string]$h.cmd).Replace('{mark}', $m.name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'restore') (EnvVars $e ([pscustomobject]@{})) 1800
+    $notes.Add("restore.after $($h.name): $(if ($code) { "FAILED ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } else { "ok$(if (@($script:ShellOut).Count) { ": $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" })" })")
+  }
+  $results[$req.id] = if ($err) { @{ outcome = 'failed'; message = $err } } else { @{ outcome = 'live'; message = "DB and code at mark $($m.name) (release $($m.release)): $($plan.statements) row change(s) undone, $(@($plan.steps).Count) structure step(s), $(@($plan.objects).Count + @($plan.objectDrops).Count) object step(s)$(if ($fbn) { "; $fbn" })$(if (@($plan.warnings).Count) { "; WARN $(@($plan.warnings) -join '; ')" })$(if ($sf) { "; smoke FAILED: $sf" })" } }
   Record-Train
 }
 
@@ -1054,7 +1228,7 @@ function Record-Train {
     foreach ($r in $x.requests) { if ($results.ContainsKey($r.id)) { $r.status = 'done'; $r.result = $results[$r.id]; $r.result.release = $(if ($results[$r.id].outcome -eq 'live') { $(if ($changed.Count) { $newN } else { $x.release.n }) }) } }
     $x.train = $null
   }
-  if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted "deploy done$(if ($changed.Count) { " (release $newN)" }): re-run your checks; your lease continues" }
+  if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted "$script:DoneWord done$(if ($changed.Count) { " (release $newN)" }): re-run your checks; your lease continues" }
   Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes) }
   $notes | ForEach-Object { "[$e] $_" }
   "[$e] train $Train done: $(if ($changed.Count) { "release $newN ($($changed -join ', '))" } else { 'no new release' })"
@@ -1088,7 +1262,7 @@ $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
-$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue
+$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue
 try {
   while ($true) {
     $tick++
@@ -1101,6 +1275,7 @@ try {
 
       # ---- trains: one worker takes all queued requests
       $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
+      $rq = @($queued | Where-Object kind -eq 'restore')[0]; if ($rq) { $queued = @($rq) } else { $queued = @($queued | Where-Object kind -ne 'restore') }   # a restore runs alone
       if (-not $st.train -and $queued.Count) {
         $tid = [guid]::NewGuid().ToString('n').Substring(0, 6); $ids = @($queued.id)
         Update-State $e { param($x) $x.train = @{ id = $tid; pid = $null; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
@@ -1189,8 +1364,13 @@ try {
         Say 'queued a refresh: a needed service has no build yet'
       }
 
-      # ---- snapshot retention, once a day
-      if (-not $st.prunedAt -or ((Get-Date) - [datetime]$st.prunedAt).TotalHours -ge 24) { Invoke-Prune $e | ForEach-Object { Say "$_" } }
+      # ---- db temp watchdog, once a minute (TODO-PARAM): the connection using the most temp above db.tempMaxGB is killed
+      if (((Get-Date) - $tempAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e)) {
+        $tempAt = Get-Date   # a db down or a connection gone before the KILL: said, the tick goes on
+        try { foreach ($k in @(Invoke-DbTempWatch $e)) { Say $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { Say "db temp watchdog: $("$_".Split("`n")[0])" }
+      }
+      # ---- marks whose binlog is gone expire, once a day
+      if ((MarksOn $e) -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { Update-Marks $e | ForEach-Object { Say "$_" } }
 
       # ---- exit when idle
       $st = Read-State $e
@@ -1222,11 +1402,18 @@ function Get-Doctor([string]$e) {
   $c = Get-EnvCfg $e; $r = [Collections.Generic.List[object]]::new()
   $add = { param($lvl, $what) $r.Add([pscustomobject]@{ level = $lvl; env = $e; what = $what }) }
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
-  if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired (HEAVY layers: db.snapshot first): remove the key" }
+  if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
+  foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne $c.db.$_ }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
+  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e)) { & $add $x.level $x.what } }
+  if (MarksOn $e) {
+    $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
+    if (-not $b) { & $add 'WARN' "no baseline mark: localenv.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
+    elseif ($st0.binlog.days -and ((Get-Date) - [datetime]$b.at).TotalDays -gt [double]$st0.binlog.days - 3) { & $add 'WARN' "baseline mark $($b.name) expires with the binlog ($($st0.binlog.days) d): seed -Env $e again" }   # TODO-PARAM (fixed default)
+  }
   $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$e.env" }
   if (-not (Test-Path -LiteralPath $f)) { & $add $(if ($c.envFile) { 'FAIL' } else { 'WARN' }) "env file $f is missing$(if (-not $c.envFile) { ' (secrets go there)' })" }
   $cmds = [ordered]@{}; $none = [pscustomobject]@{ port = '' }
-  foreach ($p in @($c.db.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|keep$)' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
+  foreach ($p in @($c.db.PSObject.Properties | Where-Object { $_.Value -is [string] -and $_.Name -notmatch '^(_|engine$|name$|user$|host$|uri$|jdbc$|passwordEnv$|schemasQuery$|afterRevert$|flashbackExclude$|bin$)' -and $_.Value -ne 'liquibase' })) { $cmds["db.$($p.Name)"] = Expand-Placeholders $p.Value $e $none $KitConf.Workspace '' }
   foreach ($m in @($c.smoke | Where-Object { $_.cmd })) { $cmds["smoke '$($m.name)'"] = Expand-Placeholders ([string]$m.cmd) $e $none $KitConf.Workspace '' }
   foreach ($s in EnvServices $e) {
     $dir = try { SvcDir $e $s } catch { & $add 'FAIL' "$($s.name): $("$_".Split("`n")[0])"; continue }
@@ -1261,23 +1448,23 @@ function Get-Doctor([string]$e) {
 # ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'prune', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'restore', 'seed', 'teardown', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
-  [string]$Session, [string]$Artifact, [string]$Query, [switch]$Owner,
-  [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [double]$Days = -1, [switch]$Json
+  [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
+  [switch]$DryRun, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
 )
-$Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services)
+$Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
-# db.engine without its presets (extra db-engine-presets) or its own snapshot / restore hooks: stop before anything changes
-$needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets -and -not ($c.db.snapshot -and $c.db.restore)) { "env $n (db.engine): db.engine presets are an extra: run kittool.py extra add db-engine-presets" } })
-if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote') { [Console]::Error.WriteLine("localenv.ps1: $($needs[0])"); exit 1 }
+# db.engine without its presets (extra db-engine-presets): stop before anything changes
+$needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets are an extra: run kittool.py extra add db-engine-presets" } })
+if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark', 'restore', 'seed', 'teardown') { [Console]::Error.WriteLine("localenv.ps1: $($needs[0])"); exit 1 }
 
 function Ensure-Loop {
   $st = Read-State $e
@@ -1340,13 +1527,13 @@ function Show-Status([string]$env1) {
     [pscustomobject]@{
       service = $s.name; state = $(if ($h) { if (-not (Managed $s)) { 'up (external)' } elseif (Owned $x) { 'up' } else { 'up (adopted)' } } elseif ($x.status -in 'starting', 'failed') { $x.status } else { 'down' })
       port = $s.port; gb = $(if ($ids) { TreeGB $ids $all } else { 0 }); release = $x.release; need = @($x.need | Where-Object { $_ }); idleMin = $idleMin; graceMin = $(if (Managed $s) { GraceMin $env1 $s }); listens = $listens
-      why = $x.why; hot = [bool]$s.hot
+      why = $x.why; hot = [bool]$s.hot; restarts30 = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }).Count
     }
   }
   $o = [pscustomobject]@{
     env = $env1; release = $st.release.n; releasedAt = $st.release.at
-    repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; mclass = $(if ($_.migrations) { if ($_.mclass) { "$($_.mclass.effective)".ToUpper() } else { 'HEAVY' } }); mcount = $_.mclass.count; mwhy = @($_.mclass.why); promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
-    train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); requests = @($st.train.requests).Count } })
+    repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
+    train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); waitSince = $st.train.waitSince; requests = @($st.train.requests).Count } })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
     services = @($svc)
     leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = $(if ($l.owner) { ([datetime]$l.until).ToString('HH:mm') }); release = $l.release; note = $l.note; graceLeft = $l.graceLeft
@@ -1354,7 +1541,10 @@ function Show-Status([string]$env1) {
       trainWaits = $(if ($st.train -and $_ -in @($st.train.waitingFor)) { "train $($st.train.id) waits $(if ($st.train.waitSince) { [int]((Get-Date) - [datetime]$st.train.waitSince).TotalMinutes } else { 0 })/$($script:LeaseMin) min" }) } })
     holds = @($st.holds.Keys | ForEach-Object { $h = $st.holds[$_]; [pscustomobject]@{ who = $_; services = @($h.services); owner = [bool]$h.owner; until = $(if ($h.until) { ([datetime]$h.until).ToString('HH:mm') }); at = $h.at; graceLeft = $h.graceLeft } })
     recent = @($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
-    keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)")
+    keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)"); keepFreeGB = [double](Get-KeepFree).gb
+    marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
+      [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days } })
+    seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
     loop = $(if ($st.loop -and (Alive $st.loop.pid)) { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
   }
   if ($Agent -and $st.notices[$Agent]) { $o | Add-Member -NotePropertyName notice -NotePropertyValue "$(([datetime]$st.notices[$Agent].at).ToString('HH:mm')) $($st.notices[$Agent].text)" }
@@ -1377,11 +1567,13 @@ function Show-Status([string]$env1) {
     if ($x.state -in 'down', 'failed' -and $x.why) { $extra += $x.why }
     '  {0,-14} {1,-16} {2,6} {3,6} GB  {4}' -f $x.service, $x.state, $(if ($x.port) { ":$($x.port)" }), $x.gb, ($extra -join ' | ')
   }
-  foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { "  MIGRATIONS $($l.mclass)$(if ($l.mclass -eq 'LIGHT') { " ($($l.mcount) changeSets, exact revert on leave)" } elseif (@($l.mwhy).Count) { ": $(@($l.mwhy)[0])" } else { ' (snapshot)' })" }) } }
+  foreach ($r in $o.repos) { "  $($r.repo) @ $($r.target) $($r.targetSha)$(if (-not $r.layers.Count) { ' (no layers)' })"; foreach ($l in $r.layers) { '    + {0,-42} {1,-10} {2}{3}{4}' -f $l.branch, $l.agent, $l.sha, $(if ($l.promoted) { "  PROMOTED ($($l.promoted))" }), $(if ($l.migrations) { '  MIGRATIONS' }) } }
   $gr = { param($x) if ($null -ne $x.graceLeft) { " - no live holder: ends in $($x.graceLeft) min" } }
   if ($o.leases) { "  leases: $(($o.leases | ForEach-Object { "$($_.agent) [$($_.services -join ',')] $(if ($_.until) { "owner until $($_.until)" } else { 'while live' }) (r$($_.release)), age $($_.ageMin) min$(if ($null -ne $_.usedMinAgo) { ", used $($_.usedMinAgo) min ago" })$(if ($_.note) { " $($_.note)" })$(if ($_.trainWaits) { " - $($_.trainWaits)" })$(& $gr $_)" }) -join '; ')" }
   if ($o.holds) { "  holds: $(($o.holds | ForEach-Object { "$($_.who) [$($_.services -join ',')] $(if ($_.owner) { "owner until $($_.until)" } else { 'while live' })$(& $gr $_)" }) -join '; ')" }
   if ($o.recent) { "  recent: $($o.recent -join '; ')" }
+  if ($o.marks) { "  marks: $($o.marks.count) (newest $($o.marks.newest); baseline $(if ($o.marks.baseline) { "$($o.marks.baseline), $($o.marks.baselineAgeDays) d old" } else { 'none: seed' }); binlog keeps $($o.marks.binlogDays) d)$(if ($o.marks.expired.Count) { "; expired $($o.marks.expired -join ', ')" })" }
+  if ($o.seed -and -not $o.seed.ok) { "  seed: DRIFT $(@($o.seed.missing + $o.seed.drift) -join ', ') ($(([datetime]$o.seed.at).ToString('MM-dd HH:mm'))): seed -Env $env1" }
   if ($o.mine) { "  YOU ($Agent): $($o.mine)" }
   if ($o.notice) { "  NOTICE ($Agent): $($o.notice)" }
 }
@@ -1400,7 +1592,34 @@ switch ($Action) {
     if ($Json) { $rows | ConvertTo-Json -Depth 4 } else { $rows | ForEach-Object { '{0,-4} {1}: {2}' -f $_.level, $_.env, $_.what } }
     if (@($rows | Where-Object level -eq 'FAIL').Count) { exit 1 }
   }
-  'prune' { Invoke-Prune $e $Days }
+  'mark' {   # -Name: a mark of the DB now (zero bytes); without: the env's marks
+    if (-not (MarksOn $e)) { throw "[$e] marks need db.engine mysql or mariadb (extra db-engine-presets): this env has none" }
+    if ($Name) { $n = New-Mark $e $Name 'owner'; "[$e] mark $n at $(@((Read-State $e).marks | Where-Object name -eq $n)[0].pos): localenv.ps1 restore -Env $e -Mark $n [-DryRun]"; return }
+    $st = Read-State $e
+    foreach ($m in @($st.marks | Where-Object { $_ })) { '  {0,-34} {1,-8} {2:yyyy-MM-dd HH:mm}  release {3,-4} {4}' -f $m.name, $m.kind, [datetime]$m.at, $m.release, $m.pos }
+    if (@($st.expiredMarks).Count) { "  expired (binlog gone): $(@($st.expiredMarks) -join ', ')" }
+    if ($st.binlog) { "  the binlog keeps $($st.binlog.days) d (oldest $($st.binlog.oldest))" }
+  }
+  'restore' {   # owner / coordinator: the DB (flashback + migration rollbacks) and the code back to a mark; -DryRun: the plan only
+    if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (extra db-engine-presets)" }
+    if (-not $Mark -and $Release -lt 0) { throw 'restore needs -Mark <name> or -Release <n> (localenv.ps1 mark -Env <env> lists them)' }
+    $st = Read-State $e; $m = Find-Mark $st $Mark $Release
+    $sch = if ($Schemas.Count) { $Schemas } else { @(EnvSchemas $e) }
+    if ($DryRun) {
+      $p = Get-RestorePlan $e $m $sch "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
+      "[$e] restore to $($m.name) ($($m.kind), $(([datetime]$m.at).ToString('yyyy-MM-dd HH:mm')), release $($m.release)) - dry run, nothing changes:"
+      RestorePlanText $p | ForEach-Object { "  $_" }
+      foreach ($rn in @($m.repos.Keys)) { $mr = $m.repos[$rn]; "  code $rn : $("$($mr.targetSha)".Substring(0, [math]::Min(9, "$($mr.targetSha)".Length))) + $(@($mr.layers | Where-Object { $_ }).Count) layer(s): $(@($mr.layers | Where-Object { $_ } | ForEach-Object branch) -join ', ')" }
+      if (@($p.refused).Count) { exit 1 }; return
+    }
+    $rid = New-Request @{ kind = 'restore'; branch = $m.name; mark = $m.name; schemas = $sch; useTool = [bool]$UseToolRollback }
+    "[$e] restore to $($m.name) queued as $rid (holders are told to pause)"; Exit-Request (Wait-Request $rid)
+  }
+  'seed' { Invoke-Seed $e -Check:$Check; if ($script:SeedBad) { exit 1 } }
+  'teardown' {   # owner: the cascade guard's triggers and journal schema removed (doctor installs them again)
+    if (-not (MarksOn $e)) { throw "[$e] teardown: no marks here (db.engine mysql or mariadb, extra db-engine-presets)" }
+    $g = Install-DbGuard $e -Remove; "[$e] cascade guard removed: $($g.removed) trigger(s), the journal schema dropped; localenv.ps1 doctor -Env $e installs it again"
+  }
   'deploy' {
     $bad = @(Get-Doctor $e | Where-Object level -eq 'FAIL')
     if ($bad.Count) { $bad | ForEach-Object { "FAIL $($_.what)" }; [Console]::Error.WriteLine("localenv.ps1: deploy stopped: fix the FAIL lines (localenv.ps1 doctor -Env $e)"); exit 1 }
@@ -1420,20 +1639,14 @@ switch ($Action) {
     $targets = if ($Repo) { @($Repo | ForEach-Object { (Get-RepoCfg $_).name }) } else { @($envRepos.Values | Where-Object { Resolve-Ref $_.cfg.checkout $Branch } | ForEach-Object name) }
     $targets = @($targets | Where-Object { $envRepos.Contains($_) })
     if (-not $targets) { throw "[$e] branch $Branch not found in any repo of this env ($($envRepos.Keys -join ', '))" }
-    $shas = @{}; $mig = @{}; $mcls = @{}
+    $shas = @{}; $mig = @{}
     foreach ($rn in $targets) {   # the commit at request time
       $sha = Resolve-Ref $envRepos[$rn].cfg.checkout $Branch; if (-not $sha) { throw "[$e] $Branch not found in $rn" }
       $shas[$rn] = $sha; $mig[$rn] = HasMigrations $envRepos[$rn].cfg.checkout $envRepos[$rn].target $sha
-      if ($mig[$rn]) { $mcls[$rn] = Get-MigClass $e $envRepos[$rn] $sha; if (-not $mcls[$rn]) { $mig[$rn] = $false; $mcls.Remove($rn) } }
     }
-    $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = $shas; migrations = $mig; mclass = $mcls }
+    $rid = New-Request @{ kind = 'deploy'; branch = $Branch; shas = $shas; migrations = $mig }
     "[$e] deploy $Branch ($(($shas.Keys | ForEach-Object { $s = $shas[$_]; "$_ @ $(if ($s.Length -ge 9) { $s.Substring(0, 9) } else { $s })" }) -join ', ')) queued as request $rid"
-    foreach ($rn in $mcls.Keys) {
-      $mc = $mcls[$rn]
-      "[$e]   $rn $(MigText $mc) - they change the shared local DB"
-      if ($mc.effective -eq 'light') { "[$e]   changeSets: $(@($mc.ids | Select-Object -First 6) -join ', ')$(if ($mc.count -gt 6) { ', ...' }); plan: localenv.ps1 migrations -Env $e -Branch $Branch" }
-      else { foreach ($w in @($mc.why | Select-Object -First 5)) { "[$e]   HEAVY because $w" }; "[$e]   -> $(if ((Get-EnvCfg $e).db.snapshot) { 'main env, DB snapshot first' } else { 'main env, no restore point (no db.snapshot hook)' })" }
-    }
+    foreach ($rn in @($mig.Keys | Where-Object { $mig[$_] })) { "[$e]   $rn MIGRATIONS: they change the shared local DB$(if (MarksOn $e) { '; the release mark keeps what their DDL destroys (localenv.ps1 migrations -Env ' + $e + ' -Branch ' + $Branch + ' lists the tables)' })" }
     Exit-Request (Wait-Request $rid)
   }
   'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
@@ -1449,7 +1662,7 @@ switch ($Action) {
       Update-State $e { param($x)
         Prune $x
         $blocked = @($x.train.blockServices | Where-Object { $_ -in $names })
-        $old = $x.leases[$Agent]
+        $old = $x.leases[$Agent]; $o.fresh = -not $old
         if ($old -and $blocked.Count) {   # a train waits on it: kept, not extended
           $o.ok = $true; $o.rel = $old.release; $o.capped = $true
         } elseif (-not $blocked.Count) {
@@ -1464,6 +1677,7 @@ switch ($Action) {
       Start-Sleep 3
     }
     Event $e 'lease' @{ agent = $Agent; services = $names; minutes = $min }
+    if ($o.fresh -and (MarksOn $e)) { try { $mk = New-Mark $e "use-$Agent" 'use'; "[$e] mark $mk (restore -Mark $mk brings the DB back to this start)" } catch { Write-Warning "[$e] no mark at the lease: $("$_".Split("`n")[0])" } }
     "[$e] lease for $Agent on $($names -join ', ') $(if ($Owner) { "for $min min (owner)" } else { 'while you are live' }) (release $($o.rel)).$(if ($o.capped) { ' Kept as is: a train waits for it - release when done.' } else { ' End: release.' })"
     Ensure-Loop
     if (Wait-Up $names) { Show-Status $e } else { exit 1 }
@@ -1535,34 +1749,25 @@ switch ($Action) {
     } finally { Update-State $e { param($x) $x.leases.Remove($key) } }
     if ($code) { throw "[$e] task $Task failed (exit $code)" }
   }
-  'migrations' {
+  'migrations' {   # the migration layers live, or the tables -Branch's migrations touch (what its release mark slices)
     $envRepos = EnvRepos $e; $st = Read-State $e
-    "[$e] migrations mode: $(MigMode $e)$(if ((MigMode $e) -ne 'classify') { ' (every migration is HEAVY)' } elseif (-not (Get-EnvCfg $e).db.rollback) { ' (no db.rollback hook: Liquibase changeSets are HEAVY)' })"
     if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path $Dir).Path rev-parse --abbrev-ref HEAD)".Trim() }
-    $items = if ($Branch) {
-      foreach ($r in $envRepos.Values) { $sha = Resolve-Ref $r.cfg.checkout $Branch; if ($sha -and (HasMigrations $r.cfg.checkout $r.target $sha)) { $mc = Get-MigClass $e $r $sha; if ($mc) { @{ rn = $r.name; layer = @{ branch = $Branch; sha = $sha; migrations = $true; mclass = $mc }; staying = @() } } } }
-    } else {
-      foreach ($rn in $st.release.repos.Keys) { $ls = @(Layers $st $rn); foreach ($l in $ls | Where-Object { $_.migrations }) { @{ rn = $rn; layer = $l; staying = @($ls | Where-Object { $_.branch -ne $l.branch }) } } }
-    }
-    if (-not @($items).Count) { "[$e] no migration layers$(if ($Branch) { " in $Branch" })"; return }
-    foreach ($it in $items) {
-      $l = $it.layer; $mc = $l.mclass
-      $lsha = "$($l.sha)"; $s9 = if ($lsha.Length -ge 9) { $lsha.Substring(0, 9) } else { $lsha }
-      "== $($it.rn) $($l.branch) @ $($s9): $(if ($mc) { MigText $mc } else { 'MIGRATIONS HEAVY (deployed before classification)' })"
-      if ($mc.manifest -and (Test-Path $mc.manifest)) {
-        $mf = Get-Content $mc.manifest -Raw | ConvertFrom-Json
-        foreach ($c in @($mf.changesets)) { '   {0,-5} {1}::{2}{3}{4}' -f "$($c.class)".ToUpper(), $c.file, $c.id, $(if ($c.why) { "  [$($c.rule)] $($c.why)" }), $(if ($c.guarded) { '  (precondition may MARK_RAN)' }) }
-        foreach ($t in @($mf.tools.PSObject.Properties)) { "   $($t.Name) in ./$($t.Value.cwd): apply '$($t.Value.apply)', dry run '$($t.Value.dry)'" }
-      }
-      if (LayerLight $l) {
-        $p = Get-MigRevertPlan $e $it.rn @($l) $it.staying '' "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
-        "   on leave: $(MigPlanText $p)"
-      } else { "   on leave: no revert (HEAVY): the env DB keeps it unless a snapshot from before it is restored" }
+    if (-not $Branch) { foreach ($rn in $st.release.repos.Keys) { foreach ($l in @(Layers $st $rn | Where-Object { $_.migrations })) { "[$e] $rn $($l.branch) ($($l.agent)) since release $($l.since): MIGRATIONS" } }; return }
+    foreach ($r in $envRepos.Values) {
+      $sha = Resolve-Ref $r.cfg.checkout $Branch; if (-not $sha -or -not (HasMigrations $r.cfg.checkout $r.target $sha)) { continue }
+      $tm = Get-MigTouched $e $r.name "origin/$($r.target)" $sha
+      "== $($r.name) ${Branch}: $(@($tm.items).Count) table(s) touched (via $($tm.via))$(if ($tm.unknown) { ' - none found: a restore past its DDL is refused' })"
+      foreach ($i in @($tm.items)) { '   {0,-7} {1}{2}' -f $i.kind, $i.table, $(if (@($i.columns).Count) { " ($(@($i.columns) -join ', '))" }) }
     }
   }
   'sql' {   # read-only, through db.query (a db.engine preset or the env's hook)
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
+  }
+  'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (orch.ps1 storage.db.use); -Kill <id>: that connection ends (storage.db.kill)
+    if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (extra db-engine-presets)" }
+    if ($Kill) { Stop-DbConn $e $Kill; Event $e 'db-kill' @{ id = $Kill; by = $Agent }; "[$e] db connection $Kill killed"; return }
+    foreach ($q in @(Get-DbTempUse $e)) { '{0} {1} {2} {3}' -f $q.id, $q.gb.ToString([Globalization.CultureInfo]::InvariantCulture), $q.secs, (Protect-KitText $q.query) }
   }
   'logs' { if (-not $Services) { throw 'logs needs -Service' }; Touch-Lease $e $Agent; $f = LogFile $e $Services[0]; if (Test-Path $f) { Read-LogTail $f $Tail $Grep $Since } else { "no log yet: $f" } }
   'events' { Touch-Lease $e $Agent; $ev = @(Read-KitLog env (Get-Date).AddDays(-30) | Where-Object env -eq $e | Select-Object -Last $Tail); if ($ev) { $ev | ForEach-Object { $_ | Select-Object * -ExcludeProperty stream | ConvertTo-Json -Compress } } else { 'no events yet' } }
@@ -1594,7 +1799,7 @@ switch ($Action) {
 
 if ($MyInvocation.InvocationName -eq '.') { }   # dot-sourced (tests): functions only
 elseif ($__verb -eq '_daemon') { Invoke-KitVerb Invoke-Daemon @($args | Select-Object -Skip 1) }
-elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 13 | Select-Object -Skip 1; exit 2 }
+elseif (-not $__verb) { Get-Content $PSCommandPath -TotalCount 14 | Select-Object -Skip 1; exit 2 }
 else {   # usage errors exit 2; any other crash exits 1 (Invoke-KitVerb)
   $KitVerbOnError = { param($e) $m = "$($e.Exception.Message)"; if ($m -match 'unknown env|-Env needed|No local environments configured|needs -') { [Console]::Error.WriteLine("localenv.ps1: $m"); exit 2 } }
   Invoke-KitVerb Invoke-LocalEnv @($args)

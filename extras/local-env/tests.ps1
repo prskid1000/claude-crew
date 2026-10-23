@@ -1,7 +1,6 @@
 #Requires -Version 7
 <#
-tests.ps1 (extra local-env): localenv.ps1 leases, usage, migration detection, the db-engine-presets line, state writes; with
-extra migration-classify also LIGHT/HEAVY classes, revert plans, db.applied check, goose tool.
+tests.ps1 (extra local-env): localenv.ps1 leases, usage, migration detection, the db-engine-presets line, state writes, seed.
 Usage: kittool.py extra test local-env (tests/kit-tests.ps1 -Area extras runs every installed extra).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -111,13 +110,17 @@ Expect "need: a stop saves the service's peak RAM; the next start needs it + 15%
 $kf = & { . $L3; $a = Get-KeepFreeFrom @(1..10 | ForEach-Object { 20 }) 64; $b = Get-KeepFreeFrom @(1..200 | ForEach-Object { 20 }) 64
   $c = Get-KeepFreeFrom @(1..200 | ForEach-Object { if ($_ % 40 -lt 10) { 5 } else { 12 } }) 64; "$($a.gb)|$($b.gb)|$($c.gb)|$($c.why)" }
 Expect "keep-free: learning = max(6, 15%); steady = 5% floor; falls + dips raise it with the why ($kf)" ($kf -match '^9\.6\|3\.2\|(\d+(\.\d)?)\|min 3\.2 \+ 10-min fall 7 \(p90 of 24 h\) \+ \d dip\(s\) under 6 GB x 0\.5$' -and [double]($kf -split '\|')[2] -gt 10)
-# prune: db.prune gets {keepDays} {keep}; old state snapshots go, baselines stay; retired sandbox leftovers removed
-$pf = Join-Path (Kd) 'prune.out'
-& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo api'; port = 41006 }); db = @{ prune = "echo {keepDays} {keep}> `"$pf`"" } } } } } $cf3 8
-$pr = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; 'x' | Set-Content (Join-Path $lgd 't-sb1-api.log'); 'x' | Set-Content (Join-Path $lgd 't-api.log')
-  Update-State t { param($x) $x.snapshots = @(@{ name = 'qa-baseline-t'; at = (Get-Date).AddDays(-40).ToString('o') }, @{ name = 't-before-r1'; at = (Get-Date).AddDays(-2).ToString('o') }) }
-  $out = Invoke-Prune t 0; "$("$(Get-Content $pf)".Trim())|$(@((Read-State t).snapshots.name) -join ',')|$(Test-Path (Join-Path $lgd 't-sb1-api.log'))$(Test-Path (Join-Path $lgd 't-api.log'))|$($out -join ' ')" }
-Expect "prune: hook args, baselines kept, sandbox leftovers removed ($pr)" ($pr -match '^0 baseline\|qa-baseline-t\|FalseTrue\|.*removed 1 leftover')
+# seed: each check gates its create (a second seed creates nothing); -Check only reports; a needs-chain waits; green -> no mark without marks
+$sdir = Kd; $sflag = Join-Path $sdir 'seed.flag'; $scnt = Join-Path $sdir 'seed.count'; $sfile = Join-Path $sdir 't.seed.json'
+@{ items = @(@{ name = 'thing'; check = @{ cmd = "pwsh -NoProfile -c `"if (Test-Path '$sflag') { exit 0 } else { exit 1 }`"" }; create = @{ cmd = "pwsh -NoProfile -c `"Set-Content '$sflag' 1; Add-Content '$scnt' 1`"" } }
+    @{ name = 'after'; needs = @('thing'); check = @{ cmd = 'exit 0' } }) } | ConvertTo-Json -Depth 6 | Set-Content $sfile
+& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo api'; port = 41006 }); seed = $sfile } } } } $cf3 8
+$sc1 = Px $L3 seed -Env t -Check 2>&1 | Out-String; $scc1 = $LASTEXITCODE
+$sc2 = Px $L3 seed -Env t 2>&1 | Out-String; $scc2 = $LASTEXITCODE
+$sc3 = Px $L3 seed -Env t 2>&1 | Out-String; $scc3 = $LASTEXITCODE
+$sst = & { . $L3; $x = (Read-State t).seed; "$($x.ok)|$(@($x.missing) -join ',')" }
+Expect "seed: -Check = missing + blocked, exit 1; seed creates once, a second seed creates nothing ($scc1 $scc2 $scc3)" ($scc1 -eq 1 -and $sc1 -match 'MISSING\s+thing' -and $sc1 -match 'BLOCKED\s+after' -and
+  $scc2 -eq 0 -and $sc2 -match 'OK\s+thing \(created\)' -and $scc3 -eq 0 -and $sc3 -notmatch 'created' -and @(Get-Content $scnt).Count -eq 1 -and $sst -eq 'True|')
 # leases: no holder -> a train goes at once; held -> it waits leaseMinutes, tells the holder, goes on, the lease stays; unused -> released
 & $J @{ localEnv = @{ leaseMinutes = 0; leaseIdleMinutes = 5; envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo api'; port = 41007 }) } } } } $cf3 8
 $lw = & { . $L3; $t0 = Get-Date; $a = @(Wait-Leases t @('api') @() @()); $fast = ((Get-Date) - $t0).TotalSeconds -lt 5
@@ -150,55 +153,6 @@ $rv = & { . $L3; $f1 = (Read-State tl).services.gone; $null = @(Wait-Leases tl @
 $null = Px $L3 _exec -Env t -Service cmp 2>&1; $cl = Get-Content (& { . (Join-Path $k3 'skills/dev-kit/lib.ps1'); Join-Path (Get-KitPath localenv-logs) 't-cmp.log' }) -Raw
 Expect "review: worker failure -> failed; no lease = no clock; compound stderr kept; 'not found' output != misconfigured ($rv)" ($rv -eq 'failed/True|True|1' -and $cl -match 'out1' -and $cl -match 'err1' -and $cl -match 'done1')
 Remove-TestKit $k3
-# LIGHT / HEAVY classes need devtools.py migrations (extra migration-classify)
-if (-not (Test-Path (Join-Path $src 'skills/dev-kit/adapters/migrations.py'))) { 'SKIP local env: LIGHT/HEAVY classes (extra migration-classify not installed)' } else {
-$k = New-LocalEnvKit local; $L = Join-Path $k 'skills/local-env/localenv.ps1'
-$ma = New-Item -ItemType Directory -Force (Join-Path $k 'skills/dev-kit/adapters'); Copy-Item (Join-Path $src 'skills/dev-kit/adapters/migrations.py') $ma
-$t = @'
-$ErrorActionPreference = 'Stop'
-. $args[0]
-$tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null
-$repo = Join-Path $tmp 'repo'; $cl = 'api/src/main/resources/config/liquibase/changelog'
-git init -q -b main $repo; git -C $repo config user.email t@t; git -C $repo config user.name t; git -C $repo config core.autocrlf false
-$x = { param($body) "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<databaseChangeLog xmlns=`"http://www.liquibase.org/xml/ns/dbchangelog`">`n$body</databaseChangeLog>`n" }
-$put = { param($rel, $text) $p = Join-Path $repo $rel; New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null; [IO.File]::WriteAllText($p, $text) }
-& $put "$cl/20260101000000_base.xml" (& $x '<changeSet id="b-1" author="dev"><createTable tableName="orders"><column name="id" type="BIGINT"/></createTable></changeSet>')
-git -C $repo add -A; git -C $repo commit -q -m base; git -C $repo update-ref refs/remotes/origin/main main
-$branch = { param($name, $file, $body) git -C $repo checkout -q -b $name main; & $put "$cl/$file" (& $x $body); git -C $repo add -A; git -C $repo commit -q -m $name; $s = "$(git -C $repo rev-parse HEAD)".Trim(); git -C $repo checkout -q main; $s }
-$light = & $branch 'light' '20260201000000_light.xml' ('<changeSet id="l-0" author="dev"><tagDatabase tag="l"/></changeSet>' +
-  '<changeSet id="l-1" author="dev"><addColumn tableName="orders"><column name="note" type="VARCHAR(80)"/></addColumn><rollback><dropColumn tableName="orders" columnName="note"/></rollback></changeSet>' +
-  '<changeSet id="l-2" author="dev"><createTable tableName="order_status"><column name="id" type="INT"/></createTable></changeSet>')
-$heavy = & $branch 'heavy' '20260301000000_heavy.xml' '<changeSet id="h-1" author="dev"><dropColumn tableName="orders" columnName="id"/><rollback><addColumn tableName="orders"><column name="id" type="BIGINT"/></addColumn></rollback></changeSet>'
-$fake = Join-Path $tmp 'fake-db.ps1'
-Set-Content $fake @"
-param([string]`$Action, [string]`$Manifest, [string]`$SearchPath, [string]`$Changelog, [int]`$Count, [string]`$Branch, [string]`$Out)
-if (`$Action -eq 'rollback') { "`$Count|`$Branch|`$Changelog|`$(Test-Path (Join-Path `$SearchPath `$Changelog))" | Set-Content `$Out; exit 0 }
-if (`$Action -eq 'applied' -and (Test-Path "`$Out.still")) { (Get-Content `$Manifest -Raw | ConvertFrom-Json).revert | ForEach-Object { "schema1 `$(`$_.file)::`$(`$_.id)::`$(`$_.author)" } }
-"@
-$outF = Join-Path $tmp 'rollback.out'; $hook = "pwsh -NoProfile -File `"$fake`" -Out `"$outF`""
-$script:LE = [pscustomobject]@{ envs = [pscustomobject]@{ t = [pscustomobject]@{ services = @(); db = [pscustomobject]@{
-rollback = "$hook -Action rollback -Manifest `"{manifest}`" -SearchPath `"{searchPath}`" -Changelog {changelog} -Count {count} -Branch {branch}"
-applied = "$hook -Action applied -Manifest `"{manifest}`"" } } } }
-$r = [pscustomobject]@{ name = 'api'; cfg = [pscustomobject]@{ checkout = $repo }; target = 'main' }
-$mc = Get-MigClass 't' $r $light; "light:$($mc.effective -eq 'light' -and $mc.count -eq 3)"
-$mh = Get-MigClass 't' $r $heavy; "heavy:$($mh.effective -eq 'heavy' -and "$($mh.why)" -match 'h-1 drop-data')"
-$layer = @{ branch = 'light'; sha = $light; migrations = $true; mclass = $mc }
-$p = Get-MigRevertPlan 't' 'api' @($layer) @() '' 'test1'; "plan:$($p.count -eq 3 -and (@($p.revert.id) -join ',') -eq 'l-2,l-1,l-0')"
-"revert:$($null -eq (Invoke-MigRevertPlan 't' $p) -and (Get-Content $outF) -eq '3|light|localenv-revert.xml|True')"
-New-Item -ItemType File "$outF.still" | Out-Null; "applied:$("$(Invoke-MigRevertPlan 't' $p)" -match 'still lists')"
-$script:LE.envs.t.db = [pscustomobject]@{}; $m2 = Get-MigClass 't' $r $light; "nohook:$($m2.class -eq 'light' -and $m2.effective -eq 'heavy')"
-git -C $repo checkout -q -b tool main; & $put 'db/m/00002_b.sql' "-- +goose Up`nCREATE TABLE b (id INT);`n-- +goose Down`nDROP TABLE b;`n"; git -C $repo add -A; git -C $repo commit -q -m tool; $tl = "$(git -C $repo rev-parse HEAD)".Trim(); git -C $repo checkout -q main
-$mt = Get-MigClass 't' $r $tl; $pt = Get-MigRevertPlan 't' 'api' @(@{ branch = 'tool'; sha = $tl; migrations = $true; mclass = $mt }) @() '' 'test2'; "tool:$($mt.effective -eq 'light' -and $pt.cmd -match 'goose -dir ""db/m"" down-to 0$')"
-"missing-sha:$(HasMigrations $repo 'main' 'deadbeef')"
-Remove-Item (MigRoot 't') -Recurse -Force -ErrorAction SilentlyContinue
-'@
-$res = Invoke-PsTest 'revert-test' $t @($L, (Join-Path (Kd) 'le'))
-foreach ($x in 'light', 'heavy', 'plan', 'revert', 'applied', 'nohook', 'tool', 'missing-sha') { Expect "local env: $x" ($res -contains "${x}:True") }
-$out = & $py -X utf8 (Join-Path $k 'skills/dev-kit/devtools.py') migrations selftest 2>&1 | Out-String
-Expect 'devtools.py migrations selftest' ($LASTEXITCODE -eq 0)
-Remove-TestKit $k
-
-}
 # supervise rows from this extra (skills/orchestrate/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/orchestrate/adapters'); Copy-Item (Join-Path $src 'skills/orchestrate/adapters/localenv_supervise.ps1') $ad
 $O = Join-Path $k 'skills/orchestrate/orch.ps1'
@@ -218,10 +172,11 @@ $ss = @(& { . $O; Get-KitLogErrors @($sl) @{ (Resolve-Path $sl).Path = $sp.size 
 $ev = { param($l) @([pscustomobject]@{ env = 'shop'; release = 7; leases = $l }) }
 $sf = & { . $O; function Left { 30 }; @(Get-KitSpikeFlag $sp (& $ev @(@{ agent = 'q1' })) -AutoFix).Count; (Get-KitSpikeFlag $sp (& $ev @())).level; Get-KitSpikeFlag $ss (& $ev @(@{ agent = 'q1' })) -AutoFix | ForEach-Object { "$($_.level) $($_.what)" } }
 Expect "ERROR SPIKE classes: an expected 4xx while a lease tests = no flag (else WATCH); a startup failure with its dependency down = ACT naming env, release, dependency ($($sf -join ' | '))" ($sp.errors -eq 0 -and $sp.expected -eq 1 -and $sf[0] -eq 0 -and $sf[1] -eq 'WATCH' -and $ss.cls -eq 'startup' -and $ss.dep -eq 'localhost:19' -and $sf[2] -match '^ACT ERROR SPIKE: shop api \(release r7\) failed to start: localhost:19 is down: ERROR o\.s\.boot\.SpringApplication - Application run failed')
-$st = TkPath $k localenv -Create; Set-JsonFile (Join-Path $st 'shop.json') @{ services = @{ api = @{ restarts = @(@((Get-Date).ToString('o')) * 3) } } }
-$hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[]}]' } }
+$hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"down","restarts30":3},{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[],"seed":{"ok":false,"missing":["roleA"],"drift":[]},"marks":{"count":1,"baseline":null,"expired":[],"binlogDays":30},"train":{"id":"t1","waitingFor":["H1"],"waitSince":"2020-01-01T00:00:00"}}]' } }
   @(Get-KitSuperviseFlagsLocalEnv) | ForEach-Object { "$($_.what)$($_.name)" } }) -join "`n"
-Expect 'supervise hook: env row, RESTART LOOP (3 in 30 min), UNKNOWN port owner' ($hk -match 'shop · web' -and $hk -match 'RESTART LOOP: shop api restarted 3 times' -and $hk -match 'UNKNOWN: shop web port 4200')
+Expect 'supervise hook (status -Json only): env row, RESTART LOOP (3 in 30 min), TRAIN WAITS, NO BASELINE MARK, SEED DRIFT, UNKNOWN port owner' ($hk -match 'TRAIN WAITS: shop train t1 waits \d+ min for the lease\(s\) of H1' -and $hk -match 'NO BASELINE MARK: shop' -and $hk -match 'SEED DRIFT: shop roleA' -and $hk -match 'shop · web' -and $hk -match 'RESTART LOOP: shop api restarted 3 times' -and $hk -match 'UNKNOWN: shop web port 4200')
+$rf = @(foreach ($j in '[{"env":"shop","services":[]}]', '[{"env":"shop","services":[],"keepFreeGB":8}]', '[{"env":"shop","services":[],"keepFreeGB":10}]') { & { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = $j } }; @(Get-KitSuperviseFlagsLocalEnv | Where-Object { "$($_.what)" -match 'RAM FLOOR' }).Count } })
+Expect "supervise RAM FLOOR: a status without keepFreeGB caches nothing (no bogus 0 -> 8); a real move flags ($($rf -join ','))" ($rf -join ',' -eq '0,0,1')
 $ph = (& { . $O; $global:downs = @(); function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$T) { if ($A -contains 'down') { $global:downs += $A[-1]; return [pscustomobject]@{ code = 0 } }
   [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"up"},{"service":"web","state":"up"},{"service":"db","state":"up"},{"service":"x","state":"up (external)"}],"leases":[{"agent":"P1","services":["api"],"graceLeft":8}],"holds":[{"who":"me","services":["db"],"graceLeft":null}]}]' } }
   Invoke-KitPauseLocalEnv; "downs=$($global:downs -join '|')" }) -join "`n"

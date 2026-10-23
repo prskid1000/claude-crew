@@ -44,8 +44,10 @@ $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix: a gone session''s QA seat + claims freed in ONE line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count -and $sr -match 'gate: \d+ running')
 $sd = Join-Path $qs 'seats'; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
-'{"leases":{"devy-A1":{"services":["api"],"repos":[],"until":"2026-10-16T12:00:00"}}}' | Set-Content (Join-Path (TkPath $k localenv -Create) 'shop.json')
+# the env's leases come from localenv.ps1 status -Json (a stub here): never its state files
+New-Item -ItemType Directory -Force (Join-Path $k 'skills/local-env') | Out-Null
+"'[{`"env`":`"shop`",`"leases`":[{`"agent`":`"devy-A1`",`"services`":[`"api`"],`"until`":null,`"graceLeft`":7}],`"holds`":[]}]'" | Set-Content (Join-Path $k 'skills/local-env/localenv.ps1')
 $bs = Px $O board show | Out-String; $rc = Px $O recover | Out-String
-Expect 'board show lists QA seats and env leases; recover lists the lease with no live holder' ($bs -match 'seat: test:Q1 web 2 GB' -and $bs -match 'lease: shop devy-A1 on api' -and $rc -match '== LEASE shop devy-A1 \[api\]: no live holder')
+Expect 'board show lists QA seats and env leases; recover lists the lease with no live holder' ($bs -match 'seat: test:Q1 web 2 GB' -and $bs -match 'lease: shop devy-A1 on api' -and $rc -match '== LEASE shop devy-A1 \[api\]: no live holder, ends in 7 min')
 Remove-TestKit $k
 Complete-Tests

@@ -6,7 +6,7 @@ supervise report, seats and leases in board show and recover.
 Its hooks run inside the orch.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Exit codes: none (functions only).
-Sections: L12 builds · L41 supervise · L130 lines · L146 cleanup
+Sections: L12 builds · L41 supervise · L130 lines · L155 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -131,12 +131,21 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
 # board show: QA seats and local-env leases
 function Get-KitBoardLinesResources {
   foreach ($o in @(Read-KitJsonFiles (Join-Path (Get-KitPath qa-seats) 'seats'))) { "  seat: $($o.agent) $($o.kind) $($o.need) GB since $($o.since)$(if ((Test-KitHolder $o) -eq $false) { ' (holder gone)' })" }
-  foreach ($o in @(Read-KitJsonFiles (Get-KitPath localenv))) { foreach ($l in @($o.leases.PSObject.Properties)) { "  lease: $([IO.Path]::GetFileNameWithoutExtension($o.file)) $($l.Name) on $(@($l.Value.services) + @($l.Value.repos) -join ', ') until $($l.Value.until)" } }
+  foreach ($ev in @(Get-KitLocalEnvStatus)) { foreach ($l in @($ev.leases | Where-Object { $_ })) { "  lease: $($ev.env) $($l.agent) on $(@($l.services) -join ', ') $(if ($l.until) { "until $($l.until)" } else { 'while live' })" } }
+}
+# localenv.ps1 status -Json (extra local-env): the env state as the env reports it, never its files
+function Get-KitLocalEnvStatus {
+  if (-not $KitCmd.local -or -not (Test-Path $KitCmd.local)) { return }
+  $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') 60
+  @(try { "$($r.out)" | ConvertFrom-Json } catch { @() })
 }
 
 # recover: env and phone leases with no live holder (README "Leases")
 function Get-KitRecoverLinesResources {
-  foreach ($o in @(Read-KitJsonFiles (Get-KitPath localenv)) + @(Read-KitJsonFiles (Get-KitPath phones))) {
+  foreach ($ev in @(Get-KitLocalEnvStatus)) {
+    foreach ($l in @(@($ev.leases) + @($ev.holds) | Where-Object { $_ -and $null -ne $_.graceLeft })) { $a = if ($l.agent) { $l.agent } else { $l.who }; "== LEASE $($ev.env) $a [$(@($l.services) -join ',')]: no live holder, ends in $($l.graceLeft) min (now: localenv.ps1 release|unhold -Env $($ev.env) -Agent $a)" }
+  }
+  foreach ($o in @(Read-KitJsonFiles (Get-KitPath phones))) {
     $name = [IO.Path]::GetFileNameWithoutExtension($o.file)
     $ls = @{}; if ($o.lane) { $ls[$o.agent] = $o } else { foreach ($p in @($o.leases.PSObject.Properties) + @($o.holds.PSObject.Properties) | Where-Object { $_ }) { $ls[$p.Name] = $p.Value } }
     foreach ($k in @($ls.Keys)) { if ($k -notin '__stopping__', 'manual' -and -not (Test-KitLive $ls[$k])) { "== LEASE $name $k [$(@($ls[$k].services) -join ',')]: no live holder, ends after idle.graceMinutes (now: $(if ($o.lane) { "swarm.ps1 release -Agent $k" } else { "localenv.ps1 release|unhold -Env $name -Agent $k" }))" } }

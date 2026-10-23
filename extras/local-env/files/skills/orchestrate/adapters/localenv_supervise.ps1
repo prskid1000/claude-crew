@@ -3,7 +3,7 @@ localenv_supervise.ps1 (extra local-env): the local env in orch.ps1 supervise, d
 env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left);
 Invoke-KitPauseLocalEnv in orch.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L35 rows · L69 supervise
+Sections: L9 logs · L35 rows · L57 pause · L69 spike · L91 flags
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -32,7 +32,7 @@ function Get-KitLogErrors([string[]]$Files, $Sizes) {
     [pscustomobject]@{ path = $i.FullName; size = $i.Length; errors = $real.Count; expected = $hits.Count - $real.Count; cls = $(if ($cls) { $cls } else { 'error' }); first = "$top".Trim(); dep = $dep }
   }
 }
-# ---- rows: env rows, pause
+# ---- rows: env rows
 # local-env rows (pure on status -Json): up services + holders; a down one only while a lease / hold needs it (no lease = idle);
 # one service on one port in several envs (a shared external DB) is one row: its envs and holders merged, its RAM once
 function Get-KitEnvRows($Envs, [datetime]$now) {
@@ -54,7 +54,7 @@ function Get-KitEnvRows($Envs, [datetime]$now) {
     [pscustomobject]@{ name = $(if ($u.envs.Count -gt 1) { "$($u.svc) ($($u.envs -join ', '))" } else { "$($u.envs[0]) · $($u.svc)" }); by = "$((@($u.who) | Select-Object -Unique) -join ', ')$(if ($null -ne $g) { " (grace $g min)" })"; gb = $u.gb } }); if ($ur.Count) { $rows.InsertRange(0, [object[]]$ur) }
   [pscustomobject]@{ rows = @($rows); flags = @($fl); owner = @($own) }
 }
-# orch.ps1 pause: kit-started services no live lease or hold needs stop now (paused agents' leases are only in grace)
+# ---- pause: orch.ps1 pause: kit-started services no live lease or hold needs stop now (paused agents' leases are only in grace)
 function Invoke-KitPauseLocalEnv {
   if (-not (Test-Path $KitCmd.local)) { return }
   $st = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') 60
@@ -66,7 +66,7 @@ function Invoke-KitPauseLocalEnv {
     "local env $($ev.env): $(if ($dn.code) { "stopping $($idle -join ', ') FAILED: $($dn.out)" } else { "stopped $($idle -join ', ') (no live holder)" })"
   }
 }
-# ---- supervise: ERROR SPIKE flags, the supervise hook
+# ---- spike: ERROR SPIKE flags
 # one log's new errors -> nothing (expected 4xx while a lease tests), ACT (startup, connection, 5xx: the cause, env, service,
 # release), WATCH (other errors); a startup failure whose dependency is up again: restarted once (-AutoFix)
 function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
@@ -88,7 +88,9 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
   }
   [pscustomobject]@{ level = 'ACT'; what = "ERROR SPIKE: $where, $n new error line(s), $($L.cls): $($L.first)"; action = "& $($KitCmd.local) logs -Env $(if ($ev) { $ev.env } else { '<env>' }) -Service $svc; a branch layer in that release caused it -> its agent (board msg), else kitty kind env" }
 }
-# supervise section 7: env rows and flags, owner holds (info), restart loops, unknown port owners, new log errors (sizes cached per round)
+# ---- flags: supervise section 7 (status -Json only): env rows and flags, owner holds (info), restart loops, trains
+# waiting on leases, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
+# (sizes cached per round)
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
@@ -96,13 +98,25 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   $envs = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
   $er = Get-KitEnvRows $envs $now
   $er.rows; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
-  foreach ($sf in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue)) {
-    $x = try { Get-Content $sf.FullName -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $x) { continue }
-    foreach ($sn in @($x.services.Keys)) {
-      $n = @($x.services[$sn].restarts | Where-Object { $_ -and ($now - [datetime]$_).TotalMinutes -lt 30 }).Count
-      if ($n -gt 2) { & $watch "RESTART LOOP: $($sf.BaseName) $sn restarted $n times in 30 min" "evidence localenv.ps1 logs -Env $($sf.BaseName) -Service $sn" }
+  $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}
+  $waitMin = [double](Get-KitSetting 'localEnv.trainWaitFlagMinutes' 10)   # TODO-PARAM (fixed default)
+  foreach ($ev in $envs) {   # all from status -Json: never the env's state files
+    foreach ($s in @($ev.services | Where-Object { [int]$_.restarts30 -gt 2 })) { & $watch "RESTART LOOP: $($ev.env) $($s.service) restarted $($s.restarts30) times in 30 min" "evidence localenv.ps1 logs -Env $($ev.env) -Service $($s.service)" }
+    if ($ev.train -and @($ev.train.waitingFor).Count -and $ev.train.waitSince -and ($now - [datetime]$ev.train.waitSince).TotalMinutes -ge $waitMin) {
+      & $watch "TRAIN WAITS: $($ev.env) train $($ev.train.id) waits $([int]($now - [datetime]$ev.train.waitSince).TotalMinutes) min for the lease(s) of $(@($ev.train.waitingFor) -join ', ')" 'holders: release when done (it deploys at leaseMinutes and tells them)'
     }
+    $kf = $ev.keepFreeGB; $was = $last["$($ev.env)/keepFreeGB"]; if ($null -ne $kf) { $seenEnv["$($ev.env)/keepFreeGB"] = [double]$kf }   # a failed / older status has no floor: nothing cached
+    if ($null -ne $kf -and $null -ne $was -and [math]::Abs([double]$kf - [double]$was) -ge 1) { [pscustomobject]@{ level = 'INFO'; what = "RAM FLOOR: $($ev.env) keep-free moved $was -> $kf GB ($($ev.keepFree))"; action = 'Nothing to do (learned from 24 h of free RAM; localEnv.keepFreeGB fixes it).' } }
+    if ($ev.marks) {
+      $new = @($ev.marks.expired | Where-Object { $_ -notin @($last["$($ev.env)/expired"]) }); $seenEnv["$($ev.env)/expired"] = @($ev.marks.expired)
+      if ($new.Count) { & $watch "MARKS EXPIRED: $($ev.env) $($new -join ', ') (the binlog keeps $($ev.marks.binlogDays) d)" "restore to them is gone; localenv.ps1 doctor -Env $($ev.env)" }
+      if (-not $ev.marks.baseline) { & $watch "NO BASELINE MARK: $($ev.env)" "localenv.ps1 seed -Env $($ev.env) (a green seed marks baseline-<date>)" }
+      elseif ($ev.marks.binlogDays -and [double]$ev.marks.baselineAgeDays -gt [double]$ev.marks.binlogDays - 3) { & $watch "BASELINE EXPIRES: $($ev.env) $($ev.marks.baseline) is $($ev.marks.baselineAgeDays) d old, the binlog keeps $($ev.marks.binlogDays) d" "localenv.ps1 seed -Env $($ev.env)" }
+      if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitSetting 'localEnv.marks.keepDays' 30)) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "localenv.ps1 doctor -Env $($ev.env) (SET PERSIST binlog_expire_logs_seconds)" }
+    }
+    if ($ev.seed -and -not $ev.seed.ok) { & $watch "SEED DRIFT: $($ev.env) $(@(@($ev.seed.missing) + @($ev.seed.drift)) -join ', ')" "localenv.ps1 seed -Env $($ev.env) (ENV-FIX)" }
   }
+  $seenEnv | ConvertTo-Json -Depth 4 | Set-Content $cf
   foreach ($ev in $envs) { foreach ($s in @($ev.services | Where-Object state -eq 'up (adopted)')) { & $watch "UNKNOWN: $($ev.env) $($s.service) port $($s.port) is served by a process the kit did not start" "stop it or change the port (localenv.ps1 status -Env $($ev.env))" } }
   $sizesFile = Join-Path (Get-KitPath cache -Create) 'localenv-log-sizes.json'
   $sizes = try { Get-Content $sizesFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sizes) { $sizes = @{} }
