@@ -15,10 +15,10 @@ orch.ps1: the coordinator + kit commands (orchestrate SKILL.md). pwsh 7: & <kit>
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (extra kit-admin)   hooks and install
 Extras (kittool.py extra add <name>) install skills/orchestrate/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L23 init · L51 board · L216 budget · L244 launch · L336 recover · L403 pause · L447 resume · L505 program · L549 track ·
-  L822 supervise report · L863 anomalies · L892 supervise · L1150 report · L1227 audit · L1287 bugbrief · L1397 cleanup ·
-  L1521 learn · L1551 decide · L1617 health · L1679 retro due · L1689 the kit origin's main and extras · L1705 setup ·
-  L1770 guard-sendmessage
+Sections: L23 init · L51 board · L216 budget · L244 launch · L413 recover · L488 pause · L532 resume · L590 program · L634 track ·
+  L907 supervise report · L948 anomalies · L977 supervise · L1235 report · L1312 audit · L1372 bugbrief · L1482 cleanup ·
+  L1606 learn · L1636 decide · L1702 health · L1764 retro due · L1774 the kit origin's main and extras · L1790 setup ·
+  L1855 guard-sendmessage
 #>
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -270,7 +270,13 @@ if ($Self) {
 if ($Done) {
   if (-not $RunId -and -not $Run) { 'usage: launch -Done -RunId <id> | -Run <run> (a self record: the workflow wrote it)'; exit 2 }
   $files = @(@(if ($RunId) { Join-Path $dir "$(& $safe $RunId).json" }) | Where-Object { Test-Path -LiteralPath $_ })
+  if ($RunId) {   # both record kinds of the run, and the earlier launches it superseded
+    $wfDirs = @(Get-KitWorkflowDirs); $hit = @(Get-StoppedRuns -Hours 720 -All | Where-Object { $_.runId -eq $RunId -or (-not $_.runId -and (Resolve-KitRunId $_ $wfDirs) -eq $RunId) })
+    $files += @($hit | ForEach-Object { $_.file, $_.selfFile } | Where-Object { $_ })
+    foreach ($h in $hit) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object { -not $_.completed -and $_.run -eq $h.run -and (Split-Path ([string]$_.script) -Leaf) -eq $h.leaf -and [datetime]$_.at -le $h.last } | ForEach-Object file) }
+  }
   if ($Run) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object run -eq $Run | ForEach-Object file) }
+  $files = @($files | Select-Object -Unique)
   if (-not $files.Count) { Write-Host "[launch] no record for $RunId$Run (nothing to mark)"; exit 0 }
   foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-Date).ToString('o'); Write-KitAtomic $x ($r | ConvertTo-Json -Depth 30) } }
   Write-Host "[launch] marked completed: $(@($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
@@ -310,41 +316,111 @@ function Get-LaunchRunName($a) {
   if ($a.select) { return "select-$(if ($a.name) { $a.name } elseif ($a.target) { $a.target } else { 'run' })" }
   ''
 }
-# self records alone have no runId
+# self records alone have no runId; a later launch of the same run (a relaunch, a fix round) supersedes it: one entry per run
 function Get-StoppedRuns([int]$Hours = 24, [switch]$All) {
   $dir = Get-KitPath launches -Create; $since = (Get-Date).AddHours(-$Hours)
   $selfs = @(Read-KitJsonFiles $dir 'self-*.json')
   $records = @(Read-KitJsonFiles $dir | Where-Object { (Split-Path $_.file -Leaf) -notlike 'self-*' -and $_.script } | Sort-Object { (Get-Item -LiteralPath $_.file).LastWriteTime })   # args dumps are no launches
+  $latest = @{}
+  foreach ($x in @($selfs | ForEach-Object { , @($_.script, $_.run, $_.at) }) + @($records | ForEach-Object { , @($_.script, (Get-LaunchRunName $_.args), $_.at) })) {
+    $t = $null; try { $t = [datetime]$x[2] } catch {}; if (-not $t) { continue }; $key = "$(Split-Path ([string]$x[0]) -Leaf)|$($x[1])"; if (-not $latest[$key] -or $t -gt $latest[$key]) { $latest[$key] = $t }
+  }
+  $runs = @(Get-StoppedRunsOf $records $selfs $since $All | Where-Object { $_.paused -or $latest["$($_.leaf)|$($_.run)"] -le $_.last.AddMinutes(10) })
+  $runs = @(@($runs | Where-Object { -not $_.runId }) + @($runs | Where-Object runId | Group-Object runId | ForEach-Object { $_.Group | Sort-Object at | Select-Object -Last 1 }))
+  @($runs | Group-Object { "$($_.leaf)|$($_.run)" } | ForEach-Object { $_.Group | Sort-Object last | Select-Object -Last 1 })   # one entry per run: the latest args win
+}
+function Get-StoppedRunsOf($records, $selfs, [datetime]$since, [bool]$All) {
   $used = @{}
   foreach ($r in $records | Where-Object { -not $_.completed }) {
     $at = try { [datetime]$r.at } catch { (Get-Item -LiteralPath $r.file).LastWriteTime }
     if ($at -lt $since -and -not $r.paused) { continue }   # a paused run waits for resume however long
     if (-not $All -and -not $r.paused -and (Test-KitHolder $r) -eq $true) { continue }
     $leaf = Split-Path ([string]$r.script) -Leaf; $run = Get-LaunchRunName $r.args
-    $sf = @($selfs | Where-Object { $run -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
-    if (-not $sf) { $sf = @($selfs | Where-Object { (Split-Path ([string]$_.script) -Leaf) -eq $leaf -and [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 }) | Select-Object -First 1 -ExpandProperty file }
-    if ($sf) { $used[$sf] = $true; $so = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($so.completed) { continue }; $run = $so.run }   # an owner-stopped self record ends the launch too
-    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r; paused = $r.paused }
+    $free = @($selfs | Where-Object { -not $used[$_.file] -and (Split-Path ([string]$_.script) -Leaf) -eq $leaf })   # one self record per launch record
+    $sf = @($free | Where-Object { $run -and $_.run -eq $run } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }) | Select-Object -First 1 -ExpandProperty file
+    $near = @($free | Where-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) -le 30 } | Sort-Object { [math]::Abs(([datetime]$_.at - $at).TotalMinutes) }); $bp = { param($x) ("$x" -split '[\\/]')[-1] }   # typed args: the brief's file name only, or other slashes
+    if (-not $sf) { $sf = @(@($near | Where-Object { $r.args.brief -and (& $bp $_.args.brief) -ieq (& $bp $r.args.brief) }) + $near) | Select-Object -First 1 -ExpandProperty file }
+    $last = $at
+    if ($sf) { $used[$sf] = $true; $so = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($so.completed) { continue }; $run = $so.run; if ([datetime]$so.at -gt $last) { $last = [datetime]$so.at } }   # an owner-stopped self record ends the launch too
+    [pscustomobject]@{ runId = $r.runId; leaf = $leaf; script = $r.script; run = $run; at = $at; last = $last; file = $r.file; selfFile = $sf; runDir = $r.runDir; record = $r; paused = $r.paused }
   }
   foreach ($s in $selfs | Where-Object { -not $used[$_.file] -and -not $_.completed -and ($_.paused -or [datetime]$_.at -ge $since) }) {
     if (-not $All -and -not $s.paused -and (Test-KitHolder $s) -eq $true) { continue }
     # only a completed record of THIS launch hides it
     if (@($records | Where-Object { $_.completed -and (Get-LaunchRunName $_.args) -eq $s.run -and [math]::Abs(([datetime]$_.at - [datetime]$s.at).TotalMinutes) -le 30 }).Count) { continue }
-    [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null; paused = $s.paused }
+    [pscustomobject]@{ runId = $null; leaf = (Split-Path ([string]$s.script) -Leaf); script = $s.script; run = $s.run; at = [datetime]$s.at; file = $null; selfFile = $s.file; runDir = $(if ($s.runDir) { $s.runDir } else { $s.args.runDir }); record = $null; paused = $s.paused; last = [datetime]$s.at }
   }
 }
-# ---- recover: stopped runs; no network
+# the workflow run id of a self record: the transcript that ran its launch -Self (its args hash first: one run name, several launches)
+function Resolve-KitRunId($S, $WfDirs) {
+  $fnv = if ($S.selfFile) { "$((Get-Content -LiteralPath $S.selfFile -Raw | ConvertFrom-Json).fnv)" }
+  $base = [regex]::Escape("launch -Self -Script $($S.leaf) -Run '$($S.run)' ")
+  foreach ($rx in @(if ($fnv) { "$base.*-Fnv $fnv" }) + $base) {
+    $hit = $WfDirs | Where-Object { @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $rx -Quiet }).Count } | Select-Object -First 1
+    if ($hit) { return $hit.Name }
+  }
+}
+# per-item steps done of a buildy area: host MRs (stored refs, refs in the items, worktree branches, task ids in titles and
+# branches), the task (status, testing doc link), worktrees; a failed call = unknown, never a state. An area skips the steps
+# every item has done; its state = its least done item.
+$script:KitStates = 'unknown', 'start', 'build', 'open', 'merged', 'done'
+$script:KitSteps = 'build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'
+$script:KitTasks = @{}   # per recover: tasks, comments, task MRs, MRs (one call each)
+function Get-KitOnce([string]$Key, [scriptblock]$Get) { if (-not $script:KitTasks.ContainsKey($Key)) { $script:KitTasks[$Key] = & $Get }; $script:KitTasks[$Key] }
+function Test-KitOnlineOnce { if ($null -eq $script:KitOnline) { $script:KitOnline = [bool](Test-KitOnline) }; $script:KitOnline }
+function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $null) {   # $Since: the run's launch; older found MRs are earlier work
+  $txt = "$($Ag.items) $($Ag.note)"; $tid = { param($x) @("$x" -split '[\s,;()]+' | ForEach-Object { NormTask $_ } | Where-Object { $_ -match '^(?=.*\d)(?=.*[a-z])[\w-]{5,}$' }) }
+  $tasks = @(& $tid "$($Ag.items)" | Select-Object -Unique); $c = @{}; $fail = $false   # task ids from the items only (a note has words like oauth2)
+  $add = { param($repo, $n, $pin) if ($repo -and $n -and -not $c["$repo!$n"].pin) { $c["$repo!$n"] = @{ repo = $repo; n = "$n"; pin = [bool]$pin } } }
+  foreach ($u in @($Stored | ForEach-Object { ConvertFrom-MrUrl $_ } | Where-Object { $_ })) { & $add $u.repo $u.n 1 }   # the run's own refs
+  foreach ($m in [regex]::Matches($txt, '([\w./-]+)!(\d+)')) { & $add (Get-HostProject $m.Groups[1].Value -Raw) $m.Groups[2].Value 1 }
+  if ((Test-KitOnlineOnce)) {
+    $global:KitHostFailed = $false
+    foreach ($w in @($Wts | Where-Object branch)) {
+      if ("$(git -C $w.dir remote get-url origin 2>$null)" -notmatch '^(?:\w+://)?(?:[^@/]+@)?[^/:]+[:/](?<p>.+?)(?:\.git)?/?$') { continue }
+      $p = $Matches.p; foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = $p; source_branch = $w.branch; state = 'all' } | Where-Object { $_ })) { & $add $p $m.iid }
+    }
+    foreach ($t in $tasks) { foreach ($r in @(Get-KitOnce "$t#mrs" { @(Find-TaskMrs $t) })) { if ("$r" -match '^(?<r>.+)!(?<n>\d+)$') { & $add (Get-HostProject $Matches.r -Raw) $Matches.n } } }
+    $fail = [bool]$global:KitHostFailed
+  } elseif ($c.Count -or $tasks.Count -or @($Wts | Where-Object branch).Count) { $fail = $true }
+  $mrs = @(foreach ($k in $c.Keys) { $h = if ((Test-KitOnlineOnce)) { Get-KitOnce "mr:$k" { try { Invoke-HostVerb 'mr.get' $c[$k] } catch { $null } } }
+      [pscustomobject]@{ ref = $k; url = $(if ($h.web_url) { $h.web_url } else { $k }); repo = ($c[$k].repo -split '/')[-1]; state = $(if ($h.state) { "$($h.state)" } else { 'UNKNOWN' }); text = "$($h.source_branch) $($h.title)"; body = "$($h.description)$($h.body)"; pin = $c[$k].pin; created = $h.created_at } })
+  $mrs = @($mrs | Where-Object { $_.state -ne 'closed' -and ($_.pin -or -not $Since -or -not $_.created -or [datetimeoffset]$_.created -ge ([datetimeoffset]$Since).AddMinutes(-10)) })   # offsets: host times are UTC, launches local
+  $wip = @($Wts | Where-Object { $_.dirty -or $_.unpushed -ne '0' }).Count   # merged work ignores it: a squash leaves the branch ahead
+  $its = @("$($Ag.items)" -split ',(?![^()]*\))' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ item = $_; task = @(& $tid $_)[0] } })
+  $hit = { param($m, $t) $t -and $m.text -match "(?i)(?<![a-z0-9])$([regex]::Escape($t))(?![a-z0-9])" }
+  $loose = @($mrs | Where-Object { $m = $_; -not @($its | Where-Object { & $hit $m $_.task }).Count })   # no item's task in branch or title
+  $items = @(foreach ($it in $its) {
+      $t = $it.task; $mine = @($mrs | Where-Object { & $hit $_ $t })
+      $guess = -not $mine.Count -and $loose.Count -and $its.Count -gt 1   # whose loose MR it is would be a guess: unknown
+      if (-not $mine.Count -and $its.Count -eq 1) { $mine = $loose }
+      $tk = if ($t) { Get-KitOnce $t { try { Get-TrackerTask $t } catch { $null } } }; $ts = "$($tk.status)"
+      $late = $ts -and (Test-TrackerStatus $ts 'promoted', 'inTest', 'closed')   # the task says the dev steps are done (failedTesting: back to dev)
+      $rx = '(?i)testing doc\W{0,6}(https?://[^\s)\]"<>]+)'
+      $doc = if ($t -and -not $late) { if ("$(@($mine.body) -join ' ') $($tk.description)" -match $rx) { $Matches[1] } else {
+          if ((Get-KitOnce "$t#c" { "$(try { Get-TrackerComments $t | ConvertTo-Json -Depth 4 -Compress } catch { '' })" }) -match $rx) { $Matches[1] } } }
+      $open = @($mine | Where-Object state -eq 'opened').Count; $known = -not $fail -and -not $guess -and -not @($mine | Where-Object state -eq 'UNKNOWN').Count
+      $done = @(if ($late) { $script:KitSteps } else {
+          if ($known -and $mine.Count -and -not ($open -and $wip)) { 'build' }   # an MR opens only after the local loop passed
+          if ($known -and $mine.Count -and -not $open) { 'review', 'ci', 'merge' }
+          if ($doc -and $mine.Count) { 'testing-doc' } })   # a doc before this run's MR is an earlier change's
+      $st = if ($done.Count -eq $script:KitSteps.Count) { 'done' } elseif ($done -contains 'merge') { 'merged' } elseif ($done -contains 'build') { 'open' } elseif (-not $known) { 'unknown' } elseif ($wip) { 'build' } else { 'start' }
+      [pscustomobject]@{ item = $it.item; state = $st; done = $done; mrs = $mine; tracker = $ts; doc = $doc; deployed = [bool]($ts -and (Test-TrackerStatus $ts 'inTest', 'closed')) }
+    })
+  $area = @($items | Sort-Object { $script:KitStates.IndexOf($_.state) })[0].state; if (-not $area) { $area = 'start' }
+  [pscustomobject]@{ state = $area; skip = @($script:KitSteps | Where-Object { $s1 = $_; $items.Count -and -not @($items | Where-Object { $_.done -notcontains $s1 }).Count }); items = $items; mrs = @($items.mrs | Where-Object { $_ } | Sort-Object ref -Unique) }
+}
+# ---- recover: stopped runs; each buildy area's state from the host, the tracker and its worktrees (bounded calls)
 function Invoke-Recover {
 param([string]$RunId, [string[]]$Run = @(), [int]$Hours = 48)
 $Run = @(Split-KitList $Run)
 $runs = @(Get-StoppedRuns -Hours $Hours -All:([bool]($RunId -or $Run.Count)) | Where-Object { (-not $RunId -or $_.runId -eq $RunId) -and (-not $Run.Count -or $_.run -in $Run) })
 if ($RunId -and -not $runs.Count) { "no launch record for $RunId within $Hours h (orch.ps1 launch -List)"; exit 0 }
 $wfDirs = @(Get-KitWorkflowDirs | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-$Hours) })
+foreach ($s in $runs) { if (-not $s.runId) { $s.runId = Resolve-KitRunId $s $wfDirs } }
+$runs = @(@($runs | Where-Object { -not $_.runId }) + @($runs | Where-Object runId | Group-Object runId | ForEach-Object { $_.Group | Sort-Object at | Select-Object -Last 1 }) | Sort-Object at)   # one entry per run id: the latest args win
+$script:KitOnline = $null; $script:KitTasks = @{}
 foreach ($s in $runs) {
-  if (-not $s.runId) {
-    $hit = $wfDirs | Where-Object { @(Get-ChildItem $_.FullName -Filter 'agent-*.jsonl' -ErrorAction SilentlyContinue | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch "launch -Self -Script $($s.leaf) -Run '$($s.run)' " -Quiet }).Count } | Select-Object -First 1
-    if ($hit) { $s.runId = $hit.Name }
-  }
   $lr = Get-Content -LiteralPath $(if ($s.selfFile) { $s.selfFile } else { $s.file }) -Raw | ConvertFrom-Json; $a = $lr.args
   $aj = Get-LaunchArgsJson $lr; if (-not $a.runDir -and $lr.runDir) { $a | Add-Member -Force NoteProperty runDir $lr.runDir }
   "== $($s.leaf) run $(if ($s.runId) { $s.runId } else { '<id unknown>' }) ($($s.run)), launched $($s.at.ToString('yyyy-MM-dd HH:mm'))"
@@ -352,30 +428,37 @@ foreach ($s in $runs) {
   $board = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -eq $s.run })
   foreach ($b in $board | Where-Object { $_.status -ne 'left' -or $_.paused -or $_.crashed } | Sort-Object agent) { "  board: $($b.agent) $(if ($b.paused) { 'paused' } elseif ($b.crashed) { 'crashed' } else { $b.status }), last beat $(([datetime]$b.beat).ToString('dd MMM HH:mm'))$(if ((Test-KitHolder $b) -eq $false) { ', session gone' }) | $($b.area)" }
   if (@($board | Where-Object status -eq 'left').Count) { "  board: $(@($board | Where-Object status -eq 'left').Count) entr(ies) left" }
-  $wts = @(); $brief = @()
+  $wts = @(); $brief = @(); $resume = [ordered]@{}
+  $wv = if ($s.runId) { Join-Path (Get-KitPath waves) "$($s.runId).json" }; $wave = @(if ($wv -and (Test-Path $wv)) { (Get-Content $wv -Raw | ConvertFrom-Json).agents })
   $agents = if ($a.agents) { @($a.agents) } else { @($board | Group-Object agent | ForEach-Object { [pscustomobject]@{ id = $_.Name; items = $_.Group[0].items } }) }
   foreach ($ag in $agents) {
-    $pre = "$($ag.id)".ToLower()
+    $pre = "$($ag.id)".ToLower(); $mine = @()
     foreach ($root in $KitConf.WorktreeRoots) {
       foreach ($w in @(Get-ChildItem $root -Directory -Filter "$pre-*" -ErrorAction SilentlyContinue)) {
         $br = "$(git -C $w.FullName branch --show-current 2>$null)".Trim(); if (-not $br) { continue }
         $gd = "$(git -C $w.FullName rev-parse --absolute-git-dir 2>$null)".Trim(); $tg = if ($gd -and (Test-Path "$gd/claude-target")) { "$(Get-Content "$gd/claude-target")".Trim() } else { '' }
         $dirty = @(git -C $w.FullName status --porcelain 2>$null).Count
         $ahead = if ($tg) { "$(git -C $w.FullName rev-list --count "origin/$tg..HEAD" 2>$null)".Trim() } else { '?' }
+        $up = "$(git -C $w.FullName rev-list --count '@{u}..HEAD' 2>$null)".Trim(); if (-not $up) { $up = $ahead }   # no upstream: every commit unpushed
         $last = "$(git -C $w.FullName log -1 --format='%h %cr %s' 2>$null)".Trim()
         $line = "$($ag.id) $($w.FullName): branch $br (target $(if ($tg) { $tg } else { '?' })), $ahead commit(s) not on the target, $dirty uncommitted file(s); last: $last"
-        $wts += "  worktree: $line"; $brief += "- $line"
+        $wts += "  worktree: $line"; $brief += "- $line"; $mine += [pscustomobject]@{ dir = $w.FullName; branch = $br; dirty = $dirty; unpushed = $up }
       }
     }
-    if (-not @($wts | Where-Object { $_ -like "*worktree: $($ag.id) *" }).Count) { $brief += "- $($ag.id) (items $($ag.items)): no worktree found: not started, or removed" }
+    $st = Get-KitAreaState $ag @($wave | Where-Object id -eq $ag.id | ForEach-Object { $_.report.mrs.url } | Where-Object { $_ }) $mine $s.at
+    $sl = "$($ag.id) state: $($st.state)$(if ($st.skip.Count) { " (skip: $($st.skip -join ', '))" })"; $wts += "  $sl"; $brief += "- $sl"
+    $brief += @('', "| $($ag.id) item | State | Done: skipped | Missing: runs | MRs | Tracker | Testing doc | Deployed |", '|---|---|---|---|---|---|---|---|')
+    foreach ($i in $st.items) {
+      $mx = @($i.mrs | ForEach-Object { "$($_.url) $($_.state)" }) -join ', '; $miss = @($script:KitSteps | Where-Object { $i.done -notcontains $_ }) -join ', '
+      $wts += "    item $($i.item): $($i.state); runs: $(if ($miss) { $miss } else { 'nothing' })$(if ($mx) { "; MRs: $mx" })$(if ($i.tracker) { "; tracker $($i.tracker)" })"
+      $brief += "| $($i.item) | $($i.state) | $($i.done -join ', ') | $miss | $mx | $($i.tracker) | $($i.doc) | $(if ($i.deployed) { 'yes' } else { 'no' }) |"
+    }
+    $brief += ''
+    $resume[$ag.id] = [ordered]@{ state = $st.state; skip = $st.skip; doc = "$(@($st.items.doc | Where-Object { $_ })[0])"; mrs = @($st.mrs | ForEach-Object { [ordered]@{ url = $_.url; repo = $_.repo; merged = $_.state -eq 'merged' } }); worktrees = @($mine.dir) }
     $ck = Get-KitCheckpoint $ag.id
     if ($ck -and -not $ck.done -and (-not $ck.run -or $ck.run -eq $s.run)) { $l = "$($ag.id) checkpoint: next $($ck.next); done: $(@($ck.steps | ForEach-Object { "$($_.step) $($_.evidence)".Trim() }) -join '; ')"; $wts += "  $l"; $brief += "- $l (start there; dev.ps1 checkpoint -Agent $($ag.id) -Read)" }
   }
   $wts
-  if ($s.runId) {
-    $wv = Join-Path (Get-KitPath waves) "$($s.runId).json"
-    if (Test-Path $wv) { foreach ($x in @((Get-Content $wv -Raw | ConvertFrom-Json).agents)) { foreach ($m in @($x.report.mrs)) { "  MR: $($x.id) $($m.url) $(if ($m.mergeState) { $m.mergeState } elseif ($m.merged) { 'MERGED' } else { 'OPEN' })"; $brief += "- $($x.id) MR $($m.url) $($m.mergeState)" } } }
-  }
   foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ -and $_.run -eq $s.run })) { "  decision pending: $($d.id) $($d.agent) item $($d.item): $($d.question)" }
   if ($s.leaf -eq 'testy.js' -and $a.runDir) { "  QA run folder: $($a.runDir) (unpublished items: below)" }
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) {
@@ -383,12 +466,14 @@ foreach ($s in $runs) {
     $txt = @("# Resume brief: $($s.run) ($($s.leaf) $($s.runId))", "Original brief: $($a.brief) (it wins where this differs). Mode: resume.",
       'A stopped agent''s work is below. Join the board with its id + -Resume (TAKEOVER, not DUPLICATE). Before editing: dev.ps1 wt status',
       '-Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it stopped (testing goals, local test',
-      'loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.', '', '## State at recovery') + $brief
+      'loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.', 'Steps per item (host + tracker, checked at recovery): build, review, ci,',
+      'merge, testing-doc, tracker. Done steps are skipped; run only the missing ones. unknown = a call failed: check it first.', '', '## State at recovery') + $brief
     Write-KitAtomic $rf (($txt -join "`n") + "`n")
     "  resume brief: $rf"
   }
   if ($s.runId) { "  RESUME: Workflow({ scriptPath: '$($s.script -replace '\\', '/')', resumeFromRunId: '$($s.runId)', args: $aj })" }
-  if ($s.leaf -eq 'buildy.js') { "  RELAUNCH (resume refused): Workflow({ scriptPath: '$($s.script -replace '\\', '/')', args: { ...the same args, brief: '<resume brief above>', mode: 'resume' } })" }
+  if ($s.leaf -eq 'buildy.js' -and $agents.Count) { $na = $aj | ConvertFrom-Json -AsHashtable; $na.brief = $rf -replace '\\', '/'; $na.mode = 'resume'; $na.resume = $resume; if (-not $na.agents) { $na.agents = @($agents | ForEach-Object { [ordered]@{ id = $_.id; items = $_.items } }) }
+    "  RELAUNCH (resume refused; finished steps skipped per area): Workflow({ scriptPath: '$($s.script -replace '\\', '/')', args: $($na | ConvertTo-Json -Depth 30 -Compress) })" }
   elseif ($a.runDir) { "  RELAUNCH (resume refused): Workflow({ scriptPath: '$($s.script -replace '\\', '/')', args: { runDir: '$($a.runDir)', kitDir: '$($KitConf.Kit -replace '\\', '/')' } }) (item claims skip published items)" }
   "  then: orch.ps1 launch -RunId <new id> ... ; the old one: orch.ps1 launch -Done -RunId $(if ($s.runId) { $s.runId } else { '<id>' })"
 }
@@ -494,7 +579,7 @@ foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run 
     "  $ag`: resume at '$($ck.next)' -> $bf"
   })
   $openMrs = @($mrs | Where-Object { $_.state -ne 'merged' })
-  if ($mrs.Count -and -not $openMrs.Count -and -not $noMr) { "  SKIP: all $($mrs.Count) MR(s) merged; finished: orch.ps1 launch -Done $(if ($s.runId) { "-RunId $($s.runId)" } else { "-Run '$($s.run)'" })"; continue }
+  if ($mrs.Count -and -not $openMrs.Count -and -not $noMr) { "  all $($mrs.Count) MR(s) merged: the relaunch runs only the missing post-merge steps (recover's per-area skip list)" }
   $lines; $go += $s.run
 }
 # a pause of all runs resumed for one run: that run released, the others stay paused
@@ -556,7 +641,7 @@ function Find-TaskMrs($task) {
       $pp = ProjPath $r; if (-not $pp) { continue }
       $enc = $pp -replace '/', '%2F'
       @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
-        @(Invoke-HostApi "projects/$enc/merge_requests?state=opened&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
+        @(Invoke-HostApi "projects/$enc/merge_requests?state=all&per_page=100" | Where-Object { "$($_.source_branch)" -match "(?i)$([regex]::Escape($tagged))(?![A-Za-z0-9])" })) |
         Where-Object { $_ -and $_.iid -and $_.state -ne 'closed' } | ForEach-Object { "$r!$($_.iid)" }
     }) | Select-Object -Unique
 }

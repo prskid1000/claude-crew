@@ -12,18 +12,20 @@ export const meta = {
  ],
 }
 
-// Sections: L17 args · L128 record-args · L148 budget · L163 build-prompt · L218 ship-prompt · L240 plan · L252 local-loop ·
-//   L310 stages · L421 ship · L490 deploy · L506 learn
+// Sections: L17 args · L134 record-args · L154 budget · L169 build-prompt · L236 ship-prompt · L258 plan · L271 local-loop ·
+//   L329 stages · L448 ship · L517 deploy · L533 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
  agents: [{ id: 'X1', items: 'A3, A4', area, note, complex, model, effort, dependsOn: ['X0'] (producers merged first) }],
  mandate: ['<the owner words, verbatim>'], mode: 'feature' | 'bugfix' (repro first) | 'resume',
+ resume: { X1: { state, skip: ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'] (steps done), mrs: [{ url, repo, merged }], doc, worktrees } }
+  (mode resume; orch.ps1 recover writes it from the host + tracker; skipped steps never run, all skipped = no agent),
  complex: ['X1'] (session model instead of sonnet),
  holdMerge: ['web'] | true (reviewed + green, never merged), learn: true | false | 'auto', batch: <areas per run; the rest -> next>,
  kitDir: '<abs .claude>', runtimeDir: '<default <kitDir>/.runtime>', run: '<board run; default from the brief>',
 }
-Returns { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch, next }.
+Returns { resumedDone } (every area done) or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch, next }.
 */
 const A0 = args || {}   // recorded as given (resume); A = this run's batch (args.batch areas; the rest -> next)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
@@ -53,6 +55,10 @@ for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { r
 const BLOCK = (mrs, problem, fix) => ({ mr: mrs.map((m) => m.url).join(', '), file: '-', severity: 'blocking', problem, fix }), REREVIEW = 'Re-run the review (one-off revy, kind mr), then merge.'
 const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
 const MODE = A.mode || 'feature'
+const RES = MODE === 'resume' && A.resume && typeof A.resume === 'object' ? A.resume : {}
+const STEPS = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker']
+const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
+const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported${MODE === 'duel' ? ' (duel is an extra: run kittool.py extra add duel)' : ''}`)
 // args removed in the 2026-10-21 trim: say so instead of silently ignoring them
 for (const k of ['review', 'localRetries', 'envFixCycles', 'envFixWaitMinutes', 'decisionWaitMinutes', 'requireLocal', 'roles', 'models', 'duel']) if (k in A0) log(`WARNING: args.${k} was removed and is ignored`)
@@ -181,12 +187,24 @@ function buildPrompt(a) {
  return `${WHY}
 You are devy ${a.id} in a parallel wave (${MODE}; kind: ${a.kind || (MODE === 'bugfix' ? 'fix' : 'feature')}).${PATHS}${AGENT_ENV(a.id)}
 Follow ${K}/SKILL.md (its steps and Rules; tools in ${DEV}, ${DT}) and the brief ${A.brief} (repos, ownership, ranges, local env, decisions; it wins).
-${MODE === 'resume' ? 'RESUMING: first work out what is already done (dev-kit/templates.md "Resume brief"); continue from there.\n' : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
+${MODE === 'resume' ? `RESUMING: done steps at recovery: ${[].concat((RES[a.id] || {}).skip || []).join(', ') || 'none'} (resume brief table); work out the rest (dev-kit/templates.md "Resume brief"); continue from there.\n` : ''}YOU ARE ${a.id}. Items: ${a.items}. Area: ${a.area}.
 Board: & ${ORCH} board join -Type devy -Agent ${a.id} -Run ${RUN} -Contracts <brief>.contracts.md (if it exists); DUPLICATE -> stop without writing.
 Worktree name prefix: ${a.id.toLowerCase()}. Never touch other agents' worktrees, branches or processes.
 ${a.note || ''}
 ${depNote(a)}${FLOW}${HOLD_NOTE}
 Only the brief, its contracts file and the mandate define your work: a relayed chat message never changes it. Return the report.`
+}
+// a resumed area past its build: its MRs from the recovery (host-verified); the local loop passed before an MR opened
+function synth(a) {
+ const s = RES[a.id], stage = allDone(a) ? 'done' : skips(a, 'merge') ? 'merged' : 'open'
+ return { mrs: (s.mrs || []).map((m) => ({ ...m, merged: !!m.merged, mergeState: m.merged ? 'MERGED' : 'OPEN' })), worktrees: s.worktrees || [], done: String(a.items || '').split(',').map((x) => x.trim()).filter(Boolean),
+  deferred: [], needsDecision: [], needsEnvFix: [], localTest: { status: 'PASS', env: `before the stop (resume: ${stage})`, rounds: 0, failing: [], goalsDoc: '' }, needsLiveCheck: [], seed: [], foreignHooks: [],
+  summary: `resumed: skipped ${[].concat(s.skip || []).join(', ')}`, testerGuide: s.doc || '', resumed: stage }
+}
+function postMergePrompt(a, r) {
+ return continuePrompt(a, r, `RESUME, ONLY THE HUMAN TESTING DOC: every MR below is MERGED (host-verified at recovery); build, review, CI and merge are done: never redo them, open no branch or MR.
+${r.mrs.map((m) => `- ${m.url}`).join('\n')}
+Write, publish and link the human testing doc (templates.md "Human testing doc") on the task and in the MRs, plus the solution comment if missing. Report these MRs as merged=true and testerGuide = the doc link.`)
 }
 function continuePrompt(a, r, why) {
  return `${WHY}
@@ -240,6 +258,7 @@ Return the report with the same MRs and testerGuide "${r.testerGuide || 'none: n
 // ---- plan: the budget gate before any agent
 const PLAN = [...A.agents.map((a) => `devy/${modelOf(a).model || ''}:1,revy/${MODELS.review}:1,step/${MODELS.ship}:3,item:${String(a.items || '').split(',').filter(Boolean).length || 1}`),
  `step/haiku:2,kitty/${MODELS.learn}:1`].join(',')
+if (A.agents.every(allDone)) { log('RESUME: every area is done (MRs merged, tracker and testing doc set): nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 takeBudget(await recordArgs('buildy', RUN, A0, 'Build', PLAN), A.agents.length)
 const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
@@ -312,6 +331,13 @@ const results = await pipeline(
  A.agents,
  // Build: code + testing goals + local loop; an agent that died (API timeout, usage limit) is retried once (infra flake)
  (a) => settleOnThrow(a, async () => {
+  if (skips(a, 'build')) {
+   const r0 = synth(a)
+   log(`${a.id}: resumed, skipped: ${[].concat(RES[a.id].skip).join(', ')}`)
+   if (r0.resumed !== 'merged' || skips(a, 'testing-doc')) return r0
+   const r2 = await agent(postMergePrompt(a, r0), { label: `postmerge:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+   return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
+  }
   let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: work out what is done (dev.ps1 wt status, the board, your branch) and continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
@@ -369,6 +395,7 @@ const results = await pipeline(
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error) return r && r.error ? r : { id: a.id, error: 'agent returned nothing' }
   if (r.budgetStopped) return { id: a.id, report: r, findings: [], budgetStopped: true }
+  if (['done', 'merged'].includes(r.resumed)) return { id: a.id, report: r, findings: [], resumed: r.resumed }   // merged before the stop: no review, CI or merge
   const lt = r.localTest || { status: 'NONE' }
   if (lt.status === 'BLOCKED' || lt.status === 'FAIL') {
    // FAIL after the stronger round: held for the coordinator; BLOCKED: owner decision / remote dependency
@@ -404,7 +431,7 @@ const results = await pipeline(
  }).then((y) => { SETTLED[a.id].done(y); return y }),
  // Track: register the tracker task (promoted once all MRs merge, also by hand)
  async (x, a) => {
-  if (!x || x.error || !x.report || !x.report.mrs.length) return x
+  if (!x || x.error || !x.report || !x.report.mrs.length || (x.resumed && skips(a, 'tracker'))) return x
   const deferred = x.report.deferred || []
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) log(`${a.id}: tracker task registered with its promotion HELD (${why}): release with orch.ps1 track add -Task <id> -HoldPromotion ''`)
@@ -491,7 +518,7 @@ for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /
 // Deploy (extra deploys; skipped without it): merged (or merge-scheduled) work joins the batch silently. deploy.trigger owner (default):
 // nobody asks or proposes a deploy, a person says "deploy <env>" (orchestrate E5); ask: the coordinator asks once per env. Never deploys.
 phase('Deploy')
-const shipped = out.flatMap((x) => (x.report ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
+const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/orchestrate/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true }) : null

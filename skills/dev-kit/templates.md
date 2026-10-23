@@ -82,6 +82,7 @@ A stopped agent's work is in worktrees <root>/<prefix>-*. Join the board with it
 Before editing: dev.ps1 wt status -Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it
 stopped (testing goals, local test loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.
 ```
+`orch.ps1 recover` adds one table per area: each item's done steps (skipped) and missing steps (run), MRs, tracker, testing doc.
 
 ## Testing goals
 Written by devy BEFORE testing (dev-kit step 4); the local test loop runs it; the human testing doc grows out of it.

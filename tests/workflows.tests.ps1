@@ -53,7 +53,7 @@ run(args, agent, _n, _n, pipeline).then(() => {
 $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
 Expect-Each $res 'buildy: #' 're-review', 'hold' -Show 5
-Expect 'buildy: default run name = orch.ps1 Get-LaunchRunName' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1)
+Expect 'buildy: default run name = orch.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
 const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, _pass, _n, _n, pipeline)
@@ -91,6 +91,41 @@ console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /deploys extra is 
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
 '@
 Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: #' 'deploy-skip', 'deploy-batch' -Show 5
+# buildy resume: each area skips the steps recover found done; all done -> no agent at all
+$jsrs = @'
+const S = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'], m = (n, merged) => [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged }]
+const resume = { D: { skip: S, mrs: m(1, true) }, M: { skip: S.slice(0, 4), mrs: m(2, true) }, O: { skip: ['build'], mrs: m(3, false) } }
+const base = { brief: 'C:/b/w.md', ..._kl, mode: 'resume', resume, agents: [{ id: 'D' }, { id: 'M' }, { id: 'O' }, { id: 'N' }] }
+const { calls, agent } = _mock((p, o) => /^(build|ship|postmerge):/.test(o.label) ? _rep({ status: 'PASS' }, _merged(9)) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
+await run(base, agent, _n, _n, pipeline); const L = calls.map((c) => c.label), d = await _mock(() => undefined)
+const od = await run({ ...base, agents: [{ id: 'D' }] }, d.agent, _n, _n, pipeline)
+console.log(`resume-skip:${!L.some((l) => /:(D|M|O)$/.test(l) && /^build/.test(l)) && L.includes('postmerge:M') && L.includes('build:N') && L.includes('review:O') && !L.some((l) => /^(review|ship):[DM]$/.test(l)) && L.includes('track:M') && !L.includes('track:D')}`)
+console.log(`resume-done:${d.calls.length === 0 && od.resumedDone[0].agent === 'D'}`)
+'@
+Expect-Each (Invoke-Js dw-resume $jsrs $wfd) 'buildy resume: #' 'resume-skip', 'resume-done' -Show 5
+$as = & { . $O; $env:KIT_OFFLINE = '0'; function Find-TaskMrs { 'g/api!7' }
+  Register-KitAdapter 'git-host' 'gitlab' @{ 'mr.get' = { param($a) [pscustomobject]@{ iid = $a.n; state = 'merged'; title = 'fx9abc'; description = 'Testing doc: https://d/1'; created_at = (Get-Date).ToUniversalTime().AddDays(-2) } } }
+  Register-KitAdapter 'tracker' 'none' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = 'failed testing' } }; comments = { @() } }
+  $f = { param($i, $d) Get-KitAreaState ([pscustomobject]@{ id = 'F'; items = $i }) @() @() (Get-Date).AddDays($d) }
+  $o, $n, $g = (& $f 'fx9abc' 0), (& $f 'fx9abc' -3), (& $f 'A3, A4 g/api!2' 0); "$($o.state)|$($o.skip.Count)|$($n.state)|$($n.skip -join ',')|$($n.items[0].doc)|$($g.state)" }
+Remove-Item Env:KIT_OFFLINE
+Expect 'recover area state: an MR older than the run = earlier work, failedTesting = back to dev; doc link from the MR; a loose MR among 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
+# launch records: a fix round supersedes the launch (one recover entry); launch -Done -RunId closes both kinds
+$ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv (& { . $O; Get-KitFnv $json }) @args | Out-String }
+$sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
+$null = & $self testy.js select-stg $sa -RunDir 'C:/rt/qa-runs/d-stg'
+$sr = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Get-Content -Raw | ConvertFrom-Json
+Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'select-stg')
+$sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
+$sr | Add-Member -Force holderPid 999999; & $J $sr $sf.FullName 10   # its session is gone
+$sl0 = pwsh @np $O launch -List -Brief | Out-String
+$dn = pwsh @np $O launch -Done -Run select-stg 2>&1 | Out-String; $sl1 = pwsh @np $O launch -List -Brief | Out-String
+Expect 'launch -Done -Run: a completed self record (owner-stopped run) is no stopped run' ($sl0 -match 'select-stg' -and $dn -match 'marked completed: self-testy' -and $sl1 -notmatch 'select-stg')
+foreach ($n in '', 'fix') { $null = & $self buildy.js dd "{""brief"":""C:/b/dd.md"",""agents"":[{""id"":""D1"",""note"":""$n""}]}" }
+$null = pwsh @np $O launch -RunId wf_d1 -Script (Join-Path $k 'workflows/buildy.js') -ArgsJson '{"brief":"C:/b/dd.md","run":"dd"}'
+$df = @(Get-ChildItem $ld -Filter '*d*.json' | Where-Object Name -match '^(self-buildy-dd-|wf_d1)' | Sort-Object Name); foreach ($f in $df) { $x = Read-Json $f.FullName; $x.holderPid = 999999; if ($f.Name -like 'self-*' -and "$($x.args.agents[0].note)" -eq '') { $x.at = (Get-Date).AddHours(-1).ToString('o') }; & $J $x $f.FullName 10 }
+$dr = pwsh @np $O recover | Out-String; $null = pwsh @np $O launch -Done -RunId wf_d1; $dl = pwsh @np $O launch -List -Brief | Out-String
+Expect 'recover: one entry per run (a fix round supersedes the launch); launch -Done -RunId closes both record kinds' (([regex]::Matches($dr, '== buildy\.js run \S+ \(dd\)')).Count -eq 1 -and $dl -notmatch '\bdd\b' -and @($df | Where-Object { (Read-Json $_.FullName).completed }).Count -eq 3)
 $wf = Join-Path $src 'workflows/testy.js'
 $js = @'
 const { calls, agent } = _mock((prompt, o) => {
