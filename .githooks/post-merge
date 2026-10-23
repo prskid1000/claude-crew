@@ -1,12 +1,12 @@
 #!/bin/sh
-# Kit post-merge hook (enabled by bossy.ps1 setup: core.hooksPath .githooks): after git pull / merge, installs or updates the
-# goodies the config needs (kitbag.py goody sync) and regenerates the live clone's kit-flow page (kitbag.py flow). Never opens
-# it, never fails the merge.
+# Kit post-merge hook (enabled by bossy.ps1 setup: core.hooksPath .githooks): after git pull / merge, in the background, installs
+# or updates the goodies the config needs (kitbag.py goody sync), then regenerates the live clone's kit-flow page (kitbag.py flow).
+# Never opens it, never fails the merge.
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do
   if command -v "$p" >/dev/null 2>&1 && "$p" -c '' >/dev/null 2>&1; then   # a store stub is on PATH but does not run
-    ("$p" -X utf8 "$root/skills/bossy/kitbag.py" goody sync >/dev/null 2>&1 &)   # background: its fetch never holds up the pull
-    "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow >/dev/null 2>&1
+    # background, the page after the sync (a flow run during it installed flow-map a second time, racing the sync)
+    (("$p" -X utf8 "$root/skills/bossy/kitbag.py" goody sync; "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow) >/dev/null 2>&1 &)
     break
   fi
 done

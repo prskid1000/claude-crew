@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L31 paths · L82 kitlog · L162 load · L548 lint · L917 README graph · L1023 lint command · L1056 audit · L1165 registry ·
-  L1403 prose · L1546 sections · L1676 budget · L1694 goodies · L2223 main
+  L1403 prose · L1546 sections · L1676 budget · L1694 goodies · L2226 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -1966,6 +1966,9 @@ def migrate_layout(kit, fetched=True):   # shim: remove after 2026-11-23 (the re
         if osp.basename(src) == '__pycache__':
             return shutil.rmtree(src, ignore_errors=True)
         rel = osp.relpath(src, kit).replace('\\', '/')
+        if fetched and osp.isfile(src) and rel not in keep and new_path(rel) in keep:   # an old copy of a goody file a new block lists (a worktree synced first)
+            os.remove(src)
+            return print(f'removed {rel} (its goody installs {new_path(rel)})')
         if not osp.exists(dst) and not any(x == rel or x.startswith(rel + '/') for x in keep):
             os.makedirs(osp.dirname(dst), exist_ok=True)
             try:

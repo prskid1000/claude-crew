@@ -139,16 +139,16 @@ $s7 = & $ex goody sync; $b7 = (Get-Content $xf -Raw) -match 'goody supervise-res
 Remove-Item "$w2/notes/sr.txt"; $null = & $ex goody sync; $b8 = (Get-Content $xf -Raw) -match 'goody supervise-resources'
 Expect "goody sync: a fold keeps the block while another worktree has the file untracked, then drops it ($b7 $b8)" ($b7 -and -not $b8 -and (Test-Path (Join-Path $kc 'notes/sr.txt')))
 git -C $kc worktree remove --force $w2 2>&1 | Out-Null
-# the #7 rename (shim: remove after 2026-11-23)
+# #7 rename (shim: remove after 2026-11-23)
 $m = "$xw/goodies/mig"; New-Item -ItemType Directory -Force "$m/files/skills/envy", "$m/files/skills/local-env", "$kc/skills/local-env", "$kc/skills/crafty" | Out-Null
 "# mig`n`nNeeded when: listed." | Set-Content "$m/GOODY.md"; 'new' | Set-Content "$m/files/skills/envy/envy.ps1"
-'fwd' | Set-Content "$m/files/skills/local-env/localenv.ps1"; 'old' | Set-Content "$kc/skills/local-env/localenv.ps1"; & $pushX 'feat: mig'   # shim: remove after 2026-11-23
+'fwd' | Set-Content "$m/files/skills/local-env/localenv.ps1"; 'old' | Set-Content "$kc/skills/local-env/localenv.ps1", "$kc/skills/local-env/envy.ps1"; & $pushX 'feat: mig'   # shim: remove after 2026-11-23
 Move-Item "$kc/skills/crafty/kit.local.json" "$kc/skills/local-env/x.local.json"; Add-Content $xf "`n# kittool extra mig`n/skills/local-env/localenv.ps1`n# kittool extra end"   # shim: remove after 2026-11-23
 & $J @{ extras = @('mig') } $kl; '## dev-kit' | Set-Content "$kc/LESSONS.local.md"; git -C $kc fetch -q origin; $s9 = & $ex goody sync; $x9 = Get-Content $xf -Raw; $l9 = Read-Json $kl   # shim: remove after 2026-11-23
-Expect "rename: goody sync migrates ($($s9.out.Trim() -replace '\s+', ' '))" ((Get-Content "$kc/skills/envy/envy.ps1" -Raw) -match 'new' -and (Test-Path "$kc/skills/envy/x.local.json") -and
+Expect 'rename: goody sync migrates' ((Get-Content "$kc/skills/envy/envy.ps1" -Raw) -match 'new' -and (Test-Path "$kc/skills/envy/x.local.json") -and -not (Test-Path "$kc/skills/local-env/envy.ps1") -and
   (Get-Content "$kc/skills/local-env/localenv.ps1" -Raw) -match 'fwd' -and $x9 -notmatch 'kittool extra' -and $x9 -match '# kitbag goody mig' -and 'mig' -in $l9.goodies -and -not $l9.extras -and (Get-Content "$kc/LESSONS.local.md") -eq '## crafty')   # shim: remove after 2026-11-23
 $sh = (& $ex extra list).out + (& $py -X utf8 (Join-Path $kc 'skills/orchestrate/kittool.py') goody list 2>&1 | Out-String) + (pwsh -NoProfile -File (Join-Path $kc 'skills/orchestrate/orch.ps1') learn -Read -Skill orchestrate 2>&1 | Out-String)   # shim: remove after 2026-11-23
-Expect "shims forward ($($sh -replace '\s+', ' '))" (([regex]::Matches($sh, '(?m)^\* mig')).Count -eq 2 -and $sh -match '## bossy')   # shim: remove after 2026-11-23
+Expect 'shims forward' (([regex]::Matches($sh, '(?m)^\* mig')).Count -eq 2 -and $sh -match '## bossy')   # shim: remove after 2026-11-23
 $null = & $ex goody remove mig
 # on demand (KIT_EXTRA_AUTO unset): a config-named adapter at lib load, an bossy.ps1 verb, a kitbag command; installed unlisted
 $fx = @{ 'tracker-zz' = @('skills/crafty/adapters/tracker_zz.ps1', "Register-KitAdapter 'tracker' 'zz' @{ 'view' = { param(`$a) [pscustomobject]@{ id = `$a.id; name = 'zz task'; status = 'open' } }; 'url' = { param(`$a) ""zz/`$(`$a.id)"" } }")
