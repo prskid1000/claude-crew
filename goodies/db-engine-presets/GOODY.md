@@ -4,7 +4,8 @@
   migration release (CREATE text, the rows its DDL destroys, view / routine / trigger / event definitions), `restore` (structure
   and objects back, row flashback with FK / unique checks; trigger tables as inverted row events; a table it cannot restore
   exactly falls back to seed), the cascade guard (journal triggers on CASCADE / SET NULL parents) and the touched-tables parser
-  (`db.migrateSql` output or migration files); mysql: the temp watchdog (`db.tempMaxGB`), `dbtemp`, temp-cap doctor rows;
+  (`db.migrateSql` output or migration files); mysql: the temp watchdog (`db.tempMaxGB`), `dbtemp`, temp-cap doctor rows, the busy / idle buffer pool
+  (`db.bufferPool`: envy SKILL.md "DB buffer pool");
   `db.expect` doctor rows; `tenant list | drop` (`tenants`: local tenants dropped with their admin rows, users and schema).
   Other engines: marks unsupported.
 Needed when: `localEnv.envs.*.db` = `*`, `localEnv.defaults.db` = `*`

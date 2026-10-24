@@ -3,7 +3,7 @@
 # mysql / mariadb, gives marks (binlog positions), flashback restores and the cascade guard (db_flashback.py); other
 # engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri
-# Sections: L27 marks · L88 temp · L137 tenants
+# Sections: L27 marks · L88 temp · L128 pool · L164 tenants
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $script:DbPresets = @{
   postgres  = @{ port = 5432; query = "psql $q -d {N} -At -c `"{sql}`""; exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f `"{file}`""; jdbc = 'jdbc:postgresql://{H}:{P}/{N}?currentSchema={schema}'; passwordEnv = 'PGPASSWORD' }
@@ -125,10 +125,37 @@ function Get-DbTempDoctor([string]$e) {
   foreach ($b in $bad) { [pscustomobject]@{ level = 'WARN'; what = "db temp: $b" } }
   if (-not $bad.Count) { [pscustomobject]@{ level = 'OK'; what = "db temp: temptable_max_ram $(& $gb $w.temptable_max_ram) GB, temptable_max_mmap $(& $gb $w.temptable_max_mmap) GB, ibtmp1 $(if ($ib) { "max $(& $gb $ib) GB" } else { 'fixed size' }), max_execution_time $([int]$w.max_execution_time / 1000) s, slow log on, watchdog at $max GB" } }
 }
+# ---- pool: db.bufferPool (mysql) = innodb_buffer_pool_size busyMB (2048) while a lease or train is live on any env of this db
+#      server, idleMB (256) once none was for idle.graceMinutes; online, chunk-aligned, one resize at a time, never mid switch-over
+$script:DbPoolIdleSince = $null
+function Get-DbPoolVars([string]$e) { $v = @{}; foreach ($r in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('innodb_buffer_pool_size', 'innodb_buffer_pool_chunk_size', 'innodb_buffer_pool_instances')") { $v[$r[0]] = [long]$r[1] }; $v }
+function Invoke-DbPool([string]$e, [switch]$Now) {
+  $b = (Get-EnvCfg $e).db.bufferPool; if (-not $b -or -not (Test-DbTemp $e)) { return }
+  $me = DbConn $e; $sts = @(EnvNames | Where-Object { (Test-DbTemp $_) -and "$((DbConn $_).host):$((DbConn $_).port)" -eq "$($me.host):$($me.port)" } | ForEach-Object { Read-State $_ })
+  if (@($sts | Where-Object { "$($_.train.phase)" -like 'switching*' }).Count) { return }   # a train switching over: never under it
+  $busy = [bool]@($sts | Where-Object { $_.leases.Count -or $_.train }).Count
+  if ($busy) { $script:DbPoolIdleSince = $null } elseif (-not $script:DbPoolIdleSince) { $script:DbPoolIdleSince = Get-Date }
+  if (-not $busy -and -not $Now -and ((Get-Date) - $script:DbPoolIdleSince).TotalMinutes -lt [double](Get-KitParam 'idle.graceMinutes' 10)) { return }
+  $mb = [double]$(if ($busy) { if ($b.busyMB) { $b.busyMB } else { 2048 } } elseif ($b.idleMB) { $b.idleMB } else { 256 })
+  $v = Get-DbPoolVars $e; $unit = [math]::Max(1, $v.innodb_buffer_pool_chunk_size) * [math]::Max(1, $v.innodb_buffer_pool_instances)
+  $want = [long]([math]::Ceiling($mb * 1MB / $unit) * $unit); if ($want -eq $v.innodb_buffer_pool_size) { return }
+  $rs = @{}; foreach ($r in Invoke-DbSql $e "SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_resize_status%'") { $rs[$r[0]] = "$($r[1])" }
+  if ($(if ($rs.Contains('Innodb_buffer_pool_resize_status_code')) { $rs.Innodb_buffer_pool_resize_status_code -notin '0', '' } else { $rs.Innodb_buffer_pool_resize_status -and $rs.Innodb_buffer_pool_resize_status -notmatch '^Completed' })) { return }
+  $null = Invoke-DbSql $e "SET GLOBAL innodb_buffer_pool_size = $want"
+  "db pool: innodb_buffer_pool_size $([long]($v.innodb_buffer_pool_size / 1MB)) -> $([long]($want / 1MB)) MB ($(if ($busy) { 'a lease or train is live' } else { 'idle' }))"
+}
+# doctor row: the pool now, its two sizes, the server's RAM (Windows: the freed pool can stay in mysqld's working set until a restart)
+function Get-DbPoolDoctor([string]$e) {
+  $b = (Get-EnvCfg $e).db.bufferPool; if (-not $b -or -not (Test-DbTemp $e)) { return }
+  $v = try { Get-DbPoolVars $e } catch { return [pscustomobject]@{ level = 'WARN'; what = "db pool: $("$_".Split("`n")[0])" } }
+  $ws = (@(Get-Process mysqld, mariadbd -ErrorAction SilentlyContinue | ForEach-Object WorkingSet64) | Measure-Object -Sum).Sum
+  [pscustomobject]@{ level = 'OK'; what = "db pool: innodb_buffer_pool_size $([long]($v.innodb_buffer_pool_size / 1MB)) MB (db.bufferPool busy $(if ($b.busyMB) { $b.busyMB } else { 2048 }) / idle $(if ($b.idleMB) { $b.idleMB } else { 256 }) MB); server RAM $(if ($ws) { "$([long]($ws / 1MB)) MB" } else { 'unknown (no local mysqld)' })" }
+}
 # doctor rows: db.expect { <server variable>: <value> } = the server settings the env wants (buffer pool, redo log, flush, ...)
 function Get-DbExpectDoctor([string]$e) {
   $x = (Get-EnvCfg $e).db.expect; if (-not (Test-DbMarks $e) -or -not $x) { return }
-  $want = @{}; foreach ($p in @($x.PSObject.Properties | Where-Object Name -notlike '_*')) { $want[$p.Name] = "$($p.Value)" }
+  $want = @{}; foreach ($p in @($x.PSObject.Properties | Where-Object { $_.Name -notlike '_*' -and -not ($_.Name -eq 'innodb_buffer_pool_size' -and (Get-EnvCfg $e).db.bufferPool) })) { $want[$p.Name] = "$($p.Value)" }   # db.bufferPool owns the pool
+  if (-not $want.Count) { return }
   $cur = @{}; try { foreach ($r in Invoke-DbSql $e "SHOW GLOBAL VARIABLES WHERE Variable_name IN ($(@($want.Keys | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))") { $cur[$r[0]] = $r[1] } }
   catch { [pscustomobject]@{ level = 'WARN'; what = "db.expect: $("$_".Split("`n")[0])" }; return }
   $num = { param($v) if ("$v" -match '^(\d+(?:\.\d+)?)([KMG])$') { [double]$Matches[1] * @{ K = 1KB; M = 1MB; G = 1GB }[$Matches[2].ToUpper()] } elseif ("$v" -match '^\d+(\.\d+)?$') { [double]$v } else { "$v".ToUpper() } }

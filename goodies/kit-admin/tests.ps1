@@ -14,8 +14,9 @@ $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 $wt = Join-Path $root 'wt-detached'; git -C $kc worktree add -q --detach $wt 2>&1 | Out-Null
 'work' | Set-Content (Join-Path $wt 'unmerged.txt'); git -C $wt add unmerged.txt; git -C $wt commit -q -m 'feat: unmerged work'
 Get-ChildItem $wt -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHours(-5) }   # idle, like a forgotten worktree
+'# resume' | Set-Content (Join-Path (TkPath $kc launches -Create) 'wf-x.resume.md')
 $out = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
-Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF)' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF')
+Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF); a resume brief is no launch record' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF' -and $out -notmatch 'wf-x\.resume\.md')
 git -C $kc worktree remove --force $wt 2>&1 | Out-Null
 # prepush: a pushed file a goody's exclude block lists = LOCAL FILE, unless that goody left origin/goodies (folded into the core)
 $ad = Join-Path $kc 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
@@ -34,6 +35,8 @@ Expect 'kit-admin: release prints the next SemVer and its notes' ($rel -match '^
 # cost: one start row per crew agent
 $cost = & $py -X utf8 $KT cost --json 2>$null | Out-String | ConvertFrom-Json
 Expect 'kit-admin: cost has a start row per crew agent' (@($cost | Where-Object { $_.agent -match '\(start\)$' }).Count -ge 1 -and @($cost | Where-Object { $_.total -le 0 }).Count -eq 0)
+$cst = & $py -X utf8 $KT cost --steps 2>$null | Out-String
+Expect 'kit-admin: cost --steps measures the tidy judge prompt (the prep mock returns its JSON)' ($cst -match '(?m)^tidy\s+apply\s')
 # budget raise: steps of x1.1 from 200000, refused under the cap
 $bj = Join-Path $kc 'skills/crafty/kit.example.json'; $bt = { & $py -X utf8 $KT budget raise -Reason x 2>&1 | Out-String }
 $capTo = { param($v) (Get-Content $bj -Raw) -replace '("totalTokens":\s*)\d+', "`${1}$v" | Set-Content $bj -NoNewline; git -C $kc commit -qam cap }

@@ -5,7 +5,7 @@
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $flag = Join-Path (Kd) 'fake.up'; $log = Join-Path (Kd) 'fake.log'
 $fake = @{ isUp = "if (Test-Path '$flag') { 'up' }"; up = "New-Item -Force '$flag' | Out-Null; Add-Content '$log' up"
-  down = "Remove-Item -Force '$flag'; Add-Content '$log' down"; match = '^fakectl\b' }
+  down = "Remove-Item -Force '$flag'; Add-Content '$log' down"; match = 'fakectl\b|tcx' }   # unanchored: the kit tests it at each command's head
 & $J @{ runtimes = @{ fake = $fake } } (Join-Path $k 'skills/crafty/kit.local.json')
 function Log { if (Test-Path $log) { @(Get-Content $log) -join ',' } else { '' } }
 function Reset { Remove-Item $flag, $log -Force -ErrorAction SilentlyContinue; Remove-Item (TkPath $k runtimes) -Recurse -Force -ErrorAction SilentlyContinue }
@@ -29,8 +29,8 @@ $o1 = & $g "`$env:CLAUDE_AGENT='g1'; fakectl run x"
 for ($i = 0; $i -lt 50 -and -not (Test-Path $flag); $i++) { Start-Sleep -Milliseconds 200 }
 $st = Get-Content (Join-Path (TkPath $k runtimes) 'fake.json') -Raw | ConvertFrom-Json
 Expect "runtimes: the guard leases for an agent that forgot, starts the runtime, tells it to release ($o1)" ($o1 -match '"additionalContext"' -and $o1 -match 'release -Name fake -Agent g1' -and $o1 -notmatch 'permissionDecision' -and $st.leases[0].auto -and $st.startedByKit -and (Test-Path $flag))
-$o2 = & $g "`$env:CLAUDE_AGENT='g1'; fakectl ps"; $o3 = (& $g 'git commit -m "fakectl notes"') + (& $g 'cat fakectl/README.md'); $o4 = & $g "crafty.ps1 gate -Dir . -Cmd 'fakectl test'"
-Expect "runtimes: no second note for a held lease, none for quoted text or a path ($o2|$o3)" (-not $o2.Trim() -and -not $o3.Trim())
+$o2 = & $g "`$env:CLAUDE_AGENT='g1'; fakectl ps"; $o3 = (& $g 'git commit -m "fakectl notes"') + (& $g 'cat fakectl/README.md') + (& $g 'grep tcx pom.xml') + (& $g 'pwsh -Command "x.ps1 learn -Text ''fakectl run''"'); $o4 = & $g "crafty.ps1 gate -Dir . -Cmd 'fakectl test'"
+Expect "runtimes: no second note for a held lease, none for quoted text (also inside -Command), a path or a word mid-command ($o2|$o3)" (-not $o2.Trim() -and -not $o3.Trim())
 Expect "runtimes: a gate -Cmd counts, the hook's agent names the lease ($o4)" ($o4 -match 'Agent devy-abcdef12')
 
 # supervise -AutoFix: a lease whose holder died 1 h ago is released and the kit-started runtime stopped

@@ -237,6 +237,13 @@ CREATE TABLE t3keep.u (login varchar(40)); INSERT INTO t3keep.u VALUES ('carol')
   Expect "tenant drop: registry + FK children (cycle) + listed tables + only users no staying tenant has + schema; 0 left; kept tenants verified ($after)" ($d1c -eq 0 -and $after -eq 't2,t3keep|12|22|t2|2,3|bob,carol|2,3|0' -and $d1 -match '0 references left' -and $d1 -match 'kept tenant t3keep : verify ok')
   Expect "tenant drop: a user goes once no staying tenant has it ($users2)" ($users2 -eq 'carol' -and $d2 -match 'tenant t2 dropped')
   Expect "doctor: db.expect differs -> WARN with the server setting; equal -> nothing ($($ex -join ' / '))" ($ex.Count -eq 1 -and $ex[0] -match 'db sort_buffer_size = 262144, db\.expect 1M')
+  # db.bufferPool: a live lease grows the pool (chunk-aligned), idle shrinks it back; db.expect leaves the pool to it; the doctor row
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = $port; user = 'root'; bufferPool = @{ busyMB = 200; idleMB = 128 }; expect = @{ innodb_buffer_pool_size = '1G' } } } } } } (Join-Path $k3 'skills/crafty/kit.local.json') 8
+  $poolMB = { param($w) for ($i = 0; $i -lt 40 -and -not ([double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') -eq $w -and "$(Q "SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_resize_status'")" -notmatch 'Resiz'); $i++) { Start-Sleep -Milliseconds 250 }; [double](Q 'SELECT @@innodb_buffer_pool_size / 1048576') }
+  '{"leases":{"L9":{"services":["api"],"agent":"L9","owner":true,"until":"2999-01-01T00:00:00"}}}' | Set-Content $sf3
+  $pg = & { . $L3; Invoke-DbPool s }; $pb = & $poolMB 256; Remove-Item $sf3
+  $pi = @(& { . $L3; Invoke-DbPool s; Invoke-DbPool s -Now; @(Get-DbExpectDoctor s).Count; (Get-DbPoolDoctor s).what }); $ps = & $poolMB 128
+  Expect "db.bufferPool: a lease grows the pool to busyMB (chunk-aligned), idle shrinks it to idleMB only past the grace (-Now: loop exit); db.expect skips the pool; doctor row ($pg | $($pi -join ' | '))" ($pg -match '128 -> 256 MB \(a lease' -and $pb -eq 256 -and $pi[0] -match '256 -> 128 MB \(idle\)' -and $pi[1] -eq 0 -and $pi[2] -match 'innodb_buffer_pool_size 128 MB \(db\.bufferPool busy 200 / idle 128 MB\); server RAM \d+ MB' -and $ps -eq 128)
 } finally {
   if ($srv -and -not $srv.HasExited) { & mysqladmin -h 127.0.0.1 -P $port -u root shutdown 2>&1 | Out-Null; $null = $srv.WaitForExit(30000); if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force } }
   Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue

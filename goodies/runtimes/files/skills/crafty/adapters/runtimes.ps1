@@ -5,7 +5,7 @@ stops what it started once the last agent is done; a runtime the kit did not sta
   & <kit>/skills/crafty/crafty.ps1 runtime release [-Name <runtime>] [-Agent <a>] [-Session <s>]   drop the lease; last one + kit-started -> down
   & <kit>/skills/crafty/crafty.ps1 runtime status [-Name <runtime>] [-Json]
 Inputs: kit.local.json `runtimes.<name>`: isUp (command line; running = exit 0 + some output), up (optional: else the agent's
-own command starts it), down, match (regex of commands that use it: crafty.ps1 guard leases for an agent that forgot). -Agent
+own command starts it), down, match (regex of commands that use it, tested at each command's head: crafty.ps1 guard leases for an agent that forgot). -Agent
 defaults to $env:CLAUDE_AGENT, else main. State: <state>/runtimes/<name>.json. Command lines run in pwsh -Command.
 Dot-sourced by lib.ps1 (adapters/*.ps1): crafty.ps1 gets the verb and the guard rule, bossy.ps1 supervise its sweep
 (Get-KitSuperviseGuardRuntimes: a lease with no live holder for idle.graceMinutes -> released; kit-started + no lease -> down).
@@ -117,14 +117,14 @@ switch ($Action) {
 # crafty.ps1 guard: a command matching runtimes.<n>.match from an agent without a lease -> an auto lease (started if down), one line for it
 Register-KitAdapter 'guard' 'runtimes' @{ check = { param($a)
     $raw = "$($a.raw)"; $rts = @(Get-KitRuntimeNames)
-    if (-not $rts.Count -or $raw -match '(?:crafty|dev)\.ps1["'']?\s+runtime\b') { return }   # shim: remove after 2026-11-23 (dev.ps1)
-    # what runs, one segment per command (match may anchor with ^): the command minus quoted data, plus what a shell -c /
-    # -Command or the gate's -Cmd is told to run
-    $text = "$($a.cmd)`n" + ((@([regex]::Matches($raw, '(?i)(?:^|\s)-(?:c|Command|Cmd)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })) -join "`n")
-    $segs = @($text -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() -replace '^&\s*' } | Where-Object { $_ })
+    if (-not $rts.Count -or $raw -match 'crafty\.ps1["'']?\s+runtime\b') { return }
+    # what runs, one segment per command: the command minus quoted data, plus what a shell -c / -Command or the gate's -Cmd is
+    # told to run (minus its own quoted data); match is tested at each segment's head (after &, (, VAR=x, sudo / time / nohup), never mid-text
+    $text = "$($a.cmd)`n" + ((@([regex]::Matches($raw, '(?i)(?:^|\s)-(?:c|Command|Cmd)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')') | ForEach-Object { ($_.Groups[1].Value + $_.Groups[2].Value) -replace '\\"(?:(?!\\").)*\\"|"(?:[^"\\]|\\.)*"|''[^'']*''', '""' })) -join "`n")
+    $segs = @($text -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() -replace '^(?:[&(]\s*|(?:env\s+)?\w+=\S*\s+|(?:sudo|time|nohup)\s+)*' } | Where-Object { $_ })
     $who = if ($raw -match 'CLAUDE_AGENT\s*=\s*[''"]?([\w.@:-]+)') { $Matches[1] } elseif ($a.hook.agent_type) { "$($a.hook.agent_type)$(if ($a.hook.agent_id) { '-' + "$($a.hook.agent_id)".Substring(0, [math]::Min(8, "$($a.hook.agent_id)".Length)) })" } else { 'main' }
     $notes = foreach ($n in $rts) {
-      $m = "$(Get-KitSetting "runtimes.$n.match" '')"; if (-not $m -or -not @($segs | Where-Object { $_ -match $m }).Count) { continue }
+      $m = "$(Get-KitSetting "runtimes.$n.match" '')"; if (-not $m -or -not @($segs | Where-Object { $_ -match "^(?:$m)" }).Count) { continue }
       if ((Test-Path "$(Get-KitRuntimeFile $n).lock") -and ((Get-Date) - (Get-Item "$(Get-KitRuntimeFile $n).lock").LastWriteTime).TotalMinutes -lt 2) { continue }   # a use / down in progress: never past the hook timeout; the next command retries
       $mine = @((Get-KitRuntimeState $n).leases | Where-Object { $_.agent -eq $who })
       if ($mine.Count) { if (@($mine | Where-Object { $_.auto }).Count) { Update-KitRuntimeState $n { param($st) foreach ($l in @($st.leases | Where-Object { $_.agent -eq $who -and $_.auto })) { $l.used = (Get-Date).ToString('o') } } }; continue }

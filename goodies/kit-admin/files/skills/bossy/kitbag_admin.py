@@ -8,8 +8,8 @@ scan, token cost, releases and the budget raise.
 
 Installed by `kitbag.py goody add kit-admin` (or `goody sync`); kitbag.py loads it and shares its own names (out, run, git,
 load_json, key_paths, manifest, cap_next, _sub_file).
-Sections: L18 helpers · L60 setup · L169 config · L321 recover · L466 release · L517 budget-raise · L539 cost · L654 registry ·
-  L658 scan
+Sections: L18 helpers · L60 setup · L169 config · L321 recover · L466 release · L517 budget-raise · L539 cost · L655 registry ·
+  L659 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
 import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -403,7 +403,7 @@ def cmd_recover(kit, fix):
          f'git -C {kit} rm --cached -- {f} in a kit commit (the lead confirms; the file stays on disk)')
     # launch records, board entries, product worktrees, runtime size
     ld = kit_path('launches', kit=kit)
-    for f in sorted(os.listdir(ld)) if osp.isdir(ld) else []:
+    for f in sorted(x for x in os.listdir(ld) if x.endswith('.json')) if osp.isdir(ld) else []:   # bossy.ps1 recover's *.resume.md are no records
         r, err = load_json(osp.join(ld, f))
         if err or not isinstance(r, dict):
             out('ACT', 'RECOVER-LAUNCH', f, f'unreadable launch record ({err})', 'delete it')
@@ -563,6 +563,7 @@ function mock(label) {
   case 'close': case 'hold': case 'add-followups': return { ok: true, output: 'published' }
   case 'prepare': return { runDir: SAMPLE['testy'].runDir, items: 2, left: [{ id: 't3', reason: 'not live' }], summary: 'sample' }
   case 'load-run': return { json: JSON.stringify(SAMPLE['testy']) }
+  case 'prep': case 'prep-retry': return { ok: true, record: 'ok', prep: JSON.stringify({ work: 3, groups: 1, sec: 20, steps: ['signals'], digest: '/ws/.claude/<runtime>/logs/retros/digest.md', at: '2026-01-01T00:00:00', minutes: 30 }) }
   case 'analyse': return { proposals: [{ file: `${kit}/skills/crafty/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
   case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
   default: return 'ok'

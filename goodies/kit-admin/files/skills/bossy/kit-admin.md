@@ -7,9 +7,8 @@ template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfi
 feature goes to the `goodies` branch, not the core.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
   Character blocks and ports are generated from it; `renamed` lists old names (no aliases).
-- **Shims** [SHIM-DUE]: a rename that outside callers use by path or name (settings, scheduled tasks, notes, local files) keeps
-  for one release a forwarder at the old path and old-name lines, each tagged `shim: remove after <date>` (`git grep` lists them;
-  never a kit file); past the date lint refuses them: delete them.
+- **Renames**: no forwarders or old-name stand-ins; outside callers of a renamed path or name (settings, scheduled tasks, notes,
+  local files) get the exact edit as a coordinator step in the report.
 - **Formats** [SCHEMA, AGENT-TYPE]: SKILL.md and subagent front matter + the Character shape, JSON-Schema checked; every workflow
   `agent()` names a crew agentType. **Versions**: SemVer tags from Conventional Commits (`kitbag.py release`; no CHANGELOG).
   **Decisions**: ADR lines in LESSONS.md "Decisions". Every addition: front matter, manifest entry, reachability edge, test, flow

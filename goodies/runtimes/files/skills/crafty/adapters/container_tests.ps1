@@ -1,6 +1,6 @@
 #Requires -Version 7
 # runtimes (goody): before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
-# -AllTests), crafty.ps1 check asks the engine (runtimes.<docker|podman>.isUp, else `<engine> info`); none answers -> exit 4.
+# -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests.
 function Test-DockerForContainerTests {
   $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
@@ -22,9 +22,10 @@ function Test-DockerForContainerTests {
   if (-not $need) { return 0 }
   $why = 'neither docker nor podman is on PATH'   # Colima: the docker CLI; Podman for Testcontainers: DOCKER_HOST = its socket
   foreach ($x in 'docker', 'podman') {
-    if ((Get-Command Test-KitRuntimeUp -ErrorAction SilentlyContinue) -and (Get-KitSetting "runtimes.$x.isUp" '')) {   # a configured runtime's own probe
-      if (Test-KitRuntimeUp $x 10) { Write-Host "[check] container tests: $x is running (runtimes.$x.isUp)"; return 0 }
-      $why = "runtimes.$x.isUp does not answer (crafty.ps1 runtime use -Name $x starts it)"; continue
+    if ((Get-Command Use-KitRuntime -ErrorAction SilentlyContinue) -and (Get-KitSetting "runtimes.$x.isUp" '')) {   # a configured runtime: leased (started when down)
+      $u = try { Use-KitRuntime $x $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }) } catch { "$_" }
+      if ($u -match ': (running|started)') { Write-Host "[check] container tests: $u (release when done: crafty.ps1 runtime release -Name $x)"; return 0 }
+      $why = $u; continue
     }
     if (-not (Get-Command $x -ErrorAction SilentlyContinue)) { continue }
     $r = Invoke-KitExe $x @('info') 5; if (-not $r.code) { Write-Host "[check] container tests: $x is running"; return 0 }

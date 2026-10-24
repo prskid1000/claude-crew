@@ -14,8 +14,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L26 config · L184 state · L225 leases · L306 code · L338 migrations · L553 hooks · L625 marks · L763 seed ·
-  L809 processes · L1092 daemon · L1523 cleanup · L1595 doctor · L1643 verbs
+Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L561 hooks · L633 marks · L771 seed ·
+  L817 processes · L1100 daemon · L1533 cleanup · L1605 doctor · L1653 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -177,6 +177,14 @@ function With-Env($vars, [scriptblock]$body) {
   try { & $body } finally { foreach ($k in $old.Keys) { [Environment]::SetEnvironmentVariable($k, $old[$k]) } }
 }
 function LogFile([string]$e, [string]$n) { Join-Path (Get-KitPath localenv-logs -Create) "$e-$n.log" }
+# a failed start's log, kept past the next start's rotation (last 3 per service; TODO-PARAM fixed default) -> "<cause line>. Log: <kept>"
+function Save-FailLog([string]$log, $release) {
+  $keep = $log -replace '\.log$', ".fail-$(ConvertTo-KitSlug $(if ($release) { $release } else { (Get-Date).ToString('yyyyMMdd-HHmmss') })).log"
+  $t = @(Get-Content -LiteralPath $log -Tail 2000 -ErrorAction SilentlyContinue); Copy-Item -LiteralPath $log $keep -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath (Split-Path $log) -Filter "$([IO.Path]::GetFileNameWithoutExtension($log)).fail-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue
+  $c = @($t | Where-Object { $_ -match '^\s*Caused by:' })[-1]; if (-not $c) { $c = @($t | Where-Object { $_ -match '\bERROR\b|Exception' })[0] }
+  "$(if ($c) { "Cause: $($c.Trim()). " })Log: $keep"
+}
 function Event([string]$e, [string]$kind, [hashtable]$data = @{}) {
   $data.env = $e; Write-KitLog env $kind $data
 }
@@ -1075,7 +1083,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
       if ($why) {
         Stop-Svc $e $s $why; Update-State $e { param($x) $x.services[$s.name].status = 'failed' }
         Event $e 'start-failed' @{ service = $s.name; why = $why; release = $release }
-        throw "[$e] $($s.name) $why. Log: $log`n$((Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join "`n")"
+        throw "[$e] $($s.name) $why. $(Save-FailLog $log $release)`n$((Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join "`n")"   # the tail: DepFailPattern reads it
       }
       Start-Sleep 1
     }
@@ -1393,7 +1401,7 @@ $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
-$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue
+$quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue; $poolAt = [datetime]::MinValue
 try {
   while ($true) {
     $tick++
@@ -1496,6 +1504,8 @@ try {
         $tempAt = Get-Date   # a db down or a connection gone before the KILL: said, the tick goes on
         try { foreach ($k in @(Invoke-DbTempWatch $e)) { Say $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { Say "db temp watchdog: $("$_".Split("`n")[0])" }
       }
+      # ---- db buffer pool, once a minute (goody db-engine-presets, db.bufferPool): busy size while a lease or train is live, idle after the grace
+      if (((Get-Date) - $poolAt).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) { $poolAt = Get-Date; try { foreach ($k in @(Invoke-DbPool $e)) { Say $k; Event $e 'db-pool' @{ what = $k } } } catch { Say "db pool: $("$_".Split("`n")[0])" } }
       # ---- marks whose binlog is gone expire, once a day
       if ((MarksOn $e) -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { Update-Marks $e | ForEach-Object { Say "$_" } }
 
@@ -1503,7 +1513,7 @@ try {
       $st = Read-State $e
       $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or
         @($starters.Values | Where-Object { Alive $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
-      if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { Say 'idle: loop exits'; break }
+      if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { if (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue) { try { foreach ($k in @(Invoke-DbPool $e -Now)) { Say $k } } catch { } }; Say 'idle: loop exits'; break }
     } catch {
       $fails++; $m = "$_".Split("`n")[0]
       if ($m -ne $lastErr) { Say "tick $tick failed ($fails in a row, retrying): $_ $($_.ScriptStackTrace)"; $lastErr = $m }
@@ -1599,7 +1609,7 @@ function Get-Doctor([string]$e) {
   foreach ($x in @(Test-PortClash)) { & $add 'FAIL' $x }
   if ($c.sandbox) { & $add 'WARN' "envs.$e.sandbox: migration sandboxes are retired: remove the key" }
   foreach ($k in @('snapshot', 'restore', 'prune', 'keepDays', 'keep') | Where-Object { $null -ne $c.db.$_ }) { & $add 'WARN' "envs.$e.db.$k : full-DB snapshots are retired (marks + restore + seed replace them): remove the key" }
-  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e })) { & $add $x.level $x.what } }
+  if (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
   if (MarksOn $e) {
     $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
     if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<date>)" }

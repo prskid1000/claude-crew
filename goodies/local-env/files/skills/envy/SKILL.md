@@ -56,6 +56,11 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   `storage.db.use` = `pwsh -NoProfile -File <kit>/skills/envy/envy.ps1 dbtemp -Env <env>`, `storage.db.kill` = the same
   `-Kill {id}`. Doctor WARNs: ibtmp1 without a max, temp caps above `db.tempMaxGB`, `max_execution_time` 0, slow log off, the
   datadir outside `storage.watch`.
+- **DB buffer pool** (mysql, `db.bufferPool` set, e.g. `{}`): while a lease or train is live on any env of that db server, the
+  controller grows `innodb_buffer_pool_size` online to `busyMB` (2048), and once none was for `idle.graceMinutes` (or the loop
+  exits) shrinks it to `idleMB` (256): chunk-aligned, one resize at a time, never during a switch-over, one log line each; `db.expect`
+  then skips the pool. Doctor: the pool and the server's RAM. Windows can keep the freed memory in mysqld's working set until a
+  restart; the resize is `SET GLOBAL` only: keep the server's configured size (my.cnf / `SET PERSIST`) the idle one.
 - Config: envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`,
   `smoke`) merge by `name`. `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health and `db.expect` ({ server
   variable: value }); `deploy` stops on its FAIL lines. Service logs move to `.prev` past `logMaxMB` (100; per service too).

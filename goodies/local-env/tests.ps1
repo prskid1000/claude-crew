@@ -94,10 +94,10 @@ Expect "processes: tree from the children map, GB from the snapshot; an unchange
 # starts: RAM first, the start lock, RAM again under it; no stop of a service that is not running; the learned need = its peak
 $ss = & { . $L3; $script:log = @(); $script:rooms = 0
   function Wait-Room { $script:log += 'room' }; function Test-Room { $script:rooms++; $script:rooms -gt 1 }; function Stop-Svc { $script:log += "stop:$($args[2])" }
-  function Start-Pwsh { 999999 }; function Healthy { $false }
-  try { Start-Svc t (Svc t api) 0 '' | Out-Null } catch { $script:err = "$_" }
-  "$($script:log -join ',')|$($script:err -match 'exited while starting')" }
-Expect "start: room, lock, room again when RAM fell; no stop of a stopped service ($ss)" ($ss -like 'room,room,stop:exited while starting|True')
+  function Start-Pwsh { Set-Content (LogFile t api) 'x', 'ERROR first', 'Caused by: boom'; 999999 }; function Healthy { $false }
+  try { Start-Svc t (Svc t api) 9 '' | Out-Null } catch { $script:err = "$_" }
+  "$($script:log -join ',')|$($script:err -match 'exited while starting\. Cause: Caused by: boom\. Log: .*t-api\.fail-9\.log' -and (Test-Path ((LogFile t api) -replace 'log$', 'fail-9.log')))" }
+Expect "start: room, lock, room again when RAM fell; no stop of a stopped service; a failed start's log kept with its cause line ($ss)" ($ss -like 'room,room,stop:exited while starting|True')
 # dependsOn healthy first; a start failing on a dependency connection waits for it again and retries once; another failure throws
 $dr = & { . $L3; $script:h = 0; $script:n = 0; function Svc { [pscustomobject]@{ name = $args[1]; dependsOn = $(if ($args[1] -eq 'api') { @('es') }) } }
   function Healthy { ++$script:h -gt 2 -and $script:h -ne 4 }; function Start-SvcOnce { if (++$script:n -eq 1) { throw '[t] api failed to start. Unhandled exception caught whilst connecting to ES client' }; 'up' }
