@@ -18,10 +18,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L27 init · L56 board · L223 budget · L251 launch · L512 recover · L596 pause · L640 resume · L698 program · L742 param ·
-  L748 track · L1034 supervise report · L1076 anomalies · L1105 supervise · L1425 report · L1503 audit · L1563 storage ·
-  L1774 bugbrief · L1885 cleanup · L2012 learn · L2043 decide · L2109 health · L2171 retro due · L2181 tidy ·
-  L2251 the kit origin's main and goodies · L2267 setup · L2333 guard-sendmessage
+Sections: L27 init · L56 board · L226 budget · L254 launch · L515 recover · L599 pause · L643 resume · L701 program · L745 param ·
+  L751 track · L1037 supervise report · L1079 anomalies · L1108 supervise · L1428 report · L1506 audit · L1566 storage ·
+  L1777 bugbrief · L1888 cleanup · L2015 learn · L2045 decide · L2111 health · L2173 retro due · L2183 tidy ·
+  L2253 the kit origin's main and goodies · L2269 setup · L2335 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -124,6 +124,9 @@ switch ($Action) {
     $notes = @()
     $rejoin = $same | Where-Object { -not $Resume -and ($now - [datetime]$_.beat).TotalMinutes -lt 2 -and ((@(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique) -join '|') -eq ($myClaims -join '|')) } |
       Sort-Object { [datetime]$_.joined } -Descending | Select-Object -First 1
+    # same name, live session, no -Resume or rejoin: a parallel <agent>-<n>
+    $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and ($now - [datetime]$_.beat).TotalMinutes -lt $staleMin })
+    if ($peer) { $b = $Agent; $n = 2; while (@(Active | Where-Object agent -eq "$b-$n").Count) { $n++ }; $Agent = "$b-$n"; $same = @(); $notes += "PARALLEL: $b runs in session $($peer[0].session): you are $Agent" }
     if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
     else { $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
     # the dead pid is the join shell's: not alone
@@ -2023,7 +2026,6 @@ function Invoke-Learn {
   if ($Stats -or $History -or $Lesson -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
     $admin = Assert-KitExtra Invoke-LearnAdmin 'learn -Stats / -History / -Lesson / -Bump / -Fixed / -Trim' 'kit-admin'; & $admin @PSBoundParameters; return
   }
-  $Skill = @{ 'orchestrate' = 'bossy'; 'dev-kit' = 'crafty'; 'qa-kit' = 'pokey'; 'local-env' = 'envy'; 'android-swarm' = 'phoney' }[$Skill] ?? $Skill   # shim: remove after 2026-11-23 (skill names before the rename)
   $file = Get-KitPath signals -Create
   if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
   if ($Read) {
@@ -2299,11 +2301,11 @@ function Update-Exclude {
   $begin = '# >>> kit localOnly (managed by skills/bossy/bossy.ps1 setup; edit kit.local.json "localOnly" instead)'
   $end = '# <<< kit localOnly'
   $old = if (Test-Path $ex) { Get-Content $ex -Raw } else { '' }
-  $rest = [regex]::Replace($old, '(?s)\r?\n?' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end) + '\r?\n?', "`n").TrimEnd()
+  $rest = [regex]::Replace($old, '(?s)\r?\n?# >>> kit localOnly[^\n]*.*?' + [regex]::Escape($end) + '\r?\n?', "`n").TrimEnd()
   $block = if ($paths.Count) { "$begin`n" + (($paths | ForEach-Object { "/$_" }) -join "`n") + "`n$end" } else { '' }
   $new = (@($rest, $block) | Where-Object { $_ }) -join "`n`n"
   $new = if ($new) { $new + "`n" } else { '' }
-  if ($new -ne $old) { New-Item -ItemType Directory -Force (Split-Path $ex) | Out-Null; [IO.File]::WriteAllText($ex, $new); "excluded $($paths.Count) localOnly path(s) in $ex" }
+  if ($new -ne $old) { [IO.File]::WriteAllText($ex, $new); "excluded $($paths.Count) localOnly path(s) in $ex" }
 }
 
 if ($Exclude) { $r = Update-Exclude; if ($r) { Say $r }; $m = Set-Memory; if ($m) { Say $m }; exit 0 }

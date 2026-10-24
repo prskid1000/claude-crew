@@ -160,9 +160,9 @@ $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Di
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
 $rt = Invoke-TestScript $D runtime status
 Expect "guard: a goody's note is context, no decision; runtime without its goody exits 1 ($gn)" ($gn -match '"additionalContext":"lease noted"' -and $gn -notmatch 'permissionDecision' -and $rt.code -eq 1 -and $rt.out -match 'goody add runtimes')
-$lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' } }
-$tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
-Expect 'lib: a linked worktree reads the main clone''s kit.local.json; fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
+$lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' }; zz = @(@{ p = 'q' }) }
+$tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; (Get-KitSetting 'zz' 'dflt').p; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
+Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
 Expect 'lib: a deleted tracker task leaves tracking (an outage page does not); a pid reused after a reboot holds nothing' ($gt -eq 'True False False True|False True')
 # bossy.ps1 storage: verdicts on minute samples, the learned normal, one-pass folder sizes, drill-down, the db watchdog and the rescue hold
@@ -194,11 +194,6 @@ Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contai
 Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
-# the #7 rename (shim: remove after 2026-11-23): lib reads the config at its old path until goody sync moves it
-$fk = Join-Path (Kd) 'fb/.claude'; New-Item -ItemType Directory -Force "$fk/skills/crafty", "$fk/skills/dev-kit" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" "$fk/skills/crafty"   # shim: remove after 2026-11-23
-& $J @{ tracker = @{ bugPrefix = '[Old]' } } "$fk/skills/dev-kit/kit.local.json"   # shim: remove after 2026-11-23
-$fb = pwsh -NoProfile -Command ". '$fk/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.bugPrefix' 'none'" 2>&1 | Out-String
-Expect "lib: the config at its old path still loads ($($fb.Trim()))" ($fb.Trim() -eq '[Old]')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
 $pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"

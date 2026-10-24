@@ -139,17 +139,6 @@ $s7 = & $ex goody sync; $b7 = (Get-Content $xf -Raw) -match 'goody supervise-res
 Remove-Item "$w2/notes/sr.txt"; $null = & $ex goody sync; $b8 = (Get-Content $xf -Raw) -match 'goody supervise-resources'
 Expect "goody sync: a fold keeps the block while another worktree has the file untracked, then drops it ($b7 $b8)" ($b7 -and -not $b8 -and (Test-Path (Join-Path $kc 'notes/sr.txt')))
 git -C $kc worktree remove --force $w2 2>&1 | Out-Null
-# #7 rename (shim: remove after 2026-11-23)
-$m = "$xw/goodies/mig"; New-Item -ItemType Directory -Force "$m/files/skills/envy", "$m/files/skills/local-env", "$kc/skills/local-env", "$kc/skills/crafty" | Out-Null
-"# mig`n`nNeeded when: listed." | Set-Content "$m/GOODY.md"; 'new' | Set-Content "$m/files/skills/envy/envy.ps1"
-'fwd' | Set-Content "$m/files/skills/local-env/localenv.ps1"; 'old' | Set-Content "$kc/skills/local-env/localenv.ps1", "$kc/skills/local-env/envy.ps1"; & $pushX 'feat: mig'   # shim: remove after 2026-11-23
-Move-Item "$kc/skills/crafty/kit.local.json" "$kc/skills/local-env/x.local.json"; Add-Content $xf "`n# kittool extra mig`n/skills/local-env/localenv.ps1`n# kittool extra end"   # shim: remove after 2026-11-23
-& $J @{ extras = @('mig') } $kl; '## dev-kit' | Set-Content "$kc/LESSONS.local.md"; git -C $kc fetch -q origin; $s9 = & $ex goody sync; $x9 = Get-Content $xf -Raw; $l9 = Read-Json $kl   # shim: remove after 2026-11-23
-Expect 'rename: goody sync migrates' ((Get-Content "$kc/skills/envy/envy.ps1" -Raw) -match 'new' -and (Test-Path "$kc/skills/envy/x.local.json") -and -not (Test-Path "$kc/skills/local-env/envy.ps1") -and
-  (Get-Content "$kc/skills/local-env/localenv.ps1" -Raw) -match 'fwd' -and $x9 -notmatch 'kittool extra' -and $x9 -match '# kitbag goody mig' -and 'mig' -in $l9.goodies -and -not $l9.extras -and (Get-Content "$kc/LESSONS.local.md") -eq '## crafty')   # shim: remove after 2026-11-23
-$sh = (& $ex extra list).out + (& $py -X utf8 (Join-Path $kc 'skills/orchestrate/kittool.py') goody list 2>&1 | Out-String) + (pwsh -NoProfile -File (Join-Path $kc 'skills/orchestrate/orch.ps1') learn -Read -Skill orchestrate 2>&1 | Out-String)   # shim: remove after 2026-11-23
-Expect 'shims forward' (([regex]::Matches($sh, '(?m)^\* mig')).Count -eq 2 -and $sh -match '## bossy')   # shim: remove after 2026-11-23
-$null = & $ex goody remove mig
 # on demand (KIT_EXTRA_AUTO unset): a config-named adapter at lib load, an bossy.ps1 verb, a kitbag command; installed unlisted
 $fx = @{ 'tracker-zz' = @('skills/crafty/adapters/tracker_zz.ps1', "Register-KitAdapter 'tracker' 'zz' @{ 'view' = { param(`$a) [pscustomobject]@{ id = `$a.id; name = 'zz task'; status = 'open' } }; 'url' = { param(`$a) ""zz/`$(`$a.id)"" } }")
   'duel' = @('skills/bossy/adapters/board_disputes.ps1', "function Invoke-BoardDispute { 'dispute ran' }")
@@ -186,15 +175,14 @@ foreach ($n in $needs.Keys) { New-Item -ItemType Directory -Force "$xw/goodies/$
 $s5 = & $ex goody sync; $got = @([regex]::Matches($s5.out, '(?m)^goody (\S+): installed') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
 Expect "goody sync: a real-like config installs exactly tracker-clickup, report-gdocs, liquibase, node-spec, ts-typecheck (a repo file), os-here (this OS) ($($got -join ','))" ($s5.code -eq 0 -and ($got -join ',') -eq 'liquibase,node-spec,os-here,report-gdocs,tracker-clickup,ts-typecheck')
 # lint codes on the copy
-$oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'; $oldRt = 'kit' + '-retro'   # built: no old name in the kit (lint OLD-NAME)
+$oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in the kit (lint OLD-NAME)
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })`nappendFileSync('a.jsonl', x)" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
 Add-Content (Join-Path $kc 'skills/crafty/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/x.ps1` (goody `demo`)', 'run `skills/gone/y.ps1`', 'see goody `nope`' -Encoding utf8   # a path a goody brings: cited with its goody
 $qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8   # PS-VERSION
-Add-Content (Join-Path $kc 'skills/crafty/templates.md') "`nsee $oldRt   # $('shim: remove after ' + '2000-01-01')" -Encoding utf8   # a shim line: no OLD-NAME, SHIM-DUE once past
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 Expect 'kitbag lint: AGENT-TYPE, LOG-DIRECT, PS-VERSION, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real goody' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
-  $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: goody .nope.: no such goody' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1' -and $l2 -match 'SHIM-DUE\s+skills/crafty/templates\.md' -and $l2 -notmatch "OLD-NAME.*$oldRt")
+  $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: goody .nope.: no such goody' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1')
 # goodies' section maps: lint checks installed files; goody test the branch's, with or without a tests.ps1
 ('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/goodies/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/goodies/big/GOODY.md"
 ('# x' + "`n") * 3000 | Set-Content "$xw/goodies/big/files/skills/big.ps1"; & $pushX 'feat: big'

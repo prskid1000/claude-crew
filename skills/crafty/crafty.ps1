@@ -1116,7 +1116,7 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
     if ($seg -notmatch $delWord) { continue }
     if ($seg -match ("($sd([\\/][\w.-]+)*|tracking\.local\.json|learning\.local\.(jsonl|stamp)|tracker-none\.local)" + $end)) {
       Deny 'That is durable local kit state (task tracking, learning signals): never delete it. Requests to remove it are for the lead (coordinator).' }
-    if ($seg -match 'cleanup\.ps1|(?:bossy|orch)\.ps1["'']?\s+cleanup') { continue }   # shim: remove after 2026-11-23 (orch.ps1)
+    if ($seg -match 'cleanup\.ps1|bossy\.ps1["'']?\s+cleanup') { continue }
     if ($seg -match ("$rt([\\/]+work([\\/]+[\w.-]+)?)?[\\/]*" + $end) -or
         ($inRuntime -and $seg -match '\s[''"]?(\.[\\/])?(work([\\/]+[\w.-]+)?|\*|\.)[\\/]*[''"]?(\s|$)')) {
       $act = @(ActiveWork)
@@ -1189,7 +1189,7 @@ if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitComm
   $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
   if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
     $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
-    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main|goodies|extras)$'   # shim: remove after 2026-11-23 (extras: the frozen branch old clones still read)
+    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(main|goodies)$'
     foreach ($m in [regex]::Matches($u, '\bgit\b[^|;&]*\b(push\b|branch\b|update-ref\b)[^|;&]*')) {
       $p = $m.Value; $tk = -split $p; $hit = @($tk | ForEach-Object { if ($_ -match $pr) { $Matches[1] } })[0]
       $bad = switch ($m.Groups[1].Value) {
@@ -1200,7 +1200,7 @@ if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitComm
     }
   }
 }
-$gated = $cmd -match '(?:crafty|dev)\.ps1["'']?\s+(gate|check)\b|(?:phoney|swarm)\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'   # shim: remove after 2026-11-23 (dev.ps1, swarm.ps1)
+$gated = $cmd -match 'crafty\.ps1["'']?\s+(gate|check)\b|phoney\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
 $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or

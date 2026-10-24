@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L31 paths · L82 kitlog · L162 load · L548 lint · L917 README graph · L1023 lint command · L1056 audit · L1165 registry ·
-  L1403 prose · L1546 sections · L1676 budget · L1694 goodies · L2226 main
+Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1156 registry ·
+  L1385 prose · L1528 sections · L1658 budget · L1676 goodies · L2141 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -195,19 +195,10 @@ def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count 
         t = re.sub(r'<!-- kit-graph:start .*?<!-- kit-graph:end -->', '', t, flags=re.S)
     return len(t.encode('utf-8')) // 4
 
-SHIM_RX = re.compile(r'shim: remove after (\d{4}-\d{2}-\d{2})')   # an old name kept for one release: the line (or a file with it on top)
-
-def is_shim(path):
-    """A forwarder at an old path: the marker in its first 3 lines. Never a kit file (caps, budgets, reach, graph)."""
-    with contextlib.suppress(OSError):
-        with open(path, encoding='utf-8', errors='replace') as fh:
-            return bool(SHIM_RX.search(''.join(fh.readline() for _ in range(3))))
-    return False
-
 def counted_files(kdir):
-    """Tracked files the budget counts: all but the generated ports and shims (a deletion not staged yet is gone)."""
+    """Tracked files the budget counts: all but the generated ports (a deletion not staged yet is gone)."""
     rc, o, _ = git(kdir, 'ls-files')
-    return [x for x in o.split('\n') if x and not x.startswith(GENERATED) and osp.isfile(osp.join(kdir, x)) and not is_shim(osp.join(kdir, x))] if rc == 0 else []
+    return [x for x in o.split('\n') if x and not x.startswith(GENERATED) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
 
 def split_total(sizes):
     """(kit total, tests total) of {file: tokens}: the kit total is what agents load; tests/ never is (own cap testTokens)."""
@@ -353,7 +344,7 @@ def load(kit):
     k.junk = junk
     k.local_rules = [f for f in k.all if re.match(r'rules/[^/]+\.local\.md$', f)]
     # kit = published files + local overlay (local skills, project profiles); not configs/state; not shims
-    k.files = sorted(f for f in k.all if (not ignored(f) or f in k.local_rules) and not is_shim(osp.join(k.dir, f)))
+    k.files = sorted(f for f in k.all if (not ignored(f) or f in k.local_rules))
     k.fileset = set(k.files)
     try:
         lj = osp.join(k.dir, 'skills', 'crafty', 'kit.local.json')
@@ -1360,14 +1351,6 @@ def registry_lint(k, bad):
             if not at or at.group(1) not in crew:
                 ln = src.count('\n', 0, m.start()) + 1
                 bad('AGENT-TYPE', f'{p}:{ln}', f'agent() without a crew agentType ({at.group(1) if at else "none: a general-purpose agent"}); use one of {sorted(crew)}')
-    today = datetime.date.today().isoformat()
-    for f in sorted(set(tracked(k.dir)) | {p for ps in installed_extras(k.dir).values() for p in ps}):
-        if f.startswith(GENERATED) or not f.lower().endswith(TEXT_EXT) or not osp.isfile(osp.join(k.dir, f)):
-            continue
-        for m in SHIM_RX.finditer(read(osp.join(k.dir, f))):
-            if m.group(1) < today:
-                bad('SHIM-DUE', f, f'shim past its date ({m.group(1)}): delete the forwarder / old-name line (git grep "shim: remove after")')
-                break
     olds = man.get('renamed') or {}
     pats = [(o, old_name_rx(o)) for o in olds]
     for f in k.files:
@@ -1376,7 +1359,6 @@ def registry_lint(k, bad):
         t = k.texts.get(f) or ''
         if f == PATHS_JSON:
             t = re.sub(r'"(renamed|moved)":\s*\{[^}]*\}', '', t)   # the migration notes themselves
-        t = re.sub(r'(?m)^.*' + SHIM_RX.pattern + '.*$', '', t)   # a shim line names the old one on purpose
         for o, rx in pats:
             m = rx.search(t)
             if m:
@@ -1695,9 +1677,6 @@ def cmd_budget(a):
 # goodies/<name>/GOODY.md says what it is and "Needed when: `<config key>` = `<value>`"; goodies/<name>/files/<kit path> are its files.
 EXTRAS_REF = 'refs/remotes/origin/goodies'
 EXCLUDE_MARK = '# kitbag goody '
-OLD_MARK = '# kittool extra '   # shim: remove after 2026-11-23 (blocks written before the rename; read as the new layout)
-OLD_DIRS = {'orchestrate': 'bossy', 'dev-kit': 'crafty', 'qa-kit': 'pokey', 'local-env': 'envy', 'android-swarm': 'phoney'}   # shim: remove after 2026-11-23
-OLD_FILES = {'localenv.ps1': 'envy.ps1', 'swarm.ps1': 'phoney.ps1'}   # shim: remove after 2026-11-23 (goody files renamed; kittool_<x>.py too)
 OS_NAME = {'win32': 'windows', 'darwin': 'macos'}.get(sys.platform, 'linux')   # `<os>` OS in a Needed when line
 EXTRA_NOTE = re.compile(r'\bgoody `([\w-]+)`')   # core text citing a goody's part names it: lint skips that line's paths
 EXTRA_OF = {'flow': 'flow-map', 'port': 'ports', 'new': 'kit-admin', 'rename': 'kit-admin', 'remove': 'kit-admin', 'cost': 'kit-admin',
@@ -1722,29 +1701,19 @@ def exclude_path(kit):
     rc, p, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', timeout=20)
     return p if rc == 0 and p else None
 
-def new_path(rel):
-    """A kit path from before the rename in the new layout (skills/<old>/<file> -> skills/<new>/<file>)."""   # shim: remove after 2026-11-23
-    parts = rel.split('/')
-    if len(parts) > 2 and parts[0] == 'skills' and parts[1] in OLD_DIRS:
-        parts[1], parts[-1] = OLD_DIRS[parts[1]], OLD_FILES.get(parts[-1], re.sub(r'^kittool_', 'kitbag_', parts[-1]))   # shim: remove after 2026-11-23
-    return '/'.join(parts)
-
-def exclude_blocks(kit, old=False):
+def exclude_blocks(kit):
     """{name: [kit paths]} of every `# kitbag goody <name>` ... `# kitbag goody end` block in .git/info/exclude (shared by
-    every worktree of the clone); a block also ends at a blank line or the next block. An OLD_MARK block reads as the new
-    layout; old=True: only those, paths as written."""
+    every worktree of the clone); a block also ends at a blank line or the next block."""
     p = exclude_path(kit)
-    blocks, name, was = {}, None, False
+    blocks, name = {}, None
     for line in (read(p) if p else '').split('\n'):
-        mark = EXCLUDE_MARK if line.startswith(EXCLUDE_MARK) else OLD_MARK if line.startswith(OLD_MARK) else None
-        if mark:
-            name, was = line[len(mark):].strip(), mark == OLD_MARK
-            name = None if name == 'end' or (old and not was) else name
+        if line.startswith(EXCLUDE_MARK):
+            name = line[len(EXCLUDE_MARK):].strip()
+            name = None if name == 'end' else name
             if name:
                 blocks[name] = []
         elif name and line.strip():
-            x = line.strip().lstrip('/')
-            blocks[name].append(x if old or not was else new_path(x))
+            blocks[name].append(line.strip().lstrip('/'))
         else:
             name = None
     return blocks
@@ -1758,11 +1727,11 @@ def set_exclude(kit, name, paths):
     p = exclude_path(kit)
     lines, inside = [], False
     for line in read(p).split('\n') if p and osp.isfile(p) else []:
-        if inside and (line.startswith((EXCLUDE_MARK, OLD_MARK)) or not line.strip()):
+        if inside and (line.startswith(EXCLUDE_MARK) or not line.strip()):
             inside = False
-            if line in (f'{EXCLUDE_MARK}end', f'{OLD_MARK}end'):
+            if line == f'{EXCLUDE_MARK}end':
                 continue
-        if line in (f'{EXCLUDE_MARK}{name}', f'{OLD_MARK}{name}'):
+        if line == f'{EXCLUDE_MARK}{name}':
             inside = True
         if not inside:
             lines.append(line)
@@ -1810,7 +1779,7 @@ def local_config(kit, fname):
     return (load_json(p)[0] or {}) if p else {}
 
 def listed_goodies(cfg):
-    return cfg.get('goodies') or cfg.get('extras') or []   # shim: remove after 2026-11-23 (the key before the rename)
+    return cfg.get('goodies') or []
 
 def set_listed(kit, name, on):
     """kit.local.json `goodies`: names sync always installs (a fresh clone gets them back); goody add lists, remove unlists.
@@ -1824,7 +1793,6 @@ def set_listed(kit, name, on):
         if names is None or (name in names) == on:
             return
         cfg['goodies'] = sorted(set(names) | {name}) if on else [x for x in names if x != name]
-        cfg.pop('extras', None)   # shim: remove after 2026-11-23 (the key before the rename)
         indent = len(re.search(r'\n( *)"', read(p)).group(1)) if re.search(r'\n( *)"', read(p)) else 2
         with open(p + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:
             fh.write(json.dumps(cfg, indent=indent, ensure_ascii=False) + '\n')
@@ -1937,8 +1905,6 @@ def extra_sync(kit):
     is not behind origin/main (a newer goody may need newer core: the pull comes first). Silent when nothing to do."""
     fetched = not git(kit, 'rev-parse', '-q', '--verify', EXTRAS_REF)[0]
     current = git(kit, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD')[0] == 0
-    if current and osp.normcase(osp.abspath(main_clone(kit))) == osp.normcase(osp.abspath(kit)):
-        migrate_layout(kit, fetched)   # shim: remove after 2026-11-23 (the main clone only: a worktree must not rewrite the shared blocks)
     if not fetched:
         print('kitbag goody sync: the goodies branch was never fetched (offline?): nothing installed', file=sys.stderr)
         return 1
@@ -1951,57 +1917,6 @@ def extra_sync(kit):
         for name in stale_extras(kit, installed):
             rc = max(rc, add_extra(kit, name, installed, 'updated'))
     return rc
-
-def migrate_layout(kit, fetched=True):   # shim: remove after 2026-11-23 (the rename of skill folders, scripts and extras -> goodies)
-    """Once after the rename: old-layout goody files go and come back at their new paths (an OLD_MARK block becomes a new
-    one; only with the branch fetched), local files in the old skill folders move to the new ones (a file already there stays
-    put), `extras` -> `goodies`, old skill names in LESSONS.local.md headings and the signals."""
-    known = known_extras(kit) or set()
-    for name, paths in exclude_blocks(kit, old=True).items() if fetched else []:
-        drop_extra(kit, name, paths, 'moved to the new layout')
-        if name in known:
-            add_extra(kit, name, {})
-    keep = set(tracked(kit)) | {p for old in (False, True) for ps in exclude_blocks(kit, old).values() for p in ps}   # tracked, goody files stay
-    def move(src, dst):
-        if osp.basename(src) == '__pycache__':
-            return shutil.rmtree(src, ignore_errors=True)
-        rel = osp.relpath(src, kit).replace('\\', '/')
-        if fetched and osp.isfile(src) and rel not in keep and new_path(rel) in keep:   # an old copy of a goody file a new block lists (a worktree synced first)
-            os.remove(src)
-            return print(f'removed {rel} (its goody installs {new_path(rel)})')
-        if not osp.exists(dst) and not any(x == rel or x.startswith(rel + '/') for x in keep):
-            os.makedirs(osp.dirname(dst), exist_ok=True)
-            try:
-                os.replace(src, dst)
-                return print(f'moved {rel} -> {osp.relpath(dst, kit)}')
-            except OSError as e:
-                return print(f'kitbag goody sync: {rel} not moved ({e}): move it by hand', file=sys.stderr)
-        if osp.isdir(src) and osp.isdir(dst):
-            for x in os.listdir(src):
-                move(osp.join(src, x), osp.join(dst, x))
-    for old, new in OLD_DIRS.items():
-        if osp.isdir(osp.join(kit, 'skills', old)):
-            for x in os.listdir(osp.join(kit, 'skills', old)):
-                move(osp.join(kit, 'skills', old, x), osp.join(kit, 'skills', new, x))
-    p = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
-    if osp.isfile(p) and '"extras"' in read(p):
-        with locked(p):
-            cfg = load_json(p)[0]
-            if isinstance(cfg, dict) and 'extras' in cfg and 'goodies' not in cfg:
-                indent = len(re.search(r'\n( *)"', read(p)).group(1)) if re.search(r'\n( *)"', read(p)) else 2
-                with open(p + '.tmp', 'w', encoding='utf-8', newline='\n') as fh:   # same key order: the key renamed in place
-                    fh.write(json.dumps({('goodies' if k == 'extras' else k): v for k, v in cfg.items()}, indent=indent, ensure_ascii=False) + '\n')
-                os.replace(p + '.tmp', p)
-                print('kit.local.json: key extras -> goodies')
-    rx = re.compile(r'^(## |\{.*"skill": ?")(' + '|'.join(map(re.escape, OLD_DIRS)) + r')(?=\r?$|")', re.M)
-    for p in (osp.join(kit, 'LESSONS.local.md'), kit_path('signals', kit=kit)):
-        t = read(p, raw=True) if osp.isfile(p) else ''
-        t2 = rx.sub(lambda m: m.group(1) + OLD_DIRS[m.group(2)], t)
-        if t2 != t:
-            with open(p + '.tmp', 'w', encoding='utf-8', newline='') as fh:
-                fh.write(t2)
-            os.replace(p + '.tmp', p)
-            print(f'{osp.basename(p)}: old skill names -> new')
 
 def migrate_extras(kit):
     """MERGED_EXTRAS gone from the goodies branch: the old files go, a listed old name is listed as the new one (sync installs it)."""
@@ -2291,7 +2206,6 @@ if __name__ == '__main__':
     getattr(sys.stdout, 'reconfigure', lambda **_: None)(encoding='utf-8')
     load_plugins()
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ('', [])
-    cmd = 'goody' if cmd == 'extra' else cmd   # shim: remove after 2026-11-23 (the verb before the rename)
     rc = check_args(cmd, rest)
     if rc is None and cmd in PLUGINS:
         stamp_fn(PLUGINS[cmd])

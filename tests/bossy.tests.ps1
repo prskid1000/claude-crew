@@ -7,9 +7,9 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit orch; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bossy.ps1'
+$mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
-$mk = "$(Kd)/kit main"
-Expect 'setup -Exclude in a kit worktree: excludes to the main clone, no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+Expect 'setup -Exclude in a kit worktree: excludes to the main clone (an older block replaced), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
 git -C $mk remote add origin https://github.com/o/r.git; foreach ($b in 'main', 'goodies') { git -C $mk update-ref "refs/remotes/origin/$b" HEAD }
 $po = Invoke-PsTest kit-protect @'
 $null = . $args[0] 6>$null; $global:seen = @()

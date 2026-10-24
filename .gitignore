@@ -15,9 +15,6 @@
 settings.local.json
 skills/phoney/swarm.config.json
 skills/phoney/swarm.json
-# shim: remove after 2026-11-23 (the lane files before goody sync moves them)
-skills/android-swarm/swarm.config.json
-skills/android-swarm/swarm.json
 rules/*.local.md
 
 # harness state Claude Code writes into .claude (auto memory: bossy.ps1 setup points autoMemoryDirectory at /memory)

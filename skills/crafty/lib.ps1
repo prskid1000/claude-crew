@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L83 config · L164 OS · L336 leases · L608 tracker · L828 git-host · L933 kitlog · L1045 params ·
-  L1208 entry-scripts
+Sections: L10 paths · L83 config · L163 OS · L335 leases · L607 tracker · L827 git-host · L932 kitlog · L1044 params ·
+  L1207 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -90,7 +90,6 @@ if (-not (Test-Path $__cfgFile)) {
   $__cd = "$(git -C $__devkit rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
   if ($__cd) { $__alt = Join-Path (Split-Path $__cd) 'skills/crafty/kit.local.json'; if (Test-Path $__alt) { $__cfgFile = $__alt } }
 }
-foreach ($__old in @(@($__kit) + @(if ($__cd) { Split-Path $__cd }) | ForEach-Object { Join-Path $_ 'skills/dev-kit/kit.local.json' })) { if (-not (Test-Path $__cfgFile) -and (Test-Path $__old)) { $__cfgFile = $__old } }   # shim: remove after 2026-11-23 (before kitbag.py goody sync moved it)
 if (Test-Path $__cfgFile) { try { $__cfg = Get-Content $__cfgFile -Raw | ConvertFrom-Json } catch { Write-Warning "ignoring $__cfgFile (invalid JSON): $_" } }
 function Get-KitValue([string]$Name, $Default) { if ($__cfg -and $null -ne $__cfg.$Name -and "$($__cfg.$Name)" -ne '') { return $__cfg.$Name }; $Default }   # arrays stay whole
 function Get-KitSetting([string]$Path, $Default) {
@@ -99,7 +98,7 @@ function Get-KitSetting([string]$Path, $Default) {
     if ($null -eq $cur -or -not ($cur.PSObject.Properties.Name -contains $part)) { return $Default }
     $cur = $cur.$part
   }
-  if ($null -eq $cur -or "$cur" -eq '') { return $Default }
+  if ($cur -is [array]) { if (-not $cur.Count) { return $Default } } elseif ($null -eq $cur -or "$cur" -eq '') { return $Default }   # a list of objects stringifies to ''
   $cur
 }
 $__reportType = [string]$(if ($env:KIT_REPORT_TYPE) { $env:KIT_REPORT_TYPE } else { Get-KitSetting 'reports.type' $(if (Get-Command gws -ErrorAction SilentlyContinue) { 'gdocs' } else { 'markdown' }) })

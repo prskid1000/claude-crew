@@ -115,5 +115,10 @@ Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $
 # label prefixes map to the new crew types
 $nc = & { . $O; ((Get-KitLabelType 'spike'), (Get-KitLabelType 'migration-review:X1'), (Get-KitLabelType 'review:X1')) -join ','; Format-KitReport @{ agents = @(@{ type = 'rechy'; name = 'spike'; mode = 'spike' }); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1 } -Agents }
 Expect 'supervise: spike = rechy, migration-review = datay, their rows show' ($nc[0] -eq 'rechy,datay,revy' -and ($nc -join "`n") -match '\| 1 × rechy \| spike 1 \(spike\) \|')
+# board: the same name in a live session 5 min after its beat = a parallel agent
+$j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
+$e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
+$j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
+Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
 Remove-TestKit $k
 Complete-Tests
