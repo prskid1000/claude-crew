@@ -100,6 +100,11 @@ Expect-Cases @(
       { param($r) $exc = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
         $r.code -eq 0 -and -not (Test-Path $demo) -and $exc -notmatch 'kitbag goody' -and $exc -match '(?m)^# ' })
 )
+# a goody file still listed in localOnly: drop keeps it and its exclude line (an unignored org file would block a pull)
+$klj = Join-Path $kc 'skills/crafty/kit.local.json'; '{ "tracker": { "type": "demo" }, "localOnly": ["skills/bossy/kitbag_demo.py"] }' | Set-Content $klj
+$null = & $ex goody add demo; $lo = & $ex goody remove demo; $lx = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
+Expect "goody remove: a localOnly path stays, file and exclude line ($($lo.out.Trim()))" ($lo.code -eq 0 -and (Test-Path $demo) -and $lx -match '(?m)^/skills/bossy/kitbag_demo\.py' -and -not (git -C $kc status --porcelain))
+'{ "tracker": { "type": "demo" } }' | Set-Content $klj; $null = & $ex goody remove demo; Remove-Item $demo -ErrorAction SilentlyContinue
 # goody sync: config in kit.local.json or another local file, an existing kit file; a changed branch file updates
 foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by pokey.ps1): `targets.*.auth.type` = `basic` | `token`'), @('own', 'Needed when: `.githooks/pre-commit` exists'), @('never', 'Needed when: you want the page (`flow --readme` stays core).'))) {
   New-Item -ItemType Directory -Force "$xw/goodies/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/goodies/$($x[0])/GOODY.md"; "$($x[0])" | Set-Content "$xw/goodies/$($x[0])/files/notes/$($x[0]).txt"

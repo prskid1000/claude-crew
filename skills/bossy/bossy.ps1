@@ -18,10 +18,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L27 init · L56 board · L226 budget · L254 launch · L515 recover · L599 pause · L643 resume · L701 program · L745 param ·
-  L751 track · L1037 supervise report · L1079 anomalies · L1108 supervise · L1428 report · L1506 audit · L1566 storage ·
-  L1777 bugbrief · L1888 cleanup · L2015 learn · L2045 decide · L2111 health · L2173 retro due · L2183 tidy ·
-  L2253 the kit origin's main and goodies · L2269 setup · L2335 guard-sendmessage
+Sections: L27 init · L56 board · L227 budget · L255 launch · L516 recover · L600 pause · L644 resume · L702 program · L746 param ·
+  L752 track · L1038 supervise report · L1080 anomalies · L1109 supervise · L1429 report · L1507 audit · L1567 storage ·
+  L1778 bugbrief · L1884 cleanup · L2011 learn · L2041 decide · L2107 health · L2169 retro due · L2179 tidy ·
+  L2249 the kit origin's main and goodies · L2265 setup · L2331 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -117,7 +117,8 @@ function Get-Unread([string]$who) { $f = Get-InboxFile $who; if (Test-Path $f) {
 
 switch ($Action) {
   'join' {
-    if (-not $Agent) { throw 'join needs -Agent' }
+    if (-not $Agent) { $Agent = $Type }   # -Type only: the type is the id
+    if (-not $Agent) { 'usage: bossy.ps1 board join -Agent <id> [-Type] [-Run] [-Area] [-Items] [-Claims] (e.g. -Agent devy-a1 -Type devy -Run fix-42)'; exit 2 }
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
@@ -1802,12 +1803,7 @@ $j = Get-TrackerTask $Task
 if (-not $j.name) { throw "cannot read task $Task from the tracker ($($KitConf.TrackerType)) - check its CLI auth / tracker config" }
 $desc = [string]$j.description
 $texts = @($desc) + @(@(try { Get-TrackerComments $Task } catch { @() }) | Sort-Object date -Descending | ForEach-Object { [string]$_.text })
-$checks = @(); $cur = $null
-foreach ($line in (@($texts | Where-Object { $_ -match '(?m)^###\s+\S+\s+[—-]\s+' } | Select-Object -First 1) -split "`n")) {
-  if ($line -match '^###\s+(?<id>\S+)\s+[—-]\s+(?<screen>.+)$') { if ($cur) { $checks += $cur }; $cur = [ordered]@{ id = $Matches.id; screen = $Matches.screen.Trim(); saw = '' } }
-  elseif ($cur -and $line -match '^\*\*Saw:\*\*\s*(?<s>.+)$') { $s = ($Matches.s -split '\| Independent re-test')[0].Trim(); $cur.saw = if ($s.Length -gt 500) { $s.Substring(0, 497) + '...' } else { $s } }
-}
-if ($cur) { $checks += $cur }
+$checks = @(Get-KitFailedChecks $texts)   # every package: description, comments newest first
 if (-not $checks) { throw "no '### <id> — <screen>' failed checks found in $Task" }
 
 $runItem = $null

@@ -1,10 +1,10 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run)
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>']: over prose limits = refused)
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]  gated checks
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment, create, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create, list, ...)
  pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L228 stack · L403 gate · L664 check · L816 pipes · L852 guard · L1220 dir · L1230 checkpoint ·
-  L1254 tracker · L1287 host
+Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1222 dir · L1232 checkpoint ·
+  L1256 tracker · L1295 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -28,7 +28,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -175,7 +175,9 @@ switch ($Action) {
     if (-not $NoStage) { git -C $Dir add -A }
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
-    $null = Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message
+    $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
+    $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # the subject style is the repo's commitlint's; WIP commits (pause, stash guard) pass
+    if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { "commit refused: $($pf.Count) prose finding(s) above: rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
     git -C $Dir @c commit -m $Message
     exit $LASTEXITCODE
   }
@@ -1257,8 +1259,8 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
@@ -1271,7 +1273,13 @@ function Invoke-Tracker {
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
     'status' { Set-TrackerStatus $__id $__x }
-    'comment' { Add-TrackerComment $__id $(if ($__x) { $__x } else { $__trOpt.Text }) }
+    'comment' {   # -Kind comment-solution | comment-status | comment-deploy: over its prose limits = refused, nothing posted
+      $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
+      $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
+      if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
+      elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
+      Add-TrackerComment $__id $__ct; exit 0   # it throws on a failure; a stray native exit code is not one
+    }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
     'create' { __TrOut (New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority) }
     'url' { Get-TrackerUrl $__id }

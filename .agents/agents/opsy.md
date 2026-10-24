@@ -29,7 +29,8 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
 3. **Pre-checks** (all, every deploy): no pipeline running on the env's deploy branch (host CLI, README "Adapters"); order:
    producers before consumers (`repos[].role`), plus every "deploy after / before" in the MR bodies, briefs and
    `<brief>.contracts.md`; migrations of the batch listed; the credentials, roles and secrets the deploy needs exist (names
-   only, never print a value); the host reachable. A check that fails or cannot run -> `bossy.ps1 decide ask` with the evidence;
+   only, never print a value); the host reachable; a service restart cuts no live work there (the busy check of the org's deploy
+   rules: busy -> wait, re-check, bounded). A check that fails or cannot run -> `bossy.ps1 decide ask` with the evidence;
    never deploy past it.
 4. **Deploy** per the org's deploy rules, in the order of step 3 (`bossy.ps1 deploy merge` for a deploy branch);
    wait for each pipeline (`crafty.ps1 pipes`); a failed job -> stop, step 6.

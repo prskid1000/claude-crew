@@ -1,9 +1,10 @@
 """devtools.py: tracker / git-host / docs helpers for agents (crafty steps 6-7). Host and project come from the worktree's
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
- python devtools.py comment <taskId> <file.md | "text"> [kind]   kind: comment-status (default), comment-deploy, decision-request ...
- python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review]   guide link on top, one solution comment (+ guide link), status
- python devtools.py mr <worktree> "<title>" <body.md> [target]   open a merge/pull request from the current branch
+ python devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
+ python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review] [--prose-ok "<why>"]   guide link on top, one solution comment (+ guide link), status
+ python devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
+  comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  python devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
@@ -13,8 +14,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L30 config · L64 run · L148 tracker · L223 git host · L306 MR · L369 merge · L601 docs · L721 plugins · L735 keepboth ·
-  L754 selftest · L901 CLI
+Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L615 docs · L735 plugins · L749 keepboth ·
+  L768 selftest · L915 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -195,6 +196,18 @@ def prose(kind, text):
     return found
 
 
+PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
+
+
+def prose_gate(kind, text):
+    """prose() before a write: over a limit -> exit 1 before anything is written, unless --prose-ok."""
+    found = prose(kind, text)
+    if found and not PROSE_OK:
+        raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts), or pass'
+                         ' --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
+    return found
+
+
 
 def set_status(tid, status):
     """status: logical (tracker.statuses) or the tracker's own name."""
@@ -202,11 +215,12 @@ def set_status(tid, status):
 
 
 def comment(tid, text, kind='comment-status'):
-    prose(kind, text)
-    return _tracker('comment', tid, text)
+    prose_gate(kind, text)
+    return _tracker('comment', tid, text, '-ProseOk', f'devtools.py checked it ({kind})')
 
 
 def finish(tid, guide_url, solution_md, status='review'):
+    prose_gate('comment-solution', solution_md if guide_url in solution_md else f'{solution_md.rstrip()}\n\n**Testing doc**: https://doc')   # before doc, describe, status
     if os.path.isfile(guide_url):   # publish it: never link a local path
         guide_url = make_doc(os.path.splitext(os.path.basename(guide_url))[0], guide_url)
     t = task(tid)
@@ -334,8 +348,8 @@ def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - templates.md "MR body"', file=sys.stderr)
-    prose('mr-title', title)
-    prose('mr-body', body_md)
+    prose_gate('mr-title', title)
+    prose_gate('mr-body', body_md)
     if _verified_gaps(body_md):
         print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
              ' - say what was not run (or "Not run: nothing") - see templates.md "MR body"', file=sys.stderr)
@@ -900,7 +914,7 @@ def _report_selftest(expect):
 
 # ---- CLI: argument checks, verb dispatch
 def _cli():
-    global REPORT_TYPE
+    global REPORT_TYPE, PROSE_OK
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
@@ -914,10 +928,13 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ():
+    for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ('--prose-ok',) if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
+    PROSE_OK = opt.get('--prose-ok') or ''
+    if PROSE_OK:
+        print(f'[prose] --prose-ok: {PROSE_OK}', file=sys.stderr)
     if cmd in ('-h', '--help', 'help') or (use and any(x in ('-h', '--help') for x in a[1:])):
         print('\n'.join(use) if use else __doc__)
         sys.exit(0)

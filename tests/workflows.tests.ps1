@@ -70,7 +70,7 @@ const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.r
 console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
-# buildy: mode duel is a goody (refused, names the goody); a removed arg is warned about, not silently ignored
+# buildy: mode duel is a goody (refused, names it); a removed arg is warned about, not silently ignored
 $jso = @'
 const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const e = await run({ ...base, mode: 'duel' }, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
@@ -121,7 +121,7 @@ $as = & { . $O; $env:KIT_OFFLINE = '0'; function Find-TaskMrs { 'g/api!7' }
   $o, $n, $g = (& $f 'fx9abc' 0), (& $f 'fx9abc' -3), (& $f 'A3, A4 g/api!2' 0); "$($o.state)|$($o.skip.Count)|$($n.state)|$($n.skip -join ',')|$($n.items[0].doc)|$($g.state)" }
 Remove-Item Env:KIT_OFFLINE
 Expect 'recover area state: an MR older than the run = earlier work, failedTesting = back to dev; doc link from the MR; a loose MR among 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
-# launch records: a fix round supersedes the launch (one recover entry); launch -Done -RunId closes both kinds
+# launch records: a fix round supersedes the launch (one recover entry); launch -Done -RunId closes both
 $ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv (& { . $O; Get-KitFnv $json }) @args | Out-String }
 $sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
 $null = & $self testy.js select-stg $sa -RunDir 'C:/rt/qa-runs/d-stg'
@@ -172,7 +172,7 @@ run(args, a.agent, _n, _n, null).then(() => run(args, b.agent, _n, _n, null)).th
 '@
 $res = Invoke-Js tc-envfix $js3 $wf
 Expect-Each $res 'testy local: #' 'envfix-ask', 'envfix-pass', 'envfix-held' -Show 5
-# testy: envy.ps1 / phoney.ps1 calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
+# testy: envy / phoney calls guarded (goodies): a missing one prints the goody line; the prompt names goody sync
 $js3b = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^(test|retest)/.test(o.label)) return _res(o.label.split(':')[1], [_ck('C1', 'PASS')])
@@ -275,7 +275,7 @@ run(args, agent, _n, _n, null).then(() => {
 '@
 $res = Invoke-Js tc-flaky $js6 $wf
 Expect-Each $res 'testy verify: #' 'flaky', 'no-evidence' -Show 5
-# budget: a run over its cap is refused with the split; a build handoff resumes from its brief; testy at 80% stops and returns the rest
+# budget: over the cap -> refused + split; build handoff -> its brief; testy at 80% stops, returns the rest; spent read last
 $jsb = @'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
   if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
@@ -288,16 +288,16 @@ const ba = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }, { id: 'X2',
 $jsbB = @'
 const m1 = mk('{"cap":100000,"estimate":500000,"stopAt":0.8}'); const o1 = await run(ba, m1.agent, _n, _n, pipeline)
 console.log(`refuse:${o1.refused === true && o1.batch === 1 && o1.next.args.batch === 1 && !m1.calls.some((c) => /^build:/.test(c.label))}`)
-const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 0, 'C:/b/handoff-X1.md'); const o2 = await run({ ...ba, agents: [ba.agents[0]] }, m2.agent, _n, _n, pipeline)
-console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /resume brief C:\/b\/handoff-X1\.md/.test(c.prompt)) && !o2.next}`)
+const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 42, 'C:/b/handoff-X1.md'); const o2 = await run({ ...ba, agents: [ba.agents[0]] }, m2.agent, _n, _n, pipeline)
+console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /resume brief C:\/b\/handoff-X1\.md/.test(c.prompt)) && !o2.next && o2.budget.spent === 42}`)
 '@
 $jsbT = @'
 const items = ['W1', 'W2', 'W3'].map((c) => _item(c, 'web', { skipClose: true }))
 const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o3 = await run({ runDir: 'C:/r/run1', ..._kl, items, webParallel: 1, mandate: ['m'], verify: false }, m3.agent, _n, _n, null)
-console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.some((c) => c.label === 'budget') && !m3.calls.some((c) => c.label === 'test:W2')}`)
+console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.filter((c) => c.label === 'budget').length === 2 && !m3.calls.some((c) => c.label === 'test:W2')}`)
 '@
 Expect-Each (@(Invoke-Js wb-b "$jsb`n$jsbB" $wfd) + @(Invoke-Js wb-t "$jsb`n$jsbT" $wf)) 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
-# recover, records shaped like 2026-10-23: one task over phase runs and a wave; relaunch under another run name; same item twice
+# recover (2026-10-23 records): one task over phase runs and a wave; relaunch under another run name; one item twice
 $gw = Join-Path (Kd) 'pw'; New-Item -ItemType Directory -Force $gw | Out-Null; 'a' | Set-Content "$gw/a.txt"; Save-GitRepo $gw base; git -C $gw remote add origin https://h.example/g/api.git
 $pa = Invoke-PsTest areas @'
 $null = . $args[0] 6>$null; $env:KIT_OFFLINE = '0'; $br = @{ 39 = 't-tsk1abc-5a'; 43 = 't-tsk1abc-6a'; 45 = 't-tsk2abc-rates' }

@@ -16,6 +16,12 @@ try {
   'feat: from file' | Set-Content "$r/msg.txt"
   Push-Location "$r/outer"; $null = pwsh @np $D wt commit -MessageFile "$r/msg.txt" 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt commit -MessageFile from the current folder' ($code -eq 0 -and (git -C "$r/outer" log -1 --format=%s) -eq 'feat: from file')
+  Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')   # the prose limits
+  'z' | Set-Content "$r/outer/z.txt"; $lm = 'feat: ' + ('long subject ' * 8)
+  $po = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm 2>&1 | Out-String; $pc = $LASTEXITCODE; $ps = git -C "$r/outer" log -1 --format=%s
+  $null = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm -ProseOk 'test' 2>&1; $pk = $LASTEXITCODE
+  'w' | Set-Content "$r/outer/w.txt"; $null = pwsh @np $D wt commit -Dir "$r/outer" -Message ('wip: ' + 'pause ' * 20) 2>&1; $pk += $LASTEXITCODE
+  Expect "wt commit: a subject over its prose limit is refused, -ProseOk / a WIP commit pass ($pc $pk)" ($pc -eq 1 -and $po -match 'commit refused' -and $ps -eq 'feat: from file' -and $pk -eq 0 -and (git -C "$r/outer" log -2 --format=%s)[1] -eq $lm.Trim())
   foreach ($n in 'a', 'ab', 'c-1', 'c-2') { git -C "$r/outer" worktree add -q -b $n "$r/wt/$n-outer" 2>$null }
   Push-Location "$r/outer"
   $bad = @(@(), @('-Dir', "$r/outer"), @('-Name', 'zz'), @('-Name', 'c')) | ForEach-Object { $a = $_; $null = pwsh @np $D wt remove @a -Force 2>&1; $LASTEXITCODE }
@@ -46,6 +52,13 @@ Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*'
 $bad = pwsh @np $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
 $said = (pwsh @np $D tracker comments $t.id | ConvertFrom-Json).text
 Expect 'tracker comment -File sends it; unknown option = usage error' (@($said) -match '^body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
+# over its prose limit a comment is refused (nothing posted) unless -ProseOk; devtools.py comment the same (--prose-ok)
+$wl = (1..130 | ForEach-Object { "w$_" }) -join ' '; $n0 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+$pr = pwsh @np $D tracker comment $t.id $wl -Kind comment-status 2>&1 | Out-String; $prc = $LASTEXITCODE; $n1 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+$null = pwsh @np $D tracker comment $t.id $wl -Kind comment-status -ProseOk 'brief format' 2>&1; $pkc = $LASTEXITCODE; $n2 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+$dp = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution 2>&1 | Out-String; $dpc = $LASTEXITCODE
+$null = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution --prose-ok 'brief format' 2>&1; $dkc = $LASTEXITCODE; $n3 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+Expect "prose gate: tracker comment / devtools.py comment over the limit refused, nothing posted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
 Remove-Item Env:KIT_TRACKER_TYPE
 # tracker command backend on recorded answers (an unknown call fails)
 $tb = @'

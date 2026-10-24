@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L83 config · L163 OS · L335 leases · L607 tracker · L827 git-host · L932 kitlog · L1044 params ·
-  L1207 entry-scripts
+Sections: L10 paths · L83 config · L163 OS · L335 leases · L608 tracker · L843 git-host · L948 kitlog · L1060 params ·
+  L1223 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -518,7 +518,8 @@ function Test-KitProse([string]$Kind, [string]$Text, [string]$Path) {
   $kt = $KitCmd.kitbag; if (-not $kt -or -not (Test-Path $kt)) { return @() }
   $tmp = $null
   if (-not $Path) { $tmp = Join-Path (Get-KitTemp) "kit-prose-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 6)).md"; [IO.File]::WriteAllText($tmp, $Text); $Path = $tmp }
-  try { $r = & (Get-Python) -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue } }
+  $lec = $global:LASTEXITCODE   # kitbag's exit 1 on findings is no exit code of the caller
+  try { $r = & (Get-Python) -X utf8 $kt prose --kind $Kind $Path --json 2>$null | ConvertFrom-Json } catch { $r = $null } finally { if ($tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }; $global:LASTEXITCODE = $lec }
   $found = @(if ($r) { $r.findings })
   foreach ($f in $found) { Write-Warning "[prose] $Kind`: $f (templates.md ""Writing standards"": rewrite, nothing was cut)" }
   $found
@@ -822,6 +823,21 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 function Get-TrackerTasks([string]$List, [string]$Status) {
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
   __TrA 'list' @{ list = $List; status = (Resolve-TrackerStatus $Status); logical = $Status }
+}
+
+# failed checks in tracker texts (pokey.ps1 Format-Checks: "### <id> — <screen>" + "**Saw:**"), an id once (the first text
+# wins); not env-data untested checks (the env's, not a code bug) nor gallery rows ("(PASS)") -> [ordered]@{ id; screen; saw }
+function Get-KitFailedChecks([string[]]$Texts) {
+  $seen = @{}
+  foreach ($tx in $Texts) {
+    $cur = $null; $sect = ''
+    foreach ($line in @("$tx" -split '\r?\n') + '## end') {
+      if ($line -match '^##\s+[^#]|^###\s+\S+\s+[—-]\s+') {
+        if ($cur -and -not $seen[$cur.id] -and -not ($sect -match '^##\s+Untested' -and $cur.nt) -and $cur.screen -notmatch '\((PASS|NOT TESTED|PENDING|OUT OF SCOPE)\b.*\)$') { $seen[$cur.id] = 1; $cur.Remove('nt'); $cur }
+        $cur = $null; if ($line -match '^###\s+(?<id>\S+)\s+[—-]\s+(?<screen>.+)$') { $cur = [ordered]@{ id = $Matches.id; screen = $Matches.screen.Trim(); saw = '' } } else { $sect = $line }
+      } elseif ($cur -and $line -match '^\*\*Saw:\*\*\s*(?<s>.+)$') { $s = ($Matches.s -split '\| Independent re-test')[0].Trim(); $cur.nt = $s -match '\(cause: env-data\)'; $cur.saw = if ($s.Length -gt 500) { $s.Substring(0, 497) + '...' } else { $s } }
+    }
+  }
 }
 
 # ---- git-host: git-host + ci adapters (README "Adapters"), Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }

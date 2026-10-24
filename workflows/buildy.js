@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L172 build-prompt · L244 ship-prompt · L266 plan · L280 spike ·
-//   L293 local-loop · L351 stages · L473 ship · L542 deploy · L558 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L271 plan · L285 spike ·
+//   L298 local-loop · L356 stages · L478 ship · L548 deploy · L564 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -160,11 +160,16 @@ const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false,
 function takeBudget(out, units) {
  try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(out) || [])[1])); BUD.unit = BUD.estimate / Math.max(1, units) } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
 }
+// the run's spend (its agents' transcripts): gate() near the stop line, and once for the outcome
+async function measure(phaseName) {
+ const r = await runStep(`& ${ORCH} budget -Run '${RUN}' -Json`, 'budget', phaseName).catch(() => null)
+ try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {}
+}
 async function gate(phaseName) {   // before a new round; measures only near the stop line
  if (BUD.stop || !BUD.cap) return !BUD.stop
  BUD.guess += BUD.unit
  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
- BUD.m = BUD.m || runStep(`& ${ORCH} budget -Run '${RUN}' -Json`, 'budget', phaseName).catch(() => null).then((r) => { try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {} BUD.m = null })
+ BUD.m = BUD.m || measure(phaseName).then(() => { BUD.m = null })
  await BUD.m
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running rounds finish, no new one starts; the rest -> next`) }
  return !BUD.stop
@@ -522,6 +527,7 @@ for (const x of out) {
  const r = x.report
  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, local ${(r.localTest || {}).status || '?'}, done ${r.done.length}, deferred ${r.deferred.length}${x.blocked ? `, BLOCKED (${x.blocked})` : ''}`)
 }
+await measure('Fix')
 const outcome = {
  agents: out,
  deferred: out.flatMap((x) => (x.report ? x.report.deferred.map((d) => ({ agent: x.id, ...d })) : [])),

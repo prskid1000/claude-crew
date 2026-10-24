@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L211 local · L239 app · L262 test-prompt ·
-//   L316 verify · L360 run-item · L538 pool · L560 budget · L583 run · L619 learn
+//   L316 verify · L360 run-item · L538 pool · L560 budget · L588 run · L625 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -571,11 +571,16 @@ if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  log(`REFUSED: estimate ${BUD.estimate} > ${BUD.stopAt * 100}% of the cap ${BUD.cap}: test ${batch} item(s) per run (args.batch)`)
  return { refused: true, estimate: BUD.estimate, cap: BUD.cap, batch, next: nextCall(ARGS0.only, { batch }) }
 }
+// the run's spend (its agents' transcripts): gate() near the stop line, and once for the outcome
+async function measure(phaseName) {
+ const r = await runStep(`& ${ORCH} budget -Run '${RUN0}' -Json`, 'budget', phaseName).catch(() => null)
+ try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {}
+}
 async function gate(phaseName) {   // before a new item; measures only near the stop line
  if (BUD.stop || !BUD.cap) return !BUD.stop
  BUD.guess += BUD.unit
  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
- BUD.m = BUD.m || runStep(`& ${ORCH} budget -Run '${RUN0}' -Json`, 'budget', phaseName).catch(() => null).then((r) => { try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {} BUD.m = null })
+ BUD.m = BUD.m || measure(phaseName).then(() => { BUD.m = null })
  await BUD.m
  if (BUD.spent >= BUD.stopAt * BUD.cap && !BUD.stop) { BUD.stop = true; log(`BUDGET: spent ${BUD.spent} of the cap ${BUD.cap}: running items finish, no new one starts; the rest -> next`) }
  return !BUD.stop
@@ -614,6 +619,7 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
  log(`app follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
  all.push(...(await pool(followUps, LANES.length, 300, laneFor)).filter(Boolean))
 }
+await measure('Test')
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
 // ---- learn: signals for /tidy

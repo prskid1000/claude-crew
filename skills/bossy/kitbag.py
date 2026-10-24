@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1156 registry ·
-  L1385 prose · L1528 sections · L1658 budget · L1676 goodies · L2141 main
+  L1385 prose · L1528 sections · L1658 budget · L1676 goodies · L2153 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
 import os.path as osp
@@ -1931,11 +1931,23 @@ def migrate_extras(kit):
         if new and (old in listed or old in blocks):   # installed by hand (unlisted) too: its new home stays installed
             set_listed(kit, new, True)
 
+def local_only(kit):
+    """kit.local.json localOnly paths (the kit's, else its main clone's): org-only files no goody owns."""
+    try:
+        lj = osp.join(kit, 'skills', 'crafty', 'kit.local.json')
+        lj = lj if osp.isfile(lj) else osp.join(main_clone(kit), 'skills', 'crafty', 'kit.local.json')
+        return [p.replace('\\', '/').strip('/') for p in json.loads(read(lj) or '{}').get('localOnly', [])]
+    except (ValueError, OSError, AttributeError):
+        return []
+
 def drop_extra(kit, name, paths, why=''):
     """Delete a goody's untracked files here (and the folders it brought); its exclude block goes once no worktree has them
-    untracked (a worktree behind a core fold still needs the block: an unignored file there would block its pull)."""
+    untracked (a worktree behind a core fold still needs the block: an unignored file there would block its pull). Paths
+    still in localOnly stay: never deleted, their block lines kept."""
     tracked_files = set(tracked(kit))   # another block's files (the goody it merged into) are never this one's to delete
-    mine = [x for x in paths if x not in {p for n, b in exclude_blocks(kit).items() if n != name for p in b}]
+    lo = local_only(kit)
+    keep = [x for x in paths if any(x == p or x.startswith(p + '/') for p in lo)]
+    mine = [x for x in paths if x not in keep and x not in {p for n, b in exclude_blocks(kit).items() if n != name for p in b}]
     here = [x for x in mine if x not in tracked_files and osp.isfile(osp.join(kit, x))]
     for rel in here:
         os.remove(osp.join(kit, rel))
@@ -1946,7 +1958,7 @@ def drop_extra(kit, name, paths, why=''):
     loose = lambda w, x: osp.isfile(osp.join(w, x)) and git(w, 'ls-files', '--error-unmatch', '--', x)[0] != 0
     elsewhere = [w for w in worktrees(kit) if any(loose(w, x) for x in mine)]
     if not elsewhere:
-        set_exclude(kit, name, None)
+        set_exclude(kit, name, keep or None)
     elif not here and why:   # a migration another worktree still has to run: nothing to say here
         return here
     print(f'goody {name}: removed {len(here)} file(s)' + (f' ({why})' if why else '') + (f'; still installed in {", ".join(elsewhere)}' if elsewhere else ''))
