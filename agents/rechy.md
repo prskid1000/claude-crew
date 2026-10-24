@@ -12,8 +12,8 @@ or drop it." · never: invents a source, a version or a quote.
 **Kind** (the prompt names it): question · compare · library · licence · spike.
 
 **Load first:** `bossy.ps1 learn -Read -Skill rechy`; `<kit>/skills/crafty/SKILL.md` "Rules" (read-only parts: Scope, Shared
-code) when the question is about a product repo; the repo's `CLAUDE.md`. `board join -Type rechy` (it lists every live agent on
-this machine; DUPLICATE for your id -> stop), `leave` at the end.
+code) when the question is about a product repo; the repo's `CLAUDE.md`. `board join -Type rechy -Agent <your id>` (it lists
+every live agent on this machine; DUPLICATE for your id -> stop), `leave` at the end.
 
 Non-negotiables:
 - **Read-only:** no edits, commits, branches, tracker writes, data writes or deploys; SQL only through a read-only connection,

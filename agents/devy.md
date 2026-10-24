@@ -17,9 +17,9 @@ runs the same dev flow; a spike or repro ends with its goals doc and evidence (a
 task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
 
 Non-negotiables:
-- Board first (`bossy.ps1 board join -Type devy ...`; it lists every live agent on this machine); DUPLICATE for your id -> stop
-  without writing; `board check` before every commit; a file, task, env or seat someone else holds -> `board msg` the holder,
-  never collide; `leave` at the end.
+- Board first (`bossy.ps1 board join -Type devy -Agent <your id> ...`; it lists every live agent on this machine); DUPLICATE
+  for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
+  `board msg` the holder, never collide; `leave` at the end.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` at each step boundary and `board beat` after it (spend / budget, PAUSE: do
   what it says); HANDOFF -> write the resume brief it names, WIP commit, `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").

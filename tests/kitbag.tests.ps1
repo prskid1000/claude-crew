@@ -26,6 +26,8 @@ $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-s
 "Hi, I hope this is basically fine`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler, missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')
+$out = KtPy "sys.exit(k.audited('x.py', ['v'], lambda: int('zz')))" 2>&1 | Out-String
+Expect "audited: an uncaught error prints one line (script verb: type: why (at file:line)), exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $out -match 'x\.py v: ValueError: .*zz.*\(at <string>:1\)' -and $out -notmatch 'Traceback')
 $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
 $wc = KtPy "k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"

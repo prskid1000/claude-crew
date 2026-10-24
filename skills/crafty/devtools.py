@@ -1,16 +1,16 @@
 """devtools.py: tracker / git-host / docs helpers for agents (crafty steps 6-7). Host and project come from the worktree's
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
- python devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
- python devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review] [--prose-ok "<why>"]   guide link on top, one solution comment (+ guide link), status
- python devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
+ python -X utf8 devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
+ python -X utf8 devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review] [--prose-ok "<why>"]   guide link on top, one solution comment (+ guide link), status
+ python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
- python devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
+ python -X utf8 devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
- python devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
- python devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
- python devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
- python devtools.py selftest   offline self-test (and each installed plugin's)
+ python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
+ python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
+ python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
+ python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
@@ -925,7 +925,7 @@ def _cli():
     if cmd == 'findings':
         extra_missing('devtools.py findings (module audits)', 'module-audit')
     # --help never becomes an id; unknown flags and missing args are usage errors
-    use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
+    use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
     for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ('--prose-ok',) if cmd in ('comment', 'finish', 'mr') else ():
@@ -940,7 +940,8 @@ def _cli():
         sys.exit(0)
     bad = [x for x in a[1:] if re.match(r'^--?[A-Za-z][\w-]*$', x) and x not in FLAGS.get(cmd, set())]
     if cmd not in ARITY or bad or len(a) - 1 < ARITY[cmd]:
-        print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY else __doc__, file=sys.stderr)
+        print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY
+              else f"devtools.py: {f'unknown verb {cmd}' if cmd else 'missing verb'}: python -X utf8 devtools.py <verb> ...\n{__doc__}", file=sys.stderr)
         print('\n'.join(use) if use else '', file=sys.stderr)
         sys.exit(2)
     if cmd == 'comment':
@@ -962,6 +963,9 @@ def _cli():
         title, path = a[1], a[2]
         if os.path.isfile(title) and not os.path.isfile(path):   # swapped order: doc <file> "<title>"
             title, path = path, title
+        if not os.path.isfile(path):
+            print(f'devtools.py doc: file not found: {path} - write it first (nothing was published)', file=sys.stderr)
+            sys.exit(2)
         print(make_doc(title, path, *(a[3:4] or [])))
     elif cmd == 'evidence':
         ff = open(opt['--files-from'], encoding='utf-8-sig').read().splitlines() if opt.get('--files-from') else []   # one path per line: no command-line limit

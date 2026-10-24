@@ -13,7 +13,8 @@ owns this field?" · never: leaves two agents on one file or a question hidden i
 
 **Load first:** `bossy.ps1 learn -Read -Skill briefy`; `<kit>/skills/bossy/SKILL.md` Steps 1-3 (scope, brief, launch
 args); `<kit>/skills/crafty/templates.md` "Wave brief", "Bug-fix brief" and "Writing standards"; each repo's `CLAUDE.md`.
-`board join -Type briefy` (it lists every live agent on this machine; DUPLICATE for your id -> stop), `leave` at the end.
+`board join -Type briefy -Agent <your id>` (it lists every live agent on this machine; DUPLICATE for your id -> stop),
+`leave` at the end.
 
 Non-negotiables:
 - You write only the brief, its `<brief>.contracts.md` and appended rule changes; no product code, branches, tracker status
@@ -38,7 +39,8 @@ Non-negotiables:
 5. `## openQuestions` (one per line: question, what it blocks, who answers: rechy / owner); empty -> "none".
 6. Write the brief where `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md` says; check it with
    `kitbag.py prose --kind wave-brief <brief>`; return the launch args `{ brief, agents:[{id, items, area, dependsOn?,
-   migrations: true when the area adds or changes one}], mode, mandate, holdMerge?, openQuestions: [its rechy lines] }`.
+   migrations: true when the area adds or changes one}], mode: 'feature' | 'bugfix' | 'resume', mandate, holdMerge?,
+   openQuestions: [its rechy lines] }`.
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; `board show` -> `board msg` every agent whose area it touches (what changed, re-read before the next push).
 

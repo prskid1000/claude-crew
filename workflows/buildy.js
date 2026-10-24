@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L271 plan · L285 spike ·
-//   L298 local-loop · L356 stages · L478 ship · L548 deploy · L564 learn
+//   L298 local-loop · L356 stages · L478 ship · L548 deploy · L565 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -551,7 +551,8 @@ for (const g of outcome.testerGuides) if (!g.guide || g.guide === 'MISSING' || /
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`
-const dp = shipped.length ? await runStep(`if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
+const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
+if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true }) : null
 if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: the deploys goody is not installed (merged work waits for a person)')
 else if (shipped.length) {

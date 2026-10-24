@@ -17,10 +17,10 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L31 paths · L82 kitlog · L162 load · L539 lint · L908 README graph · L1014 lint command · L1047 audit · L1156 registry ·
-  L1385 prose · L1528 sections · L1658 budget · L1676 goodies · L2153 main
+Sections: L31 paths · L82 kitlog · L166 load · L543 lint · L912 README graph · L1018 lint command · L1051 audit · L1160 registry ·
+  L1389 prose · L1532 sections · L1662 budget · L1680 goodies · L2157 main
 """
-import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zipfile
+import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -155,6 +155,10 @@ def audited(script, argv, cli):
         if rc and not isinstance(e.code, int):   # sys.exit('<why>') caught here printed nothing: callers saw a bare exit 1
             err = str(e.code)
             print(err, file=sys.stderr)
+    except Exception as e:   # an uncaught error: one readable line (where + why) in the output and the call log
+        at = traceback.extract_tb(e.__traceback__)[-1]
+        err = f'{script} {_CALL.get("verb") or ""}: {type(e).__name__}: {e} (at {os.path.basename(at.filename)}:{at.lineno})'
+        print(err, file=sys.stderr)
     finally:
         kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000), **({'err': err[:300]} if err else {})})
     return rc
