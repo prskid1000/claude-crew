@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1222 dir · L1232 checkpoint ·
-  L1256 tracker · L1295 host
+Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1293 dir · L1303 checkpoint ·
+  L1327 tracker · L1366 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -856,7 +856,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'
+  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -887,6 +887,49 @@ if ($SelfTest) {
   @('P', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, $da),
   @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, $da),
   @('P', "& D:/kit/learn.ps1 -Skill crafty -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/crafty/LESSONS.md | Out-Null", $true, $da),
+  @('P', '& D:\kit\skills\crafty\devtools.py merge 12', $true, $sx),
+  @('P', "& 'D:\kit\skills\crafty\devtools.py' merge", $true, $sx),
+  @('P', '& "$k/skills/pokey/browser.mjs" shot', $true, $sx),
+  @('P', '.\x.py --flag', $true, $sx),
+  @('P', 'tool.ts run', $true, $sx),
+  @('P', 'Start-Process x.py', $true, $sx),
+  @('P', 'cmd /c x.js', $true, $sx),
+  @('B', './skills/crafty/devtools.py merge 12', $true, $sx),
+  @('B', 'cd x && FOO=1 tool.mjs a', $true, $sx),
+  @('B', 'start x.py', $true, $sx),
+  @('P', 'python -X utf8 skills/crafty/devtools.py merge 12', $false, ''),
+  @('P', 'node skills/pokey/browser.mjs shot; npx tsx a.ts', $false, ''),
+  @('P', 'pwsh -File x.ps1; & D:/kit/x.ps1 -A b.py', $false, ''),
+  @('P', 'Get-Content x.json; Select-String foo x.md', $false, ''),
+  @('B', 'python -X utf8 skills/crafty/devtools.py merge 12; node a.mjs', $false, ''),
+  @('B', 'cat devtools.py; grep -n foo x.md; ls *.json > out.txt', $false, ''),
+  @('P', '& .\notes.md', $true, $da),
+  @('P', 'ii .', $true, $da),
+  @('P', 'explorer.exe D:\x', $true, $da),
+  @('P', 'code skills/crafty/devtools.py', $true, $da),
+  @('P', 'notepad a.txt', $true, $da),
+  @('P', 'mmc; control', $true, $da),
+  @('P', 'rundll32 url.dll,FileProtocolHandler https://x', $true, $da),
+  @('P', 'Start-Process report.docx', $true, $da),
+  @('P', 'cmd /c start https://x', $true, $da),
+  @('B', 'start https://example.com', $true, $da),
+  @('B', 'explorer .', $true, $da),
+  @('B', 'cmd //c start "" a.xlsx', $true, $da),
+  @('B', 'code .', $true, $da),
+  @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden; Start-Process -FilePath node.exe -WindowStyle Hidden', $false, ''),
+  @('B', 'cd D:/x/src/code-review; echo code', $false, ''),
+  @('P', 'glab mr view 12 --web', $true, $wb),
+  @('B', 'gh pr view 3 -w', $true, $wb),
+  @('B', 'gh browse', $true, $wb),
+  @('P', 'glab mr view 12 -R g/web; gh pr view 3 --json title', $false, ''),
+  @('B', 'gh run list -w ci.yml; gh workflow run -w x; gh browse -n 12', $false, ''),
+  @('P', 'code --version; code --list-extensions', $false, ''),
+  @('B', 'code --version', $false, ''),
+  @('P', 'Start-Process -FilePath notepad.exe -WindowStyle Hidden', $false, ''),
+  @('P', 'powershell -c "ii ."', $true, $da),
+  @('B', 'pwsh -c ". a.py"', $true, $sx),
+  @('P', 'cmd.exe /k a.js', $true, $sx),
+  @('B', 'mshta x.hta', $true, $da),
   @('B', "cd D:/x/{RT} && mkdir -p work/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/g5/body.md; cat >> work/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/g5/body.md)`"", $false, $rp),
   @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
   @('B', 'rm -rf /d/x/{RT}/work', $true, $rp),
@@ -1131,30 +1174,58 @@ if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (anothe
 # Git for Windows shows help pages as HTML in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
-# opening a doc pops up a desktop app instead of reading it
+$hl = "GUI windows on the owner's screen are not allowed (headless rule)."
+if ($cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?(gh|glab)(\.exe)?\s+(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
+# a script or doc run or opened directly pops up its Windows file association (an editor, a viewer, the browser); 'script' | 'doc' | $null
 function Test-OpenDoc([string]$text, [string]$tool) {
-  $doc = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)$'
-  # kit script call: the rest is arguments
-  $text = [regex]::Replace($text, '(?m)(^|[;{]|&&)\s*&\s+(''[^'']+\.(ps1|py|mjs)''|"[^"]+\.(ps1|py|mjs)"|[^\s;''"]+\.(ps1|py|mjs))(\s.*)?$', '$1')
+  $de = 'md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|gif|svg|pdf|docx?|xlsx?|pptx?'; $se = 'pyw?|[cm]?js|ts'
+  $doc = "\.($de)$"; $scr = "\.($se)$"
+  $gui = '^(explorer|xdg-open|open|code|code-insiders|notepad|notepad\+\+|wordpad|mspaint|mmc|control|rundll32|mshta|wscript|Invoke-Item|ii)(\.exe)?$'; $info = '(^|\s)(--version|-v|--list-extensions|--help|-h|--status)(\s|$)'
+  # kit .ps1 call: the rest is arguments
+  $text = [regex]::Replace($text, '(?m)(^|[;{]|&&)\s*&\s+(''[^'']+\.ps1''|"[^"]+\.ps1"|[^\s;''"]+\.ps1)(\s.*)?$', '$1')
   if ($tool -ne 'Bash') {
     $cas = CmdAsts $text
     if ($null -ne $cas) {
       foreach ($ca in $cas) {
         $el = @($ca.CommandElements); if (-not $el.Count) { continue }
         $val = { param($e) if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $e.Value } else { $e.Extent.Text.Trim('''"') } }
-        if ($ca.InvocationOperator -in 'Ampersand', 'Dot' -and (& $val $el[0]) -match $doc) { return $true }
+        $w0 = & $val $el[0]; $leaf = $w0 -replace '^.*[\\/]', ''
+        if ($el[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $el[0] -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+          if ($w0 -match $scr) { return 'script' }
+          if ($w0 -match $doc) { return 'doc' }
+        }
+        $rest = (@($el | Select-Object -Skip 1 | ForEach-Object { & $val $_ }) -join ' ')
+        if ($leaf -match $gui -and -not ($leaf -match '^code' -and $rest -match $info)) { return 'doc' }
+        if ($leaf -match '^(pwsh|powershell)(\.exe)?$' -and $rest -match '(?is)(^|\s)-(c|Command)\s+(.+)$' -and ($inner = Test-OpenDoc $Matches[3] 'PowerShell')) { return $inner }
+        if ($leaf -match '^cmd(\.exe)?$' -and $rest -match "(?i)[/-][ck]\s+(start\s+(""""\s+)?)?\S+\.($se)(\s|$)") { return 'script' }
+        if ($leaf -match '^cmd(\.exe)?$' -and $rest -match '(?i)[/-][ck]\s+start\b') { return 'doc' }
         # only the opened target counts (first argument or -FilePath / -Path): Start-Process pwsh -RedirectStandardOutput o.txt reads nothing
         $fp = [array]::FindIndex([object[]]$el, [Predicate[object]] { param($x) $x -is [System.Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -match '^(FilePath|Path|LiteralPath)$' })
         $tg = if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } else { $el | Select-Object -Skip 1 | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] } | Select-Object -First 1 }
-        if ((& $val $el[0]) -match '^(Invoke-Item|ii|Start-Process|start|saps|explorer(\.exe)?|xdg-open|open)$' -and $tg -and (& $val $tg) -match "$doc|^https?://") { return $true }
+        if ($w0 -match '^(Start-Process|start|saps)$' -and $tg) {
+          $tv = & $val $tg
+          if ($tv -match $scr) { return 'script' }
+          if ($tv -match "$doc|^https?://|^\.{1,2}[\\/]?$" -or (($tv -replace '^.*[\\/]', '') -match $gui -and $rest -notmatch '(?i)-WindowStyle\s+Hidden')) { return 'doc' }
+        }
       }
-      return $false
+      return $null
     }
   }
-  (StripData $text) -match '(^|[;|({\r\n]|&&)\s*(&|\.|Invoke-Item|ii|Start-Process|start|explorer(\.exe)?|xdg-open|open|cmd(\.exe)?\s+/c\s+start(\s+"")?)\s+([^\s;|&]+\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|pdf)|https?://\S+)(\s|;|\||\)|$)'
+  foreach ($nm in [regex]::Matches($text, '\b(?:(?:ba|z|da)?sh|pwsh|powershell)(?:\.exe)?\s+(?:-\S+\s+)*?-(?:c|Command)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) {
+    if (($inner = Test-OpenDoc ($nm.Groups[1].Value + $nm.Groups[2].Value) $(if ($nm.Value -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }))) { return $inner }
+  }
+  $t = [regex]::Replace((StripData $text), '(?m)\bcode(-insiders)?(\.exe)?(?=\s+(--version|-v|--list-extensions|--help|-h|--status)(\s|$))', 'codeinfo'); $sep = '(?m)(^|[;|({\r\n]|&&)\s*(\w+=\S*\s+)*'; $fe = '(\s|;|\||\)|$)'
+  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>]+\.($se)$fe" -or $t -match "$sep(start|Start-Process|saps|cmd(\.exe)?\s+[/-]+[ck](\s+start(\s+"""")?)?)\s+[^\s;|&<>]+\.($se)$fe") { return 'script' }
+  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>]+\.($de)$fe" -or $t -match "$sep(\S*[\\/])?(explorer|xdg-open|open|code|code-insiders|notepad|notepad\+\+|wordpad|mspaint|mmc|control|rundll32|mshta|wscript|Invoke-Item|ii)(\.exe)?$fe" -or
+      $t -match "$sep(\S*[\\/])?cmd(\.exe)?\s+[/-]+[ck]\s+start$fe" -or ($tool -eq 'Bash' -and $t -match "$sep(start)$fe") -or
+      $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
+  $null
 }
-if (Test-OpenDoc $raw $tn) {
-  Deny 'That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool.' }
+$od = Test-OpenDoc $raw $tn
+if ($od -eq 'script') {
+  Deny "That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>). $hl" }
+if ($od) {
+  Deny "That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool. $hl" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {

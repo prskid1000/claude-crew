@@ -18,6 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Run every script through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`): `& x.py` or `.\x.py` opens the file in its Windows association (an editor on the owner's screen); the guard denies it, and doc openers, `--web`, `gh browse`.
 - Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (4×)
 - An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
 - Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
