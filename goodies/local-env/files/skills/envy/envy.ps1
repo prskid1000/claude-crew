@@ -14,8 +14,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L561 hooks · L633 marks · L771 seed ·
-  L817 processes · L1100 daemon · L1533 cleanup · L1605 doctor · L1653 verbs
+Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L584 hooks · L656 marks · L794 seed ·
+  L840 processes · L1123 daemon · L1561 cleanup · L1633 doctor · L1683 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -457,10 +457,28 @@ function Build-Repo([string]$e, [string]$rn) {
 # a release's runnable copy per service (the env worktree builds on while it serves): the artifact file, its unpacked form
 # (services[].unpack) or the built files of a static service; keepReleases kept per service plus the ones in use
 # {reactor} in a build: services[].reactor = module folders (globs, relative to the repo) built from source in one reactor with
-# the service's module; -> '-f <aggregator> -pl <module> -am' (only what it needs; the aggregator is untracked in the env worktree)
-function Write-Reactor([string]$e, $s) {
+# the service's module; -> '-f <aggregator> -pl <module> -am' (only what it needs; the aggregator is untracked in the env worktree).
+# Only modules whose parent is in the service module's parent chain: others miss its pluginManagement (Maven default plugin
+# versions: absent offline, too old online) and come from the local repository instead (doctor lists them)
+function Get-PomParents([string]$pom) {   # groupId:artifactId of each parent found on disk (relativePath, default ../pom.xml)
+  for ($i = 0; $i -lt 8 -and (Test-Path -LiteralPath $pom); $i++) {
+    $x = try { [xml](Get-Content -LiteralPath $pom -Raw) } catch { break }; $p = $x.project.parent; if (-not $p) { break }
+    "$($p.groupId):$($p.artifactId)"
+    $pom = Join-Path (Split-Path $pom) $(if ($p.relativePath) { [string]$p.relativePath } else { '../pom.xml' }); if (Test-Path -LiteralPath $pom -PathType Container) { $pom = Join-Path $pom 'pom.xml' }
+  }
+}
+function Get-ReactorModules([string]$e, $s) {
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; $me = ([IO.Path]::GetRelativePath($wt, (SvcDir $e $s))).Replace('\', '/')
-  $mods = @(@($s.reactor | ForEach-Object { Get-ChildItem (Join-Path $wt $_) -Directory -ErrorAction SilentlyContinue } | Where-Object { Test-Path (Join-Path $_.FullName 'pom.xml') } | ForEach-Object { [IO.Path]::GetRelativePath($wt, $_.FullName).Replace('\', '/') }) + $me | Select-Object -Unique)
+  $chain = @(Get-PomParents (Join-Path $wt "$me/pom.xml")); $use = @(); $skip = @()
+  foreach ($d in @($s.reactor | ForEach-Object { Get-ChildItem (Join-Path $wt $_) -Directory -ErrorAction SilentlyContinue } | Where-Object { Test-Path (Join-Path $_.FullName 'pom.xml') })) {
+    $rel = [IO.Path]::GetRelativePath($wt, $d.FullName).Replace('\', '/'); $mp = @(Get-PomParents (Join-Path $d.FullName 'pom.xml'))[0]
+    if ($mp -and $mp -in $chain) { $use += $rel } else { $skip += $rel }
+  }
+  [pscustomobject]@{ wt = $wt; me = $me; use = @(@($use) + $me | Select-Object -Unique); skip = @($skip) }
+}
+function Write-Reactor([string]$e, $s) {
+  $rm = Get-ReactorModules $e $s; $wt = $rm.wt; $me = $rm.me; $mods = $rm.use
+  if ($rm.skip.Count) { Write-Host "[$e] $($s.name) reactor: from the local repository, not built (parent outside $me's chain): $($rm.skip -join ', ')" }
   $f = Join-Path $wt ".localenv-reactor-$($s.name).xml"
   Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$($s.name)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
   "-f `"$f`" -pl $me -am"
@@ -481,7 +499,12 @@ function Stage-Artifacts([string]$e, [string]$rn, [string]$tag) {
       $excl = if ($s.artifactExclude) { [string]$s.artifactExclude } else { 'original|sources|javadoc|plain' }
       $f = Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch $excl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
       if (-not $f) { throw "[$e] $($s.name): no artifact matches $($s.artifact) in $dir after the build" }
-      if ($s.unpack) { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to } else { Copy-Item $f.FullName $to -Force; $out[$s.name] = Join-Path $to $f.Name }
+      $out[$s.name] = $null
+      if ($s.unpack) {   # an unpack that fails falls back to the plain artifact: the release still goes live, the event says why
+        try { $out[$s.name] = Expand-Artifact $e $s $f.FullName $to }
+        catch { $why = "$_".Split("`n")[0]; Write-Host "[$e] $($s.name): $why - staged the plain artifact instead"; Event $e 'unpack-fallback' @{ service = $s.name; tag = $tag; why = $why }; Get-ChildItem -LiteralPath $to -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
+      }
+      if (-not $out[$s.name]) { Copy-Item $f.FullName $to -Force; $out[$s.name] = Join-Path $to $f.Name }
     }
     Event $e 'stage' @{ service = $s.name; tag = $tag; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); unpacked = [bool]$s.unpack }
     $null = Remove-OldReleases $e $s (Split-Path $to)
@@ -1401,6 +1424,7 @@ $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
+$cfgAt = if ($__cfgFile -and (Test-Path -LiteralPath $__cfgFile)) { (Get-Item -LiteralPath $__cfgFile).LastWriteTimeUtc.Ticks }; $reload = $false   # kit.local.json read at start
 $quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue; $poolAt = [datetime]::MinValue
 try {
   while ($true) {
@@ -1411,6 +1435,9 @@ try {
       if ($beat) { $beatAt = Get-Date }
       if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
+      # ---- kit.local.json edited: between trains a fresh loop takes over (services, leases and state stay)
+      $cfgNow = if ($__cfgFile -and (Test-Path -LiteralPath $__cfgFile)) { (Get-Item -LiteralPath $__cfgFile).LastWriteTimeUtc.Ticks }
+      if (-not $st.train -and $cfgNow -ne $cfgAt -and $(try { $null = Get-Content -LiteralPath $__cfgFile -Raw | ConvertFrom-Json; $true } catch { $false })) { Say "kit.local.json changed: the loop restarts with it"; Event $e 'loop-reload' @{ pid = $PID }; $reload = $true; break }   # a half-written file waits
 
       # ---- trains: one worker takes all queued requests
       $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
@@ -1527,6 +1554,7 @@ try {
 finally {
   Update-State $e { param($x) if ($x.loop -and $x.loop.pid -eq $PID) { $x.loop = $null } }
   try { $mx.ReleaseMutex() } catch { }
+  if ($reload) { $null = Start-Pwsh @('_daemon', '-Env', $e) $PSScriptRoot "_daemon -Env $e" (LogFile $e 'loop') }   # after the mutex: the new loop owns it
 }
 }
 
@@ -1626,6 +1654,8 @@ function Get-Doctor([string]$e) {
     $v = try { EnvVars $e $s } catch { @{} }
     $jh = if ($v.JAVA_HOME) { $v.JAVA_HOME } elseif ("$($s.start) $($s.build)" -match '\b(java|mvnw?|gradlew?)\b') { $env:JAVA_HOME } else { $null }
     if ($jh -and -not (Test-Path -LiteralPath (Join-Path $jh 'bin'))) { & $add 'FAIL' "$($s.name): JAVA_HOME $jh has no bin folder" }
+    if ($s.reactor) { $rm = try { Get-ReactorModules $e $s } catch { $null }; if ($rm.skip.Count) { & $add 'WARN' "$($s.name).reactor: $($rm.skip -join ', ') not built (their parent is outside $($rm.me)'s chain: Maven default plugins); they come from the local repository" } }
+    if ($s.unpack) { $uf = @(Read-KitLog env (Get-Date).AddDays(-7) | Where-Object { $_.env -eq $e -and $_.event -eq 'unpack-fallback' -and $_.service -eq $s.name }); if ($uf.Count) { & $add 'WARN' "$($s.name).unpack failed $($uf.Count)x in 7 d (the plain artifact was staged): $($uf[-1].why)" } }
     if ($s.artifact -and $s.repo) {
       if (-not (Test-Path -LiteralPath $dir)) { & $add 'WARN' "$($s.name): $dir does not exist yet (the first deploy / refresh creates it)" }
       elseif (-not $(if ($s.static) { Test-Path -LiteralPath (Join-Path $dir $s.static) -PathType Container } else { @(Get-ChildItem (Join-Path $dir $s.artifact) -File -ErrorAction SilentlyContinue).Count })) { & $add 'WARN' "$($s.name): nothing matches artifact $($s.artifact) in $dir yet (the next deploy / refresh builds it)" }

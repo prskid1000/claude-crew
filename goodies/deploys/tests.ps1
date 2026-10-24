@@ -35,16 +35,28 @@ $p = @(& $dep plan -Offline $fx3 -Json | ConvertFrom-Json)
 Expect 'deploy plan: skips a task live on every test env and a done task without doneAt' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!9')
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
-# a failed pokey.ps1 deployed: UNKNOWN, never NOTHING
+# one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }) }); deploy = @{ planTimeoutSec = 4 } } $cfgF
+& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1'); done = $false } }; automerge = @{} } $tf
+$fq = Join-Path (Kd) 'fake-deployed.ps1'
+Set-Content $fq @'
+$t = $args[[array]::IndexOf($args, '-Target') + 1]
+if ($t -eq 'slow') { Start-Sleep 30 }
+if ($t -eq 'bad') { 'pokey.ps1: usage error'; exit 2 }
+'[{"mr":"api!1","target":"good","state":"NOT-DEPLOYED","detail":"x"}]'
+'@ -Encoding utf8
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60) { [pscustomobject]@{ code = 2; out = 'pokey.ps1: usage error'; err = ''; timedOut = $false } }
-$p = @(Invoke-Deploy plan -Json | ConvertFrom-Json)
-"unknown:$(@($p | Where-Object status -eq 'UNKNOWN').Count -ge 1 -and -not @($p | Where-Object status -eq 'NOTHING').Count)"
+$KitCmd.qa = $args[1]; $sw = [Diagnostics.Stopwatch]::StartNew()
+$p = @(Invoke-Deploy plan -Json | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
+"bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
+"slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
+"good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'api!1')"
+"parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
 '@
-$res = Invoke-PsTest 'deploy-unknown' $ut @($O)
-Expect-Each $res 'deploy: #' @('unknown')
+$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq)
+Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN (#)' @('bad', 'slow', 'good', 'parallel')
 $it = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]

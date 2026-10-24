@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L23 intest · L102 deploy · L203 supervise
+Sections: L13 helpers · L23 intest · L102 deploy · L212 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -146,20 +146,29 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   foreach ($q in $pend) { foreach ($m in @($q.mrs)) { $cand[$m] = "requested by $($q.run)" } }
   foreach ($m in $Mrs) { $cand[$m] = "requested by $Run" }
   # no network = UNKNOWN, no hang
-  $rows = @{}; $timedOut = $false; $fail = 'no answer'
+  $rows = @{}; $failOf = @{}   # target -> why its check gave no rows (timeout, crash): that target is UNKNOWN, the others stand
   $rowsOf = { param($m) if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] } }
   if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
   elseif ($cand.Count) {
     $lim = [int](Get-KitSetting 'deploy.planTimeoutSec' 180)
-    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: checking $($cand.Count) MR(s) on $(@($targets).Count) test env(s) (max $lim s) ...") }
-    $pa = @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', (@($cand.Keys) -join ','), '-Json', '-Exclude', (Get-NoTestRx))
-    if ($Env) { $pa += @('-Target', $Env) }
-    $r = Invoke-KitExe 'pwsh' $pa $lim
-    $timedOut = $r.timedOut
-    $txt = "$($r.out)"; $j0 = $txt.IndexOf('[')
-    $parsed = if ($j0 -ge 0) { try { @(ConvertFrom-Json $txt.Substring($j0) -NoEnumerate) } catch { $null } } else { $null }
-    if ($r.code -notin 0, 1 -or $null -eq $parsed -or -not @($parsed | Where-Object { $_.mr }).Count) { $timedOut = $true; $fail = if ($r.timedOut) { "pokey.ps1 deployed timed out after $lim s" } else { "pokey.ps1 deployed exit $($r.code): $(("$($r.out)$($r.err)" -split "`n" | Where-Object { $_ } | Select-Object -First 1))" } }
-    foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
+    # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
+    $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
+        $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) }); if (-not $tm.Count) { continue }
+        $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
+        foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Json', '-Exclude', (Get-NoTestRx))) { $si.ArgumentList.Add([string]$x) }
+        $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
+        $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
+      })
+    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: checking $($cand.Count) MR(s) on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
+    $until = (Get-Date).AddSeconds($lim)
+    foreach ($q in $runs) {
+      if (-not $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds))) { try { $q.p.Kill($true) } catch {}; $failOf[$q.t] = "pokey.ps1 deployed timed out after $lim s on $($q.t)"; continue }
+      $null = [Threading.Tasks.Task]::WaitAll(@($q.so, $q.se), 5000); $txt = "$(if ($q.so.IsCompleted) { $q.so.Result })"; $j0 = $txt.IndexOf('[')
+      $parsed = if ($j0 -ge 0) { try { @(ConvertFrom-Json $txt.Substring($j0) -NoEnumerate) } catch { $null } } else { $null }
+      if ($q.p.ExitCode -notin 0, 1 -or $null -eq $parsed -or -not @($parsed | Where-Object { $_.mr }).Count) { $failOf[$q.t] = "pokey.ps1 deployed exit $($q.p.ExitCode) on $($q.t): $(("$txt$(if ($q.se.IsCompleted) { $q.se.Result })" -split "`n" | Where-Object { $_ } | Select-Object -First 1))"; continue }
+      foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
+    }
   }
   $trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower()
   $win = Get-KitSetting 'deploy.minIntervalHours' 4
@@ -186,7 +195,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $next = if ($last) { $last.AddHours($h) } else { $null }
     $mine = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) })
     $unk = @(foreach ($m in $mine) { @(& $rowsOf $m) | Where-Object { $_ -and $_.target -eq $t -and $_.state -eq 'UNKNOWN' } | ForEach-Object { "${m}: $($_.detail)" } })
-    $why = if ($unk.Count) { $unk -join '; ' } elseif ($timedOut -and $mine.Count -and -not @($mine | Where-Object { @(& $rowsOf $_) | Where-Object { $_ -and $_.target -eq $t } }).Count) { $fail }
+    $why = if ($unk.Count) { $unk -join '; ' } elseif ($failOf[$t] -and $mine.Count -and -not @($mine | Where-Object { @(& $rowsOf $_) | Where-Object { $_ -and $_.target -eq $t } }).Count) { $failOf[$t] }
     $status = if ($why -and -not $batch.Count) { 'UNKNOWN' } elseif (-not $batch.Count) { 'NOTHING' } elseif ($running) { 'DEPLOYING' } elseif ($trigger -ne 'ask') { 'READY' } elseif ($next -and (Get-Date) -lt $next) { 'WAIT' } else { 'ASK' }
     [pscustomobject]@{ target = $t; status = $status; trigger = $trigger; last = $(if ($last) { $last.ToString('s') }); lastSource = $src; windowHours = $h; nextAllowed = $(if ($next) { $next.ToString('s') }); mrs = $batch; why = $why; pending = @($pend | ForEach-Object { "$($_.run) $($_.at)" }) }
   }

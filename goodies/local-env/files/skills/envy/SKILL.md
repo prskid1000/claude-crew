@@ -68,9 +68,10 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   static server serves a staged copy (unknown routes -> index.html; no dev server). `prepare` = a command after each sync whose
   edits are committed locally on `localenv/<env>` (a build cache at `{cache}`, outside the repo). `unpack` = a command that
   unpacks `{artifact}` into `{out}`: each library under `unpackLib` (lib) kept once by content hash, hard-linked into each
-  release; `keepReleases` (2) staged per service + the ones running. `aotTrain` ({aotFile}): one gated background run per
+  release (it fails: the plain artifact is staged, event `unpack-fallback`, doctor warns); `keepReleases` (2) staged per service + the ones running. `aotTrain` ({aotFile}): one gated background run per
   artifact after it is up; `{aot}` in `start` = `aotUse` (`-XX:AOTCache="{aotFile}"`) once it exists. `{reactor}` in `build` =
-  `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs). `readyPattern`: a ready log line checks health at
+  `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is in the module's parent
+  chain, the rest come from the local repository: doctor lists them). An edited kit.local.json restarts the loop between trains. `readyPattern`: a ready log line checks health at
   once (else every 5 s; fail lines every 1 s). `mvnd` on PATH replaces mvn / mvnw in every gated build. Events: `build`,
   `stage`, `up`, `aot-train` with seconds. Idle services all stop in one tick, also while a train waits for leases.
 - **Owner upkeep:** `tenant list | drop -Name <t,..> [-DryRun]` (`tenants`: { schema, table, key, name, tables, idColumns,

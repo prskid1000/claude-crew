@@ -192,11 +192,20 @@ $sv = & { . $L3; $port = 41016; $srv = Start-Process node -ArgumentList "`"$(Sta
     "$(& $g '/')|$(& $g '/orders/7')|$(& $g '/main.js')|$((& $g '/nope.js') -replace ':.*')|$((& $g '/..%2f..%2fwt') -replace ':.*')|$((& $g '/%00') -replace ':.*')|$(-not $srv.HasExited)" } finally { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } }
 Expect "static server: index at /, unknown routes -> index.html, files as they are, a missing file 404, no way out of the root, a NUL path 400 and it keeps serving ($sv)" ($sv -match '^200:<html>i</html>\|200:<html>i</html>\|200:x\|404\|(403|404)\|400\|True$')
 # builds: {reactor} = one aggregator of the module folders + the service's module, -pl it -am; prepare edits are committed locally
-$rx = & { . $L3; New-Item -ItemType Directory -Force (Join-Path $wtd 'lib/m1'), (Join-Path $wtd 'lib/m2') | Out-Null; 'p' | Set-Content (Join-Path $wtd 'lib/m1/pom.xml')
+$rx = & { . $L3; New-Item -ItemType Directory -Force (Join-Path $wtd 'lib/m1'), (Join-Path $wtd 'lib/m2'), (Join-Path $wtd 'lib/m3') | Out-Null
+  $pom = { param($g, $a) "<project><parent><groupId>$g</groupId><artifactId>$a</artifactId></parent></project>" }
+  '<project><groupId>o</groupId><artifactId>root</artifactId></project>' | Set-Content (Join-Path $wtd 'pom.xml')
+  & $pom 'o' 'root' | Set-Content (Join-Path $wtd 'api/pom.xml'); & $pom 'o' 'root' | Set-Content (Join-Path $wtd 'lib/m1/pom.xml'); & $pom 'o' 'lib-parent' | Set-Content (Join-Path $wtd 'lib/m3/pom.xml')
   function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }; function RepoOf { 'r' }
-  $a = Write-Reactor t ([pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); reactor = @('lib/*') }); $x = Get-Content (Join-Path $wtd '.localenv-reactor-api.xml') -Raw
-  "$($a -match '-pl api -am$')|$($x -match '<module>lib/m1</module><module>api</module></modules>')|$($x -notmatch 'm2')" }
-Expect "build: {reactor} -> -f <aggregator> -pl <service module> -am over the module folders with a pom ($rx)" ($rx -eq 'True|True|True')
+  $a = Write-Reactor t ([pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); reactor = @('lib/*') }) 6>$null; $x = Get-Content (Join-Path $wtd '.localenv-reactor-api.xml') -Raw
+  "$($a -match '-pl api -am$')|$($x -match '<module>lib/m1</module><module>api</module></modules>')|$($x -notmatch 'm2|m3')" }
+Expect "build: {reactor} -> -f <aggregator> -pl <service module> -am over the module folders with a pom whose parent is the module's (m3: another parent, not built) ($rx)" ($rx -eq 'True|True|True')
+# a failed unpack stages the plain artifact (event unpack-fallback); the loop restarts on an edited kit.local.json between trains
+$uf = & { . $L3; function RepoOf { 'r' }; $script:evs = @(); function Event($e, $k, $d) { $script:evs += $k }
+  function Svc0 { [pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); artifact = 'target/app-*.jar'; unpack = 'exit 3' } }; function EnvServices { Svc0 }
+  $r = Stage-Artifacts t r 'r9-f' 6>$null; "$((Split-Path $r.api -Leaf) -eq 'app-1.jar' -and (Get-Content $r.api) -eq 'fat')|$($script:evs -contains 'unpack-fallback')" }
+$ls = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
+Expect "stage: a failed unpack -> the plain artifact + unpack-fallback; loop: kit.local.json mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
 # cleanup: logs / run files / data folders / env worktrees no configured env uses are orphans; -DryRun deletes nothing
 & $J @{ localEnv = @{ cleanup = @{ dataRoots = @(@{ dir = (Join-Path $ud 'data'); match = 'sb1|^t$' }); quick = @(@{ name = 'old q'; paths = @("$ud/q/*"); olderThanDays = 1; cmd = 'echo q' }) }; envs = @{ t = @{ db = @{ datadir = (Join-Path $ud 'data/keepsb1') }; services = @(@{ name = 'api'; start = "run -Epath.data=$(Join-Path $ud 'data/t')"; port = 41017 }) } } } } $cf3 8
 $co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }
