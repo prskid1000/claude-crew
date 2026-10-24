@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1293 dir · L1303 checkpoint ·
-  L1327 tracker · L1366 host
+Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1308 dir · L1318 checkpoint ·
+  L1342 tracker · L1381 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -903,6 +903,18 @@ if ($SelfTest) {
   @('P', 'Get-Content x.json; Select-String foo x.md', $false, ''),
   @('B', 'python -X utf8 skills/crafty/devtools.py merge 12; node a.mjs', $false, ''),
   @('B', 'cat devtools.py; grep -n foo x.md; ls *.json > out.txt', $false, ''),
+  @('B', 'cd ../MR3/scripts; E=../evidence; ls ../ev/MR3-T2A_0*; cp ../ev/MR3-T2A_02_vin-photo.jpg $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/MR3-T2_00_vin-input.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
+  @('B', 'E=../evidence; cat ../ev/MR3-T2A_02_vin-photo.jpg > $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/in.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
+  @('B', 'LN=D:/x/{RT}/work/lead-notes.md; for i in $(seq 1 30); do m=$(curl -s https://x/ | grep -o ''"mode":"[a-z]*"''); a=$(grep -E "^- .*MR4:" $LN | grep -v "REQUEST"); echo "$m ${a:0:200}"; done', $false, $da),
+  @('B', 'E=D:/x/{RT}/work/MR4/evidence; F=$E/MR4-T2_retry_03_history.log; { echo "== NRQL"; echo x; } > $F', $false, $da),
+  @('P', '$x = ''notes.md''; Get-Content $x', $false, $da),
+  @('B', 'x=$(cat a.md); a=(x.md y.md)', $false, $da),
+  @('B', 'x.md', $true, $da),
+  @('B', 'cd x; for f in a; do r.pdf; done', $true, $da),
+  @('B', 'X=1 r.html', $true, $da),
+  @('B', 'start x.html', $true, $da),
+  @('P', 'ii x.pdf', $true, $da),
+  @('P', '& x.py', $true, $sx),
   @('P', '& .\notes.md', $true, $da),
   @('P', 'ii .', $true, $da),
   @('P', 'explorer.exe D:\x', $true, $da),
@@ -985,7 +997,8 @@ if ($SelfTest) {
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch' }[$c[0]]
     $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live)
-    $json = @{ tool_name = $tool; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
+    # cwd = the runtime (writable everywhere): results never depend on where the self-test runs
+    $json = @{ tool_name = $tool; cwd = (Get-KitRuntime); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
@@ -1214,9 +1227,11 @@ function Test-OpenDoc([string]$text, [string]$tool) {
   foreach ($nm in [regex]::Matches($text, '\b(?:(?:ba|z|da)?sh|pwsh|powershell)(?:\.exe)?\s+(?:-\S+\s+)*?-(?:c|Command)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) {
     if (($inner = Test-OpenDoc ($nm.Groups[1].Value + $nm.Groups[2].Value) $(if ($nm.Value -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }))) { return $inner }
   }
-  $t = [regex]::Replace((StripData $text), '(?m)\bcode(-insiders)?(\.exe)?(?=\s+(--version|-v|--list-extensions|--help|-h|--status)(\s|$))', 'codeinfo'); $sep = '(?m)(^|[;|({\r\n]|&&)\s*(\w+=\S*\s+)*'; $fe = '(\s|;|\||\)|$)'
-  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>]+\.($se)$fe" -or $t -match "$sep(start|Start-Process|saps|cmd(\.exe)?\s+[/-]+[ck](\s+start(\s+"""")?)?)\s+[^\s;|&<>]+\.($se)$fe") { return 'script' }
-  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>]+\.($de)$fe" -or $t -match "$sep(\S*[\\/])?(explorer|xdg-open|open|code|code-insiders|notepad|notepad\+\+|wordpad|mspaint|mmc|control|rundll32|mshta|wscript|Invoke-Item|ii)(\.exe)?$fe" -or
+  # command position only: ${v} is no brace group, a=(...) no subshell, X=path / > path / arguments are data
+  $t = [regex]::Replace(((StripData $text) -replace '\$\{[^}\s]*\}', '$$v'), '(?m)\bcode(-insiders)?(\.exe)?(?=\s+(--version|-v|--list-extensions|--help|-h|--status)(\s|$))', 'codeinfo')
+  $sep = '(?m)(^|[;|{\r\n]|(?<!=)\(|&&)\s*((do|then|else|elif)\s+)?(\w+=(?:\$\([^)]*\)|\([^)]*\)|[^\s(])*\s+)*'; $fe = '(\s|;|\||\)|$)'
+  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>=]+\.($se)$fe" -or $t -match "$sep(start|Start-Process|saps|cmd(\.exe)?\s+[/-]+[ck](\s+start(\s+"""")?)?)\s+[^\s;|&<>]+\.($se)$fe") { return 'script' }
+  if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>=]+\.($de)$fe" -or $t -match "$sep(\S*[\\/])?(explorer|xdg-open|open|code|code-insiders|notepad|notepad\+\+|wordpad|mspaint|mmc|control|rundll32|mshta|wscript|Invoke-Item|ii)(\.exe)?$fe" -or
       $t -match "$sep(\S*[\\/])?cmd(\.exe)?\s+[/-]+[ck]\s+start$fe" -or ($tool -eq 'Bash' -and $t -match "$sep(start)$fe") -or
       $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
   $null
