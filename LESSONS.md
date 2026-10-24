@@ -19,6 +19,8 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 
 ## crafty
 - Run every script through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`): `& x.py` or `.\x.py` opens the file in its Windows association (an editor on the owner's screen); the guard denies it, and doc openers, `--web`, `gh browse`.
+- Before merge, confirm a pipeline exists for the MR head; none (rules skipped) -> trigger one or report NOT_MERGED with the reason, never wait silently. (2x)
+- Push a review-fix commit before asking for re-review or merge; check the MR head sha on the host equals the local HEAD. (2x)
 - Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (4×)
 - An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
 - Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
@@ -73,6 +75,9 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x)
+- pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
+- A helper adding agents/<x>.md must update the router row, reach mentions and manifest in the same commit; pre-commit lint (ROUTER-UNROUTED, REACH-MENTION, MANIFEST) blocks a lone file. (3x)
 - Kit token cap work: measure the whole pass's headroom first (one trim plan), then one file per agent; never trim or reformat a file another agent edits; prove each trim by token or AST equality before pushing. (4×)
 
 ## revy
@@ -84,3 +89,5 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - 2026-10-16 NOT_TESTED: context untested checks closed tasks · decision one stronger retry, then failedTesting on shared envs; local items ENV-FIX, never failedTesting (owner).
 - 2026-10-16 Leases: context resources held by fixed hours · decision every resource has a live holder; no holder for idle.graceMinutes -> released; services start only from a lease or a person (owner) · consequences lint LEASE-HOLDER.
 - 2026-10-16 Readability: context indentation halving and aliases to save tokens · decision normal indentation and full cmdlet names (owner).
+## briefy
+- Launch args mode must be feature, bugfix or resume (buildy.js rejects anything else, e.g. build, at once); map a new-work ask to feature. (1x)
