@@ -140,12 +140,14 @@ git init -q "$sm/sub"; git -C "$sm/sub" commit -q --allow-empty -m s; git init -
 git -C "$sm/super" -c protocol.file.allow=always submodule add -q "$sm/sub" m 2>$null; git -C "$sm/super/m" remote set-url origin 'https://git.example.com/g/subrepo.git'
 git -C "$sm/super" remote add origin 'https://git.example.com/g/superrepo.git'
 $gd = "$(git -C "$sm/super/m" rev-parse --path-format=absolute --git-common-dir)".Trim()
-$mt = & { . $O; $fa = (Get-Command Invoke-Cleanup).ScriptBlock.Ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'MergedTip' }, $true) | Select-Object -First 1; . ([scriptblock]::Create($fa.Extent.Text)); $global:seen = @(); function Invoke-HostVerb([string]$Verb, [hashtable]$A) { $global:seen += $A.repo; @() }; $null = MergedTip $gd 'f/x'; $global:seen -join ' ' }
-Expect 'cleanup: MergedTip on a submodule''s git dir asks the submodule''s project, not the superproject' ($mt -match 'g/subrepo' -and $mt -notmatch 'superrepo')
+$mt = & { . (Lib); $global:seen = @(); function Invoke-HostVerb([string]$Verb, [hashtable]$A) { $global:seen += $A.repo; @() }; $null = Get-MergedMrs $gd 'f/x'; $global:seen -join ' ' }
+Expect 'Get-MergedMrs on a submodule''s git dir asks its project, not the superproject' ($mt -match 'g/subrepo' -and $mt -notmatch 'superrepo')
 $sd = TkPath $k sessions -Create; foreach ($n in 'tabs-t__u.json', 'old-login.json') { $p = Join-Path $sd $n; '{}' | Set-Content $p; (Get-Item $p).LastWriteTime = (Get-Date).AddHours(-9) }
 $rt = TkPath $k runtime; $ap = TkPath $k apks -Create
 foreach ($p in @("$rt/h1-run.log", "$rt/work/x2/a.txt", "$rt/work/x2") + @(1..5 | ForEach-Object { "$ap/app-$_.apk" })) { if (-not (Test-Path $p)) { New-Item -Force $p | Out-Null }; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-15) }
+$lg5 = 1..5001; Set-Content "$(TkPath $k logs -Create)/k5.log" $lg5; Set-Content "$(TkPath $k localenv-logs -Create)/t-api.log" $lg5
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
+Expect 'cleanup: a kit log over 5000 lines rotates, a local env service log never' ($cd -match '\b1 x\s+rotated.*k5\.log')
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
 Expect 'cleanup keep rules: newest N APKs kept, entries off the layout (runtime root, work/) go' ($cd -match '2 x\s+apks > 72 h' -and $cd -match 'layout \(runtime root\)' -and $cd -match 'layout \(work/\)')
 $env:KIT_RUN = 'r-9'; $env:KIT_AGENT = 'K1'; $null = pwsh @np $O decide list; $null = pwsh @np $O learn -Skill kitty -Kind idea -Text 'Bearer abc123defghij token=abc1 a@b.co'

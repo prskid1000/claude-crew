@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L963 kitlog · L1075 params ·
-  L1238 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L973 kitlog · L1085 params ·
+  L1248 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -958,6 +958,16 @@ function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fiel
   if ($v -eq 'mr.merge') { if ($Fields.squash) { $a.method = if ($Fields.squash -eq 'true') { 'squash' } else { 'merge' } }; $a.sha = $Fields.sha; $a.auto = "$($Fields.merge_when_pipeline_succeeds)" -eq 'true' }
   if (-not $v) { Write-Warning "githost: no verb for $Path"; return $null }
   Invoke-HostVerb $v $a -NoMemo:$NoMemo
+}
+# merged MRs of a branch, from the host (squash merges too: their tip is never in the target); $Dir = a checkout or git dir of the repo
+function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) {
+  $url = "$(git -C $Dir remote get-url origin 2>$null)".Trim()
+  if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return @() }
+  $hostName = $Matches.host; $path = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''
+  $type = if ($hostName -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $hostName }
+  if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
+  $q = @{ repo = $path; type = $type; source_branch = $Branch; state = 'merged'; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
+  @(Invoke-HostVerb 'mr.list' $q | Where-Object { $_ -and (-not $Target -or $_.target_branch -eq $Target) })
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)

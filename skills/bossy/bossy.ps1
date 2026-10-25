@@ -20,8 +20,8 @@ Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L27 init · L56 board · L227 budget · L255 launch · L519 recover · L603 pause · L647 resume · L705 program · L749 param ·
   L755 track · L1041 supervise report · L1083 anomalies · L1112 supervise · L1432 report · L1510 audit · L1570 storage ·
-  L1781 bugbrief · L1887 cleanup · L2014 learn · L2044 decide · L2110 health · L2172 retro due · L2182 tidy ·
-  L2252 the kit origin's main and goodies · L2268 setup · L2334 guard-sendmessage
+  L1781 bugbrief · L1887 cleanup · L2007 learn · L2037 decide · L2103 health · L2165 retro due · L2175 tidy ·
+  L2245 the kit origin's main and goodies · L2261 setup · L2327 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1946,15 +1946,7 @@ foreach ($f in Get-ChildItem $tmp -Force | Where-Object { $_.Name -match '^(kit-
 }
 
 # a branch goes only with a MERGED MR at its tip
-function MergedTip($repo, $br) {
-  $url = "$(git -C $repo remote get-url origin 2>$null)".Trim()
-  if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return $null }
-  $hostName = $Matches.host; $path = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''
-  $type = if ($hostName -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $hostName }
-  if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
-  $mrs = Invoke-HostVerb 'mr.list' @{ repo = $path; type = $type; source_branch = $br; state = 'merged'; per_page = 20 }
-  return @($mrs | ForEach-Object sha)
-}
+function MergedTip($repo, $br) { @(Get-MergedMrs $repo $br | ForEach-Object sha) }
 $wtDays = [double](Get-KitSetting 'cleanup.worktreeDays' 7)   # a gone branch / uncommitted files: idle this long (TODO-PARAM)
 $repos = @{}; $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalHours -lt 24 } | ForEach-Object { $_.worktrees } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
 foreach ($root in $WorktreeRoot) {
@@ -1999,7 +1991,8 @@ foreach ($repo in @($repos.Keys)) {
 
 if (-not $WorktreesOnly) {
 # service logs and the durable log streams keep their last 5000 lines
-foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName) + @($script:KitLogMap.streams | Where-Object { $pm.durable.$_ } | ForEach-Object { Get-KitPath $_ }))) {
+$envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # live service logs: the local env rotates them itself (logMaxMB); rewriting one races its writer
+foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName | Where-Object { -not $_.StartsWith($envLogs, [StringComparison]::OrdinalIgnoreCase) }) + @($script:KitLogMap.streams | Where-Object { $pm.durable.$_ } | ForEach-Object { Get-KitPath $_ }))) {
   if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { Invoke-KitLocked $f { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep } }; [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'rotated to 5000 lines'; path = $f }) }
 }
 
