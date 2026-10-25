@@ -16,7 +16,7 @@ try {
   'feat: from file' | Set-Content "$r/msg.txt"
   Push-Location "$r/outer"; $null = pwsh @np $D wt commit -MessageFile "$r/msg.txt" 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt commit -MessageFile from the current folder' ($code -eq 0 -and (git -C "$r/outer" log -1 --format=%s) -eq 'feat: from file')
-  Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')   # the prose limits
+  Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty')
   'z' | Set-Content "$r/outer/z.txt"; $lm = 'feat: ' + ('long subject ' * 8)
   $po = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm 2>&1 | Out-String; $pc = $LASTEXITCODE; $ps = git -C "$r/outer" log -1 --format=%s
   $null = pwsh @np $D wt commit -Dir "$r/outer" -Message $lm -ProseOk 'test' 2>&1; $pk = $LASTEXITCODE
@@ -31,23 +31,24 @@ try {
   'u' | Set-Content "$r/wt/cu/u.txt"; $ci, $cu = 'ci', 'cu' | ForEach-Object { "$(pwsh @np $D wt remove -Dir "$r/wt/$_" 2>&1) rc=$LASTEXITCODE" }
   Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match '(?s)rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match '(?s)u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
   $w = "$r/wt/ab-outer"; git -C "$r/outer" worktree lock "$r/wt/c-1-outer"; 'main' | Set-Content "$(git -C $w rev-parse --path-format=absolute --git-dir)/claude-target"; 'y' | Set-Content "$w/stray.txt"
-  $ws = (& { pwsh @np $D wt remove -Dir "$r/wt/c-1-outer" -Force; pwsh @np $D wt sync -Dir $w; pwsh @np $D wt sync -Dir "$r/wt" } 2>&1 | Out-String) -replace '\s*\r?\n\s*\|?\s*', ' '   # '|' wrap margins
+  $ws = (& { pwsh @np $D wt remove -Dir "$r/wt/c-1-outer" -Force; pwsh @np $D wt sync -Dir $w; pwsh @np $D wt sync -Dir "$r/wt" } 2>&1 | Out-String) -replace '\s*\r?\n\s*\|?\s*', ' '
   Expect 'wt remove: git''s why; wt sync: dirty -> wt commit line, worktrees root -> its worktrees' ($ws -match 'remove failed.*locked' -and $ws -match 'wt commit -Dir .*ab-outer -Message ''wip: ' -and $ws -match 'holds worktrees.*-outer')
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host adapters: type command, MR URLs, a missing goody (github; gitlab: unknown hosts)
+# git-host adapters: type command, MR URLs, a missing goody, a repos[].ci object
 $gh = @'
 . $args[0]
 $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
 "mr-urls:$("$u" -eq 'gitlab:g/s/r!4 github:o/r!5 bitbucket:w/r!6 azure:o/p/r!7')"
 $m = Invoke-HostVerb 'mr.get' @{ type = 'command'; repo = 'o/cmd'; n = '4' }; "command:$($m.iid -eq 4 -and $m.title -eq 'o/cmd')"
-$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # an unknown host = gitlab: a goody too
+$e = try { Invoke-HostVerb 'mr.get' @{ type = 'github'; repo = 'o/r'; n = '1' } } catch { "$_" }; $g = try { Invoke-HostVerb 'mr.get' @{ repo = 'o/r'; n = '1' } } catch { "$_" }   # unknown host = gitlab
 "extra-line:$($e -eq 'git-host github is a goody: run kitbag.py goody add github' -and $g -eq 'git-host gitlab is a goody: run kitbag.py goody add gitlab')"
+"ci-object:$(try { $null = Invoke-HostVerb 'ci.status' @{ type = 'command'; repo = 'o/cmd' }; $true } catch {})"
 '@
 $ka = New-TestKit adapters; $cmdf = Join-Path (Split-Path $ka) 'host-cmd.ps1'; Set-Content $cmdf '[ordered]@{ iid = [int]$args[1]; state = ''merged''; title = $args[0] } | ConvertTo-Json -Compress'
-& $J @{ gitHost = 'git.example'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
+& $J @{ gitHost = 'git.example'; repos = @(@{ name = 'cmd'; ci = @{ mrPipelines = $false } }); gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$cmdf`" {repo} {n}" } } } (Join-Path $ka 'skills/crafty/kit.local.json') 5
 $f = Join-Path (Kd) 'githost-test.ps1'; Set-Content $f $gh
 $res = @(pwsh @np $f (Join-Path $ka 'skills/crafty/lib.ps1') 2>&1)
-Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line'
+Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line', 'ci-object'
 Remove-TestKit $ka
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
@@ -92,7 +93,7 @@ $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd')
 Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $mw = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
-$gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} cases need a kit clone
+$gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # {KIT} cases
 $kl = "$k/skills/crafty/kit.local.json"; '{"guard":{"layout":"block"}}' | Set-Content $kl
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
 Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
@@ -113,7 +114,7 @@ $rt = & $py -X utf8 $fk (Split-Path $DT) 2>$null | Out-String
 Expect "devtools: --help 0, bad args 2, reads retried, writes never, hung read once ($thc $tbc $tmc $($rt.Trim()))" ($thc -eq 0 -and $th -match 'devtools\.py comment <taskId>' -and $th -notmatch 'finish' -and $tbc -eq 2 -and $tmc -eq 2 -and $rt.Trim() -eq 'ok 2 1 2')
 $se = & $py -X utf8 $DT mr (Kd) main nobody-wrote-this.md 2>&1 | Out-String; $sec = $LASTEXITCODE
 Expect "devtools: a sys.exit('<why>') prints its why (exit $sec)" ($sec -eq 1 -and $se -match 'file not found: nobody-wrote-this\.md')
-if ($IsWindows) {   # npm .cmd shim: user text with cmd characters reaches the program intact; another shim refuses it
+if ($IsWindows) {
   $sh = Join-Path (Kd) 'shim'; New-Item -ItemType Directory -Force "$sh/node_modules/c" | Out-Null; 'console.log(JSON.stringify(process.argv.slice(2)))' | Set-Content "$sh/node_modules/c/run.js"
   "@ECHO off`r`nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & ""%_prog%""  ""%dp0%\node_modules\c\run.js"" %*" | Set-Content "$sh/g.cmd"; '@echo %*' | Set-Content "$sh/p.cmd"
   $sq = "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d`nprint(d._run([sys.argv[2], 'RM<>HM |&^% ""q""']))`ntry: d._run([sys.argv[3], 'a<b'])`nexcept SystemExit as e: print('REFUSED', e)"

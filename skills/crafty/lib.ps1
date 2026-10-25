@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L973 kitlog · L1085 params ·
-  L1248 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L974 kitlog · L1086 params ·
+  L1249 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -874,7 +874,8 @@ function Get-RepoConf([string]$Repo, [string]$Key, $Default) {
   foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$($r.$Key)" -ne '') { return $r.$Key } }
   $Default
 }
-function Get-KitCiType([string]$Repo, [string]$HostT = $script:HostType) { $c = ([string](Get-RepoConf $Repo 'ci' 'host')).ToLower(); if ($c -eq 'external') { $c = ([string](Get-KitSetting 'ci.type' 'host')).ToLower() }; if ($c -eq 'host') { $HostT } else { $c } }
+# repos[].ci: a CI type string or an object ({ type, mrPipelines }); only the type names the adapter
+function Get-KitCiType([string]$Repo, [string]$HostT = $script:HostType) { $rc = Get-RepoConf $Repo 'ci' 'host'; $c = ([string]$(if ($rc -is [string]) { $rc } elseif ($rc.type) { $rc.type } else { 'host' })).ToLower(); if ($c -eq 'external') { $c = ([string](Get-KitSetting 'ci.type' 'host')).ToLower() }; if ($c -eq 'host') { $HostT } else { $c } }
 function __HostJson($out) { $t = (@($out) | ForEach-Object { "$_" }) -join "`n"; if (-not $t.Trim()) { return $null }; try { $t | ConvertFrom-Json } catch { $null } }
 function __Enc([string]$s) { [uri]::EscapeDataString($s) }
 function __Del($a) { [bool](Get-RepoConf $a.repo 'deleteBranch' $true) }
