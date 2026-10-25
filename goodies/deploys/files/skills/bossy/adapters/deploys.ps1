@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L23 intest · L102 deploy · L212 supervise
+Sections: L13 helpers · L23 intest · L102 deploy · L217 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
