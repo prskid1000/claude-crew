@@ -150,7 +150,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $rowsOf = { param($m) if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] } }
   if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
   elseif ($cand.Count) {
-    $lim = [int](Get-KitSetting 'deploy.planTimeoutSec' 180)
+    $lim = [int](Get-KitSetting 'deploy.planTimeoutSec' 600)   # 180 s left a slow test env UNKNOWN
     # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
     $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
         $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) }); if (-not $tm.Count) { continue }

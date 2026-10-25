@@ -35,6 +35,7 @@ $p = @(& $dep plan -Offline $fx3 -Json | ConvertFrom-Json)
 Expect 'deploy plan: skips a task live on every test env and a done task without doneAt' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!9')
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
+Expect 'deploy plan: planTimeoutSec defaults to 600 s (kit.example.json)' ((Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "'deploy\.planTimeoutSec' 600\)" -and (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).deploy.planTimeoutSec -eq 600)
 # one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
 & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }) }); deploy = @{ planTimeoutSec = 4 } } $cfgF
 & $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1'); done = $false } }; automerge = @{} } $tf
