@@ -37,14 +37,16 @@ $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -ma
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
 Expect 'deploy plan: planTimeoutSec defaults to 600 s (kit.example.json)' ((Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "'deploy\.planTimeoutSec' 600\)" -and (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).deploy.planTimeoutSec -eq 600)
 # one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }) }); deploy = @{ planTimeoutSec = 4 } } $cfgF
-& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1'); done = $false } }; automerge = @{} } $tf
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }, @{ target = 'part' }, @{ target = 'crash' }) }); deploy = @{ planTimeoutSec = 4 } } $cfgF
+& $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1', 'api!2'); done = $false } }; automerge = @{} } $tf
 $fq = Join-Path (Kd) 'fake-deployed.ps1'
 Set-Content $fq @'
 $t = $args[[array]::IndexOf($args, '-Target') + 1]
 if ($t -eq 'slow') { Start-Sleep 30 }
 if ($t -eq 'bad') { 'pokey.ps1: usage error'; exit 2 }
-'[{"mr":"api!1","target":"good","state":"NOT-DEPLOYED","detail":"x"}]'
+"{`"mr`":`"api!1`",`"target`":`"$t`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"x`"}"
+if ($t -eq 'part') { Start-Sleep 30 }; if ($t -eq 'crash') { exit 3 }   # api!1 checked, api!2 never
+"{`"mr`":`"api!2`",`"target`":`"$t`",`"state`":`"DEPLOYED`",`"detail`":`"live`"}"
 '@ -Encoding utf8
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
@@ -54,10 +56,12 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json); $s = @{}; foreach ($x in $p
 "bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
 "slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
 "good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'api!1')"
+"part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'api!1' -and $s.part.why -match 'api!2: not checked: .*timed out after 4 s on part')"
+"crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'api!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
 "parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
 '@
 $res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq)
-Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN (#)' @('bad', 'slow', 'good', 'parallel')
+Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN; a timeout keeps the rows already checked (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel')
 $it = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]

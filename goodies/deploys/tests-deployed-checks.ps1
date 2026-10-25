@@ -16,7 +16,10 @@ function Invoke-HostApi($p) { switch -Wildcard ($p) { '*requests/5' { @{ iid = 5
 Invoke-Deployed -Mrs 'web!5' -Detail
 '@
 '{"repos":[{"name":"web","deploys":[{"target":"stg","branch":"staging","job":"deploy-*"},{"target":"phones","laneApk":true}]}]}' | Set-Content $kl
-$res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $api.proc.Kill(); Remove-Item $kl
+$res = @(Px "$(Kd)/dp.ps1" $Q $gr $s1 $s2 "http://127.0.0.1:$P/v" 2>&1); $api.proc.Kill()
+$dl = @(Px $Q deployed -Mrs 'nope,zz!1' -Lines 2>&1); $dlc = $LASTEXITCODE; Remove-Item $kl
+$dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} } | Where-Object state -eq 'BAD-REF')
+Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed ($dlc $($dl.Count))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj.Count -eq 2 -and $dj[1].mr -eq 'zz!1')
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
 Expect 'deployed: a wildcard job matches a matrix job' ("$res" -match 'DEPLOYED\s+web!5')
 Expect 'deployed: a laneApk deploy without the goody android-swarm is UNKNOWN with the goody line' ("$res" -match 'UNKNOWN\s+web!5\s+phones\s+deploys\[\] laneApk is a goody: run kitbag\.py goody add android-swarm')

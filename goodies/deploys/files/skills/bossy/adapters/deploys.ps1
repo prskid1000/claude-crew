@@ -155,18 +155,23 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
         $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) }); if (-not $tm.Count) { continue }
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
-        foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Json', '-Exclude', (Get-NoTestRx))) { $si.ArgumentList.Add([string]$x) }
+        foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
         $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-        $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
+        $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
       })
     if (-not $Json) { [Console]::Error.WriteLine("deploy plan: checking $($cand.Count) MR(s) on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
     $until = (Get-Date).AddSeconds($lim)
     foreach ($q in $runs) {
-      if (-not $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds))) { try { $q.p.Kill($true) } catch {}; $failOf[$q.t] = "pokey.ps1 deployed timed out after $lim s on $($q.t)"; continue }
-      $null = [Threading.Tasks.Task]::WaitAll(@($q.so, $q.se), 5000); $txt = "$(if ($q.so.IsCompleted) { $q.so.Result })"; $j0 = $txt.IndexOf('[')
-      $parsed = if ($j0 -ge 0) { try { @(ConvertFrom-Json $txt.Substring($j0) -NoEnumerate) } catch { $null } } else { $null }
-      if ($q.p.ExitCode -notin 0, 1 -or $null -eq $parsed -or -not @($parsed | Where-Object { $_.mr }).Count) { $failOf[$q.t] = "pokey.ps1 deployed exit $($q.p.ExitCode) on $($q.t): $(("$txt$(if ($q.se.IsCompleted) { $q.se.Result })" -split "`n" | Where-Object { $_ } | Select-Object -First 1))"; continue }
+      $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
+      $null = [Threading.Tasks.Task]::WaitAll(@($q.so, $q.se), 5000); $txt = "$(if ($q.so.IsCompleted) { $q.so.Result })"
+      $parsed = @($txt -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.mr })   # -Lines: one row per line
+      if (-not $fin -or ($parsed.Count -and $q.p.ExitCode -notin 0, 1)) {   # a timeout or crash keeps the rows already checked
+        $failOf[$q.t] = "pokey.ps1 deployed $(if ($fin) { "exit $($q.p.ExitCode)" } else { "timed out after $lim s" }) on $($q.t)"
+      }
+      elseif (-not $parsed.Count -or $q.p.ExitCode -notin 0, 1) { $failOf[$q.t] = "pokey.ps1 deployed exit $($q.p.ExitCode) on $($q.t): $(("$txt$(if ($q.se.IsCompleted) { $q.se.Result })" -split "`n" | Where-Object { $_ } | Select-Object -First 1))"; continue }
+      $seen = @($parsed | ForEach-Object { Get-CanonMr $_.mr })   # an MR without a row never vanishes: UNKNOWN each
+      $parsed += @($q.m | Where-Object { (Get-CanonMr $_) -notin $seen } | ForEach-Object { [pscustomobject]@{ mr = $_; target = $q.t; state = 'UNKNOWN'; detail = "not checked: $(if ($failOf[$q.t]) { $failOf[$q.t] } else { "no row from pokey.ps1 deployed on $($q.t)" })" } })
       foreach ($x in @($parsed | ForEach-Object { $_ })) { if ($x.mr) { if (-not $rows.ContainsKey($x.mr)) { $rows[$x.mr] = @() }; $rows[$x.mr] += $x } }
     }
   }

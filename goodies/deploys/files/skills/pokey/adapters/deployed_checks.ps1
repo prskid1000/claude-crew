@@ -88,7 +88,7 @@ function Test-DeployedExtra($d) {
 # pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: goody
 # android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude)   # -Exclude <regex>: skip those targets
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines)   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout)
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
@@ -131,7 +131,8 @@ function LocalAncestor($dir, $sha, $commit) {
   $LASTEXITCODE -eq 0
 }
 # pwsh -File keeps the quotes: strip, split
-$out = foreach ($m in @(Split-KitList $Mrs)) {
+$out = [Collections.Generic.List[object]]::new()
+& { foreach ($m in @(Split-KitList $Mrs)) {
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }
@@ -162,7 +163,8 @@ $out = foreach ($m in @(Split-KitList $Mrs)) {
     if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
     else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
   }
-}
+} } | ForEach-Object { $out.Add($_); if ($Lines) { $_ | ConvertTo-Json -Depth 3 -Compress } }
+if ($Lines) { exit $(if (@($out | Where-Object { $_.state -ne 'DEPLOYED' }).Count) { 1 } else { 0 }) }
 $row = { "{0,-13} {1,-18} {2,-12} {3}" -f $_.state, $_.mr, $_.target, $_.detail }
 if ($Json) { $out | ConvertTo-Json -Depth 3 }
 elseif ($Detail) { $out | ForEach-Object $row }
