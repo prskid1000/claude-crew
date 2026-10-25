@@ -61,6 +61,12 @@ $sg = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json
 $s4 = @($sg | Where-Object ref -eq r4); $s5 = @($sg | Where-Object ref -eq r5)
 Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once, the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'crafty' }).Count -and
   $s5.Count -eq 1 -and $s5[0].skill -eq 'pokey' -and $s5[0].text -eq 'test:A1: seat lost' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
+# a workflow without a Learn phase (tidy) closed by launch -Done: no "before its Learn phase" signal
+New-Item -ItemType Directory -Force "$k/workflows" | Out-Null; Copy-Item (Join-Path $src 'workflows/tidy.js') "$k/workflows/"
+New-Journal wf_r6 @(@{ type = 'started'; agentId = 'e1'; label = 'prep' }, @{ type = 'result'; agentId = 'e1'; result = @{ ok = $true } })
+$null = pwsh @np $O launch -RunId wf_r6 -Script tidy.js -ArgsJson '{"run":"r6"}' 2>&1; $d6 = pwsh @np $O launch -Done -RunId wf_r6 2>&1 | Out-String
+$s6 = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.ref -eq 'r6' })
+Expect "launch -Done on a run without a Learn phase: no skipped-Learn signal ($($s6.Count))" (-not $s6.Count -and $d6 -match 'learn: run r6 stopped by launch -Done - nothing to record')
 # worktree prune: remote branch gone + clean + idle worktreeDays -> the worktree goes, its local branch stays; uncommitted files: reported only
 $wr = Join-Path (Kd) 'wtr'; $bo = Join-Path (Kd) 'wto.git'; git init -q --bare -b main $bo; git clone -q $bo "$wr-main" 2>$null; 'a' | Set-Content "$wr-main/a.txt"; Save-GitRepo "$wr-main" init; git -C "$wr-main" push -q origin main 2>$null
 foreach ($n in 'gone', 'dirty') { git -C "$wr-main" worktree add -q -b "f/$n" "$wr/$n" 2>$null; "$n" | Set-Content "$wr/$n/$n.txt"; Save-GitRepo "$wr/$n" $n; git -C "$wr/$n" push -q -u origin "f/$n" 2>$null; git -C "$wr-main" push -q origin --delete "f/$n" 2>$null }

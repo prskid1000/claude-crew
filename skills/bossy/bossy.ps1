@@ -18,10 +18,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L27 init · L56 board · L227 budget · L255 launch · L516 recover · L600 pause · L644 resume · L702 program · L746 param ·
-  L752 track · L1038 supervise report · L1080 anomalies · L1109 supervise · L1429 report · L1507 audit · L1567 storage ·
-  L1778 bugbrief · L1884 cleanup · L2011 learn · L2041 decide · L2107 health · L2169 retro due · L2179 tidy ·
-  L2249 the kit origin's main and goodies · L2265 setup · L2331 guard-sendmessage
+Sections: L27 init · L56 board · L227 budget · L255 launch · L519 recover · L603 pause · L647 resume · L705 program · L749 param ·
+  L755 track · L1041 supervise report · L1083 anomalies · L1112 supervise · L1432 report · L1510 audit · L1570 storage ·
+  L1781 bugbrief · L1887 cleanup · L2014 learn · L2044 decide · L2110 health · L2172 retro due · L2182 tidy ·
+  L2252 the kit origin's main and goodies · L2268 setup · L2334 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -274,6 +274,9 @@ function Invoke-KitStopLearn($S, [string]$By) {
   $jl = @(if ($wf -and (Test-Path (Join-Path $wf.FullName 'journal.jsonl'))) { Get-Content (Join-Path $wf.FullName 'journal.jsonl') | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} } })
   $lab = @{}; foreach ($e in $jl | Where-Object type -eq 'started') { $lab[$e.agentId] = [string]$e.label }
   $res = @($jl | Where-Object type -eq 'result'); $n = 0
+  # no Learn phase (tidy): none skipped
+  $wfs = if ($S.leaf) { Join-Path $KitConf.Kit "workflows/$($S.leaf)" }
+  $noLearn = $wfs -and (Test-Path -LiteralPath $wfs) -and -not (Select-String -LiteralPath $wfs -Pattern "phase\('Learn'\)" -Quiet)
   if (-not @($jl | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -and -not @($lab.Values | Where-Object { $_ -eq 'learn' }).Count) {
     $skill = if ($S.leaf -like 'buildy*') { 'crafty' } elseif ($S.leaf -like 'testy*') { 'pokey' } else { 'bossy' }
     $cut = { param($t) $t = "$t" -replace '\s+', ' '; $t.Substring(0, [math]::Min(200, $t.Length)) }
@@ -284,7 +287,7 @@ function Invoke-KitStopLearn($S, [string]$By) {
         $b = @($r.result.findings | Where-Object severity -eq 'blocking'); if ($l -like 'review:*' -and $b.Count) { , @('defect-missed', "$l`: $($b.Count) blocking finding(s), first: $(& $cut $b[0].problem)") } }
       $g = @(Read-KitLog guard $since | Where-Object { $_.event -eq 'deny' -and $_.run -eq $S.run }); if ($g.Count) { , @('rule-violation', "guard blocked $($g.Count) command(s), first: $(& $cut $g[0].why)") }
       foreach ($d in @(Read-KitLog decisions-log $since | Where-Object { $_.kind -eq 'envfix' -and $_.status -eq 'pending' -and $_.run -eq $S.run })) { , @('stale-env', "ENV-FIX $($d.agent): $(& $cut $d.question)") }
-      if ($By -ne 'pause') { , @('friction', "run stopped by $By before its Learn phase: $($lab.Count) step(s), $($res.Count) result(s)") })
+      if ($By -ne 'pause' -and -not $noLearn) { , @('friction', "run stopped by $By before its Learn phase: $($lab.Count) step(s), $($res.Count) result(s)") })
     foreach ($x in $sig) { Write-KitLog signals '' ([ordered]@{ skill = $skill; kind = $x[0]; text = $x[1]; ref = $S.run; source = "stop:$By" }); $n++ }
     if ($id) { $null = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'report', '-Run', $id, '-Stopped') 30 }   # waves/<id>.json even for a stopped run; bounded (pause must stay quick)
   }

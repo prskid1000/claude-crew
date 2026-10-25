@@ -27,6 +27,9 @@ try {
   $bad = @(@(), @('-Dir', "$r/outer"), @('-Name', 'zz'), @('-Name', 'c')) | ForEach-Object { $a = $_; $null = pwsh @np $D wt remove @a -Force 2>&1; $LASTEXITCODE }
   $null = pwsh @np $D wt remove -Name a 2>&1; $code = $LASTEXITCODE; Pop-Location
   Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
+  foreach ($n in 'ci', 'cu') { $w = "$r/wt/$n"; git -C "$r/outer" worktree add -q -b $n $w 2>$null; [IO.File]::WriteAllBytes("$(git -C $w rev-parse --path-format=absolute --git-dir)/index", [byte[]]::new(64)) }
+  'u' | Set-Content "$r/wt/cu/u.txt"; $ci, $cu = 'ci', 'cu' | ForEach-Object { "$(pwsh @np $D wt remove -Dir "$r/wt/$_" 2>&1) rc=$LASTEXITCODE" }
+  Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match 'rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match 'u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters: type command, MR URLs, a missing goody (github; gitlab: an unknown host's default)
 $gh = @'
@@ -78,6 +81,8 @@ Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() 
 # a stale lock that vanishes between the check and the read (Test-Path stub removes it) must not throw
 $kl = pwsh -NoProfile -Command ". '$(Lib)'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
 Expect "Invoke-KitLocked: a lock removed mid-check is no crash ($kl)" ("$kl".Trim() -eq 'ran')
+$mv = pwsh -NoProfile -Command ". '$(Lib)'; foreach (`$e in [IO.IOException]::new('p', -2147024809), [ArgumentException]::new('p'), [IO.IOException]::new('b', -2147024864)) { Test-KitMoveUnsupported `$e }; `$f = '$(Kd)/atomic.json'; Write-KitAtomic `$f 'a'; Write-KitAtomic `$f 'b'; Get-Content `$f"
+Expect "Write-KitAtomic: Win32 87 / ArgumentException copy over, a sharing violation retries ($mv)" ("$mv" -eq 'True True False b')
 # a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr
 $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
   $e = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
@@ -86,8 +91,15 @@ Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $mw = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} cases need a kit clone
-$out = pwsh @np $D guard -SelfTest 2>&1 | Out-String
-Expect 'guard self-test' ($out -match '(\d+)/\1 passed'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
+$kl = "$k/skills/crafty/kit.local.json"; '{"guard":{"layout":"block"}}' | Set-Content $kl
+$out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
+Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
+'/nested/' | Set-Content "$k/.gitignore"   # a harness worktree under the live clone
+$gn = Invoke-PsTest 'guard-nested' @'
+$d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }
+'@ @($D, $k)
+Remove-Item "$k/.gitignore"
+Expect "guard: git commit in an ignored folder of the live clone passes, a tracked one denied ($($gn -join ' '))" (($gn -join ' ') -eq 'False True'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/crafty/devtools.py'

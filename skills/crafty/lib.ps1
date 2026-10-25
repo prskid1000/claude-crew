@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L83 config · L163 OS · L335 leases · L608 tracker · L843 git-host · L948 kitlog · L1060 params ·
-  L1223 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L963 kitlog · L1075 params ·
+  L1238 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -40,7 +40,22 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
 function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text) {
   $p = [IO.Path]::GetFullPath($Path, (Get-Location -PSProvider FileSystem).ProviderPath); $t = "$p.$PID.tmp"
   [IO.File]::WriteAllText($t, $Text, [Text.UTF8Encoding]::new($false))
-  for ($i = 0; ; $i++) { try { [IO.File]::Move($t, $p, $true); return } catch { if ($i -ge 40) { [IO.File]::Delete($t); throw }; Start-Sleep -Milliseconds 50 } }
+  for ($i = 0; ; $i++) {
+    try { [IO.File]::Move($t, $p, $true); return }
+    catch {
+      # Win32 87 "The parameter is incorrect" never clears on a retry (board join failed twice): copy over, then drop the temp
+      if (Test-KitMoveUnsupported $_.Exception) { [IO.File]::Copy($t, $p, $true); [IO.File]::Delete($t); return }
+      if ($i -ge 40) { [IO.File]::Delete($t); throw }; Start-Sleep -Milliseconds 50
+    }
+  }
+}
+# a rename the file system refuses outright (ArgumentException, Win32 87), not a reader holding the file (sharing, access: retried)
+function Test-KitMoveUnsupported([Exception]$Err) {
+  for ($e = $Err; $e; $e = $e.InnerException) {
+    if ($e -is [ArgumentException] -or ($e.HResult -band 0xFFFF) -eq 87) { return $true }
+    if ($e -is [IO.IOException] -or $e -is [UnauthorizedAccessException]) { return $false }
+  }
+  $false
 }
 # names the kit makes (crafty.ps1 dir, briefs, checkpoints, snapshots): lowercase-kebab
 function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }

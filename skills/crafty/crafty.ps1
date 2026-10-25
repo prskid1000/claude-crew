@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L230 stack · L405 gate · L666 check · L818 pipes · L854 guard · L1308 dir · L1318 checkpoint ·
-  L1342 tracker · L1381 host
+Sections: L20 init · L26 wt · L236 stack · L411 gate · L672 check · L824 pipes · L860 guard · L1315 dir · L1325 checkpoint ·
+  L1349 tracker · L1388 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -203,6 +203,12 @@ switch ($Action) {
     $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
     if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
+    # a corrupt index (bad signature 0x00000000) fails status and remove: rebuild it from HEAD (files untouched), so the dirty test sees the truth
+    if ("$(git -C $Dir status --porcelain 2>&1)" -match 'index file corrupt') {
+      Remove-Item -LiteralPath (Join-Path $gd 'index') -Force; git -C $Dir reset -q 2>&1 | Out-Null
+      if ($LASTEXITCODE) { throw "wt remove: $Dir has a corrupt index and git reset could not rebuild it: fix it by hand" }
+      "rebuilt the corrupt index of $Dir from HEAD"
+    }
     $farms = @($links | Where-Object { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })
     $links = @($links | Where-Object { $l = $_; -not @($farms | Where-Object { $l.StartsWith($_ + [IO.Path]::DirectorySeparatorChar) }).Count })
     if (-not $Force) {
@@ -997,8 +1003,8 @@ if ($SelfTest) {
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch' }[$c[0]]
     $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live)
-    # cwd = the runtime (writable everywhere): results never depend on where the self-test runs
-    $json = @{ tool_name = $tool; cwd = (Get-KitRuntime); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
+    # cwd = an agent folder (crafty.ps1 dir: a kit place, so guard.layout block passes a relative write): results never depend on where the self-test runs
+    $json = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
@@ -1061,6 +1067,7 @@ function InLive([string]$p, [string]$base) {
   $rel = [IO.Path]::GetRelativePath($live, [IO.Path]::GetFullPath($p))
   if ($rel -notmatch '^\.\.([\\/]|$)|^\.git([\\/]|$)' -and -not [IO.Path]::IsPathRooted($rel)) { $rel }
 }
+function LiveIgnored([string]$rel) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 0 }
 function LiveFile([string]$p, [string]$base) {
   $own = '^(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + '|' + [regex]::Escape($script:KitPathMap.stateDir.Trim('/\')) + ')([\\/]|$)'
   if (($rel = InLive $p $base) -and $rel -ne '.' -and $rel -notmatch $own) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 1 }
@@ -1263,7 +1270,7 @@ if ($cmd) {
       for ($i = 1; $i -lt $tk.Count; $i++) {
         if ($tk[$i] -eq '-C') { $i++; $gd = if ([IO.Path]::IsPathRooted($tk[$i])) { $tk[$i] } elseif ($gd) { Join-Path $gd $tk[$i] }; continue }
         if ($tk[$i] -match '^-') { if ($tk[$i] -eq '-c') { $i++ }; continue }
-        if (-not $liveOk -and $tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and $seg -notmatch '\s(-n|--dry-run|--check|-h|--help)(\s|$)' -and (InLive $gd '')) { Deny $liveWhy }
+        if (-not $liveOk -and $tk[$i] -match '^(checkout|switch|apply|am|commit|reset|restore|merge|rebase|cherry-pick|revert|rm|mv|clean)$' -and $seg -notmatch '\s(-n|--dry-run|--check|-h|--help)(\s|$)' -and ($gr = InLive $gd '') -and ($gr -eq '.' -or -not (LiveIgnored $gr))) { Deny $liveWhy }
         break
       }
     }

@@ -48,6 +48,15 @@ $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Obje
 $rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) x'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
 $po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
 Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class (not a re-test)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$')
+$pp = pwsh @np $Q finalize -RunDir $pl -Code P1 2>&1 | Out-String; $ppc = $LASTEXITCODE
+Expect "finalize publish: over the prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))
+# -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
+$rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
+[IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
+$null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check -FixNames 2>&1; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name
+& $J $rj "$rn/R1/results.json"; $null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check 2>&1; $f2c = $LASTEXITCODE
+$null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check -FixNames 2>&1; $f3 = Get-Content "$rn/R1/results.json" -Raw
+Expect "finalize -FixNames: any-case reference renamed; an old name after a rewrite resolves and is fixed ($new $f2c)" ($new -match '^R1-C1_' -and $f1 -match [regex]::Escape($new) -and $f1 -notmatch '(?i)"shotone\.png"' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new))
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })

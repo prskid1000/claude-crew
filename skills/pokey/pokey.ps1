@@ -12,7 +12,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator.
-Sections: L22 report · L94 seat · L162 api · L285 finalize · L635 retest
+Sections: L22 report · L94 seat · L162 api · L285 finalize · L647 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -313,10 +313,15 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
 # copy evidence outside shots/evidence into evidence to upload
 if (-not $Check) { New-Item -ItemType Directory -Force "$D/evidence" | Out-Null }
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
+# -FixNames renames (old -> new): a results file written again from the checks of before the rename still names the old files
+$renLog = "$D/evidence-renames.json"; $renamed = @{}; $remap = [ordered]@{}
+if (Test-Path -LiteralPath $renLog) { (Get-Content -LiteralPath $renLog -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $renamed[$_.Name] = [string]$_.Value } }
 foreach ($c in @($res.checks)) {
   if ($null -eq $c.PSObject.Properties['evidence']) { $c | Add-Member NoteProperty evidence @() }
   $c.evidence = @(@($c.evidence) | Where-Object { $_ -and [string]$_ -notmatch '\.(mjs|cjs|js|jsx|ts|tsx|java|kt|ps1|py|sh)$|\s' } | ForEach-Object {
       $e = [string]$_; $leaf = Split-Path $e -Leaf
+      $nw = $renamed[$leaf]
+      if ($nw -and -not (Test-Path "$D/shots/$leaf") -and -not (Test-Path "$D/evidence/$leaf") -and ((Test-Path "$D/shots/$nw") -or (Test-Path "$D/evidence/$nw"))) { $remap[$leaf] = $nw; $leaf = $nw }
       if (-not (Test-Path "$D/shots/$leaf") -and -not (Test-Path "$D/evidence/$leaf")) {
         $src = if ([IO.Path]::IsPathRooted($e) -and (Test-Path $e)) { $e } elseif (Test-Path (Join-Path $D $e)) { Join-Path $D $e } else { (Get-ChildItem $RunDir -Recurse -File -Filter $leaf -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
         if (-not $src) { $lost.Add([pscustomobject]@{ check = $c; name = $leaf }) }
@@ -333,6 +338,13 @@ if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not follow
 $badTypes = @(@(foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and [IO.Path]::GetExtension([string]$e) -notmatch $script:EvidenceExt) { "$($c.id): $e" } } }) | Select-Object -Unique)
 if ($badTypes.Count -and -not $Check) { Write-Warning "evidence listed but of an unsupported type (not published): $($badTypes -join '; ')" }
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
+# the prose limits: -Check exits 1, a publish refuses (one rule), before anything is published
+$prose = {
+  $lm = @{ folderLink = $D; files = @{} }; foreach ($x in $files) { $lm.files[$x.Name] = @{ link = $x.Name } }
+  $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
+  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
+}
+$prWhy = "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards"")"
 if ($Check) {
   # standard name, else setup form; nn from the name, else a free one
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
@@ -376,18 +388,21 @@ if ($Check) {
   if ($Results -ne 'results.json') { $badNames = @($badNames | Where-Object { $cited.ContainsKey($_) }) }   # a retry renames only its own
   $suggest = [ordered]@{}
   foreach ($b in $badNames) { $suggest[$b] = if ($emptyNames -contains $b) { $null } else { Get-StandardName $b } }
-  if ($FixNames -and $suggest.Count) {
+  if ($FixNames -and ($suggest.Count -or $remap.Count)) {
     $resFile = Join-Path $D $Results; $raw = [IO.File]::ReadAllText($resFile)
+    # references end in the file name; any case (Windows found the file under a reference in another case, the rename left it)
+    $retag = { param($old, $nn) [regex]::Replace($raw, '(?<=["/\\])' + [regex]::Escape($old) + '(?=")', $nn.Replace('$', '$$'), 'IgnoreCase') }
+    foreach ($o in @($remap.Keys)) { $raw = & $retag $o $remap[$o]; "  $Results`: $o -> $($remap[$o]) (renamed by an earlier -FixNames)" }
     foreach ($b in @($suggest.Keys)) {
       $new = $suggest[$b]; if (-not $new) { continue }
       $f = $files | Where-Object Name -eq $b | Select-Object -First 1
       Rename-Item -LiteralPath $f.FullName -NewName $new
-      # references end in the file name
-      $raw = [regex]::Replace($raw, '(?<=["/\\])' + [regex]::Escape($b) + '(?=")', $new.Replace('$', '$$'))
+      $raw = & $retag $b $new; $renamed[$b] = $new
       "  renamed $($f.Directory.Name)/$b -> $new"
       $suggest.Remove($b)
     }
     [IO.File]::WriteAllText($resFile, $raw)
+    [IO.File]::WriteAllText($renLog, ($renamed | ConvertTo-Json -Depth 2))
     $badNames = @($suggest.Keys)
   }
   $dups = @(@($res.checks) | Where-Object { $_.id } | Group-Object { [string]$_.id } | Where-Object Count -gt 1 | ForEach-Object { "$($_.Name) (x$($_.Count))" })
@@ -409,17 +424,16 @@ if ($Check) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
   }
-  # finalize's prose limits, before anything is published
-  $lm = @{ folderLink = $D; files = @{} }; foreach ($x in $files) { $lm.files[$x.Name] = @{ link = $x.Name } }
-  $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
-  $pr = @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
-  if ($pr.Count) { $fail = $true; "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards""):"; $pr | ForEach-Object { "  $_" } }
+  $pr = @(& $prose)
+  if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   if ($fail) { exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"; exit 0
 }
 if ($lostList.Count) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run."
 }
+$pr = @(& $prose)
+if ($pr.Count) { throw "${prWhy}, then re-run - nothing was published: $($pr -join '; ')" }
 $fin = "$D/finalize.json"
 $prev = if ((Test-Path $fin) -and -not $Force) { Get-Content $fin -Raw | ConvertFrom-Json } else { $null }
 $title = if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }
@@ -459,9 +473,7 @@ if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited bu
 $html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # goody report-gdocs: the styled HTML goes to gdocs
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
-$null = Test-KitProse -Kind result-note -Path "$D/results.json"
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl
-$null = Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0]
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
