@@ -29,7 +29,7 @@ try {
   Expect 'wt remove -Name: only that worktree; main tree, no args, no match, 2 matches -> refused' (-not ($bad -contains 0) -and $code -eq 0 -and -not (Test-Path "$r/wt/a-outer") -and @('ab', 'c-1', 'c-2' | Where-Object { Test-Path "$r/wt/$_-outer" }).Count -eq 3 -and (Test-Path "$r/outer/.git"))
   foreach ($n in 'ci', 'cu') { $w = "$r/wt/$n"; git -C "$r/outer" worktree add -q -b $n $w 2>$null; [IO.File]::WriteAllBytes("$(git -C $w rev-parse --path-format=absolute --git-dir)/index", [byte[]]::new(64)) }
   'u' | Set-Content "$r/wt/cu/u.txt"; $ci, $cu = 'ci', 'cu' | ForEach-Object { "$(pwsh @np $D wt remove -Dir "$r/wt/$_" 2>&1) rc=$LASTEXITCODE" }
-  Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match 'rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match 'u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
+  Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match '(?s)rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match '(?s)u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters: type command, MR URLs, a missing goody (github; gitlab: an unknown host's default)
 $gh = @'
@@ -94,7 +94,8 @@ $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} case
 $kl = "$k/skills/crafty/kit.local.json"; '{"guard":{"layout":"block"}}' | Set-Content $kl
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
 Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
-'/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null$gn = Invoke-PsTest 'guard-nested' @'
+'/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null
+$gn = Invoke-PsTest 'guard-nested' @'
 $d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }
 '@ @($D, $k)
 Remove-Item "$k/.gitignore", "$k/nested" -Recurse -Force
