@@ -18,6 +18,8 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Test cleanup deleting several rows: collect each failure and assert once at the end, so one 409 does not leave the rest behind (1x, hard failure).
+- A rule that says name only items that exist (statuses, keys): check every listed name against its source before commit; no invented or stale entries (2x).
 - Run every script through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`): `& x.py` or `.\x.py` opens the file in its Windows association (an editor on the owner's screen); the guard denies it, and doc openers, `--web`, `gh browse`.
 - Before merge, confirm a pipeline exists for the MR head; none (rules skipped) -> trigger one or report NOT_MERGED with the reason, never wait silently. (2x)
 - Push a review-fix commit before asking for re-review or merge; check the MR head sha on the host equals the local HEAD. (2x)
@@ -48,6 +50,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## pokey
+- Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x).
 - Run pokey.ps1 -Check before every publish: it catches missing or renamed evidence references so no broken report goes out (1x win).
 - A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
