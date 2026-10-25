@@ -221,6 +221,28 @@ $pp = & { . $L3; $c = Join-Path $gr 'c'; function SvcDir { $c }; function Sync-D
   $res = Sync-Repo t ([pscustomobject]@{ name = 'r'; wt = $c; target = 'main'; cfg = [pscustomobject]@{ checkout = $c } }) @() -NoFetch
   "$((Get-Content (Join-Path $c 'f.txt') -Raw).Trim() -like '*localenv*t-web')|$(git -C $c log -1 --format=%s)|$(@(git -C $c status --porcelain).Count)|$($res.targetSha -eq (git -C $go rev-parse HEAD))" }
 Expect "prepare: its edit (here {cache}: outside the repo) is committed on the env worktree, the target sha stays the base ($pp)" ($pp -eq 'True|localenv prepare web (local only)|0|True')
+# merged layers: a squash-merged one (host: MR merged at its commit) and one merged past its commit drop; a reused branch, an MR into another target, an open one stay
+$sq = Kd; $so = Join-Path $sq 'sqo'; git init -q -b main $so; Set-Content (Join-Path $so 'f.txt') 'v1'; git -C $so add .; git -C $so -c user.name=t -c user.email=t@t commit -qm init
+$sqc = { param($sqb, $sqf, [switch]$New) if ($New) { git -C $so checkout -q -b $sqb main } else { git -C $so checkout -q $sqb }; Add-Content (Join-Path $so $sqf) $sqb; git -C $so add .; git -C $so -c user.name=t -c user.email=t@t commit -qm $sqb; "$(git -C $so rev-parse HEAD)".Trim() }
+$sq1 = & $sqc sq1 a.txt -New; $gr1 = & $sqc grow b.txt -New; $gr2 = & $sqc grow b.txt; $ru1 = & $sqc reuse c.txt -New; $ru2 = & $sqc reuse c.txt; $ot1 = & $sqc other d.txt -New; $op1 = & $sqc open e.txt -New
+git -C $so checkout -q main; git -C $so merge -q --squash sq1; git -C $so -c user.name=t -c user.email=t@t commit -qm 'sq1 squashed'
+$sqd = Join-Path $sq 'sqc'; git clone -q $so $sqd 2>$null; git -C $sqd remote set-url origin 'https://git.example.com/g/r.git'
+& $J @{ repos = @(@{ name = 'r'; checkout = $sqd; target = 'main' }); localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'web'; repo = 'r'; port = 41018 }) } } } } $cf3 8
+$sqr = & { . $L3; function Sync-DepLinks { }; function G([string]$d) { if ($args[0] -eq 'fetch') { return }; $o = & git -C $d @args 2>&1; if ($LASTEXITCODE) { throw "git $args : $o" }; $o }
+  $mrBy = @{ sq1 = @{ iid = 1; sha = $sq1; target_branch = 'main' }; grow = @{ iid = 2; sha = $gr2; target_branch = 'main' }; reuse = @{ iid = 3; sha = $ru1; target_branch = 'main' }; other = @{ iid = 4; sha = $ot1; target_branch = 'next' } }
+  $global:sqAsk = @(); function Invoke-HostVerb([string]$Verb, [hashtable]$A) { $global:sqAsk += "$($A.repo):$($A.source_branch):$($A.state)"; if ($A.source_branch -eq 'open') { throw 'host offline' }; if ($mrBy[$A.source_branch]) { @([pscustomobject]$mrBy[$A.source_branch]) } else { @() } }
+  $lay = @(@{ branch = 'sq1'; sha = $sq1 }, @{ branch = 'grow'; sha = $gr1 }, @{ branch = 'reuse'; sha = $ru2 }, @{ branch = 'other'; sha = $ot1 }, @{ branch = 'open'; sha = $op1 })
+  $res = Sync-Repo t ([pscustomobject]@{ name = 'r'; wt = $sqd; target = 'main'; cfg = [pscustomobject]@{ checkout = $sqd } }) $lay
+  $nf = Sync-Repo t ([pscustomobject]@{ name = 'r'; wt = $sqd; target = 'main'; cfg = [pscustomobject]@{ checkout = $sqd } }) @(@{ branch = 'sq1'; sha = $sq1 }) -NoFetch
+  "$(@($res.kept.branch) -join ',')|$(@($res.dropped | ForEach-Object { "$($_.layer.branch)=$($_.why)" }) -join ',')|$($global:sqAsk[0])|$(@($nf.kept).Count)" }
+Expect "merged layers: squash-merged (MR at the layer commit) and merged past it drop; reused branch, other target, open (host offline) stay; -NoFetch asks no host ($sqr)" ($sqr -eq 'reuse,other,open|sq1=merged into main (MR 1),grow=merged into main (MR 2)|g/r:sq1:merged|1')
+# a reader holding the old service log (no delete share): the start appends to it and skips its old lines (an old fail line is no failure)
+& $J @{ localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'api'; start = 'x' }) } } } } $cf3 8
+$lk = & { . $L3; $lkLog = LogFile t api; Set-Content $lkLog 'APPLICATION FAILED TO START (old run)'; $lkHold = [IO.File]::Open($lkLog, 'Open', 'Read', 'ReadWrite')
+  function SvcDir { $sq }; function StartCmd { 'x' }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }
+  function Start-Pwsh { Add-Content $lkLog 'Started App in 1.0 seconds'; $PID }; function Healthy { (++$script:lkH) -gt 1 }
+  try { $o = @(Start-SvcOnce t (Svc t api) 1 '') -join ' '; "$($o -match 'open elsewhere, appending')|$((Read-State t).services.api.status)|$(-not (Test-Path "$lkLog.prev"))" } catch { "threw: $_" } finally { $lkHold.Dispose() } }
+Expect "start: a held log is appended to, its old fail line ignored, the service comes up ($lk)" ($lk -eq 'True|up|True')
 Remove-TestKit $k3
 # supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad

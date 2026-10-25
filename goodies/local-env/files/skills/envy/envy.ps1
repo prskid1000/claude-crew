@@ -14,8 +14,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L584 hooks · L656 marks · L794 seed ·
-  L840 processes · L1123 daemon · L1561 cleanup · L1633 doctor · L1683 verbs
+Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L589 hooks · L661 marks · L799 seed ·
+  L845 processes · L1129 daemon · L1568 cleanup · L1640 doctor · L1690 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -420,6 +420,11 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
     if (-not $sha) { $dropped += @{ layer = $l; why = 'branch and commit gone' }; continue }
     git -C $d merge-base --is-ancestor $sha $tref 2>$null
     if ($LASTEXITCODE -eq 0) { $dropped += @{ layer = $l; why = "merged into $($r.target)" }; continue }
+    # squash / rebase merges: the host knows the MR merged at this commit (or past it), git ancestry does not
+    if (-not $NoFetch -and $tref -eq "origin/$($r.target)" -and (Get-Command Get-MergedMrs -ErrorAction SilentlyContinue)) {
+      $mr = try { @(Get-MergedMrs $d $l.branch $r.target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0)) })[0] } catch { $null }   # host down: ancestry only
+      if ($mr) { $dropped += @{ layer = $l; why = "merged into $($r.target) (MR $($mr.iid))" }; continue }
+    }
     $out = git -C $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost merge -q --no-ff --no-edit -m "localenv layer $($l.branch) ($($l.agent))" $sha 2>&1
     if ($LASTEXITCODE) {
       $files = @(git -C $d diff --name-only --diff-filter=U 2>$null)
@@ -1088,7 +1093,8 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
       if ($round -ge 3) { throw "[$e] $($s.name): RAM was taken while it waited for the start lock (3 rounds) - not started" }
       "[$e] RAM fell while $($s.name) waited for the start lock: waiting for room again"
     }
-    $log = LogFile $e $s.name; if (Test-Path $log) { Move-Item $log "$log.prev" -Force }
+    $log = LogFile $e $s.name; $logFrom = 0   # a reader holding the log (tidy, logs -Grep): append, scan only the new lines
+    if (Test-Path $log) { try { Move-Item $log "$log.prev" -Force -ErrorAction Stop } catch { $logFrom = (Get-Item $log).Length; "[$e] $($s.name): $log is open elsewhere, appending to it" } }
     "[$e] starting $($s.name)$(if ($release) { " (release $release)" }): $cmd"
     $t0 = Get-Date
     $p = Start-Pwsh @('_exec', '-Env', $e, '-Service', $s.name, '-Artifact', "$artifact") $dir "_exec -Env $e -Service $($s.name)" "$log.wrapper"
@@ -1096,7 +1102,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
     $limit = (Get-Date).AddMinutes((StartMin $s))
     $fail = if ($s.failPattern) { [string]$s.failPattern } else { $script:FailPattern }
     $ready = if ($s.readyPattern) { [string]$s.readyPattern } else { $script:ReadyPattern }
-    $failPos = @{ $log = 0 }; $readyPos = @{ $log = 0 }; $seen = $false
+    $failPos = @{ $log = $logFrom }; $readyPos = @{ $log = $logFrom }; $seen = $false
     # a 1 s poll: fail / ready lines every second, health every 5 s until the ready line, then every second
     for ($i = 0; ; $i++) {
       if (-not $seen -and $ready -and (Find-NewLogLine $log $ready $readyPos)) { $seen = $true }
@@ -1196,6 +1202,7 @@ function Run-Train {
       if (-not $cands.Count -or -not (& $try $base)) {
         foreach ($l in $cands) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : the target + the layers already live do not build either: $($state.err)" } } }
         $notes.Add("$rn does not build on its target + current layers: kept the running release ($($state.err))")
+        foreach ($q in @($reqs | Where-Object { $_.kind -eq 'drop' -and @($cur[$rn].branch) -contains $_.branch })) { $results[$q.id] = @{ outcome = 'failed'; message = "$rn does not build without it either: the layer stays ($($state.err))" } }
         $null = Sync-Repo $e $r @($cur[$rn]) -NoFetch   # worktree back on the live code
         continue
       }

@@ -22,7 +22,7 @@ function Get-KitLogErrors([string[]]$Files, $Sizes) {
     $i = Get-Item $x -ErrorAction SilentlyContinue; if (-not $i) { continue }
     $from = [long]$Sizes.($i.FullName); if (-not $Sizes.Contains($i.FullName)) { $from = $i.Length } elseif ($from -gt $i.Length) { $from = 0 }   # rotated: from 0
     $from = [math]::Max($from, $i.Length - 1MB)
-    $new = if ($i.Length -gt $from) { $s = [IO.File]::Open($i.FullName, 'Open', 'Read', 'ReadWrite'); try { [void]$s.Seek($from, 'Begin'); [IO.StreamReader]::new($s).ReadToEnd() } finally { $s.Dispose() } } else { '' }
+    $new = if ($i.Length -gt $from) { $s = [IO.File]::Open($i.FullName, 'Open', 'Read', 'ReadWrite, Delete'); try { [void]$s.Seek($from, 'Begin'); [IO.StreamReader]::new($s).ReadToEnd() } finally { $s.Dispose() } } else { '' }
     $hits = @($new -split "`r?`n" | Where-Object { $_ -cmatch '\b(ERROR|FATAL)\b|Exception\b|Traceback|^\s*\w*Error:|(?i:\b(status|HTTP/\S+)\W+5\d\d\b)' })
     $C = $script:KitLogClasses; $real = @($hits | Where-Object { $_ -notmatch $C.expected -or $_ -match "$($C.startup)|$($C.connection)|$($C['5xx'])" })
     $cls = @('startup', 'connection', '5xx' | Where-Object { $k = $_; @($real | Where-Object { $_ -match $C[$k] }).Count })[0]
