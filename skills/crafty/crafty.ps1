@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L236 stack · L411 gate · L672 check · L824 pipes · L860 guard · L1315 dir · L1325 checkpoint ·
-  L1349 tracker · L1388 host
+Sections: L20 init · L26 wt · L237 stack · L412 gate · L673 check · L825 pipes · L861 guard · L1322 dir · L1332 checkpoint ·
+  L1356 tracker · L1395 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -205,8 +205,9 @@ switch ($Action) {
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
     # a corrupt index (bad signature 0x00000000) fails status and remove: rebuild it from HEAD (files untouched), so the dirty test sees the truth
     if ("$(git -C $Dir status --porcelain 2>&1)" -match 'index file corrupt') {
-      Remove-Item -LiteralPath (Join-Path $gd 'index') -Force; git -C $Dir reset -q 2>&1 | Out-Null
-      if ($LASTEXITCODE) { throw "wt remove: $Dir has a corrupt index and git reset could not rebuild it: fix it by hand" }
+      $ix = Join-Path $gd 'index'; Move-Item -LiteralPath $ix "$ix.corrupt" -Force; git -C $Dir reset -q 2>&1 | Out-Null
+      if ($LASTEXITCODE) { Move-Item -LiteralPath "$ix.corrupt" $ix -Force; throw "wt remove: $Dir has a corrupt index and git reset could not rebuild it: fix it by hand" }
+      Remove-Item -LiteralPath "$ix.corrupt" -Force
       "rebuilt the corrupt index of $Dir from HEAD"
     }
     $farms = @($links | Where-Object { (Split-Path $_ -Leaf) -eq 'node_modules' -and -not (Get-Item -LiteralPath $_ -Force).LinkType })
@@ -1067,7 +1068,13 @@ function InLive([string]$p, [string]$base) {
   $rel = [IO.Path]::GetRelativePath($live, [IO.Path]::GetFullPath($p))
   if ($rel -notmatch '^\.\.([\\/]|$)|^\.git([\\/]|$)' -and -not [IO.Path]::IsPathRooted($rel)) { $rel }
 }
-function LiveIgnored([string]$rel) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 0 }
+# a git-ignored folder that is its own worktree (a harness worktree under .claude/worktrees); .runtime has none: git there hits the live clone
+function LiveIgnored([string]$rel) {
+  $abs = Join-Path $live $rel; if (-not (Test-Path -LiteralPath $abs -PathType Container)) { return $false }
+  $top = "$(git -C $abs rev-parse --show-toplevel 2>$null)".Trim()
+  if (-not $top -or [IO.Path]::GetFullPath($top).TrimEnd('\', '/') -eq [IO.Path]::GetFullPath($live).TrimEnd('\', '/')) { return $false }
+  git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 0
+}
 function LiveFile([string]$p, [string]$base) {
   $own = '^(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + '|' + [regex]::Escape($script:KitPathMap.stateDir.Trim('/\')) + ')([\\/]|$)'
   if (($rel = InLive $p $base) -and $rel -ne '.' -and $rel -notmatch $own) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 1 }

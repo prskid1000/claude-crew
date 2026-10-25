@@ -94,12 +94,11 @@ $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # the {KIT} case
 $kl = "$k/skills/crafty/kit.local.json"; '{"guard":{"layout":"block"}}' | Set-Content $kl
 $out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
 Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
-'/nested/' | Set-Content "$k/.gitignore"   # a harness worktree under the live clone
-$gn = Invoke-PsTest 'guard-nested' @'
-$d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }
+'/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null$gn = Invoke-PsTest 'guard-nested' @'
+$d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }
 '@ @($D, $k)
-Remove-Item "$k/.gitignore"
-Expect "guard: git commit in an ignored folder of the live clone passes, a tracked one denied ($($gn -join ' '))" (($gn -join ' ') -eq 'False True'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
+Remove-Item "$k/.gitignore", "$k/nested" -Recurse -Force
+Expect "guard: git commit in a nested worktree passes; a tracked folder, an ignored non-repo denied ($($gn -join ' '))" (($gn -join ' ') -eq 'False True True'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/crafty/devtools.py'

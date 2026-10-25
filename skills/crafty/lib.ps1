@@ -43,8 +43,8 @@ function Write-KitAtomic([Parameter(Mandatory)][string]$Path, [string]$Text) {
   for ($i = 0; ; $i++) {
     try { [IO.File]::Move($t, $p, $true); return }
     catch {
-      # Win32 87 "The parameter is incorrect" never clears on a retry (board join failed twice): copy over, then drop the temp
-      if (Test-KitMoveUnsupported $_.Exception) { [IO.File]::Copy($t, $p, $true); [IO.File]::Delete($t); return }
+      # Win32 87 "The parameter is incorrect" never clears on a retry (board join failed twice): copy over (not atomic), drop the temp
+      if (Test-KitMoveUnsupported $_.Exception) { try { [IO.File]::Copy($t, $p, $true) } finally { [IO.File]::Delete($t) }; return }
       if ($i -ge 40) { [IO.File]::Delete($t); throw }; Start-Sleep -Milliseconds 50
     }
   }
