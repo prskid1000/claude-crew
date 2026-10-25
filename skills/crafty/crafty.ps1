@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L237 stack · L412 gate · L673 check · L825 pipes · L861 guard · L1322 dir · L1332 checkpoint ·
-  L1356 tracker · L1395 host
+Sections: L20 init · L26 wt · L242 stack · L417 gate · L678 check · L830 pipes · L868 guard · L1329 dir · L1339 checkpoint ·
+  L1363 tracker · L1402 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -38,7 +38,12 @@ function Resolve-Wt($d) {
   if (-not (Test-Path -LiteralPath $d -PathType Container)) { throw "no such folder: $d" }
   $d = (Resolve-Path -LiteralPath $d).Path.TrimEnd('\', '/')
   $pre = git -C $d rev-parse --show-prefix 2>$null   # '' only at a worktree top
-  if ($LASTEXITCODE -or "$pre".Trim()) { throw "$d is not the top of a git worktree (top: $(git -C $d rev-parse --show-toplevel 2>$null)); pass the worktree folder as -Dir" }
+  if ($LASTEXITCODE -or "$pre".Trim()) {
+    # a worktrees root: its nearest git top is the superproject, never the agent's worktree
+    $kids = @(Get-ChildItem -LiteralPath $d -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git') -PathType Leaf } | Select-Object -First 5 -ExpandProperty FullName)
+    if ($kids.Count) { throw "$d holds worktrees, it is not one: pass -Dir <worktree>, e.g. $($kids -join ', ')" }
+    throw "$d is not the top of a git worktree (top: $(git -C $d rev-parse --show-toplevel 2>$null)); pass the worktree folder as -Dir"
+  }
   $d
 }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
@@ -144,7 +149,7 @@ switch ($Action) {
   'sync' {
     $Dir = Resolve-Wt $Dir
     $t = Meta $Dir 'target'; if (-not $t) { throw "no target for ${Dir}: git -C $Dir rebase origin/<target>" }
-    if (git -C $Dir status --porcelain --untracked-files=no) { throw 'uncommitted changes: commit first (WIP is fine; never git stash)' }
+    if (git -C $Dir status --porcelain --untracked-files=no) { throw "uncommitted changes in ${Dir}: crafty.ps1 wt commit -Dir $Dir -Message 'wip: <what>' (WIP is fine; never git stash), then wt sync again" }
     G -C $Dir fetch -q origin $t | Out-Null
     git -C $Dir rebase "origin/$t"
     if ($LASTEXITCODE) { "REBASE CONFLICT. Append-only files (changelog masters, nav/i18n lists): $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code: resolve by hand. Then git add + git -C $Dir rebase --continue, and re-run crafty.ps1 check."; exit 1 }
@@ -222,11 +227,11 @@ switch ($Action) {
     $farmUndo = @(foreach ($f in $farms) { $m = Join-Path $f '.kit-farm.json'; if (Test-Path $m) { , @($f, ((Get-Content $m -Raw).Trim() -split '\|')) } })
     foreach ($l in $links) { if (Test-Path $l) { if ((Split-Path $l -Leaf) -eq 'node_modules' -or -not (Get-Item -LiteralPath $l -Force).LinkType) { Remove-NodeModules $l } else { Remove-DirLink $l } } }
     $main = ((git -C $Dir worktree list --porcelain | Select-Object -First 1) -replace '^worktree ', '')
-    git -C $main worktree remove $(if ($Force) { '--force' }) $Dir
+    $gitSaid = @(git -C $main worktree remove $(if ($Force) { '--force' }) $Dir 2>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE) {
       foreach ($u in $undo) { if ($u[1] -and -not (Test-Path $u[0])) { New-DirLink $u[0] $u[1] } }
       foreach ($u in $farmUndo) { $src = $u[1][0]; $wtr = $u[1][1]; $null = Set-NodeModules $u[0] $src (git -C $Dir rev-parse --path-format=absolute --git-common-dir | Split-Path) $wtr }
-      throw "git worktree remove failed for $Dir (links restored): fix what git reports, or -Force"
+      throw "git worktree remove failed for $Dir (links restored): $(($gitSaid | Where-Object { $_.Trim() }) -join ' ' -replace '\s+', ' '); fix that, or -Force"
     }
     "removed $Dir"
   }
@@ -827,6 +832,8 @@ function Invoke-Pipes {
 param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8)
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
+# repos[].ci.mrPipelines false: CI runs only on other branches (deploy), an MR never gets a pipeline
+$noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
 # any host (lib.ps1 git-host): no head pipeline -> no-ci (the repo's CI adapter finds no CI config) or no-pipeline (one may start)
 function State($url) {
   $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
@@ -835,7 +842,7 @@ function State($url) {
   if (-not $m) { return [ordered]@{ mr = $url; status = 'unknown' } }
   if ($m.state -eq 'merged') { return [ordered]@{ mr = $url; status = 'merged' } }
   $p = $m.head_pipeline
-  if (-not $p) { return [ordered]@{ mr = $url; status = $(if ((Invoke-HostVerb 'ci.config' @{ repo = $u.repo; ref = $m.target_branch; type = $u.type }) -eq $false) { 'no-ci' } else { 'no-pipeline' }) } }
+  if (-not $p) { return [ordered]@{ mr = $url; status = $(if (@($noMrCi | Where-Object { "/$($u.repo)".ToLower().EndsWith("/$_") }).Count -or (Invoke-HostVerb 'ci.config' @{ repo = $u.repo; ref = $m.target_branch; type = $u.type }) -eq $false) { 'no-ci' } else { 'no-pipeline' }) } }
   $o = [ordered]@{ mr = $url; status = $p.status }
   if ($p.status -eq 'failed' -and $p.id) {
     $job = @(Invoke-HostVerb 'ci.jobs' @{ repo = $u.repo; id = $p.id; type = $u.type } | Where-Object status -eq 'failed')[0]

@@ -61,6 +61,15 @@ $sg = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json
 $s4 = @($sg | Where-Object ref -eq r4); $s5 = @($sg | Where-Object ref -eq r5)
 Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once, the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'crafty' }).Count -and
   $s5.Count -eq 1 -and $s5[0].skill -eq 'pokey' -and $s5[0].text -eq 'test:A1: seat lost' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
+$null = pwsh @np $O board nosuch 2>&1; $bpc = $LASTEXITCODE; $bpe = & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Read-KitLog calls ([datetime]0) | Where-Object { "$($_.rc)" -eq '2' } | Select-Object -Last 1).error }
+Expect "a bad parameter: exit 2, its call line keeps the why ($bpc)" ($bpc -eq 2 -and $bpe -match '^board: .*nosuch')
+$mu = 'https://h.x/g/r/-/merge_requests/1'   # build and fix spell one MR two ways (case, slash): one row
+New-Journal wf_r9 @(foreach ($l in 'build', 'fix') { @{ type = 'started'; agentId = $l; label = "${l}:X1" }; @{ type = 'result'; agentId = $l; result = @{ mrs = @(@{ url = $mu; merged = $true }) } }; $mu = $mu.Replace('h.x', 'H.X') + '/' })
+$rm6 = @((pwsh -NoProfile -Command ". '$O'; function Invoke-HostVerb { @{ state = 'opened' } }; Invoke-Report -Run wf_r9 -Json" | Out-String | ConvertFrom-Json).agents.X1.mrs)
+Expect "report: an agent's merged: true loses to the host's state now ($($rm6.mergeState))" ($rm6.Count -eq 1 -and -not $rm6[0].merged -and $rm6[0].mergeState -eq 'OPEN')
+$lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
+try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
+Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
 # a workflow without a Learn phase (tidy) closed by launch -Done: no "before its Learn phase" signal
 New-Item -ItemType Directory -Force "$k/workflows" | Out-Null; Copy-Item (Join-Path $src 'workflows/tidy.js') "$k/workflows/"
 New-Journal wf_r6 @(@{ type = 'started'; agentId = 'e1'; label = 'prep' }, @{ type = 'result'; agentId = 'e1'; result = @{ ok = $true } })

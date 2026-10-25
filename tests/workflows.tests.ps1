@@ -38,13 +38,14 @@ let reviews = 0
 const { calls, agent } = _mock((prompt, o) => {
  if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }] })
  if (/^review:/.test(o.label)) return { findings: reviews++ ? [] : [{ mr: '1', file: 'a.ts', line: 3, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] }
- if (/^fix:/.test(o.label)) return rep()
+ if (/^fix:/.test(o.label)) return rep({ worktrees: ['c:\\WT\\x1\\'] })
  if (/^ship:/.test(o.label)) return rep(_merged(1))
 }, '[]')
 const args = { brief: 'C:/b/wave-x.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a' }], mandate: ['m'], ..._kl }
 run(args, agent, _n, _n, pipeline).then(() => {
  const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1'), si = calls.findIndex((c) => c.label === 'ship:X1')
  console.log(`re-review:${rv.length === 2 && /RE-REVIEW after the fix round/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
+ console.log(`wt-dedup:${calls[si].prompt.includes('(worktrees: C:/wt/x1)')}`)
  console.log(`hold:${ti >= 0 && /-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)
  console.log(`run:${m ? m[1] : 'none'}`)
@@ -52,7 +53,7 @@ run(args, agent, _n, _n, pipeline).then(() => {
 '@
 $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
-Expect-Each $res 'buildy: #' 're-review', 'hold' -Show 5
+Expect-Each $res 'buildy: #' 're-review', 'hold', 'wt-dedup' -Show 5
 Expect 'buildy: default run name = bossy.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
@@ -60,7 +61,7 @@ const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0'
 console.log(`batch-next:${!!(await run(o1.next.args, _pass, _n, _n, pipeline).catch(_err))}`)
 '@
 Expect-Each (Invoke-Js dw-next $jsn $wfd) 'buildy: #' 'batch-next' -Show 5
-# buildy: merge pairs set by the workflow; no ship agent behind an unmerged producer
+# buildy: the workflow sets merge pairs; no ship agent behind an unmerged producer
 $jsm = @'
 const mr = (r, s) => ({ url: `u/${r}/-/merge_requests/1`, repo: r, merged: false, mergeState: s }), lt = { status: 'PASS' }
 const { calls, agent } = _mock((p, o) => ({ 'build:F1': _rep(lt, { mrs: [mr('py')] }), 'build:F2': _rep(lt, { mrs: [mr('java'), mr('web')] }), 'ship:F1': _rep(lt, { mrs: [mr('py', 'WAIT')] }),
@@ -70,7 +71,7 @@ const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.r
 console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
-# buildy: mode duel is a goody (refused, names it); a removed arg is warned about, not silently ignored
+# buildy: mode duel is a goody (refused, named); a removed arg is warned, not ignored
 $jso = @'
 const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
 const e = await run({ ...base, mode: 'duel' }, _pass, _n, _n, pipeline).then(() => '', (x) => x.message)
@@ -79,7 +80,7 @@ console.log(`duel-refused:${/duel is a goody: run kitbag.py goody add duel/.test
 console.log(`removed-arg:${logs.some((l) => /args.review was removed/.test(l))}`)
 '@
 Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'duel-refused', 'removed-arg' -Show 5
-# buildy deploy batch: skipped without the deploys goody (the step checks for it), parsed with it
+# buildy deploy batch: skipped without the deploys goody, else parsed
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
  return _pass(p, o) }
@@ -102,7 +103,7 @@ console.log(`spike:${a.ty.spike === 'rechy' && a.L.indexOf('spike') < a.L.indexO
 console.log(`migration:${a.ty[M] === 'datay' && !n(z.L, 'ship:X1') && n(f.L, 'fix:X1') + n(f.L, M) + n(f.L, 'ship:X1') === 4}`)
 '@
 Expect-Each (Invoke-Js dw-spike $jssp $wfd) 'buildy: #' 'spike', 'migration' -Show 5
-# buildy resume: each area skips the steps recover found done; all done -> no agent at all
+# buildy resume: an area skips steps recover found done; all done -> no agent
 $jsrs = @'
 const S = ['build', 'review', 'ci', 'merge', 'testing-doc', 'tracker'], m = (n, merged) => [{ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged }]
 const resume = { D: { skip: S, mrs: m(1, true) }, M: { skip: S.slice(0, 4), mrs: m(2, true) }, O: { skip: ['build'], mrs: m(3, false) } }
@@ -120,7 +121,7 @@ $as = & { . $O; $env:KIT_OFFLINE = '0'; function Find-TaskMrs { 'g/api!7' }
   $f = { param($i, $d) Get-KitAreaState ([pscustomobject]@{ id = 'F'; items = $i }) @() @() (Get-Date).AddDays($d) }
   $o, $n, $g = (& $f 'fx9abc' 0), (& $f 'fx9abc' -3), (& $f 'A3, A4 g/api!2' 0); "$($o.state)|$($o.skip.Count)|$($n.state)|$($n.skip -join ',')|$($n.items[0].doc)|$($g.state)" }
 Remove-Item Env:KIT_OFFLINE
-Expect 'recover area state: an MR older than the run = earlier work, failedTesting = back to dev; doc link from the MR; a loose MR among 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
+Expect 'recover area state: MR older than the run = earlier work, failedTesting = dev; doc link from the MR; a loose MR among 2 items = unknown' ($as -eq 'start|0|merged|build,review,ci,merge,testing-doc|https://d/1|unknown')
 # launch records: a fix round supersedes the launch (one recover entry); launch -Done -RunId closes both
 $ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv (& { . $O; Get-KitFnv $json }) @args | Out-String }
 $sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
@@ -188,7 +189,7 @@ run(args, agent, _n, _n, null).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8
-# testy retries per check: fewer checks keep the first FAIL; a duplicate (C5b) retries as C5
+# testy retries per check: fewer checks keep the first FAIL; duplicate C5b retries as C5
 $js4 = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'FAIL', { defect: 'own' }), _ck('C2', 'NOT_TESTED'), _ck('C3', 'NOT_TESTED'), _ck('C4', 'PASS'), _ck('C5', 'PASS'), _ck('C5', 'NOT_TESTED')])
@@ -260,7 +261,7 @@ run({ runDir: 'C:/runs/P1', ..._kl, items }, a.agent, _n, _n, null)
 '@
 $res = Invoke-Js tc-ports $js5 $wf
 Expect-Each $res 'testy: #' 'ports', 'retry-file', 'expect' -Show 5
-# a FAIL with evidence one re-test misses stays FAIL; without evidence it may pass
+# a FAIL with evidence a re-test misses stays FAIL; without, it may pass
 $js6 = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'FAIL', { defect: 'own', evidence: ['A1-C1_01_500.json'] }), _ck('C2', 'FAIL', { defect: 'own' }), _ck('C3', 'PASS')])
@@ -275,7 +276,7 @@ run(args, agent, _n, _n, null).then(() => {
 '@
 $res = Invoke-Js tc-flaky $js6 $wf
 Expect-Each $res 'testy verify: #' 'flaky', 'no-evidence' -Show 5
-# budget: over the cap -> refused + split; build handoff -> its brief; testy at 80% stops, returns the rest; spent read last
+# budget: over the cap -> refused + split; build handoff -> its brief; testy at 80% returns the rest; spent read last
 $jsb = @'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
   if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
@@ -297,7 +298,7 @@ const m3 = mk('{"cap":1000000,"estimate":750000,"stopAt":0.8}', 900000); const o
 console.log(`stop-next:${o3.next && o3.next.args.only.join(',') === 'W2,W3' && m3.calls.filter((c) => c.label === 'budget').length === 2 && !m3.calls.some((c) => c.label === 'test:W2')}`)
 '@
 Expect-Each (@(Invoke-Js wb-b "$jsb`n$jsbB" $wfd) + @(Invoke-Js wb-t "$jsb`n$jsbT" $wf)) 'workflow budget: #' @('refuse', 'handoff', 'stop-next') -Show 5
-# recover (2026-10-23 records): one task over phase runs and a wave; relaunch under another run name; one item twice
+# recover (2026-10-23 records): one task over phase runs + a wave; relaunch under another name; one item twice
 $gw = Join-Path (Kd) 'pw'; New-Item -ItemType Directory -Force $gw | Out-Null; 'a' | Set-Content "$gw/a.txt"; Save-GitRepo $gw base; git -C $gw remote add origin https://h.example/g/api.git
 $pa = Invoke-PsTest areas @'
 $null = . $args[0] 6>$null; $env:KIT_OFFLINE = '0'; $br = @{ 39 = 't-tsk1abc-5a'; 43 = 't-tsk1abc-6a'; 45 = 't-tsk2abc-rates' }
@@ -324,7 +325,7 @@ $ln = & { . $O; $l = Get-KitLineage @(Get-StoppedRuns -Hours 99999 -All | Where-
 $l1 = & $runs; $dn = Px $O launch -Done -RunId wf_b2 | Out-String; $null = Px $O launch -Done -RunId wf_c3; $l2 = & $runs
 & $rec self-buildy-r3-5 120 @{ run = 'r3'; args = (& $ar "$lq/fix-r2.resume.md" 'tsk9abc'); completed = 'x' }; $l3 = & $runs
 Expect 'recover: a relaunch''s lineage: the first launch, its ancestors'' run names and ids' ($ln -eq '10:00|wf-a1.resume-2633|wf_b2,wf_a1')   # a typed launch's run name only from its transcript (none here)
-Expect 'recover: a relaunch replaces its original, the same agent + items twice shows once (phases stay); launch -Done closes the lineage, never a live relaunch; a closed relaunch hides its older parent' (
+Expect 'recover: a relaunch replaces its original, same agent + items once (phases stay); launch -Done closes the lineage, never a live relaunch; a closed relaunch hides its parent' (
   "$l1|$l2|$l3" -eq 'fix-r2 ph5 ph6 wf-a1.resume-2633 wf-c3.resume-1|fix-r2 ph5 ph6 wf-c3.resume-1|ph5 ph6 wf-c3.resume-1' -and -not @('wf_a1', 'wf_b2', 'p6-1', 'resume-2633' | Where-Object { $dn -notmatch $_ }).Count)
 Remove-TestKit $k
 Complete-Tests

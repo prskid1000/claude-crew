@@ -19,9 +19,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L27 init · L56 board · L227 budget · L255 launch · L519 recover · L603 pause · L647 resume · L705 program · L749 param ·
-  L755 track · L1041 supervise report · L1083 anomalies · L1112 supervise · L1432 report · L1510 audit · L1570 storage ·
-  L1781 bugbrief · L1887 cleanup · L2007 learn · L2037 decide · L2103 health · L2165 retro due · L2175 tidy ·
-  L2245 the kit origin's main and goodies · L2261 setup · L2327 guard-sendmessage
+  L755 track · L1041 supervise report · L1083 anomalies · L1112 supervise · L1432 report · L1511 audit · L1571 storage ·
+  L1782 bugbrief · L1888 cleanup · L2010 learn · L2040 decide · L2106 health · L2168 retro due · L2178 tidy ·
+  L2248 the kit origin's main and goodies · L2264 setup · L2330 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1443,14 +1443,15 @@ $running = @(if ($Run -notin (Get-KitFinishedRuns)) { Get-JournalRunning $starte
 $cut0 = @(if ($Stopped) { $running }); if ($Stopped) { $running = @() }   # stopped (pause, launch -Done): those steps never finish
 
 $agents = [ordered]@{}; $findings = New-Object System.Collections.ArrayList; $qa = [ordered]@{}; $learn = $null
+$nuUrl = { param($u) ([string]$u -replace '[?#].*$', '').TrimEnd('/').ToLower() }
 foreach ($x in $results) {
   $kind, $id = ($x.label -split ':', 2); $id = ($id -split '@')[0]
   switch ($kind) {
     { $_ -in 'build', 'fix' } {
       $p = if ($agents.Contains($id)) { $agents[$id] } else { $null }
       if ($x.r -is [System.Management.Automation.PSCustomObject]) {
-        $rm = @($x.r.mrs | Where-Object { $_ }); $urls = @($rm | ForEach-Object url)
-        $mrs = @(@($p.mrs | Where-Object { $_ -and $_.url -notin $urls }) + @($rm | ForEach-Object { [ordered]@{ url = $_.url; merged = [bool]$_.merged; mergeState = $(if ($_.mergeState) { [string]$_.mergeState } elseif ($_.merged) { 'MERGED' } else { 'OPEN' }) } }))
+        $rm = @($x.r.mrs | Where-Object { $_ }); $urls = @($rm | ForEach-Object { & $nuUrl $_.url })
+        $mrs = @(@($p.mrs | Where-Object { $_ -and (& $nuUrl $_.url) -notin $urls }) + @($rm | ForEach-Object { [ordered]@{ url = $_.url; merged = [bool]$_.merged; mergeState = $(if ($_.mergeState) { [string]$_.mergeState } elseif ($_.merged) { 'MERGED' } else { 'OPEN' }) } }))
         $nd = @($x.r.deferred | Where-Object { $_ }); $ndIds = @($nd | ForEach-Object id)
         $agents[$id] = [ordered]@{ mrs = $mrs; done = @(@($p.done) + @($x.r.done) | Where-Object { $_ } | Select-Object -Unique)
           deferred = @(@($p.deferred | Where-Object { $_ -and $_.id -notin $ndIds }) + $nd)
@@ -1459,8 +1460,8 @@ foreach ($x in $results) {
       }
       elseif (-not $p) { $agents[$id] = [ordered]@{ mrs = @(); done = @(); deferred = @(); needsLiveCheck = @(); note = ([string]$x.r).Substring(0, [math]::Min(300, ([string]$x.r).Length)) } }
     }
-    'ship' { if ($agents.Contains($id) -and $x.r.mrs) { foreach ($sm in @($x.r.mrs | Where-Object { $_ })) { $u = ([string]$sm.url).TrimEnd('/').ToLower()
-      foreach ($m in $agents[$id].mrs) { if (([string]$m.url).TrimEnd('/').ToLower() -eq $u -and $sm.mergeState) { $m.mergeState = [string]$sm.mergeState; $m.merged = ($sm.mergeState -eq 'MERGED') } } } } }
+    'ship' { if ($agents.Contains($id) -and $x.r.mrs) { foreach ($sm in @($x.r.mrs | Where-Object { $_ })) { $u = & $nuUrl $sm.url
+      foreach ($m in $agents[$id].mrs) { if ((& $nuUrl $m.url) -eq $u -and $sm.mergeState) { $m.mergeState = [string]$sm.mergeState; $m.merged = ($sm.mergeState -eq 'MERGED') } } } } }
     'review' { foreach ($f in $x.r.findings) { [void]$findings.Add([ordered]@{ agent = $id; severity = $f.severity; file = $f.file; line = $f.line; problem = $f.problem; fix = $f.fix; mr = $f.mr }) } }
     { $_ -in 'test', 'retest' } { if ($x.r.checks) { $c = @($x.r.checks); $qa[$id] = [ordered]@{ checks = $c.Count; pass = @($c | Where-Object result -in 'PASS', 'PASS_WITH_NOTE').Count; fail = @($c | Where-Object result -eq 'FAIL').Count; notTested = @($c | Where-Object result -eq 'NOT_TESTED').Count } } }
     'close' { if ($qa.Contains($id)) { $qa[$id].published = [bool]$x.r.ok } }
@@ -1469,10 +1470,10 @@ foreach ($x in $results) {
 }
 $addressed = @($findings | Where-Object { $_.severity -ne 'nit' -and $agents[$_.agent].fixedRound })
 $open = @($findings | Where-Object { $_.severity -ne 'nit' -and -not $agents[$_.agent].fixedRound })
-# "merged" is a snapshot
-foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if (-not $m.merged -and ($u = ConvertFrom-MrUrl $m.url)) {
-  $h = try { Invoke-HostVerb 'mr.get' $u } catch { $null }   # a host adapter that is a goody throws: the journal state stays
-  if ($h.state -eq 'merged') { $m.merged = $true; $m.mergeState = 'MERGED' } elseif ($h.merge_when_pipeline_succeeds) { $m.mergeState = 'SCHEDULED' } } } }
+# host state wins
+foreach ($a in $agents.Values) { foreach ($m in $a.mrs) { if ($u = ConvertFrom-MrUrl $m.url) {
+  $h = try { Invoke-HostVerb 'mr.get' $u } catch { $null }   # a goody host adapter throws
+  if ($h.state -in 'merged', 'opened', 'closed') { $m.merged = $h.state -eq 'merged'; $m.mergeState = if ($m.merged) { 'MERGED' } elseif ($h.state -eq 'closed') { 'NOT_MERGED' } elseif ($h.merge_when_pipeline_succeeds) { 'SCHEDULED' } else { 'OPEN' } } } } }
 $out = [ordered]@{ run = $Run; at = (Get-Date).ToString('s'); running = $running; stopped = $cut0; agents = $agents; openFindings = $open; qa = $qa; learn = $learn }
 $wavesDir = Get-KitPath waves -Create
 $wvf = Join-Path $wavesDir "$Run.json"; $wvt = "$wvf.$PID.tmp"; $out | ConvertTo-Json -Depth 8 | Set-Content $wvt; Move-Item -LiteralPath $wvt -Destination $wvf -Force
@@ -1993,7 +1994,9 @@ if (-not $WorktreesOnly) {
 # service logs and the durable log streams keep their last 5000 lines
 $envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # live service logs: the local env rotates them itself (logMaxMB); rewriting one races its writer
 foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName | Where-Object { -not $_.StartsWith($envLogs, [StringComparison]::OrdinalIgnoreCase) }) + @($script:KitLogMap.streams | Where-Object { $pm.durable.$_ } | ForEach-Object { Get-KitPath $_ }))) {
-  if ((Test-Path $f) -and @(Get-Content $f).Count -gt 5000) { if (-not $DryRun) { Invoke-KitLocked $f { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep } }; [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'rotated to 5000 lines'; path = $f }) }
+  # shared read: a writer may hold it
+  $over = try { $lr = [IO.StreamReader]::new([IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')); try { $ln = 0; while ($ln -le 5000 -and $null -ne $lr.ReadLine()) { $ln++ }; $ln -gt 5000 } finally { $lr.Dispose() } } catch { $false }
+  if ($over) { if (-not $DryRun) { Invoke-KitLocked $f { $keep = Get-Content $f -Tail 5000; Set-Content $f $keep } }; [void]$actions.Add([pscustomobject]@{ mb = 0; why = 'rotated to 5000 lines'; path = $f }) }
 }
 
 }

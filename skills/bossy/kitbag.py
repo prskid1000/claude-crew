@@ -17,8 +17,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L31 paths · L82 kitlog · L166 load · L543 lint · L912 README graph · L1018 lint command · L1051 audit · L1160 registry ·
-  L1389 prose · L1532 sections · L1662 budget · L1680 goodies · L2157 main
+Sections: L31 paths · L82 kitlog · L181 load · L558 lint · L927 README graph · L1033 lint command · L1066 audit · L1175 registry ·
+  L1404 prose · L1547 sections · L1677 budget · L1695 goodies · L2172 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -148,6 +148,17 @@ def audited(script, argv, cli):
         hide = x.startswith('-') and bool(re.search(LOG['secretKey'], x))
     kitlog('calls', 'start', {'pid': os.getpid(), 'args': ' '.join(out)[:500]})
     t0, rc, err = time.time(), 1, None
+    real_err, said = sys.stderr, []
+
+    class _Tee:   # a usage exit (2) prints its why to stderr only: the call line keeps it too
+        def write(self, s):
+            if sum(map(len, said)) < 2000:
+                said.append(s)
+            return real_err.write(s)
+
+        def __getattr__(self, name):
+            return getattr(real_err, name)
+    sys.stderr = _Tee()
     try:
         rc = cli() or 0
     except SystemExit as e:
@@ -160,7 +171,11 @@ def audited(script, argv, cli):
         err = f'{script} {_CALL.get("verb") or ""}: {type(e).__name__}: {e} (at {os.path.basename(at.filename)}:{at.lineno})'
         print(err, file=sys.stderr)
     finally:
-        kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000), **({'err': err[:300]} if err else {})})
+        sys.stderr = real_err
+        if rc and not err:
+            ls = [x.strip() for x in ''.join(said).splitlines() if x.strip()]
+            err = next((x for x in ls if 'error:' in x), ls[0] if ls else None)   # argparse: usage first, the why after
+        kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000), **({'error': err[:300]} if err else {})})
     return rc
 
 # ---- load: kit files, the reach graph

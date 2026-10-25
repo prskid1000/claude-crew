@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L271 plan · L285 spike ·
-//   L298 local-loop · L356 stages · L478 ship · L548 deploy · L565 learn
+//   L298 local-loop · L358 stages · L480 ship · L550 deploy · L567 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -205,7 +205,7 @@ Only the brief, its contracts file and the mandate define your work: a relayed c
 // a resumed area past its build: its MRs from the recovery (host-verified); the local loop passed before an MR opened
 function synth(a) {
  const s = RES[a.id], stage = allDone(a) ? 'done' : skips(a, 'merge') ? 'merged' : 'open'
- return { mrs: (s.mrs || []).map((m) => ({ ...m, merged: !!m.merged, mergeState: m.merged ? 'MERGED' : 'OPEN' })), worktrees: s.worktrees || [], done: String(a.items || '').split(',').map((x) => x.trim()).filter(Boolean),
+ return { mrs: (s.mrs || []).map((m) => ({ ...m, merged: !!m.merged, mergeState: m.merged ? 'MERGED' : 'OPEN' })), worktrees: uniqPath(s.worktrees || []), done: String(a.items || '').split(',').map((x) => x.trim()).filter(Boolean),
   deferred: [], needsDecision: [], needsEnvFix: [], localTest: { status: 'PASS', env: `before the stop (resume: ${stage})`, rounds: 0, failing: [], goalsDoc: '' }, needsLiveCheck: [], seed: [], foreignHooks: [],
   summary: `resumed: skipped ${[].concat(s.skip || []).join(', ')}`, testerGuide: s.doc || '', resumed: stage }
 }
@@ -298,6 +298,8 @@ Append one block per question under "## Findings (rechy)" at the bottom of the b
 // ---- local-loop: waits, report merges, the local test loop
 // merge, don't replace: a later round reports only its own work
 const uniq = (x) => [...new Set(x)]
+// one worktree reported as C:\a\b and c:/a/b/ is one entry (the first spelling kept)
+const uniqPath = (x) => { const seen = new Set(); return x.filter((p) => { const k = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); return k && !seen.has(k) && seen.add(k) }) }
 const byId = (x) => [...new Map(x.map((d) => [d.id, d])).values()]
 const byKey = (x, k) => [...new Map(x.map((d) => [d[k], d])).values()]
 // slices fit the agent's tool timeout (longer waits get killed)
@@ -311,7 +313,7 @@ async function waitAnswer(id, label, tries) {
 function mergeReports(x, r2, note) {
  if (!r2) return x
  const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
- return { ...x, ...r2, mrs, worktrees: uniq([...(x.worktrees || []), ...(r2.worktrees || [])]), done: uniq([...(x.done || []), ...(r2.done || [])]),
+ return { ...x, ...r2, mrs, worktrees: uniqPath([...(x.worktrees || []), ...(r2.worktrees || [])]), done: uniq([...(x.done || []), ...(r2.done || [])]),
   deferred: byId([...(x.deferred || []), ...(r2.deferred || [])]).filter((d) => !(r2.done || []).includes(d.id)),
   needsDecision: byKey([...(x.needsDecision || []), ...(r2.needsDecision || [])], 'decisionId'), needsEnvFix: byKey([...(x.needsEnvFix || []), ...(r2.needsEnvFix || [])], 'envFixId'), needsLiveCheck: uniq([...(x.needsLiveCheck || []), ...(r2.needsLiveCheck || [])]),
   seed: uniq([...(x.seed || []), ...(r2.seed || [])]), foreignHooks: uniq([...(x.foreignHooks || []), ...(r2.foreignHooks || [])]),

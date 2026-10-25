@@ -14,8 +14,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L615 docs · L735 plugins · L749 keepboth ·
-  L768 selftest · L915 CLI
+Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L625 docs · L745 plugins · L759 keepboth ·
+  L778 selftest · L932 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -530,6 +530,13 @@ def held(proj):
     return any(_same_repo(n, proj) for n in names)
 
 
+def no_mr_pipelines(proj):
+    """repos[].ci.mrPipelines false: the repo runs CI only on other branches (deploy), so an MR never gets a pipeline."""
+    return any(isinstance(r, dict) and isinstance(r.get('ci'), dict) and r['ci'].get('mrPipelines') is False
+               and any(_same_repo(str(n), proj) for n in [r.get('name') or ''] + list(r.get('aliases') or []) if n)
+               for r in CFG.get('repos') or [])
+
+
 def auto_merge(worktree, iid, max_wait=90):
     STOP_AT[0] = time.time() + max_wait   # 10 s floor per call
     try:
@@ -573,7 +580,10 @@ def _auto_merge(worktree, iid, max_wait):
     # no CI config -> merge now (merge-when-green would wait forever); CI + no pipeline 5 min after the MR update -> NOT_MERGED
     no_ci = False
     if st is None:
-        if H('ci.config', ref=m.get('target_branch') or '') is False:
+        if no_mr_pipelines(proj):
+            no_ci = True
+            _progress(f'repos[].ci.mrPipelines is false for {proj} (CI runs on other branches only): merging !{iid} on review + local checks')
+        elif H('ci.config', ref=m.get('target_branch') or '') is False:
             no_ci = True
             _progress(f'repo has no CI (no CI config on {m.get("target_branch")}): merging !{iid} now')
         else:
@@ -832,6 +842,13 @@ def selftest():
                and "'raw': 'null'" in res and [v for v, _ in calls] == ['mr.get', 'mr.get'])
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
+        repos0 = CFG.get('repos'); CFG['repos'] = [{'name': 'r', 'ci': {'mrPipelines': False}}]
+        try:
+            calls.clear(); g['_host'] = fake()
+            expect('repos[].ci.mrPipelines false: no pipeline wait, merged at once', merge_word(auto_merge('.', '7', max_wait=0)) == 'MERGED'
+                   and merged() and not merged()[0]['auto'] and not [v for v, _ in calls if v.startswith('ci.')])
+        finally:
+            CFG.pop('repos') if repos0 is None else CFG.update(repos=repos0)
         calls.clear(); g['_host'] = fake(hp={'status': 'running'}, put={'state': 'opened'})
         expect('running checks, nothing scheduled: WAIT', merge_word(auto_merge('.', '7')) == 'WAIT' and merged()[0]['auto'])
         calls.clear(); g['_host'] = lambda v, **a: [{'status': 'failed', 'failure_reason': 'ci_quota_exceeded'}] if v == 'ci.jobs' else fake(hp={'status': 'failed', 'id': 9})(v, **a)

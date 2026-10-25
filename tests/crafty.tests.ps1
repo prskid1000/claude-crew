@@ -30,8 +30,11 @@ try {
   foreach ($n in 'ci', 'cu') { $w = "$r/wt/$n"; git -C "$r/outer" worktree add -q -b $n $w 2>$null; [IO.File]::WriteAllBytes("$(git -C $w rev-parse --path-format=absolute --git-dir)/index", [byte[]]::new(64)) }
   'u' | Set-Content "$r/wt/cu/u.txt"; $ci, $cu = 'ci', 'cu' | ForEach-Object { "$(pwsh @np $D wt remove -Dir "$r/wt/$_" 2>&1) rc=$LASTEXITCODE" }
   Expect "wt remove: a corrupt index is rebuilt; clean: removed, untracked file: refused" ($ci -match '(?s)rebuilt the corrupt index.*rc=0' -and -not (Test-Path "$r/wt/ci") -and $cu -match '(?s)u\.txt.*rc=[1-9]' -and (Test-Path "$r/wt/cu/u.txt"))
+  $w = "$r/wt/ab-outer"; git -C "$r/outer" worktree lock "$r/wt/c-1-outer"; 'main' | Set-Content "$(git -C $w rev-parse --path-format=absolute --git-dir)/claude-target"; 'y' | Set-Content "$w/stray.txt"
+  $ws = (& { pwsh @np $D wt remove -Dir "$r/wt/c-1-outer" -Force; pwsh @np $D wt sync -Dir $w; pwsh @np $D wt sync -Dir "$r/wt" } 2>&1 | Out-String) -replace '\s*\r?\n\s*\|?\s*', ' '   # '|' wrap margins
+  Expect 'wt remove: git''s why; wt sync: dirty -> wt commit line, worktrees root -> its worktrees' ($ws -match 'remove failed.*locked' -and $ws -match 'wt commit -Dir .*ab-outer -Message ''wip: ' -and $ws -match 'holds worktrees.*-outer')
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host adapters: type command, MR URLs, a missing goody (github; gitlab: an unknown host's default)
+# git-host adapters: type command, MR URLs, a missing goody (github; gitlab: unknown hosts)
 $gh = @'
 . $args[0]
 $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
@@ -55,15 +58,14 @@ Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*'
 $bad = pwsh @np $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
 $said = (pwsh @np $D tracker comments $t.id | ConvertFrom-Json).text
 Expect 'tracker comment -File sends it; unknown option = usage error' (@($said) -match '^body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
-# over its prose limit a comment is refused (nothing posted) unless -ProseOk; devtools.py comment the same (--prose-ok)
 $wl = (1..130 | ForEach-Object { "w$_" }) -join ' '; $n0 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $pr = pwsh @np $D tracker comment $t.id $wl -Kind comment-status 2>&1 | Out-String; $prc = $LASTEXITCODE; $n1 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $null = pwsh @np $D tracker comment $t.id $wl -Kind comment-status -ProseOk 'brief format' 2>&1; $pkc = $LASTEXITCODE; $n2 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $dp = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution 2>&1 | Out-String; $dpc = $LASTEXITCODE
 $null = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution --prose-ok 'brief format' 2>&1; $dkc = $LASTEXITCODE; $n3 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
-Expect "prose gate: tracker comment / devtools.py comment over the limit refused, nothing posted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
+Expect "prose gate: tracker / devtools.py comment over the limit refused, unposted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
 Remove-Item Env:KIT_TRACKER_TYPE
-# tracker command backend on recorded answers (an unknown call fails)
+# tracker command backend on recorded answers (unknown call fails)
 $tb = @'
 . $args[0]; $global:log = [Collections.Generic.List[string]]::new()
 $__cfg = '{"tracker":{"commands":{"view":"mytr view {id}","status":"mytr status {id} {status}","comment":"mytr comment {id} {text}","create":"mytr create {list} {name}","list":"mytr list {list} {status}"}}}' | ConvertFrom-Json
@@ -78,12 +80,12 @@ $res = Invoke-PsTest 'tracker-test' $tb @(Lib)
 Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'command'
 $kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
-# a stale lock that vanishes between the check and the read (Test-Path stub removes it) must not throw
+# a stale lock gone between check and read (Test-Path stub): no throw
 $kl = pwsh -NoProfile -Command ". '$(Lib)'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
 Expect "Invoke-KitLocked: a lock removed mid-check is no crash ($kl)" ("$kl".Trim() -eq 'ran')
 $mv = pwsh -NoProfile -Command ". '$(Lib)'; foreach (`$e in [IO.IOException]::new('p', -2147024809), [ArgumentException]::new('p'), [IO.IOException]::new('b', -2147024864)) { Test-KitMoveUnsupported `$e }; `$f = '$(Kd)/atomic.json'; Write-KitAtomic `$f 'a'; Write-KitAtomic `$f 'b'; Get-Content `$f"
 Expect "Write-KitAtomic: Win32 87 / ArgumentException copy over, a sharing violation retries ($mv)" ("$mv" -eq 'True True False b')
-# a crash in any verb exits 1 (a statement error alone kept exit 0), a bad parameter 2; rows: verb body, args, exit, stderr
+# a crash exits 1 (a statement error alone kept 0), a bad parameter 2
 $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
   $e = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
   if ($LASTEXITCODE -ne $r[2] -or $e.Trim() -notmatch $r[3]) { "$($r[0]) -> $LASTEXITCODE $($e.Trim())" } }
@@ -121,9 +123,6 @@ if ($IsWindows) {   # npm .cmd shim: user text with cmd characters reaches the p
 # pipes: busy only with a head pipeline
 $pt = @'
 . $args[0]
-$ast = [Management.Automation.Language.Parser]::ParseFile($args[1], [ref]$null, [ref]$null)
-$fn = $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Invoke-Pipes' }, $true) | Select-Object -First 1
-. ([scriptblock]::Create($fn.Extent.Text))
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
  if ($Verb -eq 'mr.get') { if ($A.n -ne '9') { [pscustomobject]@{ state = 'opened'; head_pipeline = $null; target_branch = 'main' } } }
  elseif ($Verb -eq 'ci.config') { if ($A.repo -match 'nocirepo') { $false } else { $null } }   # no CI file / a failed call
@@ -131,13 +130,15 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
 $a = Invoke-Pipes -Mrs 'https://h.example/g/nocirepo/-/merge_requests/1' -MaxMinutes 0 | ConvertFrom-Json
 $b = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json
 $c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinutes 0 | ConvertFrom-Json
+function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
+"mr-off:$((Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json).done)"
 "no-ci:$($a.done -and $a.mrs[0].status -eq 'no-ci')"
 "no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
 "unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
 '@
-$res = Invoke-PsTest 'pipes-test' $pt @((Lib), $D)
-Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown'
-# migrations: the repo's own check, Liquibase (goody), any other tool UNRUN; $mig: add files (path = text), commit, check
+$res = Invoke-PsTest 'pipes-test' $pt @($D)
+Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown', 'mr-off'
+# migrations: own check, Liquibase (goody), else UNRUN; $mig: add files, commit, check
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"
 Save-GitRepo $ud init
@@ -162,7 +163,7 @@ $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
 Expect 'gate: runs the command; no heap cap without the goody build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
-# gate: half the file cache counts as free; the queue head starts after 20 min above a 5% RAM floor
+# gate: half the file cache is free; the queue head starts after 20 min above a 5% RAM floor
 $gt = @'
 . $args[0]
 "kinds:$((@('py -m unittest', 'py t/test_a.py', 'echo running tests', 'ng test', 'mvn package -DskipTests', 'mvn verify', 'npx tsc --noEmit -p cypress/tsconfig.json', 'npx cypress run') | ForEach-Object { Get-GateKind $_ }) -join ',' -eq 'python,python,other,ng-test,maven,maven-test,typecheck,e2e')"
@@ -178,10 +179,10 @@ $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
 $gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
-Expect 'guard: a write off the kit layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
+Expect 'guard: a write off the layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
 $gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
-# a goody's guard rule may return a note (additionalContext, the call not decided); no runtimes goody: one line
+# a goody guard rule may add a note (additionalContext, undecided); no runtimes goody: one line
 $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
@@ -191,8 +192,8 @@ $lw = New-LinkedKit 'main kit' @{ tracker = @{ type = 'jira' }; zz = @(@{ p = 'q
 $tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 'tracker.type' 'none'; (Get-KitSetting 'zz' 'dflt').p; Invoke-GitFetch -Dir '$lw' -TimeoutSec 20" 2>&1 | Out-String
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
-Expect 'lib: a deleted tracker task leaves tracking (an outage page does not); a pid reused after a reboot holds nothing' ($gt -eq 'True False False True|False True')
-# bossy.ps1 storage: verdicts on minute samples, the learned normal, one-pass folder sizes, drill-down, the db watchdog and the rescue hold
+Expect 'lib: a deleted tracker task leaves tracking (not on an outage page); a reused pid after a reboot holds nothing' ($gt -eq 'True False False True|False True')
+# storage: verdicts, learned normal, folder sizes, drill-down, db watchdog, rescue hold
 $sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
 'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
 $sto = Invoke-PsTest storage @'
@@ -216,11 +217,11 @@ Set-KitStorageState { param($s) $s.rescues.Z.at = (Get-Date).AddHours(-2).ToStri
 [IO.File]::WriteAllText((Get-KitStorageFile Q), (@(0..2 | ForEach-Object { '{"t":' + ([DateTimeOffset]::Now.ToUnixTimeSeconds() - 60 * $_) + ',"free":' + (50 + $_) + ',"size":100}' }) -join "`n") + "`n")
 Invoke-Storage -Drive Q -Since 1h
 '@ @($O, $sd)
-Expect 'storage verdict: anomalous fill below watchFreeGB = ACT + rescue; far from full = WATCH; full within 1 h = rescue; a normal rate or none = OK; 1 GB per heartbeat = scan; floors only on a kit drive; a burst = no rescue' ((($sto | Where-Object { $_ -like 'v:*' -or $_ -like 'burst:*' }) -join ' ') -eq 'v:ACT,True,True v:WATCH,False,True v:ACT,True,True v:OK,False,True v:OK,False,False v:OK,False,False burst:ACT,False')
+Expect 'storage verdicts: odd fill ACT + rescue, far WATCH, full in 1 h rescue, normal OK, 1 GB/beat scan, kit drives only, burst no rescue' ((($sto | Where-Object { $_ -like 'v:*' -or $_ -like 'burst:*' }) -join ' ') -eq 'v:ACT,True,True v:WATCH,False,True v:ACT,True,True v:OK,False,True v:OK,False,False v:OK,False,False burst:ACT,False')
 Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contains 'normal:0.5')
 Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
-Expect 'storage: a query above maxGB is killed (43), ten small ones are not; the rescue kills the one holding temp (42) once per 10 min and holds builds until holdMinutes' ($sto -contains 'db:2:43,42:hold Z/False')
+Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
 $pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
@@ -242,13 +243,13 @@ $null = Invoke-KitParamVerb pin idle.graceMinutes 9; $null = Invoke-KitParamVerb
 '@ @("$pk/lib.ps1")
 Expect 'params: shadow = default; then a step a day toward p95 x1.5; held at 2x' ($pr -contains 'd2:10' -and "$pr" -match 'slow:20:3[78]\.')
 Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4:1:0' -and $pr -contains 'ok:8')
-Expect 'params: a timeout steps up x1.5 at once; no risky step for 7 d; then -10% a day, only after 5 new observations' ($pr -contains 'fail:90' -and $pr -contains 'hold:90' -and $pr -contains 'down1:81' -and $pr -contains 'wait5:81' -and $pr -contains 'down2:72.9')
-Expect 'params: 2+ new ACTs step the beat down; a holder back after its grace = short (once); show: last change + next risky step' ($pr -contains 'beat:10' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
+Expect 'params: a timeout steps up x1.5 at once; no risky step for 7 d, then -10% a day after 5 new observations' ($pr -contains 'fail:90' -and $pr -contains 'hold:90' -and $pr -contains 'down1:81' -and $pr -contains 'wait5:81' -and $pr -contains 'down2:72.9')
+Expect 'params: 2+ new ACTs step the beat down; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:10' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
 Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
 Remove-TestKit $k
-# ---- OS helpers on Linux / macOS (was the goody posix)
+# ---- OS helpers on Linux / macOS
 $k = New-TestKit posix
 if ($IsWindows) { 'SKIP posix (Linux / macOS only)' } else {
   $r = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; `$m = Get-SysMem; `$p = @(Get-SysProcs | Where-Object Id -eq `$PID); `$d = Join-Path '$(Kd)' 'l'; New-DirLink `$d '$(Kd)'; ""`$(`$m.TotalGB -gt 0 -and `$m.AvailGB -gt 0)|`$(`$p.Count)|`$(@(Get-DirLinks '$(Kd)' 1).Count)""" 2>&1 | Out-String

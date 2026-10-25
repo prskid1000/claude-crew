@@ -1054,12 +1054,12 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
   # call lines (calls stream): start, then end with rc (0 returned, 1 crash, 2 bad parameters; a verb's own exit: rc 'exit', its code is not visible here) and ms
   $script:KitLogOn = $Fn -notmatch '^Invoke-Guard'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards run on every tool call: they log their denials
-  $end = { if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end @{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } } }
+  $end = { param([string]$Why) if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($Why) { @{ error = $Why } } else { @{} })) } }   # rc 2: the usage message (tidy digest "Script errors")
   # a crash exits 1 (2 = bad parameters), never 0: a statement error alone lets `pwsh -File` exit 0, a throw keeps a caller's stale $LASTEXITCODE
   $run = { param([object[]]$pa, [hashtable]$nm)
     $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; & $end; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"); exit 2 }
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; $why = "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
     if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
