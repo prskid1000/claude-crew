@@ -62,6 +62,37 @@ $p = @(Invoke-Deploy plan -Json | ConvertFrom-Json); $s = @{}; foreach ($x in $p
 '@
 $res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq)
 Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN; a timeout keeps the rows already checked (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel')
+# an MR whose merge is in the deploy branch's last green job: DEPLOYED from one git rev-list, never probed; the request is on disk before the probe
+$gr = Join-Path (Kd) 'anc-repo'; $null = git init -q -b main $gr; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c1
+$c1 = git -C $gr rev-parse HEAD; git -C $gr branch staging; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c2; $c2 = git -C $gr rev-parse HEAD
+& $J @{ repos = @(@{ name = 'api'; checkout = $gr; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } $cfgF
+& $J @{ tasks = @{ v = @{ task = 'v'; mrs = @('api!1'); done = $false } }; automerge = @{} } $tf
+$fa = Join-Path (Kd) 'fake-deployed-anc.ps1'
+Set-Content $fa @'
+$m = $args[[array]::IndexOf($args, '-Mrs') + 1]; Add-Content $env:FAKE_ASKED $m
+$pend = (Test-Path $env:FAKE_PENDING) -and (Get-Content $env:FAKE_PENDING -Raw) -match 'api!2'
+foreach ($x in $m -split ',') { "{`"mr`":`"$x`",`"target`":`"stage`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"pending:$pend`"}" }
+exit 1
+'@ -Encoding utf8
+$ua = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$KitCmd.qa = $args[1]; $c1 = $args[2]; $c2 = $args[3]; $env:FAKE_ASKED = $args[4]; $env:FAKE_PENDING = Join-Path (Get-KitPath deploys -Create) 'pending.json'; Remove-Item $env:FAKE_PENDING -ErrorAction SilentlyContinue
+function Invoke-HostApi([string]$Path) {
+  if ($Path -match 'merge_requests\?') { if ($Path -match 'page=1') { @([pscustomobject]@{ iid = 1; merge_commit_sha = $c1; target_branch = 'main' }, [pscustomobject]@{ iid = 2; merge_commit_sha = $c2; target_branch = 'main' }) }; return }
+  if ($Path -match 'pipelines/7/jobs') { return @([pscustomobject]@{ name = 'deploy'; status = 'success' }) }
+  if ($Path -match 'pipelines\?') { return @([pscustomobject]@{ id = 7; sha = $c1; status = 'success'; updated_at = (Get-Date).AddHours(-6).ToString('s') }) }
+}
+$p = @((@(Invoke-Deploy request -Mrs 'api!2' -Run w9 -Json) -notmatch '^requested ') -join "`n" | ConvertFrom-Json); $asked = @(Get-Content $env:FAKE_ASKED)
+"skip:$(($asked -join ';') -eq 'api!2')"
+"batch:$($p[0].status -eq 'READY' -and (@($p[0].mrs.mr) -join ',') -eq 'api!2')"
+"first:$($p[0].mrs[0].detail -eq 'pending:True')"
+$rp = @(Get-KitValue 'repos' @()); $two = @([pscustomobject]@{ name = 'api'; checkout = $rp[0].checkout; deploys = @($rp[0].deploys[0], [pscustomobject]@{ target = 'stage'; ssh = @{ host = 'h' } }) })
+$gone = @([pscustomobject]@{ name = 'api'; checkout = 'Z:/no-such-checkout'; deploys = $rp[0].deploys })
+"degrade:$((Get-DeployedByAncestry @('api!1') $two @('stage')).Count -eq 0 -and (Get-DeployedByAncestry @('api!1') $gone @('stage')).Count -eq 0 -and (Get-DeployedByAncestry @('api!1') $rp @('stage') 14 (Get-Date).AddSeconds(-1)).Count -eq 0)"
+'@
+$res = Invoke-PsTest 'deploy-ancestry' $ua @($O, $fa, $c1, $c2, (Join-Path (Kd) 'asked.txt'))
+Expect-Each $res 'deploy plan: an MR in the last green deploy job is not probed; the request is recorded before the probe; another deploy to the same env, no checkout or a passed deadline -> probed (#)' @('skip', 'batch', 'first', 'degrade')
 $it = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]

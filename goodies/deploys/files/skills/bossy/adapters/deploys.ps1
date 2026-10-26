@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L23 intest · L102 deploy · L217 supervise
+Sections: L13 helpers · L61 intest · L140 deploy · L257 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -18,6 +18,44 @@ function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1
   if ($rp) { "$($rp.name)!$($Matches.i)" } else { $m }
+}
+# MRs in a CI deploy's last green job (its commit holds the merge): mr|target -> detail; per repo one MR list and one git
+# rev-list per deploy instead of one pokey.ps1 deployed probe per MR (229 MRs ran past 600 s); past $Until the rest is probed
+function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int]$Days = 14, [datetime]$Until = (Get-Date).AddSeconds(200)) {
+  $hit = @{}; $env:GIT_TERMINAL_PROMPT = '0'
+  foreach ($rp in $Repos) {
+    if ((Get-Date) -gt $Until) { break }
+    $dir = [string]$rp.checkout
+    $deps = @($rp.deploys | Where-Object { $_.target -in $Targets -and $_.branch -and $_.job -and -not ($_.ssh -or $_.awsStack -or $_.probe -or $_.tag -or $_.manual -or $_.laneApk) })
+    $want = @{}; foreach ($m in $Mrs) { $c = Get-CanonMr (ConvertTo-MrRef $m); if ($c -match "^$([regex]::Escape($rp.name))!(\d+)$") { $want[$Matches[1]] = $m } }
+    if (-not $want.Count -or -not $deps.Count -or -not $dir -or -not (Test-Path $dir)) { continue }
+    $p = Get-HostProject $rp.name; $shaOf = @{}; $tb = @{}; $got = @{}; $det = @{}
+    $after = (Get-Date).AddDays( - ($Days + 1)).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    for ($pg = 1; $pg -le 5 -and $shaOf.Count -lt $want.Count -and (Get-Date) -lt $Until; $pg++) {   # newest first; an MR not listed is probed as before
+      $page = @(try { Invoke-HostApi "projects/$p/merge_requests?state=merged&updated_after=$after&order_by=updated_at&per_page=100&page=$pg" } catch { }) | Where-Object { $_ }
+      foreach ($x in $page) { $s = @($x.squash_commit_sha, $x.merge_commit_sha, $x.sha) | Where-Object { $_ } | Select-Object -First 1; if ($s -and $want.ContainsKey("$($x.iid)")) { $shaOf["$($x.iid)"] = $s; if ($x.target_branch) { $tb[$x.target_branch] = 1 } } }
+      if ($page.Count -lt 100) { break }
+    }
+    if (-not $shaOf.Count) { continue }
+    $null = git -C $dir fetch -q origin @($deps.branch) @($tb.Keys) 2>$null
+    $known = @($shaOf.Values | Select-Object -Unique | git -C $dir cat-file --batch-check 2>$null | Where-Object { $_ -match '^\S+ commit ' } | ForEach-Object { ($_ -split ' ')[0] })
+    if (-not $known.Count) { continue }
+    foreach ($d in $deps) {
+      if ((Get-Date) -gt $Until) { break }
+      $base = $null
+      foreach ($pl in @(try { Invoke-HostApi "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10" } catch { }) | Where-Object { $_ -and $_.sha }) {
+        $job = @(try { Invoke-HostApi "projects/$p/pipelines/$($pl.id)/jobs?per_page=100" } catch { }) | Where-Object { $_.name -like $d.job } | Select-Object -First 1
+        if ($job.status -eq 'success') { $base = [string]$pl.sha; break }
+      }
+      if (-not $base) { continue }
+      $out = @($known | git -C $dir rev-list --stdin "^$base" 2>$null); if ($LASTEXITCODE) { continue }   # commits the base lacks
+      $miss = [Collections.Generic.HashSet[string]]::new([string[]]$out)
+      foreach ($i in $shaOf.Keys) { $s = $shaOf[$i]; if ($s -in $known -and -not $miss.Contains($s)) { $key = "$($want[$i])|$($d.target)"; $got[$key] = 1 + [int]$got[$key]; $det[$key] = "$($d.job) finished on $($base.Substring(0, [math]::Min(8, $base.Length))), which holds $($s.Substring(0, [math]::Min(8, $s.Length)))" } }
+    }
+    # a target counts only when every deploy of this repo to it holds the MR (pokey checks each)
+    foreach ($key in $got.Keys) { $tgt = ($key -split '\|', 2)[1]; if ($got[$key] -eq @($rp.deploys | Where-Object { $_.target -eq $tgt }).Count) { $hit[$key] = $det[$key] } }
+  }
+  $hit
 }
 
 # ---- intest: promoted tasks live on a test env -> inTest
@@ -151,16 +189,18 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
   elseif ($cand.Count) {
     $lim = [int](Get-KitSetting 'deploy.planTimeoutSec' 600)   # 180 s left a slow test env UNKNOWN
+    $anc = Get-DeployedByAncestry @($cand.Keys) $repos $targets $Days (Get-Date).AddSeconds($lim / 3)
+    foreach ($kv in $anc.GetEnumerator()) { $km, $kt = $kv.Key -split '\|', 2; if (-not $rows.ContainsKey($km)) { $rows[$km] = @() }; $rows[$km] += [pscustomobject]@{ mr = $km; target = $kt; state = 'DEPLOYED'; detail = $kv.Value } }
     # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
     $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
-        $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) }); if (-not $tm.Count) { continue }
+        $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) -and -not $anc.ContainsKey("$_|$t") }); if (-not $tm.Count) { continue }
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
         foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
         $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
         $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
       })
-    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: checking $($cand.Count) MR(s) on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
+    if (-not $Json) { [Console]::Error.WriteLine("deploy plan: $($anc.Count) MR x env in a green deploy job; probing the rest on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
     $until = (Get-Date).AddSeconds($lim)
     foreach ($q in $runs) {
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
