@@ -50,7 +50,8 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## pokey
-- Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x).
+- pokey.ps1 api -OutDir refused 9x with a number: the variable was reused (PowerShell names are case-insensitive, $o is $O); pass -OutDir from crafty.ps1 dir in a distinctly named variable (9x)
+- Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x). (2×)
 - Run pokey.ps1 -Check before every publish: it catches missing or renamed evidence references so no broken report goes out (1x win).
 - A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
