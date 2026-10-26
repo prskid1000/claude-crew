@@ -1,6 +1,6 @@
 <#
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
- wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>']: over prose limits = refused)
+ wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>']: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]  gated checks
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L242 stack · L417 gate · L678 check · L830 pipes · L868 guard · L1329 dir · L1339 checkpoint ·
-  L1363 tracker · L1402 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L717 check · L869 pipes · L907 guard · L1368 dir · L1378 checkpoint ·
+  L1402 tracker · L1441 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -28,7 +28,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -47,6 +47,43 @@ function Resolve-Wt($d) {
   $d
 }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
+# repos[].regenerate: a rebase conflict only in generated files -> the target's copy, rebase finished, the run commands, last commit
+# amended, pushed; returns 'regenerated ...' or the refusal reason (a failing command: back to the plain conflict)
+function Sync-Generated($d, $t, $head0) {
+  $gen = @(Get-RepoConf ("$(git -C $d remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1] 'regenerate' @())
+  if (-not $gen.Count) { return '' }
+  $taken = @(); $gd = GitDir $d; $last = ''
+  while ((Test-Path "$gd/rebase-merge") -or (Test-Path "$gd/rebase-apply")) {
+    $u = @(git -C $d -c core.quotepath=false diff --name-only --diff-filter=U)
+    $other = @($u | Where-Object { $f = $_; -not ($gen | Where-Object { $f -like $_.path }) })
+    $sig = "$(git -C $d rev-parse -q --verify REBASE_HEAD)|$($u -join '|')"   # same commit, same files: no progress
+    if ($sig -eq $last) { $other = $u }
+    if (-not $u.Count -or $other.Count) { return "not only generated files conflict ($($other -join ', '))$(if ($taken) { "; took the target's $($taken -join ', '): after the rebase run repos[].regenerate run" })" }
+    $last = $sig
+    foreach ($f in $u) {   # in a rebase, ours = the target side; none = the target deleted it
+      git -C $d checkout -q --ours -- $f 2>$null
+      if ($LASTEXITCODE) { git -C $d rm -q -- $f 2>$null } else { git -C $d add -- $f }
+    }
+    $taken = @($taken + $u | Select-Object -Unique)
+    git -C $d diff --cached --quiet
+    $step = if ($LASTEXITCODE) { 'continue' } else { 'skip' }   # a commit that only changed the generated file
+    $null = git -C $d -c core.editor=true rebase "--$step" 2>&1
+  }
+  if (-not $taken.Count) { return 'the rebase stopped without a conflict' }
+  $mr = if ($Mrs) { ($Mrs -split '[!/#]')[-1] } else { try { "$(@(Get-MergedMrs $d (G -C $d rev-parse --abbrev-ref HEAD).Trim() $t 'opened' | ForEach-Object iid)[0])" } catch { '' } }
+  $runs = @($gen | Where-Object { $p = $_.path; $taken | Where-Object { $_ -like $p } } | ForEach-Object { @($_.run) } | Select-Object -Unique | Where-Object { $mr -or $_ -notmatch '\{mr\}' })   # {mr}: only once the MR exists
+  foreach ($c in $runs) {
+    $tok = Split-KitCommand $c @{ mr = $mr; target = $t }
+    $r = Invoke-KitExe $tok[0] @($tok | Select-Object -Skip 1) 900 -Cwd $d
+    if ($r.code) { git -C $d reset -q --hard $head0; $null = git -C $d rebase "origin/$t" 2>&1; return "regenerate failed (exit $($r.code)): $c`n$("$($r.err)$($r.out)".Trim() -split "`n" | Select-Object -Last 5)" }
+  }
+  $own = (G -C $d rev-list --count "origin/$t..HEAD").Trim() -ne '0'   # none: every commit only changed generated files
+  git -C $d add -A -- @($taken); git -C $d diff --cached --quiet
+  if ($LASTEXITCODE) { if ($own) { G -C $d commit -q --amend --no-edit | Out-Null } else { G -C $d commit -q -m "chore: regenerate $($taken -join ', ')" | Out-Null; $own = $true } }
+  $br = (G -C $d rev-parse --abbrev-ref HEAD).Trim(); git -C $d rev-parse -q --verify "refs/remotes/origin/$br" *> $null
+  $pushed = if (-not $LASTEXITCODE -and $br -ne $t -and $own) { G -C $d push -q --force-with-lease origin "HEAD:refs/heads/$br" | Out-Null; "; pushed ${br}: run devtools.py merge again" } else { '' }
+  "regenerated $($taken -join ', ') (target's copy + $($runs.Count) command(s)$(if (-not $mr) { ', no MR yet: {mr} commands skipped' }))$pushed"
+}
 function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { Write-KitAtomic $f "$v`n" } elseif (Test-Path $f) { Get-Content $f } }
 function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
@@ -151,8 +188,10 @@ switch ($Action) {
     $t = Meta $Dir 'target'; if (-not $t) { throw "no target for ${Dir}: git -C $Dir rebase origin/<target>" }
     if (git -C $Dir status --porcelain --untracked-files=no) { throw "uncommitted changes in ${Dir}: crafty.ps1 wt commit -Dir $Dir -Message 'wip: <what>' (WIP is fine; never git stash), then wt sync again" }
     G -C $Dir fetch -q origin $t | Out-Null
+    $head0 = (G -C $Dir rev-parse HEAD).Trim()
     git -C $Dir rebase "origin/$t"
-    if ($LASTEXITCODE) { "REBASE CONFLICT. Append-only files (changelog masters, nav/i18n lists): $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code: resolve by hand. Then git add + git -C $Dir rebase --continue, and re-run crafty.ps1 check."; exit 1 }
+    $why = if ($LASTEXITCODE) { Sync-Generated $Dir $t $head0 } else { '' }
+    if ($why -match '^regenerated ') { $why } elseif ($why) { $why; "REBASE CONFLICT. Append-only files (changelog masters, nav/i18n lists): $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code: resolve by hand. Then git add + git -C $Dir rebase --continue, and re-run crafty.ps1 check."; exit 1 }
     "rebased onto origin/$t"
   }
   'commit' {

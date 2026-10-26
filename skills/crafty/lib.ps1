@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L623 tracker · L858 git-host · L974 kitlog · L1086 params ·
-  L1249 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L628 tracker · L863 git-host · L979 kitlog · L1091 params ·
+  L1254 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -402,18 +402,21 @@ function Test-KitLeaseBack([string]$Agent) {
   Set-KitLeaseReleased $Agent $null
 }
 
-function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
+function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
   $res = { param($c, $o, $e, $t = $false) [pscustomobject]@{ code = $c; out = $o; err = $e; timedOut = $t } }
   $cmd = Get-Command $Exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd.CommandType -eq 'ExternalScript') { $app = Get-Command $Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if ($app) { $cmd = $app } }   # an npm .ps1 shim: its .cmd keeps the timeout
   if (-not $cmd) { return & $res 127 '' "$Exe is not on PATH" }
   if ($cmd.CommandType -ne 'Application') {
-    $o = @(& $Exe @A 2>&1); $c = [int]$LASTEXITCODE; $so = @(); $se = @()
+    if ($Cwd) { Push-Location -LiteralPath $Cwd }
+    try { $o = @(& $Exe @A 2>&1); $c = [int]$LASTEXITCODE } finally { if ($Cwd) { Pop-Location } }
+    $so = @(); $se = @()
     foreach ($x in $o) { if ($x -is [Management.Automation.ErrorRecord]) { $se += "$x" } else { $so += "$x" } }
     return & $res $c ($so -join "`n") ($se -join "`n")
   }
   $si = [Diagnostics.ProcessStartInfo]::new($cmd.Source)
   if ($Raw) { $si.Arguments = $Raw } else { foreach ($x in @($A)) { $si.ArgumentList.Add([string]$x) } }
+  if ($Cwd) { $si.WorkingDirectory = $Cwd }
   $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
   $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
   $p = [Diagnostics.Process]::Start($si)
@@ -558,9 +561,11 @@ function Invoke-KitAdapter([string]$Kind, [string]$Name, [string]$Verb, [hashtab
   if ($f.File) { Add-KitExtraUse $f.File }   # a goody's adapter in use
   & $f $a $Verb
 }
+# a config command line -> argv: quotes group, {name} = $a.name
+function Split-KitCommand([string]$Line, [hashtable]$a) { @([regex]::Matches($Line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) }) }
 function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$a) {
   $line = [string]$(if ($Commands) { $Commands.$Verb }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
-  $t = @([regex]::Matches($line, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { [regex]::Replace($_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value, '\{(\w+)\}', { param($m) [string]$a[$m.Groups[1].Value] }) })
+  $t = Split-KitCommand $line $a
   $r = Invoke-KitRetry { Invoke-KitNetExe $t[0] @($t | Select-Object -Skip 1) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
   if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
   $o = "$($r.out)".Trim(); if ($o -match '^[\[{]') { try { return ($o | ConvertFrom-Json) } catch {} }; $o
@@ -960,14 +965,14 @@ function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fiel
   if (-not $v) { Write-Warning "githost: no verb for $Path"; return $null }
   Invoke-HostVerb $v $a -NoMemo:$NoMemo
 }
-# merged MRs of a branch, from the host (squash merges too: their tip is never in the target); $Dir = a checkout or git dir of the repo
-function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) {
+# merged (or -State opened) MRs of a branch, from the host (squash merges too: their tip is never in the target); $Dir = a checkout or git dir of the repo
+function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$State = 'merged') {
   $url = "$(git -C $Dir remote get-url origin 2>$null)".Trim()
   if ($url -notmatch '^(?:https?://(?:[^@/]+@)?(?<host>[^/]+)/|[^@]+@(?<host>[^:]+):)(?<path>.+?)(?:\.git)?/?$') { return @() }
   $hostName = $Matches.host; $path = $Matches.path -replace '/_git/', '/' -replace '^v3/', ''
   $type = if ($hostName -eq $KitConf.GitHost) { $script:HostType } else { Get-HostKind $hostName }
   if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
-  $q = @{ repo = $path; type = $type; source_branch = $Branch; state = 'merged'; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
+  $q = @{ repo = $path; type = $type; source_branch = $Branch; state = $State; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
   @(Invoke-HostVerb 'mr.list' $q | Where-Object { $_ -and (-not $Target -or $_.target_branch -eq $Target) })
 }
 

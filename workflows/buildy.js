@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L271 plan · L285 spike ·
-//   L298 local-loop · L358 stages · L480 ship · L550 deploy · L567 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L272 plan · L286 spike ·
+//   L299 local-loop · L359 stages · L481 ship · L551 deploy · L568 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -251,7 +251,8 @@ const isHeld = (m) => HOLD.includes('*') || HOLD.includes(m.repo) || HOLD.some((
 const CONSUMER = /(^|[\/_.-])(web|ui|frontend|front|app|apps|mobile|android|ios|client|clients|portal|spa)([\/_.-]|$)/i
 const isConsumer = (m) => CONSUMER.test(m.repo || '') || CONSUMER.test(((m.url || '').split('/-/')[0] || '').split('/').pop() || '')
 const toShip = (r) => { const open = r.mrs.filter((m) => !m.merged && !isHeld(m)); return [...open.filter((m) => !isConsumer(m)), ...open.filter(isConsumer)] }
-const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONFLICT: & ${DEV} wt sync -Dir <worktree>. A rebase conflict ONLY in
+const SYNC_NOTE = `Before each merge, and whenever devtools.py merge prints CONFLICT: & ${DEV} wt sync -Dir <worktree> -Mrs <iid> (it regenerates,
+amends and pushes kit.local.json repos[].regenerate files itself: "regenerated ..." -> devtools.py merge again). A rebase conflict ONLY in
 append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists): python ${DT} keepboth <file>, no conflict marker
 left, git add, git -c core.editor=true rebase --continue, & ${DEV} check -Dir <module>, git push --force-with-lease (the MR's own branch
 only), then devtools.py merge again. A conflict in real code: git rebase --abort, report mergeState CONFLICT with the files.`

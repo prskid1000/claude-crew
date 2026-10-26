@@ -33,6 +33,17 @@ try {
   $w = "$r/wt/ab-outer"; git -C "$r/outer" worktree lock "$r/wt/c-1-outer"; 'main' | Set-Content "$(git -C $w rev-parse --path-format=absolute --git-dir)/claude-target"; 'y' | Set-Content "$w/stray.txt"
   $ws = (& { pwsh @np $D wt remove -Dir "$r/wt/c-1-outer" -Force; pwsh @np $D wt sync -Dir $w; pwsh @np $D wt sync -Dir "$r/wt" } 2>&1 | Out-String) -replace '\s*\r?\n\s*\|?\s*', ' '
   Expect 'wt remove: git''s why; wt sync: dirty -> wt commit line, worktrees root -> its worktrees' ($ws -match 'remove failed.*locked' -and $ws -match 'wt commit -Dir .*ab-outer -Message ''wip: ' -and $ws -match 'holds worktrees.*-outer')
+  # wt sync, repos[].regenerate: a binary generated file conflicts -> target's copy + command, amended, pushed; a failing command -> the conflict
+  $g = "$r/gen"; git init -q --bare "$r/fix.git"; git clone -q "$r/fix.git" $g 2>$null; 'gen.bin binary' | Set-Content "$g/.gitattributes"; 'base' | Set-Content "$g/gen.bin"
+  Save-GitRepo $g base; git -C $g push -q origin HEAD:main; git -C $g checkout -q -b f; 'mine' | Set-Content "$g/gen.bin"; 'a' | Set-Content "$g/a.txt"; Save-GitRepo $g mine; 'm2' | Set-Content "$g/gen.bin"; Save-GitRepo $g stamp
+  git -C $g push -q origin f; git -C $g checkout -q main; 'theirs' | Set-Content "$g/gen.bin"; Save-GitRepo $g theirs; git -C $g push -q origin main
+  git -C $g checkout -q f; 'main' | Set-Content "$g/.git/claude-target"; $kl = "$k/skills/crafty/kit.local.json"
+  $sy = foreach ($run in 'node -e process.exit(3)', 'node -e "require(''fs'').writeFileSync(''gen.bin'', ''regen {mr} {target}'')"') {
+    & $J @{ repos = @(@{ name = 'fix'; regenerate = @(@{ path = '*.bin'; run = $run }) }) } $kl 6
+    "$(pwsh @np $D wt sync -Dir $g -Mrs '!7' 2>&1) rc=$LASTEXITCODE mid=$(Test-Path "$g/.git/rebase-merge")"; git -C $g rebase --abort 2>$null }
+  Remove-Item $kl
+  Expect "wt sync regenerate: failing command keeps the conflict; else target's copy + command, amended, pushed" ($sy[0] -match '(?s)regenerate failed.*REBASE CONFLICT.*rc=1 mid=True' -and $sy[1] -match 'regenerated gen\.bin.*pushed f.*rc=0' -and
+    (Get-Content "$g/gen.bin") -eq 'regen 7 main' -and (git -C $g rev-list --count origin/main..origin/f) -eq 1 -and (git -C $g show --stat --format= origin/f) -match 'a\.txt')
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters: type command, MR URLs, a missing goody, a repos[].ci object
 $gh = @'
@@ -194,35 +205,6 @@ $tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 't
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID))" }
 Expect 'lib: a deleted tracker task leaves tracking (not on an outage page); a reused pid after a reboot holds nothing' ($gt -eq 'True False False True|False True')
-# storage: verdicts, learned normal, folder sizes, drill-down, db watchdog, rescue hold
-$sd = Join-Path (Kd) 'stree'; foreach ($f in 'a/x/1.bin', 'a/y/2.bin', 'b/3.bin') { New-Item -ItemType Directory -Force (Split-Path "$sd/$f") | Out-Null; [IO.File]::WriteAllBytes("$sd/$f", [byte[]]::new(1MB)) }
-'if ($env:USE10) { 1..10 | ForEach-Object { "$_ 0.6 10 q$_" } } else { "42 0.5 900 SELECT 1"; "43 7 30 SELECT big" }' | Set-Content "$sd/use.ps1"; 'param($i) Add-Content (Join-Path $PSScriptRoot killed.txt) $i' | Set-Content "$sd/kill.ps1"
-$sto = Invoke-PsTest storage @'
-$null = . $args[0] 6>$null; $sd = $args[1]
-$c = [pscustomobject]@{ watchFreeGB = 50; actHours = 1; factor = 10; minRateGBh = 5; scanDropGB = 1; actFreeGB = 30; drillGB = 1; flatDays = 7; holdMinutes = 60; sampleSeconds = 60; watch = @()
-  db = @{ use = "pwsh -NoProfile -File `"$sd/use.ps1`""; kill = "pwsh -NoProfile -File `"$sd/kill.ps1`" {id}"; maxGB = 5 } }
-function Get-KitStorageConf { $c }
-$xs = { param($f, $pm) @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = $f + $pm * (20 - $_) } }) }
-foreach ($x in @(40, 0.12, 0.2), @(600, 0.12, 0.2), @(3, 0.12, 0.2), @(600, 0.12, 2), @(600, 0, 0.2), @(20, 0, 0.2, 0)) { $v = Get-KitDiskVerdict (& $xs $x[0] $x[1]) $c $x[2] ($x.Count -lt 4); "v:$($v.level),$($v.rescue),$($v.scan)" }
-$b = @(0..20 | ForEach-Object { [pscustomobject]@{ t = 1e6 + 60 * $_; free = 8 + [math]::Max(0, 2 - 0.7 * $_) } }); $v = Get-KitDiskVerdict $b $c; "burst:$($v.level),$($v.rescue)"
-"normal:$(Get-KitDiskNormal @(0..10 | ForEach-Object { [pscustomobject]@{ t = 3600 * $_; free = 100 - 0.5 * $_ } }))"
-$m = Measure-KitFolders $sd @("$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar)); $ak = "$sd/a".Replace('/', [IO.Path]::DirectorySeparatorChar).ToLower()
-"folders:$($m.sizes[$ak] / 1MB):$((@($m.kids[$ak].Values) | Sort-Object) -join ',')"
-$fo = @{ tracked = @{ R = @{ src = 'default' }; L = @{ src = 'learned'; flat = (Get-Date).AddDays(-8).ToString('s') } } }
-$g = Update-KitTracked $fo @{ sizes = @{ R = 13; L = 2 }; kids = @{ R = @{ 'R/a' = 1.2; 'R/b' = 7.8 } } } @{ sizes = @{ R = 10; L = 2 }; kids = @{ R = @{ 'R/a' = 1; 'R/b' = 5 } } } $c
-"drill:$($g[0].path)+$($g[0].gb):$(@($fo.tracked.Keys | Sort-Object) -join ',')"
-$q = @(Get-KitDbQueries $c); $null = Invoke-KitStorageTick -Force; $env:USE10 = '1'; $null = Invoke-KitStorageTick -Force; $z = [pscustomobject]@{ drive = 'Z'; kit = $true; free = 3; rate = 9; ttf = 0.3 }
-Invoke-KitDiskRescue $c $z @($q | Where-Object id -ne 43); Invoke-KitDiskRescue $c $z $q; $h1 = (Get-KitDiskHold).drive
-Set-KitStorageState { param($s) $s.rescues.Z.at = (Get-Date).AddHours(-2).ToString('o') }
-"db:$($q.Count):$((Get-Content "$sd/killed.txt") -join ','):hold $h1/$([bool](Get-KitDiskHold))"
-[IO.File]::WriteAllText((Get-KitStorageFile Q), (@(0..2 | ForEach-Object { '{"t":' + ([DateTimeOffset]::Now.ToUnixTimeSeconds() - 60 * $_) + ',"free":' + (50 + $_) + ',"size":100}' }) -join "`n") + "`n")
-Invoke-Storage -Drive Q -Since 1h
-'@ @($O, $sd)
-Expect 'storage verdicts: odd fill ACT + rescue, far WATCH, full in 1 h rescue, normal OK, 1 GB/beat scan, kit drives only, burst no rescue' ((($sto | Where-Object { $_ -like 'v:*' -or $_ -like 'burst:*' }) -join ' ') -eq 'v:ACT,True,True v:WATCH,False,True v:ACT,True,True v:OK,False,True v:OK,False,False v:OK,False,False burst:ACT,False')
-Expect 'storage: the learned normal = the median hourly fill rate' ($sto -contains 'normal:0.5')
-Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto -contains 'folders:2:1048576,1048576')
-Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
-Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
 $pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
@@ -247,7 +229,6 @@ Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4
 Expect 'params: a timeout steps up x1.5 at once; no risky step for 7 d, then -10% a day after 5 new observations' ($pr -contains 'fail:90' -and $pr -contains 'hold:90' -and $pr -contains 'down1:81' -and $pr -contains 'wait5:81' -and $pr -contains 'down2:72.9')
 Expect 'params: 2+ new ACTs step the beat down; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:10' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
-Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
 
 Remove-TestKit $k
 # ---- OS helpers on Linux / macOS

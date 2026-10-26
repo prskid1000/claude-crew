@@ -7,7 +7,7 @@
   "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: goody ios-simulator",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
-  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: goody liquibase; another tool: UNRUN); ci.mrPipelines false = MRs get no pipeline (CI only on deploy branches): pipes says no-ci, devtools.py merge merges on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: goody deploys",
+  "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: goody liquibase; another tool: UNRUN); regenerate: wt sync conflicts in these files -> target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = MRs get no pipeline (CI only on deploy branches): pipes says no-ci, devtools.py merge merges on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: goody deploys",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
   "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a bigger, idle or growing app: one ASK), ramNames (default _manifest.ram), briefSeconds (one -Brief round); heartbeatMinutes (15) = the base of the NEXT <n> min each round prints (5 to 30 by state; manyAgents 8)",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
@@ -77,7 +77,7 @@
    "antigravity": { "fraction": 0.8, "source": "unverified: 0.8 x the model window" },
    "unknown": { "tokens": 160000, "source": "0.8 x 200k" } } },
  "repos": [
-  { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "ci": { "mrPipelines": true }, "mergeMethod": "squash", "migrations": { "check": "<e.g. flyway validate>" },
+  { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "ci": { "mrPipelines": true }, "mergeMethod": "squash", "migrations": { "check": "<e.g. flyway validate>" }, "regenerate": [{ "path": "docs/cov.xlsx", "run": "python cov.py --mr {mr}" }],
    "deploys": [ { "target": "staging", "branch": "staging", "job": "deploy-staging" } ] },
   { "name": "web", "aliases": ["ui"], "checkout": "<workspace>/repos/web", "target": "main", "linkFrom": "<a checkout whose node_modules can be linked (optional)>",
    "deploys": [
@@ -143,7 +143,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 30, "plumbing": 8, "totalTokens": 266000, "testTokens": 48500 },
+  "caps": { "content": 30, "plumbing": 8, "totalTokens": 266000, "testTokens": 49000 },
   "params": { "idle.graceMinutes": "quantile q=.95 k=1.5", "net.timeoutSec": "quantile q=.99 k=3", "gate.waitMinutes": "quantile q=.95 k=2", "gate.needGB": "peak k=1.15 up=.5",
    "supervise.heartbeatMinutes": "quantile q=.5 k=.5 min=10 safe=down", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
   "adapters": {
