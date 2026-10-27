@@ -7,7 +7,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|status <link | key> ...   evidence videos / screenshots -> text index, frames (goody media-evidence)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
-  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo ...   ($env:ANDROID_SERIAL; goody android-swarm)
+  ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
