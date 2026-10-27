@@ -356,7 +356,7 @@ $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
-  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
+  @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text (($md -split "`n## Evidence index")[0] -replace '(?m)^\*\*Evidence:\*\* .*$', '') 3>$null))   # link lists are not prose
 }
 $prWhy = "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards"")"
 if ($Check) {
