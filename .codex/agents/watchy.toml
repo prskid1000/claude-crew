@@ -14,7 +14,8 @@ monitoring skill, hosts, queries); the env's `repos[].deploys[]` in `kit.local.j
 
 Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<window>`):
 1. **Scope:** env, window start + end (window: from the deploy time; sweep: the last 24 h; triage: the screenshot's time and
-   screen ±1 h), the baseline = the same length before (window, sweep) or the day before (triage).
+   screen ±1 h), the baseline = the same length before (window, sweep) or the day before (triage). A triage video or
+   screenshot link: `pokey.ps1 evidence index <link>` first, then `read-chunk` only what matters (goody `media-evidence`).
 2. **Collect** (read-only): the monitoring error and latency queries for scope and baseline; the service logs (error and fatal
    lines); the health probes. A query that fails or times out = UNKNOWN for that source, never "no errors".
 3. **Group** each error into a signature: exception or error class + normalised message (ids, numbers, timestamps, emails

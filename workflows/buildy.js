@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L249 ship-prompt · L272 plan · L286 spike ·
-//   L299 local-loop · L359 stages · L481 ship · L551 deploy · L568 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L250 ship-prompt · L273 plan · L287 spike ·
+//   L300 local-loop · L360 stages · L482 ship · L552 deploy · L569 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -184,7 +184,8 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: area(s) ${cs.join(', ')} consume your work: open your MRs early and say which MR carries the contract.\n` : '')
 }
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (local loop, ENV-FIX, decision pauses); this run's commands:
-${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fixing; record it in the testing-goals doc.\n' : ''}- Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
+${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fixing; record it in the testing-goals doc.\n' : ''}- Evidence links in a task (videos, recordings, screenshots): pokey.ps1 evidence index <link> first, read the index, then read-chunk only what matters (goody media-evidence).
+- Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." -Recommend <A|B>
  -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.

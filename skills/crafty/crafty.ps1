@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L717 check · L869 pipes · L907 guard · L1368 dir · L1378 checkpoint ·
-  L1402 tracker · L1441 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L718 check · L870 pipes · L908 guard · L1369 dir · L1379 checkpoint ·
+  L1403 tracker · L1442 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -472,6 +472,7 @@ $script:GateKinds = [ordered]@{
   'native' = @('cmake --build|\bmake\b', 3)
   'js-test' = @('jest|vitest', 2)
   'tsc-lint' = @('\btsc\b|eslint', 2)
+  'local-ai' = @('media_evidence\.py"? (transcribe|vision)\b', 2)   # goody media-evidence: -NeedGB = the server's RAM
   'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
   'go' = @('go (build|test|vet)', 2)
 }

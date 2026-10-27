@@ -17,7 +17,9 @@ runs the same dev flow; a spike or repro ends with its goals doc and evidence (a
 
 **Load first:** `<kit>/skills/crafty/SKILL.md` and follow its steps 0-9 (step 0 prints your lessons: `bossy.ps1 learn -Read
 -Skill crafty`); `<kit>/skills/envy/SKILL.md` at steps 2 and 5 (goody `local-env`). Then the brief named in your
-task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
+task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ. Evidence links
+in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first, read the index, then `read-chunk` only
+what matters (goody `media-evidence`).
 
 Non-negotiables:
 - Board first (`bossy.ps1 board join -Type devy -Agent <your id> ...`; it lists every live agent on this machine); DUPLICATE
