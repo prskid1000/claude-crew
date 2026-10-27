@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L687 tracker · L922 git-host · L1038 kitlog · L1150 params ·
-  L1313 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L702 tracker · L937 git-host · L1053 kitlog · L1165 params ·
+  L1328 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -412,41 +412,57 @@ function Get-KitGpuHolders($St = (Get-KitGpuState)) {
   $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex) { return @() }
   @($St.leases) + @(foreach ($k in @($ex.PSObject.Properties.Name)) { $rx = "$($ex.$k.processes)"; if ($rx) { Get-SysProcs -Name $rx -NoCommandLine | ForEach-Object { @{ kind = $k; holder = "$($_.Name) pid $($_.Id)"; pid = $_.Id } } } })
 }
-# GPU users from nvidia-smi: @{ usedMB; procs = @(@{ pid; name; mb }) } (KIT_GPU_PROBE: a JSON file of that shape, tests) · $null unknown
+# GPU users from nvidia-smi: @{ usedMB; freeMB; procs = @(@{ pid; name; mb }) } (KIT_GPU_PROBE: a JSON file of that shape, null = no
+# nvidia-smi; tests) · $null unknown. procs from the process table: --query-compute-apps omits graphics (G) users such as emulators
 function Get-KitGpuProbe {
   if ($env:KIT_GPU_PROBE) { return (Get-Content $env:KIT_GPU_PROBE -Raw | ConvertFrom-Json -AsHashtable) }
   $r = Invoke-KitExe 'nvidia-smi' @() 20; if ($r.code) { return $null }
   $used = if ("$($r.out)" -match '(\d+)MiB\s*/\s*\d+MiB') { [int]$Matches[1] } else { 0 }
-  @{ usedMB = $used; procs = @(foreach ($m in [regex]::Matches("$($r.out)", '(?m)^\|\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(?:C|G|C\+G)\s+(\S+)\s+(\d+MiB|N/A)')) {
+  $q = Invoke-KitExe 'nvidia-smi' @('--query-gpu=memory.free', '--format=csv,noheader,nounits') 20
+  $free = if (-not $q.code -and "$($q.out)" -match '(\d+)') { [int]$Matches[1] } else { $null }
+  @{ usedMB = $used; freeMB = $free; procs = @(foreach ($m in [regex]::Matches("$($r.out)", '(?m)^\|\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(?:C|G|C\+G)\s+(\S+)\s+(\d+MiB|N/A)')) {
         $id = [int]$m.Groups[1].Value; $n = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
         @{ pid = $id; name = $(if ($n) { $n } else { $m.Groups[2].Value }); mb = $(if ($m.Groups[3].Value -match '\d+') { [int]$Matches[0] } else { $null }) } }) }
 }
 # a kind with idleExcept (regex of its own backend's process names): any other GPU process, or idleMaxMB (512) used while its backend
 # is not running, blocks it (e.g. a local vision model that needs the whole GPU)
-function Get-KitGpuBusy([string]$Kind) {
-  $rx = "$(Get-KitSetting "gpu.exclusive.$Kind.idleExcept" '')"; if (-not $rx) { return $null }
-  $p = Get-KitGpuProbe; if (-not $p) { return @{ kind = 'gpu'; holder = 'state unknown (nvidia-smi does not answer)' } }
+function Get-KitGpuBusy([string]$Kind, [int]$MinFreeMB = 0) {
+  $rx = "$(Get-KitSetting "gpu.exclusive.$Kind.idleExcept" '')"; if (-not $rx -and $MinFreeMB -le 0) { return $null }
+  $p = Get-KitGpuProbe
+  if (-not $p) {
+    if ($rx) { return @{ kind = 'gpu'; holder = 'state unknown (nvidia-smi does not answer)' } }
+    if (-not $script:KitGpuNoSmiSaid) { Write-Warning "GPU free-memory check skipped: nvidia-smi does not answer (no NVIDIA GPU?)"; $script:KitGpuNoSmiSaid = $true }; return $null
+  }
+  $mb = { param($x) "$($x.name) pid $($x.pid) $(if ($null -ne $x.mb) { "$($x.mb) MB" } else { 'using the GPU' })" }
+  if ($MinFreeMB -gt 0 -and $null -ne $p.freeMB -and [int]$p.freeMB -lt $MinFreeMB) {
+    return @{ kind = 'gpu'; vram = $true; holder = "needs $MinFreeMB MB free GPU memory, $($p.freeMB) MB free (held by $(if (@($p.procs).Count) { @($p.procs | ForEach-Object { & $mb $_ }) -join ', ' } else { 'no listed process' }))" }
+  }
+  if (-not $rx) { return $null }
   $f = @($p.procs | Where-Object { "$($_.name)" -notmatch $rx }) | Select-Object -First 1
   if ($f) { return @{ kind = 'gpu'; holder = "$($f.name) pid $($f.pid) using $(if ($null -ne $f.mb) { "$($f.mb) MB" } else { 'the GPU' })" } }
   $max = [int](Get-KitSetting "gpu.exclusive.$Kind.idleMaxMB" 512)
   if (-not @($p.procs | Where-Object { "$($_.name)" -match $rx }).Count -and [int]$p.usedMB -gt $max) { return @{ kind = 'gpu'; holder = "$($p.usedMB) MB used (> idleMaxMB $max)" } }
 }
-# $true held (a kind gpu.exclusive does not list: always) · $false still held by another kind or GPU user after WaitMinutes
-function Use-KitGpu([string]$Kind, [string]$Holder, [int]$ProcessId = $PID, [double]$WaitMinutes = 30) {
-  $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex -or $Kind -notin @($ex.PSObject.Properties.Name)) { return $true }
+# $true held (a kind gpu.exclusive does not list and no -MinFreeMB: always) · $false still held by another kind or GPU user after
+# WaitMinutes ($script:KitGpuRefused = that blocker). -MinFreeMB: the caller's default for gpu.exclusive.<kind>.minFreeMB (0 = off);
+# under it the caller waits like for a holder, also for a kind gpu.exclusive does not list (no lease kept then)
+function Use-KitGpu([string]$Kind, [string]$Holder, [int]$ProcessId = $PID, [double]$WaitMinutes = 30, [int]$MinFreeMB = 0) {
+  $ex = Get-KitSetting 'gpu.exclusive' $null; $listed = $ex -and $Kind -in @($ex.PSObject.Properties.Name)
+  $min = if ($MinFreeMB -gt 0) { [int](Get-KitSetting "gpu.exclusive.$Kind.minFreeMB" $MinFreeMB) } else { 0 }
+  if (-not $listed -and $min -le 0) { return $true }
   $me = @{ kind = $Kind; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o') }
-  $end = (Get-Date).AddMinutes($WaitMinutes); $said = $false; $f = Get-KitGpuFile
+  $end = (Get-Date).AddMinutes($WaitMinutes); $said = $false; $f = Get-KitGpuFile; $script:KitGpuRefused = $null
   while ($true) {
-    $busy = Get-KitGpuBusy $Kind
+    $busy = Get-KitGpuBusy $Kind $min
     $other = Invoke-KitLocked $f {
-      $st = Get-KitGpuState; $o = @(@(Get-KitGpuHolders $st | Where-Object { $_.kind -ne $Kind }) + @($busy | Where-Object { $_ })) | Select-Object -First 1
+      $st = Get-KitGpuState; $o = @(@(if ($listed) { Get-KitGpuHolders $st | Where-Object { $_.kind -ne $Kind } }) + @($busy | Where-Object { $_ })) | Select-Object -First 1
       $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
-      if ($o) { $st.waiting += $me + @{ heldBy = "$($o.kind) $($o.holder)" } } else { $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId -or $_.kind -ne $Kind }) + $me }
+      if ($o) { $st.waiting += $me + @{ heldBy = "$($o.kind) $($o.holder)" } } elseif ($listed) { $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId -or $_.kind -ne $Kind }) + $me }
       Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $o
     }
     if (-not $other) { return $true }
     if (-not $said) { Write-Host "waiting for GPU: held by $($other.kind) $($other.holder)"; $said = $true }
-    if ((Get-Date) -ge $end) { Remove-KitGpu -ProcessId $ProcessId; return $false }
+    if ((Get-Date) -ge $end) { Remove-KitGpu -ProcessId $ProcessId; $script:KitGpuRefused = $other; return $false }
     Wait-KitPoll 30
   }
 }
@@ -456,7 +472,6 @@ function Remove-KitGpu([int]$ProcessId = $PID) {
 }
 # bossy.ps1 supervise: who holds the GPU, who waits for it
 function Get-KitSuperviseGuardGpu([switch]$AutoFix) {
-  if (-not (Get-KitSetting 'gpu.exclusive' $null)) { return }
   $st = Get-KitGpuState; $h = @(Get-KitGpuHolders $st)
   if ($h.Count -or $st.waiting.Count) { "gpu: $(if ($h.Count) { "held by $(@($h | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', ')" } else { 'free' })$(@($st.waiting | ForEach-Object { "; waiting for GPU: $($_.kind) $($_.holder) (held by $($_.heldBy))" }) -join '')" }
 }

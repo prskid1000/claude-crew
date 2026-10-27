@@ -131,7 +131,8 @@ only owner holds (`envy.ps1 up -Owner`, phone `manual`; goody `local-env`, goody
 Local AI servers (`local-stt`, `local-vision`; goody `media-evidence`): one job each, bound to the job's process, its RAM through the memory gate.
 The GPU (`gpu.exclusive.<kind>`, lib.ps1 `Use-KitGpu`): one kind at a time (e.g. lane emulators, `local-vision`); another kind waits, supervise
 shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
-it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down.
+it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
+caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
 
 ## Pause and resume
 - **Checkpoints** (both paths): each agent runs `crafty.ps1 checkpoint` at every step boundary (worktree, commit, testing goals,
