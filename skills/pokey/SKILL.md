@@ -66,7 +66,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `crafty/templates.md`
-   "Writing standards"), run `pokey.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
+   "Writing standards"; re-test / audit text: `verify`), run `pokey.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
    (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
    `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession` or log out); return the results.
 

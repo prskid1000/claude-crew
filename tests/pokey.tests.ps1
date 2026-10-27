@@ -16,7 +16,7 @@ function New-Run($name, $items) {
   }
   $d
 }
-function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c 2>&1 | Out-String }
+function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c @args 2>&1 | Out-String }   # $LASTEXITCODE = its exit
 function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
 function Task($id) { Read-Json (Join-Path $store "$id.json") }
 function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.name -like '`[Bug`]*' }) }
@@ -46,20 +46,22 @@ Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observe
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
 $rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) x'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
-$po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
+$po = Fin $pl P1 -Check
 Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class (not a re-test)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$')
-$pp = pwsh @np $Q finalize -RunDir $pl -Code P1 2>&1 | Out-String; $ppc = $LASTEXITCODE
+$pp = Fin $pl P1; $ppc = $LASTEXITCODE
 Expect "finalize publish: over the prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))
 $s12 = "$(1..12) ."; $note = "$s12 $s12 $s12"; $bg = New-Run 'BG' @(@{ code = 'G1'; task = 'TG'; checks = @(1..44 | % { , @("C$_", 'PASS') }) }); $sm = New-Run 'SM' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') })
-$rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
-$go = pwsh @np $Q finalize -RunDir $bg -Code G1 -Check 2>&1 | Out-String; $gc = $LASTEXITCODE; $so = pwsh @np $Q finalize -RunDir $sm -Code S1 -Check 2>&1 | Out-String
-Expect "finalize -Check: 44 checks of 36-word notes pass prose:900w ($gc); a small report padded over 900 prose words fails" ($gc -eq 0 -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
+$rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; foreach ($i in 0, 1) { $rj.checks[$i].result = 'FAIL'; $rj.checks[$i] | Add-Member verify "confirmed | $(1..(300 - 270 * $i))" }; & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
+$go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check
+Expect "finalize -Check: 44 checks of 36-word notes, FAILs with a 300- and a 30-word verify, pass prose:900w ($gc); a small report padded over 900 prose words fails" ($gc -eq 0 -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
+$null = Fin $bg 'G1'; $vm = Get-Content "$bg/G1/report.md" -Raw
+Expect 'finalize: a long verify: the cell shows its status, the text a linked file' ((Get-Content "$bg/G1/evidence/G1-C1_verify_retest.txt" -Raw) -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
-$null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check -FixNames 2>&1; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name
-& $J $rj "$rn/R1/results.json"; $null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check 2>&1; $f2c = $LASTEXITCODE
-$null = pwsh @np $Q finalize -RunDir $rn -Code R1 -Check -FixNames 2>&1; $f3 = Get-Content "$rn/R1/results.json" -Raw
+$null = Fin $rn R1 -Check -FixNames; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name
+& $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
+$null = Fin $rn R1 -Check -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw
 Expect "finalize -FixNames: any-case reference renamed; an old name after a rewrite resolves and is fixed ($new $f2c)" ($new -match '^R1-C1_' -and $f1 -match [regex]::Escape($new) -and $f1 -notmatch '(?i)"shotone\.png"' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new))
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
@@ -96,17 +98,17 @@ $lrc = Use-FakeUploader @'
     if gl: gl.restype = ctypes.c_wchar_p
     open(os.path.join(here, 'ev-rec.txt'), 'a').write(f'{len(gl() if gl else " ".join(a))} {n + len([x for x in a[2:] if x.endswith(".png")])}\n')
     print('{}')
-'@ { $null = pwsh @np $Q finalize -RunDir $lr -Code L1 -NoTracker 2>&1; $LASTEXITCODE }
+'@ { $null = Fin $lr L1 -NoTracker; $LASTEXITCODE }
 $rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue)
 Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
 # an uploader that hosts a folder but drops a cited file: nothing is published
 $ur = New-Run 'U' @(@{ code = 'U1'; task = 'TU'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$ur/U1/shots" | Out-Null
 [IO.File]::WriteAllBytes("$ur/U1/shots/U1-C1_01_screen.png", [byte[]](1, 2, 3))
 $rj = Read-Json "$ur/U1/results.json"; $rj.checks[0].evidence = @('U1-C1_01_screen.png'); & $J $rj "$ur/U1/results.json"
-$uo = Use-FakeUploader "    print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String; "rc=$LASTEXITCODE" }
+$uo = Use-FakeUploader "    print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')" { Fin $ur U1 -NoTracker; "rc=$LASTEXITCODE" }
 $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
-$fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { pwsh @np $Q finalize -RunDir $ur -Code U1 -NoTracker 2>&1 | Out-String }
+$fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { Fin $ur U1 -NoTracker }
 Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
 # ---- review batch 2: pokey.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
@@ -129,15 +131,15 @@ $ps = @('S1', 'S2' | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfi
 $ps | Wait-Process -Timeout 180
 Expect 'finalize: parallel siblings of a shared task close it' (((Rec $sr 'S1').closed -or (Rec $sr 'S2').closed) -and (Task 'TS').status -eq 'closed')
 $ex = New-Run 'EX' @(@{ code = 'E1'; task = 'TE'; checks = @(@('C1', 'PASS'), @('C2', 'PASS')) })
-$eo = pwsh @np $Q finalize -RunDir $ex -Code E1 -ExpectChecks 5 2>&1 | Out-String
-$null = pwsh @np $Q finalize -RunDir $ex -Code E1 -Check -ExpectChecks 5 2>&1; $ec = $LASTEXITCODE
-$null = pwsh @np $Q finalize -RunDir $ex -Code E1 -Check -ExpectChecks 2 2>&1; $eok = $LASTEXITCODE
-$er = pwsh @np $Q finalize -RunDir $ex -Code E1 -Results results-retry.json 2>&1 | Out-String
+$eo = Fin $ex E1 -ExpectChecks 5
+$null = Fin $ex E1 -Check -ExpectChecks 5; $ec = $LASTEXITCODE
+$null = Fin $ex E1 -Check -ExpectChecks 2; $eok = $LASTEXITCODE
+$er = Fin $ex E1 -Results results-retry.json
 Expect 'finalize: -ExpectChecks refuses a truncated copy; -Results needs -Check' ($eo -match 'truncated copy' -and -not (Test-Path "$ex/E1/finalize.json") -and $ec -eq 1 -and $eok -eq 0 -and $er -match 'only with -Check')
 New-Item -ItemType Directory -Force "$ex/E1/shots" | Out-Null; 'x' | Set-Content "$ex/E1/shots/retryshot.png"; 'y' | Set-Content "$ex/E1/shots/othershot.png"
 & $J @{ code = 'E1'; checks = @(@{ id = 'C2'; subtask_id = 'TE'; screen = 's'; result = 'PASS'; what_was_done = 'w'; observed = 'o'; evidence = @('retryshot.png') }); findings = @(); setup_changes = @(); data_created = @() } "$ex/E1/results-retry.json" 6
 $before = Get-Content "$ex/E1/results.json" -Raw
-$null = pwsh @np $Q finalize -RunDir $ex -Code E1 -Check -FixNames -Results results-retry.json 2>&1
+$null = Fin $ex E1 -Check -FixNames -Results results-retry.json
 Expect 'finalize -Results: a scoped retry renames only its own files' (-not (Test-Path "$ex/E1/shots/retryshot.png") -and (Test-Path "$ex/E1/shots/othershot.png") -and (Get-Content "$ex/E1/results-retry.json" -Raw) -match 'E1-C2_' -and (Get-Content "$ex/E1/results.json" -Raw) -eq $before)
 Remove-Item "$ex/E1/shots" -Recurse -Force; Remove-Item "$ex/E1/results-retry.json" -Force
 $cf = New-Run 'CF' @(@{ code = 'F1'; task = 'TF'; checks = , @('C1', 'PASS') })

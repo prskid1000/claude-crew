@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L211 local · L239 app · L262 test-prompt ·
-//   L316 verify · L360 run-item · L538 pool · L560 budget · L588 run · L625 learn
+//   L316 verify · L360 run-item · L542 pool · L564 budget · L592 run · L629 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -196,7 +196,7 @@ const AUDIT_SCHEMA = {
    own: { type: 'boolean', description: 'with defect: the task\'s own expected behaviour' },
    part: { type: 'string', description: 'with notExercised: the part of Expected that was not exercised' },
    reason: { type: 'string' } }, required: ['id', 'defect', 'reason'] } },
-  newDefects: { type: 'array', items: { type: 'object', properties: { screen: { type: 'string' }, what_was_done: { type: 'string' }, observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['screen', 'what_was_done', 'observed', 'evidence'] } },
+  newDefects: { type: 'array', items: { type: 'object', properties: { screen: { type: 'string' }, what_was_done: { type: 'string' }, observed: { type: 'string', description: '<= 40 words: <observed> vs <expected>; <evidence>' }, detail: { type: 'string', description: 'the rest, no cap' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['screen', 'what_was_done', 'observed', 'evidence'] } },
  },
  required: ['reclassify', 'newDefects'],
 }
@@ -369,6 +369,8 @@ const causeHint = (c) => CAUSE_NEXT[c.cause] || 'find another way in (data, user
 const ntShare = (r) => (r && r.checks.length ? r.checks.filter((c) => c.result === 'NOT_TESTED').length / r.checks.length : 1)
 const tag = (L) => (L ? '@' + L.name : '')
 // a scoped retry's results replace the NOT_TESTED checks it ran (a split id answers to its guide id)
+// a check's verify: '<status> | <re-test text> | <note audit text>' (pokey.ps1 VerifyStatus reads the status)
+const vJoin = (...parts) => parts.filter(Boolean).join(' | ')
 function adoptRetry(res, retry, note) {
  for (const c2 of (retry && !retry.skipped && retry.checks) || []) {
   const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
@@ -418,7 +420,7 @@ async function runItem(it, idx, L) {
   const a = await agent(auditPrompt(it, res), { label: `audit:${it.code}`, phase: 'Verify', schema: AUDIT_SCHEMA, agentType: 'checky', ...pick('audit') })
   for (const d of (a && a.reclassify) || []) {
    const c = res.checks.find((x) => x.id === d.id)
-   if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.defect = d.own === false ? 'new' : 'own'; c.observed = `${c.observed} | Note audit: a defect, not a note: ${d.reason}` }
+   if (c && d.defect && c.result === 'PASS_WITH_NOTE') { c.result = 'FAIL'; c.defect = d.own === false ? 'new' : 'own'; c.verify = vJoin(c.verify, `Note audit: a defect, not a note: ${d.reason}`) }
    else if (c && d.notExercised) {
     // NOT EXERCISED: untested Expected -> check <id>n (NOT_TESTED; FAIL if unreachable)
     let nid = `${c.id}n`, k = 1
@@ -426,13 +428,13 @@ async function runItem(it, idx, L) {
     res.checks.push({ id: nid, subtask_id: c.subtask_id, screen: c.screen, result: d.unreachable ? 'FAIL' : 'NOT_TESTED', ...(d.unreachable ? { defect: 'own' } : { cause: 'env-data' }),
      what_was_done: `Split from ${c.id} by the note audit: this part of its Expected was never exercised: ${d.part || '(see reason)'}`,
      observed: `${d.unreachable ? 'The screen/endpoint this part needs was missing or unreachable' : 'Not exercised by the tester'}: ${d.reason} (raised by the note audit)`, evidence: [] })
-    c.observed = `${c.observed} | Note audit: the unexercised part moved to ${nid}`
+    c.verify = vJoin(c.verify, `Note audit: the unexercised part moved to ${nid}`)
    }
   }
   // new audit checks continue after the highest X id
   let n = Math.max(0, ...res.checks.map((c) => +((/^X(\d+)$/.exec(c.id) || [])[1] || 0)))
   for (const d of (a && a.newDefects) || []) {
-   res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', defect: 'new', what_was_done: d.what_was_done, observed: `${d.observed} (raised by the note audit)`, evidence: d.evidence || [] })
+   res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', defect: 'new', what_was_done: d.what_was_done, observed: d.observed, verify: vJoin('Note audit: raised this new defect', d.detail), evidence: d.evidence || [] })
   }
   if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
  }
@@ -480,13 +482,13 @@ async function runItem(it, idx, L) {
  const envFixOpen = !!LOCALENV(it) && res.checks.some((c) => c.result === 'NOT_TESTED')
  if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
  const fails = res.checks.filter((c) => c.result === 'FAIL')
- if (fails.length && !VERIFY) for (const c of fails) c.verify = 'not re-tested (verify: false)'
+ if (fails.length && !VERIFY) for (const c of fails) c.verify = vJoin('not re-tested (verify: false)', c.verify)
  if (fails.length && VERIFY) {
   const v = await agent(verifyPrompt(it, fails, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'checky', ...pick('verify'), ...(it.effort ? { effort: it.effort } : {}) })
   const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
   for (const c of fails) {
    const x = byId[c.id]
-   if (!x) { c.verify = 'not re-tested'; continue }
+   if (!x) { c.verify = vJoin('not re-tested', c.verify); continue }
    let outcome = x.outcome || 'inconclusive'
    // fewer attempts than the first tester never refutes an intermittent FAIL (attemptsNeeded)
    const need = attemptsNeeded(c)
@@ -503,10 +505,12 @@ async function runItem(it, idx, L) {
    if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
    const firstEv = (c.evidence || []).length > 0   // the first run's own evidence (before the verifier's)
    c.evidence = [...c.evidence, ...(x.evidence || [])]
-   if (outcome === 'confirmed') { c.verify = 'confirmed'; c.observed = `${c.observed} | Independent re-test confirmed: ${x.observed}` }
-   else if (outcome === 'inconclusive') { c.verify = 'inconclusive'; c.observed = `${c.observed} | Re-test inconclusive (conditions not recreated): ${x.observed}` }
-   else if (firstEv) { c.verify = 'not reproduced (flaky)'; c.flaky = true; c.observed = `${c.observed} | FLAKY: an independent re-test under the same conditions did not reproduce it; the first run's evidence stands. Re-test: ${x.observed}` }
-   else { c.verify = 'not reproduced'; c.result = 'PASS_WITH_NOTE'; c.observed = `First run reported a failure with no saved evidence; an independent re-test under the same conditions did not reproduce it. Re-test: ${x.observed}. First run: ${c.observed}` }
+   // re-test + audit text lives in verify (the report renders it outside the Results cell); observed stays within the note cap
+   const audit = c.verify
+   if (outcome === 'confirmed') c.verify = vJoin('confirmed', `Independent re-test confirmed: ${x.observed}`, audit)
+   else if (outcome === 'inconclusive') c.verify = vJoin('inconclusive', `Re-test inconclusive (conditions not recreated): ${x.observed}`, audit)
+   else if (firstEv) { c.verify = vJoin('not reproduced (flaky)', `An independent re-test under the same conditions did not reproduce it; the first run's evidence stands. Re-test: ${x.observed}`, audit); c.flaky = true }
+   else { c.verify = vJoin('not reproduced', `Re-test: ${x.observed}`, `First run: ${c.observed}`, audit); c.result = 'PASS_WITH_NOTE'; c.observed = 'First run reported a failure with no saved evidence; an independent re-test under the same conditions did not reproduce it.' }
   }
  }
  const n = (k) => res.checks.filter((c) => c.result === k).length
@@ -531,7 +535,7 @@ Replace <now> with the current UTC time (ISO 8601) when you write it (workflow s
  let fin = await agent(finalPrompt(it, res), { label: `close:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', ...pick('close'), effort: 'low' })
  if (!(fin && fin.ok)) fin = await agent(finalPrompt(it, res), { label: `close-retry:${it.code}`, phase: 'Close', schema: FINAL_SCHEMA, agentType: 'checky', model: 'sonnet' })
  log(line + (fin && fin.ok ? '' : ' [NOT PUBLISHED - the coordinator runs pokey.ps1 finalize for it (pokey L3)]'))
- const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(c.observed || '')) || !(fin && fin.ok)
+ const eventful = retried || n('FAIL') > 0 || n('NOT_TESTED') > 0 || res.checks.some((c) => /Note audit|not reproduce|inconclusive/.test(`${c.observed || ''} ${c.verify || ''}`)) || !(fin && fin.ok)
  return { code: it.code, summary: line, finalize: fin, eventful, envFix, unpublished: !(fin && fin.ok), result: fin && fin.ok ? undefined : res, pending: res.checks.filter((c) => c.result === 'PENDING').map((c) => c.id) }
 }
 

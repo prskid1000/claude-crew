@@ -261,7 +261,7 @@ run({ runDir: 'C:/runs/P1', ..._kl, items }, a.agent, _n, _n, null)
 '@
 $res = Invoke-Js tc-ports $js5 $wf
 Expect-Each $res 'testy: #' 'ports', 'retry-file', 'expect' -Show 5
-# a FAIL with evidence a re-test misses stays FAIL; without, it may pass
+# a FAIL a re-test misses: evidence: stays FAIL, else may pass
 $js6 = @'
 const { calls, agent } = _mock((prompt, o) => {
  if (/^test:/.test(o.label)) return _res('A1', [_ck('C1', 'FAIL', { defect: 'own', evidence: ['A1-C1_01_500.json'] }), _ck('C2', 'FAIL', { defect: 'own' }), _ck('C3', 'PASS')])
@@ -270,8 +270,8 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R6', ..._kl, items: [_item('A1')] }
 run(args, agent, _n, _n, null).then(() => {
  const cl = calls.find((c) => c.label === 'close:A1')
- console.log(`flaky:${!!cl && /"id":"C1"[^}]*"result":"FAIL"[^}]*"verify":"not reproduced \(flaky\)","flaky":true/.test(cl.prompt)}`)
- console.log(`no-evidence:${!!cl && /"id":"C2"[^}]*"result":"PASS_WITH_NOTE"/.test(cl.prompt)}`)
+ console.log(`flaky:${!!cl && /"id":"C1"[^}]*"result":"FAIL"[^}]*"not reproduced \(flaky\) \|[^}]*"flaky":true/.test(cl.prompt)}`)
+ console.log(`no-evidence:${!!cl && /"id":"C2"[^}]*"result":"PASS_WITH_NOTE"[^}]*Re-test/.test(cl.prompt)}`)
 }).catch(_err)
 '@
 $res = Invoke-Js tc-flaky $js6 $wf

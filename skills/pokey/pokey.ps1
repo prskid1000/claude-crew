@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L95 seat · L163 api · L286 finalize · L648 retest
+Sections: L23 report · L102 seat · L170 api · L293 finalize · L661 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -38,12 +38,17 @@ function Caption($file) {
 }
 # phone shots render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
+# verify = '<status> | <re-test text> | <note audit text>' (testy.js vJoin): the Results cell shows the status only
+function VerifyStatus($v) { $s = ([string]$v -split ' \| ', 2)[0].Trim(); if ($s -match '^Note audit' -or @($s -split '\s+').Count -gt 6) { '' } else { $s } }
+# a verify over 20 words (the report's sentence cap is 25) is published as its own evidence file, linked from the report
+function VerifyFile($Code, $c) { if (@(([string]$c.verify) -split '\s+' | Where-Object { $_ }).Count -gt 20) { "$Code-$(([string]$c.id) -replace '[^A-Za-z0-9-]', '')_verify_retest.txt" } }
 
 function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl) {
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
   # an image: the host's embeddable src (gdocs) or its link; the quoted title = width in px (md_to_html)
   function MdImg($f) { $u = if ($Map.files[$f].src) { $Map.files[$f].src } else { $Map.files[$f].link }; "![$(Caption $f)]($(([string]$u) -replace ' ', '%20') `"$(ImgWidth $f)`")" }
   function Lnk($f) { if ($Map.files[$f]) { "[$f]($(([string]$Map.files[$f].link) -replace ' ', '%20'))" } else { $f } }
+  function VerifyMd($c) { $vf = VerifyFile $Code $c; if ($vf -and $Map.files[$vf]) { "$(if ($s = VerifyStatus $c.verify) { "$s · " })full text: $(Lnk $vf)" } else { MdEsc ([string]$c.verify -replace ' \| ', ' · ') } }
   $label = @{ PASS = 'PASS'; PASS_WITH_NOTE = 'PASS (note)'; FAIL = '**FAIL**'; NOT_TESTED = 'NOT TESTED'; PENDING = 'PENDING'; OUT_OF_SCOPE = 'OUT OF SCOPE' }
   $checks = @($Res.checks)
   $n = @{}; foreach ($k in $label.Keys) { $n[$k] = @($checks | Where-Object result -eq $k).Count }
@@ -61,19 +66,21 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o.Add('## Results'); $o.Add(''); $o.Add('| Check | Screen / area | Result | What was done | What we saw |'); $o.Add('|---|---|---|---|---|')
   foreach ($c in $checks) {   # a FAIL's steps and saw live once, in "Failures in detail"
     $did, $saw = if ($c.result -eq 'FAIL') { $a = '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')'; $a, $a } else { (MdEsc $c.what_was_done), (MdEsc $c.observed) }
-    $o.Add("| **$(MdEsc $c.id)** | $(MdEsc $c.screen) | $($label[[string]$c.result])$(if ($c.verify) { " (re-test: $(MdEsc $c.verify))" }) | $did | $saw |")
+    $o.Add("| **$(MdEsc $c.id)** | $(MdEsc $c.screen) | $($label[[string]$c.result])$(if ($vs = VerifyStatus $c.verify) { " (re-test: $(MdEsc $vs))" }) | $did | $saw |")
   }
   if ($fails.Count) {
     $o.Add(''); $o.Add('## Failures in detail')
     foreach ($c in $fails) {
       $o.Add(''); $o.Add("### $($c.id) — $($c.screen)"); $o.Add("**Steps:** $($c.what_was_done)"); $o.Add(''); $o.Add("**Saw:** $($c.observed)")
-      if ($c.verify) { $o.Add(''); $o.Add("**Independent re-test:** $($c.verify)") }
+      if ($c.verify) { $o.Add(''); $o.Add("**Independent re-test:** $(VerifyMd $c)") }
       $ev = @($c.evidence | Where-Object { $_ }); if ($ev.Count) { $o.Add(''); $o.Add("**Evidence:** $(($ev | ForEach-Object { Lnk $_ }) -join ', ')") }
       foreach ($f in @($ev | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { $o.Add(''); $o.Add((MdImg $f)) }
     }
   }
-  if (@($Res.findings).Count) {   # a note's observed is in the Results table already
+  $vNotes = @($checks | Where-Object { $_.result -ne 'FAIL' -and $_.verify -and [string]$_.verify -ne (VerifyStatus $_.verify) })   # a FAIL's verify is in its detail
+  if (@($Res.findings).Count -or $vNotes.Count) {   # a note's observed is in the Results table already
     $o.Add(''); $o.Add('## Notes'); $o.Add('')
+    foreach ($c in $vNotes) { $o.Add("- **$(MdEsc $c.id)** re-test / note audit: $(VerifyMd $c)") }
     foreach ($f in @($Res.findings)) { $o.Add("- $(MdEsc $f)") }
   }
   $setup = @($Res.setup_changes) + @($Res.data_created) | Where-Object { $_ }
@@ -313,6 +320,12 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
 }
 # copy evidence outside shots/evidence into evidence to upload
 if (-not $Check) { New-Item -ItemType Directory -Force "$D/evidence" | Out-Null }
+# a long verify (re-test + note audit text) -> its own evidence file; -Check only counts it as present
+$vText = [ordered]@{}
+foreach ($c in @($res.checks)) { $vf = VerifyFile $Code $c; if ($vf) { $vText[$vf] = "$($c.id) — $($c.screen): independent re-test and note audit`n`n" + (([string]$c.verify -split ' \| ') -join "`n`n") + "`n" } }
+$vChanged = @(if (-not $Check) { foreach ($vf in $vText.Keys) {   # changed text: uploaded again on a re-run (step 1)
+  if ((Test-Path "$D/evidence/$vf") -and [IO.File]::ReadAllText("$D/evidence/$vf") -ne $vText[$vf]) { $vf }
+  [IO.File]::WriteAllText("$D/evidence/$vf", $vText[$vf]) } })
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
 # -FixNames renames (old -> new): a results file written again from the checks of before the rename still names the old files
 $renLog = "$D/evidence-renames.json"; $renamed = @{}; $remap = [ordered]@{}
@@ -333,7 +346,7 @@ foreach ($c in @($res.checks)) {
 
 # 0. Evidence check first
 $files = @(Get-ChildItem "$D/shots", "$D/evidence" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'tmp*' -and $_.Extension -match $script:EvidenceExt })
-$badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName } | ForEach-Object Name)
+$badNames = @($files | Where-Object { $_.Name -notmatch $script:EvidenceName -and -not $vText.Contains($_.Name) } | ForEach-Object Name)
 if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not following the standard (published anyway): $($badNames -join ', ')" }
 # a listed unsupported type would stay on disk
 $badTypes = @(@(foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and [IO.Path]::GetExtension([string]$e) -notmatch $script:EvidenceExt) { "$($c.id): $e" } } }) | Select-Object -Unique)
@@ -341,7 +354,7 @@ if ($badTypes.Count -and -not $Check) { Write-Warning "evidence listed but of an
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
 # the prose limits: -Check exits 1, a publish refuses (one rule), before anything is published
 $prose = {
-  $lm = @{ folderLink = $D; files = @{} }; foreach ($x in $files) { $lm.files[$x.Name] = @{ link = $x.Name } }
+  $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
   @(@(Test-KitProse -Kind result-note -Path (Join-Path $D $Results) 3>$null) + @(Test-KitProse -Kind qa-report -Text ($md -split "`n## Evidence index")[0] 3>$null))
 }
@@ -418,8 +431,8 @@ if ($Check) {
     $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)/$($_.Name)" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
-  # a note without its class hides defects; a re-test's own note (verify) is exempt
-  $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not $_.verify -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
+  # a note without its class hides defects; a re-test's own note (verify) is exempt, a note audit's is not
+  $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not ($_.verify -and "$($_.verify)" -notmatch '^Note audit') -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
   if ($noClass.Count) { $fail = $true; "$Code note check: PASS_WITH_NOTE without its class (observed starts with '(a|b|c|d) <why>', pokey SKILL.md step 5; else FAIL): $($noClass -join ', ')" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
@@ -446,7 +459,7 @@ function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-War
 
 # 1. Evidence: hosted by the report type (devtools evidence; gdocs: a Drive folder, a re-run adds new files) or the run folder
 $map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
-if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { $map.files[$pf.Name] = $pf.Value } }
+if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype)
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
