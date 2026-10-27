@@ -45,7 +45,8 @@ Needed when: `media` = `*`, or listed in kit.local.json `goodies`.
   | Model (local proxy, its own settings) | Exact text | s / frame (median, mean) | GPU peak | backend RAM | Chatter |
   |---|---|---|---|---|---|
   | 27B dense, IQ3 | 177 / 195 (91%) | 44, 57 | 11.43 GiB | 8.6 GB | 0 / 25 |
-  | 35B-A3B MoE, Q4 | not scored: its backend crashed (CUDA illegal memory access) on 3 of 5 image requests, 1 with the GPU idle | - | 11.36 GiB | 22 GB | - |
+  | 35B-A3B MoE, Q4 (proxy build after its image-crash fix) | 184 / 195 (94%) | 48, 58 (on battery) | 11.00 GiB | 22.5 GB | 0 / 25 |
 
-  Misses: a 3-digit seal number read as letters, "Rate" read as "Cost", columns cut at the frame edge. ~45 s a frame: keep
-  `vision.maxFrames` small (start, page changes, clicked crops come first).
+  27B misses: a 3-digit seal number read as letters, "Rate" read as "Cost", columns cut at the frame edge. 35B misses: one
+  amount in a narrow column (5 frames), a delivery point name. Earlier proxy builds crashed the 35B on images: re-score after a
+  backend change. ~45 s a frame: keep `vision.maxFrames` small (start, page changes, clicked crops come first).
