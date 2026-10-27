@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L702 tracker · L937 git-host · L1053 kitlog · L1165 params ·
-  L1328 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L702 status · L879 tracker · L1114 git-host · L1230 kitlog ·
+  L1342 params · L1505 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -322,8 +322,8 @@ function Get-KitSpend([string]$File) {
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
   }
 }
-function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl') {
-  $root = if ($v = $env:KIT_TRANSCRIPTS) { $v } else { $KitConf.ClaudeProjectDir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
+function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl', [string]$Root) {
+  $root = if ($Root) { $Root } elseif ($v = $env:KIT_TRANSCRIPTS) { $v } else { $KitConf.ClaudeProjectDir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
   foreach ($f in @(Get-ChildItem $root -Recurse -Filter $Filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) } | Sort-Object { -not $sid -or $_.FullName -notmatch [regex]::Escape($sid) }, { -$_.LastWriteTime.Ticks })) {
     if (Select-String -LiteralPath $f.FullName -SimpleMatch $Marker -Quiet) { return $f.FullName }
   }
@@ -697,6 +697,183 @@ function Invoke-ExtrasPrune([double]$Days = 0, [switch]$DryRun) {
   if (-not $Days) { $Days = if ($gp) { try { [double](& $gp 'goodies.pruneDays' 30) } catch { 30 } } else { 30 } }   # TODO-PARAM (fixed default)
   $pa = @('-X', 'utf8', $KitCmd.kitbag, 'goody', 'prune', '--days', "$Days") + @(if ($DryRun) { '--dry-run' })
   & (Get-Python) @pa   # exit code in $LASTEXITCODE
+}
+
+# ---- status: one row per agent and workflow run from files only (board, journals, transcripts, decide, pauses, waits); no LLM, no network
+# workflow run folders (<Claude project dir>/<session>/subagents/workflows/<run>) of every session, or of one
+function Get-KitWorkflowDirs([string]$Session) {
+  Get-ChildItem $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }) -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
+}
+# every parsed *.json of a state folder, each with its path in .file; a broken file is skipped
+function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
+  if (-not $Dir) { return }
+  foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter $Filter -File -ErrorAction SilentlyContinue)) {
+    $o = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { $null }
+    if ($o) { $o | Add-Member -Force NoteProperty file $f.FullName; $o }
+  }
+}
+# agents of a journal still running: no result, no later finished start of the same item (a 529-dead agent writes no result),
+# no later restart of the same label
+function Get-JournalRunning($Started, $DoneIds) {
+  $itemOf = { param($label) (([string]$label -split ':', 2)[-1] -split '@')[0] }
+  $lastDone = @{}; $lastStart = @{}
+  for ($i = 0; $i -lt $Started.Count; $i++) {
+    if ($Started[$i].agentId -in $DoneIds) { $lastDone[(& $itemOf $Started[$i].label)] = $i }
+    $lastStart[[string]$Started[$i].label] = $i
+  }
+  @(for ($i = 0; $i -lt $Started.Count; $i++) { $s = $Started[$i]; if ($s.agentId -notin $DoneIds -and -not ($lastDone[(& $itemOf $s.label)] -gt $i) -and $lastStart[[string]$s.label] -eq $i) { $s } })
+}
+# a workflow label -> the board names its agent may use (X1, X1-review, review-X1)
+function LabelNames($l) { $p = $l -split ':'; $n = ($p[-1] -split '@')[0]; @($n) + $(if ($p.Count -gt 1) { "$n-$($p[0])"; "$($p[0])-$n" }) }
+# a transcript's tail only (they reach MBs): the last 512 KB, newest line first, only lines matching $Want parsed; $Each sets the
+# fields (tool, what <= 1 line, ended, killed, version) and returns $true when it has all it needs; an unknown record sets nothing
+function Read-KitTranscriptTail([string]$File, [string]$Want, [scriptblock]$Each) {
+  $fi = if ($File) { Get-Item -LiteralPath $File -ErrorAction SilentlyContinue }; if (-not $fi) { return $null }
+  $fs = [IO.File]::Open($fi.FullName, 'Open', 'Read', 'ReadWrite')
+  try { $n = [int][math]::Min($fs.Length, 512KB); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $null = $fs.Read($b, 0, $n) } finally { $fs.Dispose() }
+  $s = [pscustomobject]@{ file = $fi.FullName; at = $fi.LastWriteTime; tool = ''; what = ''; ended = $null; killed = $false; version = ''; raw = [Text.Encoding]::UTF8.GetString($b) }
+  $lines = @($s.raw -split "`r?`n" | Select-Object -Skip $(if ($n -lt $fi.Length) { 1 } else { 0 }))   # the first line of a cut tail is partial
+  for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+    if ($lines[$i] -notmatch $Want) { continue }
+    $o = try { $lines[$i] | ConvertFrom-Json -Depth 80 } catch { $null }; if ($o -and (& $Each $o $s)) { break }
+  }
+  $s
+}
+# adapter:transcript/claude: <project dir>/<session>/subagents/**/agent-*.jsonl, a line per tool call and result; background task
+# *.output files it names count as progress
+Register-KitAdapter 'transcript' 'claude' @{
+  'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }); filter = '*.jsonl' } }
+  'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_use"' { param($o, $s) $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' })[-1]
+      if ($u) { $s.tool = "$($u.name)"; $s.what = "$($u.input.description)" }; [bool]$u }
+    if (-not $s) { return }; if ($s.raw -match '"version":"([^"]+)"') { $s.version = "claude $($Matches[1])" }
+    $outs = foreach ($m in [regex]::Matches($s.raw, 'tasks(?:\\\\|/)\w+\.output')) { $i = $s.raw.LastIndexOfAny([char[]]'"<> ', $m.Index) + 1; $s.raw.Substring($i, $m.Index + $m.Length - $i) -replace '\\\\', '\' }   # back to the path's start: a forward regex backtracks for seconds
+    foreach ($o in @($outs | Select-Object -Unique)) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }
+    $s }
+}
+# adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl {timestamp, type, payload}; line 1 session_meta (cli_version);
+# the newest turn marker: task_complete = its turn ended
+Register-KitAdapter 'transcript' 'codex' @{
+  'root' = { @{ dir = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions'; filter = 'rollout-*.jsonl' } }
+  'last' = { param($a) $s = Read-KitTranscriptTail $a.file 'function_call"|task_started|task_complete' { param($o, $s) $p = $o.payload
+      if (-not $s.tool -and $o.type -eq 'response_item' -and $p.type -eq 'function_call') { $s.tool = "$($p.name)"; $g = try { "$($p.arguments)" | ConvertFrom-Json } catch { $null }; $s.what = "$(if ($g.cmd) { $g.cmd } else { $g.command })" }
+      elseif ($null -eq $s.ended -and $o.type -eq 'event_msg' -and $p.type -in 'task_started', 'task_complete') { $s.ended = $p.type -eq 'task_complete' }
+      $s.tool -and $null -ne $s.ended }
+    if ($s) { $m = try { Get-Content -LiteralPath $s.file -TotalCount 1 | ConvertFrom-Json } catch { $null }; if ($m.payload.cli_version) { $s.version = "codex $($m.payload.cli_version)" } }; $s }
+}
+# adapter:transcript/antigravity: brain/<id>/.system_generated/logs/transcript.jsonl {step_index, type, status, tool_calls[{name, args}]};
+# the parent's brain/<parent>/.system_generated/subagents/<id>.json state SUBAGENT_STATE_KILLED = killed
+Register-KitAdapter 'transcript' 'antigravity' @{
+  'root' = { @{ dir = Join-Path $HOME '.gemini/antigravity-cli/brain'; filter = 'transcript.jsonl' } }
+  'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_calls"' { param($o, $s) $c = @($o.tool_calls)[-1]; if ($c.name) { $s.tool = "$($c.name)"; $s.what = "$($c.args.toolSummary)" }; [bool]$c.name }
+    if ($s) { $id = Split-Path (Split-Path (Split-Path (Split-Path $s.file))) -Leaf; $brain = Split-Path (Split-Path (Split-Path (Split-Path $s.file)))
+      $k = @(Get-Item -Force -Path (Join-Path $brain "*/.system_generated/subagents/$id.json") -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })[0]
+      $s.killed = "$($k.state)" -eq 'SUBAGENT_STATE_KILLED' }; $s }
+}
+# adapter:transcript/none: no transcript (another tool): board and journal only
+Register-KitAdapter 'transcript' 'none' @{ 'root' = { $null }; 'last' = { $null } }
+# adapter-end:transcript
+function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
+# first rule that holds: STOPPED (crashed, error, killed, session gone) · FINISHED (left, a journal result, turn complete) · WAITING
+# (a named wait) · ACTIVE (progress within $StuckMin) · STUCK; then the since and next cells of that state
+function Set-KitStatusState($R, [datetime]$Now, [double]$StuckMin) {
+  $s = if ($R.stopped) { 'STOPPED' } elseif ($R.done) { 'FINISHED' } elseif ($R.wait) { 'WAITING' } elseif ($R.last -and ($Now - [datetime]$R.last).TotalMinutes -lt $StuckMin) { 'ACTIVE' } else { 'STUCK' }
+  $rc = "bossy.ps1 recover$(if ($R.run) { " -Run $($R.run)" })"
+  $R | Add-Member -Force NoteProperty state $s
+  $R | Add-Member -Force NoteProperty since $(switch ($s) { 'ACTIVE' { $R.started } 'WAITING' { $R.waitAt } 'STUCK' { $R.last } default { $R.ended } })
+  $R | Add-Member -Force NoteProperty next $(switch ($s) { 'WAITING' { $R.waitNext } 'STUCK' { "read its transcript tail; resume it or $rc" } 'STOPPED' { $rc } default { $R.next } }); $R
+}
+# rows: board entries (a beat within 6 h, left within 2 h), workflow runs (2 h after their last write, 48 h unfinished) and their running
+# steps no board entry covers; $script:KitTxVersions = the transcript formats read (tool version)
+function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
+  $stuck = [double](Get-KitSetting 'supervise.stuckMinutes' 20); $rows = [Collections.Generic.List[object]]::new(); $script:KitTxVersions = @{}
+  $last = { param($tool, $file) $t = if ($file) { Invoke-KitAdapter transcript (Get-KitTranscriptKind $tool) last @{ file = $file } }; if ($t.version) { $script:KitTxVersions[($t.version -split ' ')[0]] = $t.version }; $t }
+  $max = { param([object[]]$T) @($T | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1] }
+  $doing = { param($t) if ($t.tool) { "$($t.tool)$(if ($t.what) { ": $($t.what)" })" } }
+  $outcome = { param($st) if ("$($st.result.summary)") { "$($st.result.summary)" } else { 'done' } }
+  $tok = { param($n) if ($n -ge 1e6) { '{0:0.#}M' -f ($n / 1e6) } else { '{0:0}k' -f ($n / 1e3) } }
+  # waits: "<run>/<agent>" or "/<agent>" -> why, since, next
+  $waits = @{}; $put = { param($k, $why, $at, $nx) if (-not $waits[$k]) { $waits[$k] = [pscustomobject]@{ why = $why; at = $at; next = $nx } } }
+  foreach ($d in @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object status -eq 'pending')) {
+    $e = $d.kind -eq 'envfix'; & $put "$($d.run)/$($d.agent)" "$(if ($e) { 'env fix' } else { 'decision' }) $($d.id)" $d.at "$(if ($e) { 'coordinator fixes the env' } else { 'owner answers' }), then decide answer -Id $($d.id)"
+  }
+  foreach ($g in @((Get-KitGpuState).waiting)) { & $put "/$($g.holder)" "GPU, held by $($g.heldBy)" $g.at 'the GPU frees' }
+  foreach ($h in @(Get-Command 'Get-KitStatusWait*' -CommandType Function -ErrorAction SilentlyContinue)) { foreach ($w in @(& $h)) { & $put "/$($w.agent)" $w.why $w.at $w.next } }   # adapters: build gate, phone lanes
+  $pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object state -eq 'paused')
+  $waitOf = { param([string]$Run, [string[]]$Names)
+    foreach ($n in $Names) { foreach ($k in "$Run/$n", "/$n") { if ($waits[$k]) { return $waits[$k] } } }
+    $p = @($pauses | Where-Object { $Run -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })[0]
+    if ($p) { [pscustomobject]@{ why = "owner pause: $($p.reason)"; at = $p.at; next = "bossy.ps1 resume -Run $Run" } } }
+  # board entries first: a transcript inside a workflow folder names that run (the engine's folder id <-> the run's name)
+  $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window
+  $runOf = @{}; foreach ($e in $recent) { if ("$($e.transcript)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]agent-' -and $e.run) { $runOf[$Matches[1]] = $e.run } }
+  # workflow runs and their steps
+  $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $runSteps = [Collections.Generic.List[object]]::new()
+  foreach ($w in @(Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | Sort-Object LastWriteTime)) {   # oldest first: a relaunch's steps win
+    $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
+    $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
+    $lr = @($launch | Where-Object { $_.runId -eq $w.Name -or ($_.wfDir -and (Split-Path "$($_.wfDir)" -Leaf) -eq $w.Name) })
+    $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x }
+    $running = @(Get-JournalRunning $started @($res.Keys)); $seen = [Collections.Generic.List[object]]::new(); $seen.Add($jt)
+    # the engine writes no end marker: a script only waits on its agents, so no running step for 2+ min = it ended (unless paused)
+    $paused = [bool]@($lr | Where-Object { $_.paused -and -not $_.completed }).Count
+    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($lr | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2))
+    if (($Now - $jt).TotalHours -ge $(if ($fin) { 2 } else { 48 })) { continue }
+    $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]
+    if (-not @($lr).Count) { $lr = @($launch | Where-Object { $_.run -eq $run -and $_.cap }) }   # its self record: script, tokens spent, cap
+    foreach ($s in $started) {
+      $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt }
+      if ($s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st) }
+      foreach ($k in @(LabelNames $st.label | ForEach-Object { "$run/$_"; if ($run -like 'wf_*') { "?/$_" } })) { if (-not ($steps[$k].tx -and -not $st.tx)) { $steps[$k] = $st } }   # the latest step of a name wins, a running one first; ?/ = run name unknown
+    }
+    $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]; $hold = @($lr | Where-Object holderPid)[0]
+    $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
+    $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw.Count) step(s): $($cw[0].why)"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $running.Count
+          task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
+          stopped = $(if (-not $fin -and $hold -and (Test-KitHolder $hold) -eq $false) { 'session gone' }); done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
+          wait = $wp.why; waitAt = $wp.at; waitNext = $wp.next; last = & $max $seen; started = $w.CreationTime; ended = $jt; next = '' }) $Now $stuck))
+  }
+  # board entries; a running step of the same name is that agent now (a resume or env-fix step after its entry left)
+  $trk = (Read-KitTracking).tasks
+  foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 })) {   # a re-join replaces its older entry
+    $st = @($steps["$($e.run)/$($e.agent)"], $steps["?/$($e.agent)"] | Where-Object { $_ })[0]; if ($st) { $st.covered = $true }; $on = [bool]$st.tx
+    $t = if ($on) { $st.tx } else { & $last $e.tool $(if ($e.transcript) { $e.transcript } elseif ($st) { $st.tf }) }
+    $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
+    if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats
+    $tn = foreach ($i in "$($e.items)" -split '[,\s]+') { $o = if ($i -and $trk) { $trk[$i] }; if ($o -and -not $o.done) { "track $i`: $(@($o.mrs).Count) MR(s) until promoted$(if ($o.holdPromotion) { " (held: $($o.holdPromotion))" })"; break } }
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
+          stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
+          done = $(if ($on) { '' } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t; started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
+          next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" }) }) $Now $stuck))
+  }
+  foreach ($st in @($runSteps | Where-Object { -not $_.covered })) {
+    $w = & $waitOf $st.run @(LabelNames $st.label); $ty = try { (Get-Content ($st.tf -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json).agentType } catch { '' }
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$((($st.label -split ':', 2)[-1] -split '@')[0]) ($(if ($ty) { $ty } else { 'step' }))"; run = $st.run; task = "$($st.label) · $($st.run)"
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = $(if ($st.tx) { $st.tx.at } else { $st.jt }); doing = & $doing $st.tx; started = (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime; next = '' }) $Now $stuck))
+  }
+  @($rows)
+}
+# markdown, one line per row (the coordinator pastes it as is); worst states first; cells cut to one line
+function Format-KitStatusTable($Rows, $Now, $Versions) {
+  $Now = if ($Now) { [datetime]$Now } else { Get-Date }
+  $cut = { param($t, [int]$n = 60) $t = ("$t" -replace '[\r\n|]+', ' ').Trim(); if ($t.Length -gt $n) { $t.Substring(0, $n - 1) + '…' } else { $t } }
+  $hm = { param($t) if ($t) { ([datetime]$t).ToString('HH:mm') } else { '—' } }
+  '| Agent | Task / run | State | Since | Last progress | Next |'; '|---|---|---|---|---|---|'
+  foreach ($r in @($Rows | Sort-Object { @{ STUCK = 0; STOPPED = 1; WAITING = 2; ACTIVE = 3; FINISHED = 4 }[$_.state] }, name)) {
+    $sc = switch ($r.state) { 'ACTIVE' { "ACTIVE$(if ($r.left) { " ($($r.left) step$(if ($r.left -ne 1) { 's' }) left)" })" } 'WAITING' { "WAITING ($($r.wait))" } 'FINISHED' { "FINISHED: $($r.done)" }
+      'STUCK' { "STUCK ($(if ($r.last) { "$([int]($Now - [datetime]$r.last).TotalMinutes) min" } else { 'no progress seen' }))" } default { "STOPPED ($($r.stopped))" } }
+    "| $(& $cut $r.name 30) | $(& $cut $r.task) | $(& $cut $sc 80) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (& $cut $r.doing) }) | $(if ($r.next) { & $cut $r.next 80 } else { '—' }) |"
+  }
+  if (-not @($Rows).Count) { '| — | nothing running | — | — | — | — |' }
+  if ($Versions -and $Versions.Count) { "transcripts read: $(@($Versions.Values | Sort-Object) -join ', ')" }
+}
+# supervise flags of STUCK rows (agents and steps, not their run): WATCH, ACT from 3x the threshold
+function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
+  foreach ($r in @($Rows | Where-Object { $_.state -eq 'STUCK' -and -not $_.left })) {   # a run with running steps: its steps are the rows
+    $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
+    [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
+  }
 }
 
 # ---- tracker: adapter (a Register-KitAdapter block per tracker.type)

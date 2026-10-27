@@ -194,16 +194,16 @@ $hb = Px $O board beat -Session $ht | Out-String; $hf = if ($hb -match 'leave -S
 $null = Px $O board leave -Session $ht -Handoff $hf; $hr = Px $O recover | Out-String
 $h2 = Px $O board join -Agent H1 -Run hr | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
 Expect 'budget: join shows it, a beat at 80% = HANDOFF, recover lists the brief, a fresh join continues' ($hj -match 'budget: claude claude-opus-5-5 967000 tokens, handoff at 773600' -and $hb -match 'HANDOFF: spend 800000 >= 773600' -and $hf -and $hr -match "== HANDOFF H1 \(hr\).*$([regex]::Escape($hf))" -and $h2 -match "CONTINUE: .*$([regex]::Escape($hf))" -and $h2 -notmatch 'DUPLICATE')
-$rd = @{ agents = @(@{ type = 'checky'; name = 'W1'; mode = 'test'; spend = 50000; prevSpend = 30000 }, @{ type = 'checky'; name = 'J1'; mode = 'env-fix'; wait = $true }, @{ type = 'devy'; name = 'P1'; mode = 'build'; spend = 10000; prevSpend = 0 })
+$rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'Bash' }, @{ name = 'J1'; task = 'r'; state = 'WAITING'; wait = 'env fix e-1'; since = '2026-01-02T10:00'; next = 'decide' })
   mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('deploy ready: stage (2 MR(s))'); detailFile = 'r.md'
-  resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }, @{ name = 'browser rm·acme·admin'; by = 'W1'; gb = 2 }, @{ name = 'hm · api (down)'; by = 'memory'; gb = 0 })
+  resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }, @{ name = 'hm · api (down)'; by = 'memory'; gb = 0 })
   flags = @(@{ level = 'WATCH'; what = 'gate: 6 builds queued'; action = 'wait' }, @{ level = 'ACT'; what = 'ENV-FIX e-1 waiting 240 min'; action = 'fix it' }) }
-$r1 = (& { . $O; Format-KitReport $rd -Agents }) -join "`n"; $rd.mem.AvailGB = 6; $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
-$want1 = @('| Agent | Doing |', '|---|---|', '| 1 × devy (+10kT) | build 1 (P1) |', '| 2 × checky (+20kT) | waiting: env-fix 1 (J1) · test 1 (W1) |', '',
-  '**RAM** 48 / 64 GB used, 16 GB free', '', '| Resource | Used by | RAM |', '|---|---|---|', '| rm · api | W1 | 3 |', '| browser rm·acme·admin | W1 | 2 |', '| hm · api (down) | memory | — |', '',
+$r1 = (& { . $O; Format-KitReport $rd }) -join "`n"; $rd.mem.AvailGB = 6; $rd.rows = @(); $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
+$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | r | WAITING (env fix e-1) | 10:00 | — | decide |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Bash | — |', '',
+  '**RAM** 48 / 64 GB used, 16 GB free', '', '| Resource | Used by | RAM |', '|---|---|---|', '| rm · api | W1 | 3 |', '| hm · api (down) | memory | — |', '',
   '**Flags**', '- **ACT** ENV-FIX e-1 waiting 240 min -> fix it', '- **WATCH** gate: 6 builds queued -> wait', '- **INFO** deploy ready: stage (2 MR(s))') -join "`n"
-Expect 'supervise report snapshot (-Agents)' ($r1 -eq $want1)
-Expect 'supervise report: below the floor named, no agents by default' ($r2 -match '\*\*RAM\*\* 58 / 64 GB used, 6 GB free \(below the floor 8 GB\)' -and $r2 -notmatch 'Agent')
+Expect 'supervise report snapshot (status rows, worst first)' ($r1 -eq $want1)
+Expect 'supervise report: below the floor; no rows = nothing running' ($r2 -match '\*\*RAM\*\* 58 / 64 GB used, 6 GB free \(below the floor 8 GB\)' -and $r2 -match 'nothing running')
 $an = & { . $O; $c = @{ outbox = 4; toolErrors = 2; errorRun = 'wf1' }
   "$((Get-KitAnomalies $c @{ outbox = 1; toolErrors = 1 }).flags.what -join "`n")`n$((Get-KitAnomalies @{ outbox = 0 } @{}).flags.Count)" }
 $want = 'outbox grew to 4', '1 new agent', '\n0$'

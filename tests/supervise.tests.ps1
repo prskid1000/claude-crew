@@ -39,9 +39,37 @@ New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'ki
 $null = pwsh @np $O launch -RunId wf_r3 -Script buildy.js -ArgsJson '{"brief":"C:/b/r3.md","run":"r3"}' 2>&1
 $sj = pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json; $sw = @($sj.flags | ForEach-Object { "[$($_.level)] $($_.what)" }) -join "`n"
 $lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); $left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
-Expect 'supervise -AutoFix: stale entries with a journal result or a finished parent leave as finished (INFO); a silent one stays WATCH; a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and
+Expect 'supervise -AutoFix: stale entries with a journal result or a finished parent leave as finished (INFO); a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and
   $sw -match '\[INFO\] auto-fixed: board entry review-PY-RET \(r1\) left: its workflow step has a journal result' -and $sw -match '\[INFO\] auto-fixed: board entry revy-1400 \(kit-fix\) left: every other agent of its run left' -and
-  $sw -match '\[WATCH\] board entry H9 \(r2\) has no heartbeat' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: launch record closed' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
+  $sw -match '\[WATCH\] STUCK H9 \(revy\) \(r2\): no progress for 30 min' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: launch record closed' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
+# status rows, one per state; transcripts (Claude, Codex, Antigravity shapes) with set mtimes
+$tx = { param($f, [string[]]$Lines, [int]$Min = 1) New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content $f $Lines; (Get-Item $f).LastWriteTime = (Get-Date).AddMinutes(-$Min); $f }
+$ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }; $wd = Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/workflows/wf_s1'
+New-Journal wf_s1 (@(1..31 | ForEach-Object { @{ type = 'started'; agentId = "x$_"; label = "test:$(if ($_ -eq 1) { 'S1' } else { "T$_" })" }, @{ type = 'result'; agentId = "x$_"; result = @{ summary = "S$_ shipped !1$_" } } }) + @{ type = 'started'; agentId = 'x32'; label = 'build:S32' })
+$null = & $tx "$wd/agent-x32.jsonl" '{"type":"assistant","version":"2.9","message":{"content":[{"type":"tool_use","name":"Bash","input":{"description":"🧪 Run the tests"}}]}}'
+& $J @{ run = 'sr'; script = 'C:/k/buildy.js'; wfDir = $wd; cap = 2e7; spent = 1.5e6; at = (& $ago 60) } (Join-Path (TkPath $k launches) 'self-buildy-sr.json')
+$cx = & $tx (Join-Path (Kd) 'codex/rollout-1.jsonl') '{"type":"session_meta","payload":{"cli_version":"0.157.0","agent_role":"devy"}}', '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}', '{"type":"event_msg","payload":{"type":"task_complete"}}', '{"type":"brand_new_kind","payload":{}}'
+$ag = & $tx (Join-Path (Kd) 'brain/c1/.system_generated/logs/transcript.jsonl') '{"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"run_command","args":{"toolSummary":"Run unit tests"}}]}'
+& $J @{ conversationId = 'c1'; state = 'SUBAGENT_STATE_KILLED'; subagentDescriptor = @{ typeName = 'checky' } } (Join-Path (Kd) 'brain/p1/.system_generated/subagents/c1.json')
+$se = { param($a, [hashtable]$x) $b = @{ session = "s-$a"; agent = $a; run = 'sr'; type = 'devy'; status = 'working'; beat = (& $ago 1); joined = (& $ago 90); holderPid = $PID; holderStart = $hs }; foreach ($kx in $x.Keys) { $b[$kx] = $x[$kx] }; & $J $b (Join-Path $bd "s-$a.json") }
+& $se S1 @{ status = 'left'; transcript = (& $tx (Join-Path (Kd) 'S1.jsonl') '{"message":{"content":[{"type":"tool_use","name":"Bash","input":{"description":"Reporting results, leaving the board"}}]}}' 0) }
+& $se S2 @{ beat = (& $ago 30) }; & $se S3 @{ beat = (& $ago 30) }; & $se S4 @{ status = 'left'; crashed = (& $ago 5) }; & $se S5 @{ beat = (& $ago 40); transcript = (& $tx (Join-Path (Kd) 'S5.jsonl') '{}') }
+& $se S6 @{}; & $se S7 @{ tool = 'codex'; transcript = $cx }; & $se S8 @{ tool = 'antigravity'; transcript = $ag; status = 'running tests' }
+& $J @{ id = 'e-1'; kind = 'envfix'; run = 'sr'; agent = 'S2'; status = 'pending'; at = (& $ago 20) } (Join-Path (TkPath $k decisions -Create) 'e-1.json')
+& $J @{ waiting = @(@{ kind = 'lanes'; holder = 'S6'; heldBy = 'vision x'; pid = $PID; pidStart = $hs; at = (& $ago 3) }) } (Join-Path (TkPath $k runtimes -Create) 'gpu.json')
+# an older folder of run sr (its S32 finished; the newer one runs S32 again), a run whose only step waits, a paused run between steps
+$wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-Item "$(Split-Path $wd)/$id/journal.jsonl").LastWriteTime = (Get-Date).AddMinutes(-$m); & $J (@{ runId = $id; run = $run } + $x) (Join-Path (TkPath $k launches) "$id.json") }
+& $wj wf_s0 sr @(@{ type = 'started'; agentId = 'x0'; label = 'build:S32' }, @{ type = 'result'; agentId = 'x0'; result = @{ summary = 'old' } }) 60; & $se S32 @{ status = 'left' }
+& $wj wf_s2 sp @(@{ type = 'started'; agentId = 'y1'; label = 'build:P1' }) 30; $null = & $tx "$(Split-Path $wd)/wf_s2/agent-y1.jsonl" '{}' 30
+& $J @{ id = 'e-2'; kind = 'envfix'; run = 'sp'; agent = 'P1'; status = 'pending'; at = (& $ago 25) } (Join-Path (TkPath $k decisions) 'e-2.json')
+& $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
+$st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
+$sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }
+Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& $sv 'sr (workflow)' 'ACTIVE \(1 step left\)') -and @($st -match 'buildy\.js wf_s1 · steps 31/32 · 1\.5M tokens of 20M').Count -and (& $sv 'S32 (devy)' 'ACTIVE \| .* Bash: 🧪 Run the tests') -and -not @($st -match 'S32 \(step\)|STUCK sp').Count -and (& $sv 'sp (workflow)' 'WAITING \(1 step\(s\): env fix e-2\)') -and (& $sv 'sq (workflow)' 'WAITING \(owner pause\)') -and
+  (& $sv 'S1 (devy)' 'FINISHED: S1 shipped !11 \|') -and (& $sv 'S2 (devy)' 'WAITING \(env fix e-1\)') -and (& $sv 'S3 (devy)' 'STUCK \(30 min\)') -and (& $sv 'S4 (devy)' 'STOPPED \(crashed\)') -and (& $sv 'S5 (devy)' 'ACTIVE') -and
+  (& $sv 'S6 (devy)' 'WAITING \(GPU, held by vision x\)') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
+  @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 30 min').Count -and
+  @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
 # the next heartbeat: 5 on an ACT / ENV-FIX, half the base on storage / build streak / many agents, 30 idle machine, else back to the base
 $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 1), @(15, 0, 1, 0, 0, 2, 2, 1), @(15, 0, 0, 1, 0, 2, 2, 1), @(15, 0, 0, 0, 3, 2, 2, 1), @(15, 0, 0, 0, 0, 9, 9, 3), @(15, 0, 0, 0, 0, 0, 0, 0), @(15, 0, 0, 0, 0, 2, 0, 2), @(15, 0, 0, 0, 0, 2, 2, 1), @(5, 0, 0, 0, 0, 2, 2, 1), @(30, 0, 0, 0, 0, 2, 2, 1)) { `$n = Get-KitNextBeat `$c[0] 15 `$c[1] `$c[2] ([bool]`$c[3]) `$c[4] `$c[5] `$c[6] `$c[7]; `"`$(`$n.min) `$(`$n.why)`" }"
 Expect "heartbeat NEXT: ACT 5, ENV-FIX 5, storage / 3 failed builds / many agents 8, nothing runs 30, all idle 22, normal 15, back toward 15 from 5 and 30 ($($nb -join ' | '))" (($nb -join '|') -eq '5 1 ACT open|5 1 ENV-FIX open|8 storage anomaly|8 3 failed builds in a row|8 9 live agents|30 nothing runs|22 every agent idle|15 normal|10 back toward 15|22 back toward 15' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
@@ -132,9 +160,6 @@ Expect 'board show lists QA seats and env leases; recover lists the lease with n
 'idea', 'win', 'retired' | ForEach-Object { @{ at = '2099-01-01'; skill = 'kitty'; kind = $_; text = 'board slot' } | ConvertTo-Json -Compress } | Add-Content $sg
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content $tp.digest -Raw; pwsh @np $O tidy done -At '2026-01-02T03:04' >$null
 Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match 'T03:04:00')
-# label prefixes map to the new crew types
-$nc = & { . $O; ((Get-KitLabelType 'spike'), (Get-KitLabelType 'migration-review:X1'), (Get-KitLabelType 'review:X1')) -join ','; Format-KitReport @{ agents = @(@{ type = 'rechy'; name = 'spike'; mode = 'spike' }); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1 } -Agents }
-Expect 'supervise: spike = rechy, migration-review = datay, their rows show' ($nc[0] -eq 'rechy,datay,revy' -and ($nc -join "`n") -match '\| 1 × rechy \| spike 1 \(spike\) \|')
 # board: the same name in a live session 5 min after its beat = a parallel agent
 $j3 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $s3 = ($j3 -csplit 'SESSION ')[-1].Split(' ')[0]; $f3 = Join-Path (TkPath $k board) "$s3.json"
 $e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-KitPidStart $PID }; $e3.beat = (Get-Date).AddMinutes(-5).ToString('o'); & $J $e3 $f3
