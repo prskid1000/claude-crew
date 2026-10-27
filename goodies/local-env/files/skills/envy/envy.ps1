@@ -15,7 +15,7 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L589 hooks · L661 marks · L799 seed ·
-  L845 processes · L1129 daemon · L1568 cleanup · L1640 doctor · L1690 verbs
+  L845 processes · L1132 daemon · L1574 cleanup · L1646 doctor · L1696 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1058,18 +1058,19 @@ function Wait-Deps([string]$e, $s) {
     }
   }
 }
-function Start-Svc([string]$e, $s, [int]$release, [string]$artifact) {
+function Start-Svc([string]$e, $s, [int]$release, [string]$artifact, [switch]$Latest) {
   Wait-Deps $e $s
-  try { Start-SvcOnce $e $s $release $artifact }
+  try { Start-SvcOnce $e $s $release $artifact -Latest:$Latest }
   catch {
     if ("$_" -notmatch $script:DepFailPattern) { throw }
     "[$e] $($s.name) failed on a dependency connection: waiting for $(if (@($s.dependsOn).Count) { @($s.dependsOn) -join ', ' } else { '30 s (no dependsOn)' }), then one retry"
     Event $e 'start-retry' @{ service = $s.name; why = "$_".Split("`n")[0] }
     if (@($s.dependsOn | Where-Object { $_ }).Count) { Wait-Deps $e $s } else { Wait-KitPoll 30 }
-    Start-SvcOnce $e $s $release $artifact
+    Start-SvcOnce $e $s $release $artifact -Latest:$Latest
   }
 }
-function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
+# -Latest (start worker): the copy the state names once room and lock are got; trains staged and pruned while it waited
+function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch]$Latest) {
   $dir = SvcDir $e $s
   if (-not (Test-Path $dir)) { throw "[$e] $($s.name): folder $dir does not exist" }
   $cmd = StartCmd $e $s $artifact
@@ -1093,6 +1094,8 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact) {
       if ($round -ge 3) { throw "[$e] $($s.name): RAM was taken while it waited for the start lock (3 rounds) - not started" }
       "[$e] RAM fell while $($s.name) waited for the start lock: waiting for room again"
     }
+    $xl = if ($Latest) { (Read-State $e).services[$s.name] }
+    if ($xl.artifact -and "$($xl.artifact)" -ne $artifact) { "[$e] $($s.name): a newer staged copy since this start was queued (release $($xl.release))"; $artifact = "$($xl.artifact)"; if ($xl.release) { $release = [int]$xl.release }; $cmd = StartCmd $e $s $artifact }
     $log = LogFile $e $s.name; $logFrom = 0   # a reader holding the log (tidy, logs -Grep): append, scan only the new lines
     if (Test-Path $log) { try { Move-Item $log "$log.prev" -Force -ErrorAction Stop } catch { $logFrom = (Get-Item $log).Length; "[$e] $($s.name): $log is open elsewhere, appending to it" } }
     "[$e] starting $($s.name)$(if ($release) { " (release $release)" }): $cmd"
@@ -1283,7 +1286,10 @@ function Run-Train {
         $p = $prevSvc[$s.name]
         $art = if ($prevArt[$s.name]) { $prevArt[$s.name] } elseif ($s.artifact -and $p.artifact -and (Test-Path $p.artifact)) { $p.artifact } else { $null }
         if ($s.artifact -and -not $art) { $notes.Add("rollback of $($s.name): no build of the previous release, left stopped"); continue }
-        try { Start-Svc $e $s ([int]$p.release) $art } catch { $notes.Add("rollback of $($s.name) failed too: $("$_".Split("`n")[0])") }
+        try {
+          if ($s.artifact) { Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{} }; $z.services[$s.name].artifact = $art; $z.services[$s.name].release = [int]$p.release } }   # a failed restart never leaves the rolled-back copy for the next lease
+          Start-Svc $e $s ([int]$p.release) $art
+        } catch { $notes.Add("rollback of $($s.name) failed too: $("$_".Split("`n")[0])") }
       }
     }
   }
@@ -1417,7 +1423,7 @@ if ($Aot) {   # AOT training worker: one run for one artifact, gated, off the lo
 }
 if ($Start) {   # start worker: one service start (RAM wait, start lock, health) off the loop, so beats, prune and idle stops go on
   $s = Svc $e $Start
-  try { if (Healthy $e $s) { Say "start of ${Start}: already up" } else { Start-Svc $e $s $Release $Artifact *>&1 | ForEach-Object { Say "$_" } } }
+  try { if (Healthy $e $s) { Say "start of ${Start}: already up" } else { Start-Svc $e $s $Release $Artifact -Latest *>&1 | ForEach-Object { Say "$_" } } }
   catch {
     $why = "$_".Split("`n")[0]; Say "start of $Start failed: $why"
     Update-State $e { param($z) if (-not $z.services[$Start]) { $z.services[$Start] = @{} }; $z.services[$Start].status = 'failed'; $z.services[$Start].why = $why }

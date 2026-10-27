@@ -243,6 +243,28 @@ $lk = & { . $L3; $lkLog = LogFile t api; Set-Content $lkLog 'APPLICATION FAILED 
   function Start-Pwsh { Add-Content $lkLog 'Started App in 1.0 seconds'; $PID }; function Healthy { (++$script:lkH) -gt 1 }
   try { $o = @(Start-SvcOnce t (Svc t api) 1 '') -join ' '; "$($o -match 'open elsewhere, appending')|$((Read-State t).services.api.status)|$(-not (Test-Path "$lkLog.prev"))" } catch { "threw: $_" } finally { $lkHold.Dispose() } }
 Expect "start: a held log is appended to, its old fail line ignored, the service comes up ($lk)" ($lk -eq 'True|up|True')
+# a start worker queued with a copy that trains replaced (and pruned) while it waited for room starts the copy the state names
+$lt = & { . $L3; Update-State t { param($x) $x.services = @{ api = @{ status = 'failed'; artifact = 'run/r9-b/app.jar'; release = 9 } } }
+  function SvcDir { $sq }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }; function Healthy { $true }; function Stop-Svc { }; function Wait-Deps { }
+  function Start-Pwsh { $script:ltArgs = "$($args[0] -join ' ')"; $PID }
+  $o = @(Start-Svc t (Svc t api) 7 'run/r7-a/app.jar' -Latest) -join ' '; $sv = (Read-State t).services.api
+  $null = Start-SvcOnce t (Svc t api) 7 'run/r7-a/app.jar'; "$($script:ltArgs -match 'r7-a')|$($o -match 'starting api \(release 9\)')|$($sv.artifact)|$($sv.release)" }
+$ltw = (Get-Content $L3 -Raw) -match "Start-Svc \`$e \`$s \`$Release \`$Artifact -Latest" -and ([regex]::Matches((Get-Content $L3 -Raw), 'Start-SvcOnce \$e \$s \$release \$artifact -Latest:\$Latest')).Count -eq 2
+Expect "start: -Latest (the start worker, through Start-Svc and its retry) runs the state's newer copy, not the one it was queued with; a train's own start keeps its copy ($lt|$ltw)" ($lt -eq 'True|True|run/r9-b/app.jar|9' -and $ltw)
+# a switch-over that fails and a rollback restart that fails too: the state names the previous copy, never the rolled-back one
+$a1 = Join-Path $sq 'r1-a.jar'; Set-Content $a1 x; $rbw = Join-Path $k3 'rb-train.ps1'
+& { . $L3; Update-State t { param($x) $x.release = @{ n = 1; repos = @{ r = @{ targetSha = 't0'; layers = @() } } }; $x.services = @{ api = @{ status = 'up'; artifact = $a1; release = 1 } }
+    $x.requests = @(@{ id = 'q1'; kind = 'deploy'; branch = 'b'; agent = 'A'; shas = @{ r = 's1' }; migrations = @{}; status = 'in-train' }); $x.train = @{ id = 'tr2'; requests = @('q1') } } }
+Set-Content $rbw @"
+. '$L3'
+function EnvServices { [pscustomobject]@{ name = 'api'; repo = 'r'; artifact = 'app.jar'; start = 'x' } }; function RepoOf { 'r' }; function EnvRepos { @{ r = @{ target = 'main'; wt = '$sq'; cfg = @{ checkout = '$sq' } } } }
+function Wait-Leases { }; function Sync-Repo { @{ dropped = @(); kept = @(`$args[2]); targetSha = 't1' } }; function Build-Repo { `$null }; function Stage-Artifacts { @{ api = 'run/r2-tr2/app.jar' } }
+function Start-Svc { if (`$args[3] -match 'r2') { Update-State t { param(`$z) `$z.services.api.artifact = 'run/r2-tr2/app.jar'; `$z.services.api.release = 2 } }; throw 'not healthy' }
+Invoke-Daemon -Env t -Train tr2
+"@
+$null = Px $rbw 2>&1
+$rb = & { . $L3; $sv = (Read-State t).services.api; "$($sv.artifact -eq $a1)|$($sv.release)|$((Read-State t).release.n)" }
+Expect "rollback: a failed switch-over and a failed restart leave the previous release's copy in the state ($rb)" ($rb -eq 'True|1|1')
 Remove-TestKit $k3
 # supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad
