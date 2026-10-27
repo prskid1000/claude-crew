@@ -14,3 +14,5 @@ Needed when (swarm.config.json, checked by phoney.ps1): `app.kind` = `flutter` |
 - Tests: `tests.ps1` (runs `tests-*.ps1` too).
 - GPU: with `gpu.exclusive.emulator` set (README "Leases"), `up` boots no emulator while another kind (a local vision model) holds the
   GPU (`<lane> not started: no memory turn (waiting for GPU)`: acquire's queue retries); a running emulator holds it until it exits.
+  Each boot also waits for `gpu.exclusive.emulator.minFreeMB` (2048) free GPU memory (`lane <lane>: needs <n> MB free GPU memory, <m>
+  MB free (held by <processes>)`); no nvidia-smi: one warning, no check. Needs the core `Use-KitGpu -MinFreeMB`.

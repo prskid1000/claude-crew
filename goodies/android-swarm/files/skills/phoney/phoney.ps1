@@ -12,7 +12,7 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
-Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L660 down · L689 slim
+Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L665 down · L694 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -601,8 +601,13 @@ foreach ($name in $Lanes) {
     $left | ForEach-Object { Stop-SysProcess $_.Id }; Wait-KitPoll 2
   }
   if (-not (Test-LaneUp $l)) {
-    # the GPU (gpu.exclusive): no emulator boots while another kind (a local vision model) holds it; the caller's queue retries
-    if ($onGpu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue) -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }))) { Write-Warning "$name not started: no memory turn (waiting for GPU)"; continue }
+    # the GPU (gpu.exclusive): no emulator boots while another kind (a local vision model) holds it, nor under minFreeMB free (a GPU
+    # user outside the kit; each running lane counts too); the caller's queue retries on 'no memory turn'
+    $gpuCmd = Get-Command Use-KitGpu -ErrorAction SilentlyContinue
+    $gpuMin = if ($gpuCmd -and $gpuCmd.Parameters.ContainsKey('MinFreeMB')) { @{ MinFreeMB = 2048 } } else { @{} }   # an older core: no free-memory check
+    if ($onGpu -and $gpuCmd -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }) @gpuMin)) {
+      Write-Warning $(if ($script:KitGpuRefused.vram) { "lane $name`: $($script:KitGpuRefused.holder); not started: no memory turn" } else { "$name not started: no memory turn (waiting for GPU)" }); continue
+    }
     if (-not (Turn 'emulator' 4.5)) { continue }
     $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
