@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L628 tracker · L863 git-host · L979 kitlog · L1091 params ·
-  L1254 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L687 tracker · L922 git-host · L1038 kitlog · L1150 params ·
+  L1313 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -400,6 +400,65 @@ function Test-KitLeaseBack([string]$Agent) {
   $r = if ($Agent) { (Read-KitParams).released.$Agent }; if (-not $r) { return }; $now = Get-KitNow; $gap = ($now - [datetime]$r.at).TotalMinutes
   if ($gap -le 3 * [double]$r.grace) { Add-KitParamObs 'idle.graceMinutes' ([double]$r.quiet + $gap) '' 'short' 10 }
   Set-KitLeaseReleased $Agent $null
+}
+# the GPU: one exclusive resource for the kinds in gpu.exclusive (e.g. emulator lanes, a local vision model); holders of one kind
+# share it, another kind waits. A holder = a lease bound to a process, or a running process matching <kind>.processes
+function Get-KitGpuFile { Join-Path (Get-KitPath runtimes -Create) 'gpu.json' }
+function Get-KitGpuState {
+  $s = try { Get-Content (Get-KitGpuFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
+  $s.leases = @($s.leases | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s.waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s
+}
+function Get-KitGpuHolders($St = (Get-KitGpuState)) {
+  $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex) { return @() }
+  @($St.leases) + @(foreach ($k in @($ex.PSObject.Properties.Name)) { $rx = "$($ex.$k.processes)"; if ($rx) { Get-SysProcs -Name $rx -NoCommandLine | ForEach-Object { @{ kind = $k; holder = "$($_.Name) pid $($_.Id)"; pid = $_.Id } } } })
+}
+# GPU users from nvidia-smi: @{ usedMB; procs = @(@{ pid; name; mb }) } (KIT_GPU_PROBE: a JSON file of that shape, tests) · $null unknown
+function Get-KitGpuProbe {
+  if ($env:KIT_GPU_PROBE) { return (Get-Content $env:KIT_GPU_PROBE -Raw | ConvertFrom-Json -AsHashtable) }
+  $r = Invoke-KitExe 'nvidia-smi' @() 20; if ($r.code) { return $null }
+  $used = if ("$($r.out)" -match '(\d+)MiB\s*/\s*\d+MiB') { [int]$Matches[1] } else { 0 }
+  @{ usedMB = $used; procs = @(foreach ($m in [regex]::Matches("$($r.out)", '(?m)^\|\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(?:C|G|C\+G)\s+(\S+)\s+(\d+MiB|N/A)')) {
+        $id = [int]$m.Groups[1].Value; $n = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
+        @{ pid = $id; name = $(if ($n) { $n } else { $m.Groups[2].Value }); mb = $(if ($m.Groups[3].Value -match '\d+') { [int]$Matches[0] } else { $null }) } }) }
+}
+# a kind with idleExcept (regex of its own backend's process names): any other GPU process, or idleMaxMB (512) used while its backend
+# is not running, blocks it (e.g. a local vision model that needs the whole GPU)
+function Get-KitGpuBusy([string]$Kind) {
+  $rx = "$(Get-KitSetting "gpu.exclusive.$Kind.idleExcept" '')"; if (-not $rx) { return $null }
+  $p = Get-KitGpuProbe; if (-not $p) { return @{ kind = 'gpu'; holder = 'state unknown (nvidia-smi does not answer)' } }
+  $f = @($p.procs | Where-Object { "$($_.name)" -notmatch $rx }) | Select-Object -First 1
+  if ($f) { return @{ kind = 'gpu'; holder = "$($f.name) pid $($f.pid) using $(if ($null -ne $f.mb) { "$($f.mb) MB" } else { 'the GPU' })" } }
+  $max = [int](Get-KitSetting "gpu.exclusive.$Kind.idleMaxMB" 512)
+  if (-not @($p.procs | Where-Object { "$($_.name)" -match $rx }).Count -and [int]$p.usedMB -gt $max) { return @{ kind = 'gpu'; holder = "$($p.usedMB) MB used (> idleMaxMB $max)" } }
+}
+# $true held (a kind gpu.exclusive does not list: always) · $false still held by another kind or GPU user after WaitMinutes
+function Use-KitGpu([string]$Kind, [string]$Holder, [int]$ProcessId = $PID, [double]$WaitMinutes = 30) {
+  $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex -or $Kind -notin @($ex.PSObject.Properties.Name)) { return $true }
+  $me = @{ kind = $Kind; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o') }
+  $end = (Get-Date).AddMinutes($WaitMinutes); $said = $false; $f = Get-KitGpuFile
+  while ($true) {
+    $busy = Get-KitGpuBusy $Kind
+    $other = Invoke-KitLocked $f {
+      $st = Get-KitGpuState; $o = @(@(Get-KitGpuHolders $st | Where-Object { $_.kind -ne $Kind }) + @($busy | Where-Object { $_ })) | Select-Object -First 1
+      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
+      if ($o) { $st.waiting += $me + @{ heldBy = "$($o.kind) $($o.holder)" } } else { $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId -or $_.kind -ne $Kind }) + $me }
+      Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $o
+    }
+    if (-not $other) { return $true }
+    if (-not $said) { Write-Host "waiting for GPU: held by $($other.kind) $($other.holder)"; $said = $true }
+    if ((Get-Date) -ge $end) { Remove-KitGpu -ProcessId $ProcessId; return $false }
+    Wait-KitPoll 30
+  }
+}
+function Remove-KitGpu([int]$ProcessId = $PID) {
+  $f = Get-KitGpuFile; if (-not (Test-Path $f)) { return }
+  Invoke-KitLocked $f { $st = Get-KitGpuState; $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId }); $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId }); Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5) }
+}
+# bossy.ps1 supervise: who holds the GPU, who waits for it
+function Get-KitSuperviseGuardGpu([switch]$AutoFix) {
+  if (-not (Get-KitSetting 'gpu.exclusive' $null)) { return }
+  $st = Get-KitGpuState; $h = @(Get-KitGpuHolders $st)
+  if ($h.Count -or $st.waiting.Count) { "gpu: $(if ($h.Count) { "held by $(@($h | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', ')" } else { 'free' })$(@($st.waiting | ForEach-Object { "; waiting for GPU: $($_.kind) $($_.holder) (held by $($_.heldBy))" }) -join '')" }
 }
 
 function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$TimeoutSec = 60, [string]$Raw, [string]$Cwd) {   # -Raw: the argument string as is (cmd.exe /s /c "<command>")
