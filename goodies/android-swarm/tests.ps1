@@ -97,7 +97,8 @@ Expect "deployed laneApk: no stamp UNKNOWN, merged commit in the APK DEPLOYED ($
 Remove-TestKit $k
 
 # gpu.exclusive: a vision job holding the GPU -> up boots no emulator ("waiting for GPU", the acquire queue retries)
-$k = New-TestKit swarm-gpu; & $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'local-vision' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
+$k = New-TestKit swarm-gpu; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force   # the installed goody: -Kit runs give a core-only test kit
+& $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'local-vision' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
 $vis = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
 $gt = Join-Path (Kd) 'gpu-up'; New-Item -ItemType Directory -Force $gt | Out-Null
 $gu = Invoke-PsTest 'swarm-gpu' @"
