@@ -11,8 +11,8 @@ and the memory gate); every stage also runs alone:
   python -X utf8 media_evidence.py paths <key>                       key folder, index folder, status (JSON)
 In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (headless grabs), gws, env JIRA_*. Out: text,
 JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable link, stage failed) · 2 usage.
-Sections: L26 config · L140 fetchers · L394 probe · L413 detect · L592 transcribe · L712 vision · L800 index · L908 read ·
-  L979 cli
+Sections: L26 config · L141 fetchers · L395 probe · L414 detect · L593 transcribe · L713 vision · L801 index · L909 read ·
+  L980 cli
 """
 import base64, hashlib, http.client, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -36,7 +36,8 @@ DEFAULTS = {
     'chunk': {'minSec': 20, 'maxSec': 60, 'sectionSec': 300, 'twoLevelOverSec': 3600},
     'stt': {'baseUrl': '', 'model': 'whisper-1', 'path': '/v1/audio/transcriptions', 'pieceSec': 30, 'timeoutSec': 300},
     'vision': {'baseUrl': '', 'model': '', 'enabled': True, 'path': '/v1/chat/completions', 'maxFrames': 40, 'maxEdge': 1280, 'timeoutSec': 300, 'gpuStopGB': 0,
-               'prompt': 'Answer in plain text only; do not call any tool. Transcribe every visible text in this screenshot exactly (ids, amounts, dates, error messages), one item per line. Then one line starting "UI:" describing the screen state.'},
+               'system': 'You read screenshots. Reply with only the text visible in the image, exactly as written (ids, amounts, dates, error messages), one item per line, then one line starting "UI:" describing the screen. Do not call tools. No commentary.',
+               'prompt': 'Visible text:'},
 }
 
 def merge(a, b):
@@ -745,8 +746,8 @@ def ask_vision(c, img_path):
     if s < 1:
         img = cv2.resize(img, (int(ww * s), int(hh * s)), interpolation=cv2.INTER_AREA)
     ok, jpg = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    body = {'model': c['model'], 'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': c['prompt']},
-            {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + base64.b64encode(jpg.tobytes()).decode()}}]}]}
+    body = {'model': c['model'], 'messages': ([{'role': 'system', 'content': c['system']}] if c.get('system') else []) + [{'role': 'user', 'content': [
+            {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + base64.b64encode(jpg.tobytes()).decode()}}, {'type': 'text', 'text': c['prompt']}]}]}
     req = urllib.request.Request(c['baseUrl'].rstrip('/') + c['path'], json.dumps(body).encode(), {'Content-Type': 'application/json', 'User-Agent': 'kit-media-evidence'})
     d = json.loads(urllib.request.urlopen(req, timeout=int(c['timeoutSec'])).read())
     txt = re.sub(r'(?s)<think>.*?(</think>|$)', '', (d.get('choices') or [{}])[0].get('message', {}).get('content') or '').strip()

@@ -22,13 +22,15 @@
   (one job per server, bound to the job's process: a killed job frees it at once) and the memory gate reserves `ramGB` (kind `local-ai`); a server that does not answer or
   a wait past `-WaitMinutes` -> "waiting for local STT / vision" and an index without that stage. Download, detect, reads: no lease.
   The servers are never started or reconfigured by the kit: plain requests to their own settings.
+  Vision also holds the GPU (`gpu.exclusive.local-vision`, README "Leases"): it waits while an emulator lane or, with `idleExcept`,
+  any other GPU process (nvidia-smi) uses it, and no lane boots while it runs.
 Needed when: `media` = `*`, or listed in kit.local.json `goodies`.
 - Config `media` (every key optional): `fetchers` (order), `jam.hosts`, `sharepoint.hosts` + `sharepoint.cookies` (`{host | "*":
   <cookies.txt path>}`: local only), `gdrive.hosts`, `jira.hosts`, `image.hosts` (`{host: <css selector>}`), `ytdlp.hosts`,
   `detect` (fps 12, width 640, pixel 18, cursorPx 26, settleMs 400, pageFrac 0.25, idleSec 3, maxCrops 60), `chunk` (minSec 20,
   maxSec 60, sectionSec 300, twoLevelOverSec 3600), `stt` (baseUrl, model whisper-1, path /v1/audio/transcriptions, pieceSec
   30, ramGB, maxConcurrent 1), `vision` (baseUrl, model, enabled, path /v1/chat/completions, maxFrames 40, maxEdge 1280,
-  gpuStopGB, ramGB, maxConcurrent 1, prompt). Env `KIT_MEDIA_CONFIG`: a JSON file with a media object on top (tests).
+  gpuStopGB, ramGB, maxConcurrent 1, system, prompt). Env `KIT_MEDIA_CONFIG`: a JSON file with a media object on top (tests).
 - Needs: yt-dlp, ffmpeg + ffprobe, Python OpenCV + numpy, node (`npm install` in skills/pokey) and Chrome / Edge for headless grabs;
   optional `gws`, `nvidia-smi`.
 - Wiring: `skills/pokey/adapters/evidence.ps1` (`Invoke-Evidence`: pokey.ps1 verb `evidence`), `skills/pokey/media_evidence.py`

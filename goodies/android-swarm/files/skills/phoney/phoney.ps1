@@ -12,7 +12,7 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
-Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L655 down · L684 slim
+Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L658 down · L687 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -600,6 +600,8 @@ foreach ($name in $Lanes) {
     $left | ForEach-Object { Stop-SysProcess $_.Id }; Wait-KitPoll 2
   }
   if (-not (Test-LaneUp $l)) {
+    # the GPU (gpu.exclusive): no emulator boots while another kind (a local vision model) holds it; the caller's queue retries
+    if ((Get-Command Use-KitGpu -ErrorAction SilentlyContinue) -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }))) { Write-Warning "$name not started: no memory turn (waiting for GPU)"; continue }
     if (-not (Turn 'emulator' 4.5)) { continue }
     $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
@@ -619,6 +621,7 @@ foreach ($name in $Lanes) {
     # gate ledger entry: the booting emulator's memory
     Wait-KitPoll 3
     $qemu = EmuProcs $l.port | Sort-Object Created -Descending | Select-Object -First 1
+    if ($qemu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue)) { $null = Use-KitGpu -Kind emulator -Holder $name -ProcessId $qemu.Id -WaitMinutes 0 }   # the running emulator holds the GPU until it exits
     if ($qemu) { @{ pid = $qemu.Id; need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }

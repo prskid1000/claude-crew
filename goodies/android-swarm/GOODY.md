@@ -12,3 +12,5 @@ Needed when (swarm.config.json, checked by phoney.ps1): `app.kind` = `flutter` |
   `Test-LaneApkDeployed`) and `annotate.ps1` (`Invoke-Annotate`), dot-sourced by pokey.ps1; `skills/crafty/adapters/android_sdk.ps1`
   (`Get-AndroidSdk`). Builds on it: `ios-simulator`. Without it app checks are NOT_TESTED (`phone-only`).
 - Tests: `tests.ps1` (runs `tests-*.ps1` too).
+- GPU: with `gpu.exclusive.emulator` set (README "Leases"), `up` boots no emulator while another kind (a local vision model) holds the
+  GPU (`<lane> not started: no memory turn (waiting for GPU)`: acquire's queue retries); a running emulator holds it until it exits.

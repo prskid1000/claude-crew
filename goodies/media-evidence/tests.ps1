@@ -111,7 +111,38 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
   Expect "media index: vision 503 -> one request, stage stopped, degraded, index kept ($(@($posts | Where-Object { $_ -notmatch 'audio' }).Count) vision posts)" (@($posts | Where-Object { $_ -notmatch 'audio' }).Count -eq 1 -and ($j3.notes -match 'degraded vision: stopped: the vision backend answered HTTP 503'))
   $gl = @(Get-ChildItem (TkPath $k audit) -Recurse -Filter 'builds.jsonl' -ErrorAction SilentlyContinue | Get-Content | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'start' })
   Expect "media index: STT + vision ran through the memory gate as kind local-ai with ramGB ($(@($gl.kind) -join ','))" (@($gl | Where-Object { $_.kind -eq 'local-ai' -and [double]$_.needGB -eq 0.1 }).Count -eq 2)
-  Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue
+  # gpu.exclusive: an emulator lane holding the GPU blocks vision; a vision job blocks a lane; a release frees the other
+  $probe = Join-Path (Kd) 'gpu-probe.json'; & $J @{ usedMB = 0; procs = @() } $probe; $env:KIT_GPU_PROBE = $probe
+  & $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'local-vision' = @{ idleExcept = '^llama-server' } } }; media = @{ stt = @{ baseUrl = "http://127.0.0.1:$port"; ramGB = 0.1 }; vision = @{ baseUrl = "http://127.0.0.1:$port"; model = 'm'; ramGB = 0.1 } } } $cfgF
+  $emu = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
+  $null = Invoke-PsTest 'gpu-emu' ". '$(Lib)'; `$null = Use-KitGpu -Kind emulator -Holder L1 -ProcessId $($emu.Id) -WaitMinutes 0"
+  $n0 = @(Get-Content $plog).Count
+  $g1 = Invoke-TestScript $Q evidence index $talk -Refresh -NoTranscript -WaitMinutes 0 -Json; $gj = try { $g1.out.Substring($g1.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
+  Expect "media gpu: a lane holding the GPU -> vision waits, sends nothing, says who holds it ($(@($gj.notes) -join '; '))" (@(Get-Content $plog).Count -eq $n0 -and ($gj.notes -match 'waiting for GPU: held by emulator L1'))
+  Stop-Process -Id $emu.Id -Force; Start-Sleep -Milliseconds 300
+  $g2 = Invoke-TestScript $Q evidence index $talk -Refresh -NoTranscript -WaitMinutes 0 -Json; $gk = try { $g2.out.Substring($g2.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
+  Expect "media gpu: the lane gone -> vision runs (one request to the server) ($(@($gk.notes) -join '; '))" (@(Get-Content $plog).Count -eq $n0 + 1 -and ($gk.notes -match 'HTTP 503'))
+  # a foreign GPU process (nvidia-smi) blocks vision; the vision backend's own process does not
+  & $J @{ usedMB = 900; procs = @(@{ pid = 4242; name = 'qemu-system-x86_64'; mb = $null }, @{ pid = 4343; name = 'llama-server'; mb = 8000 }) } $probe
+  $g3 = Invoke-TestScript $Q evidence index $talk -Refresh -NoTranscript -WaitMinutes 0 -Json; $gm = try { $g3.out.Substring($g3.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
+  Expect "media gpu: another GPU process -> vision waits, sends nothing ($(@($gm.notes) -join '; '))" (@(Get-Content $plog).Count -eq $n0 + 1 -and ($gm.notes -match 'waiting for GPU: held by gpu qemu-system-x86_64 pid 4242 using the GPU'))
+  & $J @{ usedMB = 8100; procs = @(@{ pid = 4343; name = 'llama-server'; mb = 8000 }) } $probe
+  $g4 = Invoke-TestScript $Q evidence index $talk -Refresh -NoTranscript -WaitMinutes 0 -Json
+  Expect 'media gpu: only the vision backend on the GPU -> vision runs' (@(Get-Content $plog).Count -eq $n0 + 2)
+  & $J @{ usedMB = 1300; procs = @() } $probe
+  $g5 = Invoke-TestScript $Q evidence index $talk -Refresh -NoTranscript -WaitMinutes 0 -Json
+  Expect 'media gpu: memory used with no backend running (> idleMaxMB) -> vision waits' (@(Get-Content $plog).Count -eq $n0 + 2 -and $g5.out -match '1300 MB used')
+  & $J @{ usedMB = 0; procs = @() } $probe
+  $vis = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
+  $gr = Invoke-PsTest 'gpu-vis' @"
+. '$(Lib)'
+`$null = Use-KitGpu -Kind local-vision -Holder v1 -ProcessId $($vis.Id) -WaitMinutes 0
+"blocked:`$(-not (Use-KitGpu -Kind emulator -Holder L2 -WaitMinutes 0))"; "shown:`$((Get-KitSuperviseGuardGpu) -match 'held by local-vision v1')"
+Stop-Process -Id $($vis.Id) -Force; Start-Sleep -Milliseconds 300
+"freed:`$(Use-KitGpu -Kind emulator -Holder L2 -WaitMinutes 0)"; Remove-KitGpu
+"@
+  Expect-Each $gr 'media gpu: a vision job #' @('blocked', 'shown', 'freed') -Show 6
+  $env:KIT_GPU_PROBE = $null; Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue
 } else { 'SKIP media index: ffmpeg or OpenCV missing' }
 
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise

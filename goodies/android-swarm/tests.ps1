@@ -95,5 +95,22 @@ $la = & { . $Q; function Row($d, $s, $x) { "$s|$x" }; function OnRef { $false }
   & $J @{ commit = $sha; branch = 'main'; built = 'now'; appDir = $gr } $stamp; $b = Test-LaneApkDeployed ([pscustomobject]@{ laneApk = $stamp }); "$a#$b" }
 Expect "deployed laneApk: no stamp UNKNOWN, merged commit in the APK DEPLOYED ($la)" ($la -match '^UNKNOWN\|no lane APK stamp.*#DEPLOYED\|in the lane APK')
 Remove-TestKit $k
+
+# gpu.exclusive: a vision job holding the GPU -> up boots no emulator ("waiting for GPU", the acquire queue retries)
+$k = New-TestKit swarm-gpu; & $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'local-vision' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
+$vis = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
+$gt = Join-Path (Kd) 'gpu-up'; New-Item -ItemType Directory -Force $gt | Out-Null
+$gu = Invoke-PsTest 'swarm-gpu' @"
+. '$(Join-Path $k 'skills/phoney/phoney.ps1')'
+`$null = Use-KitGpu -Kind local-vision -Holder v1 -ProcessId $($vis.Id) -WaitMinutes 0
+Set-Content '$gt/adb.cmd' "@echo off``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> '$gt/started.txt'" -Encoding ascii
+`$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'G1'; port = 5590 }); adb = '$gt/adb.cmd'; emulator = '$gt/emu.cmd'; avdDir = '$gt'; dir = '$gt'; out = '$gt'; state = '$gt/swarm.json'; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() } }
+`$env:KIT_SWARM_TURN_MIN = '0'
+`$w = @(Invoke-Up -Lanes G1 -Mode None -Headless 3>&1 | Where-Object { `$_ -is [Management.Automation.WarningRecord] })
+"blocked:`$((`$w.Message -match 'G1 not started: no memory turn \(waiting for GPU\)').Count -eq 1 -and -not (Test-Path '$gt/started.txt'))"
+"@
+Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
+Expect-Each $gu 'swarm gpu: a vision job holding the GPU -> no lane boot: #' @('blocked') -Show 8
+Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests

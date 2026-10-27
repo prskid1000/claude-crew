@@ -9,7 +9,7 @@ Inputs: kit.local.json `media` (GOODY.md), media_evidence.py (stages), adapters/
 <runtime>/cache/media/<key>/. One lock per video key: a second agent on the same video waits, then reads the same cache.
 STT / vision stages: lease `local-stt` / `local-vision` (one job each), then the memory gate reserves media.<stt|vision>.ramGB.
 Exit codes: 0 ok · 1 problem (unreadable link: ask the tester for the file; no index) · 2 usage.
-Sections: L15 helpers · L51 verb
+Sections: L15 helpers · L56 verb
 #>
 #Requires -Version 7
 # ---- helpers: the python stages, the per-video lock, AI stages under lease + gate
@@ -36,16 +36,21 @@ function Invoke-KitMediaAiStage([string]$Key, [string]$Stage, [string]$IxDir, [d
   $lease = if ($Stage -eq 'transcribe') { 'local-stt' } else { 'local-vision' }
   if (-not (Use-KitLocalAi $lease -Agent $Agent -WaitMinutes $WaitMinutes)) { return [pscustomobject]@{ stage = $Stage; degraded = $true; reason = "waiting for local AI: $lease still busy after $WaitMinutes min" } }
   try {
-    $ram = [double](Get-KitSetting "media.$(if ($Stage -eq 'transcribe') { 'stt' } else { 'vision' }).ramGB" 2)
+    # gpu.exclusive: no vision request while another kind (an emulator lane) holds the GPU, and no lane boots while this runs
+    if ($Stage -eq 'vision' -and -not (Use-KitGpu -Kind $lease -Holder $Agent -WaitMinutes $WaitMinutes)) {
+      $h = @(@(Get-KitGpuHolders | Where-Object { $_.kind -ne $lease }) + @(Get-KitGpuBusy $lease | Where-Object { $_ }) | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', '
+      return [pscustomobject]@{ stage = $Stage; degraded = $true; reason = "waiting for GPU: held by $h after $WaitMinutes min" }
+    }
+    $ram =[double](Get-KitSetting "media.$(if ($Stage -eq 'transcribe') { 'stt' } else { 'vision' }).ramGB" 2)
     $cmd = "`"$((Get-Command (Get-Python)).Source)`" -X utf8 `"$(Join-Path $KitConf.Kit 'skills/pokey/media_evidence.py')`" $Stage $Key $($Ref -join ' ')"
-    $g = @(& (Get-Process -Id $PID).Path -NoProfile -File $KitCmd.dev gate -Dir (Split-Path (Split-Path $IxDir)) -Cmd $cmd -NeedGB $ram -WaitMinutes ([int][math]::Ceiling($WaitMinutes)) 2>&1)
+    $g = @(& (Get-Process -Id $PID).Path -NoProfile -File $KitCmd.dev gate -Dir (Split-Path (Split-Path $IxDir)) -Cmd $cmd -NeedGB $ram -WaitMinutes ([math]::Max(1, [int][math]::Ceiling($WaitMinutes))) 2>&1)
     $code = $LASTEXITCODE
     $g | Where-Object { "$_" -match '^\[gate\] (waiting|could not)' } | Select-Object -Last 1 | ForEach-Object { Write-Host "media $Stage`: $_" }
     if ($code -eq 3) { return [pscustomobject]@{ stage = $Stage; degraded = $true; reason = "waiting for RAM: the memory gate did not start it within $WaitMinutes min" } }
     $j = try { Get-Content (Join-Path $IxDir "$Stage.json") -Raw | ConvertFrom-Json } catch { $null }
     if ($code -or -not $j) { return [pscustomobject]@{ stage = $Stage; degraded = $true; reason = "stage failed (exit $code): $(@($g | Where-Object { "$_" -notmatch '^\[gate\]' } | Select-Object -Last 1))" } }
     [pscustomobject]@{ stage = $Stage; sec = $j.stageSec; degraded = [bool]$j.degraded; reason = "$($j.reason)" }
-  } finally { Remove-KitLocalAi $lease }
+  } finally { Remove-KitLocalAi $lease; if ($Stage -eq 'vision') { Remove-KitGpu } }
 }
 
 # ---- verb: pokey.ps1 evidence
