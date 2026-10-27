@@ -1464,11 +1464,11 @@ def prose_check(kind, text, spec, banned):
     body = [l for l in lines if l.strip()]
     flat = '\n'.join(lines)
     for tok in spec['limits'].replace(';', ' ').split():
-        m = re.match(r'^(?:(each|first|[A-Z][\w ()/-]*?):)?(\d+)(w|t|l|ch|sw|b)$', tok)
+        m = re.match(r'^(?:(each|first|prose|[A-Z][\w ()/-]*?):)?(\d+)(w|t|l|ch|sw|b)$', tok)
         if not m:
             continue
         scope, n, u = (m.group(1) or '').replace('_', ' ') or None, int(m.group(2)), m.group(3)
-        targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else secs if scope == 'each' else {scope: secs.get(scope, [])}
+        targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else secs if scope == 'each' else {'(prose)': [l for l in body if not re.match(r'\s*(?:\|.*\||!\[.*\))\s*$', l)]} if scope == 'prose' else {scope: secs.get(scope, [])}   # prose: no table rows (cells have own caps), no image lines
         for name, ls in targets.items():
             txt = '\n'.join(ls)
             v = {'w': lambda: words(txt), 't': lambda: (len(txt.encode('utf-8')) + 3) // 4, 'l': lambda: len([l for l in ls if l.strip()]),

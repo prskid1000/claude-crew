@@ -8,7 +8,7 @@ The rules: AGENTS.md "Writing". Every limit is a ceiling, not a target. `kitbag.
 (exit 1 = findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
 `pokey.ps1 finalize`) run it and print findings, never truncate. A finding is fixed by rewriting.
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
-`<Section>:` that section (`_` for a space). Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
+`<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
 `options` A/B lines · `recommended` · `verdict` PASS / FAIL / BLOCKED · `conv` subject per `commitStyle` (default Conventional Commits).
 Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
@@ -28,7 +28,7 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | what must be true before merge | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
 | testing-doc | the human testing doc a tester follows | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected evidence |
-| qa-report | the QA run report | header table, a verdict line per check, defects, not tested | 900w each:15b 25sw | id verdict evidence |
+| qa-report | the QA run report | header table, a verdict line per check, defects, not tested | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
 | mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |

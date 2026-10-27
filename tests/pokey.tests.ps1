@@ -50,6 +50,10 @@ $po = pwsh @np $Q finalize -RunDir $pl -Code P1 -Check 2>&1 | Out-String
 Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class (not a re-test)" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$')
 $pp = pwsh @np $Q finalize -RunDir $pl -Code P1 2>&1 | Out-String; $ppc = $LASTEXITCODE
 Expect "finalize publish: over the prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))
+$s12 = "$(1..12) ."; $note = "$s12 $s12 $s12"; $bg = New-Run 'BG' @(@{ code = 'G1'; task = 'TG'; checks = @(1..44 | % { , @("C$_", 'PASS') }) }); $sm = New-Run 'SM' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') })
+$rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
+$go = pwsh @np $Q finalize -RunDir $bg -Code G1 -Check 2>&1 | Out-String; $gc = $LASTEXITCODE; $so = pwsh @np $Q finalize -RunDir $sm -Code S1 -Check 2>&1 | Out-String
+Expect "finalize -Check: 44 checks of 36-word notes pass prose:900w ($gc); a small report padded over 900 prose words fails" ($gc -eq 0 -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
