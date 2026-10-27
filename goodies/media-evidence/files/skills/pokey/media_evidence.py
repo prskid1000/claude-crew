@@ -21,7 +21,7 @@ PIPE = 1   # bump when a stage's output changes: old indexes are rebuilt
 HERE = osp.dirname(osp.abspath(__file__))
 KIT = osp.dirname(osp.dirname(HERE))
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36'
-ERR_RE = re.compile(r"(?i)\b(error|exception|failed|failure|invalid|not found|denied|forbidden|unauthori[sz]ed|time[d ]?out|crash\w*|unable|cannot|can't|wrong|went wrong|[45]\d\d)\b")
+ERR_RE = re.compile(r"(?i)\b(error|exception|failed|failure|invalid|not found|denied|forbidden|unauthori[sz]ed|time[d ]?out|crash\w*|unable|cannot|can't|wrong|went wrong|(?:http|status|code)\s*[:=]?\s*[45]\d\d)\b")   # a bare 3-digit number is an id or amount, not a status
 
 # ---- config: kit.local.json media + defaults
 DEFAULTS = {
