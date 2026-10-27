@@ -41,6 +41,10 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   A "<p style='font-size:9pt;color:#6b7280;margin:0'>TEST RESULTS · $(Esc $Date)</p>"
   A "<h1 style='font-size:20pt;margin:2px 0 4px 0;color:#111827'>$(Esc $Title) — $(Esc $Code)</h1>"
   A "<p style='font-size:12pt;margin:0 0 10px 0;color:$($verdict[0])'><b>$($verdict[1])</b></p>"
+  # verify = '<status> | <re-test / note audit text>' (core pokey.ps1 VerifyStatus / VerifyFile; an older core: the whole text)
+  $vNew = [bool](Get-Command VerifyFile -ErrorAction SilentlyContinue)
+  function VStatus($c) { if ($vNew) { VerifyStatus $c.verify } else { [string]$c.verify } }
+  function VFull($c) { $vf = if ($vNew) { VerifyFile $Code $c }; if ($vf -and $Map.files[$vf]) { "$(if ($s = VStatus $c) { "$(Esc $s) · " })full text: <a href='$($Map.files[$vf].link)'>$(Esc $vf)</a>" } else { Esc $c.verify } }
   # Count chips
   A "<table style='border-collapse:collapse;margin:6px 0 12px 0'><tr>"
   foreach ($k in 'PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'PENDING', 'OUT_OF_SCOPE') { if ($n[$k] -or $k -in 'PASS', 'FAIL') { A (Chip $k $n[$k]) } }
@@ -48,7 +52,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   # At a glance
   $glance = "$passAll of $($checks.Count - $n.OUT_OF_SCOPE) checks pass"
   if ($n.PASS_WITH_NOTE) { $glance += " ($($n.PASS_WITH_NOTE) with a note)" }
-  if ($fails.Count) { $glance += ". $($fails.Count) failed: " + (($fails | ForEach-Object { "$($_.id) ($($_.screen))" }) -join ', ') + $(if (@($fails | Where-Object verify -eq 'confirmed').Count) { ' — confirmed by an independent re-test' } else { '' }) }
+  if ($fails.Count) { $glance += ". $($fails.Count) failed: " + (($fails | ForEach-Object { "$($_.id) ($($_.screen))" }) -join ', ') + $(if (@($fails | Where-Object { (VStatus $_) -eq 'confirmed' }).Count) { ' — confirmed by an independent re-test' } else { '' }) }
   if ($n.NOT_TESTED) { $glance += ". $($n.NOT_TESTED) not tested (reasons below)" }
   if ($n.PENDING) { $glance += ". $($n.PENDING) app/other-lane checks are tested separately" }
   if ($n.OUT_OF_SCOPE) { $glance += ". $($n.OUT_OF_SCOPE) out of scope (channels never tested by agent QA)" }
@@ -73,7 +77,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   $i = 0
   foreach ($c in $checks) {
     $p = (Pal $c.result); $zebra = if ($i++ % 2) { '#f8fafc' } else { '#ffffff' }
-    $v = if ($c.verify) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $c.verify)</span>" } else { '' }
+    $v = if ($vs = VStatus $c) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $vs)</span>" } else { '' }
     A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b></td><td style='$script:Cell'>$(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(Esc $c.what_was_done)</td><td style='$script:Cell'>$(Esc $c.observed)</td></tr>"
   }
   A "</table>"
@@ -84,7 +88,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
     foreach ($c in $fails) {
       A "<h3 style='font-size:11.5pt;margin:12px 0 4px 0'>$(Esc $c.id) — $(Esc $c.screen)</h3><table style='border-collapse:collapse;width:100%'>"
       A (Fact 'Steps' (Esc $c.what_was_done)); A (Fact 'What we saw' (Esc $c.observed))
-      if ($c.verify) { A (Fact 'Independent re-test' (Esc $c.verify)) }
+      if ($c.verify) { A (Fact 'Independent re-test' (VFull $c)) }
       $data = @($c.evidence | Where-Object { $_ -notmatch '\.(png|jpe?g)$' -and $Map.files[$_] })
       if ($data.Count) { A (Fact 'Data evidence' (($data | ForEach-Object { "<a href='$($Map.files[$_].link)'>$(Esc $_)</a>" }) -join '<br>')) }
       A "</table>"
@@ -96,7 +100,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   $notes = @($checks | Where-Object { $_.result -in 'PASS_WITH_NOTE', 'NOT_TESTED', 'OUT_OF_SCOPE' })
   if ($notes.Count -or @($Res.findings).Count) {
     A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Notes</h2><ul>"
-    foreach ($c in $notes) { A "<li><b>$(Esc $c.id)</b> ($((Pal $c.result).label)): $(Esc $c.observed)</li>" }
+    foreach ($c in $notes) { A "<li><b>$(Esc $c.id)</b> ($((Pal $c.result).label)): $(Esc $c.observed)$(if ($c.verify -and [string]$c.verify -ne (VStatus $c)) { "<br>re-test / note audit: $(VFull $c)" })</li>" }
     foreach ($f in @($Res.findings)) { A "<li>$(Esc $f)</li>" }
     A "</ul>"
   }
