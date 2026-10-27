@@ -38,6 +38,14 @@ Needed when: `media` = `*`, or listed in kit.local.json `goodies`.
   `skills/crafty/adapters/local_ai.ps1` (`Use-KitLocalAi`, `Remove-KitLocalAi`, `Get-KitSuperviseGuardLocalAi`: supervise shows
   holders and "waiting for local AI"). Tests: `tests.ps1`.
 - Measured (2026-10-27, one laptop): detect 1-2 s per 10-50 s of 1080p; STT ~5 s per request + speech length on CPU (the server's
-  worker ~6.3 GB RAM while loaded); index 150-320 tokens for a 10-50 s bug video. Vision: one model behind a local proxy crashed
-  its backend (CUDA errors) on 2 of 4 single-image requests at ~11.4 GB of 12 GB VRAM; keep `vision.enabled` false until the
-  server is stable, compare models only on the owner's word.
+  worker ~6.3 GB RAM while loaded); index 150-320 tokens for a 10-50 s bug video without screen text.
+- Vision model comparison (2026-10-27, 25 real UI frames: dark tables, filter panels, date fields, a toast, PDF previews; long edge
+  1280; score = exact ids, amounts, dates and messages found in the reply):
+
+  | Model (local proxy, its own settings) | Exact text | s / frame (median, mean) | GPU peak | backend RAM | Chatter |
+  |---|---|---|---|---|---|
+  | 27B dense, IQ3 | 177 / 195 (91%) | 44, 57 | 11.43 GiB | 8.6 GB | 0 / 25 |
+  | 35B-A3B MoE, Q4 | not scored: its backend crashed (CUDA illegal memory access) on 3 of 5 image requests, 1 with the GPU idle | - | 11.36 GiB | 22 GB | - |
+
+  Misses: a 3-digit seal number read as letters, "Rate" read as "Cost", columns cut at the frame edge. ~45 s a frame: keep
+  `vision.maxFrames` small (start, page changes, clicked crops come first).
