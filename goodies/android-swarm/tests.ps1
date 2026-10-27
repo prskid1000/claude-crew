@@ -34,7 +34,7 @@ $script:SwarmCfg.app | Add-Member branch 'main'; Set-Content "$tmp/a/.gitignore"
 $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local'); $side = -not (Test-Path "$tmp/app-local.apk") -and @(Get-ChildItem $tmp -Filter 'app-local-*.apk').Count
 git -C "$tmp/a" checkout -q -b localenv/r1; $null = Invoke-KitVerb Invoke-Build @('-NoUpdate', '-Local')
 "local:$($side -and (Test-Path "$tmp/app-local.apk"))"
-"kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
+"kinds:$($ini -match 'arch=arm64\s[\s\S]*a35\\g\\arm64-v8a' -and $ini -match 'PlayStore.enabled=false' -and $ini -match 'hw.audioInput=yes') $((Get-Content "$tmp/app.apk" -Raw) -match 'fb gradlew')"
 '@
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $sf 2>&1)
@@ -85,6 +85,10 @@ Set-Content "$ud/platform-tools/adb.cmd" "@echo off`r`nif `"%1`"==`"pull`" copy 
 Set-Content "$ud/u.ps1" '$a = @($args); Set-Item Env:CLAUDE_RUNTIME "$($a[1])/rt"; $env:ANDROID_HOME = $a[1]; . $a[0]; function Get-ExeName($n) { "$n.cmd" }; Invoke-Ui "$($a[2])" "$($a[3])" "$($a[4])"'
 $ut = @(foreach ($a in @(@('tap', 'Hello'), @('tap', 'Nope'), @('wait', 'Nope', '1'))) { $null = Px "$ud/u.ps1" $Q $ud @a 2>&1; $LASTEXITCODE })
 Expect "ui: found 0, NOT FOUND 1, wait TIMEOUT 1; unknown action 2 ($($ut -join ','),$uc)" (($ut -join ',') -eq '0,1,1' -and $uc -eq 2)
+# ui mic: no emulator serial = usage 2; an emulator with no gRPC discovery file = 1, nothing sent
+Set-Content "$ud/s.wav" 'x'; $env:ANDROID_SERIAL = $null; $null = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1; $m1 = $LASTEXITCODE
+$env:ANDROID_SERIAL = 'emulator-5999'; $mo = Px "$ud/u.ps1" $Q $ud mic "$ud/s.wav" 2>&1 | Out-String; $m2 = $LASTEXITCODE; $env:ANDROID_SERIAL = $null
+Expect "ui mic: no serial 2, no gRPC endpoint 1 ($m1,$m2)" ($m1 -eq 2 -and $m2 -eq 1 -and $mo -match 'no gRPC endpoint for emulator-5999')
 # deploys[] laneApk: no stamp = UNKNOWN with the build hint; a stamp holding the merge = DEPLOYED (local checkout answers)
 # Row, LocalAncestor, OnRef: the Invoke-Deployed helpers the adapter calls (a local checkout answers; no git host)
 $la = & { . $Q; function Row($d, $s, $x) { "$s|$x" }; function OnRef { $false }
@@ -109,9 +113,14 @@ Set-Content '$gt/adb.cmd' "@echo off``r``nexit /b 0" -Encoding ascii; Set-Conten
 `$env:KIT_SWARM_TURN_MIN = '0'
 `$w = @(Invoke-Up -Lanes G1 -Mode None -Headless 3>&1 | Where-Object { `$_ -is [Management.Automation.WarningRecord] })
 "blocked:`$((`$w.Message -match 'G1 not started: no memory turn \(waiting for GPU\)').Count -eq 1 -and -not (Test-Path '$gt/started.txt'))"
+# avd.gpu swiftshader (software rendering, no GPU memory): boots although vision holds the GPU
+Set-Content '$gt/adb.cmd' "@echo off``r``necho 1``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> $gt\started.txt" -Encoding ascii; Set-Content '$gt/noop.ps1' 'exit 0'; `$KitCmd.swarm = '$gt/noop.ps1'; `$KitCmd.dev = '$gt/noop.ps1'
+`$script:SwarmCfg | Add-Member -Force avd ([pscustomobject]@{ gpu = 'swiftshader' })
+`$null = Invoke-Up -Lanes G1 -Mode None -Headless 3>&1; for (`$i = 0; `$i -lt 20 -and -not (Test-Path '$gt/started.txt'); `$i++) { Start-Sleep -Milliseconds 250 }
+"software:`$(Test-Path '$gt/started.txt')"
 "@
 Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
-Expect-Each $gu 'swarm gpu: a vision job holding the GPU -> no lane boot: #' @('blocked') -Show 8
+Expect-Each $gu 'swarm gpu: a vision job holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
 Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests

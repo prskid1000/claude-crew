@@ -32,7 +32,10 @@ in `phoney.ps1`). `kit.local.json` `devices.type`: android (default) · none (ve
   Put the serial in your board entry's claims (or pass `-Holder`).
 - A2. `$env:ANDROID_SERIAL='<serial>'` on every command; touch only your phone; never `adb kill-server`, never
   `up`/`down`/`install` for others. Relaunch / clear: `phoney.ps1 launch -Serial <s> [-Clear]`. Logs: `pokey.ps1 ui log <tag>`.
-  Camera: the app's camera icon, then `pokey.ps1 ui photo [shutterId]`.
+  Camera: the app's camera icon, then `pokey.ps1 ui photo [shutterId]`. Voice: start the app's listening, then
+  `pokey.ps1 ui mic <16-bit PCM wav | phrase>` (a phrase: Windows speech); on-device speech also needs the language pack
+  (Settings > System > Languages > On-device recognition, once per lane). Lanes boot with `-allow-host-audio` (else injected
+  audio never reaches the guest): while the app listens and nothing is injected, it hears the host mic; speakers stay off.
 - A2b. Offline lane (`phoney.ps1 status` shows "down, leased by <you>"): `phoney.ps1 ensure -Agent <id>` (cold boot, lease and
   reverses kept). Lease file gone: `acquire -Agent <id> -Lane <name> -NoInstall`.
 - A3. Release before long non-phone work: `phoney.ps1 release -Agent <id>` (removes reverses); acquire again later.
@@ -43,7 +46,9 @@ in `phoney.ps1`). `kit.local.json` `devices.type`: android (default) · none (ve
 - L1. Lane APK: `phoney.ps1 build` (memory gate; fast-forwards a clean checkout to `origin/<branch>`; refuses a branch without
   `app.branch`); a side checkout writes `app-<branch>-<commit>.apk` unless `-Shared`.
 - L2. `phoney.ps1 avd create` once per machine; a stuck or corrupt lane: `avd reset -Lanes <name> -Level
-  cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; default `abi` = the host's: `arm64-v8a` or `x86_64`).
+  cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; default `abi` = the host's: `arm64-v8a` or `x86_64`; `gpu`:
+  `host` (default) or a software mode (`swiftshader`: no GPU memory, no GPU lease; emulator 36.4 on Windows crashes on exit with it); a
+  lane made before the virtual mic needs `recreate` for `ui mic`).
 - L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `acquire` and
   `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes
   while a web pool or a dev wave runs.

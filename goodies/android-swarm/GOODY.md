@@ -1,6 +1,6 @@
 # android-swarm
 - What: the `phoney` skill: Android emulator lanes (acquire / release leases, AVDs, the lane and local-env APKs) and
-  `pokey.ps1 ui` (drive the app on a leased phone) + the `deploys[]` `laneApk` check of `pokey.ps1 deployed`; `pokey.ps1 annotate -In
+  `pokey.ps1 ui` (drive the app on a leased phone; `ui mic` feeds the virtual mic over the emulator's gRPC) + the `deploys[]` `laneApk` check of `pokey.ps1 deployed`; `pokey.ps1 annotate -In
   <image> -Rect 'x,y,w,h[,label]' [-Out <file> | -Copy]` (red boxes on a screenshot, Windows; elsewhere browser.mjs `mark()`);
   `phoney.ps1 arrange` (visible emulator windows in a row, Windows); `phoney.ps1 build` presets for `app.kind` flutter, maui
   (`app.tfm`), capacitor and the Expo prebuild.

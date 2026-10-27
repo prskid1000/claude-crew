@@ -12,7 +12,7 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
-Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L658 down · L687 slim
+Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L660 down · L689 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -47,8 +47,8 @@ function Get-SwarmConfig {
   $c | Add-Member -Force apkDir $apkDir
   $c | Add-Member -Force appFile (Join-Path $apkDir 'app.apk')
   $abi = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64-v8a' } else { 'x86_64' }   # the host's own ABI: no translation
-  $av = @{ abi = $abi; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore' }
-  if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { $av[$p.Name] = $p.Value } }; $c | Add-Member -Force avd ([pscustomobject]$av)
+  $av = @{ abi = $abi; api = 'android-36.1'; device = 'pixel_10_pro'; tag = 'google_apis_playstore'; gpu = 'host' }   # gpu: emulator -gpu (swiftshader = CPU rendering, no GPU memory)
+  if ($c.avd) { foreach ($p in $c.avd.PSObject.Properties) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
 }
@@ -64,7 +64,7 @@ avd.ini.encoding=UTF-8
 disk.dataPartition.size=16G
 fastboot.forceFastBoot=yes
 hw.accelerometer=yes
-hw.audioInput=no
+hw.audioInput=yes
 hw.battery=yes
 hw.camera.back=virtualscene
 hw.camera.front=emulated
@@ -578,6 +578,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $c = Get-SwarmConfig
 $adb = $c.adb
+$onGpu = "$($c.avd.gpu)" -match '^(host|auto|)$'   # software rendering (avd.gpu swiftshader, ...) uses no GPU memory: no GPU lease
 $all = @($c.lanes)
 $Lanes = @(Split-KitList $Lanes)
 if (-not $Lanes) { $Lanes = @($all | Select-Object -First $(if ($Count -gt 0) { $Count } else { $all.Count }) | ForEach-Object name) }
@@ -601,11 +602,12 @@ foreach ($name in $Lanes) {
   }
   if (-not (Test-LaneUp $l)) {
     # the GPU (gpu.exclusive): no emulator boots while another kind (a local vision model) holds it; the caller's queue retries
-    if ((Get-Command Use-KitGpu -ErrorAction SilentlyContinue) -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }))) { Write-Warning "$name not started: no memory turn (waiting for GPU)"; continue }
+    if ($onGpu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue) -and -not (Use-KitGpu -Kind emulator -Holder $name -WaitMinutes $(if ($null -ne $env:KIT_SWARM_TURN_MIN) { [double]$env:KIT_SWARM_TURN_MIN } else { 30 }))) { Write-Warning "$name not started: no memory turn (waiting for GPU)"; continue }
     if (-not (Turn 'emulator' 4.5)) { continue }
     $ini = Join-Path $c.avdDir "$name.avd/emulator-user.ini"
     if (Test-Path (Split-Path $ini)) { @('window.scale = 0.220000', 'resizable.config.id = -1', 'posture = 0') | Set-Content $ini -Encoding ascii }   # same window on every boot
-    $a = @('-avd', $name, '-port', $l.port, '-no-audio', '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
+    # mic = pokey.ps1 ui mic (gRPC injectAudio on 127.0.0.1 with a token); injected audio reaches the guest only with -allow-host-audio
+    $a = @('-avd', $name, '-port', $l.port, '-grpc', ($l.port + 3000), '-grpc-use-token', '-allow-host-audio', '-gpu', $c.avd.gpu, '-no-boot-anim'); if ($ColdBoot) { $a += '-no-snapshot-load' }
     $noWin = $Headless -or -not ($ShowAll -or $l.headless -eq $false -or ($null -eq $l.headless -and $c.headless -eq $false))   # window only with -ShowAll or headless: false
     if ($noWin) { $a += '-no-window' }
     # WMI: not our child (survives tool timeouts); SW_HIDE, CREATE_NO_WINDOW
@@ -621,7 +623,7 @@ foreach ($name in $Lanes) {
     # gate ledger entry: the booting emulator's memory
     Wait-KitPoll 3
     $qemu = EmuProcs $l.port | Sort-Object Created -Descending | Select-Object -First 1
-    if ($qemu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue)) { $null = Use-KitGpu -Kind emulator -Holder $name -ProcessId $qemu.Id -WaitMinutes 0 }   # the running emulator holds the GPU until it exits
+    if ($qemu -and $onGpu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue)) { $null = Use-KitGpu -Kind emulator -Holder $name -ProcessId $qemu.Id -WaitMinutes 0 }   # the running emulator holds the GPU until it exits
     if ($qemu) { @{ pid = $qemu.Id; need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }
@@ -691,8 +693,8 @@ param([Parameter(Mandatory)][string]$Serial)
 $adb = (Get-SwarmConfig).adb
 function A { & $adb -s $Serial shell @args 2>&1 }
 
-# KEEP: gms, gsf, maps, phone, messaging, documentsui, Gboard, camera, chrome, the app, SystemUI, Settings
-$disable = @('com.android.vending') + @('googlequicksearchbox', 'as', 'as.oss', 'youtube', 'apps.youtube.music', 'apps.youtube.kids', 'gm', 'apps.photos', 'apps.docs', 'apps.tachyon', 'calendar',
+# KEEP: gms, gsf, maps, phone, messaging, documentsui, Gboard, camera, chrome, the app, SystemUI, Settings, as + as.oss (on-device speech)
+$disable = @('com.android.vending') + @('googlequicksearchbox', 'youtube', 'apps.youtube.music', 'apps.youtube.kids', 'gm', 'apps.photos', 'apps.docs', 'apps.tachyon', 'calendar',
   'apps.subscriptions.red', 'apps.wellbeing', 'apps.turbo', 'projection.gearhead', 'apps.safetyhub', 'feedback', 'printservice.recommendation', 'apps.wallpaper',
   'apps.nbu.files', 'videos', 'apps.restore', 'apps.pixelmigrate' | ForEach-Object { "com.google.android.$_" })
 $installed = (A pm list packages) -replace '^package:', ''

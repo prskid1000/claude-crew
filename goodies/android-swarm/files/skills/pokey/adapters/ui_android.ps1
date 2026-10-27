@@ -1,6 +1,7 @@
 #Requires -Version 7
 # android-swarm (goody): pokey.ps1 ui on a leased Android phone and the laneApk kind of pokey.ps1 deployed (dot-sourced from adapters/).
 # Test-LaneApkDeployed runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, Row, OnRef, LocalAncestor.
+# Sections: L6 deployed laneApk · L26 ui
 
 # ---- deployed laneApk: is the merge in the lane APK (apk/app.json stamp written by phoney.ps1 build)?
 # laneApk: true -> <outDir>/apk/app.json; a string = its path
@@ -97,7 +98,53 @@ switch ($Action) {
     if ($ok) { & $adb shell input tap $ok.x $ok.y; Start-Sleep 2; "photo taken and accepted ('$($ok.text)')" } else { "photo taken (no confirm step seen)" }
   }
   'log' { & $adb logcat -d -t 300 -s $(if ($Arg) { $Arg } else { '*:E' }) }
-  default { "unknown action $Action (pokey.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo)"; exit 2 }
+  'mic' {
+    # Arg = a 16-bit PCM WAV, or a phrase (Windows: spoken by System.Speech); start the app's listening first: audio sent
+    # while nothing records is lost (gRPC injectAudio; endpoint + token from the emulator's discovery .ini)
+    $port = if ($env:ANDROID_SERIAL -match '^emulator-(\d+)$') { $Matches[1] } else { 'mic: set ANDROID_SERIAL to your leased emulator'; exit 2 }
+    $wav = $Arg
+    if (-not $Arg -or (-not (Test-Path -LiteralPath $Arg) -and -not $KitIsWindows)) { 'usage: pokey.ps1 ui mic <16-bit PCM wav | phrase (Windows)> [timeout s]'; exit 2 }
+    if (-not (Test-Path -LiteralPath $wav)) {
+      Add-Type -AssemblyName System.Speech; $sp = [System.Speech.Synthesis.SpeechSynthesizer]::new(); $wav = Join-Path (Get-KitPath android-tmp -Create) "mic_$tag.wav"
+      $sp.SetOutputToWaveFile($wav, [System.Speech.AudioFormat.SpeechAudioFormatInfo]::new(16000, 'Sixteen', 'Mono')); $sp.Speak($Arg); $sp.Dispose()
+    }
+    $ini = foreach ($d in @([IO.Path]::GetTempPath(), $env:XDG_RUNTIME_DIR, "$HOME/Library/Caches/TemporaryItems") | Where-Object { $_ }) { Get-ChildItem (Join-Path $d 'avd/running') -Filter 'pid_*.ini' -ErrorAction SilentlyContinue }
+    $ini = $ini | Where-Object { Get-Process -Id ($_.BaseName -replace '^pid_') -ErrorAction SilentlyContinue } | Sort-Object LastWriteTime -Descending   # a crashed emulator leaves its file
+    $kv = $ini | ForEach-Object { $h = @{}; Get-Content $_.FullName | ForEach-Object { $k, $v = $_ -split '=', 2; $h[$k] = $v }; $h } | Where-Object { $_['port.serial'] -eq $port -and $_['grpc.port'] } | Select-Object -First 1
+    if (-not $kv) { "mic: no gRPC endpoint for emulator-$port (booted by an older phoney.ps1 or with -no-audio): phoney.ps1 avd reset -Lanes <lane> -Level recreate"; exit 1 }
+    # audio injected while nothing records crashes the emulator: wait up to 10 s for an active recording
+    $rec = $false; for ($i = 0; $i -lt 10 -and -not $rec; $i++) { $rec = (& $adb shell dumpsys audio) -match 'active\? true'; if (-not $rec) { Start-Sleep 1 } }
+    if (-not $rec) { "mic: the phone is not recording: start the app's listening first (nothing sent)"; exit 1 }
+    $env:KIT_GRPC_TOKEN = $kv['grpc.token']
+    $js = @'
+import http2 from 'node:http2'; import fs from 'node:fs';
+const [port, file, secs] = process.argv.slice(1), w = fs.readFileSync(file); let o = 12, rate = 16000, ch = 1, pcm;
+while (o < w.length) { const id = w.toString('ascii', o, o + 4), n = w.readUInt32LE(o + 4);
+  if (id === 'fmt ') { ch = w.readUInt16LE(o + 10); rate = w.readUInt32LE(o + 12); if (w.readUInt16LE(o + 22) !== 16) { console.log('mic: need a 16-bit PCM wav'); process.exit(2) } }
+  if (id === 'data') pcm = w.subarray(o + 8, o + 8 + n); o += 8 + n + (n & 1) }
+if (!pcm || !pcm.length) { console.log('mic: no audio data in the wav'); process.exit(2) }
+const v = n => { const b = []; do { let x = n % 128; n = Math.floor(n / 128); b.push(n ? x | 128 : x) } while (n); return Buffer.from(b) };
+const ld = (t, b) => Buffer.concat([Buffer.from([t]), v(b.length), b]);
+const fmt = Buffer.concat([Buffer.from([8]), v(rate), Buffer.from([16, ch === 2 ? 1 : 0, 24, 1, 32, 1])]), step = Math.round(rate * ch / 10) * 2, pad = Buffer.alloc(step * 5);
+const s = http2.connect(`http://127.0.0.1:${port}`), done = (c, m) => { console.log(m); s.destroy(); process.exit(c) };
+setTimeout(() => done(1, `mic: no answer in ${secs} s after the audio`), secs * 1000 + pcm.length / rate / ch / 2 * 1000 + 1500);
+s.on('error', e => done(1, `mic: ${e.message}`));
+const h = { ':method': 'POST', ':path': '/android.emulation.control.EmulatorController/injectAudio', 'content-type': 'application/grpc', te: 'trailers' };
+if (process.env.KIT_GRPC_TOKEN) h.authorization = `Bearer ${process.env.KIT_GRPC_TOKEN}`;
+const r = s.request(h); let st = null, msg = '';
+const tr = x => { if (x['grpc-status'] != null) { st = x['grpc-status']; msg = decodeURIComponent(x['grpc-message'] || '') } };
+r.on('response', tr); r.on('trailers', tr); r.on('data', () => {}); r.on('error', e => done(1, `mic: ${e.message}`));
+r.on('end', () => done(st === '0' ? 0 : 1, st === '0' ? `mic: ${(pcm.length / rate / ch / 2).toFixed(1)} s delivered` : `mic: grpc-status ${st} ${msg}`));
+const all = Buffer.concat([pad, pcm, pad, pad]);
+const t0 = Date.now();   // real-time mode, paced 100 ms packets: the blocking mode stalls the emulator while the guest is not reading
+(async () => { for (let i = 0, k = 0; i < all.length; i += step, k++) {
+  await new Promise(ok => setTimeout(ok, Math.max(0, t0 + (k - 2) * 100 - Date.now())));   // 200 ms ahead: the guest never reads an empty buffer
+  const pk = Buffer.concat([ld(10, fmt), Buffer.from([16]), v(Date.now() * 1000), ld(26, all.subarray(i, i + step))]), f = Buffer.alloc(5); f.writeUInt32BE(pk.length, 1);
+  r.write(Buffer.concat([f, pk])) } r.end() })();
+'@
+    try { node --input-type=module -e $js $kv['grpc.port'] $wav $(if ($Arg2) { $Arg2 } else { 60 }); if ($LASTEXITCODE) { exit $LASTEXITCODE } } finally { Remove-Item Env:KIT_GRPC_TOKEN -ErrorAction SilentlyContinue }
+  }
+  default { "unknown action $Action (pokey.ps1 ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic)"; exit 2 }
 }
 if ($script:uiFailed) { exit 1 }   # NOT FOUND: the caller must not read it as done
 }
