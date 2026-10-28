@@ -100,27 +100,27 @@ $la = & { . $Q; function Row($d, $s, $x) { "$s|$x" }; function OnRef { $false }
 Expect "deployed laneApk: no stamp UNKNOWN, merged commit in the APK DEPLOYED ($la)" ($la -match '^UNKNOWN\|no lane APK stamp.*#DEPLOYED\|in the lane APK')
 Remove-TestKit $k
 
-# gpu.exclusive: a vision job holding the GPU -> up boots no emulator ("waiting for GPU", the acquire queue retries)
+# gpu.exclusive: another kind holding the GPU -> up boots no emulator ("waiting for GPU", the acquire queue retries)
 $k = New-TestKit swarm-gpu; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force   # the installed goody: -Kit runs give a core-only test kit
-& $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'local-vision' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
+& $J @{ gpu = @{ exclusive = @{ emulator = @{}; 'gpu-job' = @{} } } } (Join-Path $k 'skills/crafty/kit.local.json')
 $vis = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -WindowStyle Hidden
 $gt = Join-Path (Kd) 'gpu-up'; New-Item -ItemType Directory -Force $gt | Out-Null
 $gu = Invoke-PsTest 'swarm-gpu' @"
 . '$(Join-Path $k 'skills/phoney/phoney.ps1')'
-`$null = Use-KitGpu -Kind local-vision -Holder v1 -ProcessId $($vis.Id) -WaitMinutes 0
+`$null = Use-KitGpu -Kind gpu-job -Holder v1 -ProcessId $($vis.Id) -WaitMinutes 0
 Set-Content '$gt/adb.cmd' "@echo off``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> '$gt/started.txt'" -Encoding ascii
 `$script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'G1'; port = 5590 }); adb = '$gt/adb.cmd'; emulator = '$gt/emu.cmd'; avdDir = '$gt'; dir = '$gt'; out = '$gt'; state = '$gt/swarm.json'; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() } }
 `$env:KIT_SWARM_TURN_MIN = '0'
 `$w = @(Invoke-Up -Lanes G1 -Mode None -Headless 3>&1 | Where-Object { `$_ -is [Management.Automation.WarningRecord] })
 "blocked:`$((`$w.Message -match 'G1 not started: no memory turn \(waiting for GPU\)').Count -eq 1 -and -not (Test-Path '$gt/started.txt'))"
-# avd.gpu swiftshader (software rendering, no GPU memory): boots although vision holds the GPU
+# avd.gpu swiftshader (software rendering, no GPU memory): boots although another kind holds the GPU
 Set-Content '$gt/adb.cmd' "@echo off``r``necho 1``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> $gt\started.txt" -Encoding ascii; Set-Content '$gt/noop.ps1' 'exit 0'; `$KitCmd.swarm = '$gt/noop.ps1'; `$KitCmd.dev = '$gt/noop.ps1'
 `$script:SwarmCfg | Add-Member -Force avd ([pscustomobject]@{ gpu = 'swiftshader' })
 `$null = Invoke-Up -Lanes G1 -Mode None -Headless 3>&1; for (`$i = 0; `$i -lt 20 -and -not (Test-Path '$gt/started.txt'); `$i++) { Start-Sleep -Milliseconds 250 }
 "software:`$(Test-Path '$gt/started.txt')"
 "@
 Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
-Expect-Each $gu 'swarm gpu: a vision job holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
+Expect-Each $gu 'swarm gpu: another kind holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
 Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 
 # gpu.exclusive.emulator.minFreeMB (2048): 1500 MB free -> waits (supervise shows it), then refuses naming the GPU users; 3000 boots; no nvidia-smi skips
@@ -138,13 +138,13 @@ $vSetup = $vSetup.Replace('__K__', $k).Replace('__VT__', $vt)
 Set-Content "$vt/wait.ps1" ($vSetup + "`n`$env:KIT_SWARM_TURN_MIN = '0.1'; Invoke-Up -Lanes V1 -Mode None -Headless *>&1 | Out-String | Set-Content '$vt/wait.txt'")
 $vr = Invoke-PsTest 'swarm-vram' ($vSetup + @'
 
-$pr = { param($free) (@{ usedMB = 10000; freeMB = $free; procs = @(@{ pid = 4242; name = 'llama-server'; mb = 9000 }) } | ConvertTo-Json -Depth 4) | Set-Content $env:KIT_GPU_PROBE }
+$pr = { param($free) (@{ usedMB = 10000; freeMB = $free; procs = @(@{ pid = 4242; name = 'gpu-app'; mb = 9000 }) } | ConvertTo-Json -Depth 4) | Set-Content $env:KIT_GPU_PROBE }
 & $pr 1500
 $child = Start-Process pwsh -ArgumentList '-NoProfile', '-File', '__VT__/wait.ps1' -PassThru -WindowStyle Hidden
 $sup = ''; for ($i = 0; $i -lt 60 -and $sup -notmatch 'waiting for GPU: emulator V1'; $i++) { Start-Sleep -Milliseconds 200; $sup = "$(Get-KitSuperviseGuardGpu)" }
 $supOk = $sup -match 'waiting for GPU: emulator V1 \(held by gpu needs 2048 MB free GPU memory, 1500 MB free'; "supervise:$supOk"
 $child.WaitForExit(30000) | Out-Null; $wt = Get-Content '__VT__/wait.txt' -Raw
-"refused:$($wt -match 'lane V1: needs 2048 MB free GPU memory, 1500 MB free \(held by llama-server pid 4242 9000 MB\); not started: no memory turn' -and -not (Test-Path '__VT__/started.txt') -and -not @((Get-KitGpuState).waiting).Count)"
+"refused:$($wt -match 'lane V1: needs 2048 MB free GPU memory, 1500 MB free \(held by gpu-app pid 4242 9000 MB\); not started: no memory turn' -and -not (Test-Path '__VT__/started.txt') -and -not @((Get-KitGpuState).waiting).Count)"
 & $pr 3000
 $null = Invoke-Up -Lanes V1 -Mode None -Headless 3>&1; for ($i = 0; $i -lt 20 -and -not (Test-Path '__VT__/started.txt'); $i++) { Start-Sleep -Milliseconds 250 }
 "boots:$(Test-Path '__VT__/started.txt')"

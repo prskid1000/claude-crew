@@ -601,7 +601,7 @@ foreach ($name in $Lanes) {
     $left | ForEach-Object { Stop-SysProcess $_.Id }; Wait-KitPoll 2
   }
   if (-not (Test-LaneUp $l)) {
-    # the GPU (gpu.exclusive): no emulator boots while another kind (a local vision model) holds it, nor under minFreeMB free (a GPU
+    # the GPU (gpu.exclusive): no emulator boots while another GPU kind holds it, nor under minFreeMB free (a GPU
     # user outside the kit; each running lane counts too); the caller's queue retries on 'no memory turn'
     $gpuCmd = Get-Command Use-KitGpu -ErrorAction SilentlyContinue
     $gpuMin = if ($gpuCmd -and $gpuCmd.Parameters.ContainsKey('MinFreeMB')) { @{ MinFreeMB = 2048 } } else { @{} }   # an older core: no free-memory check

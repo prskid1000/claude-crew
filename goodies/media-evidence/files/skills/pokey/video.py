@@ -1,23 +1,26 @@
-"""media_evidence.py (goody media-evidence): tester evidence links (videos, recordings, screenshots) -> a cheap time-indexed
-text index + frames on demand. Called by pokey.ps1 evidence (it holds the per-video lock, the local-stt / local-vision leases
-and the memory gate); every stage also runs alone:
-  python -X utf8 media_evidence.py select <link>                      the fetcher for a link (JSON)
-  python -X utf8 media_evidence.py fetch <link> [--refresh]           link -> local file + sidecars (<key>/fetch.json)
-  python -X utf8 media_evidence.py detect|transcribe|vision|build <key>  index stages (cached per pipeline version)
-  python -X utf8 media_evidence.py needs <key> transcribe|vision     does the stage call a local AI server (JSON)
-  python -X utf8 media_evidence.py read <key> [<start> <end>] [--at mm:ss --window s] [--around-error] [--frames 3]
-                                                  [--size 1280] [--out <dir>]   chunk text + JPEG frames for the Read tool
-  python -X utf8 media_evidence.py window <start> <end> --duration <s> [--at t --window s]   the read window (tests)
-  python -X utf8 media_evidence.py paths <key>                       key folder, index folder, status (JSON)
-In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (headless grabs), gws, env JIRA_*. Out: text,
-JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable link, stage failed) · 2 usage.
-Sections: L26 config · L141 fetchers · L395 probe · L414 detect · L593 transcribe · L713 vision · L801 index · L909 read ·
-  L980 cli
+"""video.py (goody media-evidence): the whole video flow in one script: tester evidence links (videos, recordings, screenshots)
+-> a cheap time-indexed text index + frames on demand; the vidy agent reads the keyframes and writes them back. pokey.ps1 evidence
+<verb> passes its arguments here (-Name or --name, any case):
+  fetch <link> [--refresh] [--json]                                   link -> local file + sidecars (one lock per video)
+  index <link> [--refresh] [--wait-minutes 30] [--lock-minutes 90] [--no-transcript] [--agent a] [--json]
+                                                  fetch, detect, transcribe (local-stt lease + memory gate), vision, build
+  read-chunk <key> [<start> <end>] [--at mm:ss --window s] [--around-error] [--frames 3] [--size 1280] [--item <task>]
+                                                  that window's text + JPEG frames for the Read tool
+  frames <key> [--segment n]                      the keyframes vidy has not read: batches, segments, the cap
+  write-vision <key> --file <items.json> [--model m] [--tokens n]    vidy's screen text -> vision.json, index rebuilt, logged
+  status [<key or link>]                          the local-stt lease, a video's folders
+  Stages alone: select <link> · detect|transcribe|vision|build <key> · needs <key> transcribe · window <start> <end>
+  --duration <s> [--at t --window s] (tests) · paths <key>.
+In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
+env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
+link, busy, stage failed) · 2 usage.
+Sections: L29 config · L143 fetchers · L397 probe · L416 detect · L595 transcribe · L715 vision · L828 index · L947 read ·
+  L1019 verbs · L1165 cli
 """
-import base64, hashlib, http.client, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request
+import base64, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
 
-PIPE = 1   # bump when a stage's output changes: old indexes are rebuilt
+PIPE = 2   # bump when a stage's output changes: old indexes are rebuilt
 HERE = osp.dirname(osp.abspath(__file__))
 KIT = osp.dirname(osp.dirname(HERE))
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36'
@@ -35,9 +38,7 @@ DEFAULTS = {
     'detect': {'fps': 12, 'width': 640, 'pixel': 18, 'cursorPx': 26, 'settleMs': 400, 'pageFrac': 0.25, 'idleSec': 3, 'maxCrops': 60},
     'chunk': {'minSec': 20, 'maxSec': 60, 'sectionSec': 300, 'twoLevelOverSec': 3600},
     'stt': {'baseUrl': '', 'model': 'whisper-1', 'path': '/v1/audio/transcriptions', 'pieceSec': 30, 'timeoutSec': 300},
-    'vision': {'baseUrl': '', 'model': '', 'enabled': True, 'path': '/v1/chat/completions', 'maxFrames': 40, 'maxEdge': 1280, 'timeoutSec': 300, 'gpuStopGB': 0,
-               'system': 'You read screenshots. Reply with only the text visible in the image, exactly as written (ids, amounts, dates, error messages), one item per line, then one line starting "UI:" describing the screen. Do not call tools. No commentary.',
-               'prompt': 'Visible text:'},
+    'vidy': {'model': 'sonnet', 'maxFrames': 12, 'batch': 8, 'segmentSec': 300},   # keyframes per segment; one vidy per segment
 }
 
 def merge(a, b):
@@ -101,7 +102,8 @@ def ix_dir(key):
     f = load_json(osp.join(key_dir(key), 'fetch.json'))
     if not f or not f.get('sha'):
         return None
-    st = {k: {x: y for x, y in CFG[k].items() if x not in ('baseUrl', 'enabled', 'gpuStopGB', 'ramGB', 'maxConcurrent', 'timeoutSec')} for k in ('detect', 'chunk', 'stt', 'vision')}
+    st = {k: {x: y for x, y in CFG[k].items() if x not in ('baseUrl', 'ramGB', 'maxConcurrent', 'timeoutSec')} for k in ('detect', 'chunk', 'stt')}
+    st['vidy'] = {x: CFG['vidy'][x] for x in ('maxFrames', 'segmentSec')}   # vidy's model and batch never re-index
     return osp.join(key_dir(key), f"v{PIPE}-{f['sha'][:12]}-{hashlib.sha1(json.dumps(st, sort_keys=True).encode()).hexdigest()[:6]}")
 
 def save_json(p, o):
@@ -710,93 +712,118 @@ def transcribe(path, info, fj, out_dir):
         pass
     return {'source': 'stt', 'segments': segs, 'sec': round(time.time() - t0, 1)}
 
-# ---- vision: screen text + a UI line per keyframe / event crop, through the local OpenAI-compatible vision LLM
-def gpu_gb():
-    exe = tool('nvidia-smi')
-    if not exe:
-        return None
-    r = run([exe, '--query-gpu=memory.used', '--format=csv,noheader,nounits'], timeout=10)
-    try:
-        return max(int(x) for x in r.stdout.split()) / 1024
-    except ValueError:
-        return None
+# ---- vision: the keyframes vidy reads (Read tool, batches) and writes back as screen text + a UI line each; no model call here
+VIDY_EDGE = 2000   # the frame vidy reads: native resolution, long edge <= 2000 px
+
+def segments_of(dur):
+    n = max(1, -(-int(dur) // max(1, int(CFG['vidy']['segmentSec'])))) if dur else 1
+    step = dur / n if dur else 0
+    return [(round(i * step, 2), round((i + 1) * step, 2)) for i in range(n)]
 
 def vision_targets(det, fj, out_dir):
+    """The detector's keyframes (start, page changes, then changes by click and size), full frame at native size, at most
+    vidy.maxFrames per segment."""
     if fj.get('kind') == 'image':
-        return [{'ref': 'image', 't': 0, 'file': fj['file']}]
+        return [{'ref': 'image', 't': 0, 'file': fj['file'], 'segment': 1}]
     rows = det.get('events', [])
-    tg = [{'ref': r['id'], 't': r['t_end'], 'file': osp.join(out_dir, r['keyframe'])} for r in rows if r.get('keyframe')]
-    tg += [{'ref': r['id'], 't': r['t_end'], 'file': osp.join(out_dir, r['crop_after'])} for r in sorted(rows, key=lambda r: ('click' not in r, -r.get('frac', 0))) if r.get('crop_after')]
-    first = osp.join(out_dir, 'frames', 'start.jpg')
-    fr = grab(fj['file'], 0.5)
-    if fr is not None:
-        tg.insert(0, {'ref': 'start', 't': 0.5, 'file': save_jpeg(fr, first, 1280)})
-    seen, out = set(), []
-    for x in tg:
-        if x['file'] not in seen and osp.isfile(x['file']):
-            seen.add(x['file'])
-            out.append(x)
-    return out[:int(CFG['vision']['maxFrames'])]
-
-def ask_vision(c, img_path):
+    want = [('start', 0.5)] + [(r['id'], r['t_end']) for r in rows if r.get('keyframe')]
+    want += [(r['id'], r['t_end']) for r in sorted(rows, key=lambda r: ('click' not in r, -r.get('frac', 0))) if r.get('crop_after')]
+    settle, cap = float(CFG['detect']['settleMs']) / 1000, int(CFG['vidy']['maxFrames'])
+    segs = segments_of(float(det.get('duration') or 0))
     import cv2
-    img = cv2.imread(img_path)
-    hh, ww = img.shape[:2]
-    s = min(1.0, int(c['maxEdge']) / max(hh, ww))
-    if s < 1:
-        img = cv2.resize(img, (int(ww * s), int(hh * s)), interpolation=cv2.INTER_AREA)
-    ok, jpg = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    body = {'model': c['model'], 'messages': ([{'role': 'system', 'content': c['system']}] if c.get('system') else []) + [{'role': 'user', 'content': [
-            {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + base64.b64encode(jpg.tobytes()).decode()}}, {'type': 'text', 'text': c['prompt']}]}]}
-    req = urllib.request.Request(c['baseUrl'].rstrip('/') + c['path'], json.dumps(body).encode(), {'Content-Type': 'application/json', 'User-Agent': 'kit-media-evidence'})
-    d = json.loads(urllib.request.urlopen(req, timeout=int(c['timeoutSec'])).read())
-    txt = re.sub(r'(?s)<think>.*?(</think>|$)', '', (d.get('choices') or [{}])[0].get('message', {}).get('content') or '').strip()
-    return txt
+    vc = cv2.VideoCapture(fj['file'])
+    out, seen, per = [], set(), {}
+    for ref, t in want:
+        seg = next((i for i, (s, e) in enumerate(segs, 1) if s <= t < e), len(segs))
+        if ref in seen or per.get(seg, 0) >= cap:
+            continue
+        ts = t if ref == 'start' else t + settle
+        fr = grab(fj['file'], ts, vc)
+        if fr is None:
+            continue
+        seen.add(ref)
+        per[seg] = per.get(seg, 0) + 1
+        out.append({'ref': ref, 't': round(ts, 2), 'file': save_jpeg(fr, osp.join(out_dir, 'keyframes', f'{ref}.jpg'), VIDY_EDGE), 'segment': seg})
+    vc.release()
+    return sorted(out, key=lambda x: x['t'])
 
-def vision(det, fj, out_dir, model=None):
-    c = dict(CFG['vision'])
-    if model:
-        c['model'] = model
-    if not c.get('enabled', True):
-        return {'reason': 'vision off (media.vision.enabled false)', 'items': [], 'degraded': True}
-    if not (c.get('baseUrl') and c.get('model')):
-        return {'reason': 'no local vision model configured (media.vision.baseUrl + model)', 'items': [], 'degraded': True}
-    if not endpoint_up(c['baseUrl']):
-        return {'reason': 'waiting for local vision: it does not answer', 'items': [], 'degraded': True}
-    stop_gb, items, peak, t0, why = float(c.get('gpuStopGB') or 0), [], [0.0], time.time(), ''
-    halt = threading.Event()
-    def watch():   # GPU memory near the limit: no next request
-        while not halt.wait(1.0):
-            g = gpu_gb()
-            if g is not None:
-                peak[0] = max(peak[0], g)
-    if stop_gb and gpu_gb() is None:
-        return {'reason': 'media.vision.gpuStopGB is set but nvidia-smi does not answer: not run', 'items': [], 'degraded': True}
-    if stop_gb:
-        threading.Thread(target=watch, daemon=True).start()
-    for x in vision_targets(det, fj, out_dir):
-        if stop_gb:
-            peak[0] = max(peak[0], gpu_gb() or 0)
-        if stop_gb and peak[0] >= stop_gb:
-            why = f'stopped: GPU memory {peak[0]:.2f} GB >= media.vision.gpuStopGB {stop_gb}'
-            break
-        s0 = time.time()
-        try:   # one failure stops the stage: never retried into a crashed or busy backend
-            txt = ask_vision(c, x['file'])
-        except urllib.error.HTTPError as e:
-            why = f'stopped: the vision backend answered HTTP {e.code}'
-            break
-        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException, AttributeError, KeyError, IndexError) as e:
-            why = f'stopped: the vision backend failed ({type(e).__name__}: {e})'
-            break
-        ui = '\n'.join(l for l in txt.splitlines() if l.strip().upper().startswith('UI:'))
-        items.append({'ref': x['ref'], 't': x['t'], 'text': '\n'.join(l for l in txt.splitlines() if l.strip() and not l.strip().upper().startswith('UI:')),
-                      'ui': ui[3:].strip() if ui else '', 'sec': round(time.time() - s0, 1)})
-    halt.set()
-    res = {'model': c['model'], 'items': items, 'sec': round(time.time() - t0, 1), 'gpuPeakGB': round(peak[0], 2) if stop_gb else None}
-    if why:
-        res.update({'reason': why, 'degraded': True})
-    return res
+def vision(det, fj, out_dir):
+    tg = vision_targets(det, fj, out_dir)
+    return {'items': [], 'pending': tg, 'segments': len(segments_of(float(det.get('duration') or 0))), 'maxFrames': int(CFG['vidy']['maxFrames']),
+            'reason': f'{len(tg)} keyframes unread: run vidy' if tg else 'no keyframes'}
+
+def image_tokens(p):
+    """Claude's image input cost: w * h / 750 after its resize to <= 1568 px long edge and <= 1.15 MP."""
+    import cv2
+    img = cv2.imread(p)
+    if img is None:
+        return 0
+    h, w = img.shape[:2]
+    s = min(1.0, 1568 / max(h, w), (1150000 / (w * h)) ** 0.5)
+    return int(w * s * h * s / 750) + 1
+
+def frames(key, segment=None):
+    ix = ix_dir(key)
+    vi = load_json(osp.join(ix, 'vision.json') if ix else '')
+    if vi is None:
+        raise FileNotFoundError(f'no index for {key}: run pokey.ps1 evidence index <link> first')
+    pend, c = vi.get('pending') or [], CFG['vidy']
+    nseg, bat = int(vi.get('segments') or 1), max(1, int(c['batch']))
+    lines = [f"# {key}: {len(pend)} keyframes unread, {len(vi.get('items', []))} read · {nseg} segment(s) · cap {c['maxFrames']} keyframes per segment"
+             f" (total {int(c['maxFrames']) * nseg}) · read {bat} per turn (parallel Read calls, time order)"]
+    if nseg > 1 and segment is None:
+        lines.append(f'segments: one vidy per segment (pokey.ps1 evidence frames {key} -Segment <n>), then one merge of the timeline and answer')
+    for sg in ([int(segment)] if segment else range(1, nseg + 1)):
+        mine = [x for x in pend if int(x.get('segment') or 1) == sg]
+        if nseg > 1:
+            lines.append(f'## segment {sg}/{nseg}: {len(mine)} unread')
+        for n in range(0, len(mine), bat):
+            lines.append(f'batch {n // bat + 1}:')
+            lines += [f"{x['ref']} {mmss(x['t'])}: {x['file']}" for x in mine[n:n + bat]]
+    lines.append(f"items: {osp.join(ix, 'vision-items' + (f'-s{segment}' if segment else '') + '.json')} -> pokey.ps1 evidence write-vision {key} -File <items>")
+    return lines
+
+def write_vision(key, items_file, model=None, tokens=None):
+    ix = ix_dir(key)
+    old = load_json(osp.join(ix, 'vision.json') if ix else '')
+    if old is None:
+        raise FileNotFoundError(f'no index for {key}: run pokey.ps1 evidence index <link> first')
+    rows = load_json(items_file)
+    rows = rows.get('items') if isinstance(rows, dict) else rows
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f'{items_file}: a JSON list of {{ref, t, text, ui, frames}} is required')
+    items, read = [], []
+    for n, r in enumerate(rows, 1):
+        fr = [str(p) for p in (r.get('frames') or [])] if isinstance(r, dict) else []
+        if not fr or not (str(r.get('text') or '').strip() or str(r.get('ui') or '').strip()):
+            raise ValueError(f'{items_file} item {n}: text or ui, and the frames read, are required')
+        gone = [p for p in fr if not osp.isfile(p)]
+        if gone:
+            raise ValueError(f'{items_file} item {n}: frame not found: {gone[0]}')
+        read += [p for p in fr if p not in read]
+        items.append({'ref': str(r.get('ref') or f'f{n:02d}'), 't': round(parse_time(r.get('t', 0)), 2), 'text': str(r.get('text') or '').strip(),
+                      'ui': clip(str(r.get('ui') or ''), 300), 'frames': fr})
+    cap, img = int(CFG['vidy']['maxFrames']), sum(image_tokens(p) for p in read)
+    same = lambda p: osp.normcase(osp.abspath(p))
+    lk = os_lock(osp.join(ix, 'vision.json.lock'), 120)   # segment vidys write one after another: merge, never overwrite
+    if not lk:
+        raise RuntimeError('vision.json is locked by another write-vision for 120 s')
+    try:
+        old = load_json(osp.join(ix, 'vision.json')) or old
+        keep = [x for x in old.get('items') or [] if (x['ref'], x['t']) not in {(y['ref'], y['t']) for y in items}]
+        seen = {same(p) for x in old.get('items') or [] for p in x.get('frames') or []}
+        new = [p for p in read if same(p) not in seen]   # a frame read again is counted once
+        done = seen | {same(p) for p in read}
+        res = dict(old, by='vidy', model=model or CFG['vidy']['model'], items=sorted(keep + items, key=lambda x: x['t']),
+                   framesRead=len(done), imageTokens=int(old.get('imageTokens') or 0) + sum(image_tokens(p) for p in new),
+                   tokens=(int(old.get('tokens') or 0) + int(tokens)) if tokens else old.get('tokens'),
+                   pending=[x for x in old.get('pending') or [] if same(x['file']) not in done])
+        save_json(osp.join(ix, 'vision.json'), res)
+    finally:
+        lk.close()
+    b = build(key)
+    return {'key': key, 'items': len(items), 'framesRead': len(read), 'maxFrames': cap, 'overCap': len(read) > cap, 'imageTokens': img,
+            'tokens': int(tokens) if tokens else None, 'model': res['model'], 'unread': len(res['pending']), 'index': b['index']}
 
 # ---- index: chunks of 20-60 s split at page changes / idle, one row each; two levels for long videos
 def chunks_of(dur, cuts):
@@ -846,7 +873,13 @@ def build(key):
     else:
         cuts = [r['t'] for r in rows if r['kind'] == 'page-change'] + [(r['t'] + r['t_end']) / 2 for r in rows if r['kind'] == 'idle']
         spans = chunks_of(dur, cuts)
-    vis = {x['ref']: x for x in vi.get('items', [])}
+    vis = {f"{x['ref']}@{x['t']}": x for x in vi.get('items', [])}
+    pend = vi.get('pending') or []
+    def rel(p):
+        try:
+            return osp.relpath(p, ix)
+        except ValueError:   # another drive
+            return p
     out = []
     for n, (s, e) in enumerate(spans, 1):
         inside = lambda x: (s <= x['t'] < e) or (s == e == 0) or (n == len(spans) and x['t'] >= s)
@@ -855,8 +888,9 @@ def build(key):
         say = ' '.join(x['text'] for x in tr.get('segments', []) if inside(x))
         screen = [vis[x]['text'] for x in vis if inside(vis[x])]
         ui = [vis[x]['ui'] for x in vis if inside(vis[x]) and vis[x].get('ui')]
+        unread = [f"{x['ref']} {mmss(x['t'])} {rel(x['file'])}" for x in pend if inside(x)]
         flags = sorted({m.group(1).lower() for m in ERR_RE.finditer(say + ' ' + ' '.join(screen))})
-        out.append({'id': f'c{n:02d}', 'start': s, 'end': e, 'say': clip(say, 400), 'screen': clip(' | '.join(screen), 300), 'ui': clip(' | '.join(ui), 200),
+        out.append({'id': f'c{n:02d}', 'start': s, 'end': e, 'say': clip(say, 400), 'screen': clip(' | '.join(screen), 300), 'ui': clip(' | '.join(ui), 200), 'unread': unread,
                     'events': [ev_line(r) for r in evs if r['kind'] != 'idle'][:12], 'more': max(0, len([r for r in evs if r['kind'] != 'idle']) - 12),
                     'cursorMoves': len(curs), 'flags': flags, 'error': bool(flags)})
     meta = fj.get('meta') or {}
@@ -864,7 +898,9 @@ def build(key):
     head = [f"# media {key} · {fj.get('fetcher', '?')} · {fj.get('kind', '?')}" + (f" · {mmss(dur)}" if dur else '') + (f" · {info.get('width')}x{info.get('height')}" if info.get('width') else ''),
             f"link: {fj.get('link', '')}" + (f' · {mtxt}' if mtxt else ''),
             f"events: {', '.join(f'{k} {v}' for k, v in (det.get('counts') or {}).items()) or 'none'}{' · ignored: ' + str(len(det['tickers'])) + ' ticking cells (a clock)' if det.get('tickers') else ''} (click? = guessed from the pointer; boxes and points are fractions of the frame)",
-            f"speech: {tr.get('source')}{' (' + tr['reason'] + ')' if tr.get('reason') else ''} · screen text: {len(vi.get('items', []))} frames{' (' + vi['reason'] + ')' if vi.get('reason') else ''}",
+            f"speech: {tr.get('source')}{' (' + tr['reason'] + ')' if tr.get('reason') else ''} · screen text: {len(vi.get('items', []))} frames" +
+            (f" (vidy {vi.get('model')})" if vi.get('by') == 'vidy' else '') + (f" · {len(pend)} keyframes unread: run vidy (pokey.ps1 evidence frames {key}; paths under {ix})" if pend else
+            (f" ({vi['reason']})" if vi.get('reason') and not vi.get('items') else '')),
             f"read: pokey.ps1 evidence read-chunk {key} <start> <end> | -At <m:ss> -Window <s> | -AroundError", '']
     def row(c):
         r = [f"## {c['id']} {mmss(c['start'])}-{mmss(c['end'])}{' [error: ' + ', '.join(c['flags']) + ']' if c['flags'] else ''}"]
@@ -874,6 +910,8 @@ def build(key):
             r.append(f"screen: {c['screen']}")
         if c['ui']:
             r.append(f"ui: {c['ui']}")
+        if c['unread']:
+            r.append(f"keyframes (unread: run vidy): {' · '.join(c['unread'])}")
         r += [f'- {x}' for x in c['events']]
         if c['more']:
             r.append(f"- +{c['more']} more events (read-chunk lists them)")
@@ -949,7 +987,7 @@ def read(key, start=None, end=None, at=None, win=None, around_error=False, frame
     if fj['kind'] == 'image':
         import cv2
         p = save_jpeg(cv2.imread(fj['file']), osp.join(out, f'{key}-image.jpg'), size)
-        return [f'image {key}: {p}'] + [f"screen: {x['text']}" for x in vi.get('items', [])]
+        return [f'image {key}: {p}'] + [f"screen: {x['text']}" for x in vi.get('items', [])] + [f"unread image: {x['file']} (run vidy)" for x in vi.get('pending') or []]
     wins = error_windows(ixj, det, win) if around_error else [window(start, end, at, win, dur)]
     if around_error and not wins:
         return [f'{key}: no chunk has an error flag (index.md); read a window by time instead']
@@ -960,6 +998,7 @@ def read(key, start=None, end=None, at=None, win=None, around_error=False, frame
         lines += [f"say {mmss(x['t'])}: {x['text']}" for x in tr.get('segments', []) if s <= x['t'] <= e]
         lines += [f'- {ev_line(r)}' for r in det.get('events', []) if s <= r['t'] <= e]
         lines += [f"screen {mmss(x['t'])}: {clip(x['text'], 500)}" for x in vi.get('items', []) if s <= x['t'] <= e]
+        lines += [f"unread {x['ref']} {mmss(x['t'])}: {x['file']} (run vidy)" for x in vi.get('pending') or [] if s <= x['t'] <= e]
         ts = [s] + [r['t_end'] + 0.4 for r in det.get('events', []) if r['kind'] in ('change', 'typing', 'page-change') and s < r['t_end'] + 0.4 < e] + [max(s, e - 0.1)]
         pick = []
         for t in ts:
@@ -977,6 +1016,152 @@ def read(key, start=None, end=None, at=None, win=None, around_error=False, frame
         cap.release()
     return lines
 
+# ---- verbs: fetch, index, status under one lock per video and the local-stt lease (OS locks: a dead holder frees them)
+def os_lock(path, wait_sec, say=''):
+    """An exclusive OS lock on <path> (msvcrt / fcntl; a handle another process opened without sharing counts as held): the open
+    file, or None after wait_sec; prints say once while it waits."""
+    os.makedirs(osp.dirname(path), exist_ok=True)
+    end, said = time.time() + wait_sec, False
+    while True:
+        try:
+            fh = open(path, 'a+')
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fh
+            except OSError:
+                fh.close()
+        except OSError:
+            pass
+        if say and not said:
+            print(say, flush=True)
+            said = True
+        if time.time() >= end:
+            return None
+        time.sleep(1)
+
+def kitbag_mod():
+    sys.path.insert(0, osp.join(KIT, 'skills', 'bossy'))
+    import kitbag
+    return kitbag
+
+def log(event, fields):
+    try:
+        kitbag_mod().kitlog('calls', event, fields)
+    except Exception:
+        pass
+
+def stt_stage(key, wait_min, agent):
+    """transcribe on the local STT server: pokey.ps1 evidence stt holds the local-stt lease (video.ps1) and the memory gate."""
+    if not needs(key, 'transcribe'):
+        return stage(key, 'transcribe')
+    r = run([tool('pwsh') or 'pwsh', '-NoProfile', '-File', osp.join(KIT, 'skills', 'pokey', 'pokey.ps1'), 'evidence', 'stt', key, '-WaitMinutes', f'{wait_min:g}',
+             '-Agent', agent] + (['-Refresh'] if '--refresh' in sys.argv else []), timeout=int(wait_min * 60) + 3600)
+    for line in (r.stdout or '').splitlines():
+        if line.startswith(('waiting for local AI', 'media transcribe:')):
+            print(line, flush=True)
+    try:
+        return json.loads((r.stdout or '').strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {'degraded': True, 'reason': f"FAILED: pokey.ps1 evidence stt (exit {r.returncode}): {(r.stderr or r.stdout or '').strip()[-200:]}"}
+
+def busy(key, minutes):
+    return os_lock(key_dir(key) + '.lock', minutes * 60, f'media: another agent is processing this video ({key}); waiting, then reusing its index')
+
+def say_unreadable(f):
+    return f"unreadable: {f['reason']}" + ('' if 'ask the tester' in f['reason'] else ', ask the tester for the file')
+
+def v_fetch(link):
+    key = key_of(link)
+    lk = busy(key, float(arg('--lock-minutes', 90)))
+    if not lk:
+        raise Busy(f'evidence fetch: {key} is being processed by another agent; run it again later')
+    try:
+        f = fetch(link, '--refresh' in sys.argv)
+    finally:
+        lk.close()
+    if f['kind'] == 'unreadable':
+        print(say_unreadable(f))
+        return 1
+    f['ixDir'] = ix_dir(key)
+    if '--json' in sys.argv:
+        print(json.dumps(f, ensure_ascii=False, indent=1))
+        return 0
+    side = ', '.join(f.get('sidecars') or {})
+    print(f"fetched {key} via {f['fetcher']}: {f['kind']} {f['bytes'] / 1048576:.1f} MB" + (' (cached)' if f.get('cached') else f" in {f['fetchSec']} s") + (f'; sidecars: {side}' if side else ''))
+    return 0
+
+def v_index(link):
+    key, t0 = key_of(link), time.time()
+    lk = busy(key, float(arg('--lock-minutes', 90)))
+    if not lk:
+        raise Busy(f'evidence index: {key} is still being processed by another agent; run it again later')
+    try:
+        f = fetch(link, '--refresh' in sys.argv)
+        if f['kind'] == 'unreadable':
+            print(say_unreadable(f))
+            return 1
+        ix, wait, agent = ix_dir(key), float(arg('--wait-minutes', 30)), arg('--agent') or os.environ.get('CLAUDE_AGENT') or 'main'
+        times, notes = {'fetch': 'cached' if f.get('cached') else f"{f['fetchSec']} s"}, []
+        for st in ('detect', 'transcribe', 'vision'):
+            if st == 'transcribe' and '--no-transcript' in sys.argv:
+                times[st] = 'skipped'
+                continue
+            s0 = time.time()
+            try:
+                res = stt_stage(key, wait, agent) if st == 'transcribe' else stage(key, st)
+            except Exception as e:   # a crashed stage: its part of the index is missing, not empty
+                notes.append(f'FAILED {st}: the stage crashed ({type(e).__name__}: {e}): its part of the index is missing, not empty')
+                times[st] = 'failed'
+                continue
+            times[st] = f'{time.time() - s0:.1f} s' + (' (cached)' if res.get('cached') else '')
+            if res.get('reason'):
+                notes.append(f"{'degraded' if res.get('degraded') else 'note'} {st}: {res['reason']}")
+        b = build(key)
+    finally:
+        lk.close()
+    log('media-index', {'key': key, 'fetcher': f['fetcher'], 'tokenCount': b['tokens'], 'sec': int(time.time() - t0)})
+    if '--json' in sys.argv:
+        print(json.dumps({'key': key, 'fetcher': f['fetcher'], 'index': b['index'], 'tokens': b['tokens'], 'chunks': b['chunks'], 'times': times, 'notes': notes}, ensure_ascii=False))
+        return 0
+    print(f"index {key} ({f['fetcher']}): {b['chunks']} chunks, ~{b['tokens']} tokens, {b['index']} · " + ' · '.join(f'{k} {v}' for k, v in times.items()))
+    print('\n'.join(notes + ['']))
+    with open(b['index'], encoding='utf-8') as fh:
+        print(fh.read())
+    return 0
+
+def v_write_vision(key):
+    if not arg('--file'):
+        raise Usage('evidence write-vision: <key> --file <items.json> are required')
+    w = write_vision(key, arg('--file'), arg('--model'), arg('--tokens'))
+    log('media-vision', {'key': key, 'model': w['model'], 'framesRead': w['framesRead'], 'maxFrames': w['maxFrames'], 'imageSpend': w['imageTokens'], 'agentSpend': w['tokens']})
+    print(f"vision {key}: {w['items']} items from {w['framesRead']} frames (cap {w['maxFrames']}), ~{w['imageTokens']} image tokens"
+          + (f", {w['tokens']} agent tokens" if w['tokens'] else '') + f", {w['unread']} unread · {w['index']}")
+    if w['overCap']:
+        print(f"WARN: {w['framesRead']} frames read > media.vidy.maxFrames {w['maxFrames']}")
+    return 0
+
+def v_status(ref):
+    if ref:
+        k = ref if re.fullmatch(r'[0-9a-f]{16}', ref) else key_of(ref)
+        print(json.dumps({'key': k, 'keyDir': key_dir(k), 'ixDir': ix_dir(k)}))
+    return 0
+
+def evidence_dir(item, agent):
+    r = run([tool('pwsh') or 'pwsh', '-NoProfile', '-File', osp.join(KIT, 'skills', 'crafty', 'crafty.ps1'), 'dir', '-Kind', 'evidence', '-Item', item, '-Agent', agent], timeout=60)
+    return (r.stdout or '').strip().splitlines()[-1] if not r.returncode and (r.stdout or '').strip() else None
+
+class Busy(Exception):
+    pass
+
+class Usage(Exception):
+    pass
+
 # ---- cli: stage runner, needs, argv
 def stage(key, name):
     kd, ix = key_dir(key), ix_dir(key)
@@ -986,7 +1171,7 @@ def stage(key, name):
     os.makedirs(ix, exist_ok=True)
     target = osp.join(ix, f'{name}.json')
     old = load_json(target)
-    if old is not None and not old.get('degraded') and '--refresh' not in sys.argv:
+    if old is not None and not old.get('degraded') and ('--refresh' not in sys.argv or old.get('by') == 'vidy'):   # a refresh keeps vidy's reading
         return {'stage': name, 'cached': True, 'reason': old.get('reason', '')}
     info = None if '--refresh' in sys.argv else load_json(osp.join(ix, 'probe.json'))
     if info is None:
@@ -998,7 +1183,7 @@ def stage(key, name):
     elif name == 'transcribe':
         res = transcribe(fj['file'], info, fj, ix) if fj['kind'] == 'video' else {'source': 'none', 'segments': []}
     else:
-        res = vision(load_json(osp.join(ix, 'detect.json')) or {'events': []}, fj, ix, model=arg('--model'))
+        res = vision(load_json(osp.join(ix, 'detect.json')) or {'events': []}, fj, ix)
     res['stageSec'] = round(time.time() - t0, 1)
     save_json(target, res)
     return {'stage': name, 'sec': res['stageSec'], 'reason': res.get('reason', ''), 'degraded': bool(res.get('degraded')),
@@ -1006,15 +1191,14 @@ def stage(key, name):
             **({'items': len(res.get('items', []))} if name == 'vision' else {})}
 
 def needs(key, name):
-    """Does this stage call a local AI server (so pokey.ps1 takes its lease + gate first)? Cached, sidecar or off -> no."""
+    """Does transcribe call the local STT server (so pokey.ps1 takes its lease + gate first)? Cached, sidecar or off -> no."""
+    if name != 'transcribe':
+        return False
     kd, ix = key_dir(key), ix_dir(key)
     fj = load_json(osp.join(kd, 'fetch.json')) or {}
     old = load_json(osp.join(ix, f'{name}.json') if ix else '')
     if not fj or (old is not None and not old.get('degraded') and '--refresh' not in sys.argv):
         return False
-    if name == 'vision':
-        c = CFG['vision']
-        return bool(c.get('enabled', True) and c.get('baseUrl') and c.get('model'))
     if fj.get('kind') != 'video' or (fj.get('sidecars') or {}).get('transcript') or not CFG['stt'].get('baseUrl'):
         return False
     src = osp.join(key_dir(key), 'src')
@@ -1030,42 +1214,68 @@ def arg(name, default=None):
     a = sys.argv
     return a[a.index(name) + 1] if name in a and a.index(name) + 1 < len(a) else default
 
+VALUED = ('--at', '--window', '--frames', '--size', '--out', '--duration', '--model', '--tokens', '--segment', '--file', '--item', '--agent',
+          '--wait-minutes', '--lock-minutes')
+
+def norm_argv(argv):
+    """pokey.ps1 evidence passes PowerShell-style switches: -WaitMinutes 5 -> --wait-minutes 5 (any case)."""
+    out = []
+    for x in argv:
+        if re.fullmatch(r'-{1,2}[A-Za-z][A-Za-z-]*', x):
+            x = '--' + re.sub(r'(?<=[a-z])(?=[A-Z])', '-', x.lstrip('-')).lower()
+        out.append(x)
+    return out
+
 def main():
-    a = [x for i, x in enumerate(sys.argv[1:], 1) if not x.startswith('--') and not (i > 1 and sys.argv[i - 1] in ('--at', '--window', '--frames', '--size', '--out', '--duration', '--model'))]
+    sys.argv = [sys.argv[0]] + norm_argv(sys.argv[1:])
+    a = [x for i, x in enumerate(sys.argv[1:], 1) if not x.startswith('--') and not (i > 1 and sys.argv[i - 1] in VALUED)]
     if not a:
         print(__doc__)
         return 2
     cmd, rest = a[0], a[1:]
+    key = lambda r: r if re.fullmatch(r'[0-9a-f]{16}', r) else key_of(r)
     try:
-        if cmd == 'select' and rest:
+        if cmd == 'fetch' and rest:
+            return v_fetch(rest[0])
+        elif cmd == 'index' and rest:
+            return v_index(rest[0])
+        elif cmd == 'read-chunk' and rest:
+            out = arg('--out') or (evidence_dir(arg('--item'), arg('--agent') or os.environ.get('CLAUDE_AGENT') or 'main') if arg('--item') else None)
+            print('\n'.join(read(key(rest[0]), rest[1] if len(rest) > 1 else None, rest[2] if len(rest) > 2 else None, arg('--at'), arg('--window'),
+                                 '--around-error' in sys.argv, int(arg('--frames', 3)), int(arg('--size', 1280)), out)))
+        elif cmd == 'frames' and rest:
+            print('\n'.join(frames(key(rest[0]), arg('--segment'))))
+        elif cmd == 'write-vision' and rest:
+            return v_write_vision(key(rest[0]))
+        elif cmd == 'status':
+            return v_status(rest[0] if rest else None)
+        elif cmd == 'select' and rest:
             print(json.dumps({'fetcher': select(rest[0]), 'key': key_of(rest[0]), 'link': norm_link(rest[0])}))
-        elif cmd == 'fetch' and rest:
-            r = fetch(rest[0], '--refresh' in sys.argv)
-            r['ixDir'] = ix_dir(r['key']) if r['kind'] != 'unreadable' else None
-            print(json.dumps(r, ensure_ascii=False))
-            return 0 if r['kind'] != 'unreadable' else 1
         elif cmd in ('detect', 'transcribe', 'vision') and rest:
             print(json.dumps(stage(rest[0], cmd), ensure_ascii=False))
         elif cmd == 'needs' and len(rest) >= 2:
             print(json.dumps({'need': needs(rest[0], rest[1])}))
         elif cmd == 'build' and rest:
             print(json.dumps(build(rest[0])))
-        elif cmd == 'read' and rest:
-            print('\n'.join(read(rest[0], rest[1] if len(rest) > 1 else None, rest[2] if len(rest) > 2 else None, arg('--at'), arg('--window'),
-                                 '--around-error' in sys.argv, int(arg('--frames', 3)), int(arg('--size', 1280)), arg('--out'))))
         elif cmd == 'window' and len(rest) >= 2:
             print(json.dumps(window(rest[0], rest[1], arg('--at'), arg('--window'), float(arg('--duration', 0)))))
         elif cmd == 'paths' and rest:
-            k = rest[0] if re.fullmatch(r'[0-9a-f]{16}', rest[0]) else key_of(rest[0])
+            k = key(rest[0])
             ix = ix_dir(k)
             print(json.dumps({'key': k, 'keyDir': key_dir(k), 'ixDir': ix, 'index': osp.join(ix, 'index.md') if ix and osp.isfile(osp.join(ix, 'index.md')) else None}))
         else:
             print(__doc__)
             return 2
-    except (ValueError, FileNotFoundError, RuntimeError) as e:
-        print(f'media-evidence {cmd}: {e}', file=sys.stderr)
+    except Usage as e:
+        print(e, file=sys.stderr)
+        return 2
+    except (ValueError, FileNotFoundError, RuntimeError, Busy) as e:
+        print(f'evidence {cmd}: {e}' if not str(e).startswith('evidence ') else str(e), file=sys.stderr)
         return 1
     return 0
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(kitbag_mod().audited('video.py', sys.argv, main))
+    except ImportError:   # a kit without kitbag.py: no call log
+        sys.exit(main())
