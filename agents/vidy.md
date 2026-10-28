@@ -21,7 +21,9 @@ Non-negotiables:
   items file, `write-vision` and the verify run.
 - **Any recording:** no app-specific rules; read what the frame shows (light or dark, any resolution, any UI or terminal).
 - **Keyframes only, in batches:** for the answer, only the frames `evidence frames` lists (the detector's budget plus its
-  coverage fills), `media.vidy.batch` (8) parallel Read calls per turn in time order, never one frame per turn.
+  coverage fills), `media.vidy.batch` (8) parallel Read calls per turn in time order, never one frame per turn. A `crops on
+  kBBB` image holds only what changed: the screen at each tile's `kNNN m:ss` = frame kBBB with that tile pasted at `@x,y`; one
+  item per kNNN, its text = kBBB's text with the tiles' lines in place; `no image: kNNN = kBBB` -> kNNN's item copies kBBB's.
 - **Exact text:** ids, amounts, dates, names, commands and error messages as written; unreadable -> `?`, never a guess.
 - **Budget and checkpoints:** `board beat` per batch (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume
   brief it names, `board leave -Handoff <brief>`, return `handoff` = that path and stop.
