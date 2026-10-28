@@ -205,13 +205,20 @@ if ($ff -and $cv) {
 $gl = @(git -C (Split-Path (Split-Path $PSScriptRoot)) ls-files 2>$null | Where-Object { $_ -match '^goodies/media-evidence/' }) + @(Get-ChildItem $PSScriptRoot -Recurse -File | ForEach-Object { $_.Name })
 Expect "media goody: no video, image or label JSON among its files ($(@($gl).Count) files)" (-not @($gl | Where-Object { $_ -match '\.(mp4|webm|mkv|mov|avi|jpe?g|png|gif)$|labels?\.json$|corpus\.json$|feedback\.jsonl$|\.gt\.json$' }).Count)
 # the detector gate: 11 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
-# precision >= 0.9, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast, a ticking timer is no event and
+# precision >= 0.85, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast, a ticking timer is no event and
 # a toast over a page change is one, no frame kept twice; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
 if ($ff -and $cv) {
   if ($env:KIT_MEDIA_CORPUS -and (Test-Path $env:KIT_MEDIA_CORPUS)) { Copy-Item $env:KIT_MEDIA_CORPUS (Join-Path (New-Item -ItemType Directory -Force (Join-Path (Split-Path (TkPath $k signals)) 'media')).FullName 'corpus.json') -Force }
   $bn = Invoke-TestScript $Q evidence bench $(if (-not $env:KIT_MEDIA_CORPUS) { '-NoCorpus' })
   $bn.out -split "`n" | Where-Object { $_ -match '^(q-)?\w+: recall|^corpus ' } | ForEach-Object { "  $_" }
   Expect "media bench: the synthetic gate holds ($(($bn.out -split "`n" | Select-String 'FAIL|bench: pass') -join ' '))" ($bn.code -eq 0 -and $bn.out -match 'bench: pass' -and @([regex]::Matches($bn.out, '(?m)^(q-)?\w+: recall 1\.0 key 1\.0')).Count -eq 17)
+  # media.detect.fillCoverage: a budget of 1 frame; the fill (default 0.99) still gives every screen a frame, at 0 none does
+  $nf = { param($o) [regex]::Match($o, '(?m)^page: .* frames (\d+)').Groups[1].Value }
+  $fb = foreach ($fcv in @($null, 0)) {
+    $fc = Join-Path (Kd) "fill$fcv.json"; & $J @{ detect = (@{ frames = 1; framesPerMin = 0 } + $(if ($null -ne $fcv) { @{ fillCoverage = $fcv } } else { @{} })) } $fc
+    $env:KIT_MEDIA_CONFIG = $fc; & $nf (Invoke-TestScript $Q evidence bench -Names page --no-crf36 -NoCorpus).out; $env:KIT_MEDIA_CONFIG = $null
+  }
+  Expect "media detect.fillCoverage: over a 1-frame budget the default 0.99 adds fills, 0 adds none (frames $($fb -join ' vs '))" ([int]$fb[0] -ge 3 -and [int]$fb[1] -eq 1)
 }
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
 Expect 'media: supervise runs with the goody loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
