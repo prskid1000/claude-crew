@@ -86,7 +86,7 @@ if ($ff -and $cv) {
   $fr = Invoke-TestScript $Q evidence frames $j1.key
   $fpaths = @([regex]::Matches($fr.out, '(?m)^\S+ \d+:\d+: (\S+?\.jpg)') | ForEach-Object { $_.Groups[1].Value })
   $px = if ($fpaths) { & $py -c "import cv2,sys; print(cv2.imread(sys.argv[1]).shape[1])" $fpaths[0] } else { 0 }
-  Expect "media frames: unread keyframes as existing full frames (640 px wide), one batch, cap 12 ($($fpaths.Count), $px px)" ($fr.code -eq 0 -and $fpaths.Count -ge 2 -and -not @($fpaths | Where-Object { -not (Test-Path $_) }).Count -and $fr.out -match 'cap 12 keyframes per segment' -and $fr.out -match '(?m)^batch 1:' -and "$px" -eq '640')
+  Expect "media frames: the detector's keyframes as existing full frames (640 px wide), one batch ($($fpaths.Count), $px px)" ($fr.code -eq 0 -and $fpaths.Count -ge 2 -and -not @($fpaths | Where-Object { -not (Test-Path $_) }).Count -and $fr.out -match "the detector's $($fpaths.Count) keyframes \(read only these\)" -and $fr.out -match '(?m)^batch 1:' -and "$px" -eq '640')
   $rcU = Invoke-TestScript $Q evidence read-chunk $j1.key -At 0:05 -Window 4 -Frames 1 -Size 320
   Expect 'media read-chunk: unread keyframe paths in the window' ($rcU.out -match 'unread \w+ 0:0\d: \S+\.jpg \(run vidy\)')
   $items = Join-Path (Kd) 'vidy-items.json'
@@ -94,7 +94,7 @@ if ($ff -and $cv) {
     @{ ref = 'e002'; t = '0:05'; text = 'Error: save failed (HTTP 500)'; ui = 'a navy page'; frames = @($fpaths[-1]) }) | Set-Content $items
   $wv = Invoke-TestScript $Q evidence write-vision $j1.key -File $items -Model sonnet -Tokens 4200
   $md2 = Get-Content $j1.index -Raw
-  Expect "media write-vision: vision.json -> index.md screen text, vidy marked, error flag ($($wv.out.Trim()))" ($wv.code -eq 0 -and $wv.out -match '2 items from 2 frames \(cap 12\), ~\d+ image tokens, 4200 agent tokens' -and $md2 -match 'screen text: 2 frames \(vidy sonnet\)' -and $md2 -match 'screen: Order 4711' -and $md2 -match '\[error: ')
+  Expect "media write-vision: vision.json -> index.md screen text, vidy marked, error flag ($($wv.out.Trim()))" ($wv.code -eq 0 -and $wv.out -match '2 items from 2 frames \(of \d+ keyframes\), ~\d+ image tokens, 4200 agent tokens' -and $md2 -match 'screen text: 2 frames \(vidy sonnet\)' -and $md2 -match 'screen: Order 4711' -and $md2 -match '\[error: ')
   $rcV = Invoke-TestScript $Q evidence read-chunk $j1.key -At 0:05 -Window 4 -Frames 1 -Size 320
   Expect 'media read-chunk: picks up the vidy-written screen text' ($rcV.out -match 'screen 0:05: Error: save failed \(HTTP 500\)')
   $vlog = @(Get-ChildItem (TkPath $k audit) -Recurse -Filter 'calls.jsonl' -ErrorAction SilentlyContinue | Get-Content | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'media-vision' })
@@ -104,21 +104,22 @@ if ($ff -and $cv) {
   $bad = Join-Path (Kd) 'bad-items.json'; ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 'x'; t = 1; text = 'y'; frames = @((Join-Path (Kd) 'missing.jpg')) }) | Set-Content $bad
   $wb = Invoke-TestScript $Q evidence write-vision $j1.key -File $bad
   Expect 'media write-vision: a frame that does not exist -> exit 1' ($wb.code -eq 1 -and $wb.out -match 'frame not found')
-  # the budget and the segment split: maxFrames 1 per segment, segmentSec 4 -> 2 segments of one keyframe each; segment vidys merge
-  & $J @{ media = @{ stt = @{ baseUrl = 'http://127.0.0.1:9'; ramGB = 0.1 }; vidy = @{ maxFrames = 1; segmentSec = 4 } } } $cfgF
+  # segments: segmentSec 4 -> 2 segments; -Segment 2 lists only its own keyframes; segment vidys write in parallel and merge
+  & $J @{ media = @{ stt = @{ baseUrl = 'http://127.0.0.1:9'; ramGB = 0.1 }; vidy = @{ segmentSec = 4 } } } $cfgF
   $i5 = Invoke-TestScript $Q evidence index $mp4 -Json; $j5 = try { $i5.out.Substring($i5.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
-  $f5 = Invoke-TestScript $Q evidence frames $j5.key; $f52 = Invoke-TestScript $Q evidence frames $j5.key -Segment 2
-  $s5 = @([regex]::Matches($f5.out, '(?m)^\S+ (\d+:\d+): (\S+\.jpg)') | ForEach-Object { $_.Groups[2].Value })
-  Expect "media segments: 8 s at segmentSec 4 -> 2 segments, one keyframe each (total 2), -Segment 2 lists only its own ($($s5.Count))" ($f5.out -match '2 segment\(s\) · cap 1 keyframes per segment \(total 2\)' -and $f5.out -match 'one vidy per segment' -and $f5.out -match '## segment 1/2' -and $f5.out -match '## segment 2/2' -and $s5.Count -eq 2 -and $f52.out -notmatch '## segment 1/2' -and @([regex]::Matches($f52.out, '(?m)^\S+ \d+:\d+: \S+\.jpg')).Count -eq 1)
+  $f5 = Invoke-TestScript $Q evidence frames $j5.key
+  $seg = foreach ($n in 1, 2) { , @([regex]::Matches((Invoke-TestScript $Q evidence frames $j5.key -Segment $n).out, '(?m)^\S+ \d+:\d+: (\S+\.jpg)') | ForEach-Object { $_.Groups[1].Value }) }
+  Expect "media segments: 8 s at segmentSec 4 -> 2 segments, -Segment n lists only its own ($($seg[0].Count) + $($seg[1].Count))" ($f5.out -match '2 segment\(s\)' -and $f5.out -match 'one vidy per segment' -and $f5.out -match '## segment 2/2' -and $seg[0].Count -ge 1 -and $seg[1].Count -ge 1 -and -not @($seg[0] | Where-Object { $seg[1] -contains $_ }).Count)
   $sA = Join-Path (Kd) 'seg1.json'; $sB = Join-Path (Kd) 'seg2.json'
-  ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 's1'; t = 1; text = 'segment one text'; frames = @($s5[0]) }) | Set-Content $sA
-  ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 's2'; t = 6; text = 'segment two text'; frames = @($s5[1]) }) | Set-Content $sB
+  ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 's1'; t = 1; text = 'segment one text'; frames = @($seg[0]) }) | Set-Content $sA
+  ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 's2'; t = 6; text = 'segment two text'; frames = @($seg[1]) }) | Set-Content $sB
   $wA = Start-Job { param($q, $kk, $f) pwsh -NoProfile -File $q evidence write-vision $kk -File $f } -ArgumentList $Q, $j5.key, $sA
   $wB = Invoke-TestScript $Q evidence write-vision $j5.key -File $sB; $null = $wA | Wait-Job -Timeout 120 | Receive-Job
   $md5 = Get-Content $j5.index -Raw
-  Expect "media segments: two segment vidys write -> both readings merged, none unread ($($wB.out.Trim()))" ($md5 -match 'segment one text' -and $md5 -match 'segment two text' -and $md5 -match 'screen text: 2 frames' -and $md5 -notmatch 'keyframes unread')
-  $w5 = Invoke-TestScript $Q evidence write-vision $j5.key -File $items
-  Expect "media budget: two frames read in one call over maxFrames 1 -> WARN ($($w5.out.Trim()))" ($w5.out -match 'WARN: 2 frames read > media.vidy.maxFrames 1')
+  Expect "media segments: two segment vidys write -> both readings merged, none unread ($($wB.out.Trim()))" ($md5 -match 'segment one text' -and $md5 -match 'segment two text' -and $md5 -notmatch 'keyframes unread')
+  $nk = Join-Path (Kd) 'not-key.json'; ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 'x'; t = 5; text = 'from a read-chunk frame'; frames = @($jpgs[0]) }) | Set-Content $nk
+  $w5 = Invoke-TestScript $Q evidence write-vision $j5.key -File $nk
+  Expect "media vidy: a frame that is not a detector keyframe -> WARN ($($w5.out.Trim()))" ($w5.out -match "WARN: 1 frame\(s\) read are not the detector's keyframes")
   # STT through a fake local server; vision sends nothing to it and takes no GPU lease (an emulator GPU kind is set)
   $port = Get-Random -Minimum 20000 -Maximum 29000; $plog = Join-Path (Kd) 'fake-ai.log'
   $srv = Join-Path (Kd) 'fake_ai.py'
@@ -151,8 +152,45 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
   $gl = @(Get-ChildItem (TkPath $k audit) -Recurse -Filter 'builds.jsonl' -ErrorAction SilentlyContinue | Get-Content | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'start' })
   Expect "media index: STT ran through the memory gate as kind local-ai with ramGB ($(@($gl.kind) -join ','))" (@($gl | Where-Object { $_.kind -eq 'local-ai' -and [double]$_.needGB -eq 0.1 }).Count -eq 1)
   Stop-Process -Id $fake.Id, $emu.Id -Force -ErrorAction SilentlyContinue
+  # sidecar actions anchor keyframes: a pokey record() log next to the media -> a real click line with its before -> after frames
+  & $J @{ media = @{ stt = @{ baseUrl = 'http://127.0.0.1:9'; ramGB = 0.1 }; corpus = @{ keep = 1 } } } $cfgF
+  $sc = Join-Path (Kd) 'flow.mp4'
+  & $ff.Source -v error -y -f lavfi -i 'color=c=white:s=640x360:d=8:r=15' -vf "drawbox=x=0:y=60:w=640:h=300:color=navy:t=fill:enable='gte(t,3.2)'" -pix_fmt yuv420p $sc 2>&1 | Out-Null
+  & $J @{ source = 'pokey'; start = 1000; size = @(640, 360); events = @(@{ at = 4000; action = 'click'; target = 'Save'; box = @(300, 30, 40, 20) }) } "$sc.events.json"
+  $is = Invoke-TestScript $Q evidence index $sc -Json; $js = try { $is.out.Substring($is.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
+  $mds = if ($js) { Get-Content $js.index -Raw } else { '' }
+  Expect "media sidecar: a pokey action log anchors a click line with before -> after keyframes ($(([regex]::Match($mds, '(?m)^- 0:03 click.*$')).Value))" ($mds -match '(?m)^- 0:03 click "Save" at \(0\.47,0\.08\).*\[pokey\] k\d{3}->k\d{3}')
+  # vidy's verify phase: perfect -> passed, nothing more; a miss -> feedback row, labels, corpus open, the TUNE line; keep 1 evicts the older media
+  $ok = Join-Path (Kd) 'verify-ok.json'; & $J @{ name = 'synthetic box'; states = @(@(0, 1.9, 'white'), @(2, 4.9, 'red box'), @(5, 8, 'navy')); findings = @(); tokens = 1200 } $ok
+  $fb1 = Invoke-TestScript $Q evidence feedback $j1.key -File $ok
+  $cf = Join-Path (Join-Path (Split-Path (TkPath $k signals)) 'media') 'corpus.json'; $fbl = Join-Path (Join-Path (Split-Path (TkPath $k signals)) 'media') 'feedback.jsonl'
+  $c1 = Get-Content $cf -Raw | ConvertFrom-Json
+  Expect "media feedback: perfect -> corpus passed, recall 1, no feedback rows, no tune ($(($fb1.out -split "`n" | Where-Object { $_.Trim() })[-1]))" ($fb1.code -eq 0 -and $fb1.out -match 'perfect: nothing more for this video' -and $fb1.out -notmatch 'TUNE' -and $c1.($j1.key).status -eq 'passed' -and $c1.($j1.key).recall -eq 1 -and -not (Test-Path $fbl))
+  $bad = Join-Path (Kd) 'verify-miss.json'
+  & $J @{ name = 'flow'; states = @(@(0, 3.1, 'white'), @(3.3, 8, 'navy')); animations = @(); findings = @(@{ kind = 'missed'; t0 = '0:03'; t1 = 3.5; frames = @($sc); note = 'navy page has no keyframe' }); tokens = 90000 } $bad
+  $fb2 = Invoke-TestScript $Q evidence feedback $js.key -File $bad
+  $row = Get-Content $fbl | ConvertFrom-Json; $c2 = Get-Content $cf -Raw | ConvertFrom-Json
+  Expect "media feedback: a miss -> feedback.jsonl (kind, window, frames, pipe), labels next to the media, corpus open, TUNE line, over the token cap" ($fb2.out -match "TUNE $($js.key): spawn kitty" -and $row.kind -eq 'missed' -and $row.t0 -eq 3 -and $row.pipe -ge 3 -and $row.frames -contains $sc -and (Test-Path $c2.($js.key).labels) -and $c2.($js.key).status -eq 'open' -and $fb2.out -match '90000 tokens > media.vidy.labelTokens')
+  $kd1 = ((Mpy paths $j1.key).out | ConvertFrom-Json).keyDir
+  Expect "media corpus: keep 1 -> the older clip's media evicted, its labels kept ($($fb2.out -split "`n" | Select-String 'evicted'))" ($c2.($j1.key).media -eq 'evicted' -and $c2.($js.key).media -ne 'evicted' -and (Test-Path (Join-Path $kd1 'labels.json')) -and -not @(Get-ChildItem $kd1 -Directory).Count)
+  # the regression gate: a corpus clip whose recall would drop below its recorded value fails; evicted clips are skipped
+  $c2.($js.key) | Add-Member -Force recall 1.0; $c2 | ConvertTo-Json -Depth 6 | Set-Content $cf
+  & $J @{ key = $js.key; states = @(@(0, 1, 'white'), @(20, 21, 'a state the detector never shows (past the end)')) } $c2.($js.key).labels
+  $g1 = Invoke-TestScript $Q evidence bench -Key $js.key
+  & $J @{ key = $js.key; states = @(, @(0, 0.2, 'white')) } $c2.($js.key).labels
+  $g2 = Invoke-TestScript $Q evidence bench -Key $js.key -Record
+  $ge = Invoke-TestScript $Q evidence bench -Key $j1.key
+  Expect "media bench: a corpus recall drop fails, a covered clip passes and records, an evicted clip is skipped ($(($g1.out -split "`n" | Select-String 'FAIL') -join ' '))" ($g1.code -eq 1 -and $g1.out -match 'FAIL corpus .*recall .* < 1.0 recorded' -and $g2.code -eq 0 -and $g2.out -match 'bench: pass' -and $ge.out -match 'media evicted' -and $ge.code -eq 0)
 } else { 'SKIP media index: ffmpeg or OpenCV missing' }
 
+# the detector gate: 10 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
+# precision >= 0.9, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
+if ($ff -and $cv) {
+  if ($env:KIT_MEDIA_CORPUS -and (Test-Path $env:KIT_MEDIA_CORPUS)) { Copy-Item $env:KIT_MEDIA_CORPUS (Join-Path (New-Item -ItemType Directory -Force (Join-Path (Split-Path (TkPath $k signals)) 'media')).FullName 'corpus.json') -Force }
+  $bn = Invoke-TestScript $Q evidence bench $(if (-not $env:KIT_MEDIA_CORPUS) { '-NoCorpus' })
+  $bn.out -split "`n" | Where-Object { $_ -match '^(q-)?\w+: recall|^corpus ' } | ForEach-Object { "  $_" }
+  Expect "media bench: the synthetic gate holds ($(($bn.out -split "`n" | Select-String 'FAIL|bench: pass') -join ' '))" ($bn.code -eq 0 -and $bn.out -match 'bench: pass' -and @([regex]::Matches($bn.out, '(?m)^(q-)?\w+: recall 1\.0 key 1\.0')).Count -eq 16)
+}
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
 Expect 'media: supervise runs with the goody loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
 Remove-TestKit $k

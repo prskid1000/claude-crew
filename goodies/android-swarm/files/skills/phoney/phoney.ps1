@@ -8,11 +8,13 @@ phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.
   install [-Apk <path>] [-Serials <s>,..] [-Launch] · launch -Serial <s> [-Clear] [-Stop]
   avd list|create|reset [-Lanes <names>] [-Level cold|snapshots|wipe|recreate]
   up [-Lanes ..] [-ShowAll] · down [-Lanes ..] · slim -Serial <s>
+  events start|stop -Serial <s> [-Out <recording>]   taps, clicks, typing -> <recording>.events.json (swarm.config.json events: true)
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
-Sections: L22 config · L102 phone · L300 build · L444 install · L470 launch · L482 avd · L568 up · L665 down · L694 slim
+Sections: L24 config · L104 phone · L302 build · L446 install · L472 launch · L484 avd · L570 up · L667 down · L696 events ·
+  L752 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -691,6 +693,62 @@ if (-not $KeepBrowsers) {
 "free RAM now $(Get-FreeGB) GB"
 }
 
+# ---- events: lane actions for a recording's sidecar (swarm.config.json events: true; off by default)
+function ConvertTo-LaneEvents {
+param([string[]]$GetEvent, [string[]]$UiEvents, [double]$Uptime, [long]$At, [int[]]$Size, [int[]]$Max)
+# getevent -lt touches -> tap / swipe; uiautomator events -> click (its text), type, screen; times: device uptime -> epoch ms
+$ms = { param($sec) [long]($At + ($sec - $Uptime) * 1000) }
+$sx = if ($Max -and $Max[0]) { $Size[0] / ($Max[0] + 1) } else { 1 }; $sy = if ($Max -and $Max[1]) { $Size[1] / ($Max[1] + 1) } else { 1 }
+$out = [Collections.Generic.List[object]]::new(); $down = $null; $x = $y = 0
+foreach ($l in $GetEvent) {
+  if ($l -notmatch '^\[\s*([\d.]+)\]\s+\S+:\s+(EV_\w+)\s+(\w+)\s+(\w+)') { continue }
+  $t, $code, $val = [double]$Matches[1], $Matches[3], $Matches[4]
+  if ($code -eq 'ABS_MT_POSITION_X') { $x = [Convert]::ToInt32($val, 16) * $sx }
+  elseif ($code -eq 'ABS_MT_POSITION_Y') { $y = [Convert]::ToInt32($val, 16) * $sy }
+  elseif ($code -eq 'BTN_TOUCH' -and $val -eq 'DOWN') { $down = @{ t = $t; x = $null; y = $null } }
+  elseif ($code -eq 'SYN_REPORT' -and $down -and $null -eq $down.x) { $down.x = $x; $down.y = $y }
+  elseif ($code -eq 'BTN_TOUCH' -and $val -eq 'UP' -and $down) {
+    $moved = [math]::Sqrt([math]::Pow($x - $down.x, 2) + [math]::Pow($y - $down.y, 2)) -gt 0.02 * $Size[0]
+    $e = [ordered]@{ at = & $ms $down.t; action = $(if ($moved) { 'swipe' } else { 'tap' }); target = "$([int]$down.x),$([int]$down.y)" + $(if ($moved) { " -> $([int]$x),$([int]$y)" } else { '' }); box = @(([int]$down.x - 8), ([int]$down.y - 8), 16, 16) }
+    $out.Add($e); $down = $null
+  }
+}
+foreach ($l in $UiEvents) {
+  if ($l -notmatch 'EventType: (TYPE_\w+); EventTime: (\d+)') { continue }
+  $kind = @{ TYPE_VIEW_CLICKED = 'click'; TYPE_VIEW_LONG_CLICKED = 'click'; TYPE_VIEW_TEXT_CHANGED = 'type'; TYPE_WINDOW_STATE_CHANGED = 'screen' }[$Matches[1]]
+  if (-not $kind) { continue }
+  $at = & $ms ([double]$Matches[2] / 1000); $txt = if ($l -match 'Text: \[([^\]]*)\]') { $Matches[1] } else { '' }; $cls = if ($l -match 'ClassName: ([\w.$]+)') { $Matches[1] } else { '' }
+  $tap = if ($kind -eq 'click') { $out | Where-Object { $_.action -eq 'tap' -and $at - $_.at -ge 0 -and $at - $_.at -le 400 } | Select-Object -Last 1 }
+  if ($tap) { $tap.text = $txt; $tap.action = 'click'; continue }   # the tap that clicked this view: one event with its text
+  $out.Add([ordered]@{ at = $at; action = $kind; target = $cls; text = $txt })
+}
+@($out | Sort-Object { $_.at })
+}
+function Invoke-Events {
+param([Parameter(Mandatory, Position = 0)][ValidateSet('start', 'stop')][string]$Action, [Parameter(Mandatory)][string]$Serial, [string]$Out)
+$c = Get-SwarmConfig; $adb = $c.adb
+if (-not $c.events) { 'lane event capture is off: swarm.config.json "events": true turns it on'; return }
+$st = Join-Path $c.out "events-$($Serial -replace '\W', '_')"
+if ($Action -eq 'start') {
+  New-Item -ItemType Directory -Force $st | Out-Null
+  $up = [double](("$(& $adb -s $Serial shell cat /proc/uptime)" -split ' ')[0]); $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $wm = "$(& $adb -s $Serial shell wm size)"; $size = if ($wm -match '(\d+)x(\d+)') { @([int]$Matches[1], [int]$Matches[2]) } else { @(1080, 2400) }
+  $lp = (& $adb -s $Serial shell getevent -lp) -join "`n"; $max = foreach ($ax in 'X', 'Y') { if ($lp -match "ABS_MT_POSITION_$ax\s*:.*?max (\d+)") { [int]$Matches[1] } else { 0 } }
+  $touch = "$(& $adb -s $Serial shell settings get system show_touches)".Trim(); & $adb -s $Serial shell settings put system show_touches 1 | Out-Null   # taps show in the video too
+  $ge = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'getevent', '-lt' -RedirectStandardOutput "$st/getevent.txt" -PassThru -WindowStyle Hidden
+  $ui = Start-Process $adb -ArgumentList '-s', $Serial, 'shell', 'uiautomator', 'events' -RedirectStandardOutput "$st/ui.txt" -PassThru -WindowStyle Hidden
+  @{ uptime = $up; at = $at; size = $size; max = @($max); touch = $touch; pids = @($ge.Id, $ui.Id) } | ConvertTo-Json | Set-Content "$st/state.json"
+  "events: capturing on $Serial (show taps on) -> phoney.ps1 events stop -Serial $Serial -Out <the recording>"; return
+}
+if (-not $Out) { throw 'events stop: -Out <the recording file> is required (the sidecar is <Out>.events.json)' }
+$s0 = Get-Content "$st/state.json" -Raw | ConvertFrom-Json
+foreach ($id in $s0.pids) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+& $adb -s $Serial shell settings put system show_touches $(if ($s0.touch -eq '1') { 1 } else { 0 }) | Out-Null
+$ev = ConvertTo-LaneEvents -GetEvent @(Get-Content "$st/getevent.txt" -ErrorAction SilentlyContinue) -UiEvents @(Get-Content "$st/ui.txt" -ErrorAction SilentlyContinue) -Uptime $s0.uptime -At $s0.at -Size @($s0.size) -Max @($s0.max)
+@{ source = 'lane'; start = $null; size = @($s0.size); events = @($ev) } | ConvertTo-Json -Depth 5 | Set-Content "$Out.events.json"
+"events: $(@($ev).Count) actions -> $Out.events.json"
+}
+
 # ---- slim: one-time (run by up)
 function Invoke-Slim {
 param([Parameter(Mandatory)][string]$Serial)
@@ -735,6 +793,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'up' { Invoke-KitVerb Invoke-Up $__rest }
     'down' { Invoke-KitVerb Invoke-Down $__rest }
     'slim' { Invoke-KitVerb Invoke-Slim $__rest }
+    'events' { Invoke-KitVerb Invoke-Events $__rest }
     'arrange' { if (Get-Command Invoke-Arrange -ErrorAction SilentlyContinue) { Invoke-KitVerb 'Invoke-Arrange' $__rest } else { [Console]::Error.WriteLine('arrange is a goody: run kitbag.py goody add android-swarm'); exit 1 } }
     { $_ -in '-h', '--help', 'help', '-?' } { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 0 }
     default { Get-Content $PSCommandPath -TotalCount 15 | Select-Object -Skip 1; exit 2 }

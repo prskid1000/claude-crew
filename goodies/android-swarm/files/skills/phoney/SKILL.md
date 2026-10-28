@@ -12,7 +12,7 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step A0 / L0: `bossy.ps1 learn -Read -Skill android-swarm` |
-| `phoney.ps1` | A1-A4 (`acquire`, `ensure`, `launch`, `release`, `status`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim` runs from `up` |
+| `phoney.ps1` | A1-A5 (`acquire`, `ensure`, `launch`, `release`, `status`, `events`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim` runs from `up` |
 | `<kit>/skills/pokey/adapters/ui_android.ps1` | never read: `pokey.ps1 ui` and the `deploys[]` `laneApk` check of `pokey.ps1 deployed` (this goody) |
 
 Lanes and the app: `swarm.config.json` (git-ignored; an example: "Config" below; keys and defaults: `Get-SwarmConfig`
@@ -40,6 +40,9 @@ in `phoney.ps1`). `kit.local.json` `devices.type`: android (default) · none (ve
   reverses kept). Lease file gone: `acquire -Agent <id> -Lane <name> -NoInstall`.
 - A3. Release before long non-phone work: `phoney.ps1 release -Agent <id>` (removes reverses); acquire again later.
 - A4. `phoney.ps1 release -Agent <id>` when done. The next acquire without `-Apk` puts the lane APK back.
+- A5. A recording for vidy: `phoney.ps1 events start -Serial <s>` ... `events stop -Serial <s> -Out <recording>` writes
+  `<recording>.events.json` (getevent taps / swipes, uiautomator clicks with their text, typing, screens; show taps on while it
+  runs). Off by default: `swarm.config.json` `"events": true`.
 
 ## Lead steps
 - L0. `bossy.ps1 learn -Read -Skill android-swarm`; `swarm.config.json` once.
@@ -65,6 +68,7 @@ in `phoney.ps1`). `kit.local.json` `devices.type`: android (default) · none (ve
    "avdDir": "",
    "outDir": "",
    "headless": false,
+   "events": false,
    "lanes": [
     { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
     { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }

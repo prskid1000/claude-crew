@@ -155,5 +155,25 @@ for ($i = 0; $i -lt 20 -and -not (Test-Path '__VT__/started.txt'); $i++) { Start
 '@.Replace('__VT__', $vt))
 Expect-Each $vr 'swarm vram: under minFreeMB a lane waits (supervise shows it) then refuses, 3000 MB free boots, no nvidia-smi skips: #' @('supervise', 'refused', 'boots', 'skips') -Show 12
 Remove-Item $vt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
+# lane events (fixture logs, no emulator): off by default; getevent taps + uiautomator clicks / typing -> one sidecar, epoch times, screen px
+$k = New-TestKit swarm-events
+$ev = Invoke-PsTest 'swarm-events' @"
+. '$(Join-Path $src 'skills/phoney/phoney.ps1')'
+`$script:SwarmCfg = [pscustomobject]@{ adb = 'adb-never-called'; out = '$((Kd) -replace "'", "''")'; events = `$false }
+"off:`$((Invoke-Events start -Serial emulator-5554) -match 'capture is off')"
+`$ge = @('[  100.000000] /dev/input/event1: EV_ABS       ABS_MT_TRACKING_ID   00000001', '[  100.000000] /dev/input/event1: EV_ABS       ABS_MT_POSITION_X    00002000',
+  '[  100.000000] /dev/input/event1: EV_ABS       ABS_MT_POSITION_Y    00004000', '[  100.000000] /dev/input/event1: EV_KEY       BTN_TOUCH            DOWN',
+  '[  100.000000] /dev/input/event1: EV_SYN       SYN_REPORT           00000000', '[  100.080000] /dev/input/event1: EV_KEY       BTN_TOUCH            UP',
+  '[  102.000000] /dev/input/event1: EV_ABS       ABS_MT_POSITION_X    00002000', '[  102.000000] /dev/input/event1: EV_ABS       ABS_MT_POSITION_Y    00006000',
+  '[  102.000000] /dev/input/event1: EV_KEY       BTN_TOUCH            DOWN', '[  102.000000] /dev/input/event1: EV_SYN       SYN_REPORT           00000000',
+  '[  102.300000] /dev/input/event1: EV_ABS       ABS_MT_POSITION_Y    00002000', '[  102.300000] /dev/input/event1: EV_KEY       BTN_TOUCH            UP')
+`$ui = @('EventType: TYPE_VIEW_CLICKED; EventTime: 100150; PackageName: com.example; ClassName: android.widget.Button; Text: [Save]; ContentDescription: null',
+  'EventType: TYPE_VIEW_TEXT_CHANGED; EventTime: 104000; PackageName: com.example; ClassName: android.widget.EditText; Text: [QA-123]',
+  'EventType: TYPE_VIEW_SCROLLED; EventTime: 104500; PackageName: com.example')
+`$e = @(ConvertTo-LaneEvents -GetEvent `$ge -UiEvents `$ui -Uptime 99 -At 1700000000000 -Size 1080, 2400 -Max 32767, 32767)
+"parsed:`$((`$e.action -join ',') -eq 'click,swipe,type' -and `$e[0].text -eq 'Save' -and `$e[0].at -eq 1700000001000 -and `$e[0].target -eq '270,1200' -and `$e[2].text -eq 'QA-123' -and `$e[1].target -match '-> 270,600')"
+"@
+Expect-Each $ev 'swarm events: #' @('off', 'parsed') -Show 6
+Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests
