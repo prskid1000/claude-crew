@@ -55,13 +55,15 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R15 | Data work: a run's test data to clean up, a build or test failing on setup data, a migration's data review, local DB marks / restores / seed, a backfill, a data check | `datay` agent (kind cleanup / fixture / migration / localdb / backfill / check) | — (the agent holds its steps) |
 | R16 | Watch a deployed env: errors, logs or monitoring after a deploy, a nightly error sweep, an owner's error screenshot or report | `watchy` agent (kind window / sweep / triage) | — (the agent loads `pokey`) |
 | R17 | Research before building or deciding: compare options, pick a library, is X free / licensed / supported, how Y works; no code change | `rechy` agent (kind question / compare / library / licence / spike) | — (the agent holds its steps) |
+| R19 | Understand a video, screen recording or screenshot (a tester's or user's link or file): what it shows, what was done, where it failed | `vidy` agent (kind question / index; goody `media-evidence`) | — (the agent loads `pokey`) |
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
   `_manifest`): `devy` builds (by /buildy, one per brief area), `revy` reviews (by /buildy, R13, R14),
   `checky` tests (by /testy as lead / test / verify, R10), `kitty` keeps the kit and the machine (R2, R3, /tidy), `briefy` writes briefs and contracts (R5, E8), `rechy` researches (R17,
   /buildy Spike), `opsy` deploys on a person's word (R7, E5), `watchy` watches deployed envs (R16, E15), `datay` guards test and
-  local data (R15, /buildy migrations, E2, E7).
+  local data (R15, /buildy migrations, E2, E7), `vidy` reads videos and screenshots for any agent (R19; an existing vidy index is
+  reused, never re-read).
   Each loads its skill first; its Character shapes judgement and tone, never a rule or the Writing standards. Step 0 of every
   agent reads the board (who is alive on this machine); a disagreement with another agent's result: `board msg` it, still
   split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the same agents are ported

@@ -472,7 +472,7 @@ $script:GateKinds = [ordered]@{
   'native' = @('cmake --build|\bmake\b', 3)
   'js-test' = @('jest|vitest', 2)
   'tsc-lint' = @('\btsc\b|eslint', 2)
-  'local-ai' = @('media_evidence\.py"? (transcribe|vision)\b', 2)   # goody media-evidence: -NeedGB = the server's RAM
+  'local-ai' = @('video\.py"? transcribe\b', 2)   # goody media-evidence: -NeedGB = the STT server's RAM
   'python' = @('pytest|mypy|ruff|compileall|-m unittest\b|\btest_\w*\.py\b', 1.5)
   'go' = @('go (build|test|vet)', 2)
 }

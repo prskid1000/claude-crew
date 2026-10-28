@@ -401,7 +401,7 @@ function Test-KitLeaseBack([string]$Agent) {
   if ($gap -le 3 * [double]$r.grace) { Add-KitParamObs 'idle.graceMinutes' ([double]$r.quiet + $gap) '' 'short' 10 }
   Set-KitLeaseReleased $Agent $null
 }
-# the GPU: one exclusive resource for the kinds in gpu.exclusive (e.g. emulator lanes, a local vision model); holders of one kind
+# the GPU: one exclusive resource for the kinds in gpu.exclusive (e.g. emulator lanes); holders of one kind
 # share it, another kind waits. A holder = a lease bound to a process, or a running process matching <kind>.processes
 function Get-KitGpuFile { Join-Path (Get-KitPath runtimes -Create) 'gpu.json' }
 function Get-KitGpuState {
@@ -425,7 +425,7 @@ function Get-KitGpuProbe {
         @{ pid = $id; name = $(if ($n) { $n } else { $m.Groups[2].Value }); mb = $(if ($m.Groups[3].Value -match '\d+') { [int]$Matches[0] } else { $null }) } }) }
 }
 # a kind with idleExcept (regex of its own backend's process names): any other GPU process, or idleMaxMB (512) used while its backend
-# is not running, blocks it (e.g. a local vision model that needs the whole GPU)
+# is not running, blocks it (a job that needs the whole GPU)
 function Get-KitGpuBusy([string]$Kind, [int]$MinFreeMB = 0) {
   $rx = "$(Get-KitSetting "gpu.exclusive.$Kind.idleExcept" '')"; if (-not $rx -and $MinFreeMB -le 0) { return $null }
   $p = Get-KitGpuProbe

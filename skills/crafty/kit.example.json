@@ -1,5 +1,5 @@
 {
- "_readme": "Every key is optional (missing: README 'Configuration' default). bossy.ps1 setup -WriteLocal writes kit.local.json from this file (minus localFiles and _ sections) and each localFiles entry to its path (git-ignored). Fill <...> values; / works on every OS.",
+ "_readme": "Every key is optional (missing: README 'Configuration' default). bossy.ps1 setup -WriteLocal writes kit.local.json from this file (never localFiles or _ sections), each localFiles entry to its (git-ignored) path. Fill <...> values; / works on every OS.",
  "_doc": { "_readme": "README Configuration rows: keys without a _readme",
   "gitHost, gitHostType, githubHost, gitlabGroup": "the git host (type from the host) and the group / owner for short refs <repo>!<iid>",
   "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop)",
@@ -32,7 +32,7 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples.",
+  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples, a goody's GOODY.md.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
@@ -43,8 +43,6 @@
    "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]
   },
   "_examples": {
-   "clickup": { "type": "clickup", "list": "<list id>", "branchTag": "CU-", "statuses": { "review": "for review", "failedTesting": "failed testing", "closed": "complete" } },
-   "github": { "type": "github", "repo": "owner/name", "branchTag": "GH-", "statuses": { "failedTesting": "failed-testing" } },
    "command": { "type": "command", "commands": { "view": "mytracker show {id} --json", "status": "mytracker move {id} {status}", "comment": "mytracker note {id} {text}" } }
   }
  },
@@ -52,9 +50,9 @@
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (steps OUT_OF_SCOPE: reported, not counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule matching lists / repos / nameRegex / pathRegex gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. email>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
- "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds each test env's check in bossy.ps1 deploy plan (all at once; a late one is UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 600 },
+ "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number or per target, with a default). planTimeoutSec bounds each test env's check in bossy.ps1 deploy plan (all at once; a late one is UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 600 },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays)", "timeoutSec": 60 },
- "tests": { "_readme": "Per stack (crafty.ps1 stack names): test names -Touched looks for from a changed file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
+ "tests": { "_readme": "Per stack (crafty.ps1 stack names): test names -Touched derives from a changed file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": ["staging"],
  "cleanup": { "maxBrowserProfiles": 4, "worktreeDays": 7 },
  "guard": { "_readme": "layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt).", "layout": "warn" },
@@ -68,7 +66,7 @@
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
   "db": { "use": "", "kill": "", "maxGB": 5 } },
  "idle": { "graceMinutes": 10, "beatMinutes": 20 },
- "params": { "_readme": "Learned parameters (bossy.ps1 param show): each _manifest.params key starts at its default and learns from live observations (.state/params.json, per machine) within default/4..x4, both ways: a failure signal (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps to the safe side at once (x1.5 or the need), from the next use; a risky step at most 10% a day after 5 new observations, none for 7 d after a failure; shadowDays shown only, then applied; past 2x the default: an owner yes (param approve). A kit.local.json value = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
+ "params": { "_readme": "Learned parameters (bossy.ps1 param show): each _manifest.params key starts at its default, learns both ways from live observations (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps to the safe side from the next use (x1.5 or the need); a risky step <= 10% a day after 5 new observations, none for 7 d after a failure; shadowDays: shown only, then applied; past 2x the default: an owner yes (param approve). A kit.local.json value = a pin (no learning); learning on | shadow | off.", "learning": "on", "shadowDays": 14 },
  "budget": { "_readme": "An agent's budget = its tool's default compaction point (bossy.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split; at runStopAt x cap no new item starts (rest = next). estimate: per agent / item",
   "handoffAt": 0.8, "runStopAt": 0.8,
   "estimate": { "devy": 70000, "revy": 50000, "checky": 60000, "kitty": 60000, "rechy": 60000, "datay": 50000, "step": 15000, "item": 30000 },
@@ -109,7 +107,7 @@
   }
  },
  "_manifest": {
-  "_readme": "The kit's registry (never copied into kit.local.json): crew, skills, workflows, Router / Events rows, caps. Names live only here: lint checks files against it, kitbag.py new / rename / remove edit it, port writes Character blocks and the Crew table. renamed: old -> new (setup -Migrate applies it).",
+  "_readme": "The kit's registry: crew, skills, workflows, Router / Events rows, caps; names live only here (lint checks files against it; kitbag.py new / rename / remove edit it; port writes Character blocks + the Crew table). renamed: old -> new (setup -Migrate applies it).",
   "agents": {
    "devy": { "job": "builder: makes or changes anything in product repos through the dev flow", "kinds": ["feature", "fix", "refactor", "migration", "config", "doc", "tests", "spike", "repro"], "roles": [], "skill": "crafty", "tools": "all", "usedIn": ["/buildy", "R5", "R6"], "cant": "deploy, merge into deploy branches, edit the kit",
     "character": { "traits": "pragmatic builder", "bias": "the smallest change that passes every goal", "catchphrase": "Small, tested, shipped.", "never": "gold-plates or widens the scope" } },
@@ -128,7 +126,9 @@
    "opsy": { "job": "deploy pilot: deploys on a person's word, verifies, rolls back", "kinds": ["deploy", "rollback", "status", "secret"], "roles": [], "skill": "bossy", "tools": "all", "usedIn": ["R7", "E5"], "cant": "deploy without a person's word, edit code",
     "character": { "traits": "cautious pilot", "bias": "the checklist runs every time", "catchphrase": "Checklist first.", "never": "takes \"it worked before\" as evidence or skips a check because the last deploy passed" } },
    "watchy": { "job": "on-call watcher: errors of deployed envs, one [Bug] per issue", "kinds": ["window", "sweep", "triage"], "roles": [], "skill": "pokey", "tools": "all", "usedIn": ["R16", "E15"], "cant": "change systems, deploy, move tasks",
-    "character": { "traits": "calm on-call engineer", "bias": "a signature is noise until it is new, repeated or user-facing", "catchphrase": "What changed, and since when?", "never": "pages on one log line or opens a second task for a known issue" } }
+    "character": { "traits": "calm on-call engineer", "bias": "a signature is noise until it is new, repeated or user-facing", "catchphrase": "What changed, and since when?", "never": "pages on one log line or opens a second task for a known issue" } },
+   "vidy": { "job": "video reader: exact screen text, timed answers", "kinds": ["question", "index", "segment"], "roles": [], "skill": "pokey", "tools": "all", "usedIn": ["R19"], "cant": "edit code, tracker, kit",
+    "character": { "traits": "frame-by-frame witness", "bias": "the screen beats the narration", "catchphrase": "Which frame shows it?", "never": "paraphrases text or claims an unseen step" } }
   },
   "skills": ["crafty", "bossy", "pokey"],
   "workflows": {
@@ -136,7 +136,7 @@
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
    "tidy": { "covers": "kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest + upkeep, no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
   },
-  "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18"],
+  "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R19", "R18"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15"],
    "ram": { "_readme": "supervise RAM categories by process name (no .exe), after the kit process trees (kit), then windowsPath (exe path); the rest is unknown, RAM no process owns is windows. supervise.ramNames overrides per key", "kit": "^(claude|codex|antigravity)$",
    "windows": "^(System|Registry|Idle|Secure System|smss|csrss|wininit|winlogon|services|lsass|LsaIso|svchost|dwm|fontdrvhost|Memory Compression|MsMpEng|Search\\w+|spoolsv|WmiPrvSE|RuntimeBroker|sihost|taskhostw|ctfmon|explorer|\\w*Host|audiodg|conhost|dllhost|NVIDIA.*|nv\\w+|tailscaled?|Intel.*)$",
@@ -145,7 +145,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 30, "plumbing": 8, "totalTokens": 266000, "testTokens": 50500 },
+  "caps": { "content": 31, "plumbing": 8, "totalTokens": 266000, "testTokens": 50500 },
   "params": { "idle.graceMinutes": "quantile q=.95 k=1.5", "net.timeoutSec": "quantile q=.99 k=3", "gate.waitMinutes": "quantile q=.95 k=2", "gate.needGB": "peak k=1.15 up=.5",
    "supervise.heartbeatMinutes": "quantile q=.5 k=.5 min=10 safe=down", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
   "adapters": {
@@ -163,7 +163,7 @@
    "localenv.ps1": "envy.ps1", "swarm.ps1": "phoney.ps1" }
  },
  "_paths": {
-  "_readme": "The one map of local state (never copied into kit.local.json): scripts resolve names (Get-KitPath, kit_path, kitPath, rp(); lint RUNTIME-RAW / -MAP). runtime: under $CLAUDE_RUNTIME, else <kit>/.runtime, disposable (work/ runs, cache/, logs/ append-only); durable: <kit>/.state/, survives a runtime wipe. Folders end in '/'. setup -Migrate moves old layouts.",
+  "_readme": "The one map of local state: scripts resolve names (Get-KitPath, kit_path, kitPath, rp(); lint RUNTIME-RAW / -MAP). runtime: $CLAUDE_RUNTIME, else <kit>/.runtime, disposable (work/ runs, cache/, logs/ append-only); durable: <kit>/.state/, survives a runtime wipe. Folders end in '/'; setup -Migrate moves old layouts.",
   "runtimeDir": ".runtime",
   "stateDir": ".state",
   "legacy": {
@@ -234,7 +234,7 @@
    "mask": [["\\b(bearer|basic)\\s+(?=[\\w.~+/=-]*\\d)[\\w.~+/=-]{12,}", "$1 [redacted]"], ["(?-i:\\b(glpat-|gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[\\w-]{8,})", "[redacted]"],
     ["\\beyJ[\\w-]{6,}\\.[\\w-]{6,}\\.[\\w-]+", "[redacted]"], ["(?i)\\b((?:access_|api_?|auth_?|id_)?token|passw\\w*|secret|api[-_]?key|pwd)([\"']?\\s*[=:]\\s*)(\"[^\"]*\"|'[^']*'|[^\\s&;,]+)", "$1$2[redacted]"],
     ["://[^/\\s:@]+:[^/\\s@]+@", "://[redacted]@"], ["[\\w.+-]+@[\\w-]+(\\.[\\w-]+)*\\.[A-Za-z]{2,}\\b", "[email]"]] },
-  "keep": { "_readme": "bossy.ps1 cleanup: hours a top-level entry of that path stays after its last write ([hours, newest N always kept]); an entry the map does not name goes after 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (durable state: listed, never removed). Agents write only under crafty.ps1 dir (agents/<id>/, evidence/<item>/).",
+  "keep": { "_readme": "bossy.ps1 cleanup: hours a top-level entry of that path stays after its last write ([hours, newest N always kept]); unnamed entries: 72 h in the runtime root, 336 h in work/, 720 h in cache/ and logs/ (durable state: listed, never removed). Agents write only under crafty.ps1 dir (agents/<id>/, evidence/<item>/).",
    "sessions": 8, "tokens": 8, "android-tmp": 72, "shots": 72, "launches": 72, "agents": 168, "node-spec": 168, "apks": [72, 3], "evidence": 336, "waves": 336, "board": 336,
    "qa-seats": 336, "decisions": 336, "briefs": 720, "docs": 720, "tsbuild": 720, "audit": 720, "retros": 2160, "kitty-audits": 2160, "media": 168 }
  }

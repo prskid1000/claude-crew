@@ -33,6 +33,7 @@ flowchart LR
   CO -->|"R15"| A_datay("datay")
   CO -->|"R7"| A_opsy("opsy")
   CO -->|"R16"| A_watchy("watchy")
+  CO -->|"R19"| A_vidy("vidy")
 ```
 <!-- kit-graph:end -->
 <!-- kit-graph:start table-crew -->
@@ -47,6 +48,7 @@ flowchart LR
 | `datay` | data guardian: test data, local DB, migration data, backfills | cleanup · fixture · migration · localdb · backfill · check | /buildy, R15, E2, E7 | write production, edit code or the kit | meticulous archivist: "Mark it, count it, then touch it." |
 | `opsy` | deploy pilot: deploys on a person's word, verifies, rolls back | deploy · rollback · status · secret | R7, E5 | deploy without a person's word, edit code | cautious pilot: "Checklist first." |
 | `watchy` | on-call watcher: errors of deployed envs, one [Bug] per issue | window · sweep · triage | R16, E15 | change systems, deploy, move tasks | calm on-call engineer: "What changed, and since when?" |
+| `vidy` | video reader: exact screen text, timed answers | question · index · segment | R19 | edit code, tracker, kit | frame-by-frame witness: "Which frame shows it?" |
 <!-- kit-graph:end -->
 Board and disagreements: AGENTS.md "Crew".
 
@@ -91,8 +93,10 @@ flowchart TD
   R16{"R16: Watch a deployed env: errors, logs or…"} -->|"yes"| T16["watchy agent"]
   R16 -->|"no"| R17
   R17{"R17: Research before building or deciding:…"} -->|"yes"| T17["rechy agent"]
-  R17 -->|"no"| R18
-  R18{"R18: A question, an explanation, an…"} -->|"yes"| T18["direct"]
+  R17 -->|"no"| R19
+  R19{"R19: Understand a video, screen recording or…"} -->|"yes"| T18["vidy agent"]
+  R19 -->|"no"| R18
+  R18{"R18: A question, an explanation, an…"} -->|"yes"| T19["direct"]
 ```
 <!-- kit-graph:end -->
 
@@ -128,8 +132,8 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 ## Leases
 One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (goody `runtimes`);
 only owner holds (`envy.ps1 up -Owner`, phone `manual`; goody `local-env`, goody `android-swarm`) keep minutes, with a reminder.
-Local AI servers (`local-stt`, `local-vision`; goody `media-evidence`): one job each, bound to the job's process, its RAM through the memory gate.
-The GPU (`gpu.exclusive.<kind>`, lib.ps1 `Use-KitGpu`): one kind at a time (e.g. lane emulators, `local-vision`); another kind waits, supervise
+The local STT server (`local-stt`; goody `media-evidence`): one job at a time, bound to the job's process, its RAM through the memory gate.
+The GPU (`gpu.exclusive.<kind>`, lib.ps1 `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
 shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
 it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
 caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
@@ -232,19 +236,19 @@ scaffolding, the duel mode, evidence videos to a text index) live on the origin'
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples. |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples, a goody's GOODY.md. |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command ('&lt;cli&gt; {title} {path} {parent}' prints the URL); gdocs (Google Doc + Drive evidence via gws; default with gws), pdf, confluence, notion: goodies. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none |
 | `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "outOfScope": ["&lt;a… | shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (steps OUT_OF_SCOPE: reported, not counted). targets: target groups for /testy select runs (target: '&lt;group&gt;'): per task the first rule matching lists / repos / nameRegex / pathRegex gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind. |
-| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number, or per target with a default). planTimeoutSec bounds each test env's check in bossy.ps1 deploy plan (all at once; a late one is UNKNOWN); productionPattern ((?i)prod/critical): production by name when production is unset. |
+| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number or per target, with a default). planTimeoutSec bounds each test env's check in bossy.ps1 deploy plan (all at once; a late one is UNKNOWN); productionPattern ((?i)prod/critical): production by name when production is unset. |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays) |
-| `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (crafty.ps1 stack names): test names -Touched looks for from a changed file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
+| `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack (crafty.ps1 stack names): test names -Touched derives from a changed file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test. |
 | `guard` | {"layout": "warn"} | layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir gives its place; kit scripts are exempt). |
 | `memory` | {"keepDefault": false} | keepDefault: false = Claude Code auto memory lives in &lt;kit&gt;/memory/ (git-ignored); true = the user's own setting. |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit when the last is older (default 7; 0 = off). |
 | `build` | {"mavenOffline": true} | mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true). |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: goody build-heap; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | bossy.ps1 storage: free space per fixed drive each sampleSeconds in .state/storage (keepDays). ACT + rescue: a fill sustained 10 min, full within actHours or factor x the learned normal (&gt;= minRateGBh) below watchFreeGB; floors (watchFreeGB, supervise.minDiskFreeGB) on drives with kit paths only. Rescue: the db query holding temp killed, builds held holdMinutes. Folder scans (background): a drop &gt;= scanDropGB (scanCooldownMin), scanHours, ACT; defaults + watch[] + learned children (drillGB, flatDays). db.use prints &lt;id&gt; &lt;temp GB&gt; &lt;seconds&gt; &lt;query&gt; per query; db.kill uses {id}; a query above db.maxGB (5) is killed. TODO-PARAM. |
-| `params` | {"learning": "on", "shadowDays": 14} | Learned parameters (bossy.ps1 param show): each _manifest.params key starts at its default and learns from live observations (.state/params.json, per machine) within default/4..x4, both ways: a failure signal (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps to the safe side at once (x1.5 or the need), from the next use; a risky step at most 10% a day after 5 new observations, none for 7 d after a failure; shadowDays shown only, then applied; past 2x the default: an owner yes (param approve). A kit.local.json value = a pin (no learning); learning on / shadow / off. |
+| `params` | {"learning": "on", "shadowDays": 14} | Learned parameters (bossy.ps1 param show): each _manifest.params key starts at its default, learns both ways from live observations (.state/params.json, per machine) within default/4..x4: a failure (timeout, OOM, short: a holder back after its grace, a handoff, 2+ new ACTs in one sweep) steps to the safe side from the next use (x1.5 or the need); a risky step &lt;= 10% a day after 5 new observations, none for 7 d after a failure; shadowDays: shown only, then applied; past 2x the default: an owner yes (param approve). A kit.local.json value = a pin (no learning); learning on / shadow / off. |
 | `budget` | {"handoffAt": 0.8, "runStopAt": 0.8, "estimate": {"devy": 70000,… | An agent's budget = its tool's default compaction point (bossy.ps1 budget; defaults below); handoff at handoffAt x budget; a run's cap = its planned agents' budgets (launch -Self -Plan): an estimate over runStopAt x cap is refused with the split; at runStopAt x cap no new item starts (rest = next). estimate: per agent / item |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
@@ -289,7 +293,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 8000 · total 266000 · all tests 50500 · files: 30 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 8000 · total 266000 · all tests 50500 · files: 31 content + 8 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name
@@ -313,6 +317,7 @@ flowchart LR
   agents_opsy_md("opsy")
   agents_rechy_md("rechy")
   agents_revy_md("revy")
+  agents_vidy_md("vidy")
   agents_watchy_md("watchy")
   skills_bossy_SKILL_md["bossy"]
   skills_crafty_SKILL_md["crafty"]
@@ -328,6 +333,7 @@ flowchart LR
   AGENTS_md --> agents_opsy_md
   AGENTS_md --> agents_rechy_md
   AGENTS_md --> agents_revy_md
+  AGENTS_md --> agents_vidy_md
   AGENTS_md --> agents_watchy_md
   AGENTS_md --> skills_bossy_SKILL_md
   AGENTS_md --> skills_crafty_SKILL_md
@@ -340,8 +346,10 @@ flowchart LR
   workflows_buildy_js -->|"spawns"| agents_kitty_md
   workflows_buildy_js -->|"spawns"| agents_rechy_md
   workflows_buildy_js -->|"spawns"| agents_revy_md
+  workflows_buildy_js -->|"spawns"| agents_vidy_md
   workflows_testy_js -->|"spawns"| agents_checky_md
   workflows_testy_js -->|"spawns"| agents_kitty_md
+  workflows_testy_js -->|"spawns"| agents_vidy_md
   workflows_tidy_js -->|"spawns"| agents_kitty_md
   agents_checky_md -->|"loads"| skills_pokey_SKILL_md
   agents_devy_md -->|"loads"| skills_crafty_SKILL_md

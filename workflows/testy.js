@@ -276,7 +276,7 @@ ${it.retest ? 'This is a RETEST of a fix: re-run the failed checks named in the 
 ${seatBlock(it, `test:${it.code}`)}
 ${COMMON(it)}
 ${laneBlock(it, L)}
-${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') + '\nEvidence links in them (videos, recordings, screenshots): pokey.ps1 evidence index <link> first, read the index, then read-chunk only what matters (goody media-evidence).' : ''}
+${(it.taskFiles || []).length ? 'Task details (fix description, how-to-test comments, earlier evidence): ' + it.taskFiles.join(' , ') + '\nEvidence links in them (videos, recordings, screenshots): pokey.ps1 evidence index <link> first; frames marked unread: run vidy -> spawn vidy (R19) with the task, its testing doc and your question; use its report (read-chunk only to check one point) (goody media-evidence).' : ''}
 ${it.extra || ''}
 ${it.only ? `SCOPE: test ONLY these checks: ${it.only.join(', ')}. Return only those.` : 'Work through ALL checks in the guide. Return every check with the guide\'s own numbers.'}
 Return checks, findings, setup_changes and data_created.

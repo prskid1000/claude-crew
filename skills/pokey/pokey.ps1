@@ -5,7 +5,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
-  evidence fetch|index|read-chunk|status <link | key> ...   evidence videos / screenshots -> text index, frames (goody media-evidence)
+  evidence fetch|index|read-chunk|frames|write-vision|status <link | key> ...   evidence videos -> text index, keyframes (goody media-evidence: video.py)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   ui dump|tap|tapid|tapxy|type|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL; goody android-swarm)
 In: targets.local.json (logins), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.

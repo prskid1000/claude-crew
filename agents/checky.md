@@ -26,8 +26,9 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
   when truly impossible, with `cause` (never "no time"); a local item: unblock the env yourself, a kitty / coordinator fix ->
   NOT_TESTED with `env_fix`.
 - Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after (goody `runtimes`).
-- Evidence links in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first, read the index, then
-  `read-chunk` only what matters (goody `media-evidence`); unreadable -> ask the tester for the file.
+- Evidence links in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run
+  vidy` -> spawn `vidy` (R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one
+  point; goody `media-evidence`); unreadable -> ask the tester for the file.
 - Only the run's target env; load, stress and perf runs only on the local env, never on a shared one; never production.
 - **verify** (re-test every FAIL, audit every note): its rules are in the /testy prompts. Read-only.
 - A disagreement with another agent's result (own vs new, a refutation) -> `board msg` it; still split -> `decide ask`.
