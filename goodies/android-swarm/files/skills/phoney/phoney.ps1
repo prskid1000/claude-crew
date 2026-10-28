@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed, needs a goody) · 2 usage error.
 Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); goody ios-simulator.
-Sections: L24 config · L104 phone · L302 build · L446 install · L472 launch · L484 avd · L570 up · L667 down · L696 events ·
-  L752 slim
+Sections: L24 config · L104 phone · L303 build · L447 install · L473 launch · L485 avd · L571 up · L668 down · L698 events ·
+  L754 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -154,11 +154,12 @@ function Boot($l, [switch]$Cold, [datetime]$Until = (Get-Date)) {
 
 switch ($Action) {
   'status' {
+    $lu = Get-KitLeaseLast
     foreach ($l in $c.lanes) {
       $ls = Lease $l.name
       $up = Running $l
-      $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
-      '{0,-8} {1,-14} {2}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" })
+      $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)$(if ($ls.seen) { ", seen $(([datetime]$ls.seen).ToString('HH:mm'))" })" } else { 'free' }
+      '{0,-8} {1,-14} {2} · last used {3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), (Format-KitLeaseLast $lu["lane|$($l.name)"])
     }
     "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (~4.5 GB a phone)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
@@ -182,7 +183,7 @@ switch ($Action) {
           return $mine[0]
         }
         # fair: oldest waiter a free lane satisfies first
-        foreach ($ln in $lanes) { $o = Lease $ln.name; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
+        foreach ($ln in $lanes) { $o = Lease $ln.name; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; Write-KitLeaseLog reclaim lane $ln.name $o "reclaim: no live holder for $($o.graceMin) min"; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
         $free = @($lanes | Where-Object { -not (Lease $_.name) })
         if (-not $free) { return $null }
         $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
@@ -191,7 +192,7 @@ switch ($Action) {
         $up = @($free | Where-Object { Running $_ }); $booting = @($free | Where-Object { -not (Running $_) -and ((& $adb devices) -match "^$([regex]::Escape((LaneSerial $_)))\s") })
         $pick = if ($up) { $up[0] } elseif ($booting) { $booting[0] } else { $free[0] }
         $new = @{ lane = $pick.name; serial = (LaneSerial $pick); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '' $(if ($Agent -eq 'manual') { 240 }))   # no live holder for idle.graceMinutes: reclaimed
-        Save-Json $new (Join-Path $dir "$($pick.name).json")
+        Save-Json $new (Join-Path $dir "$($pick.name).json"); Write-KitLeaseLog acquire lane $pick.name $new
         $pick
       }
       if (-not $got) {
@@ -212,7 +213,7 @@ switch ($Action) {
             if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date }
             $sw = Locked {
               $f = @($lanes | Where-Object { $_.name -ne $got.name -and -not (Lease $_.name) -and (Running $_) })[0]
-              if ($f) { Remove-Item (Join-Path $dir "$($got.name).json") -Force; Save-Json (@{ lane = $f.name; serial = (LaneSerial $f); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent '')) (Join-Path $dir "$($f.name).json"); $f }
+              if ($f) { $o0 = Lease $got.name; Remove-Item (Join-Path $dir "$($got.name).json") -Force; Write-KitLeaseLog release lane $got.name $o0 "boot dropped: $($f.name) is free"; $n1 = @{ lane = $f.name; serial = (LaneSerial $f); since = (Get-Date).ToString('s'); holder = $Holder } + (New-KitLease $Agent ''); Save-Json $n1 (Join-Path $dir "$($f.name).json"); Write-KitLeaseLog acquire lane $f.name $n1; $f }
             }
             if ($sw) { Write-Host "$($got.name): boot dropped, $($sw.name) is free and running"; $got = $sw; $memQueued = $false; break }
           } while ((Get-Date) -lt $deadline)
@@ -224,14 +225,14 @@ switch ($Action) {
         $memQueued = Boot $got -Cold -Until $deadline
       }
     } catch {   # a throwing boot must not leave a fresh lease
-      if (-not $script:had) { Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue } }
+      if (-not $script:had) { Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue }; Write-KitLeaseLog release lane $got.name @{ agent = $Agent } "boot failed: $_" }
       throw
     }
     if (-not (Running $got)) {
       if ($script:had) {   # held lane offline: keep the lease
         throw "$($got.name) is offline and did not boot$(if ($memQueued) { " (no memory turn within -WaitMinutes)" }); lease kept: run phoney.ps1 ensure -Agent $Agent again, or release it"
       }
-      Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue }
+      Locked { Remove-Item (Join-Path $dir "$($got.name).json") -Force -ErrorAction SilentlyContinue }; Write-KitLeaseLog release lane $got.name @{ agent = $Agent } 'did not boot'
       if ($memQueued) { throw "$($got.name): no memory turn within -WaitMinutes; lease released (acquire later)" }
       throw "$($got.name) did not boot (emulator problem); lease released"
     }
@@ -279,7 +280,7 @@ switch ($Action) {
     $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent })
     if (-not $mine) { "no phone leased by $Agent"; return }
     foreach ($l in $mine) {
-      $serial = LaneSerial $l
+      $serial = LaneSerial $l; Write-KitLeaseLog release lane $l.name (Lease $l.name)
       if (Running $l) { & $adb -s $serial shell am force-stop $pkg 2>$null; & $adb -s $serial reverse --remove-all 2>$null }
       $lf = Join-Path $dir "$($l.name).json"
       $waiting = Locked {
@@ -683,6 +684,7 @@ foreach ($l in @($c.lanes) | Where-Object { -not $Lanes -or $Lanes -contains $_.
       Wait-KitPoll 3
       "$($l.name) ($serial) did not stop on request: process killed$(if (& $listed) { ' - STILL LISTED, check by hand' })"
     } else { "$($l.name) ($serial) stopped" }
+    Write-KitLeaseLog down lane $l.name
   } else { "$($l.name) not running" }
 }
 if (-not $KeepBrowsers) {

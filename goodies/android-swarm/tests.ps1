@@ -175,5 +175,27 @@ $ev = Invoke-PsTest 'swarm-events' @"
 "@
 Expect-Each $ev 'swarm events: #' @('off', 'parsed') -Show 6
 Remove-TestKit $k
+# reaper: supervise -AutoFix, no phoney call, reclaims the lane of a holder that left the board (its holder pid = the live session
+# process) and stops it (emu kill); leases.jsonl gets one reclaim and one down line; phoney.ps1 status shows last used
+$k = New-TestKit swarm-reap; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force
+$rp = Join-Path (Kd) 'reap'; New-Item -ItemType Directory -Force "$rp/platform-tools", "$k/skills/crafty/adapters" | Out-Null; $ab = "$rp/platform-tools/adb.cmd"
+Set-Content "$k/skills/crafty/adapters/android_sdk.ps1" "function Get-AndroidSdk { '$rp' }; function Get-ExeName([string]`$Name) { `"`$Name.cmd`" }"   # the fake adb, never the machine's
+Set-Content $ab "@echo off`r`necho %* >> `"$rp/adb.log`"`r`nif `"%3`"==`"emu`" (type nul > `"$rp/killed`")`r`nif `"%1`"==`"devices`" (echo List of devices attached& if not exist `"$rp/killed`" echo emulator-5556`tdevice)`r`nexit /b 0" -Encoding ascii
+& $J @{ lanes = @(@{ name = 'Falcon'; port = 5556 }); adb = $ab; app = @{ package = 'x' } } (Join-Path $k 'skills/phoney/swarm.config.json')
+$ho = @{ holderPid = $PID; holderStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o') }
+& $J (@{ session = 'AP-e3'; agent = 'AP'; run = 'r1'; type = 'devy'; status = 'left'; beat = (Get-Date).AddMinutes(-30).ToString('o'); joined = (Get-Date).AddHours(-1).ToString('o') } + $ho) (Join-Path (TkPath $k board -Create) 'AP-e3.json')
+& $J (@{ agent = 'AP'; lane = 'Falcon'; serial = 'emulator-5556'; holder = 'AP-e3'; since = (Get-Date).AddHours(-1).ToString('s'); seen = (Get-Date).AddMinutes(-11).ToString('o') } + $ho) (Join-Path (TkPath $k phones -Create) 'Falcon.json')
+$sv = (pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -join "`n"
+$lg = @(Get-Content (TkPath $k leases) | ConvertFrom-Json | ForEach-Object { "$($_.event)/$($_.name)/$($_.agent)/$($_.reason)" }) -join ','
+Expect "swarm reaper: lane of a left holder reclaimed and stopped by supervise ($lg)" (-not (Test-Path (Join-Path (TkPath $k phones) 'Falcon.json')) -and (Get-Content "$rp/adb.log" -Raw) -match 'emu kill' -and
+  $lg -eq 'reclaim/Falcon/AP/reclaim: no live holder for 10 min,down/Falcon//reclaim: no live holder for 10 min' -and $sv -match 'auto-fixed: reclaimed phone Falcon of AP')
+$ps = pwsh @np (Join-Path $k 'skills/phoney/phoney.ps1') status | Out-String
+Expect "swarm status: last used per lane ($(($ps -split "`n")[0].Trim()))" ($ps -match 'Falcon\s+emulator-5556\s+down\s+free \S+ last used \d\d-\d\d \d\d:\d\d by AP \(reclaim: no live holder for 10 min\)')
+# an agent stage that ends holding a lane: the workflow's bossy.ps1 release leaves no lease and no running lane
+Remove-Item "$rp/killed", "$rp/adb.log"; & $J (@{ agent = 'X1'; lane = 'Falcon'; serial = 'emulator-5556'; since = (Get-Date).ToString('s') } + $ho) (Join-Path (TkPath $k phones) 'Falcon.json')
+$ro = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') release -Agent X1 | Out-String; $last = Get-Content (TkPath $k leases) | Select-Object -Last 2 | ConvertFrom-Json
+Expect "swarm release: an ended agent's lane freed and stopped ($($ro.Trim()))" (-not (Test-Path (Join-Path (TkPath $k phones) 'Falcon.json')) -and (Get-Content "$rp/adb.log" -Raw) -match 'emu kill' -and
+  "$($last[0].event)/$($last[0].agent)/$($last[0].reason) $($last[1].event)" -eq 'release/X1/agent finished down')
+Remove-Item $rp -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests

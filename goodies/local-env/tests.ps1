@@ -28,6 +28,14 @@ Expect "leases: live by a board beat or a running workflow step; a finished step
 $lf = & { . (Join-Path $k2 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath localenv -Create) 'shop.json' }; '{"holds":{"main":{"services":["api"],"agent":"main"}}}' | Set-Content $lf
 $u1 = Px $L2 up -Env shop 2>&1 | Out-String; $c4 = $LASTEXITCODE; $null = Px $L2 unhold -Env shop -Agent main 2>&1
 Expect "localenv: up refuses without -Services; unhold ends a hold" ($c4 -eq 1 -and $u1 -match 'up needs -Services' -and -not @((Get-Content $lf -Raw | ConvertFrom-Json).holds.PSObject.Properties).Count)
+# leases.jsonl: one line per lease or hold that comes or goes (acquire, reclaim by Prune past the grace, release); status: last used
+$el = & { . $L2; $lp = Get-KitPath leases; Remove-Item $lp -ErrorAction SilentlyContinue
+  Update-State shop { param($x) $x.leases.Y = @{ services = @('api') } + (New-KitLease 'Y' ''); $x.leases.Z = @{ services = @('api'); agent = 'Z'; at = (Get-Date).ToString('o'); holderPid = 999999; seen = (Get-Date).AddMinutes(-11).ToString('o') } }
+  Update-State shop { param($x) Prune $x }; $null = Px $L2 release -Env shop -Agent Y
+  $g = @(Get-Content $lp | ConvertFrom-Json); "$((@($g[0..1] | ForEach-Object { "$($_.event)/$($_.agent)" } | Sort-Object) + @($g[2..9] | ForEach-Object { "$($_.event)/$($_.agent)/$($_.reason)" })) -join ',')" }
+$es = Px $L2 status -Env shop 2>&1 | Out-String
+Expect "localenv: acquire, reclaim, release each one leases.jsonl line ($el)" ($el -eq 'acquire/Y,acquire/Z,reclaim/Z/reclaim: no live holder for 10 min,release/Y/')
+Expect "localenv: status shows the env's last use ($(($es -split "`n")[0].Trim()))" ($es -match 'last used \d\d-\d\d \d\d:\d\d by Y \(release\)')
 # restart: only the named service, every lease stays, no suppress (down ends leases and stops dependents)
 & $J @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ snapshot = 'echo s'; restore = 'echo r' } }; rs = @{ services = @(@{ name = 'api'; start = 'echo a'; port = 1 }, @{ name = 'web'; start = 'echo w'; port = 2; dependsOn = @('api') }) } } } } (Join-Path $k2 'skills/crafty/kit.local.json') 6
 $rf = & { . (Join-Path $k2 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath localenv -Create) 'rs.json' }; '{"leases":{"F2":{"services":["api"],"agent":"F2","owner":true,"until":"2999-01-01T00:00:00"}}}' | Set-Content $rf

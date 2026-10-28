@@ -14,8 +14,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L26 config · L192 state · L233 leases · L314 code · L346 migrations · L589 hooks · L661 marks · L799 seed ·
-  L845 processes · L1132 daemon · L1574 cleanup · L1646 doctor · L1696 verbs
+Sections: L26 config · L193 state · L238 leases · L319 code · L351 migrations · L594 hooks · L666 marks · L804 seed ·
+  L850 processes · L1137 daemon · L1579 cleanup · L1651 doctor · L1701 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -57,6 +57,7 @@ if ($script:LE.envs) {
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
 $script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
 $script:MaxLeaseMin = [int](Opt 'maxLeaseMinutes' 120)
+$script:EnvLeaseWhy = @{}   # Prune's reason per "leases|<key>" / "holds|<key>" (leases.jsonl)
 $script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitParam 'idle.graceMinutes' 10))   # a lease unused this long is released (learned unless set)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
 $script:RoomWaitMin = [int](Opt 'roomWaitMinutes' 30)   # TODO-PARAM (fixed default)
@@ -209,12 +210,16 @@ function Update-State([string]$e, [scriptblock]$Change) {
   Invoke-KitLocked $f {
     $script:stateLocked = $true
     try { $__state = Read-State $e } finally { $script:stateLocked = $false }
-    $__was = $__state | ConvertTo-Json -Depth 10
+    $__was = $__state | ConvertTo-Json -Depth 10; $script:EnvLeaseWhy = @{}; $__had = @{}; foreach ($k in 'leases', 'holds') { foreach ($n in @($__state[$k].Keys)) { $__had["$k|$n"] = $__state[$k][$n] } }
     & $Change $__state
     $__json = $__state | ConvertTo-Json -Depth 10
     if ($__json -ceq $__was -and (Test-Path $f)) { return }   # nothing changed: no write (the loop calls this every tick)
     $__json | Set-Content "$f.tmp" -Encoding utf8
     for ($i = 0; ; $i++) { try { [IO.File]::Move("$f.tmp", $f, $true); break } catch [IO.IOException], [UnauthorizedAccessException] { if ($i -ge 100) { throw }; [Threading.Thread]::Sleep(50) } }   # an open reader (Windows: access denied) blocks the rename; a real wait
+    try { foreach ($k in 'leases', 'holds') {   # leases.jsonl: every lease / hold that came or went (README "Leases"); never fails a write
+      foreach ($n in @($__state[$k].Keys | Where-Object { -not $__had.ContainsKey("$k|$_") })) { $l = [hashtable]::new($__state[$k][$n]); if (-not $l.agent) { $l.agent = $n }; Write-KitLeaseLog acquire env $e $l }
+      foreach ($hk in @($__had.Keys | Where-Object { $_ -like "$k|*" -and -not $__state[$k].ContainsKey($_.Substring($k.Length + 1)) })) { $l = [hashtable]::new($__had[$hk]); if (-not $l.agent) { $l.agent = $hk.Substring($k.Length + 1) }; Write-KitLeaseLog release env $e $l $script:EnvLeaseWhy[$hk] }
+    } } catch {}
   }
 }
 function Alive($p) { $p -and [bool](Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue) }
@@ -234,12 +239,12 @@ function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Obje
 function Prune($st) {
   foreach ($a in @($st.leases.Keys)) {
     $l = $st.leases[$a]
-    if (-not (Update-KitLease $l)) { $st.leases.Remove($a); continue }
+    if (-not (Update-KitLease $l)) { $st.leases.Remove($a); $script:EnvLeaseWhy["leases|$a"] = $(if ($l.graceMin) { "reclaim: no live holder for $($l.graceMin) min" } else { 'owner lease ended' }); continue }
     if (-not $l.owner -and $l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalMinutes -ge $script:LeaseIdleMin) {   # nobody uses it: trains need not wait, services may idle
-      $st.leases.Remove($a); Set-Notice $st $(if ($l.agent) { $l.agent } else { $a }) "lease on $(@($l.services) -join ',') released: unused for $($script:LeaseIdleMin) min (use again to re-lease)"
+      $st.leases.Remove($a); $script:EnvLeaseWhy["leases|$a"] = "unused for $($script:LeaseIdleMin) min"; Set-Notice $st $(if ($l.agent) { $l.agent } else { $a }) "lease on $(@($l.services) -join ',') released: unused for $($script:LeaseIdleMin) min (use again to re-lease)"
     }
   }
-  foreach ($a in @($st.holds.Keys)) { if (-not (Update-KitLease $st.holds[$a])) { $st.holds.Remove($a) } }
+  foreach ($a in @($st.holds.Keys)) { if (-not (Update-KitLease $st.holds[$a])) { $script:EnvLeaseWhy["holds|$a"] = $(if ($st.holds[$a].graceMin) { "reclaim: no live holder for $($st.holds[$a].graceMin) min" } else { 'owner hold ended' }); $st.holds.Remove($a) } }
   if ($st.notices -isnot [hashtable]) { $st.notices = @{} }
   foreach ($a in @($st.notices.Keys)) { if (((Get-Date) - [datetime]$st.notices[$a].at).TotalHours -ge 2) { $st.notices.Remove($a) } }
   $st.requests = @($st.requests | Where-Object { $_.status -ne 'done' -or ((Get-Date) - [datetime]$_.at).TotalHours -lt 24 } | Select-Object -Last 60)
@@ -1765,7 +1770,7 @@ function Wait-Up([string[]]$names) {
 }
 
 function Show-Status([string]$env1) {
-  $script:e = $env1; $st = Read-State $env1; Prune $st
+  $script:e = $env1; if (Test-Path (StateFile $env1)) { Update-State $env1 { param($x) Prune $x } }; $st = Read-State $env1; Prune $st   # the prune persists: status and supervise reclaim
   $all = Get-KitProcSnap
   $svc = foreach ($s in EnvServices $env1) {
     $x = $st.services[$s.name]; $h = Healthy $env1 $s
@@ -1780,7 +1785,7 @@ function Show-Status([string]$env1) {
     }
   }
   $o = [pscustomobject]@{
-    env = $env1; release = $st.release.n; releasedAt = $st.release.at
+    env = $env1; release = $st.release.n; releasedAt = $st.release.at; lastUsed = Format-KitLeaseLast (Get-KitLeaseLast)["env|$env1"]
     repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
     train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); waitSince = $st.train.waitSince; requests = @($st.train.requests).Count } })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
@@ -1805,7 +1810,7 @@ function Show-Status([string]$env1) {
     $o | Add-Member -NotePropertyName mine -NotePropertyValue $(if ($hits.Count) { "CHANGED since your lease started (release $since): $($hits -join '; ') - re-run the checks that touch them" } else { "unchanged since your lease started (release $since)" })
   }
   if ($Json) { return $o }
-  "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)"
+  "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)   last used $($o.lastUsed)"
   if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s))" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
   foreach ($x in $o.services) {

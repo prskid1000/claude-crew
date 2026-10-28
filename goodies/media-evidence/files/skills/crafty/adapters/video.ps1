@@ -10,7 +10,7 @@ Inputs: kit.local.json media.stt (maxConcurrent 1, ramGB, baseUrl). State: <runt
 belongs to the job process (pid + start time): a killed job frees it at once. Loaded by lib.ps1 (adapters/*.ps1): bossy.ps1
 supervise gets Get-KitSuperviseGuardLocalAi ("waiting for local AI").
 Exit codes: 0 ok · 1 problem (video.py's) · 2 usage.
-Sections: L16 lease · L59 stt · L77 verb
+Sections: L16 lease · L66 stt · L84 verb
 #>
 #Requires -Version 7
 # ---- lease: local-stt, one job at a time per server, bound to the job's process
@@ -21,12 +21,14 @@ function Get-KitLocalAiFile([string]$Name) {
 function Get-KitLocalAiState([string]$Name) {
   $s = try { Get-Content (Get-KitLocalAiFile $Name) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
   if ($s -isnot [hashtable]) { $s = @{} }
+  $script:KitAiDropped = @($s.leases | Where-Object { $_ -and -not (Test-KitPid $_.pid $_.pidStart) })   # Update-KitLocalAi logs them
   $s.leases = @($s.leases | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) })
   $s.waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s
 }
 function Update-KitLocalAi([string]$Name, [scriptblock]$Change) {
   $f = Get-KitLocalAiFile $Name
-  Invoke-KitLocked $f { $st = Get-KitLocalAiState $Name; $r = & $Change $st; Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $r }
+  $r = Invoke-KitLocked $f { $st = Get-KitLocalAiState $Name; $r = & $Change $st; Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $r }
+  foreach ($d in @($script:KitAiDropped)) { Write-KitLeaseLog release local-ai $Name $d 'holder process ended' }; $script:KitAiDropped = @(); $r
 }
 function Use-KitLocalAi([string]$Name, [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session = '', [double]$WaitMinutes = 30) {
   $max = [math]::Max(1, [int](Get-KitSetting 'media.stt.maxConcurrent' 1))
@@ -38,18 +40,23 @@ function Use-KitLocalAi([string]$Name, [string]$Agent = $(if ($env:CLAUDE_AGENT)
       if ($st.leases.Count -lt $max) { $st.leases += $me; return $true }
       $st.waiting += $me; $false
     }
-    if ($got) { return $true }
+    if ($got) { Write-KitLeaseLog acquire local-ai $Name $me; return $true }
     if (-not $said) { $h = (Get-KitLocalAiState $Name).leases | Select-Object -First 1; Write-Host "waiting for local AI: $Name busy ($($h.agent) since $(([datetime]$h.at).ToString('HH:mm')))"; $said = $true }
     if ((Get-Date) -ge $end) { $null = Update-KitLocalAi $Name { param($st) $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $PID }) }; return $false }
     Wait-KitPoll 5
   }
 }
-function Remove-KitLocalAi([string]$Name) { $null = Update-KitLocalAi $Name { param($st) $st.leases = @($st.leases | Where-Object { $_.pid -ne $PID }); $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $PID }) } }
+function Remove-KitLocalAi([string]$Name) {
+  $gone = Update-KitLocalAi $Name { param($st) $g = @($st.leases | Where-Object { $_.pid -eq $PID }); $st.leases = @($st.leases | Where-Object { $_.pid -ne $PID }); $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $PID }); $g }
+  foreach ($g in @($gone)) { Write-KitLeaseLog release local-ai $Name $g }
+}
 
 # bossy.ps1 supervise: who holds the local STT server, who waits (a wait is fine: the server is busy or RAM is short)
 function Get-KitSuperviseGuardLocalAi([switch]$AutoFix) {
   $n = 'local-stt'; $f = Get-KitLocalAiFile $n; if (-not (Test-Path $f)) { return }
-  $st = Get-KitLocalAiState $n; if (-not ($st.leases.Count + $st.waiting.Count)) { return }
+  $st = Get-KitLocalAiState $n
+  if ($AutoFix -and @($script:KitAiDropped).Count) { $null = Update-KitLocalAi $n { } }   # writes out (and logs) the leases of ended jobs
+  if (-not ($st.leases.Count + $st.waiting.Count)) { return }
   $now = Get-Date
   "${n}: $(if ($st.leases.Count) { ($st.leases | ForEach-Object { "$($_.agent) $([int]($now - [datetime]$_.at).TotalMinutes) min" }) -join ', ' } else { 'free' })$(if ($st.waiting.Count) { "; $($st.waiting.Count) waiting for local AI" })"
   $long = @($st.waiting | Where-Object { ($now - [datetime]$_.at).TotalMinutes -ge 30 })
