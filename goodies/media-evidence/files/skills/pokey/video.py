@@ -18,8 +18,8 @@
 In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L33 config · L148 fetchers · L403 probe · L422 detect · L1310 transcribe · L1430 vision · L1526 index · L1648 read ·
-  L1723 bench · L2336 verbs · L2482 cli
+Sections: L33 config · L148 fetchers · L403 probe · L422 detect · L1485 transcribe · L1605 vision · L1701 index · L1823 read ·
+  L1898 bench · L2585 verbs · L2731 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -422,7 +422,8 @@ def probe(path):
 # ---- detect: keyframes from pixels (block change map vs a reference frame -> episodes -> greedy coverage), sidecar actions first
 KP = dict(B=16, settle=0.3, tau0=12, tau_min=5, tau_max=30, mu_min=1.5, mu_max=6, blk_px=2, cur_px=24, thin=3, anim_win=4.0, anim_hits=4,
           anim_span=2.0, anim_off=3.0, anim_gap=3.0, scroll_step=0.6, photo_frac=0.30, page_frac=0.35, toast_frac=0.08, long_ep=4.0,
-          gain_min=2.0, state_cover=0.99, fill_cover=0.98, fill_floor=0.95, flat_w=0.05, strong=16, anim_sample=15.0, after_cap=2.0, act_wait=0.6)
+          gain_min=2.0, state_cover=0.99, fill_cover=0.98, fill_floor=0.95, flat_w=0.05, strong=16, anim_sample=15.0, after_cap=2.0, act_wait=0.6,
+          tick_px=64, toast_max=10.0)
 cv2 = np = None
 
 def need_cv():
@@ -496,7 +497,9 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
     cands, events = [], []
     last_act = np.full((bl.by, bl.bx), -99.0, np.float32)
     anim = np.zeros((bl.by, bl.bx), bool)
-    anim_since, anim_last, anim_box, anim_samples = None, -99.0, None, []
+    aev, tick, tk_t = [], np.zeros((bl.by, bl.bx), bool), np.full((6, bl.by, bl.bx), -99.0, np.float32)   # open animated regions; ticker mask + the last 6 activations per block
+    tk_seen = np.full((bl.by, bl.bx), -99.0, np.float32)
+    toasts = []   # toast tracker: a compact corner region that appears, holds, then goes
     nring = max(2, int(p['anim_win'] * fps))
     ring, rtim, ridx = np.zeros((nring, bl.by, bl.bx), bool), np.full(nring, -99.0), 0
     ring_n = np.zeros((bl.by, bl.bx), np.int16)   # activations per block inside the ring (kept incrementally)
@@ -505,7 +508,11 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
     cursor_path, tmpl, noise = [], dict(patch=None, n=0), dict(pulse=0.0, pulses=0, pend=None)
     ep, q, i, t_cpu, first_quiet = None, S, -1, 0.0, None
     anc = [dict(t=float(a), before=None, after=None, q=0, seen=False, fq=None) for a in sorted(anchors)]
-    masks = []
+    masks, samples = [], []   # every 0.5 s: (animated, pointer boxes, moving, ticker) + the frame (lossless PNG, encoded off the main thread)
+    import concurrent.futures as cf
+    pool = cf.ThreadPoolExecutor(1)
+    keep_samples = not dur or dur <= 1800   # ~100 KB each: a longer video decodes them again at the end instead
+    png = lambda g_: cv2.imencode('.png', g_, [cv2.IMWRITE_PNG_COMPRESSION, 1])[1]
 
     def maxdiff(a, b):   # per-pixel max channel difference: a field turning red counts, not only luma
         if a.ndim == 2:
@@ -676,7 +683,7 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             if 4 * int((edge_blocks(gnew, K['g'], max(12, 2 * tau)) & R & ~bl.cells(curb)).sum()) < int(R.sum()):
                 return 'highlight'   # a fill (selection, hover, a dark theme's row tint): text unchanged
             one_line = (y1 - y0) <= 3 * max(1, round(ksc))
-            corner = (x1 - x0) <= 0.45 * bl.bx and (x0 >= 0.55 * bl.bx or x1 <= 0.45 * bl.bx) and (y0 <= 0.2 * bl.by or y1 >= 0.8 * bl.by)
+            corner = int(R.sum()) >= 3 and (x1 - x0) <= 0.45 * bl.bx and (x0 >= 0.55 * bl.bx or x1 <= 0.45 * bl.bx) and (y0 <= 0.2 * bl.by or y1 >= 0.8 * bl.by)
             return 'toast?' if corner else ('text' if one_line else 'change')
         return 'change'
 
@@ -737,6 +744,94 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             if a['after'] is None and t - a['t'] >= p['after_cap']:
                 a['after'] = (round(t, 2), g, mu)
 
+    def held(t, g, mu, bnow, moving):
+        """A state held inside a long episode (a blank window, a spinner page, a half-loaded screen): S near-still frames, after any
+        scroll stopped (scroll steps cover the motion; a fade's end can hold)."""
+        if ep['qq'] != S or moving or t - ep.get('scroll_t', -9.0) <= p['settle']:
+            return
+        hot = ep['hot'] if ep.get('hot') is not None else np.zeros_like(anim)
+        g0, m0 = ep.get('last') or (K['g'], K['mu'])
+        if K.get('curf') is None:
+            K['curf'] = find_cursor(K['g'])
+        d_ = news(g, mu, g0, m0) & ~hot & ~bl.cells(list(bnow) + K['cur'] + K['curf'] + find_cursor(g0))   # the pointer here and where it was
+        if d_.sum() >= 2:
+            cand(t, g, mu, 'state', 1.0, 'held', bnow, an=anim | hot, ev=len(events), delta=d_)
+            ep['last'] = (g, mu)
+            for c_ in cands[-6:]:   # a progress frame just before shows this held screen half-built
+                if c_['kind'] == 'progress' and t - c_['t'] <= 1.0:
+                    c_['w'] = 0.0
+
+    def anim_close(a, t_end=None):
+        t1 = a['last'] if t_end is None else t_end
+        x0, y0, x1, y1 = a['box']
+        if t1 - a['since'] + p['anim_span'] >= 3.0 and not tick[y0:y1, x0:x1].all():   # a ticker seen before its beat was clear: no event
+            events.append(dict(kind='animated', t0=round(max(0.0, a['since'] - p['anim_span']), 2), t1=round(t1, 2),
+                               box=[round(x0 * B / w, 3), round(y0 * B / h, 3), round(x1 * B / w, 3), round(y1 * B / h, 3)], samples=a['samples']))
+
+    def crop_blocks(a, b, thr):   # the B x B blocks of two block-aligned crops with >= 2 blk_px pixels apart by >= thr
+        m = cv2.threshold(cv2.absdiff(a, b), thr, 255, cv2.THRESH_BINARY)[1]
+        hh_, ww_ = m.shape
+        return (m.reshape(hh_ // B, B, ww_ // B, B) > 0).sum(axis=(1, 3)) >= 2 * p['blk_px']
+
+    def toast_step(t, g, mu, Aeff):
+        """A toast inside any episode (a page may change under it): a compact corner panel (most of its box new pixels of another
+        brightness, text among them) appears, holds >= 0.5 s, then its own pixels go at once: the old pixels or a plain background show."""
+        thr = max(12, 2 * tau)
+        for o in list(toasts):
+            b0, b1, b2, b3 = o['b']
+            inside = Aeff[b1:b3, b0:b2]
+            busy = bool(inside.any())
+            o['q'] = 0 if busy else o['q'] + 1
+            if t - o['t0'] > p['toast_max'] + 1.0:
+                toasts.remove(o)
+                continue
+            if o['q'] != S:
+                continue
+            now, pre = g[b1 * B:b3 * B, b0 * B:b2 * B], o['preg'][b1 * B:b3 * B, b0 * B:b2 * B]
+            if o['on'] is None:   # settled after appearing: an opaque panel with text (icons changing or a fill alone are no toast)
+                pm = cv2.absdiff(now, pre) >= thr   # its own pixels
+                if crop_blocks(now, pre, thr).mean() < 0.25 or pm.mean() < 0.4 or abs(float(now[pm].mean()) - float(pre[pm].mean())) < 16:
+                    toasts.remove(o)
+                    continue
+                o.update(on=now.copy(), pm=pm, ton=t, peak=(t, g, mu))
+                continue
+            off = float((cv2.absdiff(now, o['on'])[o['pm']] >= thr).mean())
+            if off <= 0.25:   # still shown (what is under it may change)
+                continue
+            toasts.remove(o)
+            t_off = t - S / fps
+            if off < 0.75 or t_off - o['ton'] < 0.5 or not (float((cv2.absdiff(now, pre)[o['pm']] >= thr).mean()) <= 0.1
+                                                            or float(now[o['pm']].std()) <= 0.5 * float(o['on'][o['pm']].std())):
+                continue
+            box = [round(b0 * B / w, 3), round(b1 * B / h, 3), round(b2 * B / w, 3), round(b3 * B / h, 3)]
+            same = [e for e in events if e.get('kind') in ('toast', 'toast?') and e['t0'] <= t_off + 0.5 and e['t1'] >= o['t0'] - 0.5 and e.get('box')
+                    and e['box'][0] < box[2] and box[0] < e['box'][2] and e['box'][1] < box[3] and box[1] < e['box'][3]]
+            if same:   # the episode logic saw it come: this says when it went
+                same[0].update(kind='toast', shown_until=round(t_off, 2))
+                continue
+            events.append(dict(kind='toast', t0=round(o['t0'], 2), t1=round(t_off, 2), area=round((b2 - b0) * (b3 - b1) / nb, 4), box=box, shown_until=round(t_off, 2), error=False))
+            tp, gp, mp = o['peak']
+            dm = np.zeros((bl.by, bl.bx), bool)
+            dm[b1:b3, b0:b2] = True
+            events[-1]['cand'] = cand(tp, gp, mp, 'toast', 1.0, 'toast', find_cursor(gp), ev=len(events) - 1, delta=dm)
+        if not Aeff.any() or Aeff.sum() > 0.25 * nb:
+            return
+        nt, labt, stt, _ = cv2.connectedComponentsWithStats(cv2.dilate(Aeff.astype(np.uint8), kern), 8)
+        for k in range(1, nt):
+            ys_, xs_ = np.nonzero(Aeff & (labt == k))
+            if not len(ys_):
+                continue
+            x0, y0, x1, y1 = int(xs_.min()), int(ys_.min()), int(xs_.max()) + 1, int(ys_.max()) + 1
+            ww_, hh_ = x1 - x0, y1 - y0
+            if len(ys_) > p['toast_frac'] * nb or ww_ > 0.45 * bl.bx or not (x0 >= 0.55 * bl.bx or x1 <= 0.45 * bl.bx) \
+                    or not (y0 <= 0.2 * bl.by or y1 >= 0.8 * bl.by) or hh_ < 2 or hh_ > 0.35 * bl.by:
+                continue
+            o = next((o for o in toasts if o['b'][0] <= x1 and x0 <= o['b'][2] and o['b'][1] <= y1 and y0 <= o['b'][3]), None)
+            if o is None:
+                toasts.append(dict(b=[x0, y0, x1, y1], t0=t - 1 / fps, preg=prevg, on=None, q=0))
+            elif o['on'] is None:   # still fading in: the box grows
+                o['b'] = [min(o['b'][0], x0), min(o['b'][1], y0), max(o['b'][2], x1), max(o['b'][3], y1)]
+
     for f in decode(path, w, h, fps):
         i += 1
         t = i / fps
@@ -746,6 +841,9 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
         if prev is None:
             K = dict(g=g, bgr=f, mu=mu, cur=[], t=0.0, curf=None)
             cand(0.0, g, mu, 'start', 1.0, 'first', [], ev=0)
+            masks.append((anim.copy(), [], False, tick.copy()))
+            if keep_samples:
+                samples.append(pool.submit(png, g))
             events.append(dict(kind='start', t0=0.0, t1=0.0, cand=0))
             prev, prevg, prevmu = f, g, mu
             anchor_step(t, f, g, mu, False)
@@ -762,6 +860,9 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
                     tau = int(np.clip(np.median(quiet_q) + 3, p['tau_min'], p['tau_max']))
                     tau_mu = float(np.clip(np.median(quiet_mu) + 1.0, p['mu_min'], p['mu_max']))
         M = cv2.threshold(D, tau, 255, cv2.THRESH_BINARY)[1]
+        Araw = bl.count(M) >= p['blk_px']   # before the pointer, caret and ticker drops: a ticker's thin digits count
+        if tick.any():
+            M[cv2.resize(tick.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0] = 0
         npx = cv2.countNonZero(M)
         dropb = None
         if 0 < npx < 0.01 * w * h:   # small changes: pointer and caret separation
@@ -832,8 +933,39 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             expl = res <= max(2.0, 3 * 1.4826 * float(np.median(res)))
             if expl.mean() >= 0.5 and (abs(ga - 1) >= 0.02 or abs(gc) >= 2):
                 is_photo, photo_dim = True, ga < 0.98 and expl.mean() < 0.97
-        # animation: a block active >= anim_hits times spread over >= anim_span s within the last anim_win s
+        # a ticker (a small clock or counter stepping at a steady beat): masked like the pointer, never an event or a state
+        hit = Araw & (t - tk_t[-1] >= 0.25) if Araw.mean() <= 0.05 else None   # a broad change hides a tick: a skipped beat is fine
+        if hit is not None and hit.any():
+            tk_t[:-1, hit] = tk_t[1:, hit]
+            tk_t[-1, hit] = t
+            d = np.diff(tk_t[:, hit], axis=0)
+            dm_ = np.median(d, axis=0)
+            r_ = d / np.maximum(dm_, 1e-3)
+            beat = np.zeros_like(tick)   # >= 4 of 5 gaps one steady beat (one stray blip allowed), beat 0.8-2.5 s (a caret blinks faster)
+            beat[hit] = (dm_ >= 0.8) & (dm_ <= 2.5) & ((np.abs(r_ - 1.0) <= 0.15).sum(axis=0) >= 4)
+            if beat.any():
+                n_tick = int(tick.sum())
+                nk, labk, stk, _ = cv2.connectedComponentsWithStats((beat | tick).astype(np.uint8), 8)
+                for k in range(1, nk):
+                    if stk[k][2] * B <= p['tick_px'] * ksc and stk[k][3] * B <= p['tick_px'] * ksc:
+                        nw = (labk == k) & beat & ~tick
+                        tick |= nw
+                        for m_ in masks[max(0, int(float(tk_t[:, nw][tk_t[:, nw] > 0].min(initial=t)) * 2)):] if nw.any() else []:   # it ticked from its first beat on
+                            m_[0][nw] = m_[3][nw] = True
+                if tick.sum() > n_tick:   # changes settled before the beat was clear, inside the ticker only: no frame, no event
+                    ys_, xs_ = np.nonzero(tick)
+                    tb = ((xs_.min() - 1) * B / w, (ys_.min() - 1) * B / h, (xs_.max() + 2) * B / w, (ys_.max() + 2) * B / h)
+                    for e_ in events:
+                        b_ = e_.get('box')
+                        if e_['kind'] in ('text', 'change', 'toast?') and b_ and tb[0] <= b_[0] and tb[1] <= b_[1] and b_[2] <= tb[2] and b_[3] <= tb[3]:
+                            e_['kind'] = 'ticker'
+                            if e_.get('cand') is not None:
+                                cands[e_['cand']]['w'] = 0.0
         last_act[A] = t
+        tk_seen[Araw] = t
+        tick &= ~(t - tk_seen > p['anim_off'])   # gone quiet (a broad change hides its beat, not its activity)
+        A &= ~tick
+        # animation: a block active >= anim_hits times spread over >= anim_span s within the last anim_win s
         motion_ep = ep is not None and (ep['scroll'] + ep['photo']) >= 0.5 * max(1, ep['frames'])
         slot = ridx % nring
         ring_n -= ring[slot]
@@ -851,18 +983,40 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
                     m_[0][anim & ~was] = True
         if anim.any():   # blocks leave the animated set after anim_off s without activity
             anim &= ~(t - last_act > p['anim_off'])
-        if anim.any():
-            if anim_since is None:
-                anim_since, anim_samples = t, []
-            anim_last = float(last_act[anim].max())
-            ys2, xs2 = np.nonzero(anim)
-            b_ = [round(xs2.min() * B / w, 3), round(ys2.min() * B / h, 3), round((xs2.max() + 1) * B / w, 3), round((ys2.max() + 1) * B / h, 3)]
-            anim_box = b_ if anim_box is None else [min(anim_box[0], b_[0]), min(anim_box[1], b_[1]), max(anim_box[2], b_[2]), max(anim_box[3], b_[3])]
-        elif anim_since is not None and t - anim_last >= p['anim_gap']:   # one animated event; gaps < anim_gap s bridged
-            if anim_last - anim_since + p['anim_span'] >= 3.0:
-                events.append(dict(kind='animated', t0=round(anim_since - p['anim_span'], 2), t1=round(anim_last, 2), box=anim_box, samples=anim_samples))
-            anim_since, anim_box = None, None
+        anim |= tick
+        if anim.any():   # one animated event per connected region (a ticker aside)
+            na, laba, sta, _ = cv2.connectedComponentsWithStats(cv2.dilate((anim & ~tick).astype(np.uint8), kern), 8)
+            regs = []
+            for k in range(1, na):
+                mk = (laba == k) & anim & ~tick
+                if not mk.any():
+                    continue
+                ys2, xs2 = np.nonzero(mk)
+                regs.append((mk, [int(xs2.min()), int(ys2.min()), int(xs2.max()) + 1, int(ys2.max()) + 1], float(last_act[mk].max())))
+            for a in aev:
+                a['cur'] &= anim   # its blocks that still move: a quiet event never captures a later region
+                a['near'] = cv2.dilate(a['cur'].astype(np.uint8), kern) > 0
+            for mk, bx_, la in regs:   # matched by the blocks each region holds now (union boxes would snowball into one)
+                own = [a for a in aev if (a['near'] & mk).any()]
+                if not own:
+                    aev.append(dict(box=bx_, since=t, last=la, samples=[], cur=mk, near=mk, seen=t))
+                    continue
+                a0 = own[0]
+                a0['cur'] = (a0['cur'] | mk) if a0.get('seen') == t else mk
+                a0['seen'] = t
+                for a in own[1:]:   # one region now spans two events: they are one
+                    a0['cur'] |= a['cur']
+                    a0['since'], a0['samples'] = min(a0['since'], a['since']), sorted(set(a0['samples'] + a['samples']))
+                    a0['box'] = [min(a0['box'][0], a['box'][0]), min(a0['box'][1], a['box'][1]), max(a0['box'][2], a['box'][2]), max(a0['box'][3], a['box'][3])]
+                    aev.remove(a)
+                a0['box'] = [min(a0['box'][0], bx_[0]), min(a0['box'][1], bx_[1]), max(a0['box'][2], bx_[2]), max(a0['box'][3], bx_[3])]
+                a0['last'] = max(a0['last'], la)
+        for a in [a for a in aev if t - a['last'] >= p['anim_gap']]:   # one animated event per region; gaps < anim_gap s bridged
+            anim_close(a)
+            aev.remove(a)
         Aeff = A & ~anim
+        if not (is_scroll or is_photo):
+            toast_step(t, g, mu, Aeff)
         active = bool(Aeff.any())
         if active:
             if ep is None:
@@ -872,6 +1026,7 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             q, first_quiet = 0, None
             if is_scroll:
                 ep['scroll'] += 1
+                ep['scroll_t'] = t
                 ep['scroll_acc'] += scroll_info[0]
                 if ep['scroll_acc'] >= p['scroll_step'] * scroll_info[1]:   # a frame per 0.6 viewport: every line fully seen once
                     ep['scroll_acc'] = 0.0
@@ -889,12 +1044,7 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
                     ep['peak'], ep['peak_f'] = rs - 2.0 * asum, (t, f, g, mu, list(bnow))
             # a state held inside a long episode (a blank window, a spinner page, a half-loaded screen): only a little still moves
             ep['qq'], ep['hot'] = (ep.get('qq', 0) + 1, Aeff | (ep['hot'] if ep.get('hot') is not None else Aeff)) if asum <= 0.01 * nb else (0, None)
-            if ep['qq'] == S and not (is_scroll or is_photo or ep['scroll'] or ep['photo']):   # scroll steps and fades have their own frames
-                g0, m0 = ep.get('last') or (K['g'], K['mu'])
-                d_ = news(g, mu, g0, m0) & ~ep['hot'] & ~bl.cells(bnow)
-                if d_.sum() >= 2:
-                    cand(t, g, mu, 'state', 1.0, 'held', bnow, an=anim | ep['hot'], ev=len(events), delta=d_)
-                    ep['last'] = (g, mu)
+            held(t, g, mu, bnow, is_scroll or is_photo)
             if t - ep['last_force'] >= p['long_ep'] and ep['peak_f'] is not None:   # no settle for long_ep s: a progress frame
                 tp, fp, gp, mp, bp = ep['peak_f']
                 cand(tp, gp, mp, 'progress', 0.7, 'long-episode', bp, ev=len(events))
@@ -903,6 +1053,9 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             q += 1
             if q == 1:
                 first_quiet = (t, f, g, mu, (list(cur['boxes']) if cur['t'] == t else []) + ([cur['box']] if cur['box'] else []))
+            if ep is not None and q < S:   # a near-still run that ends quiet but too short to settle still holds a state
+                ep['qq'] = ep.get('qq', 0) + 1
+                held(t, g, mu, (list(cur['boxes']) if cur['t'] == t else []) + ([cur['box']] if cur['box'] else []), False)
             if q == S and ep is not None:
                 tq, fq, gq, mq, cq = first_quiet
                 R, rpx = ref_diff(fq, gq, mq, K, cq)
@@ -919,13 +1072,16 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
                             events.append(dict(kind='transient', t0=round(ep['t0'], 2), t1=round(t, 2), error=bool(red)))
                             events[-1]['cand'] = cand(tp, gp, mp, 'transient', 1.2, 'reverted', bp + find_cursor(gp), red, ev=len(events) - 1, delta=Rp)
                 ep = None
-        if anim_since is not None and (not anim_samples or t - anim_samples[-1] >= p['anim_sample']):   # one sample per anim_sample s
-            anim_samples.append(round(t, 2))
-            if len(anim_samples) > 1:
-                cand(t, g, mu, 'anim-sample', 0.5, 'animated', find_cursor(g, cur['pos']), an=np.zeros_like(anim))
+        due = [a for a in aev if not a['samples'] or t - a['samples'][-1] >= p['anim_sample']]   # one sample per anim_sample s
+        for a in due:
+            a['samples'].append(round(t, 2))
+        if any(len(a['samples']) > 1 for a in due):
+            cand(t, g, mu, 'anim-sample', 0.5, 'animated', find_cursor(g, cur['pos']), an=np.zeros_like(anim))
         anchor_step(t, f, g, mu, active)
         if int(t * 2 + 1e-6) > len(masks) - 1:   # the animation mask and the pointer every 0.5 s: the coverage fill ignores them
-            masks.append((anim.copy(), (list(cur['boxes']) if cur['t'] == t else []) + ([cur['box']] if cur['box'] else []), is_scroll or is_photo or motion_ep))
+            masks.append((anim.copy(), (list(cur['boxes']) if cur['t'] == t else []) + ([cur['box']] if cur['box'] else []), is_scroll or is_photo or motion_ep, tick.copy()))
+            if keep_samples:
+                samples.append(pool.submit(png, g))
         prev, prevg, prevmu = f, g, mu
         t_cpu += time.perf_counter() - c0
     if prev is None:
@@ -934,8 +1090,8 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
         R, _ = ref_diff(prev, prevg, prevmu, K, None)
         if R.sum() >= 1:
             commit(i / fps, prev, prevg, prevmu, R, ep, 'end', [cur['box']] if cur['box'] else [])
-    if anim_since is not None and i / fps - anim_since + p['anim_span'] >= 3.0:
-        events.append(dict(kind='animated', t0=round(anim_since - p['anim_span'], 2), t1=round(i / fps, 2), box=anim_box, samples=anim_samples))
+    for a in aev:
+        anim_close(a, i / fps)
     for a in anc:   # a sidecar action: the frame before (a candidate) and the settled frame after (always kept)
         if a['before'] is None:
             continue
@@ -949,11 +1105,22 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
         e.pop('_pb', None)
     c1 = time.perf_counter()
     budget = int(min(float(c['maxFrames']), float(c['frames']) + float(c['framesPerMin']) * (dur or (i + 1) / fps) / 60.0))
-    resample = lambda: ((n / 2.0, cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)) for n, fr in enumerate(decode(path, w, h, 2)))
-    sel = choose(cands, bl, tau, tau_mu, dict(p, pulse=noise['pulse']), budget, resample, masks)
+
+    def resample():   # the 0.5 s samples kept during the pass (no second decode), decoded a few ahead
+        q_ = [pool.submit(lambda fu: cv2.imdecode(fu.result(), cv2.IMREAD_GRAYSCALE), fu) for fu in samples[:4]]
+        for n in range(len(samples)):
+            if n + 4 < len(samples):
+                q_.append(pool.submit(lambda fu: cv2.imdecode(fu.result(), cv2.IMREAD_GRAYSCALE), samples[n + 4]))
+            yield n / 2.0, q_[n].result()
+            q_[n] = None
+    try:
+        sel = choose(cands, bl, tau, tau_mu, dict(p, pulse=noise['pulse']), budget, resample if len(samples) == len(masks) else
+                     lambda: ((n / 2.0, cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)) for n, fr in enumerate(decode(path, w, h, 2))), masks)
+    finally:
+        pool.shutdown()
     t_sel = time.perf_counter() - c1
     return dict(size=[W, H], analysis=[w, h], fps=fps, frames_analysed=i + 1, tau=tau, tau_mu=round(tau_mu, 2), pulse=round(noise['pulse'], 1),
-                budget=budget, cands=cands, kept=sel['kept'], revisits=sel['revisits'], cover=sel['cover'], fills=sel['fills'], shown=sel['shown'], events=events, anchors=anc,
+                budget=budget, cands=cands, kept=sel['kept'], revisits=sel['revisits'], cover=sel['cover'], fills=sel['fills'], shown=sel['shown'], events=events, anchors=anc, masks=masks,
                 cursor=cursor_path, ms_per_frame=round(1000 * (t_cpu + t_sel) / max(1, i + 1), 2), ms_select=round(1000 * t_sel))
 
 def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
@@ -1054,8 +1221,9 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
         c['gain'] = (1 - v) * float(c['u'].sum())
         kept.append(c)
         states = [x for v_, x in sc if x is not c and v_ < p['state_cover']]
-    fills = fill(kept, resample, masks, value, covered, p) if resample else []
+    fills = fill(kept, resample, masks, value, covered, p, tau_mu + 1.0) if resample else []
     kept.sort(key=lambda c: c['t'])
+    kept[:] = [k for n, k in enumerate(kept) if n == 0 or k['t'] - kept[n - 1]['t'] >= 0.05]   # two picks at one time = one image twice
     ids = {id(k): n for n, k in enumerate(kept)}
 
     def cover(c):   # the kept frame that shows this candidate's screen (itself, else the best earlier match), or None
@@ -1085,19 +1253,26 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
         return max(float(c['u'][covered(c, k, False)].sum()) / tot for k in kept)
     return dict(kept=kept, revisits=revisits, cover=cover, fills=fills, shown=shown)
 
-def fill(kept, resample, masks, value, covered, p):
+def fill(kept, resample, masks, value, covered, p, mu_tol):
     """The safety net: a 0.5 s sample whose content no kept frame shows (>= fill_cover of its block value, the pointer and
     animation aside) is a gap; a gap run of >= detect.fillSec, or one with a clearly other screen (< fill_floor shown), gets one
     more keyframe, even over the budget, until no such run is left. Returns the fills [{t0, t1, t}]."""
     fsec, need, floor, out = float(CFG['detect']['fillSec']), p['fill_cover'], p['fill_floor'], []
+    stack = dict(n=-1)
 
     def gap(sm):
         sm['shw'], tot = 1.0, float(sm['u'].sum())
         if tot <= 0:
             return False
         sm['shw'] = 0.0
-        for k in sorted(kept, key=lambda k: abs(k['t'] - sm['t'])):   # nearest first; a screen seen long before counts too
-            sm['shw'] = max(sm['shw'], float(sm['u'][covered(sm, k, False)].sum()) / tot)
+        if stack['n'] != len(kept):   # every kept frame's block means as one array
+            stack.update(n=len(kept), mu=np.stack([k['mu'] for k in kept]), t=np.array([k['t'] for k in kept]))
+        bound = ((np.abs(stack['mu'] - sm['mu'][None]) < mu_tol) * sm['u'][None]).sum(axis=(1, 2)) / tot   # >= the shown share (pixels only remove)
+        near = np.argsort(np.abs(stack['t'] - sm['t']))[:3]   # a scrolled screen matches the nearest frames by shift, not by means
+        for j in dict.fromkeys([int(x) for x in np.argsort(-bound)[:3]] + [int(x) for x in near]):   # pixel tests on the 3 best + the 3 nearest only
+            if bound[j] <= sm['shw'] and j not in near:
+                continue
+            sm['shw'] = max(sm['shw'], float(sm['u'][covered(sm, kept[j], False)].sum()) / tot)
             if sm['shw'] >= need:   # shown: no need for the exact share
                 return False
         k1 = max((k for k in kept if k['t'] < sm['t']), key=lambda k: k['t'], default=None)
@@ -1132,7 +1307,7 @@ def fill(kept, resample, masks, value, covered, p):
                     close(q_)
     run, last, bl = [], None, None
     for t, g in resample():
-        am, cb, moving = masks[min(len(masks) - 1, int(t * 2))] if masks else (None, [], False)
+        am, cb, moving, _ = masks[min(len(masks) - 1, int(t * 2))] if masks else (None, [], False, None)
         if moving:   # mid-scroll or mid-fade: no screen state of its own (the scroll steps and the settled end cover it)
             close(run)
             run, last = [], None
@@ -1228,7 +1403,7 @@ def detect(path, info, out_dir, fj=None):
                 out['peak'] = kref(n)
         return out
     for e in r['events']:
-        if e['kind'] == 'start':
+        if e['kind'] in ('start', 'ticker'):
             continue
         row = {'t': e['t0'], 't_end': e['t1'], 'kind': {'page': 'page-change'}.get(e['kind'], e['kind']), 'source': 'detect'}
         if e.get('box'):
@@ -1284,7 +1459,7 @@ def detect(path, info, out_dir, fj=None):
     for x in r['revisits']:
         x['same_as'] = kref(x['same_as'])
     return {'fps': r['fps'], 'scaled': r['analysis'], 'duration': dur, 'events': rows, 'keyframes': kf, 'revisits': r['revisits'], 'budget': r['budget'],
-            'noise': {'tau': r['tau'], 'tauMu': r['tau_mu'], 'pulse': r['pulse']}, 'msPerFrame': r['ms_per_frame'], 'sidecar': src,
+            'noise': {'tau': r['tau'], 'tauMu': r['tau_mu'], 'pulse': r['pulse']}, 'msPerFrame': r['ms_per_frame'], 'fills': len(r['fills']), 'sidecar': src,
             'counts': {k: sum(1 for x in rows if x['kind'] == k) for k in sorted({x['kind'] for x in rows})}}
 
 def grab(path, t, cap=None):
@@ -1721,7 +1896,7 @@ def read(key, start=None, end=None, at=None, win=None, around_error=False, frame
     return lines
 
 # ---- bench: synthetic clips with exact ground truth, the regression corpus, feedback (vidy's verify phase)
-SYNTH = 1   # bump when a synthetic clip changes: cached clips are rebuilt
+SYNTH = 2   # bump when a synthetic clip changes: cached clips are rebuilt
 KEY_ITEMS = ('toast:', 'modal:', 'val:', 'st:', 'sel:', 'badge:4', 'r7:amt', 'r15:appr', 'step:Step 2', 'banner', 'det:', 'row:new', 'Rep:', 'Bra:', 'Cha:', 'title:')
 SYNTH_Q = ('scroll', 'toast', 'modal', 'typing', 'page', 'dark')   # also encoded at crf 36 (q-<name>)
 
@@ -1827,6 +2002,33 @@ def synth(out, name, crf=None):
             pointer(img, *at(t, keys))
             return img
         events = [['toast', 5.0, 8.3], ['toast', 11.0, 12.2]]
+    elif name == 'ticker':   # a recorder's timer ticking all along; a toast that holds while the page changes under it
+        keys = [(0, 700, 700), (3.5, 1500, 300), (4, 1500, 300), (8, 900, 600), (14, 900, 600)]
+
+        def r(t, f):
+            img = blank(W, H, True)
+            inv = t >= 5.5
+            chrome(img, 'Invoices' if inv else 'Orders', W, f, dark=True)
+            for k in range(18):
+                pre = 'Inv' if inv else 'Ord'
+                add(f, f'{pre}:{k + 1}', text(img, f'{pre} {k + 1:02d}: Order {2000 + k * 7} - GBP {113 + k * 13.5:.2f}', 260, 110 + k * 34, 0.6, (170, 170, 170)))
+            if inv:
+                cv2.rectangle(img, (1400, 860), (1900, 1010), (70, 70, 74), -1)
+                add(f, 'panel:total', text(img, 'Total due: GBP 4,120.50', 1420, 900, 0.65, (220, 220, 220)))
+            cv2.rectangle(img, (1400, 270), (1600, 320), (60, 140, 60), -1)
+            add(f, 'btn:save', text(img, 'Save', 1470, 303, 0.7, (255, 255, 255), 2))
+            text(img, f'REC 00:{int(t):02d}', W // 2 - 50, H - 12, 0.6, (200, 200, 200))   # the ticker: never an item
+            if 4.0 <= t < 9.0:
+                a = min(1.0, (t - 4.0) / 0.2, (9.0 - t) / 0.2)
+                ov = img.copy()
+                cv2.rectangle(ov, (1440, 930), (1860, 1000), (70, 150, 60), -1)
+                bb = text(ov, 'Order 279 saved successfully', 1460, 972, 0.65, (255, 255, 255))
+                img[:] = cv2.addWeighted(ov, a, img, 1 - a, 0)
+                if a >= 0.95:
+                    add(f, 'toast:saved', bb)
+            pointer(img, *at(t, keys))
+            return img
+        dur, events = 14, [['toast', 4.0, 9.0]]
     elif name == 'modal':
         keys = [(0, 600, 800), (3.5, 1500, 290), (4, 1500, 290), (6, 960, 560), (6.8, 960, 560), (8.5, 1100, 700), (9, 1100, 700), (15, 800, 900)]
 
@@ -2053,6 +2255,7 @@ def score_synth(frames, gt, evs):
             out['loadingFrames'] = sum(1 for t in frames if e[1] <= t <= e[2])
             out['loadingEvents'] = sum(1 for x in evs if x['kind'] == 'animated' and x['t0'] < e[2] and x['t1'] > e[1])
     out['toasts'] = sum(1 for x in evs if x['kind'] == 'toast')
+    out['animated'] = sum(1 for x in evs if x['kind'] == 'animated')
     return out
 
 def corpus_file():   # durable (<state>/media/): the corpus outlives a runtime wipe
@@ -2072,6 +2275,14 @@ def state_recall(r, states, path):
     miss = [list(st[:2]) for st, ok in zip(states, hit) if not ok]
     return round(sum(hit) / max(1, len(hit)), 3), miss
 
+def expect_met(evs, x):
+    """A labelled event check {kind, t0, t1, [box], [minSec], [absent]}: an event of that kind overlaps [t0, t1] (inside box, lasting
+    >= minSec); absent: true wants none."""
+    def inside(b, o):
+        return bool(b) and o[0] <= b[0] and o[1] <= b[1] and b[2] <= o[2] and b[3] <= o[3]
+    return any(e.get('kind') == x['kind'] and e.get('t0', 0) <= x['t1'] and e.get('t1', 0) >= x['t0'] and (not x.get('box') or inside(e.get('box'), x['box']))
+               and e.get('t1', 0) - e.get('t0', 0) >= float(x.get('minSec', 0)) for e in evs)
+
 def bench_clip(out, n, crf):
     tag = n if crf is None else f'q-{n}'
     v, g = osp.join(out, tag + '.mp4'), load_json(osp.join(out, tag + '.gt.json'))
@@ -2079,7 +2290,7 @@ def bench_clip(out, n, crf):
         v = synth(out, n, crf)
         g = load_json(osp.join(out, tag + '.gt.json'))
     r = keyframes(v, g['size'][0], g['size'][1], g['frames'] / g['fps'])
-    return tag, dict(score_synth([c['t'] for c in r['kept']], g, r['events']), ms=r['ms_per_frame'])
+    return tag, dict(score_synth([c['t'] for c in r['kept']], g, r['events']), ms=r['ms_per_frame'], dupes=sum(1 for a, b in zip(r['kept'], r['kept'][1:]) if b['t'] - a['t'] < 0.05))
 
 def bench(names=None, crf36=True, corpus=True, only=None, record=False):
     """The detector gate: synthetic clips (generated once per SYNTH into the cache) + their crf-36 variants, then every corpus
@@ -2088,7 +2299,7 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
     res, fails = {'synthetic': {}, 'corpus': {}}, []
     out = osp.join(cache_root(), f'_bench-v{SYNTH}')
     os.makedirs(out, exist_ok=True)
-    clips = [(n, None) for n in (names or ['scroll', 'toast', 'modal', 'typing', 'spinner', 'page', 'cursor', 'dark', 'text4k', 'fade'])]
+    clips = [(n, None) for n in (names or ['scroll', 'toast', 'modal', 'typing', 'spinner', 'page', 'cursor', 'dark', 'text4k', 'fade', 'ticker'])]
     clips += [(n, 36) for n, _ in list(clips) if crf36 and n in SYNTH_Q]
     import concurrent.futures as cf
     with cf.ProcessPoolExecutor(max_workers=max(1, min(len(clips), (os.cpu_count() or 2) // 2, 8))) as ex:   # one clip per process
@@ -2103,6 +2314,10 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
             fails.append(f'{tag}: a dark-theme highlight labelled toast')
         if tag == 'toast' and sc['toasts'] < 2:
             fails.append(f"{tag}: {sc['toasts']} toasts labelled (want 2)")
+        if tag == 'ticker' and (sc['toasts'] != 1 or sc['animated']):
+            fails.append(f"{tag}: {sc['toasts']} toasts (want 1 over the page change), {sc['animated']} animated events (want 0: a timer ticks)")
+        if sc['dupes']:
+            fails.append(f"{tag}: one frame kept twice ({sc['dupes']}x)")
     clean = [v for k, v in res['synthetic'].items() if not k.startswith('q-')]
     if clean and sum(v['precision'] for v in clean) / len(clean) < 0.9:
         fails.append(f"synthetic precision {sum(v['precision'] for v in clean) / len(clean):.3f} < 0.9")
@@ -2122,8 +2337,12 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
         rec, miss = state_recall(r, lab['states'], e['file'])
         anim = [x for x in lab.get('animations') or []]   # [t0, t1, max frames]
         waste = [a for a in anim if sum(1 for c in r['kept'] if a[0] <= c['t'] <= a[1]) > a[2]]
+        wrong = [x for x in lab.get('expect') or [] if expect_met(r['events'], x) == bool(x.get('absent'))]
+        dupes = [round(b['t'], 2) for a, b in zip(r['kept'], r['kept'][1:]) if b['t'] - a['t'] < 0.05]
         res['corpus'][key] = {'name': e.get('name'), 'recall': rec, 'was': e.get('recall'), 'frames': len(r['kept']), 'fills': len(r['fills']), 'missed': miss[:12],
-                              'waste': waste, 'ms': r['ms_per_frame']}
+                              'waste': waste, 'wrong': wrong, 'dupes': dupes, 'ms': r['ms_per_frame']}
+        if wrong or dupes:
+            fails.append(f"corpus {key}: " + '; '.join([f"event {'present' if x.get('absent') else 'missing'}: {x}" for x in wrong] + ([f'one frame twice at {dupes}'] if dupes else [])))
         if e.get('recall') is not None and rec < float(e['recall']):
             fails.append(f"corpus {key} ({e.get('name')}): recall {rec} < {e['recall']} recorded")
         if len(waste) > int(e.get('waste', len(waste))):
@@ -2178,23 +2397,42 @@ def gray_frames(path, w, h, fps):
         p.stdout.close()
         p.wait()
 
-def oracle(path, info, fps=30, hold=0.3, px=24):
+def oracle(path, info, fps=30, hold=0.3, px=24, masks=None, scale=None):
     """The labelling oracle (zero tokens, slow): every frame at up to 30 fps, full resolution; a state = a screen held >= 0.3 s
-    (nothing moves > 24 levels except a pointer-sized blob); a new state when the held screen differs from the last state outside
-    the pointer. A change of < 400 px or of low contrast is `ambiguous`: vidy confirms only those."""
+    (nothing moves > 24 levels except a pointer-sized blob), judged once per hold; a new state when it differs from the last state
+    outside the pointer. masks + scale: the detector's per-0.5 s (ticker blocks, pointer boxes) at its analysis size: changes
+    there make no state (a clock, the pointer). A change of < 400 px or of low contrast is `ambiguous`."""
     need_cv()
     W, H = info['width'] - info['width'] % 2, info['height'] - info['height'] % 2
     cur, kern = max(24, int(26 * max(W, H) / 1920)), np.ones((3, 3), np.uint8)
+    ign_c = {}
 
-    def moved(a, b):   # changed pixels, 0 when only one or two pointer-sized blobs moved
+    def ign_at(t):   # the masked pixels at t (full size), or None
+        k = min(len(masks) - 1, int(t * 2)) if masks else -1
+        if k < 0:
+            return None
+        if k not in ign_c:
+            am, cb = masks[k][3], masks[k][1]   # the ticker only: an animation can hide a real state
+            m = cv2.resize(am.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0
+            sx, sy = W / scale[0], H / scale[1]
+            for x0, y0, x1, y1 in cb:
+                m[max(0, int(y0 * sy) - 6):int(y1 * sy) + 6, max(0, int(x0 * sx) - 6):int(x1 * sx) + 6] = True
+            if len(ign_c) > 4:
+                ign_c.clear()
+            ign_c[k] = m
+        return ign_c[k]
+
+    def moved(a, b, ign=None):   # changed pixels, 0 when only one or two pointer-sized blobs moved
         m = cv2.threshold(cv2.absdiff(a, b), px, 255, cv2.THRESH_BINARY)[1]
+        if ign is not None:
+            m[ign] = 0
         n = cv2.countNonZero(m)
         if 0 < n <= 4 * cur * cur:
             k, _, st, _ = cv2.connectedComponentsWithStats(cv2.dilate(m, kern), 8)
             if k - 1 <= 2 and all(x[2] <= cur and x[3] <= 1.5 * cur for x in st[1:]) and (k - 1 == 2 or n < 0.5 * cur * cur):
                 return 0, m
         return n, m
-    states, prev, since, last = [], None, 0.0, None
+    states, prev, since, last, judged, t_last, jg = [], None, 0.0, None, None, 0.0, None
     for i, g in enumerate(gray_frames(path, W, H, fps)):
         t = i / fps
         if prev is not None and moved(g, prev)[0]:
@@ -2202,15 +2440,20 @@ def oracle(path, info, fps=30, hold=0.3, px=24):
         prev = g
         if t - since + 1e-6 < hold:
             continue
+        if judged == since and moved(g, jg, ign_at(t))[0] < 400:   # judged once per hold: codec drift adds no state, a slow fade's end does
+            states[-1][1] = round(t, 2)
+            continue
+        judged, jg = since, g
         if last is None:
             states.append([round(since, 2), round(t, 2), 'start'])
-            last = g
+            last, t_last = g, t
             continue
-        n, m = moved(g, last)
+        ia, ib = ign_at(t), ign_at(t_last)
+        n, m = moved(g, last, ia if ib is None else (ib if ia is None else ia | ib))
         if n >= 30:   # fewer: codec drift, never a state
             lo = n < 400 or int(cv2.absdiff(g, last)[m > 0].max()) < 2 * px
             states.append([round(since, 2), round(t, 2), f'{n} px changed' + (' (ambiguous)' if lo else '')])
-            last = g
+            last, t_last = g, t
         else:
             states[-1][1] = round(t, 2)
     return states
@@ -2223,17 +2466,19 @@ def verify(key, tokens=None):
     if not fj or fj.get('kind') != 'video':
         raise FileNotFoundError(f'no indexed video for {key}: run pokey.ps1 evidence index <link> first')
     info = probe(fj['file'])
-    states = oracle(fj['file'], info)
-    t1 = time.time()
     r = keyframes(fj['file'], info['width'], info['height'], info['duration'])
+    t1 = time.time()
+    states = oracle(fj['file'], info, masks=r['masks'], scale=r['analysis'])
     rec, miss = state_recall(r, states, fj['file'])
     amb = {tuple(st[:2]) for st in states if 'ambiguous' in st[2]}
-    vf = osp.join(kd, 'verify.json')
+    vf, old = osp.join(kd, 'verify.json'), load_json(osp.join(kd, 'labels.json'), {}) or {}
     save_json(vf, {'name': osp.basename(fj.get('link') or key)[:80], 'states': states, 'tokens': int(tokens or 0), 'by': 'oracle',
+                   'animations': old.get('animations') or [], 'expect': old.get('expect') or [],   # hand-set checks outlive a re-label
                    'findings': [{'kind': 'missed', 't0': a, 't1': b, 'note': 'an oracle state with no keyframe' + (' (ambiguous: vidy confirms)' if (a, b) in amb else '')} for a, b in miss]})
     out = feedback(key, vf)
-    log('media-verify', {'key': key, 'states': len(states), 'missed': len(miss), 'labelSec': round(t1 - t0, 1), 'verifySec': round(time.time() - t1, 1), 'tokenCount': int(tokens or 0)})
-    return [f'oracle {key}: {len(states)} states ({len(amb)} ambiguous) in {t1 - t0:.0f} s · state recall {rec} in {time.time() - t1:.0f} s'] + out + \
+    log('media-verify', {'key': key, 'states': len(states), 'missed': len(miss), 'frames': len(r['kept']), 'fills': len(r['fills']), 'detectSec': round(t1 - t0, 1),
+                         'labelSec': round(time.time() - t1, 1), 'tokenCount': int(tokens or 0)})
+    return [f'oracle {key}: {len(states)} states ({len(amb)} ambiguous) in {time.time() - t1:.0f} s · state recall {rec}, detect {t1 - t0:.0f} s'] + out + \
         ([f"ambiguous misses: vidy confirms only {', '.join(f'{a:g}-{b:g}' for a, b in am[:12])} (cap media.vidy.labelTokens)"] if (am := sorted(x for x in amb if list(x) in miss)) else [])
 
 TUNE_SPACE = {'state_cover': [0.97, 0.995], 'fill_cover': [0.97, 0.99], 'fill_floor': [0.9, 0.97], 'gain_min': [1.0, 3.0], 'tau0': [10, 16],
@@ -2278,7 +2523,8 @@ def tune(max_evals=12, space=None, names=None):
     return out
 
 def feedback(key, items_file):
-    """vidy's verify phase: {states: [[t0, t1, what]], animations: [[t0, t1, max frames]], findings: [{kind: missed | wasted |
+    """vidy's verify phase: {states: [[t0, t1, what]], animations: [[t0, t1, max frames]], expect: [{kind, t0, t1, ...}] (expect_met),
+    findings: [{kind: missed | wasted |
     wrong-label, t0, t1, frames, note}], tokens} -> labels.json next to the media, one feedback.jsonl line per finding, the clip
     in corpus.json (passed when nothing was found: nothing more happens; else open + the tune line)."""
     kd, ix = key_dir(key), ix_dir(key)
@@ -2288,6 +2534,9 @@ def feedback(key, items_file):
     j = load_json(items_file)
     if not isinstance(j, dict) or not isinstance(j.get('states'), list) or not j['states']:
         raise ValueError(f'{items_file}: {{states: [[t0, t1, what]], findings: [...]}} is required (states = every distinct screen)')
+    for n, x in enumerate(j.get('expect') or [], 1):
+        if not (isinstance(x, dict) and x.get('kind') and x.get('t0') is not None and x.get('t1') is not None):
+            raise ValueError(f'{items_file} expect {n}: {{kind, t0, t1, [box], [minSec], [absent]}}')
     for n, st in enumerate(j['states'] + (j.get('animations') or []), 1):
         if not (isinstance(st, list) and len(st) >= 2):
             raise ValueError(f'{items_file} state {n}: [t0, t1, what] (seconds or m:ss)')
@@ -2301,7 +2550,7 @@ def feedback(key, items_file):
         found.append({'kind': x['kind'], 't0': round(parse_time(x['t0']), 2), 't1': round(parse_time(x.get('t1', x['t0'])), 2),
                       'frames': [str(p) for p in x.get('frames') or []], 'note': clip(str(x.get('note') or ''), 200)})
     lab = osp.join(kd, 'labels.json')
-    save_json(lab, {'key': key, 'states': j['states'], 'animations': j.get('animations') or [], 'pipe': PIPE, 'at': time.strftime('%Y-%m-%dT%H:%M:%S')})
+    save_json(lab, {'key': key, 'states': j['states'], 'animations': j.get('animations') or [], 'expect': j.get('expect') or [], 'pipe': PIPE, 'at': time.strftime('%Y-%m-%dT%H:%M:%S')})
     fbf = osp.join(osp.dirname(corpus_file()), 'feedback.jsonl')
     os.makedirs(osp.dirname(fbf), exist_ok=True)
     with open(fbf, 'a', encoding='utf-8') if found else contextlib.nullcontext() as fh:
@@ -2576,7 +2825,10 @@ def main():
             print('\n'.join(feedback(key(rest[0]), arg('--file'))))
         elif cmd == 'label' and rest:
             fj = load_json(osp.join(key_dir(key(rest[0])), 'fetch.json')) or {}
-            print(json.dumps(oracle(fj['file'], probe(fj['file'])) if fj.get('file') else [], ensure_ascii=False))
+            if fj.get('file'):   # the detector's masks first: a ticker, an animation or the pointer makes no state
+                inf = probe(fj['file'])
+                kr = keyframes(fj['file'], inf['width'], inf['height'], inf['duration'])
+            print(json.dumps(oracle(fj['file'], inf, masks=kr['masks'], scale=kr['analysis']) if fj.get('file') else [], ensure_ascii=False))
         elif cmd == 'verify' and rest:
             vo = verify(key(rest[0]), arg('--tokens'))
             if '--tune' in sys.argv and any(x.startswith('TUNE ') for x in vo):   # a miss: the parameter search runs at once

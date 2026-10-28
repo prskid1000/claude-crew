@@ -19,14 +19,15 @@
   re-indexes, so does a change of the `detect` / `chunk` / `stt` settings or `vidy.segmentSec`):
   - detect (pixels only, cv2 + numpy + ffmpeg): BGR frames at 10 fps, long edge 960 (1280 from 1440p up); a per-video noise
     model (16 px block counts of the max-channel difference, block means, codec pulses); pointer (a learned template, one
-    pointer), caret and animation masks; episodes against a reference frame (settle 0.3 s, transient peak, a state held inside a
+    pointer), caret, ticker (a small region stepping at a steady beat, e.g. a recorder's timer: never an event) and animation
+    masks; episodes against a reference frame (settle 0.3 s, transient peak, a state held inside a
     long episode, scroll by row / column profiles, fade / dim); lazy greedy coverage under the budget `frames` + `framesPerMin`
     per minute (<= `maxFrames`), then every distinct state shown whole by one frame while the budget lasts; the coverage fill
     (over the budget, events `coverage-fill`): a 0.5 s sample no kept frame shows (>= 95% of its content, the pointer and
     animation aside; mid-scroll, mid-fade and blends excluded) gets a frame, so does a stretch of `fillSec` shown < 98%. Events:
-    `page-change`, `modal` / `modal-closed`, `scroll`, `toast` (only once its region reverts), `highlight` (a fill: a dark-theme
-    row tint is no toast), `text`, `change`, `transient`, `animated` (loading / playback: ONE event with its duration, <= 3
-    frames), `idle`, `cursor` moves, `click?` (a guess from the pointer), each with its `before` / `after` / `peak` keyframes and
+    `page-change`, `modal` / `modal-closed`, `scroll`, `toast` (a corner panel that goes within 10 s, also over a page change
+    under it), `highlight` (a fill: a dark-theme row tint is no toast), `text`, `change`, `transient`, `animated` (loading /
+    playback: ONE event per screen region with its duration, <= 3 frames), `idle`, `cursor` moves, `click?` (a guess from the pointer), each with its `before` / `after` / `peak` keyframes and
     `(same)` for a revisit. Keyframes: full frames, native size up to 2000 px (`keyframes/kNNN.jpg`).
   - sidecar actions: `<media>.events.json` beside a local file (pokey `browser.mjs` `record()`, `phoney.ps1 events`; only these:
     other videos are pixels only) anchors keyframes: each action's settled after-frame is kept, its line says `click "Save"
@@ -39,17 +40,20 @@
     20-60 s chunks split at page changes / modals / idle, error flags; over `twoLevelOverSec` a section index + `index-sNN.md`).
 - Verify loop, by script (zero tokens; seconds and tokens per stage in kitlog `media-verify` / `media-tune`): after vidy's
   answer, `verify <key> -Tune` in the background: `label` (the oracle: every frame up to 30 fps at full resolution, a state = a
-  screen held >= 0.3 s; tiny or low-contrast changes marked ambiguous) -> the detector's keyframes -> `feedback`: `labels.json`
+  screen held >= 0.3 s, judged once per hold; changes inside the detector's ticker and pointer areas make no state; tiny or
+  low-contrast changes marked ambiguous) -> the detector's keyframes -> `feedback`: `labels.json`
   beside the media, one `<state>/media/feedback.jsonl` row per miss, the clip in `<state>/media/corpus.json`. Perfect -> `passed`,
   nothing more. A miss -> `tune`: coordinate descent over the detector's thresholds, block counts, settle time and coverage
   levels against the synthetic gate + the corpus; at corpus recall 1.0 with every gate it applies (`<state>/media/params.json`
   active, a log line, a learn signal), else it names the clips and windows one kitty (kind fix) must fix in code. vidy only
   confirms the ambiguous misses (cap `vidy.labelTokens`) and never edits the detector. Media, labels, corpus, feedback and
   params stay local (`.state/`, `.runtime/`, git-ignored); the goody holds only the generator code (a test checks it).
-- `bench`: 10 synthetic clips with exact ground truth + 6 crf-36 variants (generated into the cache, never committed; gate:
-  recall and key recall 1.0, precision >= 0.9, the 30 s loading = one event with <= 3 frames, no dark-theme toast) + every
+- `bench`: 11 synthetic clips with exact ground truth + 6 crf-36 variants (generated into the cache, never committed; gate:
+  recall and key recall 1.0, precision >= 0.9, the 30 s loading = one event with <= 3 frames, no dark-theme toast, a ticking
+  timer no event and a toast over a page change one, no frame twice) + every
   corpus clip whose media is cached (state recall: a kept frame in the window or one showing >= 98% of it; a drop below its
-  recorded recall fails; `-Record` stores it). The corpus keeps media for the newest `corpus.keep` clips (`corpus.pin`: never
+  recorded recall fails; `-Record` stores it; labels' `expect` rows `{kind, t0, t1, [box], [minSec], [absent]}` and one frame
+  kept twice fail too). The corpus keeps media for the newest `corpus.keep` clips (`corpus.pin`: never
   evicted); older ones keep labels and feedback rows, `media: evicted` (skipped; `index <link>` fetches again).
 - Resources: one OS lock per video key (a second agent waits, then reads the same cache); STT holds the lease `local-stt` (one
   job, bound to the job's process: a killed job frees it at once) and the memory gate reserves `stt.ramGB` (kind `local-ai`); a

@@ -181,6 +181,9 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
   $g2 = Invoke-TestScript $Q evidence bench -Key $js.key -Record
   $ge = Invoke-TestScript $Q evidence bench -Key $j1.key
   Expect "media bench: a corpus recall drop fails, a covered clip passes and records, an evicted clip is skipped ($(($g1.out -split "`n" | Select-String 'FAIL') -join ' '))" ($g1.code -eq 1 -and $g1.out -match 'FAIL corpus .*recall .* < 1.0 recorded' -and $g2.code -eq 0 -and $g2.out -match 'bench: pass' -and $ge.out -match 'media evicted' -and $ge.code -eq 0)
+  & $J @{ key = $js.key; states = @(, @(0, 0.2, 'white')); expect = @(@{ kind = 'start'; t0 = 0; t1 = 1; absent = $true }, @{ kind = 'toast'; t0 = 0; t1 = 8 }) } $c2.($js.key).labels
+  $g3 = Invoke-TestScript $Q evidence bench -Key $js.key
+  Expect "media bench: labels' expect rows gate too: an event that must be absent shows, one that must show does not ($(($g3.out -split "`n" | Select-String 'FAIL') -join ' '))" ($g3.code -eq 1 -and $g3.out -match 'event present: .*start' -and $g3.out -match 'event missing: .*toast')
 } else { 'SKIP media index: ffmpeg or OpenCV missing' }
 
 # the loop by script (zero tokens): label = the oracle's held states, verify = oracle vs keyframes -> feedback (perfect: passed,
@@ -201,13 +204,14 @@ if ($ff -and $cv) {
 }
 $gl = @(git -C (Split-Path (Split-Path $PSScriptRoot)) ls-files 2>$null | Where-Object { $_ -match '^goodies/media-evidence/' }) + @(Get-ChildItem $PSScriptRoot -Recurse -File | ForEach-Object { $_.Name })
 Expect "media goody: no video, image or label JSON among its files ($(@($gl).Count) files)" (-not @($gl | Where-Object { $_ -match '\.(mp4|webm|mkv|mov|avi|jpe?g|png|gif)$|labels?\.json$|corpus\.json$|feedback\.jsonl$|\.gt\.json$' }).Count)
-# the detector gate: 10 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
-# precision >= 0.9, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
+# the detector gate: 11 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
+# precision >= 0.9, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast, a ticking timer is no event and
+# a toast over a page change is one, no frame kept twice; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
 if ($ff -and $cv) {
   if ($env:KIT_MEDIA_CORPUS -and (Test-Path $env:KIT_MEDIA_CORPUS)) { Copy-Item $env:KIT_MEDIA_CORPUS (Join-Path (New-Item -ItemType Directory -Force (Join-Path (Split-Path (TkPath $k signals)) 'media')).FullName 'corpus.json') -Force }
   $bn = Invoke-TestScript $Q evidence bench $(if (-not $env:KIT_MEDIA_CORPUS) { '-NoCorpus' })
   $bn.out -split "`n" | Where-Object { $_ -match '^(q-)?\w+: recall|^corpus ' } | ForEach-Object { "  $_" }
-  Expect "media bench: the synthetic gate holds ($(($bn.out -split "`n" | Select-String 'FAIL|bench: pass') -join ' '))" ($bn.code -eq 0 -and $bn.out -match 'bench: pass' -and @([regex]::Matches($bn.out, '(?m)^(q-)?\w+: recall 1\.0 key 1\.0')).Count -eq 16)
+  Expect "media bench: the synthetic gate holds ($(($bn.out -split "`n" | Select-String 'FAIL|bench: pass') -join ' '))" ($bn.code -eq 0 -and $bn.out -match 'bench: pass' -and @([regex]::Matches($bn.out, '(?m)^(q-)?\w+: recall 1\.0 key 1\.0')).Count -eq 17)
 }
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
 Expect 'media: supervise runs with the goody loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
