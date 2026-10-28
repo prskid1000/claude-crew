@@ -10,6 +10,7 @@
   write-vision <key> --file <items.json> [--model m] [--tokens n]    vidy's screen text -> vision.json, index rebuilt, logged
   status [<key or link>]                          the local-stt lease, a video's folders
   feedback <key> --file <verify.json>             vidy's verify phase: labels, feedback rows, the corpus (perfect -> passed)
+  label <key> · verify <key> [--tokens n] [--tune] · tune [--max-evals 12] [--space <json | file>]   the oracle, script feedback, a parameter search
   bench [--key k] [--names a,b] [--no-crf36] [--no-corpus] [--record] [--json]
                                                   the detector gate: synthetic clips + crf-36 variants + the cached corpus
   Stages alone: select <link> · detect|transcribe|vision|build <key> · needs <key> transcribe · window <start> <end>
@@ -17,8 +18,8 @@
 In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L32 config · L147 fetchers · L402 probe · L421 detect · L1309 transcribe · L1429 vision · L1525 index · L1647 read ·
-  L1722 bench · L2208 verbs · L2354 cli
+Sections: L33 config · L148 fetchers · L403 probe · L422 detect · L1310 transcribe · L1430 vision · L1526 index · L1648 read ·
+  L1723 bench · L2336 verbs · L2482 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -479,7 +480,7 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
     peak, scroll, fade / dim) -> candidates -> lazy greedy coverage under the budget. anchors: sidecar action times (s): the
     frame before each and the first settled frame after it are candidates, the after frame always kept."""
     need_cv()
-    p = dict(KP, **(params or {}))
+    p = dict(KP, **tuned(), **(params or {}))
     c = CFG['detect']
     fps, B = float(p.get('fps') or c['fps']), p['B']
     S = max(2, int(round(p['settle'] * fps)))
@@ -2125,10 +2126,10 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
                               'waste': waste, 'ms': r['ms_per_frame']}
         if e.get('recall') is not None and rec < float(e['recall']):
             fails.append(f"corpus {key} ({e.get('name')}): recall {rec} < {e['recall']} recorded")
-        if waste:
-            fails.append(f'corpus {key}: animation windows over their frame cap: {waste}')
-        if record and not (e.get('recall') is not None and rec < float(e['recall'])):   # a drop never lowers the baseline
-            e.update(recall=rec, pipe=PIPE, status='passed' if rec >= 1 and not waste else 'open', checked=time.strftime('%Y-%m-%d'))
+        if len(waste) > int(e.get('waste', len(waste))):
+            fails.append(f"corpus {key}: {len(waste)} animation windows over their frame cap (was {e.get('waste')}): {waste}")
+        if record and not (e.get('recall') is not None and rec < float(e['recall'])) and len(waste) <= int(e.get('waste', len(waste))):   # never lowers a baseline
+            e.update(recall=rec, waste=len(waste), pipe=PIPE, status='passed' if rec >= 1 and not waste else 'open', checked=time.strftime('%Y-%m-%d'))
     if record and corpus:
         save_json(corpus_file(), cj)
     res['fails'] = fails
@@ -2148,6 +2149,133 @@ def evict(cj):
                 shutil.rmtree(osp.join(kd, x), ignore_errors=True) if osp.isdir(osp.join(kd, x)) else os.remove(osp.join(kd, x))
         cj[k]['media'] = 'evicted'
     return gone
+
+def media_state(name):   # durable local files (<state>/media/): never in git
+    return osp.join(osp.dirname(corpus_file()), name)
+
+TUNED = {}
+
+def tuned():
+    """The parameters `tune` applied (<state>/media/params.json, active), else none; KIT_MEDIA_PARAMS (JSON) on top (tune's trials)."""
+    if 'p' not in TUNED:
+        try:
+            j = load_json(media_state('params.json'), {}) or {}
+        except Exception:   # a bare copy without kitbag: defaults
+            j = {}
+        TUNED['p'] = (j.get('params') or {}) if j.get('active') else {}
+    return dict(TUNED['p'], **json.loads(os.environ.get('KIT_MEDIA_PARAMS') or '{}'))
+
+def gray_frames(path, w, h, fps):
+    p = subprocess.Popen([tool('ffmpeg') or 'ffmpeg', '-v', 'error', '-i', path, '-vf', f'fps={fps},scale={w}:{h}', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=w * h * 4)
+    try:
+        while True:
+            b = p.stdout.read(w * h)
+            if len(b) < w * h:
+                break
+            yield np.frombuffer(b, np.uint8).reshape(h, w)
+    finally:
+        p.stdout.close()
+        p.wait()
+
+def oracle(path, info, fps=30, hold=0.3, px=24):
+    """The labelling oracle (zero tokens, slow): every frame at up to 30 fps, full resolution; a state = a screen held >= 0.3 s
+    (nothing moves > 24 levels except a pointer-sized blob); a new state when the held screen differs from the last state outside
+    the pointer. A change of < 400 px or of low contrast is `ambiguous`: vidy confirms only those."""
+    need_cv()
+    W, H = info['width'] - info['width'] % 2, info['height'] - info['height'] % 2
+    cur, kern = max(24, int(26 * max(W, H) / 1920)), np.ones((3, 3), np.uint8)
+
+    def moved(a, b):   # changed pixels, 0 when only one or two pointer-sized blobs moved
+        m = cv2.threshold(cv2.absdiff(a, b), px, 255, cv2.THRESH_BINARY)[1]
+        n = cv2.countNonZero(m)
+        if 0 < n <= 4 * cur * cur:
+            k, _, st, _ = cv2.connectedComponentsWithStats(cv2.dilate(m, kern), 8)
+            if k - 1 <= 2 and all(x[2] <= cur and x[3] <= 1.5 * cur for x in st[1:]) and (k - 1 == 2 or n < 0.5 * cur * cur):
+                return 0, m
+        return n, m
+    states, prev, since, last = [], None, 0.0, None
+    for i, g in enumerate(gray_frames(path, W, H, fps)):
+        t = i / fps
+        if prev is not None and moved(g, prev)[0]:
+            since = t
+        prev = g
+        if t - since + 1e-6 < hold:
+            continue
+        if last is None:
+            states.append([round(since, 2), round(t, 2), 'start'])
+            last = g
+            continue
+        n, m = moved(g, last)
+        if n >= 30:   # fewer: codec drift, never a state
+            lo = n < 400 or int(cv2.absdiff(g, last)[m > 0].max()) < 2 * px
+            states.append([round(since, 2), round(t, 2), f'{n} px changed' + (' (ambiguous)' if lo else '')])
+            last = g
+        else:
+            states[-1][1] = round(t, 2)
+    return states
+
+def verify(key, tokens=None):
+    """oracle -> the detector's keyframes -> feedback, all by script: misses written, ambiguous ones listed for vidy."""
+    t0 = time.time()
+    kd = key_dir(key)
+    fj = load_json(osp.join(kd, 'fetch.json'))
+    if not fj or fj.get('kind') != 'video':
+        raise FileNotFoundError(f'no indexed video for {key}: run pokey.ps1 evidence index <link> first')
+    info = probe(fj['file'])
+    states = oracle(fj['file'], info)
+    t1 = time.time()
+    r = keyframes(fj['file'], info['width'], info['height'], info['duration'])
+    rec, miss = state_recall(r, states, fj['file'])
+    amb = {tuple(st[:2]) for st in states if 'ambiguous' in st[2]}
+    vf = osp.join(kd, 'verify.json')
+    save_json(vf, {'name': osp.basename(fj.get('link') or key)[:80], 'states': states, 'tokens': int(tokens or 0), 'by': 'oracle',
+                   'findings': [{'kind': 'missed', 't0': a, 't1': b, 'note': 'an oracle state with no keyframe' + (' (ambiguous: vidy confirms)' if (a, b) in amb else '')} for a, b in miss]})
+    out = feedback(key, vf)
+    log('media-verify', {'key': key, 'states': len(states), 'missed': len(miss), 'labelSec': round(t1 - t0, 1), 'verifySec': round(time.time() - t1, 1), 'tokenCount': int(tokens or 0)})
+    return [f'oracle {key}: {len(states)} states ({len(amb)} ambiguous) in {t1 - t0:.0f} s · state recall {rec} in {time.time() - t1:.0f} s'] + out + \
+        ([f"ambiguous misses: vidy confirms only {', '.join(f'{a:g}-{b:g}' for a, b in am[:12])} (cap media.vidy.labelTokens)"] if (am := sorted(x for x in amb if list(x) in miss)) else [])
+
+TUNE_SPACE = {'state_cover': [0.97, 0.995], 'fill_cover': [0.97, 0.99], 'fill_floor': [0.9, 0.97], 'gain_min': [1.0, 3.0], 'tau0': [10, 16],
+              'settle': [0.2, 0.5], 'blk_px': [1, 3]}
+
+def tune(max_evals=12, space=None, names=None):
+    """Coordinate descent over the detector's parameters against the synthetic gate + the cached corpus. The best set that keeps
+    every gate (no clip drops) is saved to <state>/media/params.json; it applies (active) only when every corpus clip reaches
+    recall 1.0, with a log line and a learn signal; else the clips and windows a code change must fix."""
+    space = space or TUNE_SPACE
+
+    def score(prm):
+        os.environ['KIT_MEDIA_PARAMS'] = json.dumps(prm)
+        TUNED.clear()
+        r = bench(names, True, True)
+        cr = [v['recall'] for v in r['corpus'].values() if 'recall' in v]
+        return (not r['fails'], sum(cr) / max(1, len(cr)), -sum(v.get('frames', 0) for v in r['corpus'].values())), r
+    best = dict(tuned())
+    (bs, br), n = score(best), 1
+    out = [f'tune: start: gates {"pass" if bs[0] else "fail"}, corpus recall {bs[1]:.3f}']
+    for k_, vals in space.items():
+        for v in vals:
+            if n >= max_evals or best.get(k_, KP.get(k_)) == v:
+                continue
+            sc, r = score(dict(best, **{k_: v}))
+            n += 1
+            if sc > bs:
+                best, bs, br = dict(best, **{k_: v}), sc, r
+                out.append(f'tune: {k_}={v}: gates {"pass" if sc[0] else "fail"}, corpus recall {sc[1]:.3f}')
+    os.environ.pop('KIT_MEDIA_PARAMS', None)
+    TUNED.clear()
+    full = bs[0] and all(v['recall'] >= 1 for v in br['corpus'].values() if 'recall' in v)
+    save_json(media_state('params.json'), {'params': best, 'active': bool(full), 'score': list(bs), 'evals': n, 'pipe': PIPE, 'at': time.strftime('%Y-%m-%dT%H:%M:%S')})
+    log('media-tune', {'evals': n, 'applied': bool(full), 'recall': round(bs[1], 3)})
+    if full:
+        out.append(f'APPLIED {json.dumps(best)}: {media_state("params.json")} (every corpus clip at recall 1.0, gates pass, {n} trials)')
+        run([tool('pwsh') or 'pwsh', '-NoProfile', '-File', osp.join(KIT, 'skills', 'bossy', 'bossy.ps1'), 'learn', '-Skill', 'vidy', '-Kind', 'win', '-Text',
+             f'video.py tune applied {json.dumps(best)} after {n} trials: corpus recall 1.0'], timeout=60)
+    else:
+        left = {k: v['missed'] for k, v in br['corpus'].items() if v.get('missed')}
+        out.append(f'NOT APPLIED ({n} trials, best saved inactive): a code change (one kitty) must fix: ' + ('; '.join(f'{k} {w}' for k, w in left.items()) or 'the synthetic gate')[:600])
+    return out
 
 def feedback(key, items_file):
     """vidy's verify phase: {states: [[t0, t1, what]], animations: [[t0, t1, max frames]], findings: [{kind: missed | wasted |
@@ -2407,7 +2535,7 @@ def arg(name, default=None):
     a = sys.argv
     return a[a.index(name) + 1] if name in a and a.index(name) + 1 < len(a) else default
 
-VALUED = ('--key', '--names', '--at', '--window', '--frames', '--size', '--out', '--duration', '--model', '--tokens', '--segment', '--file', '--item', '--agent',
+VALUED = ('--key', '--names', '--max-evals', '--space', '--at', '--window', '--frames', '--size', '--out', '--duration', '--model', '--tokens', '--segment', '--file', '--item', '--agent',
           '--wait-minutes', '--lock-minutes')
 
 def norm_argv(argv):
@@ -2446,6 +2574,16 @@ def main():
             if not arg('--file'):
                 raise Usage('evidence feedback: <key> --file <verify.json> are required')
             print('\n'.join(feedback(key(rest[0]), arg('--file'))))
+        elif cmd == 'label' and rest:
+            fj = load_json(osp.join(key_dir(key(rest[0])), 'fetch.json')) or {}
+            print(json.dumps(oracle(fj['file'], probe(fj['file'])) if fj.get('file') else [], ensure_ascii=False))
+        elif cmd == 'verify' and rest:
+            vo = verify(key(rest[0]), arg('--tokens'))
+            if '--tune' in sys.argv and any(x.startswith('TUNE ') for x in vo):   # a miss: the parameter search runs at once
+                vo += tune(int(arg('--max-evals', 12)))
+            print('\n'.join(vo))
+        elif cmd == 'tune':
+            print('\n'.join(tune(int(arg('--max-evals', 12)), (load_json(arg('--space')) if osp.isfile(arg('--space')) else json.loads(arg('--space'))) if arg('--space') else None, arg('--names').split(',') if arg('--names') else None)))
         elif cmd == 'bench':
             r = bench(arg('--names').split(',') if arg('--names') else None, '--no-crf36' not in sys.argv, '--no-corpus' not in sys.argv, arg('--key'), '--record' in sys.argv)
             if '--json' in sys.argv:

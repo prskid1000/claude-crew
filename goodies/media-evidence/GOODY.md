@@ -37,13 +37,15 @@
     per frame into `vision.json` (WARN for a frame that is no keyframe), logs frames read, image tokens and its spend (kitlog
     `media-vision`) and rebuilds the index; segment vidys' writes merge; a `-Refresh` keeps vidy's reading) · build (`index.md`:
     20-60 s chunks split at page changes / modals / idle, error flags; over `twoLevelOverSec` a section index + `index-sNN.md`).
-- Verify loop (vidy, after its answer): dense labels of the clip (every distinct screen state with its window; animation
-  windows with a frame cap; up to `vidy.labelTokens` tokens) -> `feedback <key> -File <verify.json>`: `labels.json` beside the
-  media, one `<state>/media/feedback.jsonl` row per finding (missed / wasted / wrong-label, window, frames, pipeline), the clip in
-  `<state>/media/corpus.json`. Perfect -> `passed`, nothing more. Any finding -> `open` + the `TUNE` line: a kitty (kind fix)
-  runs `bench -Key <key>` until that clip reaches recall 1.0, then a full `bench` (no clip drops), pushes, re-indexes
-  (`index <link> -Refresh`) and a vidy re-checks the missed windows; out of budget -> it logs why and the clip stays `open`.
-  vidy never edits the detector.
+- Verify loop, by script (zero tokens; seconds and tokens per stage in kitlog `media-verify` / `media-tune`): after vidy's
+  answer, `verify <key> -Tune` in the background: `label` (the oracle: every frame up to 30 fps at full resolution, a state = a
+  screen held >= 0.3 s; tiny or low-contrast changes marked ambiguous) -> the detector's keyframes -> `feedback`: `labels.json`
+  beside the media, one `<state>/media/feedback.jsonl` row per miss, the clip in `<state>/media/corpus.json`. Perfect -> `passed`,
+  nothing more. A miss -> `tune`: coordinate descent over the detector's thresholds, block counts, settle time and coverage
+  levels against the synthetic gate + the corpus; at corpus recall 1.0 with every gate it applies (`<state>/media/params.json`
+  active, a log line, a learn signal), else it names the clips and windows one kitty (kind fix) must fix in code. vidy only
+  confirms the ambiguous misses (cap `vidy.labelTokens`) and never edits the detector. Media, labels, corpus, feedback and
+  params stay local (`.state/`, `.runtime/`, git-ignored); the goody holds only the generator code (a test checks it).
 - `bench`: 10 synthetic clips with exact ground truth + 6 crf-36 variants (generated into the cache, never committed; gate:
   recall and key recall 1.0, precision >= 0.9, the 30 s loading = one event with <= 3 frames, no dark-theme toast) + every
   corpus clip whose media is cached (state recall: a kept frame in the window or one showing >= 98% of it; a drop below its

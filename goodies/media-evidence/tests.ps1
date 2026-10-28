@@ -183,6 +183,24 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
   Expect "media bench: a corpus recall drop fails, a covered clip passes and records, an evicted clip is skipped ($(($g1.out -split "`n" | Select-String 'FAIL') -join ' '))" ($g1.code -eq 1 -and $g1.out -match 'FAIL corpus .*recall .* < 1.0 recorded' -and $g2.code -eq 0 -and $g2.out -match 'bench: pass' -and $ge.out -match 'media evicted' -and $ge.code -eq 0)
 } else { 'SKIP media index: ffmpeg or OpenCV missing' }
 
+# the loop by script (zero tokens): label = the oracle's held states, verify = oracle vs keyframes -> feedback (perfect: passed,
+# nothing more), tune = a parameter search that applies only at corpus recall 1.0; no media or label file is ever in the goody
+if ($ff -and $cv) {
+  $null = Invoke-TestScript $Q evidence index $mp4 -Json   # its media came back (evicted above)
+  $lb = Invoke-TestScript $Q evidence label $j1.key; $st = try { $lb.out | ConvertFrom-Json } catch { @() }
+  Expect "media label: the oracle finds the white, red-box and navy screens ($(@($st).Count) states)" (@($st).Count -eq 3 -and $st[1][0] -ge 1.9 -and $st[1][0] -le 2.2 -and $st[2][0] -ge 4.9 -and $st[2][0] -le 5.2)
+  $vr = Invoke-TestScript $Q evidence verify $j1.key
+  Expect "media verify: oracle vs keyframes by script -> perfect, passed, no tune ($(($vr.out -split "`n")[0]))" ($vr.code -eq 0 -and $vr.out -match 'state recall 1\.0' -and $vr.out -match 'perfect: nothing more' -and $vr.out -notmatch 'TUNE|ambiguous misses')
+  $mdir = Join-Path (Split-Path (TkPath $k signals)) 'media'
+  $cj = Get-Content (Join-Path $mdir 'corpus.json') -Raw | ConvertFrom-Json
+  foreach ($p in $cj.PSObject.Properties) { if ($p.Name -ne $j1.key) { $cj.PSObject.Properties.Remove($p.Name) } }; $cj | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $mdir 'corpus.json')
+  $sp = Join-Path (Kd) 'space.json'; & $J @{ gain_min = @(3.0) } $sp
+  $tn = Invoke-TestScript $Q evidence tune -MaxEvals 2 -Names cursor -Space $sp
+  $pj = Get-Content (Join-Path $mdir 'params.json') -Raw | ConvertFrom-Json
+  Expect "media tune: 2 trials, every corpus clip at 1.0 -> params applied (active), learn signal ($(($tn.out -split "`n" | Select-String 'APPLIED') -join ' '))" ($tn.code -eq 0 -and $tn.out -match '(?m)^APPLIED ' -and $pj.active -and $pj.evals -eq 2)
+}
+$gl = @(git -C (Split-Path (Split-Path $PSScriptRoot)) ls-files 2>$null | Where-Object { $_ -match '^goodies/media-evidence/' }) + @(Get-ChildItem $PSScriptRoot -Recurse -File | ForEach-Object { $_.Name })
+Expect "media goody: no video, image or label JSON among its files ($(@($gl).Count) files)" (-not @($gl | Where-Object { $_ -match '\.(mp4|webm|mkv|mov|avi|jpe?g|png|gif)$|labels?\.json$|corpus\.json$|feedback\.jsonl$|\.gt\.json$' }).Count)
 # the detector gate: 10 synthetic clips + 6 crf-36 variants, generated here (never committed): recall and key recall 1.000,
 # precision >= 0.9, the 30 s loading = one event with <= 3 frames, a dark highlight is no toast; KIT_MEDIA_CORPUS (a corpus.json) adds a local corpus
 if ($ff -and $cv) {
