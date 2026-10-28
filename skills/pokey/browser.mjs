@@ -340,7 +340,7 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
 
 const mid = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 })
 // per-action log {at, action, target, box}: record()'s sidecar anchors a video's keyframes (goody media-evidence)
-const act = (page, action, target, b = null, text = '') => { const q = page.__qa; if (q) (q.actions ||= []).push({ at: Date.now(), action, target: String(target), ...(b && { box: [b.x, b.y, b.width, b.height].map(Math.round) }), ...(text && { text: String(text).slice(0, 120) }) }) }
+const act = (page, action, target, b = null, text = '') => { (page.__acts ||= []).push({ at: Date.now(), action, target: String(target), ...(b && { box: [b.x, b.y, b.width, b.height].map(Math.round) }), ...(text && { text: String(text).slice(0, 120) }) }) }
 // nth match, scrolled in, with its box
 export async function pick(page, selector, nth = 0, what = 'element') {
   await page.waitForSelector(selector, { visible: true, timeout: 20000 })
@@ -417,9 +417,10 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
 // a screen recording (.mp4 or .webm by the name; ffmpeg on PATH) + <file>.events.json (the actions since start): stop() ends both
 export async function record(s, file) {
   checkName(file)
-  const rec = await s.page.screencast({ path: file, format: file.endsWith('.webm') ? 'webm' : 'mp4' }), q = s.page.__qa, start = Date.now(), from = (q.actions ||= []).length
+  const acts = (s.page.__acts ||= []), from = acts.length, start = Date.now()
+  const rec = await s.page.screencast({ path: file, format: file.endsWith('.webm') ? 'webm' : 'mp4' })
   return async () => { await rec.stop(); const v = s.page.viewport() || {}
-    writeFileSync(file + '.events.json', JSON.stringify({ source: 'pokey', start, size: [v.width, v.height], events: q.actions.slice(from) }, null, 1)); return file }
+    writeFileSync(file + '.events.json', JSON.stringify({ source: 'pokey', start, ...(v.width && { size: [v.width, v.height] }), events: acts.slice(from) }, null, 1)); return file }
 }
 
 // the UI session's token (target tokenKeys)

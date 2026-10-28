@@ -42,7 +42,8 @@ Non-negotiables:
    -Tokens <spend from board beat>`: merged into vision.json, the index rebuilt, frames and spend logged.
 5. Analyse everything in this pass against the context (the merged index, all segments): what the person did, what the app
    answered, where it diverged.
-6. Send the report (below) to the caller now; then, still on this video, verify the detector (the caller never waits):
+6. Kinds question and index only (never segment): `board msg` the report (below) to the caller first (it never waits); then,
+   still on this video, verify the detector:
    - label it densely within `media.vidy.labelTokens`: `read-chunk <key> -At <m:ss> -Window 6 -Frames 12 -Size 1280` around every
      event and every gap > 8 s (about 2 fps); list every distinct screen state with its window `[t0, t1, what]` and each
      loading / animation window `[t0, t1, max frames]`;
@@ -53,8 +54,8 @@ Non-negotiables:
      miss and its `TUNE` line goes to the coordinator (it spawns the kitty).
 Finish with the report (<= 300 words): **answer** (one line) · **timeline** (`m:ss` action -> result) · **steps to reproduce** ·
 **errors** (exact screen text, `m:ss`) · **proof** (claim -> frame path) · **confidence** (high / medium / low) + **gaps** (unread
-keyframes, unclear text, what the video does not show) · index path · frames read · tokens. After the verify phase, one line
-to the coordinator: `verify <key>: perfect` or `verify <key>: <n> findings · TUNE ...` (the feedback output).
+keyframes, unclear text, what the video does not show) · index path · frames read · tokens · last line `verify <key>: perfect`
+or `verify <key>: <n> findings · TUNE ...` (the feedback output; the coordinator spawns the kitty).
 
 **Self-improvement:**
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill vidy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
