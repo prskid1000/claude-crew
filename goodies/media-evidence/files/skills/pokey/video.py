@@ -17,8 +17,8 @@
 In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L32 config · L147 fetchers · L402 probe · L421 detect · L1306 transcribe · L1426 vision · L1522 index · L1644 read ·
-  L1719 bench · L2195 verbs · L2341 cli
+Sections: L32 config · L147 fetchers · L402 probe · L421 detect · L1309 transcribe · L1429 vision · L1525 index · L1647 read ·
+  L1722 bench · L2208 verbs · L2354 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -1060,6 +1060,8 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
     def cover(c):   # the kept frame that shows this candidate's screen (itself, else the best earlier match), or None
         if id(c) in ids:
             return ids[id(c)], 1.0
+        if c.get('same') is not None:
+            return c['same'], 1.0
         best = (None, 0.0)
         for n, k in sorted(enumerate(kept), key=lambda x: abs(x[1]['t'] - c['t']))[:6]:
             v = float(covered(c, k).mean())
@@ -1168,13 +1170,14 @@ def load_sidecar(fj, dur):
     for e in j['events']:
         if not isinstance(e, dict):
             continue
-        t = e.get('t')
-        if t is None and e.get('at') is not None and start is not None:
-            t = (float(e['at']) - float(start)) / 1000
-        if t is None or not (-0.5 <= float(t) <= (dur or 1e9) + 0.5):
+        try:   # one bad row is skipped, never the whole video
+            t = float(e['t']) if e.get('t') is not None else (float(e['at']) - float(start)) / 1000 if e.get('at') is not None and start is not None else None
+        except (TypeError, ValueError):
+            continue
+        if t is None or not (-0.5 <= t <= (dur or 1e9) + 0.5):
             continue
         box, size = e.get('box'), j.get('size')
-        if isinstance(box, list) and len(box) == 4 and isinstance(size, list) and len(size) == 2 and min(size) > 0:   # [x, y, w, h] px -> fractions
+        if isinstance(box, list) and len(box) == 4 and isinstance(size, list) and len(size) == 2 and all(isinstance(z, (int, float)) and z > 0 for z in size + box[2:]):   # [x, y, w, h] px -> fractions
             box = [round(box[0] / size[0], 3), round(box[1] / size[1], 3), round((box[0] + box[2]) / size[0], 3), round((box[1] + box[3]) / size[1], 3)]
         else:
             box = None
@@ -1202,7 +1205,7 @@ def detect(path, info, out_dir, fj=None):
         ev = r['events'][c['ev']] if c.get('ev') is not None and c['ev'] < len(r['events']) else None
         kind = c['kind'] if c['kind'] in ('start', 'scroll', 'action', 'before', 'anim-sample', 'progress', 'intermediate') or ev is None else ev['kind']
         kf.append({'ref': kref(n), 't': round(c['t'], 2), 'kind': kind, 'gain': round(c.get('gain', 0), 1),
-                   'file': save_jpeg(fr, osp.join(out_dir, 'keyframes', f'{kref(n)}.jpg'), VIDY_EDGE) if fr is not None else None})
+                   'file': save_jpeg(fr, osp.join(out_dir, 'keyframes', f"{kref(n)}-{int(round(c['t'] * 100)):06d}.jpg"), VIDY_EDGE) if fr is not None else None})   # by time: a re-detect never overwrites a frame vidy read
     vc.release()
     rows = []
 
@@ -2124,7 +2127,7 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
             fails.append(f"corpus {key} ({e.get('name')}): recall {rec} < {e['recall']} recorded")
         if waste:
             fails.append(f'corpus {key}: animation windows over their frame cap: {waste}')
-        if record:
+        if record and not (e.get('recall') is not None and rec < float(e['recall'])):   # a drop never lowers the baseline
             e.update(recall=rec, pipe=PIPE, status='passed' if rec >= 1 and not waste else 'open', checked=time.strftime('%Y-%m-%d'))
     if record and corpus:
         save_json(corpus_file(), cj)
@@ -2157,9 +2160,12 @@ def feedback(key, items_file):
     j = load_json(items_file)
     if not isinstance(j, dict) or not isinstance(j.get('states'), list) or not j['states']:
         raise ValueError(f'{items_file}: {{states: [[t0, t1, what]], findings: [...]}} is required (states = every distinct screen)')
-    for n, st in enumerate(j['states'], 1):
-        if not (isinstance(st, list) and len(st) >= 2 and float(st[0]) <= float(st[1])):
-            raise ValueError(f'{items_file} state {n}: [t0, t1, what] with t0 <= t1')
+    for n, st in enumerate(j['states'] + (j.get('animations') or []), 1):
+        if not (isinstance(st, list) and len(st) >= 2):
+            raise ValueError(f'{items_file} state {n}: [t0, t1, what] (seconds or m:ss)')
+        st[0], st[1] = parse_time(st[0]), parse_time(st[1])
+        if st[0] > st[1]:
+            raise ValueError(f'{items_file} state {n}: t0 > t1')
     kinds, found = ('missed', 'wasted', 'wrong-label'), []
     for n, x in enumerate(j.get('findings') or [], 1):
         if not isinstance(x, dict) or x.get('kind') not in kinds or x.get('t0') is None:
@@ -2173,23 +2179,30 @@ def feedback(key, items_file):
     with open(fbf, 'a', encoding='utf-8') if found else contextlib.nullcontext() as fh:
         for x in found:
             fh.write(json.dumps(dict(x, key=key, link=fj.get('link'), pipe=PIPE, at=time.strftime('%Y-%m-%dT%H:%M:%S')), ensure_ascii=False) + '\n')
-    cj = load_json(corpus_file(), {}) or {}
-    e = cj.get(key) or {'added': time.strftime('%Y-%m-%dT%H:%M:%S')}
-    e.pop('media', None)
-    e.update(name=clip(str(j.get('name') or e.get('name') or osp.basename(fj.get('link') or key)), 80), link=fj.get('link'), file=fj['file'], sha=fj.get('sha'),
-             labels=lab, states=len(j['states']), pipe=PIPE, status='open' if found else 'passed', open=len(found))
-    if not found:
-        e['recall'] = 1.0   # perfect: the clip guards against regressions from now on
-    cj[key] = e
-    gone = evict(cj)
-    save_json(corpus_file(), cj)
+    lk = os_lock(corpus_file() + '.lock', 60)   # parallel vidys on other videos: one writer at a time
+    if not lk:
+        raise RuntimeError('corpus.json is locked by another feedback for 60 s')
+    try:
+        cj = load_json(corpus_file(), {}) or {}
+        e = cj.get(key) or {}
+        e.pop('media', None)
+        e['added'] = time.strftime('%Y-%m-%dT%H:%M:%S')   # verified now: the newest clip, its media kept
+        e.update(name=clip(str(j.get('name') or e.get('name') or osp.basename(fj.get('link') or key)), 80), link=fj.get('link'), file=fj['file'], sha=fj.get('sha'),
+                 labels=lab, states=len(j['states']), pipe=PIPE, status='open' if found else 'passed', open=len(found))
+        if not found:
+            e['recall'] = 1.0   # perfect: the clip guards against regressions from now on
+        cj[key] = e
+        gone = evict(cj)
+        save_json(corpus_file(), cj)
+    finally:
+        lk.close()
     tok, cap = int(j.get('tokens') or 0), int(CFG['vidy']['labelTokens'])
     log('media-feedback', {'key': key, 'states': len(j['states']), 'findings': len(found), 'tokenCount': tok})
     out = [f"feedback {key}: {len(j['states'])} states, {len(found)} findings ({', '.join(f'{k} {sum(1 for x in found if x['kind'] == k)}' for k in kinds if any(x['kind'] == k for x in found)) or 'none'})"
            + (f' · labelling {tok} tokens' + (f' > media.vidy.labelTokens {cap}' if tok > cap else '') if tok else '')]
     out.append(f'corpus: {key} {e["status"]} · {corpus_file()}' + (f" · media evicted: {', '.join(gone)}" if gone else ''))
     out.append('perfect: nothing more for this video' if not found else
-               f'TUNE {key}: spawn kitty (kind fix): video.py bench --key {key} until recall 1.0 on it and no corpus clip drops; push; then pokey.ps1 evidence index {fj.get("link")} -Refresh and a vidy re-check of the missed windows')
+               f'TUNE {key}: spawn kitty (kind fix): video.py bench --key {key} until recall 1.0 on it, then a full bench (no clip drops); push; then pokey.ps1 evidence index {fj.get("link")} -Refresh and a vidy re-check of the missed windows')
     return out
 
 # ---- verbs: fetch, index, status under one lock per video and the local-stt lease (OS locks: a dead holder frees them)
@@ -2348,6 +2361,10 @@ def stage(key, name):
     target = osp.join(ix, f'{name}.json')
     old = load_json(target)
     if old is not None and not old.get('degraded') and ('--refresh' not in sys.argv or old.get('by') == 'vidy'):   # a refresh keeps vidy's reading
+        if name == 'vision' and '--refresh' in sys.argv:   # ... and lists the new detect's keyframes it has not read
+            fresh, same = vision(load_json(osp.join(ix, 'detect.json')) or {'events': []}, fj, ix), lambda q: osp.normcase(osp.abspath(q))
+            seen = {same(q) for x in old.get('items') or [] for q in x.get('frames') or []}
+            save_json(target, dict(old, pending=[x for x in fresh['pending'] if same(x['file']) not in seen], maxFrames=fresh['maxFrames'], budget=fresh.get('budget')))
         return {'stage': name, 'cached': True, 'reason': old.get('reason', '')}
     info = None if '--refresh' in sys.argv else load_json(osp.join(ix, 'probe.json'))
     if info is None:

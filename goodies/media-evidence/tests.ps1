@@ -82,7 +82,7 @@ if ($ff -and $cv) {
   $ne = Invoke-TestScript $Q evidence read-chunk 0123456789abcdef 0 5
   Expect 'media read-chunk: an unknown key exits 1 with the index hint' ($ne.code -eq 1 -and $ne.out -match 'run pokey.ps1 evidence index')
   # vidy path: vision lists the keyframes (no model call), index.md marks them unread with paths; write-vision -> index + read-chunk
-  Expect "media vision: no model call, unread keyframes with paths in index.md ($(@($j1.notes) -join '; '))" ($j1.notes -match 'vision: \d+ keyframes unread: run vidy' -and $md -match 'keyframes unread: run vidy \(pokey.ps1 evidence frames' -and $md -match '(?m)^keyframes \(unread: run vidy\): .*keyframes[\\/]\w+\.jpg')
+  Expect "media vision: no model call, unread keyframes with paths in index.md ($(@($j1.notes) -join '; '))" ($j1.notes -match 'vision: \d+ keyframes unread: run vidy' -and $md -match 'keyframes unread: run vidy \(pokey.ps1 evidence frames' -and $md -match '(?m)^keyframes \(unread: run vidy\): .*keyframes[\\/][\w-]+\.jpg')
   $fr = Invoke-TestScript $Q evidence frames $j1.key
   $fpaths = @([regex]::Matches($fr.out, '(?m)^\S+ \d+:\d+: (\S+?\.jpg)') | ForEach-Object { $_.Groups[1].Value })
   $px = if ($fpaths) { & $py -c "import cv2,sys; print(cv2.imread(sys.argv[1]).shape[1])" $fpaths[0] } else { 0 }

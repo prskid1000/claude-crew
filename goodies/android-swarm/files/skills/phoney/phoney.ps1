@@ -717,10 +717,10 @@ foreach ($l in $UiEvents) {
   if ($l -notmatch 'EventType: (TYPE_\w+); EventTime: (\d+)') { continue }
   $kind = @{ TYPE_VIEW_CLICKED = 'click'; TYPE_VIEW_LONG_CLICKED = 'click'; TYPE_VIEW_TEXT_CHANGED = 'type'; TYPE_WINDOW_STATE_CHANGED = 'screen' }[$Matches[1]]
   if (-not $kind) { continue }
-  $at = & $ms ([double]$Matches[2] / 1000); $txt = if ($l -match 'Text: \[([^\]]*)\]') { $Matches[1] } else { '' }; $cls = if ($l -match 'ClassName: ([\w.$]+)') { $Matches[1] } else { '' }
-  $tap = if ($kind -eq 'click') { $out | Where-Object { $_.action -eq 'tap' -and $at - $_.at -ge 0 -and $at - $_.at -le 400 } | Select-Object -Last 1 }
+  $when = & $ms ([double]$Matches[2] / 1000); $txt = if ($l -match 'Text: \[([^\]]*)\]') { $Matches[1] } else { '' }; $cls = if ($l -match 'ClassName: ([\w.$]+)') { $Matches[1] } else { '' }
+  $tap = if ($kind -eq 'click') { $out | Where-Object { $_.action -eq 'tap' -and $when - $_.at -ge 0 -and $when - $_.at -le 400 } | Select-Object -Last 1 }
   if ($tap) { $tap.text = $txt; $tap.action = 'click'; continue }   # the tap that clicked this view: one event with its text
-  $out.Add([ordered]@{ at = $at; action = $kind; target = $cls; text = $txt })
+  $out.Add([ordered]@{ at = $when; action = $kind; target = $cls; text = $txt })
 }
 @($out | Sort-Object { $_.at })
 }

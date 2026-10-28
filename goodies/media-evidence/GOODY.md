@@ -41,7 +41,7 @@
   windows with a frame cap; up to `vidy.labelTokens` tokens) -> `feedback <key> -File <verify.json>`: `labels.json` beside the
   media, one `<state>/media/feedback.jsonl` row per finding (missed / wasted / wrong-label, window, frames, pipeline), the clip in
   `<state>/media/corpus.json`. Perfect -> `passed`, nothing more. Any finding -> `open` + the `TUNE` line: a kitty (kind fix)
-  runs `bench -Key <key>` against the whole corpus until that clip reaches recall 1.0 and no clip drops, pushes, re-indexes
+  runs `bench -Key <key>` until that clip reaches recall 1.0, then a full `bench` (no clip drops), pushes, re-indexes
   (`index <link> -Refresh`) and a vidy re-checks the missed windows; out of budget -> it logs why and the clip stays `open`.
   vidy never edits the detector.
 - `bench`: 10 synthetic clips with exact ground truth + 6 crf-36 variants (generated into the cache, never committed; gate:

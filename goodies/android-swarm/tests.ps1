@@ -171,7 +171,7 @@ $ev = Invoke-PsTest 'swarm-events' @"
   'EventType: TYPE_VIEW_TEXT_CHANGED; EventTime: 104000; PackageName: com.example; ClassName: android.widget.EditText; Text: [QA-123]',
   'EventType: TYPE_VIEW_SCROLLED; EventTime: 104500; PackageName: com.example')
 `$e = @(ConvertTo-LaneEvents -GetEvent `$ge -UiEvents `$ui -Uptime 99 -At 1700000000000 -Size 1080, 2400 -Max 32767, 32767)
-"parsed:`$((`$e.action -join ',') -eq 'click,swipe,type' -and `$e[0].text -eq 'Save' -and `$e[0].at -eq 1700000001000 -and `$e[0].target -eq '270,1200' -and `$e[2].text -eq 'QA-123' -and `$e[1].target -match '-> 270,600')"
+"parsed:`$((`$e.action -join ',') -eq 'click,swipe,type' -and `$e[0].text -eq 'Save' -and `$e[0].at -eq 1700000001000 -and `$e[0].target -eq '270,1200' -and `$e[2].text -eq 'QA-123' -and `$e[2].at -eq 1700000005000 -and `$e[1].target -match '-> 270,600')"
 "@
 Expect-Each $ev 'swarm events: #' @('off', 'parsed') -Show 6
 Remove-TestKit $k
