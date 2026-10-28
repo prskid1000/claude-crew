@@ -6,7 +6,8 @@
 //   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
-// Sections: L17 config · L41 login · L125 browsers · L168 tabs · L242 session · L281 actions · L375 evidence
+//   const stop = await record(s, '<dir>/F2-T3_01_flow.mp4'); ...; await stop()   video + <file>.events.json (each action: at, target, box)
+// Sections: L18 config · L42 login · L126 browsers · L169 tabs · L243 session · L282 actions · L381 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -296,6 +297,7 @@ const capped = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { 
 
 export async function go(page, path) {
   const q = page.__qa, u = pageUrl(page, path)
+  act(page, 'navigate', u)
   await nav(page, u, 'networkidle2')
   if (q && q.t.webLogin && u.startsWith(q.t.web) && onLogin(page, q.t) && !String(path).includes(loginPath(q.t))) {
     await ensureLogin(page, q.t, q.tenant, q.as, q.key)   // expired: once, then retry
@@ -330,12 +332,15 @@ export async function clickText(page, label, { nth = 0, within = 'body', exact =
     if (b && b !== TIMED_OUT) box = { ...mid(b), n: hs.length, fallback: true }
   }
   if (!box) throw new Error(`clickText: "${label}" not found`)
+  act(page, 'click', label, { x: box.x - 1, y: box.y - 1, width: 2, height: 2 })
   await page.mouse.click(box.x, box.y, { button: right ? 'right' : 'left' })
   await settle(page, 700)
   return box
 }
 
 const mid = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 })
+// per-action log {at, action, target, box}: record()'s sidecar anchors a video's keyframes (goody media-evidence)
+const act = (page, action, target, b = null, text = '') => { const q = page.__qa; if (q) (q.actions ||= []).push({ at: Date.now(), action, target: String(target), ...(b && { box: [b.x, b.y, b.width, b.height].map(Math.round) }), ...(text && { text: String(text).slice(0, 120) }) }) }
 // nth match, scrolled in, with its box
 export async function pick(page, selector, nth = 0, what = 'element') {
   await page.waitForSelector(selector, { visible: true, timeout: 20000 })
@@ -348,21 +353,22 @@ export async function pick(page, selector, nth = 0, what = 'element') {
 
 export async function clickSel(page, selector, { right = false, nth = 0 } = {}) {
   const { b } = await pick(page, selector, nth, 'clickSel')
-  const { x, y } = mid(b); await page.mouse.click(x, y, { button: right ? 'right' : 'left' })
+  const { x, y } = mid(b); act(page, 'click', selector, b); await page.mouse.click(x, y, { button: right ? 'right' : 'left' })
   await settle(page, 700)
 }
 
 // pointer in from outside, in steps: mouseenter fires
 export async function hoverSel(page, selector, { nth = 0 } = {}) {
   const { b } = await pick(page, selector, nth, 'hoverSel')
-  await page.mouse.move(b.x - 40, b.y - 40)
+  act(page, 'hover', selector, b); await page.mouse.move(b.x - 40, b.y - 40)
   const { x, y } = mid(b); await page.mouse.move(x, y, { steps: 12 })
   await sleep(900)
 }
 
 // replace an input's value (date pickers too): select all, type, Enter
 export async function setInput(page, selector, value, { nth = 0, enter = true } = {}) {
-  const { el } = await pick(page, selector, nth, 'setInput')
+  const { el, b } = await pick(page, selector, nth, 'setInput')
+  act(page, 'type', selector, b, value)
   await el.click({ clickCount: 3 })
   const k = page.keyboard, mod = process.platform === 'darwin' ? 'Meta' : 'Control'   // Cmd+A on macOS
   await k.down(mod); await k.press('KeyA'); await k.up(mod); await k.press('Backspace')
@@ -406,6 +412,14 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
     await page.screenshot({ ...opts, fullPage: full })
   } finally { await unmark(page) }
   return file
+}
+
+// a screen recording (.mp4 or .webm by the name; ffmpeg on PATH) + <file>.events.json (the actions since start): stop() ends both
+export async function record(s, file) {
+  checkName(file)
+  const rec = await s.page.screencast({ path: file, format: file.endsWith('.webm') ? 'webm' : 'mp4' }), q = s.page.__qa, start = Date.now(), from = (q.actions ||= []).length
+  return async () => { await rec.stop(); const v = s.page.viewport() || {}
+    writeFileSync(file + '.events.json', JSON.stringify({ source: 'pokey', start, size: [v.width, v.height], events: q.actions.slice(from) }, null, 1)); return file }
 }
 
 // the UI session's token (target tokenKeys)

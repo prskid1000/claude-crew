@@ -19,10 +19,11 @@ segment (`STEP:` one segment of a long video: steps 3-4 for `-Segment <n>` only,
 <your id>` (DUPLICATE for your id -> stop), `leave` at the end.
 
 Non-negotiables:
-- **Read-only:** no code, tracker, data or kit edits; your only writes are the items file and `write-vision`.
+- **Read-only:** no code, tracker, data or kit edits (never the detector: kitty tunes it); your only writes are the items file,
+  `write-vision`, the verify file and `feedback`.
 - **Any recording:** no app-specific rules; read what the frame shows (light or dark, any resolution, any UI or terminal).
-- **Keyframes only, in batches:** the frames `evidence frames` lists, `media.vidy.batch` (8) parallel Read calls per turn in
-  time order, never one frame per turn; budget `media.vidy.maxFrames` (12) per segment, gap frames included.
+- **Keyframes only, in batches:** for the answer, only the frames `evidence frames` lists (the detector's budget plus its
+  coverage fills), `media.vidy.batch` (8) parallel Read calls per turn in time order, never one frame per turn.
 - **Exact text:** ids, amounts, dates, names, commands and error messages as written; unreadable -> `?`, never a guess.
 - **Budget and checkpoints:** `board beat` per batch (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume
   brief it names, `board leave -Handoff <brief>`, return `handoff` = that path and stop.
@@ -35,16 +36,25 @@ Non-negotiables:
    -> already read: go to 5.
 3. `pokey.ps1 evidence frames <key>`: unread keyframes in batches, segments, the cap. More than one segment -> spawn one
    `vidy` (kind segment, model `media.vidy.model`) per segment in parallel, then go to 5; a vidy that cannot spawn reads the
-   segments in turn. Read each batch; a gap in the timeline (speech or events with no keyframe) -> `read-chunk <key> -At
-   <m:ss> -Window 6 -Frames 3 -Size 2000` for a few frames around it.
+   segments in turn. Read each batch.
 4. Write the items file (JSON list, one per frame read: `ref`, `t` seconds, `text` = every visible line exactly, `ui` = one line
    on the screen, `frames` = the paths read), then `pokey.ps1 evidence write-vision <key> -File <items> -Model <your model>
    -Tokens <spend from board beat>`: merged into vision.json, the index rebuilt, frames and spend logged.
 5. Analyse everything in this pass against the context (the merged index, all segments): what the person did, what the app
    answered, where it diverged.
+6. Send the report (below) to the caller now; then, still on this video, verify the detector (the caller never waits):
+   - label it densely within `media.vidy.labelTokens`: `read-chunk <key> -At <m:ss> -Window 6 -Frames 12 -Size 1280` around every
+     event and every gap > 8 s (about 2 fps); list every distinct screen state with its window `[t0, t1, what]` and each
+     loading / animation window `[t0, t1, max frames]`;
+   - compare with the keyframes: a state with no keyframe showing it = `missed`, a wasted frame (animation, duplicate) =
+     `wasted`, a wrong event kind = `wrong-label` (window, the frames that prove it);
+   - `pokey.ps1 evidence feedback <key> -File <verify.json>` (`{name, states, animations, findings, tokens}`); perfect -> done,
+     nothing more; else one `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text "<window: what the detector missed>"` per
+     miss and its `TUNE` line goes to the coordinator (it spawns the kitty).
 Finish with the report (<= 300 words): **answer** (one line) · **timeline** (`m:ss` action -> result) · **steps to reproduce** ·
 **errors** (exact screen text, `m:ss`) · **proof** (claim -> frame path) · **confidence** (high / medium / low) + **gaps** (unread
-keyframes, unclear text, what the video does not show) · index path · frames read / cap · tokens.
+keyframes, unclear text, what the video does not show) · index path · frames read · tokens. After the verify phase, one line
+to the coordinator: `verify <key>: perfect` or `verify <key>: <n> findings · TUNE ...` (the feedback output).
 
 **Self-improvement:**
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill vidy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
