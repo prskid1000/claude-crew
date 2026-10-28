@@ -18,13 +18,13 @@
 In: kit.local.json `media` (GOODY.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media_grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L33 config · L148 fetchers · L403 probe · L422 detect · L1493 transcribe · L1613 vision · L1709 index · L1831 read ·
-  L1906 bench · L2593 verbs · L2739 cli
+Sections: L33 config · L149 fetchers · L404 probe · L423 detect · L1680 transcribe · L1800 vision · L1903 index · L2025 read ·
+  L2100 bench · L2791 verbs · L2937 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
 
-PIPE = 3   # bump when a stage's output changes: old indexes are rebuilt
+PIPE = 4   # bump when a stage's output changes: old indexes are rebuilt
 HERE = osp.dirname(osp.abspath(__file__))
 KIT = osp.dirname(osp.dirname(HERE))
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36'
@@ -39,7 +39,8 @@ DEFAULTS = {
     'jira': {'hosts': ['*.atlassian.net']},
     'image': {'hosts': {'prnt.sc': '#screenshot-image', 'prntscr.com': '#screenshot-image'}},
     'ytdlp': {'hosts': ['loom.com', '*.loom.com', 'youtube.com', '*.youtube.com', 'youtu.be', 'vimeo.com', '*.vimeo.com', '*.wistia.com', '*.vidyard.com']},
-    'detect': {'fps': 10, 'edge': 960, 'edgeHi': 1280, 'idleSec': 3, 'frames': 24, 'framesPerMin': 6, 'maxFrames': 120, 'fillSec': 8, 'fillCoverage': 0.99},   # keyframes: frames + framesPerMin, <= maxFrames; fills over it
+    'detect': {'fps': 10, 'edge': 960, 'edgeHi': 1280, 'idleSec': 3, 'frames': 24, 'framesPerMin': 6, 'maxFrames': 120, 'fillSec': 8, 'fillCoverage': 0.99,
+               'deltaShare': 0.5, 'deltaMarginPx': 16, 'montageSec': 30},   # keyframes: frames + framesPerMin, <= maxFrames; fills over it; delta pictures (deltas())
     'chunk': {'minSec': 20, 'maxSec': 60, 'sectionSec': 300, 'twoLevelOverSec': 3600},
     'stt': {'baseUrl': '', 'model': 'whisper-1', 'path': '/v1/audio/transcriptions', 'pieceSec': 30, 'timeoutSec': 300},
     'corpus': {'keep': 10, 'pin': []},   # media kept for the newest <keep> corpus clips; pin: keys or links never evicted
@@ -1114,13 +1115,13 @@ def keyframes(path, W, H, dur=0.0, anchors=(), params=None):
             yield n / 2.0, q_[n].result()
             q_[n] = None
     try:
-        sel = choose(cands, bl, tau, tau_mu, dict(p, pulse=noise['pulse']), budget, resample if len(samples) == len(masks) else
+        sel = choose(cands, bl, tau, tau_mu, dict(p, pulse=noise['pulse'], native=(W, H), segs=segments_of(dur or (i + 1) / fps)), budget, resample if len(samples) == len(masks) else
                      lambda: ((n / 2.0, cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)) for n, fr in enumerate(decode(path, w, h, 2))), masks)
     finally:
         pool.shutdown()
     t_sel = time.perf_counter() - c1
     return dict(size=[W, H], analysis=[w, h], fps=fps, frames_analysed=i + 1, tau=tau, tau_mu=round(tau_mu, 2), pulse=round(noise['pulse'], 1),
-                budget=budget, cands=cands, kept=sel['kept'], revisits=sel['revisits'], cover=sel['cover'], fills=sel['fills'], shown=sel['shown'], events=events, anchors=anc, masks=masks,
+                budget=budget, cands=cands, kept=sel['kept'], revisits=sel['revisits'], cover=sel['cover'], fills=sel['fills'], shown=sel['shown'], images=sel['images'], events=events, anchors=anc, masks=masks,
                 cursor=cursor_path, ms_per_frame=round(1000 * (t_cpu + t_sel) / max(1, i + 1), 2), ms_select=round(1000 * t_sel))
 
 def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
@@ -1150,14 +1151,14 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
         nr = math.sqrt(float((a * a).sum() * (b * b).sum())) or 1.0
         return [int(lag[j]) for j in top if r[j] / nr >= 0.5]
 
-    def covered(c, k, keep=True):
+    def covered(c, k, keep=True, shift=True):   # shift False: in place only (a delta pastes crops on its base unscrolled)
         key = (id(c), id(k))
         if keep and key in memo:
             return memo[key]
         cov = np.abs(c['mu'] - k['mu']) < tau_mu + 1.0   # same block means first: the pixel test only where they hold
         if cov.any():
             cov &= bl.count(cv2.threshold(cv2.absdiff(c['g'], k['g']), tcov, 255, cv2.THRESH_BINARY)[1]) < p['blk_px']
-        if cov.mean() < 0.5 and abs(c['t'] - k['t']) <= 30:   # the same content scrolled (nearby in time): shifts from row / column profiles
+        if shift and cov.mean() < 0.5 and abs(c['t'] - k['t']) <= 30:   # the same content scrolled (nearby in time): shifts from row / column profiles
             ys, xs = np.nonzero(~cov)
             y0, y1, x0, x1 = ys.min() * B, (ys.max() + 1) * B, xs.min() * B, (xs.max() + 1) * B
             a_, b_ = k['g'][y0:y1, x0:x1].astype(np.float32), c['g'][y0:y1, x0:x1].astype(np.float32)
@@ -1225,6 +1226,26 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
     fills = fill(kept, resample, masks, value, covered, p, tau_mu + 1.0, held_) if resample else []
     kept.sort(key=lambda c: c['t'])
     kept[:] = [k for n, k in enumerate(kept) if n == 0 or k['t'] - kept[n - 1]['t'] >= 0.05]   # two picks at one time = one image twice
+    def seen(c, k):   # the blocks of c that kept frame k's picture shows: a delta = its base outside the crops, itself inside
+        d = k.get('dl')
+        if d is None:
+            return covered(c, k)
+        return (covered(c, k, False, False) & d['M']) | (covered(c, d['base'], False, False) & ~d['M'])
+    need, force = max(p['fill_cover'], float(CFG['detect']['fillCoverage'])), set()
+    for _ in range(4):   # a state a whole kept frame showed (a scroll shift too) that its delta picture no longer shows: that frame stays whole
+        images, back = deltas(kept, covered, bl, p, tau_mu + 1.0, force), set()
+        for c in held_:
+            tot = float(c['u'].sum())
+            if tot <= 0 or any(c is k for k in kept):
+                continue
+            near = sorted(kept, key=lambda k: abs(k['t'] - c['t']))[:6]
+            sh = [(float(c['u'][covered(c, k)].sum()) / tot, k) for k in near]
+            v, k = max(sh, key=lambda x: x[0])
+            if v >= need and k.get('dl') and max(float(c['u'][seen(c, k_)].sum()) / tot for k_ in near) < need:
+                back.add(id(k))
+        if not back:
+            break
+        force |= back
     ids = {id(k): n for n, k in enumerate(kept)}
 
     def cover(c):   # the kept frame that shows this candidate's screen (itself, else the best earlier match), or None
@@ -1234,7 +1255,7 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
             return c['same'], 1.0
         best = (None, 0.0)
         for n, k in sorted(enumerate(kept), key=lambda x: abs(x[1]['t'] - c['t']))[:6]:
-            v = float(covered(c, k).mean())
+            v = float(seen(c, k).mean())
             if v > best[1]:
                 best = (n, v)
         return best
@@ -1245,7 +1266,7 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
         maybe = ((np.abs(kmu - c['mu'][None]) < tau_mu + 1.0).mean(axis=(1, 2)) >= 0.995) & (kt < c['t'] - 0.5)   # block means first: pixels only for those
         for n in (int(x) for x in np.nonzero(maybe)[0]):
             k = kept[n]
-            if covered(c, k).mean() >= 0.995:
+            if seen(c, k).mean() >= 0.995:
                 c['same'] = n
                 revisits.append(dict(t=round(c['t'], 2), same_as=n))
                 break
@@ -1253,8 +1274,130 @@ def choose(cands, bl, tau, tau_mu, p, budget, resample=None, masks=()):
         c = dict(t=t, g=g, mu=bl.mean(g), anim=masks[min(len(masks) - 1, int(t * 2))][0] if masks else np.zeros((bl.by, bl.bx), bool), curb=[])
         value(c)
         tot = float(c['u'].sum()) or 1.0
-        return max(float(c['u'][covered(c, k, False)].sum()) / tot for k in kept)
-    return dict(kept=kept, revisits=revisits, cover=cover, fills=fills, shown=shown)
+        return max(float(c['u'][seen(c, k) if k.get('dl') else covered(c, k, False)].sum()) / tot for k in kept)
+    return dict(kept=kept, revisits=revisits, cover=cover, fills=fills, shown=shown, images=images)
+
+def claude_tokens(w, h):
+    """Claude's image cost: one token per 28 x 28 patch (padded up) after its resize to a long edge <= 1568 px and <= 1568 patches."""
+    s = min(1.0, 1568 / max(w, h))
+    while math.ceil(w * s / 28) * math.ceil(h * s / 28) > 1568:
+        s *= 0.99
+    return math.ceil(w * s / 28) * math.ceil(h * s / 28)
+
+def vidy_size(W, H):   # a full frame as vidy gets it: native, long edge <= VIDY_EDGE
+    s = min(1.0, VIDY_EDGE / max(W, H))
+    return int(W * s), int(H * s)
+
+TILE_LABEL, TILE_MIN = 28, 224   # a montage tile: the label strip on top (one patch row); its least width (the label `k012 12:34 @1234,567` fits)
+
+def deltas(kept, covered, bl, p, mu_tol, force=()):
+    """Each kept frame's cheapest picture that still shows all of it (no model): the full frame, or a DELTA = a full kept frame
+    (its base) + native crops of the blocks that differ from it in place (merged boxes + detect.deltaMarginPx, on the 28 px patch
+    grid) when they cost <= detect.deltaShare of a full frame; no crop = the same as its base, no image. Deltas in a row on one
+    base within detect.montageSec share one montage (time-labelled tiles, <= 1568 px and 1568 patches: never resized). A base is
+    in the delta's vidy segment (a segment vidy reads only its own); force: ids of frames kept whole.
+    Returns the images [{kind full | montage, frames: [kept index], tiles: [(n, box, (x, y, scale))], size, tokens}]."""
+    c = CFG['detect']
+    W, H = p['native']
+    full, share, B = claude_tokens(*vidy_size(W, H)), float(c['deltaShare']), bl.B
+    sx, sy, mg = W / bl.w, H / bl.h, int(c['deltaMarginPx'])
+    kern = np.ones((3, 3), np.uint8)
+
+    def tile(b):   # a crop's tile size (label strip on top, padded to the patch grid) and the scale it needs to fit 1568 px
+        s = min(1.0, 1568 / (b[2] - b[0]))   # >= 0.82 on a 1920 px frame: sharper than the full frame Claude shrinks to 1456 px
+        return min(1568, max(TILE_MIN, 28 * math.ceil(round((b[2] - b[0]) * s, 6) / 28))), 28 * math.ceil(round((b[3] - b[1]) * s, 6) / 28) + TILE_LABEL, s
+
+    def cost(bs):
+        return sum(tile(b)[0] * tile(b)[1] // 784 for b in bs)
+
+    def boxes_of(U):   # changed blocks -> native crop boxes; two boxes merge when the union costs no more than both
+        n, _, st, _ = cv2.connectedComponentsWithStats(cv2.dilate(U.astype(np.uint8), kern), 8)
+        bs = []
+        for x0, y0, ww, hh, _a in st[1:]:
+            bs.append([max(0, int(x0 * B * sx) - mg), max(0, int(y0 * B * sy) - mg), min(W, int((x0 + ww) * B * sx) + mg), min(H, int((y0 + hh) * B * sy) + mg)])
+        merged = True
+        while merged and len(bs) > 1:
+            merged = False
+            for i in range(len(bs)):
+                for j in range(i + 1, len(bs)):
+                    u = [min(bs[i][0], bs[j][0]), min(bs[i][1], bs[j][1]), max(bs[i][2], bs[j][2]), max(bs[i][3], bs[j][3])]
+                    if cost([u]) <= cost([bs[i], bs[j]]):
+                        bs[i], merged = u, True
+                        del bs[j]
+                        break
+                if merged:
+                    break
+        return sorted(bs, key=lambda b: (b[1], b[0]))
+
+    def mask_of(bs):   # the blocks a crop holds whole (border blocks stay the base's: conservative)
+        m = np.zeros((bl.by, bl.bx), bool)
+        for x0, y0, x1, y1 in bs:
+            m[math.ceil(y0 / sy / B):int(y1 / sy // B), math.ceil(x0 / sx / B):int(x1 / sx // B)] = True
+        return m
+    segs = p.get('segs') or [(0.0, 1e9)]
+    seg = lambda t: next((i for i, (a, b) in enumerate(segs) if a <= t < b), len(segs) - 1)
+    fulls = []
+    for n, k in enumerate(kept):
+        k.pop('dl', None)
+        best, mine = None, [f for f in fulls if seg(f['t']) == seg(k['t'])]
+        if n and share > 0 and mine and id(k) not in force:
+            bound = (np.abs(np.stack([f['mu'] for f in mine]) - k['mu'][None]) < mu_tol).mean(axis=(1, 2))
+            near = sorted(range(len(mine)), key=lambda j: abs(mine[j]['t'] - k['t']))[:3]
+            for j in dict.fromkeys([int(x) for x in np.argsort(-bound)[:3]] + near):
+                U = ~covered(k, mine[j], False, False) & (k['u'] > 0)
+                bs = boxes_of(U) if U.any() else []
+                if best is None or cost(bs) < best[0]:
+                    best = (cost(bs), mine[j], bs)
+        if best is not None and best[0] <= share * full:
+            k['dl'] = dict(base=best[1], boxes=best[2], M=mask_of(best[2]))
+        else:
+            fulls.append(k)
+    ix = {id(k): n for n, k in enumerate(kept)}
+    images, cur = [], None
+    for n, k in enumerate(kept):
+        d = k.get('dl')
+        if d is None:
+            images.append(dict(kind='full', frames=[n], tokens=full))
+            cur = None
+            continue
+        if not d['boxes']:   # the same picture as its base
+            continue
+        for b in d['boxes']:   # tile by tile: a frame's crops may spill into the next montage
+            tl = (n, b, tile(b))
+            if cur is not None and cur['base'] is d['base'] and k['t'] - cur['t0'] <= float(c['montageSec']) and pack(cur['tiles'] + [tl]):
+                cur['tiles'].append(tl)
+                if cur['frames'][-1] != n:
+                    cur['frames'].append(n)
+            else:
+                cur = dict(kind='montage', base=d['base'], t0=k['t'], frames=[n], tiles=[tl])
+                images.append(cur)
+    for im in images:
+        if im['kind'] == 'montage':
+            im['size'], places = pack(im['tiles'])
+            im['tiles'] = [(n, b, (x, y, t[2])) for (n, b, t), (x, y) in zip(im['tiles'], places)]
+            im['tokens'] = claude_tokens(*im['size'])
+            im['base'] = ix[id(im['base'])]
+            im.pop('t0', None)
+    return images
+
+def pack(tiles):
+    """Shelf packing in time order at the row width (max tile .. 1568 px, 28 px steps) with the least area; None when the montage
+    would exceed 1568 px or 1568 patches (Claude would shrink it), else ((w, h), [(x, y)])."""
+    best = None
+    if len(tiles) == 1:
+        return tiles[0][2][:2], [(0, 0)]
+    for lim in range(max(t[2][0] for t in tiles), 1569, 28):
+        x = y = rh = mw = 0
+        out = []
+        for _n, _b, (tw, th, _s) in tiles:
+            if x and x + tw > lim:
+                x, y, rh = 0, y + rh, 0
+            out.append((x, y))
+            x, rh, mw = x + tw, max(rh, th), max(mw, x + tw)
+        size = (mw, y + rh)
+        if size[1] <= 1568 and (size[0] // 28) * (size[1] // 28) <= 1568 and (best is None or size[0] * size[1] < best[0][0] * best[0][1]):
+            best = (size, out)
+    return best
 
 def fill(kept, resample, masks, value, covered, p, mu_tol, held=()):
     """The safety net, even over the budget: a 0.5 s sample or a held screen (a candidate state: short holds too) that no kept
@@ -1384,12 +1527,30 @@ def detect(path, info, out_dir, fj=None):
     kref = lambda n: f'k{n:03d}' if n is not None else None
     kf = []
     vc = cv2.VideoCapture(path)
+    pos = {id(c): n for n, c in enumerate(kept)}
     for n, c in enumerate(kept):
-        fr = grab(path, c['t'], vc)
         ev = r['events'][c['ev']] if c.get('ev') is not None and c['ev'] < len(r['events']) else None
         kind = c['kind'] if c['kind'] in ('start', 'scroll', 'action', 'before', 'anim-sample', 'progress', 'intermediate') or ev is None else ev['kind']
-        kf.append({'ref': kref(n), 't': round(c['t'], 2), 'kind': kind, 'gain': round(c.get('gain', 0), 1),
-                   'file': save_jpeg(fr, osp.join(out_dir, 'keyframes', f"{kref(n)}-{int(round(c['t'] * 100)):06d}.jpg"), VIDY_EDGE) if fr is not None else None})   # by time: a re-detect never overwrites a frame vidy read
+        kf.append({'ref': kref(n), 't': round(c['t'], 2), 'kind': kind, 'gain': round(c.get('gain', 0), 1), 'file': None})
+        d = c.get('dl')
+        if d is not None:
+            kf[-1].update(base=kref(pos[id(d['base'])]), boxes=d['boxes'])
+    for m, im in enumerate(r['images']):
+        if im['kind'] == 'full':
+            n = im['frames'][0]
+            fr = grab(path, kept[n]['t'], vc)   # file named by time: a re-detect never overwrites a frame vidy read
+            kf[n]['file'] = save_jpeg(fr, osp.join(out_dir, 'keyframes', f"{kref(n)}-{int(round(kept[n]['t'] * 100)):06d}.jpg"), VIDY_EDGE) if fr is not None else None
+            continue
+        p_ = osp.join(out_dir, 'keyframes', f"m{m:03d}-{kref(im['frames'][0])}-{int(round(kept[im['frames'][0]]['t'] * 100)):06d}.png")
+        ok = montage(path, im, kept, kref, vc, p_)
+        for n in im['frames']:   # a frame that cannot be decoded for its crops: whole, as before
+            fr = None if ok else grab(path, kept[n]['t'], vc)
+            if ok:
+                kf[n]['file'] = kf[n].get('file') or p_
+                kf[n].setdefault('images', []).append(p_)
+            elif fr is not None:
+                kf[n].update(file=save_jpeg(fr, osp.join(out_dir, 'keyframes', f"{kref(n)}-{int(round(kept[n]['t'] * 100)):06d}.jpg"), VIDY_EDGE), images=None)
+                kf[n].pop('base', None)
     vc.release()
     rows = []
 
@@ -1466,7 +1627,9 @@ def detect(path, info, out_dir, fj=None):
         row['id'] = f'e{n:03d}'
     for x in r['revisits']:
         x['same_as'] = kref(x['same_as'])
+    imgs = [{'kind': im['kind'], 'refs': [kref(n) for n in im['frames']], 'base': kref(im.get('base')), 'tokens': im['tokens']} for im in r['images']]
     return {'fps': r['fps'], 'scaled': r['analysis'], 'duration': dur, 'events': rows, 'keyframes': kf, 'revisits': r['revisits'], 'budget': r['budget'],
+            'images': len(imgs), 'imageTokens': sum(x['tokens'] for x in imgs), 'deltas': sum(1 for x in kf if x.get('base')),
             'noise': {'tau': r['tau'], 'tauMu': r['tau_mu'], 'pulse': r['pulse']}, 'msPerFrame': r['ms_per_frame'], 'fills': len(r['fills']), 'sidecar': src,
             'counts': {k: sum(1 for x in rows if x['kind'] == k) for k in sorted({x['kind'] for x in rows})}}
 
@@ -1489,6 +1652,30 @@ def save_jpeg(img, out, edge):
     os.makedirs(osp.dirname(out), exist_ok=True)
     cv2.imwrite(out, img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return out
+
+def montage(path, im, kept, kref, cap, out):
+    """A delta montage (deltas()): each crop at native size (scaled only past 1568 px wide) under a label strip `kNNN m:ss
+    @x,y` (where it sits on its base frame); lossless PNG, so text edges stay sharp. False when a frame cannot be decoded."""
+    import cv2
+    W, H = im['size']
+    can = np.full((H, W, 3), 96, np.uint8)   # grey gaps between tiles
+    frs = {}
+    for n, b, (x, y, s) in im['tiles']:
+        if n not in frs:
+            frs[n] = grab(path, kept[n]['t'], cap)
+        fr = frs[n]
+        if fr is None:
+            return False
+        crop = fr[b[1]:b[3], b[0]:b[2]]
+        if s < 1:
+            crop = cv2.resize(crop, (max(1, int(crop.shape[1] * s)), max(1, int(crop.shape[0] * s))), interpolation=cv2.INTER_AREA)
+        tw = max(TILE_MIN, crop.shape[1])
+        can[y:y + TILE_LABEL, x:x + tw] = 255
+        cv2.putText(can, f"{kref(n)} {mmss(kept[n]['t'])} @{b[0]},{b[1]}", (x + 4, y + 19), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+        can[y + TILE_LABEL:y + TILE_LABEL + crop.shape[0], x:x + crop.shape[1]] = crop
+    os.makedirs(osp.dirname(out), exist_ok=True)
+    cv2.imwrite(out, can, [cv2.IMWRITE_PNG_COMPRESSION, 6])
+    return True
 
 # ---- transcribe: sidecars first (Jam transcript, VTT), else the local OpenAI-compatible STT server on speech pieces
 def parse_vtt(p):
@@ -1623,9 +1810,16 @@ def vision_targets(det, fj):
     segment; vidy reads only these."""
     if fj.get('kind') == 'image':
         return [{'ref': 'image', 't': 0, 'file': fj['file'], 'segment': 1}]
-    segs = segments_of(float(det.get('duration') or 0))
-    return [{'ref': k['ref'], 't': k['t'], 'file': k['file'], 'kind': k.get('kind'), 'segment': next((i for i, (s, e) in enumerate(segs, 1) if s <= k['t'] < e), len(segs))}
-            for k in det.get('keyframes') or [] if k.get('file') and osp.isfile(k['file'])]
+    segs, out, by = segments_of(float(det.get('duration') or 0)), [], {}
+    for k in det.get('keyframes') or []:   # one target per image: a crops montage holds several deltas on one base
+        for f in k.get('images') or ([k['file']] if k.get('file') else []):
+            if f in by:
+                by[f]['refs'].append(k['ref'])
+            elif osp.isfile(f):
+                by[f] = dict({'ref': k['ref'], 't': k['t'], 'file': f, 'kind': k.get('kind'), 'refs': [k['ref']],
+                              'segment': next((i for i, (s, e) in enumerate(segs, 1) if s <= k['t'] < e), len(segs))}, **({'base': k['base']} if k.get('base') else {}))
+                out.append(by[f])
+    return out
 
 def vision(det, fj, out_dir):
     tg = vision_targets(det, fj)
@@ -1633,14 +1827,10 @@ def vision(det, fj, out_dir):
             'reason': f'{len(tg)} keyframes unread: run vidy' if tg else 'no keyframes'}
 
 def image_tokens(p):
-    """Claude's image input cost: w * h / 750 after its resize to <= 1568 px long edge and <= 1.15 MP."""
+    """Claude's image input cost of one file (claude_tokens)."""
     import cv2
     img = cv2.imread(p)
-    if img is None:
-        return 0
-    h, w = img.shape[:2]
-    s = min(1.0, 1568 / max(h, w), (1150000 / (w * h)) ** 0.5)
-    return int(w * s * h * s / 750) + 1
+    return claude_tokens(img.shape[1], img.shape[0]) if img is not None else 0
 
 def frames(key, segment=None):
     ix = ix_dir(key)
@@ -1650,7 +1840,11 @@ def frames(key, segment=None):
     pend, c = vi.get('pending') or [], CFG['vidy']
     nseg, bat = int(vi.get('segments') or 1), max(1, int(c['batch']))
     lines = [f"# {key}: {len(pend)} keyframes unread, {len(vi.get('items', []))} read · {nseg} segment(s) · the detector's {vi.get('maxFrames', len(pend))} keyframes"
-             f" (read only these) · read {bat} per turn (parallel Read calls, time order)"]
+             f" (read only these) · read {bat} per turn (parallel Read calls, time order)",
+             'crops image (kNNN+kMMM ... on kBBB): changes only; the screen at kNNN = frame kBBB with each tile `kNNN m:ss @x,y` pasted at x,y (px)']
+    same = [f"{k['ref']} = {k['base']}" for k in (load_json(osp.join(ix, 'detect.json')) or {}).get('keyframes') or [] if k.get('base') and not k.get('boxes')]
+    if same:
+        lines.append(f"no image (same screen as its base): {', '.join(same)}")
     if nseg > 1 and segment is None:
         lines.append(f'segments: one vidy per segment (pokey.ps1 evidence frames {key} -Segment <n>), then one merge of the timeline and answer')
     for sg in ([int(segment)] if segment else range(1, nseg + 1)):
@@ -1659,7 +1853,7 @@ def frames(key, segment=None):
             lines.append(f'## segment {sg}/{nseg}: {len(mine)} unread')
         for n in range(0, len(mine), bat):
             lines.append(f'batch {n // bat + 1}:')
-            lines += [f"{x['ref']} {mmss(x['t'])}: {x['file']}" for x in mine[n:n + bat]]
+            lines += [f"{'+'.join(x.get('refs') or [x['ref']])} {mmss(x['t'])}{' crops on ' + x['base'] if x.get('base') else ''}: {x['file']}" for x in mine[n:n + bat]]
     lines.append(f"items: {osp.join(ix, 'vision-items' + (f'-s{segment}' if segment else '') + '.json')} -> pokey.ps1 evidence write-vision {key} -File <items>")
     return lines
 
@@ -1684,7 +1878,7 @@ def write_vision(key, items_file, model=None, tokens=None):
         items.append({'ref': str(r.get('ref') or f'f{n:02d}'), 't': round(parse_time(r.get('t', 0)), 2), 'text': str(r.get('text') or '').strip(),
                       'ui': clip(str(r.get('ui') or ''), 300), 'frames': fr})
     same = lambda p: osp.normcase(osp.abspath(p))
-    img, kfs = sum(image_tokens(p) for p in read), {same(x['file']) for x in (load_json(osp.join(ix, 'detect.json')) or {}).get('keyframes') or [] if x.get('file')}
+    img, kfs = sum(image_tokens(p) for p in read), {same(f) for x in (load_json(osp.join(ix, 'detect.json')) or {}).get('keyframes') or [] for f in x.get('images') or [x.get('file')] if f}
     extra = [p for p in read if kfs and same(p) not in kfs]   # vidy reads the detector's keyframes only
     lk = os_lock(osp.join(ix, 'vision.json.lock'), 120)   # segment vidys write one after another: merge, never overwrite
     if not lk:
@@ -1772,7 +1966,7 @@ def build(key):
         say = ' '.join(x['text'] for x in tr.get('segments', []) if inside(x))
         screen = [vis[x]['text'] for x in vis if inside(vis[x])]
         ui = [vis[x]['ui'] for x in vis if inside(vis[x]) and vis[x].get('ui')]
-        unread = [f"{x['ref']} {mmss(x['t'])} {rel(x['file'])}" for x in pend if inside(x)]
+        unread = [f"{x['ref']} {mmss(x['t'])}{' crops on ' + x['base'] if x.get('base') else ''} {rel(x['file'])}" for x in pend if inside(x)]
         flags = sorted({m.group(1).lower() for m in ERR_RE.finditer(say + ' ' + ' '.join(screen))})
         out.append({'id': f'c{n:02d}', 'start': s, 'end': e, 'say': clip(say, 400), 'screen': clip(' | '.join(screen), 300), 'ui': clip(' | '.join(ui), 200), 'unread': unread,
                     'events': [ev_line(r) for r in evs if r['kind'] != 'idle'][:12], 'more': max(0, len([r for r in evs if r['kind'] != 'idle']) - 12),
@@ -2275,7 +2469,7 @@ def state_recall(r, states, path):
     hit, w, h = [], *r['analysis']
     for st in states:
         t0, t1 = float(st[0]), float(st[1])
-        ok = any(t0 - 0.3 <= c['t'] <= t1 + 0.3 for c in r['kept'])
+        ok = any(t0 - 0.3 <= c['t'] <= t1 + 0.3 and not c.get('dl') for c in r['kept'])   # a delta in the window: its base + crops must show it
         if not ok:
             fr = next(decode_at(path, w, h, (t0 + t1) / 2), None)
             ok = fr is not None and r['shown']((t0 + t1) / 2, cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)) >= KP['fill_cover']
@@ -2298,7 +2492,7 @@ def bench_clip(out, n, crf):
         v = synth(out, n, crf)
         g = load_json(osp.join(out, tag + '.gt.json'))
     r = keyframes(v, g['size'][0], g['size'][1], g['frames'] / g['fps'])
-    return tag, dict(score_synth([c['t'] for c in r['kept']], g, r['events']), ms=r['ms_per_frame'], dupes=sum(1 for a, b in zip(r['kept'], r['kept'][1:]) if b['t'] - a['t'] < 0.05))
+    return tag, dict(score_synth([c['t'] for c in r['kept']], g, r['events']), ms=r['ms_per_frame'], tokens=sum(x['tokens'] for x in r['images']), images=len(r['images']), dupes=sum(1 for a, b in zip(r['kept'], r['kept'][1:]) if b['t'] - a['t'] < 0.05))
 
 def bench(names=None, crf36=True, corpus=True, only=None, record=False):
     """The detector gate: synthetic clips (generated once per SYNTH into the cache) + their crf-36 variants, then every corpus
@@ -2347,16 +2541,20 @@ def bench(names=None, crf36=True, corpus=True, only=None, record=False):
         waste = [a for a in anim if sum(1 for c in r['kept'] if a[0] <= c['t'] <= a[1]) > a[2]]
         wrong = [x for x in lab.get('expect') or [] if expect_met(r['events'], x) == bool(x.get('absent'))]
         dupes = [round(b['t'], 2) for a, b in zip(r['kept'], r['kept'][1:]) if b['t'] - a['t'] < 0.05]
+        tok = sum(x['tokens'] for x in r['images'])
         res['corpus'][key] = {'name': e.get('name'), 'recall': rec, 'was': e.get('recall'), 'frames': len(r['kept']), 'fills': len(r['fills']), 'missed': miss[:12],
+                              'images': len(r['images']), 'tokens': tok, 'tokensWas': e.get('tokens'),
                               'waste': waste, 'wrong': wrong, 'dupes': dupes, 'ms': r['ms_per_frame']}
         if wrong or dupes:
             fails.append(f"corpus {key}: " + '; '.join([f"event {'present' if x.get('absent') else 'missing'}: {x}" for x in wrong] + ([f'one frame twice at {dupes}'] if dupes else [])))
         if e.get('recall') is not None and rec < float(e['recall']):
             fails.append(f"corpus {key} ({e.get('name')}): recall {rec} < {e['recall']} recorded")
+        if e.get('tokens') is not None and tok > int(e['tokens']):
+            fails.append(f"corpus {key} ({e.get('name')}): {tok} image tokens > {e['tokens']} recorded")
         if len(waste) > int(e.get('waste', len(waste))):
             fails.append(f"corpus {key}: {len(waste)} animation windows over their frame cap (was {e.get('waste')}): {waste}")
         if record and not (e.get('recall') is not None and rec < float(e['recall'])) and len(waste) <= int(e.get('waste', len(waste))):   # never lowers a baseline
-            e.update(recall=rec, waste=len(waste), pipe=PIPE, status='passed' if rec >= 1 and not waste else 'open', checked=time.strftime('%Y-%m-%d'))
+            e.update(recall=rec, waste=len(waste), pipe=PIPE, tokens=min(tok, int(e.get('tokens') or tok)), status='passed' if rec >= 1 and not waste else 'open', checked=time.strftime('%Y-%m-%d'))
     if record and corpus:
         save_json(corpus_file(), cj)
     res['fails'] = fails
@@ -2850,9 +3048,9 @@ def main():
                 print(json.dumps(r, ensure_ascii=False))
             else:
                 for k, v in r['synthetic'].items():
-                    print(f"{k}: recall {v['recall']} key {v['key']} precision {v['precision']} frames {v['n']} {v['ms']} ms/frame" + (f" loading {v['loadingEvents']} event, {v['loadingFrames']} frames" if 'loadingFrames' in v else ''))
+                    print(f"{k}: recall {v['recall']} key {v['key']} precision {v['precision']} frames {v['n']} images {v['images']} tokens {v['tokens']} {v['ms']} ms/frame" + (f" loading {v['loadingEvents']} event, {v['loadingFrames']} frames" if 'loadingFrames' in v else ''))
                 for k, v in r['corpus'].items():
-                    print(f'corpus {k}: ' + (v['skipped'] if 'skipped' in v else f"{v['name']}: recall {v['recall']} (was {v['was']}) frames {v['frames']} (fills {v['fills']}) {v['ms']} ms/frame" + (f" missed {v['missed']}" if v['missed'] else '')))
+                    print(f'corpus {k}: ' + (v['skipped'] if 'skipped' in v else f"{v['name']}: recall {v['recall']} (was {v['was']}) frames {v['frames']} (fills {v['fills']}) images {v['images']} tokens {v['tokens']} (was {v['tokensWas']}) {v['ms']} ms/frame" + (f" missed {v['missed']}" if v['missed'] else '')))
                 print('\n'.join(f'FAIL {x}' for x in r['fails']) or 'bench: pass')
             return 1 if r['fails'] else 0
         elif cmd == 'select' and rest:

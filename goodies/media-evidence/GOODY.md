@@ -29,7 +29,12 @@
     `page-change`, `modal` / `modal-closed`, `scroll`, `toast` (a corner panel that goes within 10 s, also over a page change
     under it), `highlight` (a fill: a dark-theme row tint is no toast), `text`, `change`, `transient`, `animated` (loading /
     playback: ONE event per screen region with its duration, <= 3 frames), `idle`, `cursor` moves, `click?` (a guess from the pointer), each with its `before` / `after` / `peak` keyframes and
-    `(same)` for a revisit. Keyframes: full frames, native size up to 2000 px (`keyframes/kNNN.jpg`).
+    `(same)` for a revisit. Pictures: each keyframe's cheapest one that shows all of it: a full frame (native, long edge <= 2000
+    px, `keyframes/kNNN-*.jpg`), or a delta = a full keyframe (its base) + native crops of the blocks that differ from it in place
+    (merged while the union costs no more, `deltaMarginPx`, on Claude's 28 px patch grid) when they cost <= `deltaShare` of a
+    full frame; deltas on one base within `montageSec` share one montage (`keyframes/mNNN-*.png`, tiles labelled `kNNN m:ss @x,y`,
+    <= 1568 px and 1568 patches: never shrunk); no crop = the same screen as its base, no image. Coverage and recall count a delta
+    by its base + crops. Token cost (`claude_tokens`): one per 28 x 28 patch after Claude's resize to 1568 px / 1568 patches.
   - sidecar actions: `<media>.events.json` beside a local file (pokey `browser.mjs` `record()`, `phoney.ps1 events`; only these:
     other videos are pixels only) anchors keyframes: each action's settled after-frame is kept, its line says `click "Save"
     [pokey] k003->k004`; times = `at` - `start` (epoch ms; no `start`: the file time minus the duration).
@@ -52,8 +57,8 @@
 - `bench`: 11 synthetic clips with exact ground truth + 6 crf-36 variants (generated into the cache, never committed; gate:
   recall and key recall 1.0, precision >= 0.85, the 30 s loading = one event with <= 3 frames, no dark-theme toast, a ticking
   timer no event and a toast over a page change one, no frame twice) + every
-  corpus clip whose media is cached (state recall: a kept frame in the window or one showing >= 98% of it; a drop below its
-  recorded recall fails; `-Record` stores it; labels' `expect` rows `{kind, t0, t1, [box], [minSec], [absent]}` and one frame
+  corpus clip whose media is cached (state recall: a full keyframe in the window or one picture showing >= 98% of it; a drop
+  below its recorded recall or a rise over its recorded image tokens fails; `-Record` stores both, never worse; labels' `expect` rows `{kind, t0, t1, [box], [minSec], [absent]}` and one frame
   kept twice fail too). The corpus keeps media for the newest `corpus.keep` clips (`corpus.pin`: never
   evicted); older ones keep labels and feedback rows, `media: evicted` (skipped; `index <link>` fetches again).
 - Resources: one OS lock per video key (a second agent waits, then reads the same cache); STT holds the lease `local-stt` (one
@@ -63,7 +68,8 @@
 Needed when: `media` = `*`, or listed in kit.local.json `goodies`.
 - Config `media` (every key optional): `fetchers` (order), `jam.hosts`, `sharepoint.hosts` + `sharepoint.cookies` (`{host | "*":
   <cookies.txt path>}`: local only), `gdrive.hosts`, `jira.hosts`, `image.hosts` (`{host: <css selector>}`), `ytdlp.hosts`,
-  `detect` (fps 10, edge 960, edgeHi 1280, idleSec 3, frames 24, framesPerMin 6, maxFrames 120, fillSec 8, fillCoverage 0.99), `corpus` (keep 10,
+  `detect` (fps 10, edge 960, edgeHi 1280, idleSec 3, frames 24, framesPerMin 6, maxFrames 120, fillSec 8, fillCoverage 0.99, deltaShare 0.5: 0 =
+  full frames only, deltaMarginPx 16, montageSec 30), `corpus` (keep 10,
   pin []), `chunk` (minSec 20,
   maxSec 60, sectionSec 300, twoLevelOverSec 3600), `stt` (baseUrl, model whisper-1, path /v1/audio/transcriptions, pieceSec
   30, ramGB, maxConcurrent 1), `vidy` (model sonnet: the agent's model; batch 8 frames per turn; segmentSec 300; labelTokens

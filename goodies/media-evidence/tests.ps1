@@ -84,7 +84,7 @@ if ($ff -and $cv) {
   # vidy path: vision lists the keyframes (no model call), index.md marks them unread with paths; write-vision -> index + read-chunk
   Expect "media vision: no model call, unread keyframes with paths in index.md ($(@($j1.notes) -join '; '))" ($j1.notes -match 'vision: \d+ keyframes unread: run vidy' -and $md -match 'keyframes unread: run vidy \(pokey.ps1 evidence frames' -and $md -match '(?m)^keyframes \(unread: run vidy\): .*keyframes[\\/][\w-]+\.jpg')
   $fr = Invoke-TestScript $Q evidence frames $j1.key
-  $fpaths = @([regex]::Matches($fr.out, '(?m)^\S+ \d+:\d+: (\S+?\.jpg)') | ForEach-Object { $_.Groups[1].Value })
+  $fpaths = @([regex]::Matches($fr.out, '(?m)^\S+ \d+:\d+(?: crops on k\d+)?: (\S+?\.(?:jpg|png))') | ForEach-Object { $_.Groups[1].Value })
   $px = if ($fpaths) { & $py -c "import cv2,sys; print(cv2.imread(sys.argv[1]).shape[1])" $fpaths[0] } else { 0 }
   Expect "media frames: the detector's keyframes as existing full frames (640 px wide), one batch ($($fpaths.Count), $px px)" ($fr.code -eq 0 -and $fpaths.Count -ge 2 -and -not @($fpaths | Where-Object { -not (Test-Path $_) }).Count -and $fr.out -match "the detector's $($fpaths.Count) keyframes \(read only these\)" -and $fr.out -match '(?m)^batch 1:' -and "$px" -eq '640')
   $rcU = Invoke-TestScript $Q evidence read-chunk $j1.key -At 0:05 -Window 4 -Frames 1 -Size 320
@@ -108,7 +108,7 @@ if ($ff -and $cv) {
   & $J @{ media = @{ stt = @{ baseUrl = 'http://127.0.0.1:9'; ramGB = 0.1 }; vidy = @{ segmentSec = 4 } } } $cfgF
   $i5 = Invoke-TestScript $Q evidence index $mp4 -Json; $j5 = try { $i5.out.Substring($i5.out.IndexOf('{')) | ConvertFrom-Json } catch { $null }
   $f5 = Invoke-TestScript $Q evidence frames $j5.key
-  $seg = foreach ($n in 1, 2) { , @([regex]::Matches((Invoke-TestScript $Q evidence frames $j5.key -Segment $n).out, '(?m)^\S+ \d+:\d+: (\S+\.jpg)') | ForEach-Object { $_.Groups[1].Value }) }
+  $seg = foreach ($n in 1, 2) { , @([regex]::Matches((Invoke-TestScript $Q evidence frames $j5.key -Segment $n).out, '(?m)^\S+ \d+:\d+(?: crops on k\d+)?: (\S+\.(?:jpg|png))') | ForEach-Object { $_.Groups[1].Value }) }
   Expect "media segments: 8 s at segmentSec 4 -> 2 segments, -Segment n lists only its own ($($seg[0].Count) + $($seg[1].Count))" ($f5.out -match '2 segment\(s\)' -and $f5.out -match 'one vidy per segment' -and $f5.out -match '## segment 2/2' -and $seg[0].Count -ge 1 -and $seg[1].Count -ge 1 -and -not @($seg[0] | Where-Object { $seg[1] -contains $_ }).Count)
   $sA = Join-Path (Kd) 'seg1.json'; $sB = Join-Path (Kd) 'seg2.json'
   ConvertTo-Json -Depth 5 -InputObject @(@{ ref = 's1'; t = 1; text = 'segment one text'; frames = @($seg[0]) }) | Set-Content $sA
@@ -219,6 +219,14 @@ if ($ff -and $cv) {
     $env:KIT_MEDIA_CONFIG = $fc; & $nf (Invoke-TestScript $Q evidence bench -Names page --no-crf36 -NoCorpus).out; $env:KIT_MEDIA_CONFIG = $null
   }
   Expect "media detect.fillCoverage: over a 1-frame budget the default 0.99 adds fills, 0 adds none (frames $($fb -join ' vs '))" ([int]$fb[0] -ge 3 -and [int]$fb[1] -eq 1)
+  # media.detect.deltaShare: typing changes one line; the default sends crops on a base frame (fewer images and tokens, recall
+  # held), 0 sends every keyframe whole
+  $dl = foreach ($dsv in @($null, 0)) {
+    $dc = Join-Path (Kd) "delta$dsv.json"; & $J @{ detect = $(if ($null -ne $dsv) { @{ deltaShare = $dsv } } else { @{} }) } $dc
+    $env:KIT_MEDIA_CONFIG = $dc; $o = (Invoke-TestScript $Q evidence bench -Names typing --no-crf36 -NoCorpus).out; $env:KIT_MEDIA_CONFIG = $null
+    $mt = [regex]::Match($o, '(?m)^typing: recall (\S+) .* frames (\d+) images (\d+) tokens (\d+)'); , @($mt.Groups[1].Value, [int]$mt.Groups[2].Value, [int]$mt.Groups[3].Value, [int]$mt.Groups[4].Value)
+  }
+  Expect "media detect.deltaShare: crops cut images and tokens at recall 1.0 ($(($dl | ForEach-Object { $_ -join '/' }) -join ' vs '))" ($dl[0][0] -eq '1.0' -and $dl[0][2] -lt $dl[1][2] -and $dl[0][3] -lt $dl[1][3] -and $dl[1][2] -eq $dl[1][1])
 }
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
 Expect 'media: supervise runs with the goody loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
