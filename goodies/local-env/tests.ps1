@@ -273,6 +273,34 @@ Invoke-Daemon -Env t -Train tr2
 $null = Px $rbw 2>&1
 $rb = & { . $L3; $sv = (Read-State t).services.api; "$($sv.artifact -eq $a1)|$($sv.release)|$((Read-State t).release.n)" }
 Expect "rollback: a failed switch-over and a failed restart leave the previous release's copy in the state ($rb)" ($rb -eq 'True|1|1')
+# stale layers (supervise: drop -Stale): merged and gone-from-origin branches and a holder gone past the grace drop; a live and a paused agent's stay;
+# release (drop -Agent): a finished agent's layers drop, a paused one's stay; the env is idle: each drop waits for the next lease or request
+$lo = Join-Path $sq 'lo'; git init -q -b main $lo; Set-Content (Join-Path $lo 'f.txt') 'v1'; git -C $lo add .; git -C $lo -c user.name=t -c user.email=t@t commit -qm init
+$lyc = { param($b) git -C $lo checkout -q -b $b main; Add-Content (Join-Path $lo "$b.txt") $b; git -C $lo add .; git -C $lo -c user.name=t -c user.email=t@t commit -qm $b; "$(git -C $lo rev-parse HEAD)".Trim() }
+$ly = @{}; foreach ($b in 'mrg', 'orph', 'park', 'live', 'fin', 'pz') { $ly[$b] = & $lyc $b }
+git -C $lo checkout -q main; git -C $lo merge -q --no-ff -m 'merge mrg' mrg 2>$null; $lc = Join-Path $sq 'lc'; git clone -q $lo $lc 2>$null
+git -C $lc checkout -q -b gone1 origin/main; Add-Content (Join-Path $lc 'g.txt') g; git -C $lc add .; git -C $lc -c user.name=t -c user.email=t@t commit -qm gone1; $ly.gone1 = "$(git -C $lc rev-parse HEAD)".Trim(); git -C $lc checkout -q -b loc1; Add-Content (Join-Path $lc 'h.txt') h; git -C $lc add .; git -C $lc -c user.name=t -c user.email=t@t commit -qm loc1
+$ly.loc1 = "$(git -C $lc rev-parse HEAD)".Trim(); git -C $lc checkout -q main; git -C $lc branch -q -D gone1   # gone1: deleted everywhere; loc1: a live agent's unpushed branch
+& $J @{ repos = @(@{ name = 'r'; checkout = $lc; target = 'main' }); localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'web'; repo = 'r'; port = 41018 }) } } } } $cf3 8
+$bd = TkPath $k3 board -Create; $old = (Get-Date).AddMinutes(-11).ToString('o')
+& $J @{ agent = 'LV'; session = 'LV-s'; status = 'working'; beat = (Get-Date).ToString('o') } "$bd/LV-s.json"
+foreach ($pa in 'P1', 'PZ') { & $J @{ agent = $pa; session = "$pa-s"; status = 'left'; paused = $old; beat = $old } "$bd/$pa-s.json" }
+$lay = @(@{ branch = 'mrg'; agent = 'A1' }, @{ branch = 'orph'; agent = 'X9'; holder = @{ agent = 'X9'; seen = $old } }, @{ branch = 'park'; agent = 'P1'; holder = @{ agent = 'P1'; seen = $old } },
+  @{ branch = 'live'; agent = 'LV' }, @{ branch = 'gone1'; agent = 'LV' }, @{ branch = 'loc1'; agent = 'LV' }, @{ branch = 'fin'; agent = 'RA' }, @{ branch = 'pz'; agent = 'PZ' }) | ForEach-Object { $_.sha = $ly[$_.branch]; $_.at = $old; $_ }
+& { . $L3; Update-State t { param($x) $x.release = @{ n = 3; repos = @{ r = @{ target = 'main'; targetSha = 't0'; layers = $lay } } }; $x.requests = @(); $x.leases = @{}; $x.holds = @{}; $x.train = $null; $x.loop = $null } }   # idle: no loop, no train starts
+$dry = Px $L3 drop -Stale -Env t -DryRun 2>&1 | Out-String; $dryW = & { . $L3; @((Read-State t).release.repos.r.layers | Where-Object { $_.holder.graceMin }).Count }
+$so1 = Px $L3 drop -Stale -Env t 2>&1 | Out-String
+$rl1 = Px (Join-Path $k3 'skills/bossy/bossy.ps1') release -Agent 'RA,PZ' 2>&1 | Out-String
+$sl = & { . $L3; $q = @((Read-State t).requests); "$(@($q | Sort-Object branch | ForEach-Object { "$($_.branch)=$($_.status)" }) -join ',')|$(@($q | Where-Object branch -eq 'fin').why)" }
+Expect "stale layers: merged, gone from origin and orphan (no live holder past the grace) drop; live and paused stay; the idle env defers them ($sl)" ($sl -eq 'fin=deferred,gone1=deferred,mrg=deferred,orph=deferred|finished: fin (agent finished)' -and $so1 -match '\[t\] drop mrg due on the next lease: merged: mrg merged into main' -and $so1 -match 'orphan: orph has no live holder \(X9\) for 10 min' -and $so1 -match 'orphan: gone1 is gone from origin' -and $so1 -notmatch 'loc1')
+Expect "stale layers: -DryRun lists the same drops and writes nothing (no grace clock) ($dryW)" ($dry -match '\[t\] stale merged: mrg' -and $dry -match '\[t\] stale orphan: orph' -and $dryW -eq 0 -and $dry -notmatch 'loc1')
+Expect "release: a finished agent's layer drops (finished), a paused agent's is kept ($(($rl1 -split "`n" | Where-Object { $_ -match 'RA|PZ' }) -join ' / '))" ($rl1 -match 'RA env: \[t\] drop fin due on the next lease' -and $rl1 -match 'PZ env: \[t\] layers of PZ kept: it paused or handed off')
+# the train logs each layer that leaves (leases.jsonl kind env-layer, the drop's reason); status lists the due drops and the recent ones; a lease or request wakes them
+$wl = & { . $L3; function Ensure-Loop { }; $q = @((Read-State t).requests); Write-LayerLog t r $lay @($lay | Where-Object { $_.branch -in 'live', 'loc1', 'park', 'pz' }) $q @{ 'r|mrg' = 'merged into main' }
+  $lg = @(Get-Content (Get-KitPath leases) | ConvertFrom-Json | Where-Object kind -eq 'env-layer'); $st0 = (Px $L3 status -Env t 2>&1 | Out-String); Wake-Deferred t
+  $due = $st0 -match 'on the next lease: .*A1: drop mrg \(merged: mrg merged into main\)'; $rec = $st0 -match 'layer orphan: gone1 is gone from origin \(LV, \d\d:\d\d\); layer finished: fin \(agent finished\) \(RA'
+  "$(@($lg | ForEach-Object { "$($_.event)/$($_.agent)" }) -join ',')|$due|$rec|$(@((Read-State t).requests | Where-Object status -eq 'queued').Count)" }
+Expect "layer log: each drop one release line with its reason; status shows due and recent drops; a lease wakes the due ones ($wl)" ($wl -eq 'release/A1,release/X9,release/LV,release/RA|True|True|4')
 Remove-TestKit $k3
 # supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad

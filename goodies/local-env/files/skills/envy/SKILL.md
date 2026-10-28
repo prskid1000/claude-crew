@@ -21,7 +21,9 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   in a folder; ports unique across envs). Release N = target commit + agent branches merged as **layers** (`localenv/<env>`,
   never pushed).
 - **Train**: every deploy queued when it starts = one merge, one gated build, one switch-over; a conflict refuses that branch; a
-  failed build bisects to the culprit; merged branches drop out. A **lease** keeps services up while its holder is live
+  failed build bisects to the culprit; merged branches drop out. A layer also leaves when merged, gone from origin, its agent
+  finished (`bossy.ps1 release`) or no live holder past the grace (supervise), never a paused or handed-off agent's; an env
+  without lease or hold drops at the next lease (`status`: on the next lease, recent; leases.jsonl kind env-layer). A **lease** keeps services up while its holder is live
   (README "Leases") and is used (calls, traffic); unused `leaseIdleMinutes` (default `idle.graceMinutes`) it is released; only
   a person's `-Owner` lease ends at a time. A train waits for leases on what it changes at most `leaseMinutes` (30), then tells
   the holders ("deploy of <svc> starting, pause"; board inbox + `status -Agent` NOTICE), deploys, and tells them "deploy done,

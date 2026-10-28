@@ -4,8 +4,9 @@ on; a service = a start command in a folder (default crafty.ps1 stack `run`). Mo
   & <kit>/skills/envy/envy.ps1 <verb> [args]
 Verbs: envs · status · doctor · deploy · wait · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] ·
-       seed [-Check]
-       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop · refresh · teardown · restore -Mark <n> | -Release <n>
+       seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
+       merged, gone or orphan ones)
+       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] · cleanup [-Quick] [-DryRun] ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.extends), .state/localenv/<env>.env (secrets).
@@ -14,8 +15,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L26 config · L193 state · L238 leases · L319 code · L351 migrations · L594 hooks · L666 marks · L804 seed ·
-  L850 processes · L1137 daemon · L1579 cleanup · L1651 doctor · L1701 verbs
+Sections: L27 config · L194 state · L238 layer drops · L310 leases · L391 code · L423 migrations · L669 hooks · L741 marks ·
+  L879 seed · L925 processes · L1212 daemon · L1656 cleanup · L1728 doctor · L1778 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -234,6 +235,77 @@ function EnvProcess([int]$p, [string]$e) {
   $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("_exec -Env $e "))
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
+# ---- layer drops: release (finished), supervise (merged, gone, orphan); each queued with its reason (leases.jsonl kind env-layer)
+# paused or handed off (its newest board entry): its successor keeps its layers
+function Test-Parked([string]$a) { $b = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -eq $a } | Sort-Object { "$($_.beat)" })[-1]; [bool]($b -and ($b.paused -or $b.handoffBrief)) }
+# one drop request per branch; nobody leases or holds the env: it waits for the next lease or request (no rebuild while idle)
+function Add-LayerDrops([string]$e, [object[]]$drops) {
+  $o = @{ out = @() }
+  Update-State $e { param($x)
+    Prune $x
+    $pending = @($x.requests | Where-Object { $_.kind -eq 'drop' -and $_.status -ne 'done' } | ForEach-Object branch)
+    $due = -not $x.leases.Count -and -not $x.holds.Count
+    foreach ($dp in @($drops)) {
+      if ($dp.branch -in $pending) { continue }; $pending += $dp.branch
+      $id = [guid]::NewGuid().ToString('n').Substring(0, 8)
+      $x.requests = @($x.requests) + @(@{ id = $id; kind = 'drop'; branch = $dp.branch; agent = $dp.agent; by = $Agent; why = $dp.why; at = (Now); status = $(if ($due) { 'deferred' } else { 'queued' }) })
+      $o.out += "[$e] drop $($dp.branch) $(if ($due) { 'due on the next lease' } else { "queued as $id" }): $($dp.why)"
+    }
+  }
+  if (@($o.out).Count -and @((Read-State $e).requests | Where-Object status -eq 'queued').Count) { Ensure-Loop }   # Ensure-Loop, Wait-Request: the verbs' (Invoke-LocalEnv)
+  $o.out
+}
+# leases.jsonl kind env-layer, name <env>/<repo>: a layer that went live (acquire) or left (release, reason "<merged|finished|orphan|...>: <branch> ...")
+function Write-LayerLog([string]$e, [string]$rn, [object[]]$was, [object[]]$kept, [object[]]$reqs, [hashtable]$dropWhy) {
+  $keptB = @($kept | ForEach-Object branch); $wasB = @($was | ForEach-Object branch)
+  foreach ($l in @($kept | Where-Object { $_.branch -notin $wasB })) { Write-KitLeaseLog acquire env-layer "$e/$rn" @{ agent = $l.agent; since = $l.at } "layer: $($l.branch)" }
+  foreach ($l in @($was | Where-Object { $_.branch -notin $keptB })) {
+    $q = @($reqs | Where-Object { $_.kind -eq 'drop' -and $_.branch -eq $l.branch })[0]; $sw = "$($dropWhy["$rn|$($l.branch)"])"
+    $why = if ($q.why) { $q.why } elseif ($sw -like 'merged*') { "merged: $($l.branch) $sw" } elseif ($sw -eq 'branch and commit gone') { "orphan: $($l.branch) $sw" } elseif ($sw) { "conflict: $($l.branch) $sw" } elseif ($q) { "drop: $($l.branch) by $($q.agent)" } else { "left: $($l.branch)" }
+    Write-KitLeaseLog release env-layer "$e/$rn" @{ agent = $l.agent; since = $l.at } $why
+  }
+}
+# status "recent": the env's last 3 layer drops from leases.jsonl
+function Get-LayerDrops([string]$e) {
+  $lf = Get-KitLogFile leases; if (-not (Test-Path -LiteralPath $lf)) { return }
+  @(Get-Content -LiteralPath $lf | Where-Object { $_ -match '"env-layer"' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.event -ne 'acquire' -and "$($_.name)" -like "$e/*" } | Select-Object -Last 3 | ForEach-Object { "layer $($_.reason) ($($_.agent), $(([datetime]$_.at).ToString('HH:mm')))" })
+}
+# the env's deferred drops queued now; -Wait: until they are live (a lease starts on the refreshed code)
+function Wake-Deferred([string]$e, [switch]$Wait) {
+  $o = @{ ids = @() }
+  Update-State $e { param($x) foreach ($q in @($x.requests | Where-Object { $_.status -eq 'deferred' })) { $q.status = 'queued'; $o.ids += $q.id } }
+  if (-not $o.ids.Count) { return }
+  Ensure-Loop; if ($Wait) { foreach ($id in $o.ids) { $null = Wait-Request $id } }
+}
+# stale layers: merged into the target, branch gone from origin, or no live holder past idle.graceMinutes (paused / handed off: kept)
+function Get-StaleLayers([string]$e, [switch]$DryRun) {   # -DryRun: reads only (no grace clock starts)
+  $st = Read-State $e; $envRepos = EnvRepos $e; $why = @{}
+  $pending = @($st.requests | Where-Object { $_.kind -eq 'drop' -and $_.status -ne 'done' } | ForEach-Object branch)
+  foreach ($rn in @($st.release.repos.Keys)) {
+    $r = $envRepos[$rn]; $ls = @(Layers $st $rn | Where-Object { $_.branch -notin $pending }); if (-not $r -or -not $ls.Count) { continue }
+    $d = if (Test-Path (Join-Path $r.wt '.git')) { $r.wt } else { $r.cfg.checkout }
+    git -C $d fetch -q origin $r.target 2>$null | Out-Null; $fetched = $LASTEXITCODE -eq 0
+    $heads = @(git -C $d ls-remote --heads origin @($ls.branch) 2>$null); $listed = $LASTEXITCODE -eq 0
+    foreach ($l in $ls) {
+      $mw = if ($fetched -and $l.sha) { Get-MergedWhy $d $l.branch $l.sha $r.target "origin/$($r.target)" }
+      $why["$rn|$($l.branch)"] = if ($mw) { "merged: $($l.branch) $mw" } elseif ($listed -and -not @($heads -match "\srefs/heads/$([regex]::Escape($l.branch))$").Count -and -not $(git -C $d rev-parse -q --verify "refs/heads/$($l.branch)" 2>$null)) { "orphan: $($l.branch) is gone from origin" }   # a local, unpushed branch stays
+    }
+  }
+  $judge = { param($x)   # each layer's holder keeps its grace clock in the state
+    foreach ($rn in @($x.release.repos.Keys)) { foreach ($l in @(Layers $x $rn)) {
+      if ($why["$rn|$($l.branch)"] -or $l.branch -in $pending -or -not $l.agent -or (Test-Parked $l.agent)) { continue }
+      if ($DryRun) { $h = if ($l.holder) { [hashtable]::new($l.holder) } else { @{ agent = $l.agent } }; $gm = [double]$(if ($h.graceMin) { $h.graceMin } else { Get-KitParam 'idle.graceMinutes' 10 })
+        if (-not (Test-KitLive $h) -and $h.seen -and ((Get-Date) - [datetime]$h.seen).TotalMinutes -ge $gm) { $why["$rn|$($l.branch)"] = "orphan: $($l.branch) has no live holder ($($l.agent)) for $gm min" }; continue }
+      if (-not $l.holder) { $l.holder = @{ agent = $l.agent } }
+      if (-not (Update-KitLease $l.holder)) { $why["$rn|$($l.branch)"] = "orphan: $($l.branch) has no live holder ($($l.agent)) for $($l.holder.graceMin) min" }
+    } }
+  }
+  if ($DryRun) { & $judge $st } else { Update-State $e $judge }
+  $st = Read-State $e
+  foreach ($g in @(foreach ($rn in @($st.release.repos.Keys)) { foreach ($l in @(Layers $st $rn)) { [pscustomobject]@{ branch = $l.branch; agent = $l.agent; why = $why["$rn|$($l.branch)"] } } }) | Group-Object branch) {
+    if (-not @($g.Group | Where-Object { -not $_.why }).Count) { @{ branch = $g.Name; agent = $g.Group[0].agent; why = $g.Group[0].why } }   # every repo's layer of the branch is stale
+  }
+}
 
 # ---- leases: holds, demand; a lease ends at its time, with no live holder past the grace (Update-KitLease), or unused for leaseIdleMinutes
 function Prune($st) {
@@ -408,6 +480,14 @@ function Save-Slices([string]$e, [string]$mark, [hashtable]$byRepo) {
   $res
 }
 function Remove-MarkSlices([string]$e, [string[]]$names) { foreach ($n in $names) { if ($n) { Remove-Item (Join-Path (MigRoot $e) $n) -Recurse -Force -ErrorAction SilentlyContinue } } }
+# a layer commit in the target: ancestry, or the host's merged MR at or past it (squash / rebase merges; -NoHost or host down: ancestry only)
+function Get-MergedWhy([string]$d, [string]$branch, [string]$sha, [string]$target, [string]$tref, [switch]$NoHost) {
+  git -C $d merge-base --is-ancestor $sha $tref 2>$null
+  if ($LASTEXITCODE -eq 0) { return "merged into $target" }
+  if ($NoHost -or $tref -ne "origin/$target" -or -not (Get-Command Get-MergedMrs -ErrorAction SilentlyContinue)) { return $null }
+  $mr = try { @(Get-MergedMrs $d $branch $target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0)) })[0] } catch { $null }
+  if ($mr) { "merged into $target (MR $($mr.iid))" }
+}
 function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]$Base) {   # -Base: a target commit (restore), else origin/<target>
   Ensure-Worktree $e $r
   Sync-DepLinks $e $r
@@ -423,13 +503,8 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   foreach ($l in $layers) {
     $sha = if ($l.sha -and $(git -C $d cat-file -e "$($l.sha)^{commit}" 2>$null; $LASTEXITCODE -eq 0)) { $l.sha } else { Resolve-Ref $d $l.branch }
     if (-not $sha) { $dropped += @{ layer = $l; why = 'branch and commit gone' }; continue }
-    git -C $d merge-base --is-ancestor $sha $tref 2>$null
-    if ($LASTEXITCODE -eq 0) { $dropped += @{ layer = $l; why = "merged into $($r.target)" }; continue }
-    # squash / rebase merges: the host knows the MR merged at this commit (or past it), git ancestry does not
-    if (-not $NoFetch -and $tref -eq "origin/$($r.target)" -and (Get-Command Get-MergedMrs -ErrorAction SilentlyContinue)) {
-      $mr = try { @(Get-MergedMrs $d $l.branch $r.target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0)) })[0] } catch { $null }   # host down: ancestry only
-      if ($mr) { $dropped += @{ layer = $l; why = "merged into $($r.target) (MR $($mr.iid))" }; continue }
-    }
+    $mw = Get-MergedWhy $d $l.branch $sha $r.target $tref -NoHost:$NoFetch
+    if ($mw) { $dropped += @{ layer = $l; why = $mw }; continue }
     $out = git -C $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost merge -q --no-ff --no-edit -m "localenv layer $($l.branch) ($($l.agent))" $sha 2>&1
     if ($LASTEXITCODE) {
       $files = @(git -C $d diff --name-only --diff-filter=U 2>$null)
@@ -1155,7 +1230,7 @@ function Run-Train {
   $own = @($reqs.agent | Where-Object { $_ } | Select-Object -Unique)
   $envRepos = EnvRepos $e
   $results = @{}; foreach ($r in $reqs) { $results[$r.id] = @{ outcome = 'live'; message = '' } }
-  $notes = [Collections.Generic.List[string]]::new(); $migNote = @{}
+  $notes = [Collections.Generic.List[string]]::new(); $migNote = @{}; $dropWhy = @{}   # "<repo>|<branch>" -> why Sync-Repo dropped it
 
   $cur = @{}; $want = @{}; foreach ($rn in $envRepos.Keys) { $cur[$rn] = @(Layers $st $rn); $want[$rn] = @($cur[$rn]) }
   $affected = [Collections.Generic.List[string]]::new(); $byBranch = @{}
@@ -1190,6 +1265,7 @@ function Run-Train {
     $res = Sync-Repo $e $r @($want[$rn])
     foreach ($d in $res.dropped) {
       $rid = $byBranch["$rn|$($d.layer.branch)"]
+      if (-not $dropWhy.ContainsKey("$rn|$($d.layer.branch)")) { $dropWhy["$rn|$($d.layer.branch)"] = $d.why }
       if ($rid -and (& $isNew $d.layer)) { $results[$rid] = @{ outcome = 'refused'; message = "$rn : $($d.why)" } }
       else { $notes.Add("dropped layer $($d.layer.branch) ($($d.layer.agent)) from $rn : $($d.why)$(if ($d.layer.migrations) { " - the DB keeps its migrations$(if ((MarksOn $e) -and $d.layer.since) { " (restore -Release $($d.layer.since) undoes them)" })" })") }
     }
@@ -1394,6 +1470,7 @@ function Record-Train {
           if ($was.promoted) { $l.promoted = $was.promoted }
           $l.since = if ($was -and $was.since) { $was.since } elseif ($was) { [int]$x.release.n } else { $newN }   # first release with this commit live
         }
+        try { Write-LayerLog $e $rn @(Layers $x $rn) @($repoOut[$rn].layers) $reqs $dropWhy } catch {}   # never fails a release
         $x.release.repos[$rn] = $repoOut[$rn]
       }
       $x.release.n = $newN; $x.release.at = (Now); $x.release.train = $Train
@@ -1538,7 +1615,7 @@ try {
         Say "start of $($s.name): worker pid $($starters[$s.name])"
         $st = Read-State $e
       }
-      if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -ne 'done' }).Count) {
+      if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count) {
         $rid = [guid]::NewGuid().ToString('n').Substring(0, 8)
         Update-State $e { param($z) $z.requests = @($z.requests) + @(@{ id = $rid; kind = 'refresh'; agent = 'controller'; at = (Now); status = 'queued' }) }
         Say 'queued a refresh: a needed service has no build yet'
@@ -1556,7 +1633,7 @@ try {
 
       # ---- exit when idle
       $st = Read-State $e
-      $busy = $st.train -or @($st.requests | Where-Object { $_.status -ne 'done' }).Count -or $st.leases.Count -or $st.holds.Count -or
+      $busy = $st.train -or @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count -or $st.leases.Count -or $st.holds.Count -or
         @($starters.Values | Where-Object { Alive $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
       if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { if (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue) { try { foreach ($k in @(Invoke-DbPool $e -Now)) { Say $k } } catch { } }; Say 'idle: loop exits'; break }
     } catch {
@@ -1707,14 +1784,14 @@ param(
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
+  [switch]$DryRun, [switch]$Stale, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
 )
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
-if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup') { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ')" } }
 $e = $EnvName
 # db.engine without its presets (goody db-engine-presets): stop before anything changes
 $needs = @(foreach ($n in @($e)) { $c = $script:LE.envs.$n; if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets are a goody: run kitbag.py goody add db-engine-presets" } })
@@ -1728,7 +1805,7 @@ function Ensure-Loop {
 }
 function New-Request([hashtable]$r) {
   $r.id = [guid]::NewGuid().ToString('n').Substring(0, 8); $r.at = Now; $r.status = 'queued'; $r.agent = $Agent
-  Update-State $e { param($x) $x.requests = @($x.requests) + @($r) }
+  Update-State $e { param($x) foreach ($q in @($x.requests | Where-Object { $_.status -eq 'deferred' })) { $q.status = 'queued' }; $x.requests = @($x.requests) + @($r) }   # due drops ride along
   Event $e 'request' @{ id = $r.id; kind = $r.kind; agent = $Agent; branch = $r.branch }
   Ensure-Loop
   $r.id
@@ -1794,7 +1871,8 @@ function Show-Status([string]$env1) {
       ageMin = $(if ($l.at) { [int]((Get-Date) - [datetime]$l.at).TotalMinutes }); usedMinAgo = $(if ($l.lastUse) { [int]((Get-Date) - [datetime]$l.lastUse).TotalMinutes })
       trainWaits = $(if ($st.train -and $_ -in @($st.train.waitingFor)) { "train $($st.train.id) waits $(if ($st.train.waitSince) { [int]((Get-Date) - [datetime]$st.train.waitSince).TotalMinutes } else { 0 })/$($script:LeaseMin) min" }) } })
     holds = @($st.holds.Keys | ForEach-Object { $h = $st.holds[$_]; [pscustomobject]@{ who = $_; services = @($h.services); owner = [bool]$h.owner; until = $(if ($h.until) { ([datetime]$h.until).ToString('HH:mm') }); at = $h.at; graceLeft = $h.graceLeft } })
-    recent = @($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" })
+    due = @($st.requests | Where-Object status -eq 'deferred' | ForEach-Object { "$($_.agent): drop $($_.branch) ($($_.why))" })
+    recent = @(@($st.requests | Where-Object status -eq 'done' | Select-Object -Last 5 | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch) -> $($_.result.outcome)$(if ($_.result.release) { " (release $($_.result.release))" })" }) + @(Get-LayerDrops $env1))
     keepFree = $("$((Get-KeepFree).gb) GB: $((Get-KeepFree).why)"); keepFreeGB = [double](Get-KeepFree).gb
     marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
       [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days } })
@@ -1813,6 +1891,7 @@ function Show-Status([string]$env1) {
   "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)   last used $($o.lastUsed)"
   if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s))" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
+  if ($o.due) { "  on the next lease: $($o.due -join '; ')" }
   foreach ($x in $o.services) {
     $extra = @()
     if ($x.need.Count -and $x.state -like 'up*') { $extra += "needed: $($x.need -join ', ')" } elseif ($x.state -like 'up*' -and $null -ne $x.idleMin -and $x.graceMin) { $extra += "idle $($x.idleMin)/$($x.graceMin) min" }
@@ -1912,13 +1991,22 @@ switch ($Action) {
     foreach ($rn in @($mig.Keys | Where-Object { $mig[$_] })) { "[$e]   $rn MIGRATIONS: they change the shared local DB$(if (MarksOn $e) { '; the release mark keeps what their DDL destroys (envy.ps1 migrations -Env ' + $e + ' -Branch ' + $Branch + ' lists the tables)' })" }
     Exit-Request (Wait-Request $rid)
   }
-  'drop' { if (-not $Branch) { throw 'drop needs -Branch' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
+  'drop' {   # -Agent (bossy.ps1 release): every layer of a finished agent; -Stale (supervise): merged, gone or orphan layers of every env
+    if ($Stale) { foreach ($n in $(if ($EnvName) { @($EnvName) } else { EnvNames })) { $e = $n; $sl = @(Get-StaleLayers $n -DryRun:$DryRun); if ($DryRun) { $sl | ForEach-Object { "[$n] stale $($_.why)" } } elseif ($sl.Count) { Add-LayerDrops $n $sl } }; return }
+    if (-not $Branch -and $PSBoundParameters.ContainsKey('Agent')) {
+      if (Test-Parked $Agent) { "[$e] layers of $Agent kept: it paused or handed off"; return }
+      $st = Read-State $e; $mine = @(foreach ($rn in @($st.release.repos.Keys)) { Layers $st $rn | Where-Object { $_.agent -eq $Agent } })
+      if (-not $mine.Count) { "[$e] $Agent has no layer"; return }
+      Add-LayerDrops $e @($mine | ForEach-Object { @{ branch = $_.branch; agent = $Agent; why = "finished: $($_.branch) ($(if ($Note) { $Note } else { 'agent finished' }))" } }); return
+    }
+    if (-not $Branch) { throw 'drop needs -Branch, -Agent or -Stale' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
   'wait' { if (-not $Id) { throw 'wait needs -Id <request>' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
     $min = [math]::Min($(if ($Minutes) { $Minutes } else { $LeaseMin }), $MaxLeaseMin)
+    Wake-Deferred $e -Wait   # drops due since the env went idle: the lease starts on the refreshed code
     $until = (Get-Date).AddMinutes($Wait); $said = $null; $o = @{}
     while ($true) {
       $o.ok = $false
@@ -1948,7 +2036,7 @@ switch ($Action) {
   'release' { Update-State $e { param($x) $x.leases.Remove($Agent) }; Event $e 'release-lease' @{ agent = $Agent }; "[$e] lease of $Agent released" }
   'up' {   # -Owner: the owner's hold for -Minutes (120); else a hold that lives while its holder does
     if (-not $Services) { $st = Read-State $e; Prune $st; "[$e] up needs -Services <svc,..>. Leases need: $(@($st.leases.Keys | ForEach-Object { "$_ [$(@($st.leases[$_].services) -join ',')]" }) -join '; ')$(if (-not $st.leases.Count) { 'nothing' })"; exit 1 }
-    $names = @(Closure $e $Services); $min = if ($Minutes) { $Minutes } else { 120 }
+    $names = @(Closure $e $Services); $min = if ($Minutes) { $Minutes } else { 120 }; Wake-Deferred $e -Wait
     Update-State $e { param($x) $x.holds[$Agent] = @{ services = $names } + (New-KitLease $Agent $Session $(if ($Owner) { $min })); $x.suppress = $null }
     "[$e] holding $($names -join ', ') for $Agent $(if ($Owner) { "(owner) for $min min: unhold when done" } else { 'while it is live (board beat / step / pid): unhold when done' })"
     Ensure-Loop
@@ -1991,7 +2079,7 @@ switch ($Action) {
   'task' {
     $t = (Get-EnvCfg $e).tasks.$Task
     if (-not $t) { throw "env $e has no task '$Task' ($(((Get-EnvCfg $e).tasks.PSObject.Properties.Name) -join ', '))" }
-    $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"
+    $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"; Wake-Deferred $e -Wait
     $until = (Get-Date).AddMinutes($Wait); $o = @{}
     while ($true) {
       Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); release = [int]$x.release.n; note = "task $Task" } + (New-KitLease $Agent $Session -ProcessId $PID); $o.ok = $true } }

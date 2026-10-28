@@ -1,6 +1,6 @@
 <#
 localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
-env rows, owner holds, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left);
+env rows, owner holds, STALE LAYER drops, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left);
 Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
 Sections: L9 logs · L35 rows · L57 pause · L69 spike · L91 flags
@@ -94,7 +94,14 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
-  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
+  # layers merged into the target, gone from origin or with no live holder past the grace: -AutoFix drops them, else WATCH
+  if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count) {
+    $sd = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'drop', '-Stale') + @(if (-not $AutoFix) { '-DryRun' })) ([math]::Min(120, (Left)))
+    foreach ($ln in @("$($sd.out)" -split "`r?`n" | Where-Object { $_ -match '^\[[^\]]+\] (drop|stale) ' })) {
+      if ($AutoFix) { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } else { & $watch "STALE LAYER: $ln" 'supervise -AutoFix drops it (envy.ps1 drop -Stale).' }
+    }
+  }
+  $le =Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
   $envs = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
   $er = Get-KitEnvRows $envs $now
   $er.rows; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
