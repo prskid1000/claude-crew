@@ -181,11 +181,11 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
  items: [_item('P1', 'app')] }
 run(args, agent, _n, _n, null).then(() => {
- const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release:Falcon') || {}).prompt || ''
+ const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
  const guard = (s, x) => tp.includes(`if (Test-Path 'C:/kit/skills/${s}') { & 'C:/kit/skills/${s}' `) && tp.includes(`else { '${x} is a goody: run kitbag.py goody add ${x}' }`)
  console.log(`local-guard:${guard('envy/envy.ps1', 'local-env') && /goody sync \(or goody add local-env\)/.test(tp)}`)
  console.log(`phone-guard:${guard('phoney/phoney.ps1', 'android-swarm') && /goody sync \(or goody add android-swarm\)/.test(tp)}`)
- console.log(`release-guard:${/Test-Path 'C:\/kit\/skills\/phoney\/phoney\.ps1'.*release -Agent qa-w1-Falcon.*goody add android-swarm/.test(rel)}`)
+ console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-extras $js3b $wf) 'testy goodies: #' 'local-guard', 'phone-guard', 'release-guard' -Show 8

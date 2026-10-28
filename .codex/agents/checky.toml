@@ -15,7 +15,8 @@ Then the task's guide and context; the run's `lead-notes.md` before each check.
 
 Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - Board first (`bossy.ps1 board join -Type checky -Agent <CODE> -Run <run> -Claims <phone serial>`; it lists every live agent on
-  this machine); CLAIM or DUPLICATE -> stop and report; a seat or record someone holds -> `board msg` the holder.
+  this machine); CLAIM or DUPLICATE -> stop and report; a seat or record someone holds -> `board msg` the holder; at the end
+  `bossy.ps1 release -Agent <your id>` (every lease: lane, env, GPU, build, tabs; the workflow repeats it), then `board leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` after each check (pokey step 4) and `board beat` (spend / budget, PAUSE:
   do what it says); HANDOFF -> write the resume brief it names, WIP commit, `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that check, never retest the done ones.

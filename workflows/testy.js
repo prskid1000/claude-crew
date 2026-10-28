@@ -12,7 +12,7 @@ export const meta = {
 }
 
 // Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L211 local · L239 app · L262 test-prompt ·
-//   L316 verify · L360 run-item · L542 pool · L564 budget · L592 run · L629 learn
+//   L316 verify · L360 run-item · L542 pool · L564 budget · L592 run · L630 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -550,10 +550,10 @@ async function pool(list, size, offset, laneOf) {
    if (!(await gate('Test'))) { STOPPED.push(list[k].code); continue }
    out[k] = await runItem(list[k], offset + k, laneOf ? laneOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
   }
-  // app lane done: return the lease (phone shuts down unless someone waits)
+  // app lane done: every lease of its id (phone shuts down unless someone waits; env, GPU, builds, tabs), logged in leases.jsonl
   const L = laneOf ? laneOf(w) : null
   if (L && L.name) {
-   await runStep(viaExtra(`${SWARM}/phoney.ps1`, 'android-swarm', `release -Agent ${LEASE(L)}`), `release:${L.name}`, 'Close').catch(() => null)
+   await runStep(`& ${ORCH} release -Agent '${LEASE(L)}' -Reason 'agent finished'`, `release-${L.name}`, 'Close').catch(() => null)
    log(`lane ${L.name} (${L.serial}) released`)
   }
  }
@@ -624,6 +624,7 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
  all.push(...(await pool(followUps, LANES.length, 300, laneFor)).filter(Boolean))
 }
 await measure('Test')
+if (LANES.length) await runStep(`& ${ORCH} release -Agent '${LANES.map(LEASE).join(',')}' -Reason 'agent finished'`, 'release-lanes', 'Close').catch(() => null)   // backstop: idempotent
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
 // ---- learn: signals for /tidy

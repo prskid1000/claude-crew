@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L250 ship-prompt · L273 plan · L287 spike ·
-//   L300 local-loop · L360 stages · L482 ship · L552 deploy · L569 learn
+//   L300 local-loop · L364 stages · L490 ship · L561 deploy · L578 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -322,6 +322,10 @@ function mergeReports(x, r2, note) {
   testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
+// every lease of these ids (lanes, env, GPU, builds, tabs) once their devy stage ends, any outcome; idempotent (the reaper is the last net)
+const releaseAll = (ids, phaseName) => runStep(`& ${ORCH} release -Agent '${[].concat(ids).join(',')}' -Reason 'agent finished'`, `release-${[].concat(ids).join('-')}`, phaseName, { ok: 'when it exits 0' })
+ .then((r) => { if (!r || !r.ok) log(`WARNING release of ${ids} failed (${r ? r.output : 'no answer'}): supervise -AutoFix reclaims after the grace`) }).catch(() => null)
+const releasing = async (a, phaseName, fn) => { try { return await fn() } finally { await releaseAll(a.id, phaseName) } }
 const decisions = []
 const envFixes = []
 // BLOCKED stands only for an owner decision or a remote-only dependency; any other BLOCKED (an env reason) is a FAIL to fix
@@ -369,15 +373,18 @@ const results = await pipeline(
    const r2 = await agent(postMergePrompt(a, r0), { label: `postmerge:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
+  return releasing(a, 'Build', async () => {
   let r = await agent(buildPrompt(a), { label: `build:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) })
   if (!r) { log(`${a.id}: build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'A previous attempt stopped without a report: work out what is done (crafty.ps1 wt status, the board, your branch) and continue.'), { label: `build-retry:${a.id}`, phase: 'Build', schema: REPORT, agentType: 'devy', ...modelOf(a) }) }
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   return localLoop(a, r, LOCAL_RETRIES, 'Build')
+  })
  }),
  // Decide: owner-decision items wait for the answer (other areas go on), ENV-FIX items for the coordinator's fix (<= ENV_FIX_CYCLES
  // per area); then the agent continues them
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error || r.budgetStopped || !((r.needsDecision || []).length || (r.needsEnvFix || []).length)) return r
+  return releasing(a, 'Decide', async () => {
   let cur = r, envCycles = 0
   const asked = new Set()
   // resumes may raise new decisions / env fixes and rerun the local loop
@@ -421,6 +428,7 @@ const results = await pipeline(
    }
   }
   return { ...cur, needsDecision: [], needsEnvFix: [] }
+  })
  }),
  // Review + CI (+ one fix round), ship
  (r, a) => settleOnThrow(a, async () => {
@@ -448,7 +456,7 @@ const results = await pipeline(
    log(`${a.id}: ${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)
    const r2 = await agent(fixPrompt(a, r, blocking), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...modelOf(a) })
    if (!r2) return { ...x, findings: [...findings, ...blocking], fixed: false, stopped: true }
-   x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix') }
+   x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
    if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
    if (findings.some(mustFix)) {
@@ -532,6 +540,7 @@ for (const x of out) {
  log(`${x.id}: ${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, local ${(r.localTest || {}).status || '?'}, done ${r.done.length}, deferred ${r.deferred.length}${x.blocked ? `, BLOCKED (${x.blocked})` : ''}`)
 }
 await measure('Fix')
+await releaseAll(A.agents.map((a) => a.id), 'Fix')   // backstop for every area, also one that threw
 const outcome = {
  agents: out,
  deferred: out.flatMap((x) => (x.report ? x.report.deferred.map((d) => ({ agent: x.id, ...d })) : [])),

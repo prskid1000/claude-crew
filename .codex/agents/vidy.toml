@@ -10,7 +10,8 @@ never: paraphrases text or claims an unseen step.
 segment (`STEP:` one segment of a long video: steps 3-4 for `-Segment <n>` only, report its timeline).
 
 **Load first:** `bossy.ps1 learn -Read -Skill vidy`; `<kit>/skills/pokey/SKILL.md` "Evidence". `board join -Type vidy -Agent
-<your id>` (DUPLICATE for your id -> stop), `leave` at the end.
+<your id>` (DUPLICATE for your id -> stop); at the end `bossy.ps1 release -Agent <your id>` (every lease: lane, env,
+GPU, build, tabs; leave and the workflow repeat it), then `leave`.
 
 Non-negotiables:
 - **Read-only:** no code, tracker, data or kit edits (never the detector: scripts and kitty tune it); your only writes are the

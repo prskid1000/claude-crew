@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L718 check · L870 pipes · L908 guard · L1369 dir · L1379 checkpoint ·
-  L1403 tracker · L1442 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1373 dir · L1383 checkpoint ·
+  L1407 tracker · L1446 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -674,6 +674,7 @@ while ((Get-Date) -lt $deadline) {
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
       Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json)
+      $buildLease = @{ agent = $owner; at = (Get-Date).ToString('o') }; Write-KitLeaseLog acquire build "$kind $(Split-Path $Dir -Leaf)" $buildLease
       break
     }
     $waits++; Add-KitMemSample $s.Avail
@@ -692,7 +693,10 @@ try {
   $null = $proc.Handle   # keeps ExitCode readable
   while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt 24) { $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id)); Start-Sleep -Seconds 5 }
   $proc.WaitForExit(); $code = $proc.ExitCode
-} finally { Remove-Item $entry -ErrorAction SilentlyContinue }
+} finally {
+  $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
+  Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
+}
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
   # out of memory (a failure signal): killed / aborted (137, 134) near the reservation it started with

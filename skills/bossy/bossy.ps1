@@ -10,7 +10,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail]   task <-> MRs; promoted when all merged
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
-  status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED (files only)
+  status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
+    one row per resource: holder, since, last seen, last used (files only)
+  release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env, GPU, builds, tabs), logged in .state/leases.jsonl
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task -Agent -Repos [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
@@ -19,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L28 init · L45 board · L218 budget · L246 launch · L510 recover · L594 pause · L638 resume · L696 program · L740 param ·
-  L746 track · L1032 supervise report · L1065 anomalies · L1083 supervise · L1390 report · L1469 audit · L1529 storage ·
-  L1740 bugbrief · L1846 cleanup · L1968 learn · L1998 decide · L2064 health · L2126 retro due · L2136 tidy ·
-  L2206 the kit origin's main and goodies · L2222 setup · L2288 guard-sendmessage
+Sections: L30 init · L47 board · L225 budget · L253 launch · L517 recover · L601 pause · L645 resume · L703 program · L747 param ·
+  L753 track · L1039 supervise report · L1072 anomalies · L1090 supervise · L1397 report · L1476 audit · L1536 storage ·
+  L1747 bugbrief · L1853 cleanup · L1975 learn · L2005 decide · L2071 health · L2133 retro due · L2143 tidy ·
+  L2213 the kit origin's main and goodies · L2229 setup · L2295 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -190,6 +192,8 @@ switch ($Action) {
     $cf = Get-KitCheckpointFile $script:leftEntry.agent
     if (-not $paused) { Add-KitSpendObs $script:leftEntry $(if ($Handoff) { 'short' } else { 'ok' }) }   # a handoff: the estimate was too low
     if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # finished: the next join starts fresh
+    $twin = @(Read-KitJsonFiles $dir | Where-Object { $_.agent -eq $script:leftEntry.agent -and $_.session -ne $Session -and $_.status -ne 'left' -and (Test-KitLive @{ session = $_.session }) })
+    if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent $script:leftEntry.agent -Reason "left the board ($Session)" }   # paused / handed off: its successor keeps them
     if ($paused) {
       $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
       if ($pz) { "PAUSED ($Session): stay stopped, return no result; the coordinator stops this run or resumes it. Run this same leave again now"; exit 0 }
@@ -214,6 +218,9 @@ switch ($Action) {
   }
 }
 }
+
+# bossy.ps1 release: every lease of these agents (adapters/supervise_resources.ps1)
+function Invoke-Release([string[]]$Agent, [string]$Reason = 'agent finished') { $script:KitReleaseFailed = $false; Invoke-KitReleaseAgent $Agent $Reason; if ($script:KitReleaseFailed) { exit 1 } }
 
 # ---- budget: this agent's budget (the tool's default compaction point), a plan's run cap, a run's spend
 function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,...' (role without /model: an estimate unit, no budget)
@@ -1057,7 +1064,7 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
   do {
     $now = Get-Date; $rows = @(Get-KitStatusRows $now $Session)
     if ($Json) { ConvertTo-Json @($rows | Select-Object name, task, state, since, last, doing, wait, done, stopped, left, next) -Depth 3; return }
-    $out = @(Format-KitStatusTable $rows $now $script:KitTxVersions)
+    $out = @(Format-KitStatusTable $rows $now $script:KitTxVersions) + @(Format-KitResourceTable @(Get-KitResourceRows))
     if ($Watch) { Clear-Host; "status $($now.ToString('HH:mm:ss')), every $Seconds s (Ctrl+C stops)"; '' }; $out
     if ($Watch) { Start-Sleep -Seconds $Seconds }
   } while ($Watch)
@@ -2317,6 +2324,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'track' { Invoke-KitVerb Invoke-Track $__rest }
     'supervise' { Invoke-KitVerb Invoke-Supervise $__rest }
     'status' { Invoke-KitVerb Invoke-Status $__rest }
+    'release' { Invoke-KitVerb Invoke-Release $__rest }
     'storage' { Invoke-KitVerb Invoke-Storage $__rest }
     'report' { Invoke-KitVerb Invoke-Report $__rest }
     'audit' { Invoke-KitVerb Invoke-Audit $__rest }

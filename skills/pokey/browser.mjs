@@ -7,10 +7,10 @@
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
 //   const stop = await record(s, '<dir>/F2-T3_01_flow.mp4'); ...; await stop()   video + <file>.events.json (each action: at, target, box)
-// Sections: L18 config · L42 login · L126 browsers · L169 tabs · L243 session · L282 actions · L381 evidence
+// Sections: L18 config · L42 login · L126 browsers · L169 tabs · L246 session · L285 actions · L384 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
@@ -171,6 +171,8 @@ async function ensureLogin(page, t, tenant, as, key) {
 const tabsFile = (key) => `${kitPath('sessions', { create: true })}/tabs-${keyFile(key)}.json`
 const readJson = (f, d) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return d } }
 const saveJson = (f, o) => { writeFileSync(`${f}.tmp`, JSON.stringify(o)); renameSync(`${f}.tmp`, f) }
+// .state/leases.jsonl, as lib.ps1 Write-KitLeaseLog (bossy.ps1 status: last used); never fails a tab
+const leaseLog = (event, key, h, reason) => { try { appendFileSync(kitPath('leases', { create: true }), JSON.stringify({ at: new Date().toISOString(), script: 'browser.mjs', event, kind: 'tab', name: key, agent: h.agent, since: new Date(h.at).toISOString(), ...(reason && { reason }) }) + '\n') } catch {} }
 const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
 function leftBoard(agent) {   // all its board entries say left
   const d = kitPath('board')
@@ -190,14 +192,15 @@ export function kitParam(key, def, ctx = '') {
 }
 const GRACE_MS = 60000 * kitParam('idle.graceMinutes', 10)
 // close tabs with no live holder for idle.graceMinutes (caller holds the tabs lock); an unregistered tab counts from first sight
-async function sweep(browser, key) {
+async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bossy.ps1 release)
   const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'
   let live = 0, closed = 0
   for (const p of await browser.pages()) {
     const id = await tabId(p).catch(() => ''), h = reg[id]
     if (!h && p.url() === 'about:blank') continue
-    if (h && !((h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder (README "Leases")
-    if (now - (h ? h.seen || h.at : reg[`?${id}`] || now) > GRACE_MS) { await p.close().catch(() => {}); closed++; continue }
+    const mine = agent && h && h.agent === agent
+    if (h && !mine && !((h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder (README "Leases")
+    if (mine || now - (h ? h.seen || h.at : reg[`?${id}`] || now) > GRACE_MS) { await p.close().catch(() => {}); closed++; if (h) leaseLog(mine ? 'release' : 'reclaim', key, h, mine ? process.env.KIT_LEASE_REASON : `reclaim: no live holder for ${GRACE_MS / 60000} min`); continue }
     live++
     keep[h ? id : `?${id}`] = h || reg[`?${id}`] || now
   }
@@ -212,7 +215,7 @@ export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT |
     const page = await withLock(`tabs-${keyFile(key)}`, async () => {
       if ((await sweep(browser, key)).live >= MAX_TABS) return null
       const p = await browser.newPage(), f = tabsFile(key), reg = readJson(f, {})
-      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key; delete reg._idle
+      reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key; delete reg._idle; leaseLog('acquire', key, { agent, at: Date.now() })
       saveJson(f, reg)
       return p
     })
@@ -224,10 +227,10 @@ export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT |
 export async function closeTab(page, key) {
   const id = await tabId(page).catch(() => '')
   await page.close().catch(() => {})
-  await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); delete reg[id]; saveJson(f, reg) }).catch(() => {})
+  await withLock(`tabs-${keyFile(key)}`, async () => { const f = tabsFile(key), reg = readJson(f, {}); if (reg[id]) leaseLog('release', key, reg[id]); delete reg[id]; saveJson(f, reg) }).catch(() => {})
 }
-// orphan tabs of every shared browser (supervise -AutoFix); a failed connect keeps the registry
-export async function sweepAll() {
+// orphan tabs of every shared browser (supervise -AutoFix), or every tab of `agent` (bossy.ps1 release); a failed connect keeps the registry
+export async function sweepAll(agent = '') {
   const d = kitPath('sessions', { create: true }), ports = readJson(kitPath('browser-ports'), {})
   let closed = 0
   for (const f of readdirSync(d).filter((x) => /^tabs-.*\.json$/.test(x))) {
@@ -235,7 +238,7 @@ export async function sweepAll() {
     if (!ports[key]) { try { unlinkSync(join(d, f)) } catch {}; continue }
     const b = await puppeteer.connect({ browserURL: `http://127.0.0.1:${ports[key]}`, protocolTimeout: PROTO_MS }).catch(() => null)
     if (!b) continue
-    try { closed += (await withLock(`tabs-${keyFile(key)}`, () => sweep(b, key))).closed } finally { b.disconnect() }
+    try { closed += (await withLock(`tabs-${keyFile(key)}`, () => sweep(b, key, agent))).closed } finally { b.disconnect() }
   }
   return closed
 }

@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L702 status · L879 tracker · L1114 git-host · L1230 kitlog ·
-  L1342 params · L1505 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L910 tracker · L1145 git-host · L1261 kitlog ·
+  L1373 params · L1536 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -351,6 +351,7 @@ function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null 
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
   $l = [ordered]@{ agent = $Agent; session = $Session; at = (Get-Date).ToString('o') } + (Get-KitHolder); Test-KitLeaseBack $Agent
+  $rn = if ($script:KitWho.run) { $script:KitWho.run } else { "$env:KIT_RUN" }; if ($rn) { $l.run = $rn }
   if ($OwnerMinutes) { $l.owner = $true; $l.until = (Get-Date).AddMinutes($OwnerMinutes).ToString('o') }   # only owner holds keep minutes
   if ($ProcessId) { $l.pid = $ProcessId; $l.pidStart = Get-KitPidStart $ProcessId }; $l
 }
@@ -363,11 +364,12 @@ function Test-KitLive($l) {
   $ls = Get-KitLiveCached steps { try { $s = Get-Content (Get-KitPath live-steps) -Raw | ConvertFrom-Json; if (((Get-Date) - [datetime]$s.at).TotalMinutes -lt $bm) { $s } } catch {} }
   $mine = @($ls.labels | Where-Object { ($a -and (($_ -split ':', 2)[-1] -split '@')[0] -eq $a) -or ($l.lane -and $_ -match "@$([regex]::Escape($l.lane))$") })
   if (@($mine | Where-Object { $_ -in @($ls.running) }).Count) { return $true }
-  $b = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
-    Where-Object { $_.status -ne 'left' -and $(if ($l.session) { $_.session -eq $l.session } else { $_.agent -and $_.agent -in @($a, $l.holder) }) })
-  if (@($b | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart)) }).Count) { return $true }
+  $all = @(Get-KitLiveCached board { @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} }) } |
+    Where-Object { if ($l.session) { $_.session -eq $l.session } else { ($_.agent -and $_.agent -in @($a, $l.holder)) -or ($l.holder -and $_.session -eq $l.holder) } })
+  if (@($all | Where-Object { $_.status -ne 'left' -and (($now - [datetime]$_.beat).TotalMinutes -lt $bm -or ($_.pid -and (Test-KitPid $_.pid $_.pidStart))) }).Count) { return $true }
   if ($mine.Count -or $l.session) { return $false }   # its step finished / its board entry left or went quiet
   if ($a -match '^(main|coordinator)$') { $f = Get-Item (Get-KitPath supervise-state) -ErrorAction SilentlyContinue; if ($f -and ($now - $f.LastWriteTime).TotalMinutes -lt [math]::Max($bm, (Get-KitBeatMinutes) + 5)) { return $true } }   # its heartbeat writes it
+  if ($all.Count -and -not @($all | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt 3 * $bm }).Count) { return $false }   # left / long quiet: its holder pid is the shared session process (a subagent)
   (Test-KitHolder $l) -eq $true
 }
 # the coordinator's heartbeat interval now (min): the NEXT its last supervise printed, else supervise.heartbeatMinutes (15)
@@ -401,12 +403,37 @@ function Test-KitLeaseBack([string]$Agent) {
   if ($gap -le 3 * [double]$r.grace) { Add-KitParamObs 'idle.graceMinutes' ([double]$r.quiet + $gap) '' 'short' 10 }
   Set-KitLeaseReleased $Agent $null
 }
+# leases.jsonl: one line per acquire / release / reclaim / down of any held resource; past $KitLeaseLogMax keeps its newest half.
+# KIT_LEASE_REASON: the caller's reason (bossy.ps1 release, the reaper); a release whose reason starts with "reclaim" logs as reclaim
+$script:KitLeaseLogMax = 1MB
+function Write-KitLeaseLog([string]$Event, [string]$Kind, [string]$Name, $Lease = @{}, [string]$Reason) {
+  if (-not $Reason) { $Reason = "$env:KIT_LEASE_REASON" }; if ($Event -eq 'release' -and $Reason -like 'reclaim*') { $Event = 'reclaim' }
+  $iso = { param($v) if ($v -is [datetime]) { $v.ToString('o') } else { "$v" } }
+  $f = [ordered]@{ kind = $Kind; name = $Name; agent = "$($Lease.agent)"; session = "$($Lease.session)"; holder = "$($Lease.holder)"; run = "$($Lease.run)"
+    since = & $iso $(if ($Lease.at) { $Lease.at } else { $Lease.since }); seen = & $iso $Lease.seen; reason = $Reason; by = "$(if ($script:KitWho.agent) { $script:KitWho.agent } else { $env:KIT_AGENT })" }
+  foreach ($k in @($f.Keys)) { if (-not $f[$k]) { $f.Remove($k) } }
+  Write-KitLog leases $Event $f
+  try { $lf = Get-KitLogFile leases; if ((Get-Item -LiteralPath $lf).Length -gt $script:KitLeaseLogMax) { Invoke-KitLocked $lf { $ls = [IO.File]::ReadAllLines($lf); Write-KitAtomic $lf ((@($ls | Select-Object -Last ([int]($ls.Count / 2))) -join "`n") + "`n") } } } catch {}
+}
+function Invoke-KitLeaseReason([string]$Reason, [scriptblock]$Body) { $o = $env:KIT_LEASE_REASON; $env:KIT_LEASE_REASON = $Reason; try { & $Body } finally { $env:KIT_LEASE_REASON = $o } }
+# "<kind>|<name>" -> its newest release / reclaim line (status "last used")
+function Get-KitLeaseLast {
+  $m = @{}; $lf = Get-KitLogFile leases
+  if (Test-Path -LiteralPath $lf) { foreach ($x in Get-Content -LiteralPath $lf) { $o = try { $x | ConvertFrom-Json } catch { $null }; if ($o.event -in 'release', 'reclaim') { $m["$($o.kind)|$($o.name)"] = $o } } }
+  $m
+}
+function Format-KitLeaseLast($o) { if ($o) { "$(([datetime]$o.at).ToString('MM-dd HH:mm')) by $(if ($o.agent) { $o.agent } else { '?' }) ($(if ("$($o.reason)" -like "$($o.event)*") { $o.reason } else { "$($o.event)$(if ($o.reason) { ": $($o.reason)" })" }))" } else { 'never' } }
 # the GPU: one exclusive resource for the kinds in gpu.exclusive (e.g. emulator lanes); holders of one kind
 # share it, another kind waits. A holder = a lease bound to a process, or a running process matching <kind>.processes
 function Get-KitGpuFile { Join-Path (Get-KitPath runtimes -Create) 'gpu.json' }
 function Get-KitGpuState {
   $s = try { Get-Content (Get-KitGpuFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
+  $script:KitGpuDropped = @($s.leases | Where-Object { $_ -and -not (Test-KitPid $_.pid $_.pidStart) })   # Save-KitGpuState logs them
   $s.leases = @($s.leases | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s.waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }); $s
+}
+function Save-KitGpuState([string]$File, $St) {
+  Write-KitAtomic $File ($St | ConvertTo-Json -Depth 5)
+  foreach ($d in @($script:KitGpuDropped)) { Write-KitLeaseLog release gpu $d.kind @{ agent = $d.holder; at = $d.at } 'holder process ended' }; $script:KitGpuDropped = @()
 }
 function Get-KitGpuHolders($St = (Get-KitGpuState)) {
   $ex = Get-KitSetting 'gpu.exclusive' $null; if (-not $ex) { return @() }
@@ -456,23 +483,27 @@ function Use-KitGpu([string]$Kind, [string]$Holder, [int]$ProcessId = $PID, [dou
     $busy = Get-KitGpuBusy $Kind $min
     $other = Invoke-KitLocked $f {
       $st = Get-KitGpuState; $o = @(@(if ($listed) { Get-KitGpuHolders $st | Where-Object { $_.kind -ne $Kind } }) + @($busy | Where-Object { $_ })) | Select-Object -First 1
-      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
-      if ($o) { $st.waiting += $me + @{ heldBy = "$($o.kind) $($o.holder)" } } elseif ($listed) { $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId -or $_.kind -ne $Kind }) + $me }
-      Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $o
+      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId }); $script:KitGpuNew = $false
+      if ($o) { $st.waiting += $me + @{ heldBy = "$($o.kind) $($o.holder)" } } elseif ($listed) { $old = @($st.leases | Where-Object { $_.kind -ne $Kind -or ($_.pid -ne $ProcessId -and $_.holder -ne $Holder) }); $script:KitGpuNew = $old.Count -eq @($st.leases).Count; $st.leases = $old + $me }   # one per kind + holder (a lane: its boot, then its emulator)
+      Save-KitGpuState $f $st; $o
     }
-    if (-not $other) { return $true }
+    if (-not $other) { if ($script:KitGpuNew) { Write-KitLeaseLog acquire gpu $Kind @{ agent = $Holder; at = $me.at } }; return $true }
     if (-not $said) { Write-Host "waiting for GPU: held by $($other.kind) $($other.holder)"; $said = $true }
     if ((Get-Date) -ge $end) { Remove-KitGpu -ProcessId $ProcessId; $script:KitGpuRefused = $other; return $false }
     Wait-KitPoll 30
   }
 }
-function Remove-KitGpu([int]$ProcessId = $PID) {
+# -Holder: every lease of that holder (bossy.ps1 release), else the leases of -ProcessId
+function Remove-KitGpu([int]$ProcessId = $PID, [string]$Holder) {
   $f = Get-KitGpuFile; if (-not (Test-Path $f)) { return }
-  Invoke-KitLocked $f { $st = Get-KitGpuState; $st.leases = @($st.leases | Where-Object { $_.pid -ne $ProcessId }); $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId }); Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5) }
+  $mine = { param($x) if ($Holder) { $x.holder -eq $Holder } else { $x.pid -eq $ProcessId } }
+  $gone = Invoke-KitLocked $f { $st = Get-KitGpuState; $g = @($st.leases | Where-Object { & $mine $_ }); $st.leases = @($st.leases | Where-Object { -not (& $mine $_) }); $st.waiting = @($st.waiting | Where-Object { -not (& $mine $_) }); Save-KitGpuState $f $st; $g }
+  foreach ($g in @($gone)) { Write-KitLeaseLog release gpu $g.kind @{ agent = $g.holder; at = $g.at } }
 }
-# bossy.ps1 supervise: who holds the GPU, who waits for it
+# bossy.ps1 supervise: who holds the GPU, who waits for it; -AutoFix writes out (and logs) the leases of ended processes
 function Get-KitSuperviseGuardGpu([switch]$AutoFix) {
   $st = Get-KitGpuState; $h = @(Get-KitGpuHolders $st)
+  if ($AutoFix -and @($script:KitGpuDropped).Count) { $f = Get-KitGpuFile; Invoke-KitLocked $f { Save-KitGpuState $f (Get-KitGpuState) } }
   if ($h.Count -or $st.waiting.Count) { "gpu: $(if ($h.Count) { "held by $(@($h | ForEach-Object { "$($_.kind) $($_.holder)" }) -join ', ')" } else { 'free' })$(@($st.waiting | ForEach-Object { "; waiting for GPU: $($_.kind) $($_.holder) (held by $($_.heldBy))" }) -join '')" }
 }
 

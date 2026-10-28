@@ -195,5 +195,20 @@ Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
 Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
+$le = Invoke-PsTest 'leases' @'
+. $args[0]; $gs = ${function:Get-KitSetting}; function Get-KitSetting($p, $d) { if ($p -eq 'gpu.exclusive') { [pscustomobject]@{ lanes = 1 } } else { & $gs $p $d } }
+$s = ((Invoke-KitVerb Invoke-Board join, -Agent, AP, -Run, r | Out-String) -split 'SESSION ')[1].Split()[0]
+$null = Use-KitGpu -Kind lanes -Holder AP; $null = Use-KitGpu -Kind lanes -Holder AP -ProcessId (Get-Process -Id $PID).Parent.Id; $null = Invoke-KitVerb Invoke-Board leave, -Session, $s
+"dead:$(-not (Test-KitLive @{ agent = 'AP'; holderPid = $PID }))"
+$g = Get-Content (Get-KitPath leases) | ConvertFrom-Json | % { $_.event + $_.reason }; $ok = "$g" -match '^acquire releaseleft the board \(AP'; "log:$ok"
+$ok = (Invoke-KitVerb Invoke-Status @() | Out-String) -match 'gpu lanes \| free .+ AP \(release: left'; "status:$ok"
+$KitLeaseLogMax = 300; 1..6 | % { Write-KitLeaseLog acquire tab $_ }; "trim:$(@(Get-Content (Get-KitPath leases)).Count -lt 8)"
+'@ @($O)
+Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim'
+$jr = Invoke-Js wf-rel @'
+const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1' }] }, c.agent, _n, _n, pipeline); const L = c.calls.map((x) => x.label)
+console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
+'@ (Join-Path $src 'workflows/buildy.js')
+Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
 Remove-TestKit $k
 Complete-Tests
