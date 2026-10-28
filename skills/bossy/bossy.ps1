@@ -12,7 +12,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
-  release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env, GPU, builds, tabs), logged in .state/leases.jsonl
+  release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task -Agent -Repos [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]

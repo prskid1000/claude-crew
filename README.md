@@ -137,7 +137,7 @@ The GPU (`gpu.exclusive.<kind>`, lib.ps1 `Use-KitGpu`): one kind at a time (e.g.
 shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
 it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
 caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
-- **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env, GPU, build, tabs);
+- **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env and its layers, GPU, build, tabs);
   `board leave` and /buildy, /testy after each agent stage repeat it. A holder on the board with no live entry is dead (its holder
   pid is the shared session process); `supervise -AutoFix` reclaims every kind after the grace (lanes stop with `emu kill`).
 - **Log:** `.state/leases.jsonl` (lib.ps1 `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,

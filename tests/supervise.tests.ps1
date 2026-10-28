@@ -203,8 +203,10 @@ $null = Use-KitGpu -Kind lanes -Holder AP; $null = Use-KitGpu -Kind lanes -Holde
 $g = Get-Content (Get-KitPath leases) | ConvertFrom-Json | % { $_.event + $_.reason }; $ok = "$g" -match '^acquire releaseleft the board \(AP'; "log:$ok"
 $ok = (Invoke-KitVerb Invoke-Status @() | Out-String) -match 'gpu lanes \| free .+ AP \(release: left'; "status:$ok"
 $KitLeaseLogMax = 300; 1..6 | % { Write-KitLeaseLog acquire tab $_ }; "trim:$(@(Get-Content (Get-KitPath leases)).Count -lt 8)"
+'"LY"' > "$(Get-KitPath localenv -Create)/e.json"; function Get-KitLocalEnvStatus { @{ env = 'e'; repos = @(@{ layers = @(@{ agent = 'LY' }) }) } }; function Invoke-KitExe { $script:kx = "$($args[1])"; @{ out = 'q' } }
+"layer:$("$(Invoke-KitReleaseAgent LY)" -match '^LY env: q' -and $kx -match 'drop -Env e -Agent LY -Note agent finished$')"
 '@ @($O)
-Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim'
+Expect-Each $le 'leases (left = dead): #' 'dead', 'log', 'status', 'trim', 'layer'
 $jr = Invoke-Js wf-rel @'
 const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1' }] }, c.agent, _n, _n, pipeline); const L = c.calls.map((x) => x.label)
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
