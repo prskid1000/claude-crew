@@ -19,8 +19,8 @@ segment (`STEP:` one segment of a long video: steps 3-4 for `-Segment <n>` only,
 <your id>` (DUPLICATE for your id -> stop), `leave` at the end.
 
 Non-negotiables:
-- **Read-only:** no code, tracker, data or kit edits (never the detector: kitty tunes it); your only writes are the items file,
-  `write-vision`, the verify file and `feedback`.
+- **Read-only:** no code, tracker, data or kit edits (never the detector: scripts and kitty tune it); your only writes are the
+  items file, `write-vision` and the verify run.
 - **Any recording:** no app-specific rules; read what the frame shows (light or dark, any resolution, any UI or terminal).
 - **Keyframes only, in batches:** for the answer, only the frames `evidence frames` lists (the detector's budget plus its
   coverage fills), `media.vidy.batch` (8) parallel Read calls per turn in time order, never one frame per turn.
@@ -42,20 +42,15 @@ Non-negotiables:
    -Tokens <spend from board beat>`: merged into vision.json, the index rebuilt, frames and spend logged.
 5. Analyse everything in this pass against the context (the merged index, all segments): what the person did, what the app
    answered, where it diverged.
-6. Kinds question and index only (never segment): `board msg` the report (below) to the caller first (it never waits); then,
-   still on this video, verify the detector:
-   - label it densely within `media.vidy.labelTokens`: `read-chunk <key> -At <m:ss> -Window 6 -Frames 12 -Size 1280` around every
-     event and every gap > 8 s (about 2 fps); list every distinct screen state with its window `[t0, t1, what]` and each
-     loading / animation window `[t0, t1, max frames]`;
-   - compare with the keyframes: a state with no keyframe showing it = `missed`, a wasted frame (animation, duplicate) =
-     `wasted`, a wrong event kind = `wrong-label` (window, the frames that prove it);
-   - `pokey.ps1 evidence feedback <key> -File <verify.json>` (`{name, states, animations, findings, tokens}`); perfect -> done,
-     nothing more; else one `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text "<window: what the detector missed>"` per
-     miss and its `TUNE` line goes to the coordinator (it spawns the kitty).
+6. Kinds question and index only (never segment): `board msg` the report (below) to the caller first (it never waits); then
+   start `pokey.ps1 evidence verify <key> -Tune` in the background (label, verify and tune are scripts: zero tokens). Its
+   output names `ambiguous misses`: read only those windows (`read-chunk <key> -At <m:ss> -Window 2 -Frames 4`, within
+   `media.vidy.labelTokens`) and, for a real miss, `bossy.ps1 learn -Skill vidy -Kind defect-missed -Text "<window: what>"`.
+   Perfect -> nothing more.
 Finish with the report (<= 300 words): **answer** (one line) · **timeline** (`m:ss` action -> result) · **steps to reproduce** ·
 **errors** (exact screen text, `m:ss`) · **proof** (claim -> frame path) · **confidence** (high / medium / low) + **gaps** (unread
 keyframes, unclear text, what the video does not show) · index path · frames read · tokens · last line `verify <key>: perfect`
-or `verify <key>: <n> findings · TUNE ...` (the feedback output; the coordinator spawns the kitty).
+or `verify <key>: <n> misses · APPLIED | NOT APPLIED ...` (the script output; NOT APPLIED: the coordinator spawns one kitty).
 
 **Self-improvement:**
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill vidy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
