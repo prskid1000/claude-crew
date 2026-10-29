@@ -9,12 +9,12 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
- checkpoint -Agent <id> -Run <run> -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
+ checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1429 dir · L1439 checkpoint ·
-  L1463 tracker · L1514 host
+Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1434 dir · L1444 checkpoint ·
+  L1469 tracker · L1520 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -126,6 +126,11 @@ function Exclude-Links($path, $links) {
 switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
+    if (-not (Test-Path -LiteralPath $Repo)) {   # a repo name or alias: kit.local.json repos[].checkout, else <reposRoot>/<name>
+      $hit = @((Get-RepoConf $Repo checkout $null), (Join-Path $KitConf.ReposRoot $Repo)) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+      if (-not $hit) { throw "no repo $Repo (not a folder, no kit.local.json repos[] checkout, not under $($KitConf.ReposRoot)): pass the checkout path" }
+      $Repo = $hit
+    }
     $Repo = (Resolve-Path $Repo).Path
     if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
@@ -197,7 +202,7 @@ switch ($Action) {
   'commit' {
     $Dir = Resolve-Wt $Dir
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
-    if (-not $Message -or -not $Message.Trim()) { throw 'commit needs -Message or -MessageFile' }
+    if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
     # a worktree not made by new lacks .husky/_ and hook deps
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
     $cw = git --git-dir="$common" config core.worktree
@@ -1440,7 +1445,8 @@ if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug 
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read)
-if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> -Run <run> -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
+if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> [-Run <run>] -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
+if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }   # an agent outside a run still gets a resume point
 $jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Agent -Name 'resume.md'
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent" }; return }
 $c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }

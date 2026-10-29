@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L991 tracker · L1266 git-host ·
-  L1382 kitlog · L1496 params · L1659 entry-scripts
+  L1382 kitlog · L1497 params · L1660 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1469,7 +1469,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
     $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
     if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; $why = "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"
-      $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues }); if ($vs.Count -and $_.Exception.ErrorId -eq 'MissingMandatoryParameter') { $why += " Verbs: $($vs -join ', ')." }   # a missing verb names them (a wrong one: the set is in the message)
+      $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $_.Exception.ErrorId -eq 'MissingMandatoryParameter') { $why += " Verbs: $($vs -join ', ')." }   # a missing verb names them (a wrong one: the set is in the message)
+      $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }   # the verb's header line, not just the binder's text
       & $end $why; [Console]::Error.WriteLine($why); exit 2 }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
     if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }

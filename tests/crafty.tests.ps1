@@ -44,6 +44,13 @@ try {
   Remove-Item $kl
   Expect "wt sync regenerate: failing command keeps the conflict; else target's copy + command, amended, pushed" ($sy[0] -match '(?s)regenerate failed.*REBASE CONFLICT.*rc=1 mid=True' -and $sy[1] -match 'regenerated gen\.bin.*pushed f.*rc=0' -and
     (Get-Content "$g/gen.bin") -eq 'regen 7 main' -and (git -C $g rev-list --count origin/main..origin/f) -eq 1 -and (git -C $g show --stat --format= origin/f) -match 'a\.txt')
+  $wm = pwsh @np $D wt commit -Dir "$r/outer" 2>&1 | ForEach-Object { "$_" } | Out-String
+  & $J @{ repos = @(@{ name = 'shop'; checkout = "$r/outer" }) } $kl
+  $wn = foreach ($rn in 'nosuch', 'shop') { pwsh @np $D wt new -Repo $rn -Branch b9 -Target main -Name n9 2>&1 | ForEach-Object { "$_" } | Out-String }; Remove-Item $kl
+  $pu = pwsh @np $D pipes 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE
+  $null = pwsh @np $D checkpoint -Agent c9 -Step build 2>&1; $cr = Read-Json (Join-Path (TkPath $k agents) 'c9/resume.json')
+  Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage; checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
+    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $cr.run -eq 'adhoc-c9')
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters
 $gh = @'

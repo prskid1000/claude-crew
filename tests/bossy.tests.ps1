@@ -76,6 +76,10 @@ $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
 $bt = pwsh @np $O board beat -Session $s1 | Out-String; $btc = $LASTEXITCODE
 $bd = TkPath $k board
 Expect 'board: beat after TAKEOVER exit 1, no lock left' ($j2 -match 'TAKEOVER' -and $btc -eq 1 -and $bt -match 'TAKEN OVER' -and -not @(Get-ChildItem $bd -Filter '*.lock').Count)
+$jc = pwsh @np $O board join -Agent 'pokey:DZ1' -Run rc | Out-String; $sc = if ($jc -match 'SESSION (\S+)') { $Matches[1] }
+[IO.File]::WriteAllText((Join-Path $ld 'args-rel.json'), $full)
+$rl = pwsh @np $O launch -Self -Script buildy.js -Run rel -ArgsFile 'nowhere/args-rel.json' -Fnv (& { . $O; Get-KitFnv $full }) | Out-String; $null = pwsh @np $O launch -Done -Run rel 2>&1
+Expect "board join: a ':' in the agent name -> a file-safe session ($sc); launch -Self: a relative args path found in the launches folder" ($sc -match '^pokey-DZ1-\w{8}$' -and (Test-Path (Join-Path $bd "$sc.json")) -and $rl -match 'RECORDED')
 $lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String
 Expect 'board leave: an unknown session exits 1, records no handoff' ($LASTEXITCODE -eq 1 -and $lv -match 'unknown session')
 $null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'

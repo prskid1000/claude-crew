@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L31 paths · L82 kitlog · L181 load · L558 lint · L927 README graph · L1033 lint command · L1066 audit · L1175 registry ·
-  L1404 prose · L1549 sections · L1679 budget · L1697 goodies · L2174 main
+  L1404 prose · L1549 sections · L1679 budget · L1697 goodies · L2200 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2040,9 +2040,34 @@ $script:NewCoreTestKit = ${function:New-TestKit}
 function New-TestKit([string]$name) { $k = & $script:NewCoreTestKit $name; if (Test-Path '<files>') { Copy-Item '<files>/*' $k -Recurse -Force }; $k }
 """
 
+def goody_overlay(kit, files, to):
+    """A git copy of the kit like an installed one (tracked files committed; installed goodies' files and the goody's own
+    branch files on top, excluded): tests read the branch's files, never the copy installed in the kit."""
+    rc, o, _ = git(kit, 'ls-files')
+    for rel in (o.split('\n') if rc == 0 else []):
+        if rel and osp.isfile(osp.join(kit, rel)):
+            os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
+            shutil.copy2(osp.join(kit, rel), osp.join(to, rel))
+    for args in (('init', '-q'), ('add', '-A'), ('-c', 'user.name=goody-test', '-c', 'user.email=goody-test@localhost', 'commit', '-q', '-m', 'core'),
+                 ('fetch', '-q', kit, f'+{EXTRAS_REF}:{EXTRAS_REF}')):   # goody list / check read the branch
+        git(to, *args)
+    extra = [p for paths in installed_extras(kit).values() for p in paths]
+    for rel in extra:
+        os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
+        shutil.copy2(osp.join(kit, rel), osp.join(to, rel))
+    for r, _, fs in os.walk(files):
+        for x in fs:
+            rel = osp.relpath(osp.join(r, x), files)
+            extra.append(rel.replace('\\', '/'))
+            os.makedirs(osp.dirname(osp.join(to, rel)), exist_ok=True)
+            shutil.copy2(osp.join(r, x), osp.join(to, rel))
+    with open(osp.join(to, '.git', 'info', 'exclude'), 'a', encoding='utf-8') as fh:
+        fh.write(''.join(f'/{x}\n' for x in sorted(set(extra))))
+    return to
+
 def extra_test(kit, names):
-    """Run each installed goody's tests.ps1 (it stays on the goodies branch) against this kit, in parallel, and check its
-    scripts' section maps (lint SECTION-*); harness output."""
+    """Run each installed goody's tests.ps1 (it stays on the goodies branch) against a git copy of this kit with the branch's
+    goody files (goody_overlay), in parallel, and check its scripts' section maps (lint SECTION-*); harness output."""
     if not shutil.which('pwsh'):
         print('FAIL goody test: pwsh 7 is not on PATH\n1 failure(s)')
         return 1
@@ -2057,12 +2082,13 @@ def extra_test(kit, names):
         sec = ''.join(f'FAIL {c} {w}: {m}\n' for r, _, fs in os.walk(files) for x in fs
                       for rel in sec_files([osp.relpath(osp.join(r, x), files).replace('\\', '/')]) for c, w, m in sec_check(rel, read(osp.join(r, x)))[0])
         if osp.isfile(osp.join(here, 'tests.ps1')):
-            if osp.isfile(osp.join(kit, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
+            src = goody_overlay(kit, files, osp.join(tmp, 'kit'))
+            if osp.isfile(osp.join(src, 'tests', 'harness.ps1')) and not osp.exists(osp.join(here, 'harness.ps1')):
                 with open(osp.join(here, 'harness.ps1'), 'w', encoding='utf-8') as fh:   # a test written to sit next to the harness
-                    fh.write(HARNESS_SHIM.replace('<kit>', kit.replace("'", "''")).replace('<files>', files.replace("'", "''")))
-            cmd = ['pwsh', '-NoProfile', '-File', osp.join(here, 'tests.ps1'), '-Kit', kit]
+                    fh.write(HARNESS_SHIM.replace('<kit>', src.replace("'", "''")).replace('<files>', files.replace("'", "''")))
+            cmd = ['pwsh', '-NoProfile', '-File', osp.join(here, 'tests.ps1'), '-Kit', src]
             d = osp.dirname(sys.executable)   # no python shim (chcp: shared console code page)
-            env = dict(os.environ, PATH=d + os.pathsep + os.environ.get('PATH', '')) if d else None
+            env = dict(os.environ, KIT_TEST_CORE=kit, PATH=(d + os.pathsep if d else '') + os.environ.get('PATH', ''))   # KIT_TEST_CORE: node_modules
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', env=env)
         runs.append((name, tmp, sec, p))
     fails = 0

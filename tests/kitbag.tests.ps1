@@ -109,6 +109,9 @@ $klj = Join-Path $kc 'skills/crafty/kit.local.json'; '{ "tracker": { "type": "de
 $null = & $ex goody add demo; $lo = & $ex goody remove demo; $lx = Get-Content (git -C $kc rev-parse --path-format=absolute --git-path info/exclude) -Raw
 Expect "goody remove: a localOnly path stays, file and exclude line ($($lo.out.Trim()))" ($lo.code -eq 0 -and (Test-Path $demo) -and $lx -match '(?m)^/skills/bossy/kitbag_demo\.py' -and -not (git -C $kc status --porcelain))
 '{ "tracker": { "type": "demo" } }' | Set-Content $klj; $null = & $ex goody remove demo; Remove-Item $demo -ErrorAction SilentlyContinue
+"param([string]`$Kit)`n. (Join-Path `$Kit 'tests/harness.ps1')`nExpect 'v2' ((Get-Content (Join-Path `$src 'skills/bossy/kitbag_demo.py') -Raw) -match 'v2')`nComplete-Tests" | Set-Content "$xd/tests.ps1"
+$null = & $ex goody add demo; Add-Content "$xd/files/skills/bossy/kitbag_demo.py" '# v2'; & $pushX 'v2'; $null = & $ex goody list; $gt =& $ex goody test demo; $null = & $ex goody remove demo
+Expect "goody test: the branch's files, not the installed copy ($($gt.out -replace '\s+', ' '))" ($gt.code -eq 0 -and $gt.out -match '1 pass, 0 fail')
 # goody sync: config in kit.local.json or another local file, an existing kit file; a changed branch file updates
 foreach ($x in @(@('duo', 'Needed when (targets.local.json, checked by pokey.ps1): `targets.*.auth.type` = `basic` | `token`'), @('own', 'Needed when: `.githooks/pre-commit` exists'), @('never', 'Needed when: you want the page (`flow --readme` stays core).'))) {
   New-Item -ItemType Directory -Force "$xw/goodies/$($x[0])/files/notes" | Out-Null; "# $($x[0])`n`n$($x[1])" | Set-Content "$xw/goodies/$($x[0])/GOODY.md"; "$($x[0])" | Set-Content "$xw/goodies/$($x[0])/files/notes/$($x[0]).txt"

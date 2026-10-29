@@ -21,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
-  L757 track · L1066 anomalies · L1084 supervise · L1391 report · L1470 audit · L1530 storage · L1741 bugbrief · L1844 cleanup ·
-  L1966 learn · L1996 decide · L2062 health · L2124 retro due · L2134 tidy · L2204 the kit origin's main and goodies ·
-  L2220 setup · L2286 guard-sendmessage
+Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L756 param ·
+  L762 track · L1071 anomalies · L1089 supervise · L1396 report · L1475 audit · L1535 storage · L1746 bugbrief · L1849 cleanup ·
+  L1971 learn · L2001 decide · L2067 health · L2129 retro due · L2139 tidy · L2209 the kit origin's main and goodies ·
+  L2225 setup · L2291 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -121,7 +121,7 @@ switch ($Action) {
     $peer = @($same | Where-Object { -not ($Resume -or $rejoin) -and (Test-KitHolder $_) -and ($now - [datetime]$_.beat).TotalMinutes -lt $staleMin })
     if ($peer) { $b = $Agent; $n = 2; while (@(Active | Where-Object agent -eq "$b-$n").Count) { $n++ }; $Agent = "$b-$n"; $same = @(); $notes += "PARALLEL: $b runs in session $($peer[0].session): you are $Agent" }
     if ($rejoin) { $tok = $rejoin.session; $joined = $rejoin.joined; $notes += "REJOIN: same agent, run and claims within 2 min - reusing session $tok" }
-    else { $tok = "$Agent-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }
+    else { $tok = "$($Agent -replace '[\\/:*?"<>|\s]', '-')-" + ([guid]::NewGuid().ToString('N').Substring(0, 8)); $joined = $now.ToString('o') }   # the session names a file
     # the dead pid is the join shell's: not alone
     foreach ($o in @($same | Where-Object { $_.session -ne $tok })) {
       $alive = $o.pid -and (Test-KitPid $o.pid $o.pidStart)
@@ -306,6 +306,11 @@ $kit = $KitConf.Kit
 $dir = Get-KitPath launches -Create
 $RunId = "$RunId".Trim().Trim('''"')
 $safe = { param($id) ($id -replace '[^\w.-]', '_') }
+# a workflow's relative '.claude/.runtime/...' path means the workspace root, not this shell's cwd; else the launches folder
+if ($ArgsFile -and -not (Test-Path -LiteralPath $ArgsFile)) {
+  $ArgsFile = @(if (-not [IO.Path]::IsPathRooted($ArgsFile)) { Join-Path (Split-Path $kit) $ArgsFile }; Join-Path $dir (Split-Path $ArgsFile -Leaf)) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if (-not $ArgsFile) { "MISMATCH: args file not found (looked in the workspace root and $dir): write it there again, then re-run"; exit 1 }
+}
 
 if ($Self) {
   if (-not ($Script -and $Run -and $ArgsFile)) { 'usage: launch -Self -Script <wf>.js -Run <run> -ArgsFile <file> -Fnv <hash> [-RunDir <dir>] [-Plan ''role/model:n,..'']'; exit 2 }

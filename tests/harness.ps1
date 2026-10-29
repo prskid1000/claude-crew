@@ -116,7 +116,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
 }
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
-  $nm = "$src/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
+  $nm = "$(if ($env:KIT_TEST_CORE) { $env:KIT_TEST_CORE } else { $src })/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
   Copy-Item "$src/skills/pokey/browser.mjs" "$k/skills/pokey"; New-Item -ItemType Junction -Path "$k/skills/pokey/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
 }
 # NodeT head: login app at `web` (/login form; /sso-app -> /idp on localhost; a 6-digit c logs in; posts counted; gen++ logs out)

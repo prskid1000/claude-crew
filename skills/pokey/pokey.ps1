@@ -189,7 +189,7 @@ switch ($Action) {
 function Invoke-Api {
 param(
   [string]$Method = 'GET',
-  [Parameter(Mandatory)][string]$Path,
+  [Parameter(Mandatory, Position = 0)][string]$Path,
   [string]$Body = $null,
   [string]$Target = $null,
   [string]$As = 'admin',
