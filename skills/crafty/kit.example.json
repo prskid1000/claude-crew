@@ -2,7 +2,7 @@
  "_readme": "Every key is optional (missing: README 'Configuration' default). bossy.ps1 setup -WriteLocal writes kit.local.json from this file (never localFiles or _ sections), each localFiles entry to its (git-ignored) path. Fill <...> values; / works on every OS.",
  "_doc": { "_readme": "README Configuration rows: keys without a _readme",
   "gitHost, gitHostType, githubHost, gitlabGroup": "the git host (type from the host) and the group / owner for short refs <repo>!<iid>",
-  "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; protectedBranchesMode extend (replace: without main/master/develop)",
+  "reposRoot, worktreeRoots, repoAliases, protectedBranches": "checkouts (default the workspace), worktrees (<repos>-wt); short repo names; branches never force-pushed; `protectedBranchesMode` extend (replace: without main/master/develop)",
   "commitStyle, locale.testCommentPattern, locale.proseTerms": "subject rule conventional (free / a regex); English defaults: testing comment, prose required words ({expected: regex, ...})",
   "devices": "type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: goody ios-simulator",
   "trackerRepos, trackerLists, productTargets": "repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs",
@@ -32,12 +32,12 @@
  "repoAliases": { "api": "backend", "web": "frontend", "app": "mobile-app" },
  "holdMerge": [],
  "tracker": {
-  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps the logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated. Examples: _examples, a goody's GOODY.md.",
+  "_readme": "type: none (default) | command; github, clickup, gitlab, jira, jira-server, linear, azure, youtrack: goodies (kitbag.py goody list). statuses maps logical statuses to your board's names (a list = the first is set, all match); statusLabelPrefix: github status labels (status:); priorities: names of 1-4, space separated; branchTag: branch / MR task tag; bugPrefix: defect names. Examples: _examples, a goody's GOODY.md.",
   "type": "none",
   "repo": "<owner/name, for github issues>",
   "list": "<container of new tasks, e.g. a ClickUp list id>",
   "owner": "<optional: assignee of new tasks; empty = your OS full name as a tracker member>",
-  "branchTag": "<tag before the task id in branches and MR titles, e.g. CU- / GH-; default from type>", "bugPrefix": "[Bug]",
+  "branchTag": "<default by type: CU- / GH->", "bugPrefix": "[Bug]",
   "statuses": {
    "open": ["open", "to do"], "inProgress": "in progress", "review": ["for review", "in review"], "promoted": "promoted",
    "inTest": ["in test", "for test"], "failedTesting": ["failed testing", "test failed"], "closed": ["closed", "complete", "done"]

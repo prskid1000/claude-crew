@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 supervise report · L974 tracker · L1228 git-host ·
-  L1344 kitlog · L1458 params · L1621 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L986 tracker · L1240 git-host ·
+  L1356 kitlog · L1470 params · L1633 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -339,11 +339,22 @@ function Get-KitHolder {
   }
   [ordered]@{ holderPid = $null; holderStart = '' }
 }
+# who holds the supervise lock: the heartbeat's session, never this pwsh (a new pid each round would step aside from itself)
+function Get-SuperviseOwner([string]$Session) {
+  if ($Session) { return $Session }
+  if ($env:CLAUDE_CODE_SESSION_ID) { return $env:CLAUDE_CODE_SESSION_ID }
+  $h = Get-KitHolder; if ($h.holderPid) { return "holder$($h.holderPid)" }
+  # only shells above (a detached background shell): the topmost one is the same every round, this pwsh is not
+  $top = $PID; $p = Get-Process -Id $PID -ErrorAction SilentlyContinue
+  for ($i = 0; $p -and $i -lt 12; $i++) { $p = $p.Parent; if ($p) { $top = $p.Id } }
+  if ($top -ne $PID) { "shell$top" } else { "pid$PID" }
+}
 function Get-KitPidStart([int]$Id) { try { (Get-Process -Id $Id -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch { '' } }
 # the same process only with the same start time: a cold boot reuses pids. $Start untyped: JSON gives a DateTime
 function Test-KitPid($Id, $Start) {
   $p = if ($Id) { Get-Process -Id ([int]$Id) -ErrorAction SilentlyContinue }; if (-not $p) { return $false }
-  if ($Start) { try { return [math]::Abs(([datetimeoffset]$p.StartTime - [datetimeoffset]$Start).TotalSeconds) -lt 2 } catch {} }
+  if ($Start) { $s0 = try { [datetimeoffset]$Start } catch { return $false }   # a malformed start: not provably the same process
+    try { return [math]::Abs(([datetimeoffset]$p.StartTime - $s0).TotalSeconds) -lt 2 } catch {} }
   $true
 }
 function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null }; Test-KitPid $o.holderPid $o.holderStart }
@@ -900,6 +911,7 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
       $cur += $p
       while ($cur.Length -gt $Max) {
         $c = $Max; while ($c -gt 1 -and $cur[$c - 1] -eq '\' -and $cur.Substring($c) -match '^\\*\|') { $c-- }
+        if ($c -gt 1 -and [char]::IsHighSurrogate($cur[$c - 1])) { $c-- }   # never half an emoji
         $out.Add($cur.Substring(0, $c)); $cur = $cur.Substring($c)
       }
     }
@@ -911,7 +923,7 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
 function Limit-KitCell($Text, [int]$Max = 90) {
   $t = ("$Text" -replace '\s+', ' ').Trim(); $tag = ' (full: report)'
   if ($Max -le 0 -or $t.Length -le $Max) { return $t }
-  $c = $t.Substring(0, $Max - $tag.Length); $sp = $c.LastIndexOf(' '); if ($sp -gt $Max / 2) { $c = $c.Substring(0, $sp) }
+  $c = $t.Substring(0, $Max - $tag.Length); if ([char]::IsHighSurrogate($c[-1])) { $c = $c.Substring(0, $c.Length - 1) }; $sp = $c.LastIndexOf(' '); if ($sp -gt $Max / 2) { $c = $c.Substring(0, $sp) }
   $c.TrimEnd(' ', ',', ';', ':', '-') + $tag
 }
 # markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell); -Cap: Limit-KitCell

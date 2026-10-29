@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1426 dir · L1436 checkpoint ·
-  L1460 tracker · L1499 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1429 dir · L1439 checkpoint ·
+  L1463 tracker · L1502 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1063,6 +1063,8 @@ if ($SelfTest) {
   @('B', 'curl --data-raw /c/orders -H "X-Path: /v/1" https://h.io; curl -X POST --data /d/x https://h.io', $false, $gb),
   @('B', 'node a.mjs D:/x > /d/x/out.log 2>/d/x/err.log; python a.py < /d/x/in.txt', $false, $gb),
   @('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
+  @('B', "python a.py D:/x # was /d/x`n# node b.mjs /d/y", $false, $gb),
+  @('B', 'python a.py x#y /d/z', $true, $gb),
   @('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
   @('B', "git commit -m `"fix: node got /d/x paths`"; cat <<'EOF' > /d/x/a.md`npython /d/x/a.py`nEOF", $false, $gb),
   @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb)
@@ -1283,6 +1285,7 @@ function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
       [void]$sb.Append($ch); continue
     }
     if ($ch -eq '"' -or $ch -eq "'") { $quote = $ch; [void]$sb.Append($ch); continue }
+    if ($ch -eq '#' -and $tool -eq 'Bash' -and ($sb.Length -eq 0 -or [char]::IsWhiteSpace($sb[$sb.Length - 1]))) { $nl = $text.IndexOf("`n", $i); $i = if ($nl -lt 0) { $text.Length } else { $nl - 1 }; continue }   # a shell comment runs nothing
     if ($ch -in ';', '|', '&', "`n", '(', ')' -or ($tool -eq 'Bash' -and $ch -eq '`')) { $segs.Add($sb.ToString()); [void]$sb.Clear(); continue }
     [void]$sb.Append($ch)
   }

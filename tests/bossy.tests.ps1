@@ -28,9 +28,11 @@ Expect 'track: tag stripped, merge order echoed' ($tasks.ContainsKey('abc123') -
 $null = pwsh @np $O track add -Task zero1 2>&1; $zr = pwsh @np $O track run -Detail 2>&1 | Out-String
 Expect 'track run: a task with 0 MRs is held, never promoted' (-not (Get-Content $tf -Raw | ConvertFrom-Json -AsHashtable).tasks.zero1.done -and $zr -match 'HOLD zero1: no MR')
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
-$ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" })
+$ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
-Expect 'supervise: without -Session the lock owner is the session, the same every round (no step-aside from itself)' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1')
+Expect 'supervise: without -Session the lock owner is the session, the same every round (no step-aside from itself), also from a detached shell' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
+$ec = & { . $O; "$((Limit-KitCell ('x' * 74 + '😀' * 9)) -match '\p{Cs}')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")" }
+Expect 'report cells: a cut never splits an emoji' ($ec -eq 'FalseTrue')
 $tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
 Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
 Remove-Item Env:KIT_TRACKER_TYPE

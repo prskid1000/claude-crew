@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
-  L757 track · L1056 anomalies · L1074 supervise · L1385 report · L1464 audit · L1524 storage · L1735 bugbrief · L1838 cleanup ·
-  L1960 learn · L1990 decide · L2056 health · L2118 retro due · L2128 tidy · L2198 the kit origin's main and goodies ·
-  L2214 setup · L2280 guard-sendmessage
+  L757 track · L1056 anomalies · L1074 supervise · L1379 report · L1458 audit · L1518 storage · L1729 bugbrief · L1832 cleanup ·
+  L1954 learn · L1984 decide · L2050 health · L2112 retro due · L2122 tidy · L2192 the kit origin's main and goodies ·
+  L2208 setup · L2274 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1092,12 +1092,6 @@ function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
       if ($f.level -ne 'INFO' -and @($Acks.Keys | Where-Object { $k.StartsWith($_) -and ($Now - [datetime]$Acks[$_].at).TotalHours -lt 24 }).Count) { $hid++; continue }; $f })
   if ($hid) { $keep += [pscustomobject]@{ level = 'INFO'; what = "$hid acknowledged flag(s) hidden (supervise -Ack, 24 h)"; action = 'Nothing to do.' } }
   $keep
-}
-# who holds the supervise lock: the heartbeat's session, never this pwsh (a new pid each round would step aside from itself)
-function Get-SuperviseOwner([string]$Session) {
-  if ($Session) { return $Session }
-  if ($env:CLAUDE_CODE_SESSION_ID) { return $env:CLAUDE_CODE_SESSION_ID }
-  $h = Get-KitHolder; if ($h.holderPid) { "holder$($h.holderPid)" } else { "pid$PID" }
 }
 # the next heartbeat (min; the coordinator re-arms its timer to it): 5 with an open ACT or ENV-FIX; half the base (>= 5) with a
 # storage anomaly, 3+ failed builds in a row or many live agents; 30 when nothing runs, 22 when every agent is idle; else halfway
