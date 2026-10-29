@@ -74,7 +74,8 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
   $svc = if ($ev) { $base.Substring("$($ev.env)".Length + 1) } else { $base }; $where = if ($ev) { "$($ev.env) $svc (release r$($ev.release))" } else { $L.path }
   $n = $L.errors + $(if (-not @($ev.leases).Count) { $L.expected })   # 4xx with nobody testing: someone else's calls
   if ($n -le 0) { return }
-  if ($L.cls -eq 'error') { return [pscustomobject]@{ level = 'WATCH'; what = "ERROR SPIKE: $n new error line(s) in $($L.path)"; action = "first: $($L.first)" } }
+  $cells = @{ kind = 'ERROR SPIKE'; who = $(if ($ev) { "$($ev.env) $svc" } else { $base }); problem = "$n new error line$(if ($n -ne 1) { 's' }) in $(if ($ev) { "$($ev.env) $svc" } else { $base }) log"; next = "$($L.cls): $(("$($L.first)" -replace '\s+', ' ').Trim() | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 60) } else { $_ } })" }   # table cells (supervise -Brief, ~90 chars); what / action stay whole for the report
+  if ($L.cls -eq 'error') { return [pscustomobject](@{ level = 'WATCH'; what = "ERROR SPIKE: $n new error line(s) in $($L.path)"; action = "first: $($L.first)" } + $cells) }
   if ($L.cls -eq 'startup' -and $L.dep -and $ev) {
     $up = $false; $tc = [Net.Sockets.TcpClient]::new(); try { $h, $p = $L.dep -split ':'; $up = $tc.ConnectAsync($h, [int]$p).Wait(1000) -and $tc.Connected } catch {} finally { $tc.Dispose() }
     $rf = Join-Path (Get-KitPath cache -Create) 'localenv-retries.json'; $tried = try { Get-Content $rf -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $tried) { $tried = @{} }
@@ -84,9 +85,9 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
       $r = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'restart', '-Env', $ev.env, '-Services', $svc, '-Agent', 'supervise') ([math]::Min(120, (Left)))
       return [pscustomobject]@{ level = $(if ($r.code) { 'ACT' } else { 'INFO' }); what = "$(if ($r.code) { 'ERROR SPIKE' } else { 'auto-fixed' }): $where failed to start while $($L.dep) was down; it is up now: restarted once$(if ($r.code) { " - FAILED: $("$($r.out)".Trim())" })"; action = "& $($KitCmd.local) logs -Env $($ev.env) -Service $svc" }
     }
-    if (-not $up) { return [pscustomobject]@{ level = 'ACT'; what = "ERROR SPIKE: $where failed to start: $($L.dep) is down: $($L.first)"; action = "Bring $($L.dep) up; the next heartbeat restarts $svc once (-AutoFix)." } }
+    if (-not $up) { return [pscustomobject](@{ level = 'ACT'; what = "ERROR SPIKE: $where failed to start: $($L.dep) is down: $($L.first)"; action = "Bring $($L.dep) up; the next heartbeat restarts $svc once (-AutoFix)." } + @{ kind = $cells.kind; who = $cells.who; problem = "$svc failed to start: $($L.dep) is down"; next = "bring $($L.dep) up" }) }
   }
-  [pscustomobject]@{ level = 'ACT'; what = "ERROR SPIKE: $where, $n new error line(s), $($L.cls): $($L.first)"; action = "& $($KitCmd.local) logs -Env $(if ($ev) { $ev.env } else { '<env>' }) -Service $svc; a branch layer in that release caused it -> its agent (board msg), else kitty kind env" }
+  [pscustomobject](@{ level = 'ACT'; what = "ERROR SPIKE: $where, $n new error line(s), $($L.cls): $($L.first)"; action = "& $($KitCmd.local) logs -Env $(if ($ev) { $ev.env } else { '<env>' }) -Service $svc; a branch layer in that release caused it -> its agent (board msg), else kitty kind env" } + $cells)
 }
 # ---- flags: supervise section 7 (status -Json only): env rows and flags, owner holds (info), restart loops, trains
 # waiting on leases or stalled, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
