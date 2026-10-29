@@ -949,6 +949,11 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
 }
 
 # ---- supervise report: -Brief = the owner's round report as final markdown (no LLM step); pure on $d, so fixtures test it
+# -Brief's table: a FINISHED row stays supervise.finishedMinutes after it ended (the report file keeps it); other states always show
+function Select-KitBriefRows($Rows, [datetime]$Now) {
+  $fm = [double](Get-KitSetting 'supervise.finishedMinutes' 30)
+  @($Rows | Where-Object { $_.state -ne 'FINISHED' -or -not $_.ended -or ($Now - [datetime]$_.ended).TotalMinutes -le $fm })
+}
 function Format-KitReport($d, [string[]]$Tail = @()) {
   $g1 = { param($x) [math]::Round([double]$x, 1) }
   $reportLines = [Collections.Generic.List[string]]::new()
@@ -1186,12 +1191,12 @@ function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $I
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
 # a kit comment ends with its marker '[kit:<kind>]': a new round edits the task's latest one of that kind (adapter comment-edit),
 # else posts and deletes it (comment-delete), else only posts; comments without the marker (people's) are never touched
+function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
 function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text) {
   $mark = "[kit:$Kind]"; $body = "$((__TrText $Text).TrimEnd())`n`n$mark"; $ad = $KitAdapters['tracker'][$__trType]
   $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and "$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') } | Select-Object -Last 1
   if ($old -and $ad -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body } }
   $r = Add-TrackerComment $Id $body
-function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
   # queued (offline): the old one stays
   if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r

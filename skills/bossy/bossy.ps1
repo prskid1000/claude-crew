@@ -1375,10 +1375,12 @@ L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('s'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # the final markdown the coordinator pastes verbatim; the long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report)
-  @("# supervise $($now.ToString('s'))") + $md + @('', '## Agents (whole cells)') + @($report.rows | ForEach-Object { "- $($_.name) | $($_.task) | $($_.state) $($_.wait)$($_.done)$($_.stopped) | $($_.doing) | next: $($_.next)" -replace '[\r\n]+', ' ' }) + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @($report.info | Where-Object { $_ } | ForEach-Object { "- [INFO] $_" }) + @('', '## Resources') + @($report.resources | ForEach-Object { "- $($_.name) | $($_.by) | $($_.gb) GB" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
+  $fin = @($report.rows | Where-Object state -eq 'FINISHED'); $ln = { "- $($_.name) | $($_.task) | $($_.state) $($_.wait)$($_.done)$($_.stopped) | $($_.doing) | next: $($_.next)" -replace '[\r\n]+', ' ' }
+  @("# supervise $($now.ToString('s'))") + $md + @('', '## Agents (whole cells)') + @($report.rows | Where-Object state -ne 'FINISHED' | ForEach-Object $ln) + @('', '## Finished today') + @($fin | ForEach-Object $ln) + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @($report.info | Where-Object { $_ } | ForEach-Object { "- [INFO] $_" }) + @('', '## Resources') + @($report.resources | ForEach-Object { "- $($_.name) | $($_.by) | $($_.gb) GB" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
   $nAct = @($flags | Where-Object level -eq 'ACT').Count
   $tail = if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" } elseif ("$md" -match '\(full: report\)') { "cut cells whole: $(Get-KitPath supervise-report)" }
-  Format-KitReport $report $tail; $nextLine; $global:LASTEXITCODE = 0; exit 0
+  $shown = $report.PSObject.Copy(); $shown.rows = @(Select-KitBriefRows $report.rows $now)   # finished > finishedMinutes: report file only
+  Format-KitReport $shown $tail; $nextLine; $global:LASTEXITCODE = 0; exit 0
 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines; Format-KitStatusTable $rows $now $script:KitTxVersions
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }
