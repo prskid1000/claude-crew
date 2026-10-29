@@ -77,7 +77,7 @@ $dp = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl
 $null = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution --prose-ok 'brief format' 2>&1; $dkc = $LASTEXITCODE; $n3 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 Expect "prose gate: tracker / devtools.py comment over the limit refused, unposted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
 Remove-Item Env:KIT_TRACKER_TYPE
-# tracker command backend on recorded answers (unknown call fails)
+# tracker: unknown call fails
 $tb = @'
 . $args[0]; $global:log = [Collections.Generic.List[string]]::new()
 $__cfg = '{"tracker":{"commands":{"view":"mytr view {id}","status":"mytr status {id} {status}","comment":"mytr comment {id} {text}","create":"mytr create {list} {name}","list":"mytr list {list} {status}"}}}' | ConvertFrom-Json
@@ -92,12 +92,10 @@ $res = Invoke-PsTest 'tracker-test' $tb @(Lib)
 Expect-Each $res 'tracker #: view, status, comment, create, list on recorded answers' 'command'
 $kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
-# a lock gone between check and read: no throw
 $kl = pwsh -NoProfile -Command ". '$(Lib)'; `$ErrorActionPreference = 'Stop'; `$f = Join-Path '$(Kd)' 'kl.json'; Set-Content `"`$f.lock`" x; (Get-Item `"`$f.lock`").LastWriteTime = (Get-Date).AddMinutes(-5); function Test-Path { Remove-Item `"`$f.lock`" -Force -ErrorAction SilentlyContinue; `$true }; try { Invoke-KitLocked `$f { 'ran' } } catch { `"threw: `$_`" }"
 Expect "Invoke-KitLocked: a lock removed mid-check is no crash ($kl)" ("$kl".Trim() -eq 'ran')
 $mv = pwsh -NoProfile -Command ". '$(Lib)'; foreach (`$e in [IO.IOException]::new('p', -2147024809), [ArgumentException]::new('p'), [IO.IOException]::new('b', -2147024864)) { Test-KitMoveUnsupported `$e }; `$f = '$(Kd)/atomic.json'; Write-KitAtomic `$f 'a'; Write-KitAtomic `$f 'b'; Get-Content `$f"
 Expect "Write-KitAtomic: Win32 87 / ArgumentException copy over, a sharing violation retries ($mv)" ("$mv" -eq 'True True False b')
-# a crash exits 1, a bad parameter 2
 $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd'), @('$null.X()', '', 1, 'FAILED'), @('''ok''', '-Mode x', 2, 'Mode'), @('''ok''', '', 0, '^$'))) {
   $e = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-T { param([int]`$Mode) $($r[0]) }; Invoke-KitVerb Invoke-T @('$($r[1] -split ' ' -join "','")' | Where-Object { `$_ })" 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | Out-String
   if ($LASTEXITCODE -ne $r[2] -or $e.Trim() -notmatch $r[3]) { "$($r[0]) -> $LASTEXITCODE $($e.Trim())" } }
@@ -185,7 +183,6 @@ $gt = @'
 "starved:$((Test-GateStart 4 10 25 64) -and -not (Test-GateStart 2 10 25 64))"
 '@
 Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'starved', 'kinds', 'histcmd'
-# guard: a non-JSON payload denies (logged); empty stdin allows
 $gbad = '{not json' | Px $D guard | Out-String
 $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
@@ -194,7 +191,6 @@ $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
 Expect 'guard: a write off the layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
 $gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
-# a goody guard rule may add a note (additionalContext); no runtimes goody: one line
 $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na
@@ -231,15 +227,14 @@ Expect 'params: 2+ new ACTs step the beat down; a holder back after grace = shor
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
 
 $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
-  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) }
+  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }
 $ef = { param($a, $q) @{ level = 'ACT'; kind = 'ENV-FIX'; who = "$a (wave-brief-a8da)"; age = '34 min'; what = $a; problem = $q; action = "& D:\Kit\.claude\skills\bossy\bossy.ps1 decide answer -Id e-20261029090127-$a-e69a" } }
 $rd.flags = @(@{ level = 'WATCH'; what = 'RESTART LOOP: hm search 3x'; action = 'logs' }, (& $ef W 'devy-3dy3-put'), ((& $ef J ('p ' * 60)) + @{ next = 'nx' }), (& $ef J1 'C:\d\|x'))
 $r1 = (& { . $O; Format-KitReport $rd }) -join "`n"; $rd.mem.AvailGB = 6; $rd.rows = @(); $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
-$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '',
-  '**RAM** 48 / 64 GB used, 16 GB free', '', '| Resource | Used by | RAM |', '|---|---|---|', '| rm · api | W1 | 3 |', '', '**Flags**', '') -join "`n"
+$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '', '**Flags**', '') -join "`n"; $ro = (& { . $O; Format-KitReport $rd 'ACT: 1' }) -join ' ' -match 'INFO.+ACT: 1 +\*\*RAM'
 $fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' }); $fw = @($r1 -split "`n`n" | Where-Object { $_.StartsWith('|') } | ForEach-Object { $tl = $_ -split "`n"; $nc = ($tl[0] -split '\|').Count - 2
   (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
-Expect "report: widths ($fw) <= 95, cells <= 90" ($r1.StartsWith($want1) -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
+Expect "report: widths ($fw) <= 95, cells <= 90; RAM after Flags + ACT, 3 per row" ($r1.StartsWith($want1) -and $ro -and $r1 -match '(?s)W1 \| 3 \| browser.+(\| — ){6}\|' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
 Remove-TestKit $k
 # ---- OS helpers on Linux / macOS
 $k = New-TestKit posix

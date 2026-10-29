@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 tracker · L1193 git-host · L1309 kitlog ·
-  L1423 params · L1586 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 supervise report · L974 tracker · L1228 git-host ·
+  L1344 kitlog · L1458 params · L1621 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -936,6 +936,41 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
   }
 }
 
+# ---- supervise report: -Brief = the owner's round report as final markdown (no LLM step); pure on $d, so fixtures test it
+function Format-KitReport($d, [string[]]$Tail = @()) {
+  $g1 = { param($x) [math]::Round([double]$x, 1) }
+  $reportLines = [Collections.Generic.List[string]]::new()
+  # 1. one row per agent and workflow run (lib.ps1 status)
+  foreach ($l in @(Format-KitStatusTable $d.rows $d.at $d.versions -Cap 90) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
+  # 2. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs); then -Brief's ACT line ($Tail)
+  $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
+  $reportLines.Add("**Flags**$(if (-not $fl.Count) { ': none' })")
+  if ($fl.Count) { $reportLines.Add(''); $reportLines.Add('| Level | Flag | Who / item | Age | Problem | Next step |'); $reportLines.Add('|---|---|---|---|---|---|') }
+  foreach ($f in $fl) {
+    $c = Get-KitFlagCells $f
+    $reportLines.Add("| $($f.level) | $(@($c.kind, $c.who, $c.age, $c.problem, $c.action | ForEach-Object { if ("$_".Trim()) { Limit-KitCell (Format-KitCell $_ -Exact) 90 } else { '—' } }) -join ' | ') |")
+  }
+  $reportLines.Add('')   # GFM: a plain line right after a table becomes a row (ACT:, RAM, NEXT)
+  foreach ($t in @($Tail | Where-Object { $_ })) { $reportLines.Add($t); $reportLines.Add('') }
+  # 3. RAM in one line, then what the kit holds (below the flags: the owner reads those first)
+  $m = $d.mem
+  $reportLines.Add("**RAM** $(& $g1 ($m.TotalGB - $m.AvailGB)) / $(& $g1 $m.TotalGB) GB used, $(& $g1 $m.AvailGB) GB free$(if ($m.AvailGB -lt $d.keepFree) { " (below the floor $($d.keepFree) GB)" })")
+  $rs = @($d.resources | Sort-Object { -[double]$_.gb })
+  if ($rs.Count) {
+    # three per row, largest first; 9 columns fit the box only with short cells: words broken at 9, cells cut at 24 (whole: report)
+    $reportLines.Add(''); $reportLines.Add('|' + ' Resource | Used by | RAM |' * 3); $reportLines.Add('|' + '---|' * 9)
+    $rc = @(foreach ($r in $rs) { "$(Limit-KitCell (Format-KitCell $r.name 9) 24) | $(if ($r.by) { Limit-KitCell (Format-KitCell $r.by 9) 24 } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' })" })
+    for ($i = 0; $i -lt $rc.Count; $i += 3) { $reportLines.Add('| ' + (@(0..2 | ForEach-Object { if ($i + $_ -lt $rc.Count) { $rc[$i + $_] } else { '— | — | —' } }) -join ' | ') + ' |') }
+  }
+  $reportLines.Add('')
+  @($reportLines)
+}
+# a flag's table cells: the producer's kind / who / age / problem / next (short action); else an upper-case lead ("RESTART LOOP: ...") is the kind
+function Get-KitFlagCells($f) {
+  $kind = $f.kind; $problem = $f.problem
+  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -][A-Z]{3,})*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
+  [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
+}
 # ---- tracker: adapter (a Register-KitAdapter block per tracker.type)
 
 function Initialize-KitTracker([string]$Type, [switch]$DryRun) {

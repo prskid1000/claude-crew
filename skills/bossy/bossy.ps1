@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
-  L757 track · L1045 supervise report · L1087 anomalies · L1105 supervise · L1414 report · L1493 audit · L1553 storage ·
-  L1764 bugbrief · L1867 cleanup · L1989 learn · L2019 decide · L2085 health · L2147 retro due · L2157 tidy ·
-  L2227 the kit origin's main and goodies · L2243 setup · L2309 guard-sendmessage
+  L757 track · L1056 anomalies · L1074 supervise · L1385 report · L1464 audit · L1524 storage · L1735 bugbrief · L1838 cleanup ·
+  L1960 learn · L1990 decide · L2056 health · L2118 retro due · L2128 tidy · L2198 the kit origin's main and goodies ·
+  L2214 setup · L2280 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1042,37 +1042,6 @@ switch ($Action) {
 }
 }
 
-# ---- supervise report: -Brief = the owner's round report as final markdown (no LLM step); pure on $d, so fixtures test it
-function Format-KitReport($d) {
-  $g1 = { param($x) [math]::Round([double]$x, 1) }
-  $reportLines = [Collections.Generic.List[string]]::new()
-  # 1. one row per agent and workflow run (lib.ps1 status)
-  foreach ($l in @(Format-KitStatusTable $d.rows $d.at $d.versions -Cap 90) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
-  # 2. RAM in one line, then what the kit holds
-  $m = $d.mem
-  $reportLines.Add("**RAM** $(& $g1 ($m.TotalGB - $m.AvailGB)) / $(& $g1 $m.TotalGB) GB used, $(& $g1 $m.AvailGB) GB free$(if ($m.AvailGB -lt $d.keepFree) { " (below the floor $($d.keepFree) GB)" })")
-  $rs = @($d.resources | Sort-Object { -[double]$_.gb })
-  if ($rs.Count) {
-    $reportLines.Add(''); $reportLines.Add('| Resource | Used by | RAM |'); $reportLines.Add('|---|---|---|')
-    foreach ($r in $rs) { $reportLines.Add("| $(Format-KitCell $r.name) | $(if ($r.by) { Format-KitCell $r.by } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' }) |") }
-  }
-  # 3. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs)
-  $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
-  $reportLines.Add(''); $reportLines.Add("**Flags**$(if (-not $fl.Count) { ': none' })")
-  if ($fl.Count) { $reportLines.Add(''); $reportLines.Add('| Level | Flag | Who / item | Age | Problem | Next step |'); $reportLines.Add('|---|---|---|---|---|---|') }
-  foreach ($f in $fl) {
-    $c = Get-KitFlagCells $f
-    $reportLines.Add("| $($f.level) | $(@($c.kind, $c.who, $c.age, $c.problem, $c.action | ForEach-Object { if ("$_".Trim()) { Limit-KitCell (Format-KitCell $_ -Exact) 90 } else { '—' } }) -join ' | ') |")
-  }
-  if ($fl.Count) { $reportLines.Add('') }   # GFM: a plain line right after a table becomes a row (ACT:, NEXT)
-  @($reportLines)
-}
-# a flag's table cells: the producer's kind / who / age / problem / next (short action); else an upper-case lead ("RESTART LOOP: ...") is the kind
-function Get-KitFlagCells($f) {
-  $kind = $f.kind; $problem = $f.problem
-  if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -][A-Z]{3,})*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
-  [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
-}
 # status: the table alone (no sweep, no flags, no network); -Watch redraws it every -Seconds
 function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [string]$Session) {
   $ErrorActionPreference = 'SilentlyContinue'   # a journal mid-write must not paint -Watch red
@@ -1402,8 +1371,10 @@ L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('s'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # the final markdown the coordinator pastes verbatim; the long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report)
-  @("# supervise $($now.ToString('s'))") + $md + @('', '## Agents (whole cells)') + @($report.rows | ForEach-Object { "- $($_.name) | $($_.task) | $($_.state) $($_.wait)$($_.done)$($_.stopped) | $($_.doing) | next: $($_.next)" -replace '[\r\n]+', ' ' }) + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
-  $md; $nAct = @($flags | Where-Object level -eq 'ACT').Count; if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" }; $nextLine; $global:LASTEXITCODE = 0; exit 0
+  @("# supervise $($now.ToString('s'))") + $md + @('', '## Agents (whole cells)') + @($report.rows | ForEach-Object { "- $($_.name) | $($_.task) | $($_.state) $($_.wait)$($_.done)$($_.stopped) | $($_.doing) | next: $($_.next)" -replace '[\r\n]+', ' ' }) + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @($report.info | Where-Object { $_ } | ForEach-Object { "- [INFO] $_" }) + @('', '## Resources') + @($report.resources | ForEach-Object { "- $($_.name) | $($_.by) | $($_.gb) GB" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
+  $nAct = @($flags | Where-Object level -eq 'ACT').Count
+  $tail = if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" } elseif ("$md" -match '\(full: report\)') { "cut cells whole: $(Get-KitPath supervise-report)" }
+  Format-KitReport $report $tail; $nextLine; $global:LASTEXITCODE = 0; exit 0
 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines; Format-KitStatusTable $rows $now $script:KitTxVersions
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }

@@ -70,7 +70,6 @@ Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& 
   (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
   @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 30 min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
-# the next heartbeat: 5 on an ACT / ENV-FIX, half the base on storage / build streak / many agents, 30 idle machine, else back to the base
 $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 1), @(15, 0, 1, 0, 0, 2, 2, 1), @(15, 0, 0, 1, 0, 2, 2, 1), @(15, 0, 0, 0, 3, 2, 2, 1), @(15, 0, 0, 0, 0, 9, 9, 3), @(15, 0, 0, 0, 0, 0, 0, 0), @(15, 0, 0, 0, 0, 2, 0, 2), @(15, 0, 0, 0, 0, 2, 2, 1), @(5, 0, 0, 0, 0, 2, 2, 1), @(30, 0, 0, 0, 0, 2, 2, 1)) { `$n = Get-KitNextBeat `$c[0] 15 `$c[1] `$c[2] ([bool]`$c[3]) `$c[4] `$c[5] `$c[6] `$c[7]; `"`$(`$n.min) `$(`$n.why)`" }"
 Expect "heartbeat NEXT: ACT 5, ENV-FIX 5, storage / 3 failed builds / many agents 8, nothing runs 30, all idle 22, normal 15, back toward 15 from 5 and 30 ($($nb -join ' | '))" (($nb -join '|') -eq '5 1 ACT open|5 1 ENV-FIX open|8 storage anomaly|8 3 failed builds in a row|8 9 live agents|30 nothing runs|22 every agent idle|15 normal|10 back toward 15|22 back toward 15' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
 $bt = pwsh -NoProfile -Command ". '$O'; `$f = Get-KitPath supervise-state; `$s = Get-Content `$f -Raw | ConvertFrom-Json -AsHashtable; `$s.nextBeat = 30; `$s.report.at = (Get-Date).AddMinutes(-10).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes; `$s.report.at = (Get-Date).AddMinutes(-70).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes"
@@ -98,13 +97,11 @@ Expect "report: an agent's merged: true loses to the host's state now ($($rm6.me
 $lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
 try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
 Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
-# a workflow without a Learn phase (tidy) closed by launch -Done: no "before its Learn phase" signal
 New-Item -ItemType Directory -Force "$k/workflows" | Out-Null; Copy-Item (Join-Path $src 'workflows/tidy.js') "$k/workflows/"
 New-Journal wf_r6 @(@{ type = 'started'; agentId = 'e1'; label = 'prep' }, @{ type = 'result'; agentId = 'e1'; result = @{ ok = $true } })
 $null = pwsh @np $O launch -RunId wf_r6 -Script tidy.js -ArgsJson '{"run":"r6"}' 2>&1; $d6 = pwsh @np $O launch -Done -RunId wf_r6 2>&1 | Out-String
 $s6 = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.ref -eq 'r6' })
 Expect "launch -Done on a run without a Learn phase: no skipped-Learn signal ($($s6.Count))" (-not $s6.Count -and $d6 -match 'learn: run r6 stopped by launch -Done - nothing to record')
-# worktree prune: remote branch gone + clean + idle worktreeDays -> the worktree goes, its local branch stays; uncommitted files: reported only
 $wr = Join-Path (Kd) 'wtr'; $bo = Join-Path (Kd) 'wto.git'; git init -q --bare -b main $bo; git clone -q $bo "$wr-main" 2>$null; 'a' | Set-Content "$wr-main/a.txt"; Save-GitRepo "$wr-main" init; git -C "$wr-main" push -q origin main 2>$null
 foreach ($n in 'gone', 'dirty') { git -C "$wr-main" worktree add -q -b "f/$n" "$wr/$n" 2>$null; "$n" | Set-Content "$wr/$n/$n.txt"; Save-GitRepo "$wr/$n" $n; git -C "$wr/$n" push -q -u origin "f/$n" 2>$null; git -C "$wr-main" push -q origin --delete "f/$n" 2>$null }
 'edit' | Add-Content "$wr/dirty/dirty.txt"; foreach ($f in Get-ChildItem $wr -Recurse -File -Force) { $f.LastWriteTime = (Get-Date).AddDays(-9) }
@@ -146,10 +143,11 @@ Expect 'build failures: 3 failed in a row flag only when the last is < 24 h old'
 # a gone session's QA seat + claims freed in ONE line; board show lists seats and env leases
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $qs = TkPath $k qa-seats -Create; foreach ($x in 'seats/s1', 'claims/r1__A1', 'claims/r1__A2') { Set-JsonFile (Join-Path $qs "$x.json") @{ agent = 'test:Q9'; holderPid = $dp.Id } }
-$null = Px $O supervise -AutoFix -Brief -Takeover -Session me 2>&1
+$za = "$k/skills/bossy/adapters/z.ps1"; 'function Get-KitSuperviseGuardZ { @{ info = ''zi'' }; @{ level = ''WATCH''; what = ''w '' * 50 } }' > $za
+$sb = Px $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String; Remove-Item $za
 $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix: a gone session''s QA seat + claims freed in ONE line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count -and $sr -match 'gate: \d+ running')
-Expect 'supervise -Brief: whole cells in the report' (($sr -split '## Agents \(whole cells\)')[1] -match '## All flags' -and $sr -notmatch '\(full: report\)')
+$wc = ($sr -split '## Agents \(whole cells\)')[1]; Expect 'supervise -Brief: whole cells + INFO in the report, named under a cut' ($wc -match '## All flags' -and $wc -notmatch '\(full: report\)' -and $wc -match 'INFO\] zi' -and $sb -match 'cut cells whole: ')
 $sd = Join-Path $qs 'seats'; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
 # the env's leases come from envy.ps1 status -Json (a stub here): never its state files
