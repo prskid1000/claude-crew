@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L140 deploy · L257 supervise
+Sections: L13 helpers · L61 intest · L139 deploy · L256 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -66,9 +66,8 @@ $ErrorActionPreference = 'SilentlyContinue'
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 
 $cand = [ordered]@{}
-$trackFile = Get-KitPath tracking
-$track = if ($trackFile -and (Test-Path $trackFile)) { Get-Content $trackFile -Raw | ConvertFrom-Json } else { $null }
-if ($track) { foreach ($p in $track.tasks.PSObject.Properties) { $cand[$p.Name] = @{ mrs = @($p.Value.mrs); name = '' } } }
+$track = (Read-KitTracking).tasks   # tasks/<id>.json (skills/bossy/STATE.md)
+foreach ($id in @($track.Keys)) { $cand[$id] = @{ mrs = @($track[$id].mrs); name = '' } }
 $ownerId = try { "$(Get-TrackerOwner)".Trim() } catch { '' }
 $lists = @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique
 if ($lists.Count) {
@@ -285,7 +284,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
       $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitSetting 'deploy.planTimeoutSec' 600)) | Out-String | ConvertFrom-Json | Where-Object { $_ })
-      $cache = [pscustomobject]@{ at = $now.ToString('s'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
+      $cache = [pscustomobject]@{ at = $now.ToString('o'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
       $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8
     }
     foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }

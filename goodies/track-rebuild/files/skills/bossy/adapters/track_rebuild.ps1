@@ -1,9 +1,9 @@
 #Requires -Version 7
 # Goody track-rebuild (kitbag.py goody add track-rebuild): bossy.ps1 track -Rebuild, dot-sourced by bossy.ps1.
-# Recreates .state/tracking.json from MRs tagged with the tracker tag (last 14 days); runs inside Invoke-Track (its helpers).
+# Recreates the task records (.state/tasks/<id>.json, skills/bossy/STATE.md) from MRs tagged with the tracker tag (last 14 days); runs inside Invoke-Track (its helpers).
 function Invoke-TrackRebuild {
-  $tf = Get-KitPath tracking
-  if ((Test-Path $tf) -and -not $Force) { "tracking file exists ($tf, $(@((Read-KitTracking).tasks.Keys).Count) task(s)): nothing to rebuild (-Force merges discovered tasks into it)"; return }
+  $tf = Get-KitPath tracking; $have = @((Read-KitTracking).tasks.Keys).Count
+  if (($have -or (Test-Path $tf)) -and -not $Force) { "tracking holds $have task(s): nothing to rebuild (-Force merges discovered tasks into it)"; return }
   $tag = $KitConf.TrackerTag; $repos = @($KitConf.TrackerRepos)
   if (-not $tag -or -not $repos.Count) {
     Update-KitTracking { param($t) }
@@ -25,8 +25,8 @@ function Invoke-TrackRebuild {
   $n = 0; $nDone = 0
   foreach ($id in $found.Keys) {
     if ((Load $id) -and -not $Force) { continue }
-    $o = @{ task = $id; mrs = @($found[$id].mrs); onMerged = @('promoted'); discover = $true; done = $false; created = (Get-Date).ToString('s'); rebuilt = $true }
-    if (-not @($found[$id].states | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus (TaskStatus $id) 'promoted', 'inTest', 'closed')) { $o.done = $true; $o.doneAt = (Get-Date).ToString('s'); $nDone++ }
+    $o = @{ task = $id; mrs = @($found[$id].mrs); onMerged = @('promoted'); discover = $true; done = $false; created = (Get-Date).ToString('o'); rebuilt = $true }
+    if (-not @($found[$id].states | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus (TaskStatus $id) 'promoted', 'inTest', 'closed')) { $o.done = $true; $o.doneAt = (Get-Date).ToString('o'); $nDone++ }
     Save $o; $n++
     if ($Detail) { "  $id : $($o.mrs -join ', ')$(if ($o.done) { ' (done)' })" }
   }
