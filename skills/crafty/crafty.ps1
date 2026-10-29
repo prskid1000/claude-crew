@@ -678,7 +678,7 @@ while ((Get-Date) -lt $deadline) {
       if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' ($waitSec / 60) -Default 90 }
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
-      Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('s'); backfill = $smallFill } | ConvertTo-Json)
+      Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('o'); backfill = $smallFill } | ConvertTo-Json)
       $buildLease = @{ agent = $owner; at = (Get-Date).ToString('o') }; Write-KitLeaseLog acquire build "$kind $(Split-Path $Dir -Leaf)" $buildLease
       break
     }
@@ -1451,14 +1451,14 @@ $jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Age
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent" }; return }
 $c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
-$s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('s') }
+$s = [ordered]@{ step = $Step; evidence = $Evidence; item = $Item; at = (Get-Date).ToString('o') }
 if ($Dir) { $Dir = (Resolve-Path -LiteralPath $Dir).Path; $s.dir = $Dir; $s.head = "$(git -C $Dir rev-parse --short HEAD 2>$null)".Trim(); $c.worktrees = @(@($c.worktrees) + $Dir | Where-Object { $_ } | Select-Object -Unique) }
 $i = [array]::IndexOf($script:KitSteps, $Step.ToLower())
 $c.steps = @(@($c.steps) + $s); $c.done = $false; $c.updated = $s.at
 $c.next = if ($Next) { $Next } elseif ($Step -eq 'done') { 'none' } elseif ($i -ge 0) { $script:KitSteps[$i + 1] } else { 'the next check' }
 if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Leases) }
 $c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
-Write-KitAtomic $jf ($c | ConvertTo-Json -Depth 6)
+Write-KitState $jf $c
 $md = @("# Checkpoint $Agent (run $($c.run)), $($c.updated)", "Next: $($c.next) (start here; the steps below are done: verify, never redo)", '', '## Done') +
   @($c.steps | ForEach-Object { "- $($_.at) $($_.step)$(if ($_.item) { " [$($_.item)]" }): $($_.evidence)$(if ($_.head) { " ($($_.dir) @ $($_.head))" })" }) +
   @('', '## Open', "- worktrees: $(@($c.worktrees) -join ', ')", "- leases: $(@($c.leases) -join ', ')", "- decisions pending: $(@($c.decisions) -join ', ')")
@@ -1504,7 +1504,7 @@ function Invoke-Tracker {
         __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
       }
       $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority
-      if ($kf -and $nt.id) { Write-KitAtomic $kf (@{ key = $__trOpt.Key; id = $nt.id } | ConvertTo-Json) }
+      if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
     'url' { Get-TrackerUrl $__id }

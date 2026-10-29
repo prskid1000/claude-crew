@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L120 seat · L188 api · L311 finalize · L693 retest
+Sections: L23 report · L120 seat · L188 api · L311 finalize · L703 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -167,7 +167,7 @@ switch ($Action) {
         if (Test-Path (Join-Path $RunDir "$Code/held.json")) { return "ALREADY: $Code was tested; results held for the lead to publish" }
         $c = if (Test-Path $cf) { Read-Seat $cf }
         if ($c -and $c.owner -ne $Owner -and (LeaseLive $c $cf)) { return "ALREADY: $Code is being tested by worker $($c.owner)" }
-        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('s'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $cf $_ }
+        ([ordered]@{ run = $run; code = $Code; owner = $Owner; since = (Get-Date).ToString('o'); lease = $Agent } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $cf $_ }
         $null
       }
       if ($verdict) { $verdict; exit 3 }
@@ -180,7 +180,7 @@ switch ($Action) {
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
     $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
-    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('s') } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
+    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-Date).ToString('o') } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
     "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"
   }
 }
@@ -684,6 +684,16 @@ foreach ($st in @($item.subtasks)) {
   $out.subtasks += $rec
 }
 Save-Fin
+# the indexes (STATE.md): the task's env runs; the run's items -> result + report, so nobody re-reads the tracker or the run folder
+$envName = [string]$(if ($item.target) { $item.target } else { $run.target }); $runName = Split-Path $RunDir -Leaf
+foreach ($s in @($out.subtasks | Where-Object { $_.id })) {
+  $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; doc = $docUrl; at = (Get-Date).ToString('o') }
+  try { Update-KitTaskIndex ([string]$s.id) { param($x) $x.envRuns = @(@($x.envRuns) | Where-Object { -not ($_.run -eq $runName -and $_.code -eq $Code) }) + $er } } catch { Write-Warning "task index $($s.id): $_" }
+}
+$rix = Join-Path $RunDir 'index.json'
+try { Invoke-KitLocked $rix { $ri = Read-KitState $rix; if (-not $ri) { $ri = [ordered]@{ run = $runName; env = $envName; items = @{} } }; if ($ri.items -isnot [Collections.IDictionary]) { $ri.items = @{} }
+  $ri.items[$Code] = [ordered]@{ tasks = @($out.subtasks.id); doc = $docUrl; pubKey = $pubKey; pass = [int](($out.subtasks | Measure-Object pass -Sum).Sum); fail = [int](($out.subtasks | Measure-Object fail -Sum).Sum); at = (Get-Date).ToString('o') }
+  Write-KitState $rix $ri } } catch { Write-Warning "run index ${rix}: $_" }
 } finally { $fmx.ReleaseMutex(); $fmx.Dispose() }
 "$Code report ($rtype): $docUrl"
 if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }

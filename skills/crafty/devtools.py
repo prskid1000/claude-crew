@@ -17,18 +17,19 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L34 config · L68 run · L152 tracker · L277 git host · L360 MR · L430 merge · L682 docs · L796 publish · L977 plugins ·
-  L991 keepboth · L1010 selftest · L1271 CLI
+Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L975 plugins ·
+  L989 keepboth · L1008 selftest · L1271 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
 import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
+from datetime import datetime
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, stamp_fn   # one path map, lock, call log and goodies' usage stamps for every kit script
+from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking   # one path map, lock, call log and goodies' usage stamps for every kit script
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -429,20 +430,14 @@ def mr_create(worktree, title, body_md, tgt=None):
 
 # ---- merge: merge now or arm merge-when-green; producers first
 def _remember_automerge(ref):
-    """GitLab drops merge-when-green on a new push (e.g. a rebase): record the intent in the durable tracking file ("automerge");
-    bossy.ps1 track run re-arms it every supervise round until the MR merges."""
-    path = kit_path('tracking')
+    """GitLab drops merge-when-green on a new push (e.g. a rebase): record the intent in .state/automerge.json (under the
+    tracking lock, lib.ps1 Update-KitTracking); bossy.ps1 track run re-arms it every supervise round until the MR merges."""
+    path = kit_path('automerge')
     try:
-        with locked(path):
-            data = json.load(open(path, encoding='utf-8-sig')) if os.path.exists(path) else {}
-            data = data if isinstance(data, dict) else {}
-            data.setdefault('tasks', {})
-            am = data['automerge'] if isinstance(data.get('automerge'), dict) else {}
-            am[ref] = time.strftime('%Y-%m-%dT%H:%M:%S')
-            data['automerge'] = am
-            with open(path + '.tmp', 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=1)
-            os.replace(path + '.tmp', path)
+        with locked(os.path.join(kit_path('tasks', create=True), '_tracking')):
+            am = (state_read(path) or {}).get('refs') or {}
+            am[ref] = datetime.now().astimezone().isoformat()
+            state_write(path, {'refs': am})
     except Exception as e:   # a lost intent is never re-armed
         print(f'[merge] could not record the merge-when-green intent for {ref} in {path}: {e}', file=sys.stderr)
 
@@ -544,10 +539,8 @@ def _host_mr_state(host, proj, repo, iid):
 def unmerged_producers(proj, iid, state_of, tracking=None):
     """Unmerged producers of this MR (<proj>!<iid>): tracking-file mergeAfter pairs ('<consumer>!<iid>><producer>!<iid>', bossy.ps1
     track add -MergeAfter). state_of(repo, iid) -> 'merged'/'opened'/'closed'/''. Returns [(producer ref, state, task id)]."""
-    path = tracking or kit_path('tracking')
     try:
-        with open(path, encoding='utf-8-sig') as fh:
-            data = json.load(fh) if os.path.exists(path) else {}
+        data = read_tracking(tracking)
     except FileNotFoundError:
         data = {}
     except Exception as e:   # order unknown -> WAIT, never "no producers"
@@ -813,10 +806,15 @@ def _pub_read(key):
 
 
 def _pub_write(key, rec):
-    f = _pub_file(key)
-    with open(f + '.tmp', 'w', encoding='utf-8') as fh:
-        json.dump(rec, fh, indent=1)
-    os.replace(f + '.tmp', f)
+    """The key's record (bodies, rounds); a task doc kind also points the task index (.state/tasks/<id>.json docs.<kind>) at it."""
+    rec = state_write(_pub_file(key), rec)
+    scope, _, kind = key.rpartition(':')
+    tasks = kit_path('tasks')
+    if scope and (kind in ('testing-doc', 'testing-ai') or os.path.isfile(os.path.join(tasks, re.sub(r'[^\w.-]', '_', scope) + '.json'))):
+        try:
+            task_index(scope, lambda x: x['docs'].__setitem__(kind, {k: rec.get(k) for k in ('key', 'url', 'type', 'title', 'updated')}), tasks)
+        except Exception as e:   # the doc is published; only its pointer is missing
+            print(f'[publish] {key}: task index not updated: {e}', file=sys.stderr)
 
 
 def _pub_update(key, **fields):
@@ -1193,6 +1191,8 @@ def _publish_selftest(expect, refused):
         body = open(u2, encoding='utf-8').read()
         expect('publish by key: round 2 updates the same doc, newest version on top, earlier rounds dated below', u1 == u2 and
                body.index('| T2 |') < body.index('## Round 1') < body.index('| T1 |') and _pub_read('T9:testing-doc')['url'] == u1)
+        ix = state_read(os.path.join(kp('tasks'), 'T9.json')) or {}
+        expect('publish by key: the task index points at the doc (docs.testing-doc, schemaVersion 1)', ix.get('docs', {}).get('testing-doc', {}).get('url') == u1 and ix.get('schemaVersion') == 1)
         ua2 = publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a2.md'), aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS |')), label='loop round 2')
         expect('testing-ai: round 2 (filled Result) updates the same doc', ua2 == ua and '| PASS |' in open(ua2, encoding='utf-8').read())
         rep = w(os.path.join(tmp, 'r.md'), '# QA\n## Results\n| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T2 | PASS | ok | |\n')

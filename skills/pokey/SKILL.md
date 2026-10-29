@@ -116,8 +116,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
      `lists` (empty: `trackerLists`, else `tracker.list` / `tracker.repo`) x `statuses` (logical names via `tracker.statuses`;
      `in test` = `inTest`; other names pass through); plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the
      `tracker owner`'s.
-  2. Per task: MRs `<repo>!<iid>` (`tracking` file `tasks.<id>.mrs`, else MR links in the task, else merged MRs with the tracker
-     tag + id in `trackerRepos`); its "Testing doc (human):" link -> `<run>/guides/<code>.md` (finalize fills it).
+  2. Per task: MRs `<repo>!<iid>` (`tracking` `<id>.json` `track.mrs`, else the task's MR links, else merged MRs with the
+     tracker tag + id in `trackerRepos`); its "Testing doc (human):" link -> `<run>/guides/<code>.md` (finalize fills it).
      None of either -> left out. Tasks sharing a doc = one item.
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none

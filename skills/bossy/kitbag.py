@@ -10,6 +10,7 @@
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: goody kit-admin
+  python -X utf8 kitbag.py state lint [--since <min>] [--json]   # .state / .runtime files vs _paths.schema (skills/bossy/STATE.md)
   python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] | prune [--days N] [--dry-run]
 
 lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md (goody kit-admin) lists them.
@@ -17,8 +18,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L31 paths · L82 kitlog · L181 load · L558 lint · L927 README graph · L1033 lint command · L1066 audit · L1175 registry ·
-  L1404 prose · L1549 sections · L1679 budget · L1697 goodies · L2200 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L983 README graph · L1089 lint command · L1122 audit ·
+  L1231 registry · L1460 prose · L1605 sections · L1735 budget · L1753 goodies · L2256 state lint · L2327 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -78,6 +79,61 @@ def locked(path, stale=120):
             os.remove(lock)
         except OSError:
             pass
+
+# ---- state: skills/bossy/STATE.md (lib.ps1 Read-KitState / Write-KitState / Update-KitTaskIndex / Read-KitTracking)
+def state_read(path):
+    """A state file's object; None when missing or unreadable (tolerant reader: state-lint flags the bad file)."""
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            o = json.load(fh)
+        return o if isinstance(o, dict) else None
+    except (OSError, ValueError):
+        return None
+
+def state_write(path, data, version=1):
+    """schemaVersion, updated (ISO + offset), holder; an atomic replace."""
+    data = dict(data, schemaVersion=version, updated=datetime.datetime.now().astimezone().isoformat(),
+                holder={'agent': kit_who().get('agent', ''), 'session': os.environ.get('KIT_SESSION', ''), 'pid': os.getpid()})
+    os.makedirs(osp.dirname(path), exist_ok=True)
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(data, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, path)
+    return data
+
+def task_file(task):
+    return osp.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', str(task)) + '.json')
+
+def task_index(task, change, folder=None):
+    """Change .state/tasks/<id>.json (docs.<kind>, comments.<kind>, envRuns, track) under its lock; folder: another tasks/ dir."""
+    f = osp.join(folder, re.sub(r'[^\w.-]', '_', str(task)) + '.json') if folder else task_file(task)
+    os.makedirs(osp.dirname(f), exist_ok=True)
+    with locked(f):
+        x = state_read(f) or {'task': task}
+        for k in ('docs', 'comments'):
+            x[k] = x[k] if isinstance(x.get(k), dict) else {}
+        x['envRuns'] = [r for r in x.get('envRuns') or [] if r]
+        change(x)
+        return state_write(f, x)
+
+def read_tracking(legacy=None):
+    """{tasks: {id: track}, automerge: {ref: at}} from tasks/*.json and automerge.json, plus tracking.json until its move;
+    a bad tracking.json raises (callers wait, never read it as 'no tasks')."""
+    t, old = {'tasks': {}, 'automerge': {}}, legacy or kit_path('tracking')
+    if osp.exists(old):
+        with open(old, encoding='utf-8-sig') as fh:
+            d = json.load(fh) or {}
+        t['tasks'].update(d.get('tasks') or {})
+        t['automerge'].update(d.get('automerge') or {})
+    if legacy:
+        return t
+    d = kit_path('tasks')
+    for f in sorted(os.listdir(d)) if osp.isdir(d) else []:
+        x = state_read(osp.join(d, f)) if f.endswith('.json') else None
+        if x and x.get('task') and isinstance(x.get('track'), dict):
+            t['tasks'][x['task']] = x['track']
+    t['automerge'].update((state_read(kit_path('automerge')) or {}).get('refs') or {})
+    return t
 
 # ---- kitlog: every log line (_paths.log; lib.ps1 Write-KitLog writes the same lines)
 LOG = MAP['log']
@@ -2197,13 +2253,85 @@ def load_plugins():
         if 'lint_hook' in own:
             LINT_HOOKS.append(own['lint_hook'])
 
+# ---- state lint: every file of skills/bossy/STATE.md "Inventory" (the schema registry)
+ISO_TIME = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$')
+STATE_DOC = 'skills/bossy/STATE.md'
+
+def last_line(path, size=65536):
+    with open(path, 'rb') as fh:
+        fh.seek(max(0, osp.getsize(path) - size))
+        lines = [x for x in fh.read().decode('utf-8', 'replace').splitlines() if x.strip()]
+    return lines[-1] if lines else ''
+
+def state_schemas(kit=None):
+    """{name: schema} from the STATE.md Inventory rows: | `name` | owner | `schema` | ..."""
+    return dict(re.findall(r'(?m)^\| `([\w-]+)` \|[^|\n]*\| `([^`]+)` \|', read(osp.join(kit or KIT_DIR, STATE_DOC))))
+
+def state_lint(since_min=0):
+    """[(level, name, file, problem)]: BAD = unreadable, wrong schemaVersion or a required key missing; WARN = written before
+    STATE.md (no schemaVersion) or a time without an offset. since_min: only files written in the last N minutes."""
+    out, now = [], time.time()
+    for name, spec in state_schemas().items():
+        m = re.match(r'(json|jsonl|text|dir)(?:=(\S+))?\s+v(\d+)(?::\s*(.*))?$', spec)
+        if not m or (name not in MAP['runtime'] and name not in MAP['durable']):
+            out.append(('BAD', name, STATE_DOC, f'Inventory {name}: {spec!r} (want "<form> v<n>: <keys>" for a _paths name)'))
+            continue
+        form, pat, ver, req = m.group(1), m.group(2) or '*.json', int(m.group(3)), (m.group(4) or '').split()
+        p = kit_path(name)
+        for f in sorted(str(x) for x in Path(p).glob(pat)) if form == 'dir' else [p]:
+            if not osp.isfile(f) or (since_min and now - osp.getmtime(f) > since_min * 60) or form == 'text':
+                continue
+            rel = osp.relpath(f, KIT_DIR)
+            try:
+                o = json.loads(last_line(f)) if form == 'jsonl' else None
+            except ValueError:
+                o = None
+            o = o if form == 'jsonl' else state_read(f)
+            if not isinstance(o, dict):
+                out.append(('BAD', name, rel, 'unreadable (not one JSON object' + (' on its last line)' if form == 'jsonl' else ')')))
+                continue
+            miss = [k for k in req if k not in o]
+            if miss:
+                out.append(('BAD', name, rel, f'missing {", ".join(miss)} ({name}: {spec})'))
+            if ver and form != 'jsonl' and o.get('schemaVersion') != ver:
+                out.append(('WARN' if 'schemaVersion' not in o else 'BAD', name, rel, f'schemaVersion {o.get("schemaVersion")}, want {ver}'))
+            t = o.get('updated') or o.get('at')
+            if isinstance(t, str) and t and not ISO_TIME.match(t):
+                out.append(('WARN', name, rel, 'a time without an offset (ISO 8601 with offset: STATE.md)'))
+    return out
+
+def cmd_state(a):
+    """state lint [--since <min>] [--json]: exit 1 on a BAD file (supervise flags them)."""
+    flags, rest = parse_opts(a, ('--since',))
+    if rest[:1] != ['lint']:
+        print('usage: kitbag.py state lint [--since <minutes>] [--json]', file=sys.stderr)
+        return 2
+    found = state_lint(float(flags.get('--since') or 0))
+    if flags.get('--json'):
+        print(json.dumps([{'level': l, 'name': n, 'file': f, 'problem': p} for l, n, f, p in found]))
+    else:   # BAD one line each; WARN counted per name and problem (legacy files are many)
+        for l, n, f, p in found:
+            if l == 'BAD':
+                print(f'BAD  {f}: {p}')
+        for (n, p), c in sorted(collections_counter((n, p) for l, n, f, p in found if l == 'WARN').items()):
+            print(f'WARN {n}: {c} file(s): {p}')
+        print(f'kitbag state lint: {sum(1 for x in found if x[0] == "BAD")} bad, {sum(1 for x in found if x[0] == "WARN")} warn')
+    return 1 if any(x[0] == 'BAD' for x in found) else 0
+
+def collections_counter(items):
+    c = defaultdict(int)
+    for x in items:
+        c[x] += 1
+    return c
+
 # ---- main: argument checks, command dispatch
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days'}, False), 'sections': ({'--fix'}, set(), False)}
-NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove')   # positionals are files, verbs or names, not a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections}
+  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days'}, False), 'sections': ({'--fix'}, set(), False),
+  'state': ({'--json'}, {'--since'}, False)}
+NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove', 'state')   # positionals are files, verbs or names, not a kit dir
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections, 'state': cmd_state}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""

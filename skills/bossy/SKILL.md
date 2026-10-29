@@ -15,12 +15,13 @@ row.
 |---|---|
 | `<kit>/LESSONS.md` | step 0: `bossy.ps1 learn -Read -Skill bossy` |
 | `bossy.ps1` | every event row (verbs: its header); hooks: SessionStart `health`, SendMessage `guard-sendmessage`, git `prepush` / `precommit` (goody `kit-admin`; `.githooks` install it) |
+| `STATE.md` | a script's state file changes; an agent needs a task's doc / comment / MR / env-run links (`.state/tasks/<id>.json`) |
 | `adapters/supervise_resources.ps1` | E1 heartbeat (`supervise`), `board show`, `recover`, `cleanup`: dot-sourced by bossy.ps1 (build gate, phones, QA seats, browsers) |
 | `<kit>/.githooks/pre-commit`, `<kit>/.githooks/pre-push`, `<kit>/.githooks/post-merge` | K3: run by git (`bossy.ps1 setup` sets core.hooksPath) |
 | `kitbag.py`, `<kit>/README.md`, `<kit>/tests/kit-tests.ps1` | K1-K3 (the `kitty` agent runs them); E14: README "Rule examples" |
 
 ## One orchestration model (both flows)
-State every run shares: launch record (`bossy.ps1 launch`), agent board (`board`), tracking (`.state/tracking.json`, `track`),
+State every run shares (STATE.md): launch record (`bossy.ps1 launch`), agent board (`board`), tracking (`track`),
 decisions (`decide`), contracts (`<brief>.contracts.md` or `<runDir>/lead-notes.md`), the run report (`report -Run <id>`), agent
 checkpoints (`crafty.ps1 checkpoint`), your own program state (`bossy.ps1 program set|get -Program <name>`: phases -> runs, MRs,
 synced; never only in the session: a heartbeat after a restart reads it). Both

@@ -84,6 +84,8 @@ $dp = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl
 $null = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution --prose-ok 'brief format' 2>&1; $dkc = $LASTEXITCODE; $n3 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 Expect "prose gate: tracker / devtools.py comment over the limit refused, unposted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
 $null = pwsh @np $D tracker comment $t.id 'round two' -Kind comment-solution -ProseOk x; $cs = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
+$cx = (Read-Json (Join-Path (TkPath $k tasks) "$($t.id).json")).comments.'comment-solution'
+Expect "kit comment -Kind: its id kept in the task index ($cx)" ($cx -and $cx -in @($cs.id))
 Expect 'kit comment -Kind comment-solution: the next round edits it; status notes and a person''s comment untouched' ($cs.Count -eq $n3 -and @($cs.text -match '^round two\s+\[kit:comment-solution\]$').Count -eq 1 -and @($cs.text -match '^body text').Count -eq 1 -and @($cs.text -match '^w1 ').Count -eq 1)
 $env:KIT_DOC_GATE = '1'; $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"
 $g3 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h`nTesting doc (AI): https://d/a"

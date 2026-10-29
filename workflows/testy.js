@@ -30,7 +30,7 @@ export const meta = {
   model?, effort? (TEST step) }],
 } */
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
-const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tracking": "tracking.json"}}
+const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -63,7 +63,7 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : ['inTest'])
  const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<yyyy-MM-dd>-${String(N || `${T}-${statuses.join('-')}`).replace(/[^\w.-]+/g, '-').toLowerCase()}`,
-  statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tracking}`, runSettings: rest }
+  statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, tracking: `${K0}/.state/${KP.durable.tasks}`, runSettings: rest }
  const prep = await agent(`You are checky (role lead): build a test-only run, test nothing. PowerShell = pwsh 7 (the PowerShell tool); Python -X utf8.
 Follow ${K0}/skills/pokey/SKILL.md "Lead steps" L1 (selection) with this job (JSON): ${JSON.stringify(job)}
 Return runDir (absolute, forward slashes), items (count in run.json), left [{ id, reason }] and a one-line summary.`,

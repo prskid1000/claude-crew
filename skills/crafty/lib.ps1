@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L991 tracker · L1266 git-host ·
-  L1382 kitlog · L1497 params · L1660 entry-scripts
+Sections: L10 paths · L62 state · L116 config · L196 OS · L379 leases · L762 status · L969 supervise report · L1009 tracker ·
+  L1287 git-host · L1403 kitlog · L1518 params · L1681 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -59,30 +59,48 @@ function Test-KitMoveUnsupported([Exception]$Err) {
 }
 # names the kit makes (crafty.ps1 dir, briefs, checkpoints, snapshots): lowercase-kebab
 function ConvertTo-KitSlug([string]$Text) { ("$Text".ToLower() -replace '[^a-z0-9.]+', '-').Trim('-.') }
-# -Strict: bad JSON -> <file>.bad-<time> + throw (never {} over all tasks)
+# ---- state: skills/bossy/STATE.md (schemaVersion, updated ISO + offset, holder; tolerant reads, atomic writes, one file per key)
+function Read-KitState([string]$Path) {   # $null when missing or unreadable, never a throw (state-lint flags the bad file)
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+  try { $o = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable; if ($o -is [Collections.IDictionary]) { $o } } catch { Write-KitLog calls state-bad @{ file = $Path; error = "$_" } }
+}
+function Write-KitState([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Data, [int]$Version = 1) {   # a hashtable or a JSON object
+  $w = if ($script:KitWho) { $script:KitWho } else { @{} }
+  $h = [ordered]@{ agent = "$($w.agent)"; session = "$env:KIT_SESSION"; pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
+  foreach ($p in ([ordered]@{ schemaVersion = $Version; updated = (Get-Date).ToString('o'); holder = $h }).GetEnumerator()) {
+    if ($Data -is [Collections.IDictionary]) { $Data[$p.Key] = $p.Value } else { $Data | Add-Member -Force NoteProperty $p.Key $p.Value } }
+  New-Item -ItemType Directory -Force (Split-Path $Path) | Out-Null; Write-KitAtomic $Path ($Data | ConvertTo-Json -Depth 32)
+}
+# .state/tasks/<id>.json: track (the task <-> MRs record), docs.<kind>, comments.<kind>, envRuns[]; agents read it, not the tracker's comments
+function Get-KitTaskFile([string]$Task) { Join-Path (Get-KitPath tasks) "$($Task -replace '[^\w.-]', '_').json" }
+function Update-KitTaskIndex([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][scriptblock]$Change) {
+  $f = Get-KitTaskFile $Task; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+  Invoke-KitLocked $f { $x = Read-KitState $f; if (-not $x) { $x = [ordered]@{ task = $Task } }; foreach ($k in 'docs', 'comments') { if ($x[$k] -isnot [Collections.IDictionary]) { $x[$k] = @{} } }; $x.envRuns = @($x.envRuns | Where-Object { $_ }); & $Change $x; Write-KitState $f $x }
+}
+# tasks/*.json .track + automerge.json; the old tracking.json is read until the first write moves it (tracking.json.migrated: the owner deletes it)
 function Read-KitTracking([switch]$Strict) {
-  $f = Get-KitPath tracking; $t = $null
-  if (Test-Path $f) {
-    try { $t = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable }
-    catch {
-      if ($Strict) { $bak = "$f.bad-$(Get-Date -Format yyyyMMddHHmmss)"; Copy-Item $f $bak -Force; $m = "tracking: $f is not valid JSON (copy: $bak) - fix or remove it; not writing: $_"; Write-Warning $m; throw $m; return $null }
-      Write-Warning "tracking: $f is not valid JSON ($_)"
-    }
+  $t = @{ tasks = @{}; automerge = @{} }; $f = Get-KitPath tracking
+  if (Test-Path -LiteralPath $f) {
+    try { $old = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable; foreach ($s in 'tasks', 'automerge') { if ($old.$s -is [Collections.IDictionary]) { foreach ($k in @($old.$s.Keys)) { $t.$s[$k] = $old.$s[$k] } } } }
+    catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
   }
-  if ($t -isnot [hashtable]) { $t = @{} }
-  if ($t.tasks -isnot [hashtable]) { $t.tasks = @{} }
-  if ($t.automerge -isnot [hashtable]) { $t.automerge = @{} }
+  foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+    $x = Read-KitState $g.FullName
+    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict) { Copy-Item $g.FullName "$($g.FullName).bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
+  }
+  $am = (Read-KitState (Get-KitPath automerge)).refs; if ($am -is [Collections.IDictionary]) { foreach ($k in @($am.Keys)) { $t.automerge[$k] = $am[$k] } }
   $t
 }
 function Update-KitTracking([Parameter(Mandatory)][scriptblock]$Change) {
-  $f = Get-KitPath tracking -Create
-  Invoke-KitLocked $f {
-    $t = Read-KitTracking -Strict
-    if ($t -isnot [hashtable]) { return }
+  $lk = Join-Path (Get-KitPath tasks -Create) '_tracking'; $f = Get-KitPath tracking
+  Invoke-KitLocked $lk {
+    $t = Read-KitTracking -Strict; $was = @{}; foreach ($k in @($t.tasks.Keys)) { $was[$k] = $t.tasks[$k] | ConvertTo-Json -Depth 8 -Compress }
+    $am0 = $t.automerge | ConvertTo-Json -Compress; $move = Test-Path -LiteralPath $f
     & $Change $t
-    $t.version = 1
-    $t | ConvertTo-Json -Depth 8 | Set-Content "$f.tmp" -Encoding utf8
-    Move-Item "$f.tmp" $f -Force
+    foreach ($k in @($t.tasks.Keys)) { if ($move -or $was[$k] -cne ($t.tasks[$k] | ConvertTo-Json -Depth 8 -Compress)) { $tr = $t.tasks[$k]; Update-KitTaskIndex $k { param($x) $x.track = $tr } } }
+    foreach ($k in @($was.Keys | Where-Object { -not $t.tasks.ContainsKey($_) })) { Update-KitTaskIndex $k { param($x) $x.Remove('track') } }   # its docs and comments stay
+    if ($move -or $am0 -cne ($t.automerge | ConvertTo-Json -Compress)) { Write-KitState (Get-KitPath automerge) ([ordered]@{ refs = $t.automerge }) }
+    if ($move) { Move-Item -LiteralPath $f "$f.migrated" -Force }
   }
 }
 # a task deleted in the tracker (404 + "task not found"; never an outage page or a missing CLI): tracking drops it, the entry
@@ -1193,10 +1211,13 @@ function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | W
 # else posts and deletes it (comment-delete), else only posts; comments without the marker (people's) are never touched
 function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
 function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text) {
-  $mark = "[kit:$Kind]"; $body = "$((__TrText $Text).TrimEnd())`n`n$mark"; $ad = $KitAdapters['tracker'][$__trType]
+  $mark = "[kit:$Kind]"; $body = "$((__TrText $Text).TrimEnd())`n`n$mark"; $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit')
+  $keep = { param($cid) if ($cid) { try { Update-KitTaskIndex $Id { param($x) $x.comments[$Kind] = "$cid" } } catch { } } }   # the task index: the next edit skips the comment scan
+  $known = "$((Read-KitState (Get-KitTaskFile $Id)).comments.$Kind)"
+  if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
   $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and "$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') } | Select-Object -Last 1
-  if ($old -and $ad -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body } }
-  $r = Add-TrackerComment $Id $body
+  if ($old -and $edit) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body }; & $keep $old.id; return $r }
+  $r = Add-TrackerComment $Id $body; & $keep $r.id
   # queued (offline): the old one stays
   if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
