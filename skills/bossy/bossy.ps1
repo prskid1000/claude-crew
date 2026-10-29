@@ -1900,7 +1900,7 @@ $sd = Split-Path (Get-KitPath tracking); $odd = @(Get-ChildItem $sd -Force | Whe
 if ($odd) { $notes += "durable state not in the layout (kept; move or delete by hand): $(@($odd | ForEach-Object Name) -join ', ')" }
 
 foreach ($f in Get-ChildItem (Join-Path $tmp 'claude-build-gate') -Filter '*.json' | Where-Object Name -ne 'history.json') {
-  try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; if (-not (Get-Process -Id $e.pid -ErrorAction SilentlyContinue)) { Gone $f.FullName 'dead gate entry' } } catch {}
+  try { $e = Get-Content $f.FullName -Raw | ConvertFrom-Json; if (-not (Test-KitPid $e.pid $e.start)) { Gone $f.FullName 'dead gate entry' } } catch {}
 }
 
 $ct = if ($DryRun) { [long](Size (Join-Path $tmp 'claude')) }; if ($ct) { $notes += "Claude session temp (outside the kit, not managed): $([math]::Round($ct / 1MB)) MB in $(Join-Path $tmp 'claude')" }
