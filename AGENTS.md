@@ -88,6 +88,9 @@ These rules hold whatever the route:
   `idle.graceMinutes` -> released (README "Leases").
 - Browsers are headless by default (`skills/pokey/browser.mjs`); a visible browser only when the owner asks to watch.
 - Run python and node from the PowerShell tool (pwsh 7), not Git Bash; Python with `-X utf8`.
+- Anything handed to node, python, java or another Windows program (arguments, JSON, env vars, file contents) uses Windows
+  paths (`D:/...`, `D:\...` or the `crafty.ps1 dir` output), never Git Bash `/d/...` or `/c/...` (read as `\d\...` on the
+  current drive; the guard denies it).
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored and resolved by
   name (`Get-KitPath`); never elsewhere in the kit. Your own files (notes, bodies, diffs, logs, evidence outside a QA run) go
   only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`

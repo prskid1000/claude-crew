@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1373 dir · L1383 checkpoint ·
-  L1407 tracker · L1446 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1417 dir · L1427 checkpoint ·
+  L1451 tracker · L1490 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -914,7 +914,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'
+  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -1045,7 +1045,21 @@ if ($SelfTest) {
   @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
   @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/a.txt; cp AGENTS.md ../a.md', $false, $lk),
   @('B', 'cd {LIVE}; grep -c ">" README.md; git clean -n', $false, $lk),
-  @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk)
+  @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk),
+  @('B', 'node shot.mjs --out /d/x/{RT}/work/evidence/t1/a.png', $true, 'Use D:/x/'),
+  @('B', "python -c `"open('/d/x/a.txt', 'w')`"", $true, $gb),
+  @('B', "cd /d/x; python3 - <<'E'`nopen('/c/Users/x/a.json')`nE", $true, 'Use C:/Users/x/a.json'),
+  @('B', 'OUT=/d/x/a.png node shot.mjs', $true, $gb),
+  @('B', 'cd /d/x && node shot.mjs ''{"out":"/d/x/a.png"}''', $true, $gb),
+  @('B', 'bash -c "java -jar a.jar /d/x/in.txt"', $true, $gb),
+  @('B', 'curl -s -o /d/x/a.json https://h.io/api; x=$(npx tsx a.ts --dir=/e/y)', $true, $gb),
+  @('P', 'node shot.mjs /d/x/a.png; adb.exe pull /sdcard/a.png /d/x/', $true, $gb),
+  @('B', 'command node a.mjs /d/x; { sudo python a.py /d/y; }', $true, $gb),
+  @('B', 'node a.mjs D:/x > /d/x/out.log 2>/d/x/err.log; python a.py < /d/x/in.txt', $false, $gb),
+  @('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
+  @('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
+  @('B', "git commit -m `"fix: node got /d/x paths`"; cat <<'EOF' > /d/x/a.md`npython /d/x/a.py`nEOF", $false, $gb),
+  @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb)
   )
   $gh = 'browser on Windows'   # git help pages (Git for Windows opens HTML); elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
@@ -1249,6 +1263,36 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
+# a Git Bash drive path (/d/x) given to a Windows program lands in \d\x on the current drive: MSYS never converts strings, JSON, env or code
+function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
+  if ($depth -gt 3) { return }
+  $drive = '(?<![\w.:/~\\})\]])/(?<d>[a-zA-Z])/(?<r>[\w.$-][^\s''"`;|&<>(){}\[\],]*)'
+  # a heredoc body is the text of the command on its opener line
+  if ($tool -eq 'Bash') { $text = [regex]::Replace($text, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$', { param($hd) "<<doc '" + ($hd.Groups[4].Value -replace "['\r\n]", ' ') + "'" + $hd.Groups[3].Value }) }
+  $segs = [System.Collections.Generic.List[string]]::new(); $sb = [Text.StringBuilder]::new(); $quote = ''
+  for ($i = 0; $i -lt $text.Length; $i++) {
+    $ch = [string]$text[$i]
+    if ($quote) {
+      if ($ch -eq '\' -and $quote -eq '"' -and $tool -eq 'Bash' -and $i + 1 -lt $text.Length) { [void]$sb.Append($ch); $i++; $ch = [string]$text[$i] } elseif ($ch -eq $quote) { $quote = '' }
+      [void]$sb.Append($ch); continue
+    }
+    if ($ch -eq '"' -or $ch -eq "'") { $quote = $ch; [void]$sb.Append($ch); continue }
+    if ($ch -in ';', '|', '&', "`n", '(', ')' -or ($tool -eq 'Bash' -and $ch -eq '`')) { $segs.Add($sb.ToString()); [void]$sb.Clear(); continue }
+    [void]$sb.Append($ch)
+  }
+  $segs.Add($sb.ToString())
+  foreach ($seg in $segs) {
+    if (-not ($seg -match '(?s)^\s*((?:(?:\w+=(?:"[^"]*"|''[^'']*''|[^\s"''])*|do|then|else|elif|time|exec|nohup|env|xargs|timeout|command|sudo|\{|!|\d+[smh]?|-\S+)\s+)*)("[^"]+"|''[^'']+''|[^\s"'']+)(.*)$')) { continue }
+    $pre = $Matches[1]; $rest = $Matches[3]; $leaf = $Matches[2].Trim('''"') -replace '^.*[\\/]', ''
+    if ($leaf -match '^((ba|z|da)?sh|pwsh|powershell|cmd)(\.exe)?$') {
+      $inTool = if ($leaf -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }
+      foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command|/c)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-MsysPath ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
+      continue
+    }
+    if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and ("$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' ') -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
+  }
+}
+if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
 # Git for Windows shows help pages as HTML in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
