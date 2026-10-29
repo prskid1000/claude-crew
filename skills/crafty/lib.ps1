@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 tracker · L1174 git-host · L1290 kitlog ·
-  L1402 params · L1565 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 tracker · L1193 git-host · L1309 kitlog ·
+  L1423 params · L1586 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1170,6 +1170,25 @@ function Get-KitFailedChecks([string[]]$Texts) {
     }
   }
 }
+# the link devtools.py finish writes: 'Testing doc: <url>' in the description or '**Testing doc**: <url>' in a comment
+function Test-KitTaskDocLink([string]$Task) {
+  try { $tt = Get-TrackerTask $Task; $cm = @(Get-TrackerComments $Task) } catch { return $null }   # unread = unknown, never "no doc"
+  if (-not $tt) { return $null }
+  [bool]@(@([string]$tt.description) + @($cm | ForEach-Object { [string]$_.text }) | Where-Object { $_ -match '(?i)testing doc[^\n]{0,40}?https?://' }).Count
+}
+# this request's mandate only (a stored one is an older session's words); sonnet unless the coordinator passes -Complex
+function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {
+  if (-not $Mandate) { Write-Warning "no -Mandate: replace the placeholder with the owner's words of this request (agents drop items for later chat messages without them)" }
+  $a = [ordered]@{ id = $Agent; items = $Items; area = $Area.Substring(0, [math]::Min(160, $Area.Length)) }; if ($Complex) { $a.complex = $true }
+  [ordered]@{ brief = $Brief; run = $RunName; mode = 'bugfix'; kitDir = ($KitDir -replace '\\', '/'); mandate = @(if ($Mandate) { $Mandate } else { "<the owner's words of this request, verbatim>" }); agents = @($a) }
+}
+# a QA run's gap for the digest: finalize writes <run>/<item>/report.md, one per tested item (none at the run root)
+function Get-KitQaRunGap([string]$RunDir) {
+  $items = @(Get-ChildItem -LiteralPath $RunDir -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'results.json') })
+  if (-not $items.Count) { return ', no item tested' }
+  $miss = @($items | Where-Object { -not (Test-Path -LiteralPath (Join-Path $_.FullName 'report.md')) } | ForEach-Object Name)
+  if ($miss.Count) { ", no report: $($miss -join ', ')" } else { '' }
+}
 
 # ---- git-host: git-host + ci adapters (README "Adapters"), Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }
 function Get-HostKind([string]$HostName) { switch -Regex ($HostName) { 'github' { 'github' } 'bitbucket' { 'bitbucket' } 'dev\.azure\.com|visualstudio\.com' { 'azure' } 'gitea|forgejo|codeberg' { 'gitea' } default { 'gitlab' } } }
@@ -1376,7 +1395,9 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $run = { param([object[]]$pa, [hashtable]$nm)
     $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; $why = "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; $why = "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"
+      $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues }); if ($vs.Count -and $_.Exception.ErrorId -eq 'MissingMandatoryParameter') { $why += " Verbs: $($vs -join ', ')." }   # a missing verb names them (a wrong one: the set is in the message)
+      & $end $why; [Console]::Error.WriteLine($why); exit 2 }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
     if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }

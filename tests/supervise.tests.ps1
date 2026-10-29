@@ -82,13 +82,13 @@ Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per proble
 New-Journal wf_r4 @(@{ type = 'started'; agentId = 'c1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'c1'; result = @{ error = 'boom: local env down' } })
 $null = pwsh @np $O launch -RunId wf_r4 -Script buildy.js -ArgsJson '{"brief":"C:/b/r4.md","run":"r4"}' 2>&1
 $d1 = pwsh @np $O launch -Done -RunId wf_r4 2>&1 | Out-String; $null = pwsh @np $O launch -Done -RunId wf_r4 2>&1
-New-Journal wf_r5 @(@{ type = 'started'; agentId = 'd1'; label = 'test:A1' }, @{ type = 'result'; agentId = 'd1'; result = @{ error = 'seat lost' } }, @{ type = 'started'; agentId = 'd2'; label = 'test:A2' })
+New-Journal wf_r5 @(@{ type = 'started'; agentId = 'd1'; label = 'test:A1' }, @{ type = 'result'; agentId = 'd1'; result = @{ error = 'seat lost'; checks = @(@{ id = 'c1'; result = 'NOT_TESTED'; observed = 'lost' }, @{ id = 'c2'; verify = 'not reproduced' }) } }, @{ type = 'started'; agentId = 'd2'; label = 'test:A2' })
 $null = pwsh @np $O launch -RunId wf_r5 -Script testy.js -ArgsJson '{"runDir":"C:/q/r5"}' 2>&1
 foreach ($i in 1, 2) { $null = pwsh @np $O pause -Run r5 -Wait 0 2>&1 }
 $sg = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { "$($_.source)" -like 'stop:*' })
 $s4 = @($sg | Where-Object ref -eq r4); $s5 = @($sg | Where-Object ref -eq r5)
-Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once, the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'crafty' }).Count -and
-  $s5.Count -eq 1 -and $s5[0].skill -eq 'pokey' -and $s5[0].text -eq 'test:A1: seat lost' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
+Expect "stopped runs learn once: launch -Done x2 and pause x2 record their signals once (QA: NOT_TESTED, unreproduced checks), the report is written ($($s4.Count) $($s5.Count))" ($s4.Count -eq 2 -and @($s4 | Where-Object { $_.kind -eq 'failure' -and $_.text -match 'build:X1: boom' -and $_.skill -eq 'crafty' }).Count -and
+  $s5.Count -eq 3 -and $s5[0].skill -eq 'pokey' -and $s5[0].text -eq 'test:A1: seat lost' -and $s5[1].text -match 'NOT_TESTED, first c1: lost' -and $s5[2].kind -eq 'false-positive' -and $d1 -match 'learn: run r4 stopped by launch -Done - 2 signal' -and (Read-Json (Join-Path (TkPath $k waves) 'wf_r4.json')).run -eq 'wf_r4')
 $null = pwsh @np $O board nosuch 2>&1; $bpc = $LASTEXITCODE; $bpe = & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Read-KitLog calls ([datetime]0) | Where-Object { "$($_.rc)" -eq '2' } | Select-Object -Last 1).error }
 Expect "a bad parameter: exit 2, its call line keeps the why ($bpc)" ($bpc -eq 2 -and $bpe -match '^board: .*nosuch')
 $mu = 'https://h.x/g/r/-/merge_requests/1'   # build and fix spell one MR two ways (case, slash): one row

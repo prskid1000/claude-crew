@@ -14,8 +14,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L625 docs · L745 plugins · L759 keepboth ·
-  L778 selftest · L932 CLI
+Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L629 docs · L749 plugins · L763 keepboth ·
+  L782 selftest · L945 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -402,6 +402,7 @@ def _remember_automerge(ref):
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
 RESOLVE = 'crafty.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
+NO_DOC = re.compile(r'(?im)^[ \t>*_-]*testing doc[ \t*_]*:[ \t*_]*(none|n/?a)[ \t.]*($|[|;,(\u00b7])')   # one line; 'none yet, link below' passes
 
 
 def merge_word(res):
@@ -572,6 +573,9 @@ def _auto_merge(worktree, iid, max_wait):
         return f'!{iid}: no MR state from the git host for {proj} (auth status? network? path?); reply: {str(raw)[:300]}\nWAIT'
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
+    if NO_DOC.search(m.get('description') or m.get('body') or ''):   # merged 3x with no doc: testers had nothing to follow
+        return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
+                f'put its link in the MR body, merge again\nNOT_MERGED')
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
@@ -840,6 +844,15 @@ def selftest():
         res = auto_merge('.', '7', max_wait=0)
         expect('no MR state: mr.get retried once, WAIT names the project and the reply', merge_word(res) == 'WAIT' and 'g/r' in res
                and "'raw': 'null'" in res and [v for v, _ in calls] == ['mr.get', 'mr.get'])
+        def nd(body):   # one fake per case: its merged state carries from mr.merge to the re-read
+            f = fake(cfg=False)
+            return lambda v, **a: dict(f(v, **a), description=body) if v == 'mr.get' else f(v, **a)
+        ok = [merge_word(auto_merge('.', '7')) for g['_host'] in (nd('Testing doc:\n\nNone of the old steps'), nd('- Testing doc: none yet, link below'))]
+        calls.clear(); g['_host'] = nd('Fix x\n- Testing doc: none · Sibling MRs: -')
+        r = auto_merge('.', '7'); none_merged = not merged()
+        calls.clear(); g['_host'] = nd('- Testing doc: https://doc/1 (none of the old steps)')
+        expect('MR body "Testing doc: none": NOT_MERGED, no merge call; a linked doc merges', merge_word(r) == 'NOT_MERGED' and 'Testing doc: none' in r
+               and none_merged and merge_word(auto_merge('.', '7')) == 'MERGED' and ok == ['MERGED', 'MERGED'])
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         repos0 = CFG.get('repos'); CFG['repos'] = [{'name': 'r', 'ci': {'mrPipelines': False}}]
@@ -958,7 +971,7 @@ def _cli():
     bad = [x for x in a[1:] if re.match(r'^--?[A-Za-z][\w-]*$', x) and x not in FLAGS.get(cmd, set())]
     if cmd not in ARITY or bad or len(a) - 1 < ARITY[cmd]:
         print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY
-              else f"devtools.py: {f'unknown verb {cmd}' if cmd else 'missing verb'}: python -X utf8 devtools.py <verb> ...\n{__doc__}", file=sys.stderr)
+              else f"devtools.py: {f'unknown verb {cmd}' if cmd else 'missing verb'}: python -X utf8 devtools.py <verb> ... (verbs: {', '.join(sorted(ARITY))})\n{__doc__}", file=sys.stderr)
         print('\n'.join(use) if use else '', file=sys.stderr)
         sys.exit(2)
     if cmd == 'comment':

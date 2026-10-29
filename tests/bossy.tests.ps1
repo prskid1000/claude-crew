@@ -110,9 +110,16 @@ $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run
 $null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
 "keep:$((Read-KitTracking).tasks['t8'].holdPromotion -eq 'late')"
+$KitConf.TrackerType = 'fake'; function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks = @(); description = 'Testing doc: none' } }
+$null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
+$null = Add-TrackerComment t9 '**Testing doc**: [doc](https://docs.example/t9)'; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
+"nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk)"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives)' @('skip', 'once', 'hold', 'throttle', 'keep') 8
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with a testing-doc link)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8
+$qr = Join-Path (Kd) 'qg'; foreach ($x in 'A1', 'B1') { $null = New-Item -ItemType Directory -Force "$qr/r1/$x", "$qr/r0"; '{}' | Set-Content "$qr/r1/$x/results.json" }; 'r' | Set-Content "$qr/r1/A1/report.md"
+$qg = pwsh -NoProfile -Command ". '$O'; Get-KitQaRunGap '$qr/r1'; Get-KitQaRunGap '$qr/r0'"
+Expect "tidy digest: QA reports are per item; the items without one named, an empty run said ($qg)" ("$qg" -eq ', no report: B1 , no item tested')
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String

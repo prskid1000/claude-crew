@@ -50,7 +50,7 @@
  "driveParent": "<Drive folder or shared-drive id (gdocs)>",
  "qa": { "_readme": "shutterText / confirmText: camera label regexes. outOfScope: channels agent QA never tests (steps OUT_OF_SCOPE: reported, not counted). targets: target groups for /testy select runs (target: '<group>'): per task the first rule matching lists / repos / nameRegex / pathRegex gives its env (localEnv: a local env, live = in its running release). seatGB: RAM one QA seat promises per kind.", "seatGB": { "web": 1.5, "api": 0.4, "app": 0.4 }, "outOfScope": ["<a channel agent QA never tests, e.g. email>"],
   "targets": { "local": [ { "repos": ["backend", "web"], "target": "local", "localEnv": "shop" } ], "test": [ { "lists": ["<tracker container of product A>"], "target": "my-staging" } ] } },
- "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number or per target, with a default). planTimeoutSec bounds each test env's check in bossy.ps1 deploy plan (all at once; a late one is UNKNOWN); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 600 },
+ "deploy": { "_readme": "trigger: owner (default: a person says deploy <env>; nobody asks) or ask (one batched ask per env, at most one per minIntervalHours: a number or per target, with a default). planTimeoutSec bounds supervise's deploy plan per test env (late = UNKNOWN; direct: -TimeoutSec 100); productionPattern ((?i)prod|critical): production by name when production is unset.", "trigger": "owner", "minIntervalHours": { "default": 4, "<target>": 24 }, "planTimeoutSec": 600 },
  "net": { "_readme": "timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays)", "timeoutSec": 60 },
  "tests": { "_readme": "Per stack (crafty.ps1 stack names): test names -Touched derives from a changed file's base name ({name}). Defaults: maven/gradle {name}Test, {name}Tests, {name}IT; dotnet {name}Tests, {name}Test; python test_{name}, {name}_test; go {name}_test; web {name}.spec, {name}.test.", "maven": { "testFor": ["{name}Test", "{name}IT"] } },
  "protectedBranches": ["staging"],
@@ -145,7 +145,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 31, "plumbing": 8, "totalTokens": 293000, "testTokens": 51000 },
+  "caps": { "content": 31, "plumbing": 8, "totalTokens": 293000, "testTokens": 52000 },
   "params": { "idle.graceMinutes": "quantile q=.95 k=1.5", "net.timeoutSec": "quantile q=.99 k=3", "gate.waitMinutes": "quantile q=.95 k=2", "gate.needGB": "peak k=1.15 up=.5",
    "supervise.heartbeatMinutes": "quantile q=.5 k=.5 min=10 safe=down", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
   "adapters": {

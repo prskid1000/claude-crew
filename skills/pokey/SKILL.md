@@ -22,7 +22,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 
 ## Tester / verifier steps (test environment only, never production)
 0. `bossy.ps1 learn -Read -Skill pokey`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
-   Check the SQL/MCP tools once and note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
+   Check the SQL/MCP tools once, note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `pokey.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
@@ -65,9 +65,9 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
-6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`, <= 40 words: `crafty/templates.md`
-   "Writing standards"; re-test / audit text: `verify`), run `pokey.ps1 finalize -RunDir <run> -Code <CODE> -Check -FixNames`
-   (a scoped retry: `-Results results-retry.json`) until exit 0 (it prints [prose] findings);
+6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
+   limits: 40 words per observed or finding, 25 per sentence, 900 per report: `kitbag.py prose` first), run `pokey.ps1
+   finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
    `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession` or log out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):

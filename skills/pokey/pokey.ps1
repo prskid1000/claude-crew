@@ -1,7 +1,7 @@
 <#
 pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/pokey/pokey.ps1 <verb> [args]
   seat acquire|release|status ...                  memory seat + item claim
-  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json]  live on a test env? (goody deploys)
+  deployed -Mrs <repo>!<iid>,... [-Detail] [-Json] [-TimeoutSec 100]  live on a test env? (goody deploys)
   api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)

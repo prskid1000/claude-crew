@@ -15,16 +15,16 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
-  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task -Agent -Repos [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
+  report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
   deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait ...   deploy batch; decision pauses
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L226 budget · L254 launch · L518 recover · L602 pause · L646 resume · L704 program · L748 param ·
-  L754 track · L1040 supervise report · L1082 anomalies · L1100 supervise · L1409 report · L1488 audit · L1548 storage ·
-  L1759 bugbrief · L1865 cleanup · L1987 learn · L2017 decide · L2083 health · L2145 retro due · L2155 tidy ·
-  L2225 the kit origin's main and goodies · L2241 setup · L2307 guard-sendmessage
+Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
+  L757 track · L1045 supervise report · L1087 anomalies · L1105 supervise · L1414 report · L1493 audit · L1553 storage ·
+  L1764 bugbrief · L1867 cleanup · L1989 learn · L2019 decide · L2085 health · L2147 retro due · L2157 tidy ·
+  L2227 the kit origin's main and goodies · L2243 setup · L2309 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -283,7 +283,10 @@ function Invoke-KitStopLearn($S, [string]$By) {
     $sig = @(foreach ($r in $res) { $l = $lab[$r.agentId]
         if ($r.result.error) { , @('failure', "$l`: $(& $cut $r.result.error)") }
         if ($r.result.handoff) { , @('friction', "$l handed off at its budget: $(& $cut $r.result.handoff)") }
-        $b = @($r.result.findings | Where-Object severity -eq 'blocking'); if ($l -like 'review:*' -and $b.Count) { , @('defect-missed', "$l`: $($b.Count) blocking finding(s), first: $(& $cut $b[0].problem)") } }
+        $b = @($r.result.findings | Where-Object severity -eq 'blocking'); if ($l -like 'review:*' -and $b.Count) { , @('defect-missed', "$l`: $($b.Count) blocking finding(s), first: $(& $cut $b[0].problem)") }
+        # QA checks the Learn step records
+        $nt = @($r.result.checks | Where-Object { $_.result -eq 'NOT_TESTED' }); if ($nt.Count) { , @('friction', "$l`: $($nt.Count) check(s) NOT_TESTED, first $($nt[0].id): $(& $cut $nt[0].observed)") }
+        $nr = @($r.result.checks | Where-Object { "$($_.verify)" -match '(?i)not reproduced|inconclusive' }); if ($nr.Count) { , @('false-positive', "$l`: $($nr.Count) check(s) not reproduced or inconclusive in verify, first $($nr[0].id): $(& $cut $nr[0].verify)") } }
       $g = @(Read-KitLog guard $since | Where-Object { $_.event -eq 'deny' -and $_.run -eq $S.run }); if ($g.Count) { , @('rule-violation', "guard blocked $($g.Count) command(s), first: $(& $cut $g[0].why)") }
       foreach ($d in @(Read-KitLog decisions-log $since | Where-Object { $_.kind -eq 'envfix' -and $_.status -eq 'pending' -and $_.run -eq $S.run })) { , @('stale-env', "ENV-FIX $($d.agent): $(& $cut $d.question)") }
       if ($By -ne 'pause' -and -not $noLearn) { , @('friction', "run stopped by $By before its Learn phase: $($lab.Count) step(s), $($res.Count) result(s)") })
@@ -1000,6 +1003,8 @@ switch ($Action) {
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
+      # promoted only with the testing doc linked (3 tasks went without)
+      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -eq $false) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link: not promoted (devtools.py doc, then finish)" }; continue }
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
@@ -1300,7 +1305,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Gone reason: bossy.ps1 track add -Task <id> -HoldPromotion '' (releases it); else & $($KitCmd.dev) tracker status <id> <status>." }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "MRs merged, the tracker refused the status (track retries each round): check auth and tracker.statuses (& $($KitCmd.dev) tracker view <id>), or set it by hand." }
-    elseif ($l -match '^ATTENTION .*no solution/testing comment') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps on the task (& $($KitCmd.dev) tracker comment <id> <file.md>)." }
+    elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> <file.md>)." }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w./-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
     }
@@ -1757,17 +1762,11 @@ foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object na
 }
 
 # ---- bugbrief: bug-fix brief + /buildy args
-# this request's mandate only (a stored one is an older session's words); sonnet unless the coordinator passes -Complex
-function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {
-  if (-not $Mandate) { Write-Warning "no -Mandate: replace the placeholder with the owner's words of this request (agents drop items for later chat messages without them)" }
-  $a = [ordered]@{ id = $Agent; items = $Items; area = $Area.Substring(0, [math]::Min(160, $Area.Length)) }; if ($Complex) { $a.complex = $true }
-  [ordered]@{ brief = $Brief; run = $RunName; mode = 'bugfix'; kitDir = ($KitDir -replace '\\', '/'); mandate = @(if ($Mandate) { $Mandate } else { "<the owner's words of this request, verbatim>" }); agents = @($a) }
-}
 function Invoke-BugBrief {
 param(
   [Parameter(Mandatory)][string]$Task,
-  [Parameter(Mandatory)][string]$Agent,
-  [Parameter(Mandatory)][string[]]$Repos,
+  [string]$Agent,   # B-<task>
+  [string[]]$Repos = @(),   # else its MRs' repos
   [string[]]$Hints = @(),
   [string]$Range,
   [string[]]$Mandate = @(),
@@ -1785,7 +1784,9 @@ if (-not $j.name) { throw "cannot read task $Task from the tracker ($($KitConf.T
 $desc = [string]$j.description
 $texts = @($desc) + @(@(try { Get-TrackerComments $Task } catch { @() }) | Sort-Object date -Descending | ForEach-Object { [string]$_.text })
 $checks = @(Get-KitFailedChecks $texts)   # every package: description, comments newest first
-if (-not $checks) { throw "no '### <id> — <screen>' failed checks found in $Task" }
+$saw = ($desc -replace '\s+', ' ').Trim()   # no checks (a watchy [Bug]): the task is the check
+if (-not $checks) { $checks = @([pscustomobject]@{ id = $Task; screen = [string]$j.name; saw = $saw.Substring(0, [math]::Min(300, $saw.Length)) }) }
+if (-not $Agent) { $Agent = "B-$Task" }
 
 $runItem = $null
 foreach ($fin in Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter finalize.json -ErrorAction SilentlyContinue) {
@@ -1801,6 +1802,7 @@ foreach ($o in $orig) {   # the original ask's repos join the table unless named
   $rn = RepoName $o.repo
   if ($rn -and -not @($Repos | Where-Object { (RepoName ($_ -split '@')[0]) -eq $rn }).Count) { $Repos += "$rn@$($o.branch)" }
 }
+if (-not $Repos.Count) { throw "no -Repos and no MR on $Task or its parent: -Repos <repo>[@<branch>],..." }
 $origLine = if ($orig) { "Original ask's MRs: " + (($orig | ForEach-Object { "$($_.ref) -> ``$($_.branch)``" }) -join ', ') + '.' }
 $rows = foreach ($spec in $Repos) {
   $r, $branch = $spec -split '@', 2
@@ -2211,7 +2213,7 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(& $cut $_.error 90)" })
 & $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
 & $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
-& $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(if (-not (Test-Path (Join-Path $_.FullName 'report.md'))) { ', no report' })" }))
+& $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(Get-KitQaRunGap $_.FullName)" }))
 & $part 'Upkeep (no LLM)' @(@($steps | ForEach-Object { "$($_.step): $($_.state) ($($_.sec) s)$(if ($_.out) { ': ' + (& $cut ($_.out -join ' | ') 400) })" }) + @(Invoke-KitHooks Get-KitHealthLinesAudit))
 $file = Join-Path (Get-KitPath retros -Create) "digest-$($t0.ToString('yyyy-MM-dd-HHmm')).md"
 [IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))

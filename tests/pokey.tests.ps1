@@ -249,6 +249,18 @@ $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'ne
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
 Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PQ' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
+# bossy.ps1 bugbrief (a QA bug's brief) and a missing verb
+$BX = Join-Path $k 'skills/bossy/bossy.ps1'
+$kl = Join-Path $k 'skills/crafty/kit.local.json'; Set-JsonFile $kl @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }
+$bb = Invoke-PsTest bb @'
+. $args[0]; Update-KitTracking { param($tk) $tk.tasks.b1 = @{ task = 'b1' } }
+function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function Get-TrackerComments { }; function Get-TaskMrBranches { @{ repo = 'w'; branch = 'm' } }
+$o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
+function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
+'@ @($BX); Remove-Item $kl
+Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error (#)' 'd', 'r'
+$bnv = (pwsh @np $BX board 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE   # the raw line, not the wrapped error view
+Expect "a missing verb: exit 2 with the verb list ($bnc)" ($bnc -eq 2 -and $bnv -match 'Verbs: join, beat, show, check, leave, msg, inbox\.')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k
 Complete-Tests
