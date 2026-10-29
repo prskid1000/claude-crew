@@ -29,10 +29,12 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   the holders ("deploy of <svc> starting, pause"; board inbox + `status -Agent` NOTICE), deploys, and tells them "deploy done,
   re-run your checks"; their leases stay. A train whose worker is gone (pid + start time: a reused pid is not it) or whose
   phase and log stay quiet `trainStallMinutes` (45) is killed and its requests requeue (supervise ACT TRAIN STALLED). Only leases and holds start (or crash-restart) services, each in a start worker; no
-  holder: stop after the idle grace, at once under memory pressure; an out-of-memory line in a running service's log restarts
+  holder: stop after the idle grace, at once under memory pressure (a start waiting for RAM; a CPU wait is none); a dependency
+  of a waiting, starting or train-switched service is never idle; an out-of-memory line in a running service's log restarts
   it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
-  `keepFreeGB` fixes it). A start waits for its `dependsOn` to be healthy; one failing on a dependency connection waits
-  again and retries once before a train rolls back.
+  `keepFreeGB` fixes it). A start starts a down `dependsOn` nobody starts, then waits for it to be healthy; one failing on a
+  dependency connection waits again and retries once. A dependency still down: the train keeps its release, no rollback (the
+  service starts once it is up). Restarts count only real starts (backoff 3 / 30 min).
 - **DB marks, restore, seed** (`db.engine` mysql / mariadb: goody `db-engine-presets`; nothing is ever dumped whole): a mark = a
   binlog position + the code live then (zero bytes): `mark -Name <n>` by hand, `release-<n>` before each release's code first
   runs, `use-<agent>` at each new lease, `baseline-<date>` after a green `seed`. A release with migrations (layers or the
@@ -74,7 +76,7 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   release (it fails: the plain artifact is staged, event `unpack-fallback`, doctor warns); `keepReleases` (2) staged per service + the ones running. `aotTrain` ({aotFile}): one gated background run per
   artifact after it is up; `{aot}` in `start` = `aotUse` (`-XX:AOTCache="{aotFile}"`) once it exists. `{reactor}` in `build` =
   `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is in the module's parent
-  chain, the rest come from the local repository: doctor lists them). An edited kit.local.json restarts the loop between trains. `readyPattern`: a ready log line checks health at
+  chain, the rest come from the local repository: doctor lists them). An edited kit.local.json, envy.ps1, lib.ps1 or goody adapter restarts the loop between trains. `readyPattern`: a ready log line checks health at
   once (else every 5 s; fail lines every 1 s). `mvnd` on PATH replaces mvn / mvnw in every gated build. Events: `build`,
   `stage`, `up`, `aot-train` with seconds. Idle services all stop in one tick, also while a train waits for leases.
 - **Owner upkeep:** `tenant list | drop -Name <t,..> [-DryRun]` (`tenants`: { schema, table, key, name, tables, idColumns,

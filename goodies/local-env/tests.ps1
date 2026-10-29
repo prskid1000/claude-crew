@@ -69,7 +69,7 @@ $wr = & { . $L2; Update-State shop { param($x) $x.services = @{ web = @{ status 
   function Get-SysCpu { 10 }; function Need-GB { 3 }; function KeepFreeGB { 6 }
   function Start-Sleep { $script:ph = 1; $script:seen = Pressure; $script:ph = 2 }
   $null = Wait-Room shop @{ name = 'web' }; "$script:seen|$((Read-State shop).services.web.status)" }
-Expect "localenv: a waiting start is pressure, cache counts, then the mark is cleared ($wr)" ($wr -eq 'start(s) waiting for RAM: shop/web|down')
+Expect "localenv: a waiting start is pressure, cache counts, then the claim stays while it waits for the start lock ($wr)" ($wr -eq 'start(s) waiting for RAM: shop/web|waiting')
 Remove-TestKit $k2
 # config: envs inherit localEnv.defaults, then extends (named lists merge by name); a loop in extends is refused
 $k3 = New-LocalEnvKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'; $cf3 = Join-Path $k3 'skills/crafty/kit.local.json'
@@ -123,7 +123,7 @@ $ss = & { . $L3; $script:log = @(); $script:rooms = 0
   "$($script:log -join ',')|$($script:err -match 'exited while starting\. Cause: Caused by: boom\. Log: .*t-api\.fail-9\.log' -and (Test-Path ((LogFile t api) -replace 'log$', 'fail-9.log')))" }
 Expect "start: room, lock, room again when RAM fell; no stop of a stopped service; a failed start's log kept with its cause line ($ss)" ($ss -like 'room,room,stop:exited while starting|True')
 # dependsOn healthy first; a start failing on a dependency connection waits for it again and retries once; another failure throws
-$dr = & { . $L3; $script:h = 0; $script:n = 0; function Svc { [pscustomobject]@{ name = $args[1]; dependsOn = $(if ($args[1] -eq 'api') { @('es') }) } }
+$dr = & { . $L3; $script:h = 0; $script:n = 0; function Svc { [pscustomobject]@{ name = $args[1]; external = $args[1] -eq 'es'; dependsOn = $(if ($args[1] -eq 'api') { @('es') }) } }   # es external: waited for, never started here
   function Healthy { ++$script:h -gt 2 -and $script:h -ne 4 }; function Start-SvcOnce { if (++$script:n -eq 1) { throw '[t] api failed to start. Unhandled exception caught whilst connecting to ES client' }; 'up' }
   $o = @(Start-Svc t (Svc t api) 0 ''); $script:n = 1; function Start-SvcOnce { throw '[t] api failed to start: port 1 in use' }
   try { Start-Svc t (Svc t api) 0 '' | Out-Null } catch { $e2 = "$_" }; "$($o -join ' / ')|$($e2 -match 'port 1 in use')" }
@@ -176,6 +176,52 @@ $rv = & { . $L3; $f1 = (Read-State tl).services.gone; $null = @(Wait-Leases tl @
   $code = Invoke-Shell 'echo Status: not found&& exit 1' (Join-Path (Kd) 'nf.log') @{}; "$($f1.status)/$($f1.why -match 'does not exist')|$c0|$code" }
 $null = Px $L3 _exec -Env t -Service cmp 2>&1; $cl = Get-Content (& { . (Join-Path $k3 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath localenv-logs) 't-cmp.log' }) -Raw
 Expect "review: worker failure -> failed; no lease = no clock; compound stderr kept; 'not found' output != misconfigured ($rv)" ($rv -eq 'failed/True|True|1' -and $cl -match 'out1' -and $cl -match 'err1' -and $cl -match 'done1')
+# a start worker that finds its service already up counts no restart; one that tries counts one (the backoff reads them)
+$tl9 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 41009); $tl9.Start()
+$lr = & { . $L3; @((Read-State tl).services.api.restarts | Where-Object { $_ }).Count }   # the loop above spawned api's worker: the loop counts none
+& { . $L3; Update-State tl { param($x) $x.services.api = @{ status = 'down'; restarts = @((Get-Date).AddMinutes(-5).ToString('o')) } } }
+$null = Px $L3 _daemon -Env tl -Start api 2>&1; $tl9.Stop()
+$au = & { . $L3; $x = Read-State tl; "$lr|$($x.services.api.status)|$(@($x.services.api.restarts).Count)|$(@($x.services.gone.restarts).Count)" }
+Expect "start worker: the loop counts no restart; 'already up' -> status up, none counted; a real try (gone) counts 1 ($au)" ($au -eq '0|up|1|1')
+# deadlock 2026-10-29: a start waiting on CPU (or claiming a dependency) is no memory pressure; dependencies of a waiting,
+# starting or train-blocked service are never idle; a down dependency is started first; a dependency failure is 'dependency down'
+& $J @{ localEnv = @{ idle = @{ minMinutes = 1; maxMinutes = 1 }; envs = @{ dp = @{ services = @(@{ name = 'search'; start = 'echo s'; port = 41021 }, @{ name = 'api'; start = 'echo a'; port = 41022; dependsOn = @('search') }) } } } } $cf3 8
+$cw = & { . $L3; Update-State dp { param($x) $x.services = @{ api = @{ status = 'down' } } }; $script:ph = 0
+  function Get-SysMem { [pscustomobject]@{ AvailGB = 40; CacheGB = 0; TotalGB = 64 } }; function Get-SysCpu { @(95, 10)[$script:ph] }; function Need-GB { 3 }; function KeepFreeGB { 6 }
+  function Start-Sleep { $script:seen = "$(Pressure)/$((Read-State dp).services.api.waitFor)"; $script:ph = 1 }
+  $null = Wait-Room dp @{ name = 'api' }; $script:seen }
+Expect "pressure: a start waiting only for CPU is no memory pressure (waitFor CPU) ($cw)" ($cw -eq '/CPU')
+$ip = & { . $L3; $old = (Get-Date).AddMinutes(-30).ToString('o')
+  $mk = { param($api) @{ services = @{ search = @{ status = 'up'; lastNeed = $old; gb = 2 }; api = $api } } }
+  $r = foreach ($api in @{ status = 'waiting'; waitPid = $PID; waitStart = (Get-KitPidStart $PID) }, @{ status = 'waiting'; waitPid = 999999 }, @{ status = 'starting' }, @{ status = 'down' }) { $st = & $mk $api; (@(Get-IdleServices dp $st @{} @() 'start(s) waiting for RAM: x' | ForEach-Object name) -join ',') + '.' }
+  $st = & $mk @{ status = 'down' }; $r += (@(Get-IdleServices dp $st @{} @('api') 'p' | ForEach-Object name) -join ',') + '.'; -join $r }
+Expect "idle: a dependency of a live waiting / starting / train-blocked service is kept under pressure; of a stale waiting or down one it is idle ($ip)" ($ip -eq '.search..search..')
+$wd = & { . $L3; Update-State dp { param($x) $x.services = @{ search = @{ status = 'down' } } }; $script:started = @()
+  function Healthy { param($e, $s) $s.name -ne 'search' -or $script:started -contains 'search' }; function Wait-KitPoll { }; function Event { }
+  function Start-Svc { param($e, $s) $script:started += $s.name; "claim=$((Read-State dp).services.search.status)/$((Read-State dp).services.search.waitFor)" }
+  $o1 = @(Wait-Deps dp (Svc dp 'api')) -join ';'
+  $script:started = @(); Update-State dp { param($x) $x.services.search = @{ status = 'waiting'; waitPid = $PID; waitStart = (Get-KitPidStart $PID) } }
+  function Healthy { $false }; $script:t0 = 0; function Get-Date { if ($args.Count) { Microsoft.PowerShell.Utility\Get-Date @args } else { (Microsoft.PowerShell.Utility\Get-Date).AddMinutes(20 * $script:t0++) } }
+  $o2 = try { $null = Wait-Deps dp (Svc dp 'api'); 'no throw' } catch { "$_" }
+  $script:t0 = 0; Update-State dp { param($x) $x.services.search = @{ status = 'up'; pid = $PID; pstart = (Get-KitPidStart $PID) } }   # alive but slow: waited for, never restarted
+  $o3 = try { $null = Wait-Deps dp (Svc dp 'api'); 'no throw' } catch { "$_" }
+  "$($o1 -match 'starting it first' -and $o1 -match 'claim=waiting/dep')|$($script:started.Count)|$($o2 -match ': dependency down: search was not healthy')|$($o3 -match ': dependency down: ')" }
+Expect "deps: a down dependency nobody starts is claimed and started first; one claimed by a live start or alive but unhealthy is only waited for; timeout says 'dependency down' ($wd)" ($wd -eq 'True|0|True|True')
+$sr = & { . $L3; function Wait-Deps { }; function Start-SvcOnce { throw 'Connection refused: connect' }; function Healthy { $false }; function Event { }; function Wait-KitPoll { }
+  try { $null = Start-Svc dp (Svc dp 'api') 1 ''; 'no throw' } catch { "$_" } }
+Expect "deps: a start failing on a dependency connection while the dependency is down throws 'dependency down' (the train keeps its release) ($sr)" ($sr -match ': dependency down: search went down')
+$tb = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
+Expect "train: a 'dependency down' switch failure keeps the release (no rollback), any other failure rolls back" ($tb -match "if \(\`$sw -notmatch ': dependency down: '\) \{ & \`$rollback" -and $tb -match 'kept release \$newN but is not up')
+# envy up / use / task with -Wait <min> and a deferred request: Wait-Request reads the verb's [double]$Wait, never a [switch]
+$wk = & { . $L3; [double]$Wait = 4; function Ensure-Loop { }   # the verb's Wait-Request reads $Wait by scope
+  Update-State dp { param($x) $x.requests = @(@{ id = 'q1'; kind = 'drop'; branch = 'b'; status = 'deferred' }) }
+  $script:wr = @(); function Wait-Request { $script:wr += "$($Wait.GetType().Name)=$Wait" }
+  Wake-Deferred dp -UntilDone; "$($script:wr -join ',')|$((Read-State dp).requests[0].status)" }
+Expect "up -Wait 4: Wake-Deferred -UntilDone leaves the verb's [double]`$Wait to Wait-Request (no SwitchParameter clash) ($wk)" ($wk -eq 'Double=4|queued')
+# the loop reloads when a goody adapter it dot-sources changes, not only kit.local.json / envy.ps1 / lib.ps1
+$ls0 = & { . $L3; Get-LoopStamp }; $adp = New-Item -ItemType Directory -Force (Join-Path $k3 'skills/envy/adapters'); Set-Content (Join-Path $adp 'zz-test.ps1') '# test'
+$ls1 = & { . $L3; Get-LoopStamp }; Remove-Item (Join-Path $adp 'zz-test.ps1')
+Expect "loop: an adapter added or changed changes the loop stamp ($ls1)" ($ls0 -match 'envy\.ps1=\d+' -and $ls0 -match 'lib\.ps1=\d+' -and $ls0 -match 'kit\.local\.json=\d+' -and $ls1 -match 'zz-test\.ps1=\d+' -and $ls0 -ne $ls1)
 # idle stops: every idle service in one tick (a dependent first keeps its dependency); a train waiting for leases blocks none
 & $J @{ localEnv = @{ idle = @{ minMinutes = 1; maxMinutes = 1 }; envs = @{ t = @{ services = @(@{ name = 'api'; start = 'echo a'; port = 41011 }, @{ name = 'web'; start = 'echo w'; port = 41012; dependsOn = @('api') }, @{ name = 'job'; start = 'echo j'; port = 41013 }) } } } } $cf3 8
 $id = & { . $L3; $old = (Get-Date).AddMinutes(-30).ToString('o')
@@ -229,7 +275,7 @@ $uf = & { . $L3; function RepoOf { 'r' }; $script:evs = @(); function Event($e, 
   function Svc0 { [pscustomobject]@{ name = 'api'; dir = (Join-Path $wtd 'api'); artifact = 'target/app-*.jar'; unpack = 'exit 3' } }; function EnvServices { Svc0 }
   $r = Stage-Artifacts t r 'r9-f' 6>$null; "$((Split-Path $r.api -Leaf) -eq 'app-1.jar' -and (Get-Content $r.api) -eq 'fat')|$($script:evs -contains 'unpack-fallback')" }
 $ls = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
-Expect "stage: a failed unpack -> the plain artifact + unpack-fallback; loop: kit.local.json or envy.ps1 / lib.ps1 mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True' -and $ls -match '\$loopFiles = @\(\$__cfgFile, \$PSCommandPath, \(Join-Path \(Split-Path \$PSScriptRoot\) ''crafty/lib\.ps1''\)\)' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
+Expect "stage: a failed unpack -> the plain artifact + unpack-fallback; loop: kit.local.json or envy.ps1 / lib.ps1 mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True' -and $ls -match '\$cfgNow = Get-LoopStamp' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
 # cleanup: logs / run files / data folders / env worktrees no configured env uses are orphans; -DryRun deletes nothing
 & $J @{ localEnv = @{ cleanup = @{ dataRoots = @(@{ dir = (Join-Path $ud 'data'); match = 'sb1|^t$' }); quick = @(@{ name = 'old q'; paths = @("$ud/q/*"); olderThanDays = 1; cmd = 'echo q' }) }; envs = @{ t = @{ db = @{ datadir = (Join-Path $ud 'data/keepsb1') }; services = @(@{ name = 'api'; start = "run -Epath.data=$(Join-Path $ud 'data/t')"; port = 41017 }) } } } } $cf3 8
 $co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }
@@ -269,11 +315,14 @@ $lk = & { . $L3; $lkLog = LogFile t api; Set-Content $lkLog 'APPLICATION FAILED 
 Expect "start: a held log is appended to, its old fail line ignored, the service comes up ($lk)" ($lk -eq 'True|up|True')
 # a start worker queued with a copy that trains replaced (and pruned) while it waited for room starts the copy the state names
 $lt = & { . $L3; Update-State t { param($x) $x.services = @{ api = @{ status = 'failed'; artifact = 'run/r9-b/app.jar'; release = 9 } } }
-  function SvcDir { $sq }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }; function Healthy { $true }; function Stop-Svc { }; function Wait-Deps { }
+  function SvcDir { $sq }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }; $script:ltArgs = $null; function Healthy { [bool]$script:ltArgs }; function Stop-Svc { }; function Wait-Deps { }   # up only once launched
   function Start-Pwsh { $script:ltArgs = "$($args[0] -join ' ')"; $PID }
   $o = @(Start-Svc t (Svc t api) 7 'run/r7-a/app.jar' -Latest) -join ' '; $sv = (Read-State t).services.api
   $null = Start-SvcOnce t (Svc t api) 7 'run/r7-a/app.jar'; "$($script:ltArgs -match 'r7-a')|$($o -match 'starting api \(release 9\)')|$($sv.artifact)|$($sv.release)" }
 $ltw = (Get-Content $L3 -Raw) -match "Start-Svc \`$e \`$s \`$Release \`$Artifact -Latest" -and ([regex]::Matches((Get-Content $L3 -Raw), 'Start-SvcOnce \$e \$s \$release \$artifact -Latest:\$Latest')).Count -eq 2
+$lg = & { . $L3; function SvcDir { $sq }; function Wait-Room { }; function Test-Room { $true }; function Healthy { $true }; function Stop-Svc { }; $script:lgRun = 0; function Start-Pwsh { $script:lgRun++; $PID }
+  "$(@(Start-SvcOnce t (Svc t api) 7 '' -Latest) -join ' ')|$script:lgRun" }
+Expect "start: a worker (-Latest) whose service another process started while it waited for the lock launches nothing ($lg)" ($lg -match 'started by another process meanwhile\|0$')
 Expect "start: -Latest (the start worker, through Start-Svc and its retry) runs the state's newer copy, not the one it was queued with; a train's own start keeps its copy ($lt|$ltw)" ($lt -eq 'True|True|run/r9-b/app.jar|9' -and $ltw)
 # a switch-over that fails and a rollback restart that fails too: the state names the previous copy, never the rolled-back one
 $a1 = Join-Path $sq 'r1-a.jar'; Set-Content $a1 x; $rbw = Join-Path $k3 'rb-train.ps1'

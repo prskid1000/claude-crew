@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L27 config · L195 state · L242 layer drops · L314 leases · L414 code · L446 migrations · L692 hooks · L764 marks ·
-  L902 seed · L948 processes · L1237 daemon · L1682 cleanup · L1754 doctor · L1804 verbs
+  L902 seed · L948 processes · L1263 daemon · L1720 cleanup · L1792 doctor · L1842 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -275,11 +275,11 @@ function Get-LayerDrops([string]$e) {
   @(Get-Content -LiteralPath $lf | Where-Object { $_ -match '"env-layer"' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.event -ne 'acquire' -and "$($_.name)" -like "$e/*" } | Select-Object -Last 3 | ForEach-Object { "layer $($_.reason) ($($_.agent), $(([datetime]$_.at).ToString('HH:mm')))" })
 }
 # the env's deferred drops queued now; -Wait: until they are live (a lease starts on the refreshed code)
-function Wake-Deferred([string]$e, [switch]$Wait) {
+function Wake-Deferred([string]$e, [switch]$UntilDone) {   # not -Wait: Wait-Request reads the verb's [double]$Wait through the caller's scope
   $o = @{ ids = @() }
   Update-State $e { param($x) foreach ($q in @($x.requests | Where-Object { $_.status -eq 'deferred' })) { $q.status = 'queued'; $o.ids += $q.id } }
   if (-not $o.ids.Count) { return }
-  Ensure-Loop; if ($Wait) { foreach ($id in $o.ids) { $null = Wait-Request $id } }
+  Ensure-Loop; if ($UntilDone) { foreach ($id in $o.ids) { $null = Wait-Request $id } }
 }
 # stale layers: merged into the target, branch gone from origin, or no live holder past idle.graceMinutes (paused / handed off: kept)
 function Get-StaleLayers([string]$e, [switch]$DryRun) {   # -DryRun: reads only (no grace clock starts)
@@ -390,12 +390,12 @@ function Leased($why) { [bool]@($why | Where-Object { "$_" -match '^(lease|hold)
 function IdleWhy([double]$min, [string]$pressure) { if ($pressure) { "idle, stopped under memory pressure ($pressure)" } else { "idle: no holder for $min min (starts on the next lease)" } }
 # the services a train protects from idle stops: none while it only waits for leases (it changes nothing yet)
 function Get-IdleBlock($st) { if (-not $st.train -or "$($st.train.phase)" -like 'waiting for leases*') { @() } else { @($st.train.blockServices) } }
-# up, unneeded, no dependent up, past the idle grace (or any idle one under pressure); biggest first
+# up, unneeded, no dependent up, starting, waiting or in a train, past the idle grace (or any idle one under pressure); biggest first
 function Get-IdleServices([string]$e, $st, $need, [string[]]$block, [string]$pressure) {
   @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -eq 'up' -and -not $need[$_.name] -and $_.name -notin $block } | Where-Object {
       $n = $_.name; $x = $st.services[$n]
       $since = [datetime]$(if ($x.lastNeed) { $x.lastNeed } elseif ($x.upAt) { $x.upAt } else { (Now) })
-      -not @(Dependents $e @($n) | Where-Object { $st.services[$_].status -eq 'up' }).Count -and ($pressure -or ($script:IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
+      -not @(Dependents $e @($n) | Where-Object { $v = $st.services[$_]; $v.status -in 'up', 'starting' -or ($v.status -eq 'waiting' -and (Test-KitPid $v.waitPid $v.waitStart)) -or $_ -in $block }).Count -and ($pressure -or ($script:IdleOn -and ((Get-Date) - $since).TotalMinutes -ge (GraceMin $e $_)))
     } | Sort-Object { -[double]$st.services[$_.name].gb })
 }
 # established clients of a port from one connection snapshot per 2 s; -Any: headless browsers too (lease use, not demand)
@@ -1117,33 +1117,35 @@ function Pressure {
   $q = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue'
   $w = @(Get-ChildItem $q -Filter *.json -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 1 -and $(try { $tk = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json; Test-KitPid $tk.pid $tk.start } catch { $false }) })
   if ($w.Count) { return "$($w.Count) gated build(s) waiting for RAM" }
-  # a start waiting in any env: idle unleased services elsewhere make room (the caller stops them biggest first)
-  $ws = @(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $v = $st.services[$k]; if ($v.status -eq 'waiting' -and (Test-KitPid $v.waitPid $v.waitStart)) { "$n/$k" } } })
+  # a start waiting for RAM in any env: idle unleased services elsewhere make room (the caller stops them biggest first);
+  # a CPU wait or a dependent's start claim is no pressure (a stop frees no CPU)
+  $ws = @(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $v = $st.services[$k]; if ($v.status -eq 'waiting' -and "$($v.waitFor)" -in '', 'RAM' -and (Test-KitPid $v.waitPid $v.waitStart)) { "$n/$k" } } })
   if ($ws.Count) { return "start(s) waiting for RAM: $($ws -join ', ')" }
   $null
 }
 function Test-Room([string]$e, $s, [double]$waitedMin) { $m = Get-SysMem; Test-GateStart ((Get-GateAvailGB $m) - (Need-GB $e $s)) (KeepFreeGB) $waitedMin $m.TotalGB }
 function Wait-Room([string]$e, $s) {
   $need = Need-GB $e $s; $keep = KeepFreeGB
-  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false
+  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false; $roomOk = $false
   try {
     while ($true) {
       $m = Get-SysMem; $cpu = Get-SysCpu; $avail = Get-GateAvailGB $m
       $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
-      if ($ramOk -and $cpuOk) { return }
-      if (-not $marked) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitPid = $PID; $x.services[$s.name].waitStart = Get-KitPidStart $PID }; $marked = $true }
+      if ($ramOk -and $cpuOk) { $roomOk = $true; return }
+      $for = if ($ramOk) { 'CPU' } else { 'RAM' }
+      if ($marked -ne $for) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitFor = $for; $x.services[$s.name].waitPid = $PID; $x.services[$s.name].waitStart = Get-KitPidStart $PID }; $marked = $for }
       if ((Get-Date) -gt $until) {
         if (-not $ramOk) {
           $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
-          Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = $false
+          Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
           throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
         }
-        "[$e] CPU still $cpu% after $($script:RoomWaitMin) min: starting $($s.name) anyway"; return
+        "[$e] CPU still $cpu% after $($script:RoomWaitMin) min: starting $($s.name) anyway"; $roomOk = $true; return
       }
       if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for room to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%)"; $said = Get-Date }
       Start-Sleep 10
     }
-  } finally { if ($marked) { Update-State $e { param($x) if ($x.services[$s.name].status -eq 'waiting') { $x.services[$s.name].status = 'down' } } } }
+  } finally { if ($marked) { Update-State $e { param($x) $v = $x.services[$s.name]; if ($v.status -eq 'waiting') { if ($roomOk) { $v.waitFor = 'lock' } else { $v.status = 'down' } } } } }   # room got: still claimed while it waits for the start lock
 }
 function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   $a = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'envy.ps1')) + $a; $pwsh = (Get-Process -Id $PID).Path
@@ -1154,11 +1156,24 @@ function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
 # a start waits for its dependsOn to be HEALTHY (a train may restart one meanwhile); a start that fails on a dependency
 # connection waits for them again and retries once, before the train rolls back
 $script:DepFailPattern = '(?i)connection refused|Communications link failure|ConnectException|NoNodeAvailable|UnknownHostException|ECONNREFUSED|whilst connecting to|\bES client\b|elasticsearch.{0,40}(unreachable|refused|not reachable|timed? ?out)'   # TODO-PARAM (fixed default)
+# a dependency that is down and that nobody starts is claimed (status waiting, waitFor dep: the loop leaves it) and started here
 function Wait-Deps([string]$e, $s) {
   foreach ($d in @($s.dependsOn | Where-Object { $_ })) {
     $ds = Svc $e $d; if (-not $ds) { continue }; $until = (Get-Date).AddMinutes((StartMin $ds)); $said = $false
+    $xd = (Read-State $e).services[$d]
+    if (-not (Healthy $e $ds) -and (Managed $ds) -and -not ($ds.repo -and $ds.artifact -and -not ($xd.artifact -and (Test-Path -LiteralPath $xd.artifact)))) {   # no build yet: the loop queues one
+      $c = @{ ok = $false }
+      Update-State $e { param($x) if (-not $x.services[$d]) { $x.services[$d] = @{ status = 'down' } }; $v = $x.services[$d]
+        if (-not ((Owned $v) -or ($v.status -eq 'waiting' -and (Test-KitPid $v.waitPid $v.waitStart)))) {
+          $v.status = 'waiting'; $v.waitFor = 'dep'; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $c.ok = $true; $c.rel = [int]$x.release.n; $c.art = "$($v.artifact)" } }
+      if ($c.ok) {
+        "[$e] $($s.name): its dependency $d is down: starting it first"; Event $e 'dep-start' @{ service = $d; for = $s.name }
+        try { Start-Svc $e $ds $c.rel $c.art -Latest }
+        catch { $de = "$_".Split("`n")[0]; Update-State $e { param($x) if ($x.services[$d].status -eq 'waiting' -and $x.services[$d].waitPid -eq $PID) { $x.services[$d].status = 'failed'; $x.services[$d].why = $de } }; throw "[$e] $($s.name): dependency down: $d did not start ($de) - not started" }
+      }
+    }
     while (-not (Healthy $e $ds)) {
-      if ((Get-Date) -gt $until) { throw "[$e] $($s.name): its dependency $d was not healthy within $(StartMin $ds) min - not started" }
+      if ((Get-Date) -gt $until) { throw "[$e] $($s.name): dependency down: $d was not healthy within $(StartMin $ds) min - not started" }
       if (-not $said) { "[$e] $($s.name) waits for $d to be healthy"; $said = $true }; Wait-KitPoll 5
     }
   }
@@ -1171,7 +1186,12 @@ function Start-Svc([string]$e, $s, [int]$release, [string]$artifact, [switch]$La
     "[$e] $($s.name) failed on a dependency connection: waiting for $(if (@($s.dependsOn).Count) { @($s.dependsOn) -join ', ' } else { '30 s (no dependsOn)' }), then one retry"
     Event $e 'start-retry' @{ service = $s.name; why = "$_".Split("`n")[0] }
     if (@($s.dependsOn | Where-Object { $_ }).Count) { Wait-Deps $e $s } else { Wait-KitPoll 30 }
-    Start-SvcOnce $e $s $release $artifact -Latest:$Latest
+    try { Start-SvcOnce $e $s $release $artifact -Latest:$Latest }
+    catch {
+      $down = @($s.dependsOn | Where-Object { $_ -and (Svc $e $_) -and -not (Healthy $e (Svc $e $_)) })
+      if ("$_" -match $script:DepFailPattern -and $down.Count) { throw "[$e] $($s.name): dependency down: $($down -join ', ') went down during its start - not started" }
+      throw
+    }
   }
 }
 # -Latest (start worker): the copy the state names once room and lock are got; trains staged and pruned while it waited
@@ -1200,6 +1220,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
       "[$e] RAM fell while $($s.name) waited for the start lock: waiting for room again"
     }
     $xl = if ($Latest) { (Read-State $e).services[$s.name] }
+    if ($Latest -and ((Healthy $e $s) -or ($xl.status -eq 'starting' -and (Owned $xl) -and $xl.pid -ne $x0.pid))) { "[$e] $($s.name): started by another process meanwhile"; return }   # a worker or a dependent's start got there first
     if ($xl.artifact -and "$($xl.artifact)" -ne $artifact) { "[$e] $($s.name): a newer staged copy since this start was queued (release $($xl.release))"; $artifact = "$($xl.artifact)"; if ($xl.release) { $release = [int]$xl.release }; $cmd = StartCmd $e $s $artifact }
     $log = LogFile $e $s.name; $logFrom = 0   # a reader holding the log (tidy, logs -Grep): append, scan only the new lines
     if (Test-Path $log) { try { Move-Item $log "$log.prev" -Force -ErrorAction Stop } catch { $logFrom = (Get-Item $log).Length; "[$e] $($s.name): $log is open elsewhere, appending to it" } }
@@ -1231,9 +1252,14 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     Event $e 'up' @{ service = $s.name; release = $release; sec = $sec; gb = $gb; aot = [bool]($artifact -and (Test-Path -LiteralPath "$(AotFile $artifact)")) }
     "[$e] $($s.name) up$(if ($s.port) { " on port $($s.port)" }) in $sec s ($gb GB)"
     Start-AotTrain $e $s $artifact
-  } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose() }
+  } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
 }
 
+# the loop's inputs: kit.local.json, envy.ps1, lib.ps1 and the dot-sourced goody adapters; a changed stamp = a fresh loop between trains
+function Get-LoopStamp {
+  $fs = @($__cfgFile, (Join-Path $PSScriptRoot 'envy.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1'), (Join-Path (Split-Path $PSScriptRoot) 'crafty/adapters/liquibase.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | ForEach-Object FullName)
+  @($fs | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks)" }) -join ','
+}
 # ---- daemon: this script only; -Env = loop, -Train = train worker, -Start = start worker; logs <logs>/<env>-loop.log, -train.log; events: kitlog stream env
 function Invoke-Daemon {
 param([Parameter(Mandatory)][Alias('Env')][string]$EnvName, [string]$Train, [string]$Start, [string]$Aot, [int]$Release, [string]$Artifact)
@@ -1362,7 +1388,7 @@ function Run-Train {
   if ($migRepos.Count -and -not (MarksOn $e)) { $notes.Add("migrations in $($migRepos -join ', ') change the shared DB: no marks (db.engine mysql / mariadb), no way back") }
 
   $prevSvc = @{}; foreach ($s in $switch) { $prevSvc[$s.name] = $st2.services[$s.name] }
-  $flag = @{ restored = $false; reverted = @() }
+  $flag = @{ restored = $false; reverted = @() }; $keptRepos = @()
   $rollback = { param([string[]]$repos, $why)
     $set = [Collections.Generic.List[string]]::new(); foreach ($x in $repos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } }
     if ($relMark -and -not $flag.restored -and @($set | Where-Object { $_ -in $migRepos }).Count) { foreach ($x in $migRepos) { if ($x -in $ok -and -not $set.Contains($x)) { $set.Add($x) } } }
@@ -1420,12 +1446,19 @@ function Run-Train {
     if ($rn -notin $ok) { continue }
     if ((Read-State $e).services[$s.name].status -ne 'up') { "[$e] $($s.name) stopped idle while the train waited: it starts on release $newN at its next lease"; continue }
     try { Start-Svc $e $s $newN $artifacts[$s.name] }
-    catch { & $rollback @($rn) "$($s.name) did not come up with it: $("$_".Split("`n")[0])" }
+    catch {
+      $sw = "$_".Split("`n")[0]
+      if ($sw -notmatch ': dependency down: ') { & $rollback @($rn) "$($s.name) did not come up with it: $sw"; continue }
+      # the code is not at fault: the release stays, the service waits stopped on it and the loop starts it once its dependency is up
+      Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{} }; $z.services[$s.name].release = $newN; if ($artifacts[$s.name]) { $z.services[$s.name].artifact = $artifacts[$s.name] } }
+      Stop-Svc $e $s "waits for its dependency: $sw"
+      $notes.Add("$($s.name) kept release $newN but is not up ($sw): it starts when its dependency is up (no rollback)"); $keptRepos += $rn
+    }
   }
   if ($switch.Count -and $ok.Count -and (Get-EnvCfg $e).smoke) {
     Phase 'smoke checks' $block @($affected)
     $sf = Test-Smoke $e
-    if ($sf) { & $rollback @($ok) "smoke check failed: $sf" }
+    if ($sf) { $rb = @($ok | Where-Object { $_ -notin $keptRepos }); if ($rb.Count) { & $rollback $rb "smoke check failed: $sf" }; if ($keptRepos.Count) { $notes.Add("smoke check failed with $($keptRepos -join ', ') waiting for a dependency (kept): $sf") } }
   }
   if ($migRepos.Count -and (MarksOn $e)) {   # migrations may add / change cascading foreign keys or the child columns the guard copies
     try { $g = Install-DbGuard $e; if ($g.installed -or $g.removed) { $notes.Add("cascade guard after the migrations: $($g.installed) trigger(s) installed, $($g.removed) removed") } }
@@ -1530,7 +1563,13 @@ if ($Aot) {   # AOT training worker: one run for one artifact, gated, off the lo
 }
 if ($Start) {   # start worker: one service start (RAM wait, start lock, health) off the loop, so beats, prune and idle stops go on
   $s = Svc $e $Start
-  try { if (Healthy $e $s) { Say "start of ${Start}: already up" } else { Start-Svc $e $s $Release $Artifact -Latest *>&1 | ForEach-Object { Say "$_" } } }
+  try {
+    if (Healthy $e $s) { Say "start of ${Start}: already up"; Update-State $e { param($z) if ($z.services[$Start] -and $z.services[$Start].status -ne 'up') { $z.services[$Start].status = 'up' } } }
+    else {   # a restart counts only when one runs (backoff: 3 / 30 min), never an "already up"
+      Update-State $e { param($z) if (-not $z.services[$Start]) { $z.services[$Start] = @{ status = 'down' } }; $z.services[$Start].restarts = @(@($z.services[$Start].restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 }) + @(Now)) }
+      Start-Svc $e $s $Release $Artifact -Latest *>&1 | ForEach-Object { Say "$_" }
+    }
+  }
   catch {
     $why = "$_".Split("`n")[0]; Say "start of $Start failed: $why"
     Update-State $e { param($z) if (-not $z.services[$Start]) { $z.services[$Start] = @{} }; $z.services[$Start].status = 'failed'; $z.services[$Start].why = $why }
@@ -1544,8 +1583,7 @@ $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
-$loopFiles = @($__cfgFile, $PSCommandPath, (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')) | Where-Object { $_ }   # a pull or goody sync of the scripts reloads too: a loop never runs old code
-$cfgAt = (@($loopFiles | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks }) -join ','); $reload = $false   # kit.local.json and scripts read at start
+$cfgAt = Get-LoopStamp; $reload = $false   # kit.local.json and the scripts as read at start
 $quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue; $poolAt = [datetime]::MinValue
 try {
   while ($true) {
@@ -1558,7 +1596,7 @@ try {
       if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
       # ---- kit.local.json or the env scripts edited: between trains a fresh loop takes over (services, leases and state stay)
-      $cfgNow = (@($loopFiles | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks }) -join ',')
+      $cfgNow = Get-LoopStamp
       if (-not $st.train -and $cfgNow -ne $cfgAt -and $(try { $null = -not $__cfgFile -or (Get-Content -LiteralPath $__cfgFile -Raw | ConvertFrom-Json); $true } catch { $false })) { Say "kit.local.json or the env scripts changed: the loop restarts with them"; Event $e 'loop-reload' @{ pid = $PID }; $reload = $true; break }   # a half-written file waits
 
       # ---- trains: one worker takes all queued requests
@@ -1637,7 +1675,6 @@ try {
         $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
         if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries / 30 min
         if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
-        Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
         $starters[$s.name] = Mine (Start-Pwsh @('_daemon', '-Env', $e, '-Start', $s.name, '-Release', "$([int]$st.release.n)", '-Artifact', "$($x.artifact)") $PSScriptRoot "_daemon -Env $e -Start $($s.name)" (LogFile $e "start-$($s.name)"))
         Say "start of $($s.name): worker pid $($starters[$s.name].pid)"
         $st = Read-State $e
@@ -2036,7 +2073,7 @@ switch ($Action) {
     $names = @(Closure $e $(if ($Services) { $Services } else { All-Managed }))
     foreach ($n in $names) { $null = Svc $e $n }
     $min = [math]::Min($(if ($Minutes) { $Minutes } else { $LeaseMin }), $MaxLeaseMin)
-    Wake-Deferred $e -Wait   # drops due since the env went idle: the lease starts on the refreshed code
+    Wake-Deferred $e -UntilDone   # drops due since the env went idle: the lease starts on the refreshed code
     $until = (Get-Date).AddMinutes($Wait); $said = $null; $o = @{}
     while ($true) {
       $o.ok = $false
@@ -2066,7 +2103,7 @@ switch ($Action) {
   'release' { Update-State $e { param($x) $x.leases.Remove($Agent) }; Event $e 'release-lease' @{ agent = $Agent }; "[$e] lease of $Agent released" }
   'up' {   # -Owner: the owner's hold for -Minutes (120); else a hold that lives while its holder does
     if (-not $Services) { $st = Read-State $e; Prune $st; "[$e] up needs -Services <svc,..>. Leases need: $(@($st.leases.Keys | ForEach-Object { "$_ [$(@($st.leases[$_].services) -join ',')]" }) -join '; ')$(if (-not $st.leases.Count) { 'nothing' })"; exit 1 }
-    $names = @(Closure $e $Services); $min = if ($Minutes) { $Minutes } else { 120 }; Wake-Deferred $e -Wait
+    $names = @(Closure $e $Services); $min = if ($Minutes) { $Minutes } else { 120 }; Wake-Deferred $e -UntilDone
     Update-State $e { param($x) $x.holds[$Agent] = @{ services = $names } + (New-KitLease $Agent $Session $(if ($Owner) { $min })); $x.suppress = $null }
     "[$e] holding $($names -join ', ') for $Agent $(if ($Owner) { "(owner) for $min min: unhold when done" } else { 'while it is live (board beat / step / pid): unhold when done' })"
     Ensure-Loop
@@ -2109,7 +2146,7 @@ switch ($Action) {
   'task' {
     $t = (Get-EnvCfg $e).tasks.$Task
     if (-not $t) { throw "env $e has no task '$Task' ($(((Get-EnvCfg $e).tasks.PSObject.Properties.Name) -join ', '))" }
-    $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"; Wake-Deferred $e -Wait
+    $rn = (Get-RepoCfg $t.repo).name; $key = "$Agent/task"; Wake-Deferred $e -UntilDone
     $until = (Get-Date).AddMinutes($Wait); $o = @{}
     while ($true) {
       Update-State $e { param($x) Prune $x; if ($rn -notin @($x.train.blockRepos)) { $x.leases[$key] = @{ services = @(); repos = @($rn); release = [int]$x.release.n; note = "task $Task" } + (New-KitLease $Agent $Session -ProcessId $PID); $o.ok = $true } }
