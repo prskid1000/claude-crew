@@ -204,7 +204,7 @@ $ErrorActionPreference = 'Stop'
 # absolute only: a bound hashtable became a relative folder
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
 # Git Bash rewrites '/api/x' into a Git path: undo
-if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $Path = '/' + ($Matches.rest -replace '\\', '/') }
+if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $p0 = $Path; $Path = '/' + ($Matches.rest -replace '\\', '/'); Write-KitLog calls msys-path @{ from = $p0; to = $Path } }   # the calls log has the raw arg
 $here = $PSScriptRoot
 $cfgFile = Join-Path $here 'targets.local.json'
 if (-not (Test-Path $cfgFile)) { throw "Missing $cfgFile - run bossy.ps1 setup -WriteLocal, then fill it in" }

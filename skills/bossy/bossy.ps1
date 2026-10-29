@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L756 param ·
-  L762 track · L1071 anomalies · L1089 supervise · L1400 report · L1479 audit · L1539 storage · L1750 bugbrief · L1852 cleanup ·
-  L1974 learn · L2004 decide · L2070 health · L2132 retro due · L2142 tidy · L2212 the kit origin's main and goodies ·
-  L2228 setup · L2294 guard-sendmessage
+  L762 track · L1071 anomalies · L1089 supervise · L1401 report · L1480 audit · L1540 storage · L1751 bugbrief · L1853 cleanup ·
+  L1975 learn · L2005 decide · L2071 health · L2133 retro due · L2143 tidy · L2213 the kit origin's main and goodies ·
+  L2229 setup · L2295 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1246,6 +1246,7 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
 # one row per agent and workflow run (lib.ps1 status; local files only, so before the network sections); a STUCK row is a flag
 $rows = @(Get-KitStatusRows $now $Session); foreach ($x in @(Get-KitStuckFlags $rows $now $idleMin)) { [void]$flags.Add($x) }
+$nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10).Count)   # NEXT: a live agent without a fresh beat (or a board row) still runs
 
 # 3. memory, disk, guard blocks; goodies' machine guards
 $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
@@ -1374,7 +1375,7 @@ $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x 
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }   # the failed-build streak, newest first
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes' 15); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })
 Add-KitActObs $state $acts $now
-$next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($active.Count + $wfAgents.Count) ($liveLabels.Count + $active.Count) $runTotal
+$next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 if ($script:skipped.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $($script:skipped -join ', ')" 'Partial result: the skipped sections run next round.' }   # before the report: -Brief showed it only in the detail file
