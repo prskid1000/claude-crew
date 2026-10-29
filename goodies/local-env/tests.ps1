@@ -351,7 +351,7 @@ $wq = & { . $O; $ld = Get-KitPath localenv -Create; $lp = "{`"pid`":$PID,`"pstar
   "{`"loop`":$lp,`"requests`":[{`"id`":`"s1`",`"agent`":`"devy-z`",`"status`":`"queued`"}]}" | Set-Content "$ld/wq.seed.json"
   $w = @(Get-KitStatusWaitLocalEnv | Where-Object agent -like 'devy-*'); Remove-Item "$ld/wq.json", "$ld/wn.json", "$ld/wq.seed.json"
   "$($w.Count)|$($w[0].agent)|$($w[0].why)|$([bool](Get-Command 'Get-KitStatusWait*' | Where-Object Name -eq 'Get-KitStatusWaitLocalEnv'))" }
-Expect "status: an agent whose env request is queued while its controller beats is WAITING (local deploy <id>), not STUCK; no controller or a seed file: no wait ($wq)" ($wq -eq '1|devy-x|local deploy r7 (wq queued: train t9 merging and building)|True')
+Expect "status: an agent whose env request is queued while its controller beats is WAITING (<env> deploy <id>), not STUCK; no controller or a seed file: no wait ($wq)" ($wq -eq '1|devy-x|wq deploy r7 queued, train t9 merging and building|True')
 $rf = @(foreach ($j in '[{"env":"shop","services":[]}]', '[{"env":"shop","services":[],"keepFreeGB":8}]', '[{"env":"shop","services":[],"keepFreeGB":10}]') { & { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = $j } }; @(Get-KitSuperviseFlagsLocalEnv | Where-Object { "$($_.what)" -match 'RAM FLOOR' }).Count } })
 Expect "supervise RAM FLOOR: a status without keepFreeGB caches nothing (no bogus 0 -> 8); a real move flags ($($rf -join ','))" ($rf -join ',' -eq '0,0,1')
 $ph = (& { . $O; $global:downs = @(); function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$T) { if ($A -contains 'down') { $global:downs += $A[-1]; return [pscustomobject]@{ code = 0 } }

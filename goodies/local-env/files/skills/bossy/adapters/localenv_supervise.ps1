@@ -144,7 +144,7 @@ function Get-KitStatusWaitLocalEnv {
     $st = try { Invoke-KitLocked $f.FullName { Get-Content -LiteralPath $f.FullName -Raw } | ConvertFrom-Json } catch { continue }
     if (-not ($st.loop.beat -and ((Get-Date) - [datetime]$st.loop.beat).TotalMinutes -lt 5 -and (Test-KitPid $st.loop.pid $st.loop.pstart))) { continue }
     foreach ($r in @($st.requests | Where-Object { $_.agent -and $_.status -in 'queued', 'in-train' })) {
-      [pscustomobject]@{ agent = $r.agent; why = "local $($r.kind) $($r.id) ($($f.BaseName) $($r.status)$(if ($st.train) { ": train $($st.train.id) $($st.train.phase)" }))"; at = $r.at; next = "envy.ps1 wait -Env $($f.BaseName) -Id $($r.id); a hung train: TRAIN STALLED" }
+      [pscustomobject]@{ agent = $r.agent; why = "$($f.BaseName) $($r.kind) $($r.id)$(if ($r.status -ne 'in-train') { " $($r.status)" })$(if ($st.train) { ", train $($st.train.id) $($st.train.phase -replace '^waiting for', 'waits for')" })"; at = $r.at; next = "envy.ps1 wait -Env $($f.BaseName) -Id $($r.id); a hung train: TRAIN STALLED" }
     }
   }
 }
