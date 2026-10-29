@@ -1,7 +1,7 @@
 #Requires -Version 7
 # report-gdocs (goody): the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. pokey.ps1 finalize
 # writes report.html with Build-QaReport and publishes it instead of report.md when this file is present (dot-sourced).
-# Sections: L5 helpers · L29 build
+# Sections: L5 helpers · L30 build
 # ---- helpers: HTML escape, palette, chips, images
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 
@@ -21,7 +21,8 @@ function Pal($r) { $p = $script:Palette[[string]$r]; if ($p) { $p } else { @{ fg
 function Chip($k, $n) { $p = $script:Palette[$k]; "<td style='background:$($p.bg);color:$($p.fg);padding:8px 14px;text-align:center;$script:Font;border:1px solid #ffffff'><span style='font-size:18pt;font-weight:bold'>$n</span><br><span style='font-size:8pt;font-weight:bold'>$($p.label)</span></td>" }
 function Img($map, $f, $w) {
   $src = if ($map.files[$f].src) { Esc $map.files[$f].src } else { $map.files[$f].link }
-  "<p style='margin:4px 0 12px 0'><img src='$src' width='$w'><br><span style='font-size:9pt;color:#6b7280'>$(Esc (Caption $f)) · <a href='$($map.files[$f].link)'>$(Esc $f)</a></span></p>"
+  $id = if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+[a-z]?)_') { "$($Matches[1]): " }   # caption = check id + what it shows
+  "<p style='margin:4px 0 12px 0'><img src='$src' width='$w'><br><span style='font-size:9pt;color:#6b7280'>$(Esc "$id$(Caption $f)") · <a href='$($map.files[$f].link)'>$(Esc $f)</a></span></p>"
 }
 # phone shots render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
@@ -72,13 +73,14 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   # Results table
   A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Results</h2>"
   A "<table style='border-collapse:collapse;width:100%'><tr>"
-  foreach ($c in @(@('Check', '7%'), @('Screen / area', '16%'), @('Result', '12%'), @('What was done', '30%'), @('What we saw', '35%'))) { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff;width:$($c[1])'><b>$($c[0])</b></td>" }
+  foreach ($c in @(@('Check', '14%'), @('Result', '12%'), @('Observed', '34%'), @('Evidence', '40%'))) { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff;width:$($c[1])'><b>$($c[0])</b></td>" }
   A "</tr>"
   $i = 0
-  foreach ($c in $checks) {
+  foreach ($c in $checks) {   # evidence inline in its row: images, then one line per data file
     $p = (Pal $c.result); $zebra = if ($i++ % 2) { '#f8fafc' } else { '#ffffff' }
     $v = if ($vs = VStatus $c) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $vs)</span>" } else { '' }
-    A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b></td><td style='$script:Cell'>$(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(Esc $c.what_was_done)</td><td style='$script:Cell'>$(Esc $c.observed)</td></tr>"
+    $ev = (@($c.evidence | Where-Object { $_ -and $Map.files[$_] }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$') { Img $Map $_ ([math]::Min(260, (ImgWidth $_))) } else { "file: <a href='$($Map.files[$_].link)'>$(Esc $_)</a><br>" } }) -join ''
+    A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b> $(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(Esc $c.observed)</td><td style='$script:Cell'>$ev</td></tr>"
   }
   A "</table>"
 
@@ -89,10 +91,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
       A "<h3 style='font-size:11.5pt;margin:12px 0 4px 0'>$(Esc $c.id) — $(Esc $c.screen)</h3><table style='border-collapse:collapse;width:100%'>"
       A (Fact 'Steps' (Esc $c.what_was_done)); A (Fact 'What we saw' (Esc $c.observed))
       if ($c.verify) { A (Fact 'Independent re-test' (VFull $c)) }
-      $data = @($c.evidence | Where-Object { $_ -notmatch '\.(png|jpe?g)$' -and $Map.files[$_] })
-      if ($data.Count) { A (Fact 'Data evidence' (($data | ForEach-Object { "<a href='$($Map.files[$_].link)'>$(Esc $_)</a>" }) -join '<br>')) }
       A "</table>"
-      foreach ($f in @($c.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { A (Img $Map $f (ImgWidth $f)) }
     }
   }
 
@@ -106,16 +105,6 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   }
   $setup = @($Res.setup_changes) + @($Res.data_created) | Where-Object { $_ }
   if ($setup.Count) { A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Setup changes and test data</h2><ul>$((($setup | ForEach-Object { "<li>$(Esc $_)</li>" }) -join ''))</ul>" }
-
-  # Screenshots of the passing checks
-  $gallery = @($checks | Where-Object { $_.result -ne 'FAIL' -and @($_.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] }).Count })
-  if ($gallery.Count) {
-    A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Screenshots</h2>"
-    foreach ($c in $gallery) {
-      A "<h3 style='font-size:11pt;margin:12px 0 2px 0'>$(Esc $c.id) — $(Esc $c.screen) <span style='color:$((Pal $c.result).fg);font-size:9pt'>$((Pal $c.result).label)</span></h3>"
-      foreach ($f in @($c.evidence | Where-Object { $_ -match '\.(png|jpe?g)$' -and $Map.files[$_] })) { A (Img $Map $f (ImgWidth $f)) }
-    }
-  }
 
   # Evidence index
   $all = @($Map.files.Keys | Sort-Object)

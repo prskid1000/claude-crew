@@ -1,7 +1,7 @@
 #Requires -Version 7
 # github (goody): GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L5 gh · L16 tracker · L61 git-host · L95 ci
+# Sections: L5 gh · L16 tracker · L61 git-host · L96 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -74,6 +74,7 @@ Register-KitAdapter 'git-host' 'github' @{
   }
   'mr.changes' = { param($a) [pscustomobject]@{ changes = (__Files (__GhApi "repos/$($a.repo)/pulls/$($a.n)/files?per_page=100")) } }
   'mr.create' = { param($a) __GhMr (__GhApi "repos/$($a.repo)/pulls" 'POST' @{ head = $a.source; base = $a.target; title = $a.title; body = $a.body } -Json) }
+  'mr.update' = { param($a) __GhMr (__GhApi "repos/$($a.repo)/pulls/$($a.n)" 'PATCH' @{ title = $a.title; body = $a.body } -Json) }   # devtools.py mr re-run: the open PR
   'mr.merge' = { param($a)
     $x = @('pr', 'merge', $a.n, '-R', $a.repo, "--$(if ($a.method -in 'merge', 'rebase') { $a.method } else { 'squash' })"); if (__Del $a) { $x += '--delete-branch' }; if ($a.sha) { $x += @('--match-head-commit', $a.sha) }
     if (-not $a.auto -or ("$((__Gh ($x + '--auto')).err)" -match 'clean status' -and (Invoke-HostVerb 'ci.status' @{ repo = $a.repo; sha = $(if ($a.sha) { $a.sha } else { (__GhPr $a).sha }) } -NoMemo).status -eq 'success')) { $null = __Gh $x }

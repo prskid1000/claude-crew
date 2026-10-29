@@ -1,7 +1,7 @@
 """Goody report-gdocs: reports.type gdocs = a Google Doc through the gws CLI (Markdown converted to HTML first), shared per
 reports.share (anyone (default) | domain:<domain> | none); evidence = a Drive folder (reports.driveParent / driveParent), one
 image src per file. Loaded by devtools.py from skills/crafty/adapters/."""
-import json, os, sys
+import json, os, re, sys
 
 dt = None   # devtools.py, set by register
 
@@ -30,7 +30,18 @@ def _create(name, mime, parent, upload=None):
     return gws('drive', 'files', 'create', params={'supportsAllDrives': True, 'fields': 'id,webViewLink'}, body=b, upload=upload)
 
 
+def _update(fid, path):
+    """Replace a Google Doc's content in place (Drive files.update + media; HTML tables and images convert as on create)."""
+    return gws('drive', 'files', 'update', params={'fileId': fid, 'supportsAllDrives': True, 'fields': 'id'}, upload=path)
+
+
 def publish(a):
+    m = re.search(r'docs\.google\.com/document/d/([\w-]+)', a.get('url') or '')
+    if m:   # an earlier publish of this key: the same doc and link
+        r = _update(m.group(1), dt._html_of(a))
+        if isinstance(r, dict) and r.get('id') == m.group(1):
+            return f'https://docs.google.com/document/d/{m.group(1)}/edit'
+        print(f'warning: gws could not update {a["url"]} ({str(r)[:200]}): publishing a new doc', file=sys.stderr)
     r = _create(a['title'], 'application/vnd.google-apps.document', a.get('parent') or dt.CFG.get('driveParent'), dt._html_of(a))
     if 'id' not in r:
         raise SystemExit(f'gws upload failed: {r}')
@@ -78,6 +89,15 @@ def selftest(expect, tmp, md):
             dt.make_doc('t', md); expect('gdocs: an unshared doc is refused', False)
         except SystemExit as e:
             expect('gdocs: an unshared doc is refused', 'not shared' in str(e))
+        tmd = os.path.join(tmp, 'tbl.md')
+        with open(tmd, 'w', encoding='utf-8') as fh:
+            fh.write('# T\n| # | Steps | Expected |\n|---|---|---|\n| T1 | open | shown |\n')
+        use({}); u2 = dt.make_doc('T', tmd, url='https://docs.google.com/document/d/1AbC/edit')
+        up = [a for a, k in calls if 'update' in a]
+        html_up = open(calls[0][1]['upload'], encoding='utf-8').read()
+        expect('gdocs: an earlier link is updated in place (files.update, same id and link, no create / share); tables upload as HTML tables',
+               u2 == 'https://docs.google.com/document/d/1AbC/edit' and len(up) == 1 and len(calls) == 1 and calls[0][1]['params']['fileId'] == '1AbC'
+               and '<th>Steps</th>' in html_up and '<td>T1</td>' in html_up)
         use({}); ev = dt.make_evidence('ev', [png])
         expect('gdocs evidence: a Drive folder, an image src per file', calls[0][1]['body']['mimeType'].endswith('folder') and ev['files']['g.png']['src'].endswith('id=1AbC'))
     finally:

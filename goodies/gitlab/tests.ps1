@@ -39,4 +39,6 @@ $null = Invoke-HostApi 'projects/g%2Fr/merge_requests/5'; $n = $global:calls.Cou
 Check 'host: a repeated read is memoised' ($global:calls.Count -eq $n)
 $v = foreach ($b in 'main', 'dev', 'goodies', 'locked', 'auth') { "$b=$(Invoke-HostVerb 'branch.protect' @{ type = 'gitlab'; repo = 'o/r'; branch = $b } -NoMemo 2>$null)" }
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;goodies=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
+$null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
+Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
 exit [int]($global:failed -gt 0)

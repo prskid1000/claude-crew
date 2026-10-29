@@ -10,7 +10,9 @@ param([string]$Kit = (git rev-parse --show-toplevel))
 $global:log = [Collections.Generic.List[string]]::new(); $failed = 0
 function Fx($call) { $global:log.Add($call); foreach ($k in $global:fx.Keys) { if ($call -match $k) { return $global:fx[$k] } }; throw "404 no fixture: $call" }
 function clickup { $global:LASTEXITCODE = 0; Fx ($args -join ' ') }
-$global:fx = [ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"status":"In Progress"},"list":{"id":"L9"},"subtasks":[{"id":"C2","name":"Sub"}]}'
+$global:fx = [ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"status":"In Progress"},"list":{"id":"L9"},"subtasks":[{"id":"C2","name":"Sub"}],"markdown_description":"Testing doc (human): https://d/h"}'
+  'comment list C1 --json' = '[{"id":"55","user":{"username":"kit"},"date":"1700000000000","comment_text":"round one\n\n[kit:qa-result]"},{"id":"56","user":{"username":"ann"},"date":"1700000001000","comment_text":"a person"}]'
+  'comment edit 55 round two' = '{}'
   'status set in test C1' = 'Status set'; 'comment add C1 two words' = '{"id":"90"}'; 'member list' = '[{"id":7,"username":"Ann Lee"}]'
   'task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
 try {
@@ -20,6 +22,9 @@ try {
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create, list on recorded answers"
+$global:log.Clear(); try { $null = Set-TrackerKitComment C1 qa-result 'round two'; $pass = ($global:log -join "`n") -match '(?m)^comment edit 55 round two\s+\[kit:qa-result\]$' -and ($global:log -join "`n") -notmatch 'comment (add|delete)|56' } catch { $pass = $false; "  clickup error: $_" }
+if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a kit comment's next round edits it (comment edit <id>); a person's comment untouched"
 $f = Join-Path ([IO.Path]::GetTempPath()) "clickup-body-$PID.md"; 'body text' | Set-Content $f
 Initialize-KitTracker -Type clickup -DryRun
 $out = Add-TrackerComment 12 $f 6>&1 | Out-String; Remove-Item $f

@@ -2,7 +2,7 @@
 # gitlab (goody): GitLab / self-hosted GitLab through the glab CLI: git host (MRs, merge, auto-merge, branch.protect), CI
 # (pipelines, jobs, logs) and tracker (issues; status = a <tracker.statusLabelPrefix><name> label, closed = closed issue).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Enc, __Del, __CiStat, __Tr*).
-# Sections: L6 glab · L10 git-host · L31 ci · L41 tracker
+# Sections: L6 glab · L10 git-host · L32 ci · L42 tracker
 # ---- glab: host and API calls
 # glab reads GITLAB_HOST: a self-hosted GitLab (git host or tracker) sets it before the first call
 function __GlEnv { if (-not $env:GITLAB_HOST -and $KitConf.GitHost -and $KitConf.GitHost -ne 'gitlab.com' -and ($script:HostType -eq 'gitlab' -or $script:__trType -eq 'gitlab')) { $env:GITLAB_HOST = $KitConf.GitHost } }
@@ -14,6 +14,7 @@ Register-KitAdapter 'git-host' 'gitlab' @{
   'mr.list' = { param($a) @(__Gp $a "/merge_requests?$(($a.Keys | Where-Object { $_ -notin 'repo', 'type' } | Sort-Object | ForEach-Object { "$_=$(__Enc $a[$_])" }) -join '&')") }
   'mr.changes' = { param($a) __Gp $a "/merge_requests/$($a.n)/changes" }
   'mr.create' = { param($a) __Gp $a "/merge_requests" 'POST' @{ source_branch = $a.source; target_branch = $a.target; title = $a.title; description = $a.body; remove_source_branch = (__Del $a); squash = $a.method -eq 'squash' } -Json }
+  'mr.update' = { param($a) __Gp $a "/merge_requests/$($a.n)" 'PUT' @{ title = $a.title; description = $a.body } -Json }   # devtools.py mr re-run: the open MR
   'mr.merge' = { param($a) $f = @{ squash = "$($a.method -eq 'squash')".ToLower(); should_remove_source_branch = "$((__Del $a))".ToLower() }; if ($a.sha) { $f.sha = $a.sha }; if ($a.auto) { $f.merge_when_pipeline_succeeds = 'true' }; __Gp $a "/merge_requests/$($a.n)/merge" 'PUT' $f }
   'mr.unauto' = { param($a) __Gp $a "/merge_requests/$($a.n)/cancel_merge_when_pipeline_succeeds" 'POST' }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/-/merge_requests/$($a.n)" }

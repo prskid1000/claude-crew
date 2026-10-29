@@ -20,7 +20,9 @@ Register-KitAdapter 'tracker' 'clickup' @{
     if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (set tracker.statuses.$($a.logical) in kit.local.json)" }
   }
   'comment' = { param($a) __TrCli 'clickup' @('comment', 'add', $a.id, $a.text) }
-  'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.username $_.date $_.comment_text } }
+  'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.username $_.date $_.comment_text $_.id } }
+  'comment-edit' = { param($a) __TrCli 'clickup' @('comment', 'edit', $a.comment, $a.text) }   # a kit comment's next round (lib.ps1 Set-TrackerKitComment)
+  'comment-delete' = { param($a) __TrCli 'clickup' @('comment', 'delete', $a.comment, '--yes') }
   'create' = { param($a)
     $c = @('task', 'create', '--list-id', $a.list, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
     if ($a.priority) { $c += @('--priority', $a.priority) }
