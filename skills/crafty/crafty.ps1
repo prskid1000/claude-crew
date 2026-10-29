@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1417 dir · L1427 checkpoint ·
-  L1451 tracker · L1490 host
+Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1426 dir · L1436 checkpoint ·
+  L1460 tracker · L1499 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1055,6 +1055,12 @@ if ($SelfTest) {
   @('B', 'curl -s -o /d/x/a.json https://h.io/api; x=$(npx tsx a.ts --dir=/e/y)', $true, $gb),
   @('P', 'node shot.mjs /d/x/a.png; adb.exe pull /sdcard/a.png /d/x/', $true, $gb),
   @('B', 'command node a.mjs /d/x; { sudo python a.py /d/y; }', $true, $gb),
+  @('B', 'curl -sSo /d/x/a.json https://h.io/api', $true, 'Use D:/x/a.json'),
+  @('B', 'curl -d @/d/x/body.json https://h.io/api', $true, $gb),
+  @('B', 'curl --output=/d/x/a.zip https://h.io/a; curl -T /d/x/a.zip https://h.io/u', $true, $gb),
+  @('B', 'curl -K /d/x/c.txt; curl -F file=@/d/x/a.png https://h.io', $true, $gb),
+  @('B', 'curl -s -d ''{"route":"/c/orders"}'' https://h.io/api; curl --json ''{"p":"/d/x"}'' "https://h.io/api?path=/d/x"', $false, $gb),
+  @('B', 'curl --data-raw /c/orders -H "X-Path: /v/1" https://h.io; curl -X POST --data /d/x https://h.io', $false, $gb),
   @('B', 'node a.mjs D:/x > /d/x/out.log 2>/d/x/err.log; python a.py < /d/x/in.txt', $false, $gb),
   @('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
   @('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
@@ -1289,7 +1295,10 @@ function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
       foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command|/c)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-MsysPath ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
       continue
     }
-    if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and ("$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' ') -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
+    $chk = "$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' '
+    # curl: data bodies and URLs hold API routes; only its file options and @file read a path
+    if ($leaf -match '^curl(\.exe)?$') { $chk = ' ' + (@([regex]::Matches($chk, '(?:(?<=\s)(?:-[a-zA-Z]*[oTK]|--output|--upload-file|--config)(?:\s+|=)?|@)[''"]?(?<f>/[^\s''"]+)') | ForEach-Object { $_.Groups['f'].Value }) -join ' ') }
+    if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and $chk -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
   }
 }
 if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
