@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L927 tracker · L1162 git-host · L1278 kitlog ·
-  L1390 params · L1553 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L932 tracker · L1167 git-host · L1283 kitlog ·
+  L1395 params · L1558 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -858,7 +858,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     }
     $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]; $hold = @($lr | Where-Object holderPid)[0]
     $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
-    $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw.Count) step(s): $($cw[0].why)"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
+    $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw[0].why)$(if ($cw.Count -gt 1) { ", $($cw.Count) steps" })"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $running.Count
           task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
           stopped = $(if (-not $fin -and $hold -and (Test-KitHolder $hold) -eq $false) { 'session gone' }); done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
@@ -886,17 +886,22 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   @($rows)
 }
 # a markdown cell Claude Code can wrap: it breaks only at spaces and draws cards when the longest words do not fit, so no word
-# is over $Max (ids compacted, then long words split after - _ . : , / \ = or at camelCase); nothing is cut
-function Format-KitCell($Text, [int]$Max = 14) {
-  $t = ("$Text" -replace '[\r\n|]+', ' ') -replace '\bwf_([0-9a-f]{8})[0-9a-f-]*', '$1' -replace '\b20\d\d-\d\d-\d\d-(?=\S)', ''
+# is over $Max (ids compacted unless -Exact, then long words split after - _ . : , / \ = or at camelCase); nothing is cut; | escaped
+function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
+  $t = "$Text" -replace '[\r\n]+', ' '
+  if (-not $Exact) { $t = $t -replace '\bwf_([0-9a-f]{8})[0-9a-f-]*', '$1' -replace '\b20\d\d-\d\d-\d\d-(?=\S)', '' }
+  $t = $t -replace '(\\*)\|', '$1$1\|'   # escaped before the split (backslashes doubled: \\| ends the cell); never split inside \|
   $out = [Collections.Generic.List[string]]::new()
   foreach ($w in @($t -split '\s+' | Where-Object { $_ })) {
     if ($w.Length -le $Max) { $out.Add($w); continue }
     $cur = ''
-    foreach ($p in [regex]::Split($w, '(?<=[-_.:,;/\\=])(?=.)|(?<=[a-z])(?=[A-Z])')) {
+    foreach ($p in [regex]::Split($w, '(?<=[-_.:,;/\\=])(?!\\*\|)(?=.)|(?<=[a-z])(?=[A-Z])')) {
       if ($cur -and ($cur + $p).Length -gt $Max) { $out.Add($cur); $cur = '' }
       $cur += $p
-      while ($cur.Length -gt $Max) { $out.Add($cur.Substring(0, $Max)); $cur = $cur.Substring($Max) }
+      while ($cur.Length -gt $Max) {
+        $c = $Max; while ($c -gt 1 -and $cur[$c - 1] -eq '\' -and $cur.Substring($c) -match '^\\*\|') { $c-- }
+        $out.Add($cur.Substring(0, $c)); $cur = $cur.Substring($c)
+      }
     }
     if ($cur) { $out.Add($cur) }
   }
@@ -909,7 +914,7 @@ function Format-KitStatusTable($Rows, $Now, $Versions) {
   $hm = { param($t) if ($t) { ([datetime]$t).ToString('HH:mm') } else { '—' } }
   '| Agent | Task / run | State | Since | Last progress | Next |'; '|---|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object { @{ STUCK = 0; STOPPED = 1; WAITING = 2; ACTIVE = 3; FINISHED = 4 }[$_.state] }, name)) {
-    $sc = switch ($r.state) { 'ACTIVE' { "ACTIVE$(if ($r.left) { " ($($r.left) step$(if ($r.left -ne 1) { 's' }) left)" })" } 'WAITING' { "WAITING ($($r.wait))" } 'FINISHED' { "FINISHED: $($r.done)" }
+    $sc = switch ($r.state) { 'ACTIVE' { "ACTIVE$(if ($r.left) { " ($($r.left) step$(if ($r.left -ne 1) { 's' }) left)" })" } 'WAITING' { "WAITING: $($r.wait)" } 'FINISHED' { "FINISHED: $($r.done)" }
       'STUCK' { "STUCK ($(if ($r.last) { "$([int]($Now - [datetime]$r.last).TotalMinutes) min" } else { 'no progress seen' }))" } default { "STOPPED ($($r.stopped))" } }
     "| $(& $cut $r.name) | $(& $cut $r.task) | $(& $cut $sc) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (& $cut $r.doing) }) | $(if ($r.next) { & $cut $r.next } else { '—' }) |"
   }
@@ -920,7 +925,7 @@ function Format-KitStatusTable($Rows, $Now, $Versions) {
 function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
   foreach ($r in @($Rows | Where-Object { $_.state -eq 'STUCK' -and -not $_.left })) {   # a run with running steps: its steps are the rows
     $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
-    [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
+    [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); kind = 'STUCK'; who = "$($r.name) ($($r.task))"; age = $(if ($m -lt [int]::MaxValue) { "$m min" }); problem = "no progress$(if ($m -eq [int]::MaxValue) { ' for its whole run' }), nothing it waits on"; what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
   }
 }
 

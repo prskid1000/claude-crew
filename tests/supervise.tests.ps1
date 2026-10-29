@@ -15,8 +15,6 @@ $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O
 Expect "board join: -Type only = the agent id; neither = usage, exit 2 ($juc)" ($jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Agent')
 $cx = pwsh -NoProfile -Command ". '$O'; Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from the shared /tmp (fixed from history); halted the push'; Test-KitCollision 'Halted: another agent is editing the same worktree'"
 Expect 'supervise collision: a fix report naming another agent = no flag; a real collision = flag' ($cx[0] -eq 'False' -and $cx[1] -eq 'True')
-$tw = (& { . (Lib); Format-KitStatusTable @(@{ name = 'wave-brief-a8da'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'FINISHED'; done = 'StructuredOutput' }) })[2]
-Expect "status table: ids compacted, words <= 14 (else cards) ($tw)" ($tw -eq '| wave-brief- a8da | rm-staging- 2xyz e8c577f7 | FINISHED: Structured Output | — | — | — |')
 $lg = Invoke-PsTest 'track-lag' @'
 . $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review' }
 Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake
@@ -67,9 +65,9 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 & $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
 $st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
 $sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }
-Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& $sv 'sr (workflow)' 'ACTIVE \(1 step left\)') -and @($st -match 'buildy\.js wf_s1 · steps 31/32 · 1\.5M tokens of 20M').Count -and (& $sv 'S32 (devy)' 'ACTIVE \| .* Bash: 🧪 Run the tests') -and -not @($st -match 'S32 \(step\)|STUCK sp').Count -and (& $sv 'sp (workflow)' 'WAITING \(1 step\(s\): env fix e-2\)') -and (& $sv 'sq (workflow)' 'WAITING \(owner pause\)') -and
-  (& $sv 'S1 (devy)' 'FINISHED: S1 shipped !11 \|') -and (& $sv 'S2 (devy)' 'WAITING \(env fix e-1\)') -and (& $sv 'S3 (devy)' 'STUCK \(30 min\)') -and (& $sv 'S4 (devy)' 'STOPPED \(crashed\)') -and (& $sv 'S5 (devy)' 'ACTIVE') -and
-  (& $sv 'S6 (devy)' 'WAITING \(GPU, held by vision x\)') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
+Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& $sv 'sr (workflow)' 'ACTIVE \(1 step left\)') -and @($st -match 'buildy\.js wf_s1 · steps 31/32 · 1\.5M tokens of 20M').Count -and (& $sv 'S32 (devy)' 'ACTIVE \| .* Bash: 🧪 Run the tests') -and -not @($st -match 'S32 \(step\)|STUCK sp').Count -and (& $sv 'sp (workflow)' 'WAITING: env fix e-2 \|') -and (& $sv 'sq (workflow)' 'WAITING: owner pause') -and
+  (& $sv 'S1 (devy)' 'FINISHED: S1 shipped !11 \|') -and (& $sv 'S2 (devy)' 'WAITING: env fix e-1') -and (& $sv 'S3 (devy)' 'STUCK \(30 min\)') -and (& $sv 'S4 (devy)' 'STOPPED \(crashed\)') -and (& $sv 'S5 (devy)' 'ACTIVE') -and
+  (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
   @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 30 min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
 # the next heartbeat: 5 on an ACT / ENV-FIX, half the base on storage / build streak / many agents, 30 idle machine, else back to the base
