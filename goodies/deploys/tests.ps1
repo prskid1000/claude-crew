@@ -35,13 +35,14 @@ $p = @(& $dep plan -Offline $fx3 -Json | ConvertFrom-Json)
 Expect 'deploy plan: skips a task live on every test env and a done task without doneAt' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!9')
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
-Expect 'deploy plan: planTimeoutSec defaults to 600 s (kit.example.json)' ((Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "'deploy\.planTimeoutSec' 600\)" -and (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).deploy.planTimeoutSec -eq 600)
+$dps = Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw
+Expect 'deploy plan: -TimeoutSec 100 by default; supervise passes planTimeoutSec (600 s, kit.example.json)' ($dps -match '\[int\]\$TimeoutSec = 100\)' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitSetting 'deploy\.planTimeoutSec' 600\)" -and (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).deploy.planTimeoutSec -eq 600)
 # one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
-& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }, @{ target = 'part' }, @{ target = 'crash' }) }); deploy = @{ planTimeoutSec = 4 } } $cfgF
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }, @{ target = 'part' }, @{ target = 'crash' }) }) } $cfgF
 & $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1', 'api!2'); done = $false } }; automerge = @{} } $tf
 $fq = Join-Path (Kd) 'fake-deployed.ps1'
 Set-Content $fq @'
-$t = $args[[array]::IndexOf($args, '-Target') + 1]
+$t = $args[[array]::IndexOf($args, '-Target') + 1]; if ($t -eq 'good') { Set-Content $env:FAKE_TO $args[[array]::IndexOf($args, '-TimeoutSec') + 1] }
 if ($t -eq 'slow') { Start-Sleep 30 }
 if ($t -eq 'bad') { 'pokey.ps1: usage error'; exit 2 }
 "{`"mr`":`"api!1`",`"target`":`"$t`",`"state`":`"NOT-DEPLOYED`",`"detail`":`"x`"}"
@@ -51,17 +52,18 @@ if ($t -eq 'part') { Start-Sleep 30 }; if ($t -eq 'crash') { exit 3 }   # api!1 
 $ut = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-$KitCmd.qa = $args[1]; $sw = [Diagnostics.Stopwatch]::StartNew()
-$p = @(Invoke-Deploy plan -Json | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
+$KitCmd.qa = $args[1]; $env:FAKE_TO = $args[2]; $sw = [Diagnostics.Stopwatch]::StartNew()
+$p = @(Invoke-Deploy plan -Json -TimeoutSec 4 | ConvertFrom-Json); $s = @{}; foreach ($x in $p) { $s[$x.target] = $x }
 "bad:$($s.bad.status -eq 'UNKNOWN' -and $s.bad.why -match 'exit 2 on bad')"
 "slow:$($s.slow.status -eq 'UNKNOWN' -and $s.slow.why -match 'timed out after 4 s on slow')"
 "good:$($s.good.status -eq 'READY' -and (@($s.good.mrs.mr) -join ',') -eq 'api!1')"
 "part:$($s.part.status -eq 'READY' -and (@($s.part.mrs.mr) -join ',') -eq 'api!1' -and $s.part.why -match 'api!2: not checked: .*timed out after 4 s on part')"
 "crash:$($s.crash.status -eq 'READY' -and $s.crash.why -match 'api!2: not checked: pokey\.ps1 deployed exit 3 on crash')"
 "parallel:$($sw.Elapsed.TotalSeconds -lt 20)"
+"childcap:$((Get-Content $env:FAKE_TO) -as [int] -in 0..3)"
 '@
-$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq)
-Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN; a timeout keeps the rows already checked (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel')
+$res = Invoke-PsTest 'deploy-unknown' $ut @($O, $fq, (Join-Path (Kd) 'child-timeout.txt'))
+Expect-Each $res 'deploy plan: per target in parallel, a failed one UNKNOWN; a timeout keeps the rows already checked; each child gets the time left as -TimeoutSec (#)' @('bad', 'slow', 'good', 'part', 'crash', 'parallel', 'childcap')
 # an MR whose merge is in the deploy branch's last green job: DEPLOYED from one git rev-list, never probed; the request is on disk before the probe
 $gr = Join-Path (Kd) 'anc-repo'; $null = git init -q -b main $gr; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c1
 $c1 = git -C $gr rev-parse HEAD; git -C $gr branch staging; git -C $gr -c user.name=t -c user.email=t@t commit -q --allow-empty -m c2; $c2 = git -C $gr rev-parse HEAD

@@ -153,6 +153,9 @@ $lw = & { . $L3; $t0 = Get-Date; $a = @(Wait-Leases t @('api') @() @()); $fast =
   $inbox = Join-Path (Get-KitPath board) 'inbox/h1.jsonl'
   "$fast|$($b -match 'told H1')|$([bool]$st.leases.H1)|$($st.notices.H1.text -match 'deploy of api starting')|$((Test-Path $inbox) -and (Get-Content $inbox -Raw) -match 'pause')|$($script:Preempted -join ',')" }
 Expect "leases: no holder -> no wait; held -> wait bound, holder told (inbox + notice), lease kept ($lw)" ($lw -eq 'True|True|True|True|True|H1')
+$lq = & { . $L3; Update-State t { param($x) $x.leases = @{ Q1 = @{ services = @('api'); agent = 'Q1'; holderPid = $PID; lastUse = (Now) } }; $x.requests = @(@{ id = 'r9'; kind = 'deploy'; agent = 'Q1'; status = 'queued' }) }
+  $t0 = Get-Date; $c = @(Wait-Leases t @('api') @() @()) -join ' '; "$(((Get-Date) - $t0).TotalSeconds -lt 5)|$($c -notmatch 'Q1')" }
+Expect "leases: a holder whose own deploy waits in the queue behind this train is not waited for ($lq)" ($lq -eq 'True|True')
 $ir = & { . $L3; $st = @{ leases = @{ old = @{ services = @('api'); agent = 'old'; holderPid = $PID; lastUse = (Get-Date).AddMinutes(-6).ToString('o') }; new = @{ services = @('api'); agent = 'new'; holderPid = $PID; lastUse = (Now) }
       own = @{ services = @('api'); owner = $true; until = (Get-Date).AddMinutes(30).ToString('o'); lastUse = (Get-Date).AddMinutes(-60).ToString('o') } }; holds = @{}; notices = @{}; requests = @() }
   Prune $st; "$(($st.leases.Keys | Sort-Object) -join ',')|$($st.notices.old.text -match 'unused for 5 min')" }

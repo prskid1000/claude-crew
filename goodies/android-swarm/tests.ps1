@@ -23,6 +23,8 @@ $j = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Reverse', '8080,8
 Set-Content "$tmp/d.ps1" "(Get-Content '$lf' -Raw | ConvertFrom-Json).agent > '$tmp/during.txt'"; $KitCmd.swarm = "$tmp/d.ps1"
 $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'A')
 "release:$((Get-Content "$tmp/during.txt" -Raw).Trim() -eq '__stopping__' -and -not (Test-Path $lf))"
+$null = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'test:CL1') *>&1; $ag = (Get-Content $lf -Raw | ConvertFrom-Json).agent; $null = Invoke-KitVerb Invoke-Phone @('release', '-Agent', 'test:CL1')
+"colon:$($ag -eq 'test:CL1' -and -not (Test-Path $lf) -and -not @(Get-ChildItem "$tmp/rt" -Recurse -Filter '*CL1*').Count)"
 $s = "$tmp/sdk"; New-Item -ItemType Directory -Force "$s/platform-tools", "$s/system-images/a35/g/arm64-v8a", "$tmp/a" | Out-Null; Copy-Item $adb "$s/platform-tools"
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'A1'; port = 5570 }); adb = "$s/platform-tools/adb.cmd"; avdDir = "$tmp/avd"; apkDir = $tmp; out = $tmp; appFile = "$tmp/app.apk"
   avd = [pscustomobject]@{ abi = 'arm64-v8a'; api = 'a35'; device = 'p8'; tag = 'g' }; app = [pscustomobject]@{ buildTask = 'b'; appDir = "$tmp/a"; buildCmd = 'fb {gw}'; artifact = 'o/*.apk' } }
@@ -38,7 +40,7 @@ git -C "$tmp/a" checkout -q -b localenv/r1; $null = Invoke-KitVerb Invoke-Build 
 '@
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" (Join-Path $src 'skills/phoney/phoney.ps1') $sf 2>&1)
-foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'kinds:True True', 'local:True') { Expect "swarm: $x" ($res -contains $x) }
+foreach ($x in 'reclaim:True', 'reverse:True', 'release:True', 'colon:True', 'kinds:True True', 'local:True') { Expect "swarm: $x" ($res -contains $x) }
 Remove-Item "$sf.ps1", $sf -Recurse -Force -ErrorAction SilentlyContinue
 # lease files: reads and writes under the file lock (an open reader made the rename fail)
 $ss = & { $rt = Join-Path ([IO.Path]::GetTempPath()) "swl-$PID"; Set-Item Env:CLAUDE_RUNTIME $rt; . (Join-Path $src 'skills/phoney/phoney.ps1')

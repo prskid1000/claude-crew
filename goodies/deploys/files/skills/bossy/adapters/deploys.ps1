@@ -1,6 +1,6 @@
 <#
 deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
-  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>]   merged-not-deployed MRs per test env, trigger, window
+  bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec 100]   merged-not-deployed MRs per test env, trigger, window
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
@@ -61,7 +61,7 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
-param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @())
+param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
 $ErrorActionPreference = 'SilentlyContinue'
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 
@@ -141,7 +141,7 @@ if (-not $Quiet -or $gone.Count) { "mark-in-test: $($cand.Count) candidate(s), $
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
-    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @())
+    [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
   if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task; return }
   $Mrs = @(Split-KitList $Mrs)
@@ -188,20 +188,20 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $rowsOf = { param($m) if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] } }
   if ($fx) { foreach ($m in $cand.Keys) { $rows[$m] = @($fx.mrs.$m.rows) } }
   elseif ($cand.Count) {
-    $lim = [int](Get-KitSetting 'deploy.planTimeoutSec' 600)   # 180 s left a slow test env UNKNOWN
-    $anc = Get-DeployedByAncestry @($cand.Keys) $repos $targets $Days (Get-Date).AddSeconds($lim / 3)
+    $lim = [math]::Max(2, $TimeoutSec); $t0 = Get-Date   # 100: a foreground call ends under a 120 s tool timeout; supervise passes deploy.planTimeoutSec
+    $until = $t0.AddSeconds([math]::Max($lim * 0.9, $lim - 10))   # one deadline for all; the rest of the plan fits in the remainder
+    $anc = Get-DeployedByAncestry @($cand.Keys) $repos $targets $Days $t0.AddSeconds($lim / 3)
     foreach ($kv in $anc.GetEnumerator()) { $km, $kt = $kv.Key -split '\|', 2; if (-not $rows.ContainsKey($km)) { $rows[$km] = @() }; $rows[$km] += [pscustomobject]@{ mr = $km; target = $kt; state = 'DEPLOYED'; detail = $kv.Value } }
     # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
     $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
         $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) -and -not $anc.ContainsKey("$_|$t") }); if (-not $tm.Count) { continue }
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
-        foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx))) { $si.ArgumentList.Add([string]$x) }
+        foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', [math]::Max(1, [int](($until - (Get-Date)).TotalSeconds) - 2))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
         $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
         $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
       })
     if (-not $Json) { [Console]::Error.WriteLine("deploy plan: $($anc.Count) MR x env in a green deploy job; probing the rest on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
-    $until = (Get-Date).AddSeconds($lim)
     foreach ($q in $runs) {
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
       $null = [Threading.Tasks.Task]::WaitAll(@($q.so, $q.se), 5000); $txt = "$(if ($q.so.IsCompleted) { $q.so.Result })"
@@ -284,7 +284,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
-      $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json') | Out-String | ConvertFrom-Json | Where-Object { $_ })
+      $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitSetting 'deploy.planTimeoutSec' 600)) | Out-String | ConvertFrom-Json | Where-Object { $_ })
       $cache = [pscustomobject]@{ at = $now.ToString('s'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
       $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8
     }

@@ -19,7 +19,7 @@ function SshState($s, $sha) {
   $sub = ([string]$s.subdir).Trim('/')
   $k = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$sha"
   if ($memo.ContainsKey($k)) { return $memo[$k] }
-  $xs = (@($s.exclude | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '
+  $xs = (@(@($s.exclude) + '*.log' + '*.log.*' | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '   # a tracked rotated log (application.log.1) is runtime, not code
   $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
   $sh = @(
     '{'
@@ -88,7 +88,7 @@ function Test-DeployedExtra($d) {
 # pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: goody
 # android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines)   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout)
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = 100)   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())
@@ -131,8 +131,9 @@ function LocalAncestor($dir, $sha, $commit) {
   $LASTEXITCODE -eq 0
 }
 # pwsh -File keeps the quotes: strip, split
-$out = [Collections.Generic.List[object]]::new()
+$out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds($TimeoutSec); $nth = 0
 & { foreach ($m in @(Split-KitList $Mrs)) {
+  if ($nth++ -and (Get-Date) -gt $until) { [pscustomobject]@{ mr = $m; target = "$Target"; state = 'UNKNOWN'; detail = "not checked: -TimeoutSec $TimeoutSec reached (check it again)" }; continue }
   if ($m -notmatch '^(?<repo>[\w.-]+)!(?<iid>\d+)$') { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'expected <repo>!<iid>' }; continue }
   $r = Repo $Matches.repo; $iid = $Matches.iid
   if (-not $r) { [pscustomobject]@{ mr = $m; target = ''; state = 'BAD-REF'; detail = 'repo not in kit.local.json' }; continue }

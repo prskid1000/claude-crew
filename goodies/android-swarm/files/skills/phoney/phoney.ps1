@@ -169,7 +169,7 @@ switch ($Action) {
     if (-not $Agent) { throw 'acquire needs -Agent' }
     $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
-    $wf = Join-Path $waitDir "$Agent.json"
+    $wf = Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json"   # test:CL1 is no Windows file name
     $since = (Get-Date).ToString('s')
     Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
@@ -276,7 +276,7 @@ switch ($Action) {
 
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
-    Remove-Item (Join-Path $waitDir "$Agent.json") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json") -Force -ErrorAction SilentlyContinue
     $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent })
     if (-not $mine) { "no phone leased by $Agent"; return }
     foreach ($l in $mine) {

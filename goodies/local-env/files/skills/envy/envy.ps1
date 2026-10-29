@@ -15,8 +15,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L27 config · L195 state · L242 layer drops · L314 leases · L414 code · L446 migrations · L692 hooks · L764 marks ·
-  L902 seed · L948 processes · L1263 daemon · L1720 cleanup · L1792 doctor · L1842 verbs
+Sections: L27 config · L195 state · L242 layer drops · L314 leases · L415 code · L447 migrations · L693 hooks · L765 marks ·
+  L903 seed · L949 processes · L1264 daemon · L1721 cleanup · L1793 doctor · L1843 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -370,7 +370,8 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
     $o = @{ who = @() }
     Update-State $e { param($x)
       Prune $x
-      $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents -and $_ -notin $script:Preempted } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
+      $queued = @($x.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -eq 'queued' } | ForEach-Object agent)   # blocked in envy deploy behind this train: not testing, never waited for
+      $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents -and $_ -notin $script:Preempted -and $_ -notin $queued } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
       if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train, from the first blocking lease
       if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { $script:LeaseWait0.ToString('o') }) }
     }
