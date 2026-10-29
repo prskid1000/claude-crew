@@ -14,7 +14,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1429 dir · L1439 checkpoint ·
-  L1463 tracker · L1513 host
+  L1463 tracker · L1514 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1485,7 +1485,8 @@ function Invoke-Tracker {
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
       if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
       elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
-      if ($__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # -Kind: edits the last kit comment of that kind; a failure throws
+      # one-per-task kinds edit the last kit comment of that kind; status, deploy and decision notes keep their history
+      if (Test-KitKeyedComment $__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # a failure throws
     }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
     'create' {   # -Key <signature>: an open task made for the same key is updated (name, description), never a second one

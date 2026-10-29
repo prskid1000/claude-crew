@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L986 tracker · L1259 git-host ·
-  L1375 kitlog · L1489 params · L1652 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L991 tracker · L1266 git-host ·
+  L1382 kitlog · L1496 params · L1659 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1191,7 +1191,9 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text) {
   $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and "$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') } | Select-Object -Last 1
   if ($old -and $ad -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body } }
   $r = Add-TrackerComment $Id $body
-  if ($old -and $ad -and $ad.ContainsKey('comment-delete')) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
+function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
+  # queued (offline): the old one stays
+  if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
 }
 
@@ -1334,14 +1336,14 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   $ci = Get-KitCiType $A.repo $t
   $kind, $name, $v2 = if ($Verb -like 'ci.*') { 'ci', $ci, $Verb.Substring(3) } else { 'git-host', $t, $Verb }
   $mk = "$name|$Verb|$(($A.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '&')"
-  if ($Verb -in 'mr.create', 'mr.merge', 'mr.unauto') { $global:KitHostMemo.Clear() }
+  if ($Verb -in 'mr.create', 'mr.update', 'mr.merge', 'mr.unauto') { $global:KitHostMemo.Clear() }
   elseif (-not $NoMemo) {
     $cached = Get-KitMemo $global:KitHostMemo $mk 90 { $null }
     if ($null -ne $cached) { return $cached }
   }
   $v = Invoke-KitAdapter $kind $name $v2 $A
   if ($Verb -eq 'mr.get' -and $v.state -eq 'opened' -and ($t -ne 'gitlab' -or $ci -ne 'gitlab')) { $v | Add-Member -Force head_pipeline (Invoke-HostVerb 'ci.status' @{ type = $t; repo = $A.repo; sha = $v.sha; ref = $v.source_branch; n = $A.n } -NoMemo:$NoMemo) }
-  if ($Verb -notin 'mr.create', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
+  if ($Verb -notin 'mr.create', 'mr.update', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
   $v
 }
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) {

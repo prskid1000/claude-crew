@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
-  L757 track · L1065 anomalies · L1083 supervise · L1388 report · L1467 audit · L1527 storage · L1738 bugbrief · L1841 cleanup ·
-  L1963 learn · L1993 decide · L2059 health · L2121 retro due · L2131 tidy · L2201 the kit origin's main and goodies ·
-  L2217 setup · L2283 guard-sendmessage
+  L757 track · L1066 anomalies · L1084 supervise · L1391 report · L1470 audit · L1530 storage · L1741 bugbrief · L1844 cleanup ·
+  L1966 learn · L1996 decide · L2062 health · L2124 retro due · L2134 tidy · L2204 the kit origin's main and goodies ·
+  L2220 setup · L2286 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -876,8 +876,9 @@ function Set-KitMrsComment($o) {
   $prod = @(@($o.mergeAfter) | ForEach-Object { NormRef (($_ -split '>', 2)[-1]) })
   $rows = @(@($o.mrs) | Where-Object { $_ -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$' } | Sort-Object { if ($prod -contains $_) { 0 } else { 1 } }, { [int]($_ -replace '^.*!', '') } | ForEach-Object {
       $null = $_ -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$'; $pp = ProjPath $Matches.repo
-      $m = if ($pp) { Invoke-HostApi "projects/$($pp -replace '/', '%2F')/merge_requests/$($Matches.iid)" }
-      "- $($Matches.repo) !$($Matches.iid) — $(if ($m.title) { $m.title } else { '(title unknown)' }) — $(switch ("$($m.state)") { 'opened' { 'open' } '' { 'unknown' } default { $_ } })" })
+      $m = if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $Matches.iid } } catch { $null } }   # any git host
+      $u = if ($pp) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.iid } } catch { '' } }
+      "- $($Matches.repo) !$($Matches.iid) — $(if ($m.title) { $m.title } else { '(title unknown)' }) — $(switch ("$($m.state)") { 'opened' { 'open' } '' { 'unknown' } default { $_ } })$(if ($u) { " — $u" })" })
   if ($rows.Count) { try { $null = Set-TrackerKitComment $o.task "mrs-$($o.task)" ("MRs (merge order):`n" + ($rows -join "`n")) } catch { Write-Warning "MRs comment of $($o.task) not updated: $_" } }
 }
 switch ($Action) {

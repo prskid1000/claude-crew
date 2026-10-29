@@ -121,11 +121,12 @@ $res = Invoke-PsTest 'track-test' $tt @($O)
 $mc = Invoke-PsTest 'mrs-comment' @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
-function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened'; title = "T$($Path -replace '^.*/', '')" } }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/$($A.n)" } else { [pscustomobject]@{ state = 'opened'; title = "T$($A.n)" } } }
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened' } }
 function Start-Process { }
 $null = Invoke-Track add -Task m1 -Mrs 'g/web!12'; $null = Invoke-Track add -Task m1 -Mrs 'g/api!7' -MergeAfter 'g/web!12>g/api!7'
 $c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '\[kit:mrs-m1\]' })
-"mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open\s+- g/web !12 — T12 — open')"
+"mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open — https://h/g/api/7\s+- g/web !12 — T12 — open')"
 '@ @($O)
 Expect 'track add: ONE MRs comment, edited per round, producers first then by number' ("$mc" -match 'mrs:True')
 Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8

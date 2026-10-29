@@ -17,8 +17,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L34 config · L68 run · L152 tracker · L277 git host · L360 MR · L430 merge · L682 docs · L797 publish · L972 plugins ·
-  L986 keepboth · L1005 selftest · L1266 CLI
+Sections: L34 config · L68 run · L152 tracker · L277 git host · L360 MR · L430 merge · L682 docs · L796 publish · L977 plugins ·
+  L991 keepboth · L1010 selftest · L1271 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -240,7 +240,7 @@ def _doc_url(tid, kind, doc):
     rec = _pub_read(f'{tid}:{kind}')
     if rec.get('url') and rec['url'] != doc:
         print(f'[finish] {tid}:{kind} already has {rec["url"]}; {doc} replaces it on the task (pass the file to update one doc)', file=sys.stderr)
-    _pub_write(f'{tid}:{kind}', {**rec, 'key': f'{tid}:{kind}', 'url': doc, 'updated': time.strftime('%Y-%m-%d %H:%M')})
+    _pub_update(f'{tid}:{kind}', url=doc)
     return doc
 
 
@@ -788,8 +788,7 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
     rec = _pub_read(key) if key else {}
     out = fn({'name': name, 'files': files, 'folder': folder or rec.get('folderId'), 'parent': parent})
     if key and out.get('folderId'):
-        _pub_write(key, {**rec, 'key': key, 'folderId': out['folderId'], 'folderLink': out.get('folderLink') or rec.get('folderLink'),
-                         'updated': time.strftime('%Y-%m-%d %H:%M')})
+        _pub_update(key, folderId=out['folderId'], folderLink=out.get('folderLink') or rec.get('folderLink'))
         out['folderLink'] = out.get('folderLink') or rec.get('folderLink')
     return out
 
@@ -818,6 +817,12 @@ def _pub_write(key, rec):
     with open(f + '.tmp', 'w', encoding='utf-8') as fh:
         json.dump(rec, fh, indent=1)
     os.replace(f + '.tmp', f)
+
+
+def _pub_update(key, **fields):
+    """Merge fields into a key's record under its lock (publish holds the same lock for a whole round)."""
+    with locked(_pub_file(key)):
+        _pub_write(key, {**_pub_read(key), 'key': key, **fields, 'updated': time.strftime('%Y-%m-%d %H:%M')})
 
 
 def local_pass(task):
