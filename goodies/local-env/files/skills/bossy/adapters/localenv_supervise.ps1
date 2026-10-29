@@ -3,7 +3,7 @@ localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, 
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
 Its hook runs inside supervise (uses $now, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L35 rows · L57 pause · L69 spike · L91 flags · L140 waits
+Sections: L9 logs · L35 rows · L57 pause · L69 spike · L92 flags · L141 waits
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
