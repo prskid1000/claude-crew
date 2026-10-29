@@ -3,7 +3,7 @@ localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, 
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
 Its hook runs inside supervise (uses $now, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L35 rows · L57 pause · L69 spike · L92 flags · L141 waits
+Sections: L9 logs · L35 rows · L57 pause · L69 spike · L92 flags · L147 waits
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -92,6 +92,12 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
 # ---- flags: supervise section 7 (status -Json only): env rows and flags, owner holds (info), restart loops, trains
 # waiting on leases or stalled, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
 # (sizes cached per round)
+# the env rows early, among the machine guards: a sweep that runs out of budget later (track, network) still lists what holds RAM
+function Get-KitSuperviseGuardLocalEnv([switch]$AutoFix) {
+  if (-not (Test-Path $KitCmd.local)) { return }
+  $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
+  $script:KitEnvStatus = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }); (Get-KitEnvRows $script:KitEnvStatus $now).rows
+}
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
@@ -102,10 +108,10 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ($AutoFix) { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } else { & $watch "STALE LAYER: $ln" 'supervise -AutoFix drops it (envy.ps1 drop -Stale).' }
     }
   }
-  $le =Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left)))
-  $envs = @(try { "$($le.out)" | ConvertFrom-Json } catch { @() })
-  $er = Get-KitEnvRows $envs $now
-  $er.rows; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
+  $early = $null -ne $script:KitEnvStatus   # the guard hook read status this round: its rows are out
+  $envs = if ($early) { $script:KitEnvStatus } else { $le = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'status', '-Json') ([math]::Min(30, (Left))); @(try { "$($le.out)" | ConvertFrom-Json } catch { @() }) }
+  $script:KitEnvStatus = $null; $er = Get-KitEnvRows $envs $now
+  if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
   $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}
   $waitMin = [double](Get-KitSetting 'localEnv.trainWaitFlagMinutes' 10)   # TODO-PARAM (fixed default)
   foreach ($ev in $envs) {   # all from status -Json: never the env's state files
