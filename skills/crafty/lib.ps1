@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L932 tracker · L1167 git-host · L1283 kitlog ·
-  L1395 params · L1558 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L939 tracker · L1174 git-host · L1290 kitlog ·
+  L1402 params · L1565 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -907,16 +907,23 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
   }
   $out -join ' '
 }
-# markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell)
-function Format-KitStatusTable($Rows, $Now, $Versions) {
+# a cell over $Max chars draws the whole table as cards (Claude Code fits the box to the terminal): cut at a word + " (full: report)"
+function Limit-KitCell($Text, [int]$Max = 90) {
+  $t = ("$Text" -replace '\s+', ' ').Trim(); $tag = ' (full: report)'
+  if ($Max -le 0 -or $t.Length -le $Max) { return $t }
+  $c = $t.Substring(0, $Max - $tag.Length); $sp = $c.LastIndexOf(' '); if ($sp -gt $Max / 2) { $c = $c.Substring(0, $sp) }
+  $c.TrimEnd(' ', ',', ';', ':', '-') + $tag
+}
+# markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell); -Cap: Limit-KitCell
+function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
   $Now = if ($Now) { [datetime]$Now } else { Get-Date }
-  $cut = { param($t) Format-KitCell $t }
+  $cut = { param($t) Limit-KitCell (Format-KitCell $t) $Cap }
   $hm = { param($t) if ($t) { ([datetime]$t).ToString('HH:mm') } else { '—' } }
   '| Agent | Task / run | State | Since | Last progress | Next |'; '|---|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object { @{ STUCK = 0; STOPPED = 1; WAITING = 2; ACTIVE = 3; FINISHED = 4 }[$_.state] }, name)) {
     $sc = switch ($r.state) { 'ACTIVE' { "ACTIVE$(if ($r.left) { " ($($r.left) step$(if ($r.left -ne 1) { 's' }) left)" })" } 'WAITING' { "WAITING: $($r.wait)" } 'FINISHED' { "FINISHED: $($r.done)" }
       'STUCK' { "STUCK ($(if ($r.last) { "$([int]($Now - [datetime]$r.last).TotalMinutes) min" } else { 'no progress seen' }))" } default { "STOPPED ($($r.stopped))" } }
-    "| $(& $cut $r.name) | $(& $cut $r.task) | $(& $cut $sc) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (& $cut $r.doing) }) | $(if ($r.next) { & $cut $r.next } else { '—' }) |"
+    "| $(& $cut $r.name) | $(& $cut $r.task) | $(& $cut $sc) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (Limit-KitCell (Format-KitCell $r.doing) $(if ($Cap) { $Cap - 6 } else { 0 })) }) | $(if ($r.next) { & $cut $r.next } else { '—' }) |"
   }
   if (-not @($Rows).Count) { '| — | nothing running | — | — | — | — |' }
   if ($Versions -and $Versions.Count) { "transcripts read: $(@($Versions.Values | Sort-Object) -join ', ')" }
