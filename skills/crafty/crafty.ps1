@@ -675,7 +675,6 @@ while ((Get-Date) -lt $deadline) {
         $proc = [Diagnostics.Process]::Start($psi)
       }
       Remove-Item $myTicket -ErrorAction SilentlyContinue; $waitSec = [int]((Get-Date) - $queuedAt).TotalSeconds
-      if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' ($waitSec / 60) -Default 90 }
       Write-KitLog builds start ([ordered]@{ owner = $owner; kind = $kind; project = $project; needGB = $need; waitSec = $waitSec; availGB = $s.Avail; running = $s.Running })
       $entry = Join-Path $ledger "$($proc.Id).json"
       Write-KitAtomic $entry (@{ pid = $proc.Id; start = (Get-KitPidStart $proc.Id); gate = $PID; owner = $owner; need = $need; kind = $kind; cmd = $Cmd; dir = $Dir; started = (Get-Date).ToString('o'); backfill = $smallFill } | ConvertTo-Json)
@@ -702,6 +701,7 @@ try {
   $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
+if ($kind -ne 'emulator') { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # the wait cap learns how long a holder builds, not how long a waiter waited
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
   # out of memory (a failure signal): killed / aborted (137, 134) near the reservation it started with

@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L116 config · L196 OS · L379 leases · L762 status · L980 supervise report · L1020 tracker ·
-  L1298 git-host · L1414 kitlog · L1529 params · L1692 entry-scripts
+Sections: L10 paths · L62 state · L116 config · L196 OS · L379 leases · L762 status · L981 supervise report · L1021 tracker ·
+  L1299 git-host · L1415 kitlog · L1530 params · L1756 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -86,7 +86,7 @@ function Read-KitTracking([switch]$Strict) {
   }
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $x = Read-KitState $g.FullName
-    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict) { Copy-Item $g.FullName "$($g.FullName).bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
+    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bad-*")) { Copy-Item $g.FullName "$($g.FullName).bad-$(Get-Date -Format yyyyMMddHHmmss)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
   }
   $am = (Read-KitState (Get-KitPath automerge)).refs; if ($am -is [Collections.IDictionary]) { foreach ($k in @($am.Keys)) { $t.automerge[$k] = $am[$k] } }
   $t
@@ -902,10 +902,11 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   # board entries; a running step of the same name is that agent now (a resume or env-fix step after its entry left)
   $trk = (Read-KitTracking).tasks; $txCache = @{}
   # an entry no beat mapped yet (an Agent-tool subagent): its transcript holds the join's SESSION line; kept in the entry
-  $txOf = { param($e) if ($e.transcript -or $e.status -eq 'left' -or -not $e.session) { return "$($e.transcript)" }
+  $txOf = { param($e) if ($e.transcript -or $e.status -eq 'left' -or -not $e.session -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt 10)) { return "$($e.transcript)" }
     $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
     $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "SESSION $($e.session)" -Quiet) })[0]
-    if ($hit) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $hit.FullName; Write-KitState $e.file $x } } } catch { }; $hit.FullName } }
+    try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = $Now.ToString('o') }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
+    if ($hit) { $hit.FullName } }
   foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 })) {   # a re-join replaces its older entry
     $st = @($steps["$($e.run)/$($e.agent)"], $steps["?/$($e.agent)"] | Where-Object { $_ })[0]; if ($st) { $st.covered = $true }; $on = [bool]$st.tx
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
@@ -1528,10 +1529,13 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
 }
 # ---- params: learned parameters (README "Configuration" params; kit.example.json _manifest.params = which keys learn and how)
 function Get-KitNow { if ($env:KIT_NOW) { [datetime]$env:KIT_NOW } else { Get-Date } }   # KIT_NOW: the tests' fake clock
-function Get-KitParamSpec([string]$Key) {   # '<how> q=.95 k=1.5 up=.25 down=.1 min=5 safe=up gate=accuracy'; up = a safe step, down = a risky one
-  $s = "$($script:KitExample._manifest.params.$Key)"; if (-not $s) { return $null }
-  $w = @($s -split '\s+'); $o = @{ how = $w[0]; q = 0.95; k = 1.5; up = 0.25; down = 0.1; min = 5; safe = 'up'; gate = '' }
-  foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } }
+# a registry entry: an object {default, unit, kind learn|config|const, class, how, q, k, floor, ceil, safe, min, sample, ...} or the
+# shorthand '<how> q=.95 k=1.5 up=.25 down=.1 min=5 safe=up gate=accuracy class=timeout sample=10 default=60'; how config = never learned
+function Get-KitParamSpec([string]$Key) {
+  $r = $script:KitExample._manifest.params.$Key; if (-not $r) { return $null }
+  $o = @{ how = 'quantile'; q = 0.95; k = 1.5; up = 0.25; down = 0.1; min = 5; safe = 'up'; gate = ''; class = ''; sample = 1; spec = "$r" }
+  if ($r -is [string]) { $w = @($r -split '\s+'); $o.how = $w[0]; foreach ($x in $w | Select-Object -Skip 1) { $kv = $x -split '=', 2; $o[$kv[0]] = if ($kv[1] -match '^[\d.]+$') { [double]$kv[1] } else { $kv[1] } } }
+  else { foreach ($p in $r.PSObject.Properties) { $o[$p.Name] = $p.Value }; if ($r.kind -and $r.kind -ne 'learn') { $o.how = 'config' }; $o.spec = $r | ConvertTo-Json -Compress }
   $o.down = [math]::Min(0.1, $o.down); $o   # a risky step (toward failures): at most 10%
 }
 function Read-KitParams([switch]$Strict) {   # -Strict (writers): only a missing file reads as empty; a broken one throws, never overwritten
@@ -1549,30 +1553,50 @@ function Resolve-KitParam([string]$Key, $Default, [string]$Context, $St) {
 }
 $script:KitParamMemo = @{}
 # the reader every call site uses: never throws, the default on any error, state cached 60 s
-function Get-KitParam([Parameter(Mandatory)][string]$Key, $Default, [string]$Context = '') {
+function Get-KitParam([Parameter(Mandatory)][string]$Key, $Default, [string]$Context = '') {   # no -Default: the registry's
+  if ($null -eq $Default) { $Default = (Get-KitParamSpec $Key).default }
   try { (Resolve-KitParam $Key $Default $Context (Get-KitMemo $script:KitParamMemo state 60 { Read-KitParams }))[0] } catch { $Default }
 }
 # one observation (kitlog params): $Default = the fixed default the call site used (clamps); Result ok | fail | timeout (censored) | oom
 function Add-KitParamObs([string]$Key, [double]$Value, [string]$Context = '', [string]$Result = 'ok', [double]$Default = 0) {
-  if (-not (Get-KitParamSpec $Key) -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
-  Write-KitLog params obs ([ordered]@{ at = (Get-KitNow).ToString('o'); key = $Key; ctx = $Context; v = [math]::Round($Value, 3); r = $Result; d = $Default })
+  $sp = Get-KitParamSpec $Key; if (-not $sp -or $sp.how -eq 'config' -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
+  $w = if ($Result -eq 'ok' -and $sp.sample -gt 1) { if ([long]((Get-KitNow).Ticks / 10000) % [int]$sp.sample) { return }; [int]$sp.sample } else { 1 }   # 1 in N ok lines, weight N; failures always
+  if (-not $script:KitBoot) { $script:KitBoot = (Get-Date).AddMilliseconds(-[Environment]::TickCount64).ToString('yyyy-MM-ddTHH:mmzzz') }   # a reboot changes it
+  Write-KitLog params obs ([ordered]@{ at = (Get-KitNow).ToString('o'); key = $Key; ctx = $Context; v = [math]::Round($Value, 3); r = $Result; d = $Default; w = $w; boot = $script:KitBoot })
 }
 function Get-KitQuantile([double[]]$V, [double]$Q, [double[]]$W) {
   if (-not $V.Count) { return $null }; if (-not $W) { $W = @(foreach ($x in $V) { 1.0 }) }
   $ix = @(0..($V.Count - 1) | Sort-Object { $V[$_] }); $tot = ($W | Measure-Object -Sum).Sum; $acc = 0.0
   foreach ($i in $ix) { $acc += $W[$i]; if ($acc -ge $Q * $tot - 1e-9) { return $V[$i] } }; $V[$ix[-1]]
 }
-# a key's recommendation from its window: quantile (q of ok samples x k; > 10% timed out: step up) | peak (decaying q95 x k, half-life
-# 7 d; an OOM: 1.2 x its peak) | ewma (mean + k sigma); spikes > median + 5 MAD dropped; last 5 off the median by 3 MAD: the window restarts
+# a key's recommendation from its window (obs [at, v, r, weight]): quantile (q of ok samples x k, weighted; under 5/(1-q) samples
+# p90 x 2k; > 10% timed out: step up, unless a hang: ok p99 < 0.1 x the value) | peak (decaying q95 x k, half-life 7 d; an OOM: 1.2 x
+# its peak) | ewma (mean + k sigma) | aimd (quiet since the last change: +10%; a miss halves at once, Invoke-ParamLearn); spikes >
+# median + 5 MAD dropped; drift = a two-sided CUSUM on log values (k 0.5 sigma, h 4.5 sigma, sigma = 1.4826 MAD): the window restarts
 function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now, $Since) {   # Since: the last change (its timeouts already stepped)
+  if ($Spec.how -eq 'config') { return $null }
   $all = @($Obs); $ok = @($all | Where-Object { $_[2] -in 'ok', 'short' }); $new = @($all | Where-Object { -not $Since -or [datetime]$_[0] -gt [datetime]$Since })
-  if ($Spec.how -eq 'quantile' -and $new.Count -ge $Spec.min -and @($new | Where-Object { $_[2] -eq 'timeout' }).Count -gt 0.1 * $new.Count) { return @{ v = $Cur * (1 + $Spec.up); n = $all.Count; conf = 1; why = 'over 10% timed out: step up' } }
-  $v = [double[]]@($ok | ForEach-Object { [double]$_[1] }); if ($v.Count -lt $Spec.min) { return $null }
-  $med = Get-KitQuantile $v 0.5; $mad = Get-KitQuantile ([double[]]@($v | ForEach-Object { [math]::Abs($_ - $med) })) 0.5; $why = ''
+  if ($Spec.how -eq 'aimd') {
+    if ($new.Count -lt $Spec.min -or @($new | Where-Object { $_[2] -ne 'ok' }).Count) { return $null }
+    return @{ v = $Cur * 1.1; n = $all.Count; conf = 1; why = 'quiet: +10% (AIMD)' }
+  }
+  $okv = [double[]]@($ok | Where-Object { $_[2] -eq 'ok' } | ForEach-Object { [double]$_[1] }); $hang = $okv.Count -ge 5 -and (Get-KitQuantile $okv 0.99) -lt 0.1 * $Cur
+  if ($Spec.how -eq 'quantile' -and $new.Count -ge $Spec.min -and @($new | Where-Object { $_[2] -eq 'timeout' }).Count -gt 0.1 * $new.Count) {
+    if ($hang) { return @{ v = $Cur; n = $all.Count; conf = 1; why = 'timeouts are hangs (ok p99 < 0.1 x the value): retry, never raise' } }
+    return @{ v = $Cur * (1 + $Spec.up); n = $all.Count; conf = 1; why = 'over 10% timed out: step up' }
+  }
+  $v = [double[]]@($ok | ForEach-Object { [double]$_[1] }); $wt = [double[]]@($ok | ForEach-Object { if ($_.Count -gt 3 -and [double]$_[3] -gt 0) { [double]$_[3] } else { 1.0 } })
+  if ($v.Count -lt $Spec.min) { return $null }
+  $med = Get-KitQuantile $v 0.5; $mad = Get-KitQuantile ([double[]]@($v | ForEach-Object { [math]::Abs($_ - $med) })) 0.5; $why = ''; $drift = $false
   if ($mad -gt 0) {
     $keep = @(0..($v.Count - 1) | Where-Object { $v[$_] -le $med + 5 * $mad }); if ($keep.Count -lt $v.Count) { $why = "$($v.Count - $keep.Count) spike(s) dropped; " }
-    $ok = @($keep | ForEach-Object { , $ok[$_] }); $v = [double[]]@($keep | ForEach-Object { $v[$_] })
-    if ($v.Count -ge 10 -and [math]::Abs((Get-KitQuantile ([double[]]@($v | Select-Object -Last 5)) 0.5) - $med) -gt 3 * $mad) { $ok = @($ok | Select-Object -Last 5); $v = [double[]]@($v | Select-Object -Last 5); $why += 'drift: window restarted; ' }
+    $ok = @($keep | ForEach-Object { , $ok[$_] }); $wt = [double[]]@($keep | ForEach-Object { $wt[$_] }); $v = [double[]]@($keep | ForEach-Object { $v[$_] })
+  }
+  $lg = [double[]]@($v | ForEach-Object { [math]::Log([math]::Max(1e-6, $_)) }); $lm = Get-KitQuantile $lg 0.5; $ls = 1.4826 * (Get-KitQuantile ([double[]]@($lg | ForEach-Object { [math]::Abs($_ - $lm) })) 0.5)
+  if ($ls -gt 0 -and $v.Count -ge 10) {
+    $hi = 0.0; $lo = 0.0; $cut = -1
+    for ($i = 0; $i -lt $lg.Count; $i++) { $z = ($lg[$i] - $lm) / $ls; $hi = [math]::Max(0, $hi + $z - 0.5); $lo = [math]::Max(0, $lo - $z - 0.5); if ($hi -gt 4.5 -or $lo -gt 4.5) { $cut = $i; $hi = 0.0; $lo = 0.0 } }
+    if ($cut -ge 0) { $from = [math]::Min($cut, $v.Count - $Spec.min); $ok = @($ok | Select-Object -Skip $from); $wt = [double[]]@($wt | Select-Object -Skip $from); $v = [double[]]@($v | Select-Object -Skip $from); $why += 'drift (CUSUM): window restarted; '; $drift = $true }
   }
   $x = switch ($Spec.how) {
     'peak' {
@@ -1580,58 +1604,94 @@ function Get-KitParamRec($Spec, [object[]]$Obs, [double]$Cur, [datetime]$Now, $S
       $p = (Get-KitQuantile $v 0.95 $w) * $Spec.k; $oom = @($all | Where-Object { $_[2] -eq 'oom' } | ForEach-Object { [double]$_[1] })
       if ($oom.Count) { $p = [math]::Max($p, 1.2 * ($oom | Measure-Object -Maximum).Maximum); $why += 'OOM bump; ' }; $p; $why += "peak q95 x$($Spec.k)" }
     'ewma' { $m = $v[0]; $var = 0.0; foreach ($y in $v) { $dl = $y - $m; $m += 0.3 * $dl; $var = 0.7 * ($var + 0.3 * $dl * $dl) }; $m + $Spec.k * [math]::Sqrt($var); $why += "ewma + $($Spec.k) sigma" }
-    default { (Get-KitQuantile $v $Spec.q) * $Spec.k; $why += "p$([int](100 * $Spec.q)) x$($Spec.k)" }
+    default {
+      $nw = ($wt | Measure-Object -Sum).Sum
+      if ($Spec.q -gt 0.9 -and $nw -lt 5 / (1 - $Spec.q)) { (Get-KitQuantile $v 0.9 $wt) * 2 * $Spec.k; $why += "p90 x$(2 * $Spec.k) (n $nw < $([int](5 / (1 - $Spec.q))) for p$([int](100 * $Spec.q)))" }
+      else { (Get-KitQuantile $v $Spec.q $wt) * $Spec.k; $why += "p$([int](100 * $Spec.q)) x$($Spec.k)" } }
   }
   $mean = ($v | Measure-Object -Average).Average; $sd = [math]::Sqrt((($v | ForEach-Object { ($_ - $mean) * ($_ - $mean) }) | Measure-Object -Sum).Sum / $v.Count)
   $conf = $v.Count / ($v.Count + 5) * $(if ($Spec.how -eq 'quantile' -or -not $mean) { 1 } else { 1 - [math]::Min(1, $sd / $mean) })
-  @{ v = $x; n = $v.Count; conf = [math]::Round($conf, 2); p50 = $med; p90 = (Get-KitQuantile $v 0.9); max = ($v | Measure-Object -Maximum).Maximum; why = $why }
+  @{ v = $x; n = $v.Count; conf = [math]::Round($conf, 2); p50 = $med; p90 = (Get-KitQuantile $v 0.9); max = ($v | Measure-Object -Maximum).Maximum; why = $why; drift = $drift; hang = $hang }
 }
 # the one writer (supervise -AutoFix each heartbeat; tidy prep): new observations into .state/params.json, then each key / context's
 # learned value: slow (one change a day: a safe step within up, a risky one at most 10% after 5 fresh observations; 10% hysteresis),
 # default/4..default x4, shadow params.shadowDays, past 2x the default an owner yes (param approve); a failure signal steps to the safe
 # side at once and holds risky steps 7 d. Each use reads the value when it starts (a running one keeps its own). Returns flags.
-function Invoke-ParamLearn {
+# -Due: only when the shortest cadence passed (supervise runs it first, -Deadline 3 s: the rest of the log waits for the next pass).
+# Cadence (shadow: shown, not yet gating a key): fail / drift / a new context -> its min (15), x2 after 3 stable passes up to 1 d,
+# x4 after a rollback; rollback = after a change, over 2x the failure rate with 2+ failures: the old value back, frozen 7 d, WATCH
+function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxValue) {
   $mode = "$(Get-KitSetting 'params.learning' 'on')"; if ($mode -eq 'off') { return }
   $now = Get-KitNow; $file = Get-KitPath param-state -Create; $flags = [Collections.Generic.List[object]]::new()
   $shadow = [double](Get-KitSetting 'params.shadowDays' 14)
   $flag = { param($l, $w, $a) $flags.Add([pscustomobject]@{ level = $l; what = $w; action = $a }) }
+  # a new rule for a key (registry entry changed): what it learned under the old one goes, history says so
+  $respec = { param($e, $sp, $key, $ctx) if ("$($e.spec)" -ne $sp.spec) { if ($e.spec) { foreach ($n in 'rec', 'value', 'hold', 'changed', 'clamp', 'dir', 'why', 'ask') { $e.Remove($n) }; $e.obs = @(); $e.fresh = 0; $e.trig = 'newRule'
+        $st.history = @(@($st.history | Where-Object { $_ }) + @{ at = $now.ToString('o'); key = $key; ctx = $ctx; from = $null; to = $null; why = 'rule changed: relearn from the default' } | Select-Object -Last 200) }; $e.spec = $sp.spec } }
   Invoke-KitLocked $file {
     $st = Read-KitParams -Strict; foreach ($n in 'byKey', 'pins', 'approved') { if (-not $st[$n]) { $st[$n] = @{} } }
+    $cadMin = @(foreach ($k in $st.byKey.Keys) { foreach ($c in $st.byKey[$k].Values) { [double]$c.cad.min } }) | Where-Object { $_ -gt 0 } | Measure-Object -Minimum
+    if ($Due -and $st.lastPass -and ($now - [datetime]$st.lastPass).TotalMinutes -lt [math]::Max(15, $(if ($cadMin.Count) { $cadMin.Minimum } else { 60 }))) { return }
     $since = if ($st.cursor) { [datetime]$st.cursor } else { $now.AddDays(-30) }
     foreach ($o in @(Read-KitLog params $since.AddDays(-1) | Where-Object { $_.event -eq 'obs' -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })) {
-      $st.cursor = ([datetime]$o.at).ToString('o'); $sp = Get-KitParamSpec $o.key; if (-not $sp) { continue }
+      if ((Get-Date) -gt $Deadline) { break }
+      $st.cursor = ([datetime]$o.at).ToString('o'); $sp = Get-KitParamSpec $o.key; if (-not $sp -or $sp.how -eq 'config') { continue }
       $ctx = if ($o.ctx) { "$($o.ctx)" } else { '_' }; if (-not $st.byKey[$o.key]) { $st.byKey[$o.key] = @{} }
-      $e = $st.byKey[$o.key][$ctx]; if (-not $e) { $e = $st.byKey[$o.key][$ctx] = @{ since = $st.cursor; obs = @() } }
+      $e = $st.byKey[$o.key][$ctx]; if (-not $e) { $e = $st.byKey[$o.key][$ctx] = @{ since = $st.cursor; obs = @(); trig = 'newCtx' } }
+      & $respec $e $sp $o.key $ctx
       if ([double]$o.d) { $e.d = [double]$o.d }
       if ($sp.gate -eq 'accuracy' -and $o.r -eq 'ok' -and [double]$o.v) { $est = if ($null -ne $e.rec) { [double]$e.rec } else { [double]$e.d }; $e.errs = @(@($e.errs) + [math]::Round([math]::Abs($est - [double]$o.v) / [double]$o.v, 3) | Where-Object { $null -ne $_ } | Select-Object -Last 10) }
-      $w = [Collections.Generic.List[object]]::new(); foreach ($x in @($e.obs)) { if (($now - [datetime]$x[0]).TotalDays -le 30) { $w.Add($x) } }   # a List: @() would flatten a lone [at, v, r]
-      $w.Add(@($st.cursor, [double]$o.v, "$($o.r)")); while ($w.Count -gt 50) { $w.RemoveAt(0) }; $e.obs = $w.ToArray()
+      $wl = [Collections.Generic.List[object]]::new(); foreach ($x in @($e.obs)) { if (($now - [datetime]$x[0]).TotalDays -le 30) { $wl.Add($x) } }   # a List: @() would flatten a lone [at, v, r, w]
+      $wl.Add(@($st.cursor, [double]$o.v, "$($o.r)", [double]$(if ($o.w) { $o.w } else { 1 }))); while ($wl.Count -gt 50) { $wl.RemoveAt(0) }; $e.obs = $wl.ToArray()
       $e.fresh = [int]$e.fresh + 1
-      # a failure signal (the value was too tight: timeout, oom, short): one step to the safe side now (x1.5, or the need x k when
-      # higher), used from the next use; no risky step for 7 d. A failed build is not one.
-      if ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) {
-        $cur = if ($null -ne $e.value) { [double]$e.value } else { [double]$e.d }; $dn = $sp.safe -eq 'down'
-        $need = switch ($o.r) { 'oom' { 1.2 * [double]$o.v } 'short' { $sp.k * [double]$o.v } default { $null } }
-        $t = if ($dn) { [math]::Min($cur / 1.5, $(if ($null -ne $need) { $need } else { $cur })) } else { [math]::Max($cur * 1.5, [double]$need) }
-        $t = [math]::Round([math]::Min(4 * [double]$e.d, [math]::Max([double]$e.d / 4, $t)), 2)
+      # a failure signal (the value was too tight: timeout, oom, short): one step to the safe side now (x1.5, an interval halves, or
+      # the need x k when higher), used from the next use; no risky step for 7 d. A failed build is not one. A timeout of a timeout key
+      # moves nothing (RFC 6298: the next call backs off once, Invoke-KitNetExe); its value moves only by the 10% rule; a hang counts
+      if ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) { $e.trig = 'fail'; $e.lastFail = $st.cursor }
+      if ($o.r -eq 'timeout' -and $sp.class -eq 'timeout') {
+        $okv = [double[]]@($e.obs | Where-Object { $_[2] -eq 'ok' } | ForEach-Object { [double]$_[1] })
+        if ($okv.Count -ge 5 -and (Get-KitQuantile $okv 0.99) -lt 0.1 * [double]$o.v) { $e.hangs = [int]$e.hangs + 1 }
+      }
+      elseif ($o.r -in 'timeout', 'oom', 'short' -and [double]$e.d -gt 0) {
+        $cur = if ($null -ne $e.value) { [double]$e.value } else { [double]$e.d }; $dn = $sp.safe -eq 'down'; $f = if ($sp.how -eq 'aimd') { 2 } else { 1.5 }
+        $need = switch ($o.r) { 'oom' { 1.2 * [double]$o.v } 'short' { if ($sp.how -ne 'aimd') { $sp.k * [double]$o.v } } default { $null } }
+        $t = if ($dn) { [math]::Min($cur / $f, $(if ($null -ne $need) { $need } else { $cur })) } else { [math]::Max($cur * $f, [double]$need) }
+        $t = [math]::Round([math]::Min($(if ($sp.ceil) { [double]$sp.ceil } else { 4 * [double]$e.d }), [math]::Max($(if ($sp.floor) { [double]$sp.floor } else { [double]$e.d / 4 }), $t)), 2)
         $e.hold = ([datetime]$st.cursor).AddDays(7).ToString('o'); $e.live = $true; $e.fresh = 0
         if ($t -ne $cur) { $e.rec = $t; $e.changed = $st.cursor; $e.dir = $(if ($dn) { 'down' } else { 'up' }); $e.why = "failure: $($o.r) at $($o.v)" }
       }
     }
     foreach ($key in @($st.byKey.Keys)) {
-      $sp = Get-KitParamSpec $key; if (-not $sp) { continue }
+      $sp = Get-KitParamSpec $key; if (-not $sp -or $sp.how -eq 'config') { continue }
       foreach ($ctx in @($st.byKey[$key].Keys)) {
-        $e = $st.byKey[$key][$ctx]; $d = [double]$e.d; if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { continue }
-        $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = Get-KitParamRec $sp @($e.obs) $cur $now $e.changed
+        $e = $st.byKey[$key][$ctx]; & $respec $e $sp $key $ctx; $d = [double]$e.d; if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { continue }
+        $lo = if ($sp.floor) { [double]$sp.floor } else { $d / 4 }; $hi = if ($sp.ceil) { [double]$sp.ceil } else { 4 * $d }
+        # rollback: since the last change over 2x the failure rate before it, with 2+ failures -> the old value back, frozen 7 d
+        $fails = { param($xs) @($xs | Where-Object { $_[2] -in 'timeout', 'oom', 'short' }).Count }
+        if ($e.changed -and $null -ne $e.value) { $af = @($e.obs | Where-Object { [datetime]$_[0] -gt [datetime]$e.changed }); $bf = @($e.obs | Where-Object { [datetime]$_[0] -le [datetime]$e.changed })
+          $ra = if ($af.Count) { (& $fails $af) / $af.Count } else { 0 }; $rb = if ($bf.Count) { (& $fails $bf) / $bf.Count } else { 0 }
+          if ($af.Count -ge 5 -and (& $fails $af) -ge 2 -and $ra -gt 2 * $rb) {
+            $old = @($st.history | Where-Object { $_.key -eq $key -and $_.ctx -eq $ctx -and "$($_.to)" -eq "$($e.value)" })[-1].from
+            $e.rec = $old; $e.why = "rollback: failures $([int](100 * $ra))% after the change vs $([int](100 * $rb))% before"; $e.frozen = $now.AddDays(7).ToString('o'); $e.trig = 'rollback'
+            $e.cad = @{ min = [math]::Min(1440, 4 * [double]$(if ($e.cad.min) { $e.cad.min } else { 60 })); stable = 0 }
+            & $flag 'WATCH' "param $key [$ctx] rolled back to $(if ($null -ne $old) { $old } else { "default $d" }) ($($e.why)); frozen 7 d" 'Nothing to do unless it repeats (bossy.ps1 param history).' } }
+        $cur = if ($null -ne $e.rec) { [double]$e.rec } else { $d }; $r = if ($e.frozen -and [datetime]$e.frozen -gt $now) { $null } else { Get-KitParamRec $sp @($e.obs) $cur $now $e.changed }
+        $moved = $false
         if ($r) {
           foreach ($n in 'n', 'conf', 'p50', 'p90', 'max') { $e[$n] = $(if ($r[$n] -is [double]) { [math]::Round($r[$n], 3) } else { $r[$n] }) }
-          $t = [math]::Min(4 * $d, [math]::Max($d / 4, $r.v)); $e.clamp = $t -ne $r.v
+          if ($r.drift) { $e.trig = 'drift' }
+          $t = [math]::Min($hi, [math]::Max($lo, $r.v)); $e.clamp = $t -ne $r.v
           $up = $t -gt $cur; $risky = $up -eq ($sp.safe -eq 'down'); $f = if ($risky) { $sp.down } else { $sp.up }
           if ((-not $e.changed -or ($now - [datetime]$e.changed).TotalHours -ge 24) -and -not ($risky -and ([int]$e.fresh -lt 5 -or ($e.hold -and [datetime]$e.hold -gt $now)))) {
             $t = [math]::Round($(if ($up) { [math]::Min($cur * (1 + $f), $t) } else { [math]::Max($cur * (1 - $f), $t) }), 2)
-            if ($t -ne $cur -and [math]::Abs($t - $cur) -ge 0.99 * $cur * [math]::Min(0.1, $f)) { $e.rec = $t; $e.changed = $now.ToString('o'); $e.why = $r.why; $e.dir = $(if ($up) { 'up' } else { 'down' }); $e.fresh = 0 }   # 10% hysteresis (a smaller step: that step)
+            if ($t -ne $cur -and [math]::Abs($t - $cur) -ge 0.99 * $cur * [math]::Min(0.1, $f)) { $e.rec = $t; $e.changed = $now.ToString('o'); $e.why = $r.why; $e.dir = $(if ($up) { 'up' } else { 'down' }); $e.fresh = 0; $moved = $true }   # 10% hysteresis (a smaller step: that step)
           }
         }
+        # cadence (shadow): a trigger -> the minimum; 3 stable passes -> x2 (max 1 d)
+        $c = if ($e.cad -is [Collections.IDictionary]) { $e.cad } else { @{ min = 60; stable = 0 } }
+        if ($e.trig -in 'fail', 'drift', 'newCtx', 'newRule') { $c.min = 15; $c.stable = 0; $c.lastTrig = "$($e.trig) $($now.ToString('o'))"; $e.trig = $null }
+        elseif ($moved) { $c.stable = 0 } elseif ([int]$c.stable -ge 2) { $c.min = [math]::Min(1440, 2 * [double]$c.min); $c.stable = 0 } else { $c.stable = [int]$c.stable + 1 }
+        $c.due = $now.AddMinutes([double]$c.min).ToString('o'); $e.cad = $c
         $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
         $val = if ($mode -eq 'on' -and $null -ne $e.rec -and $acc -and ($e.live -or (($now - [datetime]$e.since).TotalDays -ge $shadow -and [double]$e.conf -ge 0.5))) { [double]$e.rec } else { $null }
         if ($null -ne $val -and $val -gt 2 * $d -and -not $st.approved["$key|$(if ($ctx -ne '_') { $ctx })"] -and -not $st.approved["$key|"]) {
@@ -1646,7 +1706,7 @@ function Invoke-ParamLearn {
         }
       }
     }
-    Write-KitAtomic $file ($st | ConvertTo-Json -Depth 8 -Compress)
+    $st.lastPass = $now.ToString('o'); Write-KitAtomic $file ($st | ConvertTo-Json -Depth 8 -Compress)
   }
   $script:KitParamMemo.Clear(); $flags
 }
@@ -1655,6 +1715,10 @@ function Invoke-ParamLearn {
 function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
 function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
   $new = @($Acts | Where-Object { $_ -notin @($State.acts) }).Count   # 2+ new ACTs in one sweep piled up between beats: short (the beat was too long)
+  # censored: a gap over 2 beats since the last sweep (sleep, a stopped coordinator) or a reboot since the last ACT: no observation
+  $boot = (Get-Date).AddMilliseconds(-[Environment]::TickCount64)
+  $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5, [double]$State.nextBeat)
+  if ($gap -or ($State.lastAct -and $boot -gt [datetime]$State.lastAct)) { $State.lastAct = $null }
   if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
   $State.acts = $Acts
 }

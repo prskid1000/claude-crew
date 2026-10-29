@@ -146,8 +146,8 @@
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
   "caps": { "content": 32, "plumbing": 8, "totalTokens": 293000, "testTokens": 56000 },
-  "params": { "idle.graceMinutes": "quantile q=.95 k=1.5", "net.timeoutSec": "quantile q=.99 k=3", "gate.waitMinutes": "quantile q=.95 k=2", "gate.needGB": "peak k=1.15 up=.5",
-   "supervise.heartbeatMinutes": "quantile q=.5 k=.5 min=10 safe=down", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
+  "params": { "idle.graceMinutes": "quantile q=.95 k=1.5", "net.timeoutSec": "quantile q=.99 k=3 class=timeout sample=10", "gate.waitMinutes": "quantile q=.95 k=2", "gate.needGB": "peak k=1.15 up=.5",
+   "supervise.heartbeatMinutes": "aimd min=5 safe=down", "budget.estimate": "ewma k=1 min=10 gate=accuracy" },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },

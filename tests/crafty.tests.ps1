@@ -230,6 +230,8 @@ $g = { Get-KitParam net.timeoutSec 60 gh }; "hold:$(& $g)"; F net.timeoutSec 4 6
 F supervise.heartbeatMinutes 20 1 220 '' short 15; L 221; "beat:$((Read-KitParams).byKey['supervise.heartbeatMinutes']['_'].rec)"; $env:KIT_NOW = $t.AddHours(222).ToString('o')
 $l = [ordered]@{ agent = 'zz-1'; at = (Get-Date).ToString('o'); seen = (Get-Date).AddMinutes(-90).ToString('o') }; $u = Update-KitLease $l; $null = New-KitLease 'zz-1'; $null = New-KitLease 'zz-1'
 "back:${u}:$(@(Read-KitLog params $t | Where-Object { $_.event -eq 'obs' -and $_.key -eq 'idle.graceMinutes' -and $_.r -eq 'short' }).Count)"; (Invoke-KitParamVerb show net.timeoutSec) -join ' '
+$s0 = @{ report = @{ at = $t.AddHours(222).ToString('o') }; nextBeat = 15; lastAct = $t.AddHours(222).ToString('o'); acts = @() }; Add-KitActObs $s0 @('a1') $t.AddHours(236)
+"censor:$(@(Read-KitLog params $t | Where-Object { $_.event -eq 'obs' -and $_.key -eq 'supervise.heartbeatMinutes' }).Count)"
 "slow:$(Get-KitParam idle.graceMinutes 10):$((Read-KitParams).byKey['idle.graceMinutes']['_'].rec)"
 "ask:$(Get-KitParam gate.needGB 3.0 'w|a'):$(@($fl | Where-Object what -match 'needGB.*past 2x').Count):$(@((Read-KitParams).history | Where-Object { !$_ }).Count)"
 $null = Invoke-KitParamVerb approve gate.needGB '' 'w|a'; L 200; "ok:$(Get-KitParam gate.needGB 3.0 'w|a')"
@@ -239,8 +241,8 @@ $null = Invoke-KitParamVerb pin idle.graceMinutes 9; $null = Invoke-KitParamVerb
 '@ @("$pk/lib.ps1")
 Expect 'params: shadow = default; then a step a day toward p95 x1.5; held at 2x' ($pr -contains 'd2:10' -and "$pr" -match 'slow:20:3[78]\.')
 Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4:1:0' -and $pr -contains 'ok:8')
-Expect 'params: a timeout steps up x1.5 at once; no risky step for 7 d, then -10% a day after 5 new observations' ($pr -contains 'fail:90' -and $pr -contains 'hold:90' -and $pr -contains 'down1:81' -and $pr -contains 'wait5:81' -and $pr -contains 'down2:72.9')
-Expect 'params: 2+ new ACTs step the beat down; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:10' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
+Expect "params: a timeout of a timeout key moves nothing (RFC 6298); no hold; -10% a day after 5 new observations ($(@($pr -match '^(fail|hold|down1|wait5|down2|beat):') -join ' '))" ($pr -contains 'fail:60' -and $pr -contains 'hold:31.89' -and $pr -contains 'down1:28.7' -and $pr -contains 'wait5:28.7' -and $pr -contains 'down2:25.83')
+Expect 'params: 2+ new ACTs halve the beat (AIMD), an overnight gap is censored; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:7.5' -and $pr -contains 'censor:1' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
 
 $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })

@@ -21,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L756 param ·
-  L762 track · L1071 anomalies · L1089 supervise · L1401 report · L1480 audit · L1540 storage · L1751 bugbrief · L1853 cleanup ·
-  L1975 learn · L2005 decide · L2071 health · L2133 retro due · L2143 tidy · L2213 the kit origin's main and goodies ·
-  L2229 setup · L2295 guard-sendmessage
+Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L757 param ·
+  L763 track · L1072 anomalies · L1090 supervise · L1403 report · L1482 audit · L1542 storage · L1753 bugbrief · L1855 cleanup ·
+  L1977 learn · L2007 decide · L2073 health · L2135 retro due · L2145 tidy · L2215 the kit origin's main and goodies ·
+  L2231 setup · L2297 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -718,6 +718,7 @@ if (-not $Program -or ($Action -eq 'set' -and -not $Key)) { 'usage: bossy.ps1 pr
 $f = Join-Path $dir "$(ConvertTo-KitSlug $Program).json"
 $read = { if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable } else { @{} } }
 if ($Action -eq 'set') {
+  if ($Key -in 'schemaVersion', 'updated', 'holder') { "program set: '$Key' is a state field (STATE.md): pick another key"; exit 2 }
   $v = try { $Value | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { $Value }
   Invoke-KitLocked $f { $p = & $read; $p[$Key] = $v; $p.Remove('_updated'); Write-KitState $f $p }
   "program $Program`: $Key set"; return
@@ -804,7 +805,7 @@ function NormRef($r) {
   if ($r -match '^(?<repo>[\w.-]+)!(?<iid>\d+)$' -and $alias[$Matches.repo]) { $r = "$($alias[$Matches.repo])!$($Matches.iid)" }
   $r
 }
-function Load($t) { (Read-KitTracking).tasks[$t] }
+function Load($t) { $x = Read-KitState (Get-KitTaskFile $t); if ($x.track -is [Collections.IDictionary]) { $x.track } else { (Read-KitTracking).tasks[$t] } }   # one file, not all
 function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
@@ -1157,6 +1158,8 @@ function Invoke-Bounded([string]$Script, [string[]]$A) { $r = Invoke-KitExe 'pws
 $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
+# learned params first: 3 s, when due (d-20261029173533)
+if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
 
 # 1. workflows: running agents from each journal
 $wfDirs = Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6
@@ -1246,7 +1249,7 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
 # one row per agent and workflow run (lib.ps1 status; local files only, so before the network sections); a STUCK row is a flag
 $rows = @(Get-KitStatusRows $now $Session); foreach ($x in @(Get-KitStuckFlags $rows $now $idleMin)) { [void]$flags.Add($x) }
-$nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10).Count)   # NEXT: a live agent without a fresh beat (or a board row) still runs
+$nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10).Count)   # live agents without a fresh beat or row
 
 # 3. memory, disk, guard blocks; goodies' machine guards
 $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
@@ -1260,9 +1263,9 @@ foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix }))
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90)
 if ($pct -ge $ramAct) { Flag 'ACT' "RAM $pct% used" 'Hold new launches; run bossy.ps1 cleanup; check for orphaned java/node/chrome from finished agents.' }
 if (Within 'storage') { try { foreach ($x in @(Get-KitStorageRound)) { Add-KitResult $x } } catch { Flag 'WATCH' "storage round failed: $($_.Exception.Message)" 'bossy.ps1 storage' } }   # every fixed drive: free, trend, the rescue
-if (Within 'state files') {   # files written since the last beats that no reader can use (STATE.md; kitbag.py state lint)
+if (Within 'state files') {   # recent state files no reader can use (STATE.md)
   $sl = Invoke-KitExe (Get-Python) @('-X', 'utf8', (Join-Path $KitConf.Kit 'skills/bossy/kitbag.py'), 'state', 'lint', '--json', '--since', [string](3 * (Get-KitBeatMinutes))) ([math]::Min(8, (Left)))
-  foreach ($b in @(try { $sl.out | ConvertFrom-Json } catch { @() }) | Where-Object level -eq 'BAD') { Flag 'WATCH' "state file $($b.file): $($b.problem)" 'Readers skip it: fix the file or move it aside (skills/bossy/STATE.md), then python -X utf8 skills/bossy/kitbag.py state lint' }
+  foreach ($b in @(try { $sl.out | ConvertFrom-Json } catch { @() }) | Where-Object level -eq 'BAD') { Flag 'WATCH' "state file $($b.file): $($b.problem)" 'Readers skip it: fix or move it aside, then kitbag.py state lint' }
 }
 $blocks = @(Read-KitLog guard $now.AddHours(-1) | Where-Object event -eq 'deny')
 if ($blocks.Count -ge 3) { Flag 'WATCH' "guard blocked $($blocks.Count) commands in the last hour" 'Agents are tripping a rule: bossy.ps1 audit -Since 1h shows them; add a contracts note or a lesson so they stop.' }
@@ -1370,7 +1373,6 @@ $cur = @{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get
 $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
 $state.acks = @{}; $a0 = $(try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }).acks   # re-read: an -Ack during this sweep
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
-if ($AutoFix -and (Within 'param learn')) { try { foreach ($x in @(Invoke-ParamLearn)) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show); the heartbeat goes on.' } }
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }   # the failed-build streak, newest first
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes' 15); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })
