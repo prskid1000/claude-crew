@@ -121,7 +121,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
     }
     $td = $ev.trainDead; if ($td) { $seenEnv["$($ev.env)/trainDead"] = $td.id }   # envy Prune ended it (worker gone or quiet past trainStallMinutes): once per train
     if ($td -and $td.id -ne $last["$($ev.env)/trainDead"]) {
-      $fl = @($td.failed | Where-Object { $_ }); [pscustomobject]@{ level = 'ACT'; what = "TRAIN STALLED: $($ev.env) train $($td.id) in '$($td.phase)' ended $(([datetime]$td.at).ToString('HH:mm')): $($td.why); $(@($td.requests).Count) request(s) requeued$(if ($fl.Count) { ", $($fl -join ', ') failed (stalled twice)" })"
+      $fl = @($td.failed | Where-Object { $_ }); [pscustomobject]@{ level = 'ACT'; what = "TRAIN STALLED: $($ev.env) train $($td.id) in '$($td.phase)' ended $(([datetime]$td.at).ToString('HH:mm')): $($td.why); $(@($td.requests).Count) request(s) requeued$(if ($fl.Count) { ", $($fl -join ', ') failed (stalled twice or died 3 times)" })"
         action = "& $($KitCmd.local) status -Env $($ev.env) (the next train runs them); $(if ($fl.Count) { 'failed: their agents look at the build log and redeploy; ' })repeats: kitty kind env with envy.ps1 logs -Env $($ev.env)" }
     }
     $kf = $ev.keepFreeGB; $was = $last["$($ev.env)/keepFreeGB"]; if ($null -ne $kf) { $seenEnv["$($ev.env)/keepFreeGB"] = [double]$kf }   # a failed / older status has no floor: nothing cached

@@ -8,11 +8,11 @@ scan, token cost, releases and the budget raise.
 
 Installed by `kitbag.py goody add kit-admin` (or `goody sync`); kitbag.py loads it and shares its own names (out, run, git,
 load_json, key_paths, manifest, cap_next, _sub_file).
-Sections: L18 helpers · L60 setup · L169 config · L321 recover · L466 release · L517 budget-raise · L539 cost · L655 registry ·
-  L659 scan
+Sections: L18 helpers · L60 setup · L169 config · L328 recover · L473 release · L524 budget-raise · L546 cost · L662 registry ·
+  L666 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
-import datetime, json, os, re, shutil, subprocess, sys, tempfile, time
+import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
 import os.path as osp
 
 # ---- helpers: example config, pwsh, the live kit
@@ -179,8 +179,13 @@ def cmd_config(kit, fill):
         if err:
             out('ACT', 'CONFIG-FILE', loc_rel, err)
             continue
-        if not isinstance(loc, dict) or not isinstance(ex, dict):
+        if not isinstance(loc, dict):
             out('ACT', 'CONFIG-FILE', loc_rel, 'top level must be a JSON object')
+            continue
+        if not isinstance(ex, dict):   # no core example (a goody's, e.g. android-swarm GOODY.md): its own rules only
+            if loc_rel.endswith('swarm.config.json'): swarm_rules(loc)
+            elif loc_rel.endswith('targets.local.json'): targets_rules(loc)
+            else: out('ACT', 'CONFIG-FILE', loc_rel, 'no example to compare with')
             continue
         changed = False
         for p in key_paths(ex):
@@ -203,7 +208,7 @@ def cmd_config(kit, fill):
         for p in key_paths(loc):
             top = p.split('.')[0]
             if get(ex, p) is None and p not in documented and f'`{p}' not in doc and not any(p.startswith(m + '.') for m in USER_MAPS) \
-              and top not in ('default', 'browser', 'keepFreeGB'):
+              and top not in ('default', 'browser', 'keepFreeGB') and not under_documented(p, documented):
                 out('WARN', 'CONFIG-UNKNOWN', f'{loc_rel} {p}', 'key not in the example nor README "Configuration": a typo, or an undocumented key a script reads?')
         if changed:
             bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S'))
@@ -229,6 +234,8 @@ def config_rules(kit, c):
     """Values a feature in use needs and no default can supply: ASK the lead (key paths only, never values)."""
     tt = (os.environ.get('KIT_TRACKER_TYPE') or get(c, 'tracker.type') or 'none').lower()
     tn = ((manifest(kit).get('adapters') or {}).get('tracker') or {}).get('names', 'none').split()
+    for f in glob.glob(osp.join(kit, 'skills', '*', 'adapters', '*')):   # installed goodies add their names (adapter:tracker/<name>)
+        tn += re.findall(r'adapter:tracker/([\w-]+)', read(f))
     if tt not in tn:
         out('ACT', 'CONFIG-VALUE', 'kit.local.json tracker.type', 'not one of ' + ' / '.join(tn))
     if tt in ('github', 'gitlab') and not get(c, 'tracker.repo'):
@@ -403,7 +410,7 @@ def cmd_recover(kit, fix):
          f'git -C {kit} rm --cached -- {f} in a kit commit (the lead confirms; the file stays on disk)')
     # launch records, board entries, product worktrees, runtime size
     ld = kit_path('launches', kit=kit)
-    for f in sorted(x for x in os.listdir(ld) if x.endswith('.json')) if osp.isdir(ld) else []:   # bossy.ps1 recover's *.resume.md are no records
+    for f in sorted(x for x in os.listdir(ld) if x.endswith('.json') and not x.startswith('args-')) if osp.isdir(ld) else []:   # args-*.json: a workflow's inputs; *.resume.md: briefs
         r, err = load_json(osp.join(ld, f))
         if err or not isinstance(r, dict):
             out('ACT', 'RECOVER-LAUNCH', f, f'unreadable launch record ({err})', 'delete it')
@@ -665,17 +672,21 @@ def config_doc_keys(kit):
         cells = row.split('|')
         if len(cells) > 3:
             heads = re.findall(r'`([A-Za-z][\w.]*)', cells[1])
-            for w in re.findall(r'`([A-Za-z]\w*)', '|'.join(cells[2:])):
+            for w in re.findall(r'\b([A-Za-z]\w*)', '|'.join(cells[2:])):   # backticked or plain (heartbeatMinutes (15))
                 keys.update(f'{h}.{w}' for h in heads)
     return doc, keys
+
+def under_documented(p, documented):
+    """p sits in a documented map (budget.defaults.<tool>, gpu.exclusive.<kind>): its names are the user's."""
+    return any('.'.join(p.split('.')[:i]) in documented for i in range(2, p.count('.') + 1))
 
 def script_config_keys(kit, files):
     """Top-level kit.local.json keys the scripts read (Get-KitSetting / Get-KitValue / CFG.get / $cfg.<key>)."""
     keys = {}
-    pats = [re.compile(r"Get-Kit(?:Setting|Value)\s+'([\w.]+)'"), re.compile(r"""CFG\.get\(\s*['"](\w+)"""),
-      re.compile(r"""CFG\[['"](\w+)"""), re.compile(r'\$cfg\.(\w+)')]
+    pats = [re.compile(r"Get-Kit(?:Setting|Value)\s+'([\w.]+)'"), re.compile(r"""(?<!\w)CFG\.get\(\s*['"](\w+)"""),
+      re.compile(r"""(?<!\w)CFG\[['"](\w+)"""), re.compile(r'\$cfg\.(\w+)')]
     for f in files:
-        if not f.endswith(('.ps1', '.py')) or f.endswith('kitbag.py'):
+        if not f.endswith(('.ps1', '.py')) or f.endswith('kitbag.py') or f.startswith('tests/'):   # tests read made-up keys
             continue
         text = read(osp.join(kit, f))
         use = pats if re.search(r"""Join-Path[^\n]*kit\.local\.json['"]""", text) else pats[:3]   # $cfg.<key> only where kit.local.json is loaded
@@ -715,7 +726,7 @@ def cmd_scan(kit):
     doc, documented = config_doc_keys(kit)
     ex, _ = load_json(osp.join(kit, PATHS_JSON))
     for p in key_paths(ex or {}):
-        if '.' in p and not any(p.startswith(m + '.') for m in USER_MAPS) and p not in documented and f'`{p}' not in doc:
+        if '.' in p and not any(p.startswith(m + '.') for m in USER_MAPS) and p not in documented and f'`{p}' not in doc and not under_documented(p, documented):
             out('ACT', 'CONFIG-UNDOC', f'kit.example.json {p}', 'not documented in README "Configuration"')
     code = '\n'.join(t for f, t in texts.items() if f.endswith(('.ps1', '.py', '.mjs', '.js')))
     for key in sorted(set(re.findall(r'^\| `([A-Za-z][\w.]*)`', doc.split('### Tracker')[0], re.M))):

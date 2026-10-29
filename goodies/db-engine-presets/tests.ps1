@@ -33,7 +33,7 @@ Remove-TestKit $k2
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
 if (-not $mysqld -or -not (Get-Command mysqlbinlog -ErrorAction SilentlyContinue)) { 'SKIP flashback round trip (no mysqld / mysqlbinlog on PATH)'; Complete-Tests }
 $k3 = New-PresetKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'
-$port = 3390; while (Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue) { $port++ }
+$fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $port = $fp.LocalEndpoint.Port; $fp.Stop()   # an OS-picked free port: 3390+ raced parallel runs
 $data = Join-Path $env:TEMP "mysqld-$PID"
 & $mysqld.Source --no-defaults --initialize-insecure "--datadir=$data" 2>&1 | Out-Null
 $srv = Start-Process $mysqld.Source -ArgumentList "--no-defaults `"--datadir=$data`" --port=$port --bind-address=127.0.0.1 --mysqlx=OFF --log-bin=binlog --server-id=1 --binlog-row-metadata=FULL" -WindowStyle Hidden -PassThru

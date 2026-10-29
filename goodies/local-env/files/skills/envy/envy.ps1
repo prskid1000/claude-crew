@@ -328,9 +328,9 @@ function Prune($st) {
   if ($t -and ($stall -or (-not (Owned $t "-Train $($t.id)") -and ($t.pid -or ((Get-Date) - [datetime]$t.at).TotalSeconds -gt 60)))) {
     if ($stall -and (Owned $t "-Train $($t.id)")) { if ($KitIsWindows) { taskkill /PID $t.pid /T /F 2>&1 | Out-Null } else { Stop-SysProcess ([int]$t.pid) } }
     $why = if ($stall) { $stall } else { 'worker gone (or its pid reused)' }; $failed = @()
-    foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($t.requests)) {   # worker died or hung: the train runs again; a second stall fails the request
-      if ($stall) { $r.stalls = [int]$r.stalls + 1 }
-      if ([int]$r.stalls -ge 2) { $r.status = 'done'; $r.result = @{ outcome = 'failed'; message = "train stalled twice: $why" }; $failed += $r.id } else { $r.status = 'queued' }
+    foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($t.requests)) {   # worker died or hung: the train runs again; a crash loop ends too
+      $r.stalls = [int]$r.stalls + 1
+      if ([int]$r.stalls -ge $(if ($stall) { 2 } else { 3 })) { $r.status = 'done'; $r.result = @{ outcome = 'failed'; message = "train stalled or died $($r.stalls) times: $why" }; $failed += $r.id } else { $r.status = 'queued' }
     } }
     $st.trainDead = @{ id = $t.id; phase = $t.phase; why = $why; at = (Now); requests = @($t.requests); failed = $failed }   # supervise: TRAIN STALLED
     Event $e 'train-dead' @{ id = $t.id; pid = $t.pid; phase = $t.phase; why = $why; failed = $failed }

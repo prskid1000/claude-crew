@@ -14,10 +14,16 @@ $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 $wt = Join-Path $root 'wt-detached'; git -C $kc worktree add -q --detach $wt 2>&1 | Out-Null
 'work' | Set-Content (Join-Path $wt 'unmerged.txt'); git -C $wt add unmerged.txt; git -C $wt commit -q -m 'feat: unmerged work'
 Get-ChildItem $wt -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHours(-5) }   # idle, like a forgotten worktree
-'# resume' | Set-Content (Join-Path (TkPath $kc launches -Create) 'wf-x.resume.md')
+'# resume' | Set-Content (Join-Path (TkPath $kc launches -Create) 'wf-x.resume.md'); '{}' | Set-Content (Join-Path (TkPath $kc launches) 'args-buildy-x.json')
 $out = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
-Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF); a resume brief is no launch record' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF' -and $out -notmatch 'wf-x\.resume\.md')
+Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF); a resume brief or workflow args file is no launch record' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF' -and $out -notmatch 'wf-x\.resume\.md|args-buildy-x')
 git -C $kc worktree remove --force $wt 2>&1 | Out-Null
+# config: a goody's tracker name counts (adapter:tracker/<name>), a goody-owned local file (swarm.config.json) is no CONFIG-FILE; scan: sub-keys named plainly in a README row are documented
+$cad = Join-Path $kc 'skills/crafty/adapters'; New-Item -ItemType Directory -Force $cad, (Join-Path $kc 'skills/phoney') | Out-Null; '# adapter:tracker/zzt' | Set-Content (Join-Path $cad 'tracker_zzt.ps1')
+Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' } }; '{"lanes": []}' | Set-Content (Join-Path $kc 'skills/phoney/swarm.config.json')
+$cfo = & $py -X utf8 $KT audit config --kit $kc 2>&1 | Out-String; $sco = & $py -X utf8 $KT audit scan --kit $kc 2>&1 | Out-String
+Expect "kit-admin: config knows installed tracker names and goody-owned files; scan reads plain sub-keys ($(($cfo + $sco) -split "`n" -match 'CONFIG-(VALUE|FILE|UNDOC)' -join ' '))" ($cfo -notmatch 'CONFIG-VALUE.+tracker\.type|CONFIG-FILE.+swarm' -and $sco -notmatch 'CONFIG-UNDOC kit\.example\.json supervise\.heartbeatMinutes')
+Remove-Item (Join-Path $cad 'tracker_zzt.ps1'), (Join-Path $kc 'skills/crafty/kit.local.json'), (Join-Path $kc 'skills/phoney/swarm.config.json') -ErrorAction SilentlyContinue
 # prepush: a pushed file a goody's exclude block lists = LOCAL FILE, unless that goody left origin/goodies (folded into the core)
 $ad = Join-Path $kc 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'files/skills/bossy/adapters/kit_admin.ps1') $ad
