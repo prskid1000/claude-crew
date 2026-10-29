@@ -1544,7 +1544,8 @@ $owned = $false
 try { $owned = $mx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
 if (-not $owned) { exit }
 Say "loop started (pid $PID)"
-$cfgAt = if ($__cfgFile -and (Test-Path -LiteralPath $__cfgFile)) { (Get-Item -LiteralPath $__cfgFile).LastWriteTimeUtc.Ticks }; $reload = $false   # kit.local.json read at start
+$loopFiles = @($__cfgFile, $PSCommandPath, (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')) | Where-Object { $_ }   # a pull or goody sync of the scripts reloads too: a loop never runs old code
+$cfgAt = (@($loopFiles | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks }) -join ','); $reload = $false   # kit.local.json and scripts read at start
 $quietSince = Get-Date; $tick = 0; $clientNeed = @{}; $starters = @{}; $misses = @{}; $logPos = @{}; $fails = 0; $lastErr = $null; $beatAt = [datetime]::MinValue; $ramAt = [datetime]::MinValue; $tempAt = [datetime]::MinValue; $poolAt = [datetime]::MinValue
 try {
   while ($true) {
@@ -1556,9 +1557,9 @@ try {
       if ($beat) { $beatAt = Get-Date }
       if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
-      # ---- kit.local.json edited: between trains a fresh loop takes over (services, leases and state stay)
-      $cfgNow = if ($__cfgFile -and (Test-Path -LiteralPath $__cfgFile)) { (Get-Item -LiteralPath $__cfgFile).LastWriteTimeUtc.Ticks }
-      if (-not $st.train -and $cfgNow -ne $cfgAt -and $(try { $null = Get-Content -LiteralPath $__cfgFile -Raw | ConvertFrom-Json; $true } catch { $false })) { Say "kit.local.json changed: the loop restarts with it"; Event $e 'loop-reload' @{ pid = $PID }; $reload = $true; break }   # a half-written file waits
+      # ---- kit.local.json or the env scripts edited: between trains a fresh loop takes over (services, leases and state stay)
+      $cfgNow = (@($loopFiles | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc.Ticks }) -join ',')
+      if (-not $st.train -and $cfgNow -ne $cfgAt -and $(try { $null = -not $__cfgFile -or (Get-Content -LiteralPath $__cfgFile -Raw | ConvertFrom-Json); $true } catch { $false })) { Say "kit.local.json or the env scripts changed: the loop restarts with them"; Event $e 'loop-reload' @{ pid = $PID }; $reload = $true; break }   # a half-written file waits
 
       # ---- trains: one worker takes all queued requests
       $queued = @($st.requests | Where-Object { $_.status -eq 'queued' })
