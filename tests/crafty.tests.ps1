@@ -45,7 +45,7 @@ try {
   Expect "wt sync regenerate: failing command keeps the conflict; else target's copy + command, amended, pushed" ($sy[0] -match '(?s)regenerate failed.*REBASE CONFLICT.*rc=1 mid=True' -and $sy[1] -match 'regenerated gen\.bin.*pushed f.*rc=0' -and
     (Get-Content "$g/gen.bin") -eq 'regen 7 main' -and (git -C $g rev-list --count origin/main..origin/f) -eq 1 -and (git -C $g show --stat --format= origin/f) -match 'a\.txt')
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
-# git-host adapters: type command, MR URLs, a missing goody, a repos[].ci object
+# git-host adapters
 $gh = @'
 . $args[0]
 $u = 'https://h/g/s/r/-/merge_requests/4', 'https://github.com/o/r/pull/5', 'https://h/w/r/pull-requests/6', 'https://h/o/p/_git/r/pullrequest/7' | % { $x = ConvertFrom-MrUrl $_; "$($x.type):$($x.repo)!$($x.n)" }
@@ -231,10 +231,11 @@ $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-0
 $ef = { param($a, $q) @{ level = 'ACT'; kind = 'ENV-FIX'; who = "$a (wave-brief-a8da)"; age = '34 min'; what = $a; problem = $q; action = "& D:\Kit\.claude\skills\bossy\bossy.ps1 decide answer -Id e-20261029090127-$a-e69a" } }
 $rd.flags = @(@{ level = 'WATCH'; what = 'RESTART LOOP: hm search 3x'; action = 'logs' }, (& $ef W 'devy-3dy3-put'), ((& $ef J ('p ' * 60)) + @{ next = 'nx' }), (& $ef J1 'C:\d\|x'))
 $r1 = (& { . $O; Format-KitReport $rd }) -join "`n"; $rd.mem.AvailGB = 6; $rd.rows = @(); $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
-$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '', '**Flags**', '') -join "`n"; $ro = (& { . $O; Format-KitReport $rd 'ACT: 1' }) -join ' ' -match 'INFO.+ACT: 1 +\*\*RAM'
+$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '', '**Flags**', '') -join "`n"
 $fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' }); $fw = @($r1 -split "`n`n" | Where-Object { $_.StartsWith('|') } | ForEach-Object { $tl = $_ -split "`n"; $nc = ($tl[0] -split '\|').Count - 2
   (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
-Expect "report: widths ($fw) <= 95, cells <= 90; RAM after Flags + ACT, 3 per row" ($r1.StartsWith($want1) -and $ro -and $r1 -match '(?s)W1 \| 3 \| browser.+(\| — ){6}\|' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
+$rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ name = "r$_"; gb = $_ } }); $fo = & { . $O; Format-KitReport $rd 'ACT: 1' }; "$(@($fo -match '^\| Resource \|').Count)$(@($fo -match '^\| r\d').Count)$(@($fo -match '— \| — \|$').Count)$(($fo -join ' ') -match 'INFO.+ACT: 1 +\*\*RAM')" }
+Expect "report: widths ($fw) <= 95, cells <= 90; RAM last; 2/3/7 resources 3 a row ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '112True 111True 132True' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
 Remove-TestKit $k
 # ---- OS helpers on Linux / macOS
 $k = New-TestKit posix
