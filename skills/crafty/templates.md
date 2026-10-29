@@ -26,9 +26,10 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 | history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
 | wave-brief | what a wave builds, by whom | the "Wave brief" template | 600w each:12b 130ch | id path |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
-| testing-goals | what must be true before merge | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
-| testing-doc | the human testing doc a tester follows | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected evidence |
-| qa-report | the QA run report | header table, a verdict line per check, defects, not tested | prose:900w each:15b 25sw | id verdict evidence |
+| testing-goals | local goals file (`goals.md`), never published | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
+| testing-doc | the human testing doc (positive cases; env evidence) | ## What changed, ## Before you start / Feature switches, ## Checks, ## Out of scope, ## Result (testers) | 1500w What_changed:80w 25sw | expected |
+| testing-ai | the AI testing doc (the local loop record) | the "Testing doc (AI)" template: setup line, case table | 2500w 25sw | expected |
+| qa-report | the QA run report (an "<env> run" section of the human doc) | header table, Tasks table, Results table (Check, Result, Observed, Evidence: images inline), failures in detail | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
 | mr-title | MR / PR title | `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
 | mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
@@ -89,15 +90,18 @@ stopped (testing goals, local test loop, MRs); never redo finished work. Files c
 `bossy.ps1 recover` adds one table per area: each item's done steps (skipped) and missing steps (run), MRs, tracker, testing doc.
 
 ## Testing goals
-Written by devy BEFORE testing (crafty step 4); the local test loop runs it; the human testing doc grows out of it.
+Written by devy FIRST, before the local test loop (crafty step 4). A LOCAL working file (`goals.md`), never published: the
+AI testing doc below grows out of it. Every doc lists checks and facts as tables, a short intro line above each; cell text
+keeps the prose limits.
 ```markdown
 # Testing goals: <task id> <title>
 Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.ps1 status), services <the leased ones>.
 ## Goals (what must be true)
-| # | Goal | Check (steps) | Expected | Proof: automated test / local manual check | Result |
-|---|---|---|---|---|---|
-| G1 | <behaviour> | <steps> | <exact values, messages, status codes> | `<TestClass#method>` / api.ps1 / browser / phone | |
-| U1 | <unchanged behaviour that must stay> | | | | |
+What must hold before merge:
+| # | Goal | How checked | Pass rule | Result |
+|---|---|---|---|---|
+| G1 | <behaviour> | <steps; `<TestClass#method>` / api.ps1 / browser / phone> | <exact values, messages, status codes> | |
+| U1 | <unchanged behaviour that must stay> | | | |
 ## Test plan (automated)
 - Unit: <new/changed logic -> test names> · Regression: <each fixed bug -> test, red before / green after>
 - Integration/API: <endpoints touched -> tests> · UI/component: <screens touched -> specs, where the stack supports it>
@@ -111,8 +115,31 @@ Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.p
 |---|---|---|
 ```
 
+## Testing doc (AI)
+The local test record of the dev flow. devy writes it from `goals.md` at the start of the local loop: every positive,
+negative, edge and regression case (invalid input, role / permission denials, boundaries, empty or missing data,
+concurrency where relevant, nearby features, impact-check edge cases), one row each. Each loop round fills Result and
+Evidence (images inline, a request / response excerpt + link) and republishes: `devtools.py doc --key <task>:testing-ai
+--label "loop round <n>"` (same link, a dated section per round; refused without a negative row). It shows the local PASS.
+```markdown
+# Testing doc (AI): <task id> <title>
+Setup and cleanup: <data created via the API (prefixed), feature switches, logins by key; what is deleted after>.
+Cases:
+| # | Type | Steps / API call + payload | Expected | Result | Evidence |
+|---|---|---|---|---|---|
+| A1 | positive | `POST /x {"a": 1}` as <role>; screen <name>, selector `<css>` | 201, body.a = 1; row shown | PASS | ![A1: row shown](<shot>) |
+| A2 | negative | same as <role without the right> | 403 `<message>` | PASS | `403 {"error": ...}` [json](<link>) |
+| A3 | edge | <empty / boundary / concurrent> | <exact> | | |
+| A4 | regression | <nearby feature> | unchanged: <exact> | | |
+```
+
 ## Human testing doc
-Published at crafty step 6 (`devtools.py doc`), linked on the task and in the MR; testers follow it (pokey H1-H3).
+The steps for a person: POSITIVE cases only (the happy paths), no negative rows. Written after the local loop PASS with
+Result and Evidence EMPTY: its evidence only ever comes from a deployed env (local evidence lives in the AI doc).
+`devtools.py finish` publishes it as `<task>:testing-doc` (refused before a loop PASS checkpoint, without the case table,
+with a negative row, an image or a filled Result / Evidence); a fix round updates the same doc after its own PASS. Testers
+and /testy follow it (pokey H1-H3, L1); each deployed-env run (`pokey.ps1 finalize`, or a person) fills Result / Evidence
+in place (images inline) and adds a dated "<env> run <date>" section with its report.
 ```markdown
 # Testing: <feature / change>
 | | |
@@ -124,16 +151,18 @@ Published at crafty step 6 (`devtools.py doc`), linked on the task and in the MR
 ## What changed
 <one paragraph in user terms; what must not change>
 ## Before you start / Feature switches
-| Setting or role | Where | Must be | How to switch | Restore after |
-|---|---|---|---|---|
+Set these first, restore them after:
+| Setting | Where | Value |
+|---|---|---|
 ## Checks
-### T1 — <screen / area>
-**Steps:** 1. <step> 2. <step>
-**Expected:** <exact result, read from the shipped code (final diff), never the brief or bug text; a timing from a measurement>
-**Proven locally:** <screenshot / JSON from the local loop, or "not provable locally: <why>" (needsLiveCheck); never claim a pass>
-### R1 — <unchanged behaviour> (regression)
+<screen / area>:
+| # | Steps | Expected | Result | Evidence |
+|---|---|---|---|---|
+| T1 | 1. <step> 2. <step> | <exact result from the shipped code (final diff), never the brief> | | |
 ## Out of scope
-- <not to test, why> · a step that only exercises a channel in qa.outOfScope: "(out of scope for agent QA: <channel>)"
+Not tested, and why (a qa.outOfScope channel: "out of scope for agent QA: <channel>"):
+| Item | Why |
+|---|---|
 ## Result (testers)
 All checks pass -> close the task. A check of this change fails or could not be tested -> failedTesting with the check ids
 and why. A defect outside this change -> one [Bug] task under the original ask.
@@ -147,15 +176,21 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 ## Changes
 - <behaviour change, user terms> · Technical: <files / endpoints / migrations>
 ## How tested
-- Checks: check quick ✅ · tests `<names>` ✅ · touched-class tests ✅ · migrations ISSUES 0 ✅
-- Local env: <env> r<n>: goals G1-Gn PASS (testing-goals doc) · Not run: <what, why> (or "nothing")
-- UI: <committed spec or screenshot link> (or "not a UI change") · Pure logic: <spec file> (or "none")
-- Regression: `<test>` red before the fix, green after (or "not a fix") · Changed methods without a test: <names> (or "none")
+| Check | Result |
+|---|---|
+| Checks | check quick ✅ · tests `<names>` ✅ · touched-class tests ✅ · migrations ISSUES 0 ✅ |
+| Local env | <env> r<n>: goals G1-Gn PASS (testing-goals doc) |
+| Not run | <what, why> (or "nothing") |
+| UI | <committed spec or screenshot link> (or "not a UI change") |
+| Pure logic | <spec file> (or "none") |
+| Regression | `<test>` red before the fix, green after (or "not a fix"); changed methods without a test: <names> (or "none") |
 ## Risks
 - <deferred item — reason> · Behaviour limits: <not handled> · Needs after deploy: <settings / data> (or "none")
 ## Links
 - Testing doc: <link> · Sibling MRs: <refs> (merge order: producers first)
 ```
+The MR opens before the human doc exists (`Testing doc: pending`); after the loop PASS, `devtools.py mr` again with the link
+edits the same MR body. Merge refuses an MR with a task link and no `Testing doc: <url>` line.
 
 ## Task solution comment
 ```markdown

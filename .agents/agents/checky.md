@@ -29,6 +29,8 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - PASS only for behaviour you saw, with its evidence; any defect is FAIL (`defect: own` | `new`), never a note; NOT_TESTED only
   when truly impossible, with `cause` (never "no time"); a local item: unblock the env yourself, a kitty / coordinator fix ->
   NOT_TESTED with `env_fix`.
+- Results reach the tracker only through `pokey.ps1 finalize` (an ad hoc check too: a one-item run.json); it updates the task's
+  AI testing doc and its one result comment in place. Never a hand-written verdict comment, status or a second report doc.
 - Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after (goody `runtimes`).
 - Evidence links in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run
   vidy` -> spawn `vidy` (R19) with the task, its testing doc and your question; use its report (`read-chunk` only to check one

@@ -76,6 +76,14 @@ $null = pwsh @np $D tracker comment $t.id $wl -Kind comment-status -ProseOk 'bri
 $dp = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution 2>&1 | Out-String; $dpc = $LASTEXITCODE
 $null = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') comment $t.id $wl comment-solution --prose-ok 'brief format' 2>&1; $dkc = $LASTEXITCODE; $n3 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 Expect "prose gate: tracker / devtools.py comment over the limit refused, unposted; -ProseOk / --prose-ok post ($prc $pkc $dpc $dkc $n0 $n1 $n2 $n3)" ($prc -eq 1 -and $pr -match 'tracker comment refused' -and $n1 -eq $n0 -and $pkc -eq 0 -and $n2 -eq $n0 + 1 -and $dpc -eq 1 -and $dp -match 'refused' -and $dkc -eq 0 -and $n3 -eq $n0 + 2)
+$null = pwsh @np $D tracker comment $t.id 'round two' -Kind comment-status -ProseOk x; $cs = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
+Expect 'kit comment -Kind: the next round edits the last one of its kind; a person''s comment untouched' ($cs.Count -eq $n3 -and @($cs.text -match '^round two\s+\[kit:comment-status\]$').Count -eq 1 -and @($cs.text -match '^body text').Count -eq 1)
+$env:KIT_DOC_GATE = '1'; $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"
+$g3 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h`nTesting doc (AI): https://d/a"
+$g2 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; Remove-Item Env:KIT_DOC_GATE
+$k1 = pwsh @np $D tracker create -List L1 -Name 'Bug s1' -Description 'a' -Key sig-1 | ConvertFrom-Json; $k2 = pwsh @np $D tracker create -List L1 -Name 'Bug s1 (2)' -Description 'b' -Key sig-1 | ConvertFrom-Json
+Expect 'tracker create -Key: an open task of the same key is updated, not created again' ($k2.id -eq $k1.id -and $k2.reused -and (pwsh @np $D tracker view $k1.id | ConvertFrom-Json).description -eq 'b')
+Expect 'status gate: promoted needs both doc links (none, the human one only: refused)' ($g1 -match 'not set to promoted' -and $g2 -notmatch 'not set' -and $g3 -match 'not set to promoted')
 Remove-Item Env:KIT_TRACKER_TYPE
 # tracker: unknown call fails
 $tb = @'

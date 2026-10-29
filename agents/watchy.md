@@ -30,8 +30,11 @@ Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<windo
    triage screenshot maps to its signature or to `unmatched` (its evidence, no task).
 5. **Act** (`crafty.ps1 tracker create` / `comment`): `new` / `rising` with a suspect MR (the deploy's MRs touch its frame or
    endpoint) -> an entry in the ONE `[Bug] <ask> — new defects (n)` under that MR's task's original ask (appended to an open
-   one); no suspect MR -> one `[Bug] <env> — <signature>`; `known` -> a comment with the new counts on its task. Evidence per
-   entry: the query, counts now vs baseline, the sample, the time range, the suspect MR. Never closes, reopens or moves a task.
+   one); no suspect MR -> one `[Bug] <env> — <signature>`
+   (`tracker create -Key <env>-<signature>` reuses an open one); `known` -> a comment with the new counts on its task.
+   Evidence per entry: the query, counts now vs baseline, the sample, the time range, the suspect MR. Comments with
+   `-Kind watch-<env>` (the next window edits it); a report doc with `devtools.py doc --key <env>:watch-<kind>`. Never closes,
+   reopens or moves a task.
 6. **Escalate:** a user-facing outage (probe failing, error rate over the org's alert bar in `rules/*.local.md`, a 5xx spike on
    a main endpoint) right after a deploy -> `board msg -To <coordinator> -Text "ROLLBACK? <env> <deploy> <evidence>"` at once
    (opsy and the owner decide; never you).

@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L521 recover · L605 pause · L649 resume · L707 program · L751 param ·
-  L757 track · L1056 anomalies · L1074 supervise · L1379 report · L1458 audit · L1518 storage · L1729 bugbrief · L1832 cleanup ·
-  L1954 learn · L1984 decide · L2050 health · L2112 retro due · L2122 tidy · L2192 the kit origin's main and goodies ·
-  L2208 setup · L2274 guard-sendmessage
+  L757 track · L1065 anomalies · L1083 supervise · L1388 report · L1467 audit · L1527 storage · L1738 bugbrief · L1841 cleanup ·
+  L1963 learn · L1993 decide · L2059 health · L2121 retro due · L2131 tidy · L2201 the kit origin's main and goodies ·
+  L2217 setup · L2283 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -503,8 +503,8 @@ function Get-KitAreaState($Ag, [string[]]$Stored = @(), $Wts = @(), $Since = $nu
       if (-not $mine.Count -and $its.Count -eq 1) { $mine = $loose }
       $tk = if ($t) { Get-KitOnce $t { try { Get-TrackerTask $t } catch { $null } } }; $ts = "$($tk.status)"
       $late = $ts -and (Test-TrackerStatus $ts 'promoted', 'inTest', 'closed')   # the task says the dev steps are done (failedTesting: back to dev)
-      $rx = '(?i)testing doc\W{0,6}(https?://[^\s)\]"<>]+)'
-      $doc = if ($t -and -not $late) { if ("$(@($mine.body) -join ' ') $($tk.description)" -match $rx) { $Matches[1] } else {
+      $rx = '(?i)testing doc(?: \(human\))?\W{0,6}(https?://[^\s)\]"<>]+)'   # the description's links block is current: read first
+      $doc = if ($t -and -not $late) { if ("$($tk.description) $(@($mine.body) -join ' ')" -match $rx) { $Matches[1] } else {
           if ((Get-KitOnce "$t#c" { "$(try { Get-TrackerComments $t | ConvertTo-Json -Depth 4 -Compress } catch { '' })" }) -match $rx) { $Matches[1] } } }
       $open = @($mine | Where-Object state -eq 'opened').Count; $known = -not $fail -and -not $guess -and -not @($mine | Where-Object state -eq 'UNKNOWN').Count
       $done = @(if ($late) { $script:KitSteps } else {
@@ -871,6 +871,15 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
+# the task's ONE MRs comment ([kit:mrs-<task>], edited in place): merge order (producers first), then MR number
+function Set-KitMrsComment($o) {
+  $prod = @(@($o.mergeAfter) | ForEach-Object { NormRef (($_ -split '>', 2)[-1]) })
+  $rows = @(@($o.mrs) | Where-Object { $_ -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$' } | Sort-Object { if ($prod -contains $_) { 0 } else { 1 } }, { [int]($_ -replace '^.*!', '') } | ForEach-Object {
+      $null = $_ -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$'; $pp = ProjPath $Matches.repo
+      $m = if ($pp) { Invoke-HostApi "projects/$($pp -replace '/', '%2F')/merge_requests/$($Matches.iid)" }
+      "- $($Matches.repo) !$($Matches.iid) — $(if ($m.title) { $m.title } else { '(title unknown)' }) — $(switch ("$($m.state)") { 'opened' { 'open' } '' { 'unknown' } default { $_ } })" })
+  if ($rows.Count) { try { $null = Set-TrackerKitComment $o.task "mrs-$($o.task)" ("MRs (merge order):`n" + ($rows -join "`n")) } catch { Write-Warning "MRs comment of $($o.task) not updated: $_" } }
+}
 switch ($Action) {
   'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch
   'add' {
@@ -902,7 +911,7 @@ switch ($Action) {
     }
     if ($o.done -and @($o.mrs).Count -gt $before) { $o.done = $false; $o.reopenedAt = (Get-Date).ToString('o'); foreach ($k in $script:doneFields) { $o.Remove($k) } }
     elseif (-not $o.done) { $o.done = $false }
-    Save $o; $s = Load $Task
+    Save $o; $s = Load $Task; Set-KitMrsComment $s
     "tracking $Task : $(@($s.mrs) -join ', ')$(if (@($s.mergeAfter).Count) { ' | merge-after: ' + (@($s.mergeAfter) -join ', ') }) -> on all merged: $(@($s.onMerged) -join ' -> ')$(if ($s.holdPromotion) { " (promotion HELD: $($s.holdPromotion))" })$(if ($Discover -and -not @($s.mrs).Count) { ' (no MR found yet: every run looks again)' })"
   }
   'run' {
@@ -1003,20 +1012,20 @@ switch ($Action) {
       if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
-      # promoted only with the testing doc linked (3 tasks went without)
-      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -eq $false) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link: not promoted (devtools.py doc, then finish)" }; continue }
+      # promoted only with both docs linked (3 tasks went without); unread = held
+      if ($todo -contains 'promoted' -and $KitConf.TrackerType -ne 'none' -and (Test-KitTaskDocLink $o.task) -ne $true) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, no testing-doc link (human + AI) or the task is unread: not promoted (devtools.py finish <task> <testing.md> <solution.md> --ai <ai.md>)" }; continue }
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
-      $urls = @($o.mrs | ForEach-Object { if ($_ -match '^(?<r>[\w./-]+)!(?<i>\d+)$' -and ($pp = ProjPath $Matches.r)) { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.i } } })
       # a run killed before Save would post again
       $allC = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
       if (-not $o.mergedCommentAt -and -not @($allC | Where-Object { $_ -match '^All MRs merged' }).Count) {
         $o.mergedCommentAt = (Get-Date).ToString('s'); Save $o -Run
-        try { $null = Add-TrackerComment $o.task "All MRs merged: $($urls -join ' , '). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
+        Set-KitMrsComment $o   # the MRs comment now says merged
+        try { $null = Add-TrackerComment $o.task "All MRs merged (see the MRs comment). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
       }
       $cmts = @($allC | Where-Object { $_ -notmatch '^All MRs merged' })
-      if (-not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions)|tester guide|live check') })) {
+      if (-not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {
               $j = try { $line | ConvertFrom-Json } catch { $null }
@@ -1024,7 +1033,7 @@ switch ($Action) {
               if ($j.type -eq 'result' -and $mine -and @($j.result.needsLiveCheck).Count) { @($j.result.needsLiveCheck) }
             } } | Where-Object { $_ } | Select-Object -Unique)
         if ($steps.Count) {
-          try { $null = Add-TrackerComment $o.task ("How to test (from the dev agent's report; run after the next deploy of $($urls -join ' , ')):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) } catch {}
+          try { $null = Add-TrackerComment $o.task ("How to test (from the dev agent's report; run after the next deploy of the MRs in the MRs comment):`n" + (($steps | ForEach-Object { "- $_" }) -join "`n")) } catch {}
           "COMMENTED $($o.task): posted $($steps.Count) how-to-test step(s) from the agent's report (its own testing comment was missing)"
         } else {
           "ATTENTION $($o.task): merged, but no solution/testing comment from its agent - post the solution, MR links and how-to-test on the task"

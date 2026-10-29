@@ -18,7 +18,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L31 paths · L82 kitlog · L181 load · L558 lint · L927 README graph · L1033 lint command · L1066 audit · L1175 registry ·
-  L1404 prose · L1547 sections · L1677 budget · L1695 goodies · L2172 main
+  L1404 prose · L1549 sections · L1679 budget · L1697 goodies · L2174 main
 """
 import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -225,7 +225,7 @@ def split_total(sizes):
     return sum(sizes.values()) - tests, tests
 # token budgets (UTF-8 bytes / 4), README "Extending"
 BUDGETS = {'always': 3500, 'skill': 3200, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'tests': 8000}
+  'workflow': 15000, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'tests': 9000}
 # files allowed raw runtime paths (lint RUNTIME-RAW)
 PATHS_JSON = 'skills/crafty/kit.example.json'   # its _paths section
 PATH_HELPERS = {PATHS_JSON, 'skills/crafty/lib.ps1', 'skills/crafty/devtools.py', 'skills/pokey/browser.mjs', 'skills/bossy/kitbag.py'}
@@ -1482,7 +1482,9 @@ def prose_check(kind, text, spec, banned):
                         break
             elif u == 'sw':
                 prose = re.sub(r'(?m)^\s*\|.*$', '', txt)
-                for s in re.split(r'(?<=[.!?])\s+|\n', prose):
+                cells = [re.sub(r'!?\[[^\]]*\]\([^)]*\)|\bfile:|`[^`]*`|<br>', ' ', c) for l in txt.split('\n') if l.lstrip().startswith('|')
+                         for c in l.strip().strip('|').split('|')]   # table docs: each cell's sentences; links and images are not words
+                for s in re.split(r'(?<=[.!?])\s+|\n', prose) + [x for c in cells for x in re.split(r'(?<=[.!?])\s+', c)]:
                     if words(s) > n:
                         out.append(f'{name}: a sentence of {words(s)} words (max {n}): {s.strip()[:60]}...')
                         break

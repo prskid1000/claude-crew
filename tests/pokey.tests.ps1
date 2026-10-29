@@ -27,7 +27,7 @@ foreach ($x in @(@('PA', 'Ask A'), @('PQ', 'Ask Q'), @('TA', 'Task A', 'PA'), @(
 $a = New-Run 'A' @(@{ code = 'A1'; task = 'T1'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
 $out = Fin $a 'A1'
 Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
-Expect 'the comment lists the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '## Untested checks' -and $_.text -match '### C2' }).Count -eq 1)
+Expect 'the one-line comment names the untested check' (@((Task 'T1').comments | Where-Object { $_.text -match '1 not tested \(C2\)' -and $_.text -notmatch '##' }).Count -eq 1)
 Expect 'no task created for untested checks' (-not @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count)
 $lo = New-Run 'LO' @(@{ code = 'L1'; task = 'TL'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
 $rj = Read-Json "$lo/run.json"; $rj | Add-Member localEnv 'shop'; & $J $rj "$lo/run.json"
@@ -36,7 +36,7 @@ Expect 'local env: NOT_TESTED keeps the task open, not failedTesting' (-not $rl.
 $b = New-Run 'B' @(@{ code = 'B1'; task = 'T2'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) })
 $null = Fin $b 'B1'
 Expect 'own FAIL -> failedTesting, no [Bug]' ((Rec $b 'B1').failedTesting -and (Rec $b 'B1').fail -eq 1 -and -not (Bugs).Count)
-Expect 'failed check in the bug-brief format' (@((Task 'T2').comments | Where-Object { $_.text -match '### C2 — s' -and $_.text -match '\*\*Saw:\*\* o C2' }).Count -eq 1)
+Expect 'the one-line comment names the failed check' (@((Task 'T2').comments | Where-Object { $_.text -match 'checks failed \(C2\)' -and $_.text -notmatch '\*\*Saw' }).Count -eq 1)
 $c = New-Run 'C' @(@{ code = 'C1'; task = 'T4'; checks = @(@('C1', 'PASS'), @('C2', 'OUT_OF_SCOPE')) })
 $null = Fin $c 'C1'
 Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 'C1').outOfScope -eq 1 -and (Get-Content "$c/C1/report.md" -Raw) -match 'OUT OF SCOPE 1')
@@ -55,7 +55,7 @@ $rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed 
 $go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check
 Expect "finalize -Check: 44 checks of 36-word notes, FAILs with a 300- and a 30-word verify, 30 links, pass prose:900w ($gc); a small report padded over 900 prose words fails" ($gc -eq 0 -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
 $null = Fin $bg 'G1'; $vm = Get-Content "$bg/G1/report.md" -Raw
-Expect 'finalize: verify status in the cell, a long text in a linked file' ((Get-Content "$bg/G1/evidence/G1-C1_verify_retest.txt" -Raw) -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
+Expect 'finalize: verify status in the cell, a long text in a linked file' ((Get-Content "$bg/G1/evidence/G1-C1_verify_retest.txt" -Raw) -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed · 1 2 3 [^|]*…\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
@@ -83,9 +83,9 @@ $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] 
 Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
 # finalize, fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest real
 $dt = Join-Path $k 'skills/crafty'
-function Use-FakeUploader([string]$Evidence, [scriptblock]$Run) {
+function Use-FakeUploader([string]$Evidence, [scriptblock]$Run, [string]$Verbs = "'evidence'") {
   Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
-  Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy, ctypes`nhere = os.path.dirname(os.path.abspath(__file__)); a = sys.argv`nif a[1:2] == ['evidence']:`n$Evidence`nelse:`n    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')"
+  Set-Content "$dt/devtools.py" -Encoding utf8 "import sys, os, runpy, ctypes, json`nhere = os.path.dirname(os.path.abspath(__file__)); a = sys.argv`nif a[1] in ($Verbs,):`n$Evidence`nelse:`n    a[0] = os.path.join(here, 'devtools_real.py'); runpy.run_path(a[0], run_name='__main__')"
   try { & $Run } finally { Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py" }
 }
 # 300 long evidence paths: the uploader records the command-line length and the files it got
@@ -110,6 +110,32 @@ $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 $fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { Fin $ur U1 -NoTracker }
 Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
+# 3 images: inline under their checks in the report, a JSON as one file line; the comment: no evidence, exactly one link
+$ir = New-Run 'I' @(@{ code = 'I1'; task = 'TI'; checks = @(@('C1', 'FAIL'), @('C2', 'PASS')) }); New-Item -ItemType Directory -Force "$ir/I1/shots" | Out-Null
+$evf = 'I1-C1_01_before.png', 'I1-C1_02_after.png', 'I1-C1_03_resp.json', 'I1-C2_01_list.png'; $evf | ForEach-Object { [IO.File]::WriteAllBytes("$ir/I1/shots/$_", [byte[]](1, 2)) }
+'{"rates":{"child":[567,567]},"original":567}' | Set-Content "$ir/I1/shots/I1-C1_03_resp.json"
+$rj = Read-Json "$ir/I1/results.json"; $rj.checks[0].evidence = $evf[0..2]; $rj.checks[1].evidence = @($evf[3]); & $J $rj "$ir/I1/results.json"
+$null = Use-FakeUploader @'
+    if a[1] == 'doc': print('https://docs.example/d/R1'); sys.exit(0)
+    ff = [os.path.basename(x) for x in open(a[a.index('--files-from') + 1], encoding='utf-8-sig').read().splitlines() if x.strip()]
+    print(json.dumps({'folderId': 'F', 'folderLink': 'https://f/F', 'files': {n: {'id': n, 'link': 'https://f/' + n, 'src': 'https://img/' + n} for n in ff}}))
+'@ { Fin $ir I1 } "'evidence', 'doc'"
+$irp = Get-Content "$ir/I1/report.md" -Raw; $ic = @((Task 'TI').comments | Where-Object { $_.text -match 'Test results' })
+Expect 'report: 3 images inline under their checks (caption = check id), the JSON as a file line; one comment, one link, no evidence list' (([regex]::Matches($irp, '!\[')).Count -eq 3 -and
+  $irp -match '(?m)^\| \*\*C1\*\* s \| \*\*FAIL\*\* \|[^\n]*!\[C1: Before\][^\n]*`rates\.child\[1\]: 567`<br>[^\n]*\[full file\]\(https://f/I1-C1_03_resp\.json\)' -and $irp -match '\| Task TI \| 1 \| 1 \| 0 \| failed \|' -and $ic.Count -eq 1 -and ([regex]::Matches($ic[0].text, 'https?://')).Count -eq 1 -and $ic[0].text -notmatch '\*\*Evidence|\]\(')
+# a task with a human testing doc (Result / Evidence empty): finalize on the env fills them (same doc) + a dated "<env> run" section
+$ad = "$(Kd)/TAI-h.md"; New-Item -ItemType Directory -Force (Split-Path $ad), "$k/.state/published" | Out-Null; Set-Content $ad 'v1'
+& $J @{ key = 'TAI:testing-doc'; url = $ad; rounds = @(@{ at = '2026-10-29 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | Steps | Expected | Result | Evidence |`n|---|---|---|---|---|`n| C1 | open a | a shown | | |`n| C2 | open b | b shown | | |" }) } "$k/.state/published/TAI_testing-doc.json"
+$ai = New-Run 'AI' @(@{ code = 'Q1'; task = 'TAI'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) }); New-Item -ItemType Directory -Force "$ai/Q1/shots" | Out-Null
+[IO.File]::WriteAllBytes("$ai/Q1/shots/Q1-C1_01_a.png", [byte[]](1, 2)); $rj = Read-Json "$ai/Q1/results.json"; $rj.checks[0].evidence = @('Q1-C1_01_a.png'); & $J $rj "$ai/Q1/results.json"
+$null = Fin $ai Q1; $at = Get-Content $ad -Raw
+Expect 'finalize: the human doc (same file) gets the env Result / Evidence per row and a dated "<env> run" section; no report doc' ((Read-Json "$ai/Q1/finalize.json").doc -eq $ad -and
+  $at -match '\| C1 \| open a \| a shown \| PASS \| !\[C1: A\]' -and $at -match '\| C2 \| open b \| b shown \| FAIL \|' -and $at -match '## t run 20' -and -not (Test-Path "$k/.state/published/TAI_qa-report.json"))
+# NOT_TESTED for a cause no developer can fix: status kept, the owner decides (close / retest)
+$nr = New-Run 'N' @(@{ code = 'N1'; task = 'TN'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) }); New-Task 'TN' 'Task N'
+$rj = Read-Json "$nr/N1/results.json"; $rj.checks[1] | Add-Member cause 'env-data'; & $J $rj "$nr/N1/results.json"
+$null = Fin $nr N1; $rn = Rec $nr N1
+Expect 'NOT_TESTED env-data: status kept, keptOpen, a decision asked' (-not $rn.failedTesting -and (Task 'TN').status -eq 'open' -and $rn.keptOpen -match 'owner decides' -and "$($rn.decision)" -match 'DECISION')
 # ---- review batch 2: pokey.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null

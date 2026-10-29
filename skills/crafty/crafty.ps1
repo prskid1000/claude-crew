@@ -14,7 +14,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L20 init · L26 wt · L281 stack · L456 gate · L722 check · L874 pipes · L912 guard · L1429 dir · L1439 checkpoint ·
-  L1463 tracker · L1502 host
+  L1463 tracker · L1513 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1466,8 +1466,8 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
@@ -1485,10 +1485,21 @@ function Invoke-Tracker {
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
       if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
       elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
-      Add-TrackerComment $__id $__ct; exit 0   # it throws on a failure; a stray native exit code is not one
+      if ($__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # -Kind: edits the last kit comment of that kind; a failure throws
     }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
-    'create' { __TrOut (New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority) }
+    'create' {   # -Key <signature>: an open task made for the same key is updated (name, description), never a second one
+      $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
+      $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
+      $ot = if ($old.id) { Get-TrackerTask $old.id }
+      if ($ot.name -and -not (Test-TrackerStatus $ot.status 'closed')) {
+        $null = Set-TrackerName $old.id $__trOpt.Name; $null = Set-TrackerDescription $old.id $__trOpt.Description
+        __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
+      }
+      $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority
+      if ($kf -and $nt.id) { Write-KitAtomic $kf (@{ key = $__trOpt.Key; id = $nt.id } | ConvertTo-Json) }
+      __TrOut $nt
+    }
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }

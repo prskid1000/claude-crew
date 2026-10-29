@@ -19,7 +19,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 
 ## crafty
 - envy deploy REFUSED by a foreign layer whose branch is not based on the published head: board msg its holder; holder off the board -> raise an ENV-FIX, never deploy over it. (2x)
-- Re-run devtools.py finish after any new testing doc, final rebase or flaky tracker call: it updates the doc link on task and MR and the status; check the tracker status after it. (4x)
+- Re-run devtools.py finish after a doc change, final rebase or flaky tracker call: it updates the same two docs, the links block and the solution comment in place; check the tracker status after it. (4x)
 - MR body limits (260 words, How tested bullets, one standalone Not run line): run kitbag.py prose --kind mr-body and fix the body before devtools.py mr, not after its warning. (4x)
 - MR state in reports comes from the host mergeState field of the final query; re-query before writing the summary, never infer open/merged from earlier output. (3x)
 - Test cleanup deleting several rows: collect each failure and assert once at the end, so one 409 does not leave the rest behind (1x, hard failure).

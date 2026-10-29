@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L250 ship-prompt · L273 plan · L287 spike ·
-//   L300 local-loop · L364 stages · L490 ship · L561 deploy · L578 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L253 ship-prompt · L276 plan · L290 spike ·
+//   L303 local-loop · L367 stages · L493 ship · L564 deploy · L581 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -106,7 +106,7 @@ const REPORT = {
    failing: { type: 'array', items: { type: 'string' }, description: 'goal ids still failing, with one line each' },
    goalsDoc: { type: 'string', description: 'path of the testing-goals doc' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
   needsLiveCheck: { type: 'array', items: { type: 'string' } },
-  testerGuide: { type: 'string', description: 'link of the published human testing doc (linked on the task and in the MR); "none: <reason>" only for changes with nothing to test' },
+  testerGuide: { type: 'string', description: 'link of the published human testing doc (devtools.py finish links it and the AI doc on the task; the MR body too)' },
   seed: { type: 'array', items: { type: 'string' }, description: 'settings/data to seed after deploy' },
   foreignHooks: { type: 'array', items: { type: 'string' } },
   summary: { type: 'string', description: '<=200 words; MR merge state lives in mrs[].mergeState' },
@@ -189,8 +189,11 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fix
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." -Recommend <A|B>
  -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.
-- Every goal PASS: push, MRs (templates.md "MR body"), human testing doc, solution comment, tracker review; do NOT merge (the
- workflow reviews, waits for CI, merges): merged=false, mergeState OPEN.`
+- Every goal PASS: crafty.ps1 checkpoint -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
+ then the human doc (positive cases) + the AI doc (every case) and devtools.py finish <task> testing.md solution.md review --ai ai.md,
+ then devtools.py mr again with both links (edits the MR). A fix round: the same commands update the same docs, comment and MR
+ after its own PASS, never a new doc. Do NOT merge (the workflow reviews, waits for CI, merges; merge refuses an MR without
+ both doc links): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
  return `${WHY}
@@ -213,7 +216,7 @@ function synth(a) {
 function postMergePrompt(a, r) {
  return continuePrompt(a, r, `RESUME, ONLY THE HUMAN TESTING DOC: every MR below is MERGED (host-verified at recovery); build, review, CI and merge are done: never redo them, open no branch or MR.
 ${r.mrs.map((m) => `- ${m.url}`).join('\n')}
-Write, publish and link the human testing doc (templates.md "Human testing doc") on the task and in the MRs, plus the solution comment if missing. Report these MRs as merged=true and testerGuide = the doc link.`)
+Write the human doc and the AI doc (templates.md "Human testing doc", "Testing doc (AI)") and run devtools.py finish <task> testing.md solution.md review --ai ai.md (it updates any docs the task has, never new ones). Report these MRs as merged=true and testerGuide = the human doc link.`)
 }
 function continuePrompt(a, r, why) {
  return `${WHY}

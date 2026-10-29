@@ -29,7 +29,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it in the testing-goals doc
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
-#   4. testing goals doc (templates.md "Testing goals") + the automated tests (Rules > Tests)
+#   4. goals.md (local) + AI testing doc FIRST (templates.md) + automated tests (Rules > Tests); each loop round:
+#      devtools.py doc "<title>" ai.md --key <task>:testing-ai --label "round <n>"
 & $D check -Dir <wt>/<module>                                                  #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched             #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations                                 #    if you touched migrations: ISSUES 0
@@ -38,10 +39,10 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #      then report FAIL with the failing goals: a stronger round follows, then the coordinator); never BLOCKED for an env
 #      reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting, pause" -> stop checks there until "deploy
 #      done", then re-run them; 0 errors + every goal reached -> release the lease -> 6
+& $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
-python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md              # 6. MR (templates.md "MR body")
-python <kit>/skills/crafty/devtools.py doc "<title>" testing.md               #    human testing doc -> link it on the task and in the MR
-python <kit>/skills/crafty/devtools.py finish <task> <doc url> solution.md review   # guide link + solution comment + status review
+python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md              # 6. MR ("MR body"); after finish: again, both links
+python <kit>/skills/crafty/devtools.py finish <task> testing.md solution.md review --ai ai.md   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...                              #    promoted once all merge (automatic)
@@ -115,9 +116,11 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
-- **Tracker:** always `crafty.ps1 tracker` (any backend; statuses `inProgress` -> `review` once the MR, the testing doc and
+- **Tracker:** always `crafty.ps1 tracker` (any backend; statuses `inProgress` -> `review` once the MR, both docs and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
-  `inTest` or `closed` yourself.
+  `inTest` or `closed` yourself; `promoted` needs both doc links.
+- **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
+  section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one); `devtools.py mr` edits the open MR.
 - **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
   a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 

@@ -99,7 +99,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);
   own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
-  -> `crafty.ps1 tracker create -Parent <ask> -Name "[Bug] <ask> — <defect>"` with steps, saw, expected and evidence.
+  -> `crafty.ps1 tracker create -Parent <ask> -Key <ask>-<defect> -Name "[Bug] <ask> — <defect>"`: steps, saw, expected, evidence.
 
 ## Lead steps (a test-only run; bossy T1-T4)
 - L0. Machine setup once: `bossy.ps1 setup -WriteLocal` (targets.local.json = environments + test logins, the only place for
@@ -117,7 +117,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
      `in test` = `inTest`; other names pass through); plus `tasks` (`tracker view`), minus `exclude`; `mine` = only the
      `tracker owner`'s.
   2. Per task: MRs `<repo>!<iid>` (`tracking` file `tasks.<id>.mrs`, else MR links in the task, else merged MRs with the tracker
-     tag + id in `trackerRepos`); the testing doc (link on top of the description or in the comments) -> `<run>/guides/<code>.md`.
+     tag + id in `trackerRepos`); its "Testing doc (human):" link -> `<run>/guides/<code>.md` (finalize fills it).
      None of either -> left out. Tasks sharing a doc = one item.
   3. Target: `target` names a `targets.local.json` entry -> every item; else `kit.local.json` `qa.targets.<target>` = rules
      `[{ lists?, repos?, nameRegex?, pathRegex?, target, localEnv? }]`, first match -> `item.target` (+ `item.localEnv`); none

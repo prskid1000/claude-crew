@@ -206,8 +206,8 @@ $rb = 'kit total (\d+) of cap \d+ \(\d+%\) . tests (\d+) of cap \d+'; $b2 = & $p
 Set-Content (Join-Path $kc 'tests/zz.tests.ps1') ('#' * 140000) -NoNewline; git -C $kc add tests/zz.tests.ps1
 $b3 = & $py -X utf8 $KT2 budget 2>&1 | Out-String; $l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
 $m2 = [regex]::Match($b2, $rb); $m3 = [regex]::Match($b3, $rb)
-Expect "budget: +35000 test tokens add to tests, not the kit total; over testTokens = BUDGET-TESTS, a file over 8000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
-  $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap \d+\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 8000\)')
+Expect "budget: +35000 test tokens add to tests, not the kit total; over testTokens = BUDGET-TESTS, a file over 9000 = BUDGET ($($b3.Trim()))" ($m2.Success -and $m3.Success -and
+  $m2.Groups[1].Value -eq $m3.Groups[1].Value -and [int]$m3.Groups[2].Value - [int]$m2.Groups[2].Value -eq 35000 -and $l4 -match 'BUDGET-TESTS\s+tests: \d+ tokens \(cap \d+\)' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)')
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix
 $sp = Join-Path $k 'sec.py'; @'

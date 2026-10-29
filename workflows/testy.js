@@ -268,7 +268,7 @@ function testPrompt(it, L) {
  return `You are checky (role test, kind ${it.retest ? 'regression' : 'task'}). Test ONE tester guide on the test environment and return a verdict per check.
 
 GUIDE: ${it.title}
-Guide text (read it fully first): ${it.guideFile}
+Guide text (read it fully first; the task's AI testing doc, else its human doc): ${it.guideFile}
 Package code: ${it.code}. Output folder: ${outDir(it)} (create shots/, evidence/, scripts/). Reuse valid evidence already there.
 Tasks covered (tag each check with its task id):
 ${(it.subtasks || []).map((s) => `  - ${s.id}: ${s.name}${s.mrs ? `  (MRs: ${s.mrs})` : ''}`).join('\n')}

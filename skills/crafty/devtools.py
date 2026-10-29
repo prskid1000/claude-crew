@@ -2,20 +2,23 @@
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
  python -X utf8 devtools.py comment <taskId> <file.md | "text"> [kind] [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
- python -X utf8 devtools.py finish <taskId> <guideUrl|guide.md> <solution.md> [review] [--prose-ok "<why>"]   guide link on top, one solution comment (+ guide link), status
+ python -X utf8 devtools.py finish <taskId> <testing.md|url> <solution.md> [review] --ai <ai.md|url> [--prose-ok "<why>"]   both docs (human + AI)
+  by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status
  python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  python -X utf8 devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
- python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>]   publish a document (reports.type); prints its URL/path
- python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] <file> ...   host evidence files (gdocs: Drive) -> JSON
+ python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
+  publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
+  --run <cells.json> (pokey finalize, key <task>:testing-doc): fills the human doc's Result / Evidence + a dated "<env> run" section
+ python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L31 config · L65 run · L149 tracker · L237 git host · L320 MR · L383 merge · L629 docs · L749 plugins · L763 keepboth ·
-  L782 selftest · L945 CLI
+Sections: L34 config · L68 run · L152 tracker · L277 git host · L360 MR · L430 merge · L682 docs · L797 publish · L972 plugins ·
+  L986 keepboth · L1005 selftest · L1266 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -215,23 +218,60 @@ def set_status(tid, status):
 
 
 def comment(tid, text, kind='comment-status'):
+    """A kit comment of this kind: the tracker edits (or replaces) the task's latest one of the same kind."""
     prose_gate(kind, text)
-    return _tracker('comment', tid, text, '-ProseOk', f'devtools.py checked it ({kind})')
+    return _tracker('comment', tid, text, '-Kind', kind, '-ProseOk', f'devtools.py checked it ({kind})')
 
 
-def finish(tid, guide_url, solution_md, status='review'):
-    prose_gate('comment-solution', solution_md if guide_url in solution_md else f'{solution_md.rstrip()}\n\n**Testing doc**: https://doc')   # before doc, describe, status
-    if os.path.isfile(guide_url):   # publish it: never link a local path
-        guide_url = make_doc(os.path.splitext(os.path.basename(guide_url))[0], guide_url)
+LINK_LINE = re.compile(r'(?im)^[ \t]*(\*\*)?(Testing doc( \((human|AI)\))?|Testing goals \(AI\))(\*\*)?[ \t]*:[^\n]*\n?(?:[ \t]*\n)*')
+
+
+def links_block(desc, human, ai):
+    """The description with one fixed links block on top; every older testing-doc line removed."""
+    return f'Testing doc (human): {human}\nTesting doc (AI): {ai}\n\n' + LINK_LINE.sub('', desc or '').lstrip()
+
+
+def _doc_url(tid, kind, doc):
+    """A file -> published by key <task>:<kind> (same doc every round); a URL -> remembered as that key's link."""
+    if os.path.isfile(doc):
+        return publish(f'{tid}:{kind}', os.path.splitext(os.path.basename(doc))[0], doc)
+    if not re.match(r'https?://', doc):
+        raise SystemExit(f'{kind} {doc!r}: neither a file nor a URL')
+    rec = _pub_read(f'{tid}:{kind}')
+    if rec.get('url') and rec['url'] != doc:
+        print(f'[finish] {tid}:{kind} already has {rec["url"]}; {doc} replaces it on the task (pass the file to update one doc)', file=sys.stderr)
+    _pub_write(f'{tid}:{kind}', {**rec, 'key': f'{tid}:{kind}', 'url': doc, 'updated': time.strftime('%Y-%m-%d %H:%M')})
+    return doc
+
+
+def finish(tid, guide, solution_md, status='review', ai=None):
+    """Both docs (human + AI) published by key, the description's links block, one solution comment, status (never backwards)."""
+    ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
+    if not ai:
+        raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Testing doc (AI)"); both docs are linked on every task. Nothing was written.')
+    prose_gate('comment-solution', solution_md if 'Testing doc' in solution_md else f'{solution_md.rstrip()}\n\n**Testing doc**: https://doc')   # before doc, describe, status
+    if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
+        ok, ev = local_pass(tid)
+        if not ok:
+            raise SystemExit(f'finish {tid}: the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS"). Nothing was written.')
+    ai_url, guide_url = _doc_url(tid, 'testing-ai', ai), _doc_url(tid, 'testing-doc', guide)
     t = task(tid)
     md = t.get('description') or ''
+    new = links_block(md, guide_url, ai_url)
     # failed lookup: describing would wipe the description
-    if t.get('id') and t.get('name') and guide_url not in md:
-        _tracker('describe', tid, f'Testing doc: {guide_url}\n\n{md}')
+    if t.get('id') and t.get('name') and new != md:
+        _tracker('describe', tid, new)
+    solution_md = re.sub(r'\*\*Testing doc\*\*:[^\n]*', lambda m: f'**Testing doc**: {guide_url}', solution_md)   # the last field of its line
     if guide_url not in solution_md:
         solution_md = f'{solution_md.rstrip()}\n\n**Testing doc**: {guide_url}'
     comment(tid, solution_md, 'comment-solution')
-    set_status(tid, status)
+    cs = (CFG.get('tracker') or {}).get('statuses') or {}   # a name or a list of names (lib.ps1 tracker statuses)
+    past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in ([cs[k]] if isinstance(cs.get(k), str) else cs.get(k) or
+            {'promoted': ['promoted'], 'inTest': ['in test', 'for test'], 'closed': ['closed', 'complete', 'done']}[k])]
+    if str(t.get('status', '')).strip().lower() in past:   # a fix round after the merge: links and comment only
+        print(f'[finish] {tid} is {t.get("status")}: status kept (never backwards)', file=sys.stderr)
+    else:
+        set_status(tid, status)
 
 
 # ---- git host: lib.ps1 git-host adapters via crafty.ps1 host
@@ -269,7 +309,7 @@ def _host(verb, **a):
     with os.fdopen(fd, 'w', encoding='utf-8') as fh:
         json.dump(a, fh)
     try:
-        out = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'host', verb, '@' + p], write=verb in ('mr.create', 'mr.merge', 'mr.unauto'))
+        out = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'host', verb, '@' + p], write=verb in ('mr.create', 'mr.update', 'mr.merge', 'mr.unauto'))
     finally:
         os.remove(p)
     if verb == 'ci.log':
@@ -326,7 +366,7 @@ def _verified_gaps(body_md):
     """True when '## How tested' has no 'Not run:' / 'Pure logic:' line."""
     m = re.search(r'^## How tested[^\n]*\n(.*?)(?=^## |\Z)', body_md, re.M | re.S)
     sec = m.group(1) if m else ''
-    return bool(m) and not re.search(r'(?im)^\s*[-*]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*:', sec)
+    return bool(m) and not re.search(r'(?im)^\s*[-*|]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*[:|]', sec)   # a line or a table row
 
 
 UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/layout[^/]*/[^/]+\.xml$', re.I)
@@ -334,7 +374,7 @@ UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/l
 
 def _ui_line_missing(worktree, tgt, body_md):
     """Changed UI files vs origin/<target> when the body has no 'UI:' line, else []."""
-    if re.search(r'(?im)^\s*[-*]?\s*(\*\*)?UI(\*\*)?\s*:', body_md) or not tgt:
+    if re.search(r'(?im)^\s*[-*|]?\s*(\*\*)?UI(\*\*)?\s*[:|]', body_md) or not tgt:
         return []
     out = _run(['git', '-C', worktree, 'diff', '--name-only', f'origin/{tgt}...HEAD'])
     return [f for f in out.splitlines() if UI_FILES.search(f.strip())]
@@ -368,6 +408,13 @@ def mr_create(worktree, title, body_md, tgt=None):
     if ui:
         print(f'[mr] the diff touches templates/styles ({", ".join(ui[:3])}{" ..." if len(ui) > 3 else ""}) but "## How tested" has no'
          ' "UI: <committed spec or screenshot link>" line (or "UI: not a UI change") - templates.md "MR body"', file=sys.stderr)
+    ex = _host('mr.list', type=host, repo=proj, state='opened', source_branch=src)   # one MR per branch: a re-run edits it
+    old = next((x for x in ex if isinstance(x, dict) and x.get('web_url')), None) if isinstance(ex, list) else None
+    if old:
+        up = _host('mr.update', type=host, repo=proj, n=old.get('iid') or old.get('number'), title=title, body=body_md)
+        if not (isinstance(up, dict) and up.get('web_url')):
+            print(f'[mr] {old["web_url"]} is open from {src}; its body was not updated (git host has no mr.update: {str(up)[:200]}) - edit it by hand', file=sys.stderr)
+        return old['web_url']
     m = _host('mr.create', type=host, repo=proj, source=src, target=tgt, title=title, body=body_md)
     url = m.get('web_url') if isinstance(m, dict) else None
     if not url:   # a retry after a timeout: the first call's MR
@@ -402,6 +449,8 @@ def _remember_automerge(ref):
 
 MERGE_WORDS = ('MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED')
 RESOLVE = 'crafty.ps1 wt sync, resolve, re-check, push --force-with-lease to YOUR branch, then run merge again'
+DOC_LINK = re.compile(r'(?im)^[ \t>*_|-]*testing doc(?! \(ai\))[^:\n]{0,12}:[ \t*_|]*(\[[^\]\n]*\]\()?(https?://|[A-Za-z]:[\\/])\S')
+AI_LINK = re.compile(DOC_LINK.pattern.replace('testing doc(?! \\(ai\\))[^:\\n]{0,12}', 'testing doc \\(ai\\)[ \\t*_]*'))
 NO_DOC = re.compile(r'(?im)^[ \t>*_-]*testing doc[ \t*_]*:[ \t*_]*(none|n/?a)[ \t.]*($|[|;,(\u00b7])')   # one line; 'none yet, link below' passes
 
 
@@ -576,6 +625,10 @@ def _auto_merge(worktree, iid, max_wait):
     if NO_DOC.search(m.get('description') or m.get('body') or ''):   # merged 3x with no doc: testers had nothing to follow
         return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
                 f'put its link in the MR body, merge again\nNOT_MERGED')
+    body = m.get('description') or m.get('body') or ''
+    if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
+        return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines; after the local loop PASS: devtools.py finish, then devtools.py mr'
+                f' with the link (edits this MR), merge again\nNOT_MERGED')
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
@@ -630,15 +683,23 @@ def _auto_merge(worktree, iid, max_wait):
 _q = lambda s: subprocess.list2cmdline([str(s)]) if os.name == 'nt' else __import__('shlex').quote(str(s))
 
 
-def keep_doc(title, path, keep=None):
-    """Copy into keep (default <runtime>/work/docs); already there: in place."""
+def keep_doc(title, path, keep=None, url=None):
+    """Copy into keep (default <runtime>/work/docs); already there: in place; url = the kept file of an earlier publish."""
     if keep and os.path.abspath(keep) == os.path.dirname(os.path.abspath(path)):
         return path
     slug = re.sub(r'[^A-Za-z0-9]+', '-', title).strip('-')[:80] or 'doc'
-    dst = os.path.join(keep or kit_path('docs', create=True), slug + os.path.splitext(path)[1])
+    dst = url if url and not re.match(r'https?://', url) and os.path.splitext(url)[1] == os.path.splitext(path)[1] else \
+        os.path.join(keep or kit_path('docs', create=True), slug + os.path.splitext(path)[1])
     if os.path.abspath(dst) != os.path.abspath(path):
         shutil.copyfile(path, dst)
     return dst
+
+
+def _cells(row):
+    """A Markdown table row's cells; empty ones kept (a fresh human doc's Result / Evidence)."""
+    r = row.strip()
+    r = r[1:] if r.startswith('|') else r
+    return [c.strip() for c in (r[:-1] if r.endswith('|') and not r.endswith('\\|') else r).split('|')]
 
 
 def md_to_html(md, title=''):
@@ -647,7 +708,7 @@ def md_to_html(md, title=''):
     import html as _h
 
     def inline(t):
-        t = html.escape(t, quote=False)
+        t = html.escape(t, quote=False).replace('&lt;br&gt;', '<br>')   # a line break inside a table cell (evidence previews)
         t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
@@ -670,7 +731,7 @@ def md_to_html(md, title=''):
                 j += 1
             out.append('<pre><code>' + html.escape('\n'.join(lines[i + 1:j])) + '</code></pre>'); i = j + 1; continue
         if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?\s*$', lines[i + 1]):
-            close(); cells = lambda r: [c.strip() for c in r.strip().strip('|').split('|')]
+            close(); cells = _cells
             rows = ['<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in cells(l)) + '</tr>']
             i += 2
             while i < len(lines) and lines[i].startswith('|'):
@@ -706,36 +767,198 @@ def _html_of(a):
     return conv
 
 
-def make_doc(title, path, parent=None):
-    """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in."""
+def make_doc(title, path, parent=None, url=None):
+    """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in; url: an earlier publish of
+    this doc, updated in place where the adapter can."""
     ad = ADAPTERS['report'].get(REPORT_TYPE) or extra_missing(f'reports.type {REPORT_TYPE}', f'report-{REPORT_TYPE}')
     keep = parent if parent and os.path.isdir(parent) else None
     stamp_fn(ad['publish'])
-    return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep})
+    return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep, 'url': url})
 
 
-def make_evidence(name, files, folder=None, parent=None):
-    """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder."""
+def make_evidence(name, files, folder=None, parent=None, key=None):
+    """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder; key: reuse its folder."""
     ad = ADAPTERS['report'].get(REPORT_TYPE)
     if ad is None:   # evidence stays in the run folder; say why once
         print(f'reports.type {REPORT_TYPE} is a goody: run kitbag.py goody add report-{REPORT_TYPE}', file=sys.stderr)
     fn = (ad or {}).get('evidence')
-    if fn:
-        stamp_fn(fn)
-    return fn({'name': name, 'files': files, 'folder': folder, 'parent': parent}) if fn else {}
+    if not fn:
+        return {}
+    stamp_fn(fn)
+    rec = _pub_read(key) if key else {}
+    out = fn({'name': name, 'files': files, 'folder': folder or rec.get('folderId'), 'parent': parent})
+    if key and out.get('folderId'):
+        _pub_write(key, {**rec, 'key': key, 'folderId': out['folderId'], 'folderLink': out.get('folderLink') or rec.get('folderLink'),
+                         'updated': time.strftime('%Y-%m-%d %H:%M')})
+        out['folderLink'] = out.get('folderLink') or rec.get('folderLink')
+    return out
+
+
+# ---- publish: one artefact per key (<task or run>:<kind>), the same id and link on every round; .state/published/
+PUB_KINDS = {'testing-doc': 'append', 'testing-ai': 'append', 'qa-report': 'append'}   # other kinds: replace
+GOALS_MARK = re.compile(r'(?m)^#{1,2} (Testing goals\b|Goals \(what must be true\))')   # templates.md "Testing goals"
+CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Human testing doc" (positive cases)
+AI_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Type\s*\|\s*Steps\s*/\s*API call[^|]*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Testing doc (AI)"
+
+
+def _pub_file(key):
+    return os.path.join(kit_path('published', create=True), re.sub(r'[^\w.-]+', '_', key) + '.json')
+
+
+def _pub_read(key):
+    try:
+        with open(_pub_file(key), encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _pub_write(key, rec):
+    f = _pub_file(key)
+    with open(f + '.tmp', 'w', encoding='utf-8') as fh:
+        json.dump(rec, fh, indent=1)
+    os.replace(f + '.tmp', f)
+
+
+def local_pass(task):
+    """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence)."""
+    last = None
+    for f in glob.glob(os.path.join(kit_path('agents'), '*', 'resume.json')):
+        try:
+            with open(f, encoding='utf-8') as fh:
+                steps = json.load(fh).get('steps') or []
+        except (OSError, ValueError):
+            continue
+        for s in steps:
+            if str(s.get('step', '')).lower() == 'loop' and task in re.split(r'[\s,;]+', str(s.get('item', ''))) and (not last or s.get('at', '') >= last.get('at', '')):
+                last = s
+    if not last:
+        return None, ''
+    ev = str(last.get('evidence', ''))
+    return bool(re.search(r'\bPASS\b', ev) and not re.search(r'\b(FAIL|BLOCKED)\b', ev)), ev
+
+
+def _demote(md):
+    """A round's Markdown under a '## Round' heading: its H1 dropped, every other heading one level down."""
+    return re.sub(r'(?m)^(#{1,5}) ', r'#\1 ', re.sub(r'\A\s*# [^\n]*\n', '', md))
+
+
+def _body_of(h):
+    m = re.search(r'(?is)<body[^>]*>(.*)</body>', h)
+    return m.group(1) if m else h
+
+
+def _table_rows(md, cells=None):
+    """Rows of every table whose header has '#', 'Result' and 'Evidence': [(id, result, evidence)]; cells {id: {result,
+    evidence}} -> the Markdown with those two cells filled. -> (rows, md)"""
+    out, rows, cols = [], [], None
+    for line in md.split('\n'):
+        c = _cells(line) if line.lstrip().startswith('|') else None
+        low = [x.lower() for x in c] if c else []
+        if c and '#' in low and 'result' in low and 'evidence' in low:
+            cols = {n: i for i, n in enumerate(low)}
+        elif c and cols and not re.fullmatch(r'[\s|:-]+', line) and len(c) == len(cols):
+            rows.append((c[cols['#']], c[cols['result']], c[cols['evidence']]))
+            if cells and c[cols['#']] in cells:
+                for k in ('result', 'evidence'):
+                    c[cols[k]] = str(cells[c[cols['#']]].get(k) or '').replace('|', '\\|')
+                line = '| ' + ' | '.join(c) + ' |'
+        elif not c:
+            cols = None
+        out.append(line)
+    return rows, '\n'.join(out)
+
+
+def _compose(title, rounds, runs=()):
+    """The newest version on top (Result / Evidence filled by the newest env run), then env runs and earlier rounds newest
+    first under dated headings ('## <env> run <date>', '## Round <n> — <date>'); one round, no run = unchanged. -> (text, ext)"""
+    top = rounds[-1]
+    if runs and top['ext'] == '.md':
+        top = dict(top, body=_table_rows(top['body'], runs[-1].get('cells') or {})[1])
+    secs = [(f'{r["label"] or "env"} run {r["at"]}', r) for r in reversed(runs)]
+    secs += [(f'Round {i + 1} — {r["at"]}{" " + r["label"] if r["label"] else ""}', r) for i, r in reversed(list(enumerate(rounds[:-1])))]
+    if not secs:
+        return top['body'], top['ext']
+    if any(r['ext'] == '.html' for r in [top] + [r for _, r in secs]):
+        h = lambda r: _body_of(r['body'] if r['ext'] == '.html' else md_to_html(r['body']))
+        body = h(top) + ''.join(f'<h2>{html.escape(n)}</h2>{h(r)}' for n, r in secs)
+        return f'<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head><body>{body}</body></html>', '.html'
+    return top['body'].rstrip() + '\n\n' + '\n\n'.join(f'## {n}\n\n{_demote(r["body"]).strip()}' for n, r in secs) + '\n', '.md'
+
+
+def _check_doc(kind, scope, path, body):
+    """testing-doc (human, positive cases, after the loop PASS) / testing-ai (the local loop record, every case): their tables."""
+    if GOALS_MARK.search(body):
+        raise SystemExit(f'{path} is the local goals file (templates.md "Testing goals"): never published; publish the AI doc'
+                         ' ("Testing doc (AI)") and, after the loop PASS, the human doc. Nothing was published.')
+    tb, name, tpl = (CHECKS_TABLE, '| # | Steps | Expected | Result | Evidence |', 'Human testing doc') if kind == 'testing-doc' else \
+        (AI_TABLE, '| # | Type | Steps / API call + payload | Expected | Result | Evidence |', 'Testing doc (AI)')
+    if not tb.search(body):
+        raise SystemExit(f'{path} has no case table "{name}" (templates.md "{tpl}"). Nothing was published.')
+    neg = re.search(r'(?im)^\|[^\n]*\|\s*negative\s*\|', body)
+    if kind == 'testing-doc' and neg:
+        raise SystemExit(f'{path} has a negative row: the human doc holds positive cases only; negative ones go in the AI doc. Nothing was published.')
+    if kind == 'testing-doc' and (re.search(r'!\[', body) or any(r or e for _, r, e in _table_rows(body)[0])):
+        raise SystemExit(f'{path} has evidence or results: the human doc ships with Result / Evidence empty; a deployed-env run fills them'
+                         ' (local evidence lives in the AI doc). Nothing was published.')
+    if kind == 'testing-ai':
+        if not neg:
+            raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "{tpl}"). Nothing was published.')
+        return   # published every loop round: it is the loop's record
+    ok, ev = local_pass(scope)
+    if not ok:
+        raise SystemExit(f'{kind} of {scope} refused: its local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS.'
+                         f' Run the loop until every case passes, then `crafty.ps1 checkpoint -Step loop -Item {scope} -Evidence "round <n> PASS"`.'
+                         ' Nothing was published.')
+
+
+def publish(key, title, path, parent=None, mode=None, label='', run=None):
+    """Publish or update by key: the first call creates the doc, later calls update the same doc (append: a dated round on top,
+    earlier rounds below; replace: the new text only). run = {id: {result, evidence}} of a deployed-env run (pokey finalize on
+    <task>:testing-doc): fills the human doc's Result / Evidence and adds the report as a dated '<env> run' section; no human
+    doc yet -> the report is published as <scope>:qa-report."""
+    scope, _, kind = key.rpartition(':')
+    if not scope or not kind:
+        raise SystemExit(f'--key {key!r}: use <task or run>:<kind>, e.g. 86abc:testing-doc')
+    with open(path, encoding='utf-8') as fh:
+        body = fh.read()
+    if run is not None and not _pub_read(key).get('rounds'):
+        key, kind, run = f'{scope}:qa-report', 'qa-report', None
+    if kind in ('testing-doc', 'testing-ai') and run is None:
+        _check_doc(kind, scope, path, body)
+    f = _pub_file(key)
+    with locked(f):
+        rec = _pub_read(key)
+        rounds, runs = list(rec.get('rounds') or []), list(rec.get('runs') or [])
+        new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
+        if run is not None:
+            runs.append(dict(new, cells=run))
+        else:
+            rounds = (rounds if (mode or PUB_KINDS.get(kind, 'replace')) == 'append' else []) + [new]
+        text, ext = _compose(rec.get('title') or title, rounds, runs)
+        out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + ext)
+        with open(out, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(text)
+        own = {'markdown': out, 'html': os.path.splitext(out)[0] + '.doc.html'}.get(REPORT_TYPE)   # kept types: one file per key, never per title
+        url = make_doc(rec.get('title') or title, out, parent, rec.get('url') or own)
+        if rec.get('url') and url != rec['url']:
+            print(f'[publish] {key}: reports.type {REPORT_TYPE} could not update {rec["url"]} in place: new link {url}', file=sys.stderr)
+        _pub_write(key, {**rec, 'key': key, 'title': rec.get('title') or title, 'url': url, 'type': REPORT_TYPE,
+                         'updated': new['at'], 'rounds': rounds, 'runs': runs})
+    return url
 
 
 R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): goody report-gdocs
-# adapter:report/markdown: the file, kept
-R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'])}
+# adapter:report/markdown: the file, kept (an earlier publish: the same file)
+R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'], a.get('url'))}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept
-R['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'])}
+R['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'], a.get('url'))}
 
 
-# adapter:report/command: reports.command with {title} {path} {parent}; last output word = the URL
+# adapter:report/command: reports.command with {title} {path} {parent} {url} (an earlier publish: update it); last output word = the URL
 def _command(a):
     c = RCFG.get('command') or sys.exit('reports.type command needs reports.command')
-    for k, v in (('title', a['title']), ('path', a['path']), ('parent', a['parent'] or a['keep'] or '')):
+    for k, v in (('title', a['title']), ('path', a['path']), ('parent', a['parent'] or a['keep'] or ''), ('url', a.get('url') or '')):
         c = c.replace('{' + k + '}', _q(v))
     r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=300)
     u = (r.stdout.split() or [''])[-1]
@@ -853,6 +1076,10 @@ def selftest():
         calls.clear(); g['_host'] = nd('- Testing doc: https://doc/1 (none of the old steps)')
         expect('MR body "Testing doc: none": NOT_MERGED, no merge call; a linked doc merges', merge_word(r) == 'NOT_MERGED' and 'Testing doc: none' in r
                and none_merged and merge_word(auto_merge('.', '7')) == 'MERGED' and ok == ['MERGED', 'MERGED'])
+        tt0 = g['TRACKER_TYPE']; g['TRACKER_TYPE'] = 'clickup'
+        calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: pending'); rp = auto_merge('.', '7'); pend = not merged()
+        calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: [d](https://doc/1)\n- Testing doc (AI): https://doc/2'); g['TRACKER_TYPE'] = tt0
+        expect('MR with a task link: "Testing doc: pending" NOT_MERGED, a linked doc merges', merge_word(rp) == 'NOT_MERGED' and pend and merge_word(auto_merge('.', '7')) == 'MERGED')
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         repos0 = CFG.get('repos'); CFG['repos'] = [{'name': 'r', 'ci': {'mrPipelines': False}}]
@@ -905,8 +1132,102 @@ def selftest():
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
     expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
     _report_selftest(expect)
+    _publish_selftest(expect, refused)
     print(f'{fails} failure(s)')
     return 1 if fails else 0
+
+
+def _publish_selftest(expect, refused):
+    """publish by key, the local-loop gate, both doc shapes, a QA run filling the AI doc, the links block, finish, MR reuse,
+    evidence folder reuse (markdown type, stubbed tracker and host)."""
+    g, tmp = globals(), tempfile.mkdtemp()
+    saved = {k: g[k] for k in ('REPORT_TYPE', 'kit_path', '_tracker', 'task', 'PROSE_OK', 'remote', '_run', '_host')}
+    w = lambda p, t: open(p, 'w', encoding='utf-8').write(t) and p
+
+    def kp(n, create=False):
+        p = os.path.join(tmp, n); os.makedirs(p, exist_ok=True); return p
+    try:
+        g.update(REPORT_TYPE='markdown', kit_path=kp, PROSE_OK='selftest')
+        doc = ('# Testing: X\n## What changed\nThe list sorts by date.\n## Before you start / Feature switches\nSet first:\n| Setting | Where | Value |\n'
+               '|---|---|---|\n| sort | Settings | on |\n## Checks\nList screen:\n| # | Steps | Expected | Result | Evidence |\n|---|---|---|---|---|\n'
+               '| T1 | 1. Open the list. | Newest first. | | |\n'
+               '## Out of scope\n| Item | Why |\n|---|---|\n| Email | qa.outOfScope |\n## Result (testers)\nAll pass -> close.\n')
+        ait = '| # | Type | Steps / API call + payload | Expected | Result | Evidence |\n|---|---|---|---|---|---|\n'
+        aidoc = ('# Testing doc (AI): X\nCases:\n' + ait + '| A1 | positive | GET /list | 200, newest first | | |\n'
+                 '| A2 | negative | GET /list as viewer | 403 | | |\n| A3 | edge | GET /list, no rows | 200, [] | | |\n')
+        human, ai = w(os.path.join(tmp, 'h.md'), doc), w(os.path.join(tmp, 'a.md'), aidoc)
+        tf = os.path.join(KIT, 'templates.md')
+        if os.path.isfile(tf):   # a full kit (goody test kits copy scripts only)
+            tpl = open(tf, encoding='utf-8').read()
+            blk = lambda n: re.search(rf'(?ms)^## {re.escape(n)}\n.*?```markdown\n(.*?)```', tpl).group(1)
+            expect('templates: the AI doc has negative rows and its case table; the human doc has positive rows only',
+                   '| negative |' in blk('Testing doc (AI)') and AI_TABLE.search(blk('Testing doc (AI)')) and CHECKS_TABLE.search(blk('Human testing doc'))
+                   and 'negative' not in blk('Human testing doc').lower())
+            long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
+            expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
+                   not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
+        h = md_to_html(doc.replace('| | |\n', '| PASS | ![T1: list](https://img/1.png) |\n'))
+        expect('md_to_html (the gdocs upload): Markdown tables become HTML tables (Docs imports real tables), images inline in the cell',
+               '<th>Steps</th>' in h and '<th>Evidence</th>' in h and re.search(r'<td><p><img src="https://img/1.png"', h) and '| T1 |' not in h)
+        refused('testing-doc: local screenshots or results in the human doc -> refused', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'hi.md'), doc.replace('| | |\n', '| PASS | |\n'))), 'evidence or results')
+        goals = w(os.path.join(tmp, 'g.md'), '# Testing goals: T9 X\n## Goals (what must be true)\n| G1 |\n')
+        refused('testing-doc: no "| # | Steps | Expected | Result | Evidence |" table -> refused', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h0.md'), '# Testing: X\n## Checks\n### T1 — s\n')), 'no case table')
+        refused('testing-doc: a negative row -> refused (human = positive cases)', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'hn.md'), doc.replace('| T1 |', '| T1 | negative |'))), 'negative row')
+        refused('testing-ai: no negative row -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a0.md'), aidoc.replace('negative', 'positive'))), 'no negative row')
+        os.makedirs(os.path.join(kp('agents'), 'd1'))
+        loop = lambda ev: w(os.path.join(kp('agents'), 'd1', 'resume.json'), json.dumps({'steps': [{'step': 'loop', 'item': 'T9', 'evidence': ev, 'at': '2026-10-29T10:00:00'}]}))
+        refused('testing-doc: refused without a local loop PASS', lambda: publish('T9:testing-doc', 'X', human), 'not recorded')
+        loop('round 1 FAIL G2')
+        refused('testing-doc: refused while the loop is FAIL', lambda: publish('T9:testing-doc', 'X', human), 'round 1 FAIL')
+        ua = publish('T9:testing-ai', 'X', ai, label='loop round 1')
+        expect('testing-ai: the loop record publishes during the loop (no PASS needed)', bool(ua))
+        loop('round 2 PASS')
+        refused('goals.md is never published (human or AI key)', lambda: publish('T9:testing-ai', 'X', goals), 'never published')
+        u1 = publish('T9:testing-doc', 'X', human)
+        u2 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h2.md'), doc.replace('| T1 |', '| T2 |')))
+        body = open(u2, encoding='utf-8').read()
+        expect('publish by key: round 2 updates the same doc, newest version on top, earlier rounds dated below', u1 == u2 and
+               body.index('| T2 |') < body.index('## Round 1') < body.index('| T1 |') and _pub_read('T9:testing-doc')['url'] == u1)
+        ua2 = publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a2.md'), aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS |')), label='loop round 2')
+        expect('testing-ai: round 2 (filled Result) updates the same doc', ua2 == ua and '| PASS |' in open(ua2, encoding='utf-8').read())
+        rep = w(os.path.join(tmp, 'r.md'), '# QA\n## Results\n| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T2 | PASS | ok | |\n')
+        expect('the human doc starts with Result / Evidence empty', _table_rows(open(u2, encoding='utf-8').read())[0][0] == ('T2', '', ''))
+        ur = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'PASS', 'evidence': '![T2: list](https://img/s2.png)'}})
+        hb = open(ur, encoding='utf-8').read()
+        expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',
+               ur == u1 and '| T2 | 1. Open the list. | Newest first. | PASS | ![T2: list](https://img/s2.png) |' in hb
+               and hb.index('| T2 |') < hb.index('## stg run ') < hb.index('## Round 1') and not _pub_read('T9:qa-report'))
+        nr = publish('T7:testing-doc', 'X', rep, run={})
+        expect('a run without a human doc: the report is published by <task>:qa-report', _pub_read('T7:qa-report').get('url') == nr)
+        legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
+        expect('links block: 7 legacy lines -> one human + one AI line, the rest kept',
+               links_block(legacy, 'https://h', 'https://a') == 'Testing doc (human): https://h\nTesting doc (AI): https://a\n\nThe ask.\n')
+        calls, st = [], {'s': 'in progress'}
+        g['_tracker'] = lambda *a: calls.append(a) or ''
+        g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': 'Testing doc: https://old\n\nThe ask.'}
+        refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
+        expect('finish refused before any tracker write', not calls)
+        finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=ai)
+        d = next(a[2] for a in calls if a[0] == 'describe'); c = next(a for a in calls if a[0] == 'comment')
+        expect('finish: links block (human + AI) on top, solution comment of kind comment-solution with the one human link, status review',
+               d.startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')
+               and c[2].count(u1) == 1 and '<link>' not in c[2] and calls[-1] == ('status', 'T9', 'review'))
+        calls.clear(); st['s'] = 'promoted'
+        finish('T9', human, '**Solution** — x\n**Testing doc**: <link>', ai=ai)
+        expect('finish on a promoted task: docs and comment, status never moved back', not [a for a in calls if a[0] == 'status'] and [a for a in calls if a[0] == 'comment'])
+        hc = []
+        g.update(remote=lambda w: ('gitlab', 'g/r'), _run=lambda *a, **k: 'f/x', _host=lambda v, **a: hc.append(v) or (
+            [{'iid': 5, 'web_url': 'https://h/g/r/5'}] if v == 'mr.list' else {'web_url': 'https://h/g/r/5'}))
+        u = mr_create('.', 'fix(x): y (T9)', '## Summary\n## Changes\n## How tested\n| Not run | nothing |\n## Risks\n## Links\n', 'main')
+        expect('mr: an open MR from the branch is edited (mr.update), never a second one', u == 'https://h/g/r/5' and hc == ['mr.list', 'mr.update'])
+        g.update(remote=saved['remote'], _run=saved['_run'], _host=saved['_host'])
+        seen = []
+        ADAPTERS['report']['markdown']['evidence'] = lambda a: seen.append(a['folder']) or {'folderId': a['folder'] or 'F1', 'folderLink': 'https://f/F1', 'files': {}}
+        make_evidence('e', [], key='T9:evidence'); ev = make_evidence('e', [], key='T9:evidence')
+        expect('evidence by key: the second run reuses the task folder', seen == [None, 'F1'] and ev['folderLink'] == 'https://f/F1')
+    finally:
+        ADAPTERS['report']['markdown'].pop('evidence', None)
+        g.update(saved); shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _report_selftest(expect):
@@ -958,7 +1279,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from') if cmd in ('doc', 'evidence') else ('--prose-ok',) if cmd in ('comment', 'finish', 'mr') else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
@@ -977,7 +1298,7 @@ def _cli():
     if cmd == 'comment':
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
-        finish(a[1], a[2], _body(a[3]), *(a[4:5] or []))
+        finish(a[1], a[2], _body(a[3]), *(a[4:5] or ['review']), ai=opt.get('--ai'))
         print('done')
     elif cmd == 'mr':
         print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
@@ -996,10 +1317,15 @@ def _cli():
         if not os.path.isfile(path):
             print(f'devtools.py doc: file not found: {path} - write it first (nothing was published)', file=sys.stderr)
             sys.exit(2)
-        print(make_doc(title, path, *(a[3:4] or [])))
+        if opt.get('--mode') not in (None, 'append', 'replace'):
+            print('devtools.py doc: --mode append|replace', file=sys.stderr)
+            sys.exit(2)
+        print(publish(opt['--key'], title, path, *(a[3:4] or [None]), mode=opt.get('--mode'), label=opt.get('--label') or '',
+                      run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None) if opt.get('--key')
+              else make_doc(title, path, *(a[3:4] or [])))
     elif cmd == 'evidence':
         ff = open(opt['--files-from'], encoding='utf-8-sig').read().splitlines() if opt.get('--files-from') else []   # one path per line: no command-line limit
-        print(json.dumps(make_evidence(a[1], a[2:] + [x for x in ff if x.strip()], opt.get('--folder') or None, opt.get('--parent') or None)))
+        print(json.dumps(make_evidence(a[1], a[2:] + [x for x in ff if x.strip()], opt.get('--folder') or None, opt.get('--parent') or None, opt.get('--key'))))
 
 
 if __name__ == '__main__':

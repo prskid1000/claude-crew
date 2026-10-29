@@ -23,8 +23,8 @@ only here.
   human testing doc, tracker promoted (no user gate) -> merged work waits: nobody asks or proposes a deploy; a person says `deploy
   <env>` and `opsy` deploys at once (`deploy.trigger`) -> in test -> testers close it, or it fails testing and comes
   back. Bugs are reproduced locally before they are fixed.
-- **Test-only** (deployed tasks on a test env, on request): agent QA per testing doc -> all pass: closed · own check failed or
-  incomplete: failedTesting (back to dev) · a new defect: one [Bug] task under the original ask.
+- **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
+  or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
 - **Budget** (both flows, README "Configuration" `budget`): an agent hands off at 80% of its tool's compaction point (resume
   brief, fresh agent); a run over its cap is refused with the split, at 80% of it nothing new starts (the rest returns as `next`).
 - **Decision pauses**: a change to existing behaviour a user sees (output, screens, data, rules applied) that the task did

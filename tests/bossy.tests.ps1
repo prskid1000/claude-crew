@@ -102,23 +102,33 @@ $null = Invoke-Track run -Detail
 "once:$(@($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match '^All MRs merged' }).Count -eq 1)"
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
-$c1 = @($global:cmts | Where-Object id -eq 't6').Count
+$c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -notmatch '\[kit:mrs-' }).Count
 $null = Invoke-Track add -Task t6 -HoldPromotion ''
 $null = Invoke-Track run -Detail
-"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object id -eq 't6').Count -eq 1)"
+"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -notmatch '\[kit:mrs-' }).Count -eq 1)"
 $KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'; $global:q = 0
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
 function Get-TrackerTask($id) { if ($id -eq 't8') { Update-KitTracking { param($t) $t.tasks['t8'].holdPromotion = 'late' } }; [pscustomobject]@{ status = 'promoted'; subtasks = @() } }   # a hold added mid-run
 $null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
 "keep:$((Read-KitTracking).tasks['t8'].holdPromotion -eq 'late')"
-$KitConf.TrackerType = 'fake'; function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks = @(); description = 'Testing doc: none' } }
+$KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h'; function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'review'; subtasks = @(); description = $global:tdesc } }
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
-$null = Add-TrackerComment t9 '**Testing doc**: [doc](https://docs.example/t9)'; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
+$global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
 "nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk)"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
-Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with a testing-doc link)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8
+$mc = Invoke-PsTest 'mrs-comment' @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened'; title = "T$($Path -replace '^.*/', '')" } }
+function Start-Process { }
+$null = Invoke-Track add -Task m1 -Mrs 'g/web!12'; $null = Invoke-Track add -Task m1 -Mrs 'g/api!7' -MergeAfter 'g/web!12>g/api!7'
+$c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '\[kit:mrs-m1\]' })
+"mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open\s+- g/web !12 — T12 — open')"
+'@ @($O)
+Expect 'track add: ONE MRs comment, edited per round, producers first then by number' ("$mc" -match 'mrs:True')
+Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8
 $qr = Join-Path (Kd) 'qg'; foreach ($x in 'A1', 'B1') { $null = New-Item -ItemType Directory -Force "$qr/r1/$x", "$qr/r0"; '{}' | Set-Content "$qr/r1/$x/results.json" }; 'r' | Set-Content "$qr/r1/A1/report.md"
 $qg = pwsh -NoProfile -Command ". '$O'; Get-KitQaRunGap '$qr/r1'; Get-KitQaRunGap '$qr/r0'"
 Expect "tidy digest: QA reports are per item; the items without one named, an empty run said ($qg)" ("$qg" -eq ', no report: B1 , no item tested')

@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L986 tracker · L1240 git-host ·
-  L1356 kitlog · L1470 params · L1633 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L361 leases · L744 status · L951 supervise report · L986 tracker · L1259 git-host ·
+  L1375 kitlog · L1489 params · L1652 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1038,7 +1038,7 @@ function __TrPrio([string]$p) { switch ($p) { '1' { 'urgent' } '2' { 'high' } '3
 function __TrWho($id, $u) { [pscustomobject]@{ id = "$id"; username = "$u" } }
 function __TrSub($i, $n, $s, $u) { [pscustomobject]@{ id = $i; name = $n; status = $s; url = $u } }
 function __TrRow($i, $n, $s, $who) { [pscustomobject]@{ id = $i; name = $n; status = $s; assignees = $who } }
-function __TrComment($u, $d, $t) { [pscustomobject]@{ user = [string]$u; date = (__TrDate $d); text = [string]$t } }
+function __TrComment($u, $d, $t, $i) { [pscustomobject]@{ user = [string]$u; date = (__TrDate $d); text = [string]$t; id = [string]$i } }
 function __TrTask($i, $n, $s, $u, $p, $who, $l, $subs, $d) { [pscustomobject]@{ id = $i; name = $n; status = $s; url = $u; parent = $p; assignees = $who; list = $l; subtasks = $subs; description = $d } }
 function __TrPartOf($a) { if ($a.parent) { "Part of #$($a.parent -replace '^.*#', '')`n`n" } }
 function __TrNote($a) { if ($a.text) { Add-TrackerComment $a.id "$($a.text) (attached: $($a.leaf))" } }
@@ -1075,7 +1075,7 @@ function __TrNone([string]$Id, [string]$What, [scriptblock]$Change) {
   $o
 }
 function __TrNoneAll { Get-ChildItem $__trNoneDir -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } }
-function __TrNoneNote($o, [string]$t) { $o.comments = @(@($o.comments) + [pscustomobject]@{ user = [Environment]::UserName; date = (Get-Date).ToUniversalTime().ToString('s'); text = $t }) }
+function __TrNoneNote($o, [string]$t) { $o.comments = @(@($o.comments) + [pscustomobject]@{ user = [Environment]::UserName; date = (Get-Date).ToUniversalTime().ToString('o'); text = $t; id = "c$(@($o.comments).Count + 1)$([guid]::NewGuid().ToString('n').Substring(0, 6))" }) }
 
 function __TrOsFullName {
   $n = ''
@@ -1103,6 +1103,8 @@ Register-KitAdapter 'tracker' 'none' @{
   'status' = { param($a) $null = __TrNone $a.id "status $($a.status)" { param($o) $o.status = $a.status }; "status of $($a.id): $($a.status) (tracker none)" }
   'comment' = { param($a) $null = __TrNone $a.id "comment $($a.text)" { param($o) __TrNoneNote $o $a.text }; "commented on $($a.id) (tracker none)" }
   'comments' = { param($a) @((__TrNone $a.id 'comments' $null).comments) }
+  'comment-edit' = { param($a) $null = __TrNone $a.id "comment-edit $($a.comment)" { param($o) foreach ($c in @($o.comments)) { if ($c.id -eq $a.comment) { $c.text = $a.text } } }; "edited comment $($a.comment) on $($a.id) (tracker none)" }
+  'comment-delete' = { param($a) $null = __TrNone $a.id "comment-delete $($a.comment)" { param($o) $o.comments = @($o.comments | Where-Object { $_.id -ne $a.comment }) }; "deleted comment $($a.comment) on $($a.id) (tracker none)" }
   'create' = { param($a)
     $d = Get-KitPath tracker-none -Create; $n = 1 + @(Get-ChildItem $d -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue).Count
     while (Test-Path (Join-Path $d "LOCAL-$n.json")) { $n++ }
@@ -1171,11 +1173,27 @@ function Invoke-KitOutbox([switch]$DryRun) {
     if ($keep.Count) { [IO.File]::WriteAllLines($f, $keep) } else { Remove-Item -LiteralPath $f -Force }
   }
 }
-function Set-TrackerStatus([string]$Id, [string]$Status) { Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status } }
+function Set-TrackerStatus([string]$Id, [string]$Status) {
+  # promoted (inTest follows it) needs both doc links; an unread task fails closed (KIT_DOC_GATE=1: also tracker none)
+  if (($Status -eq 'promoted' -or (Test-TrackerStatus $Status 'promoted')) -and ($__trType -ne 'none' -or $env:KIT_DOC_GATE -eq '1') -and (Test-KitTaskDocLink $Id) -ne $true) {
+    throw "tracker: $Id not set to $Status`: its description lacks 'Testing doc (human):' and 'Testing doc (AI):' links (devtools.py finish writes them) or the task could not be read"
+  }
+  Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
+}
 function Add-TrackerComment([string]$Id, [string]$Text) { $t = __TrText $Text; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
+# a kit comment ends with its marker '[kit:<kind>]': a new round edits the task's latest one of that kind (adapter comment-edit),
+# else posts and deletes it (comment-delete), else only posts; comments without the marker (people's) are never touched
+function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text) {
+  $mark = "[kit:$Kind]"; $body = "$((__TrText $Text).TrimEnd())`n`n$mark"; $ad = $KitAdapters['tracker'][$__trType]
+  $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and "$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') } | Select-Object -Last 1
+  if ($old -and $ad -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body } }
+  $r = Add-TrackerComment $Id $body
+  if ($old -and $ad -and $ad.ContainsKey('comment-delete')) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
+  $r
+}
 
 $script:__trOwner = $null
 function Get-TrackerOwner {
@@ -1217,11 +1235,12 @@ function Get-KitFailedChecks([string[]]$Texts) {
     }
   }
 }
-# the link devtools.py finish writes: 'Testing doc: <url>' in the description or '**Testing doc**: <url>' in a comment
+# the links block devtools.py finish writes in the description: both the human testing doc and the testing-goals doc
 function Test-KitTaskDocLink([string]$Task) {
-  try { $tt = Get-TrackerTask $Task; $cm = @(Get-TrackerComments $Task) } catch { return $null }   # unread = unknown, never "no doc"
-  if (-not $tt) { return $null }
-  [bool]@(@([string]$tt.description) + @($cm | ForEach-Object { [string]$_.text }) | Where-Object { $_ -match '(?i)testing doc[^\n]{0,40}?https?://' }).Count
+  try { $tt = Get-TrackerTask $Task } catch { return $null }   # unread = unknown, never "no doc"
+  if (-not $tt -or -not $tt.name) { return $null }
+  $d = [string]$tt.description
+  ($d -match '(?im)^\W{0,3}Testing doc \(human\)\W{0,3}:\s*\S') -and ($d -match '(?im)^\W{0,3}Testing doc \(AI\)\W{0,3}:\s*\S')
 }
 # this request's mandate only (a stored one is an older session's words); sonnet unless the coordinator passes -Complex
 function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {
