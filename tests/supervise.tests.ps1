@@ -15,6 +15,8 @@ $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O
 Expect "board join: -Type only = the agent id; neither = usage, exit 2 ($juc)" ($jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Agent')
 $cx = pwsh -NoProfile -Command ". '$O'; Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from the shared /tmp (fixed from history); halted the push'; Test-KitCollision 'Halted: another agent is editing the same worktree'"
 Expect 'supervise collision: a fix report naming another agent = no flag; a real collision = flag' ($cx[0] -eq 'False' -and $cx[1] -eq 'True')
+$tw = (& { . (Lib); Format-KitStatusTable @(@{ name = 'wave-brief-a8da'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'FINISHED'; done = 'StructuredOutput' }) })[2]
+Expect "status table: ids compacted, words <= 14 (else cards) ($tw)" ($tw -eq '| wave-brief- a8da | rm-staging- 2xyz e8c577f7 | FINISHED: Structured Output | — | — | — |')
 $lg = Invoke-PsTest 'track-lag' @'
 . $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review' }
 Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake

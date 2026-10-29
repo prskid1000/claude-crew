@@ -1049,7 +1049,7 @@ function Format-KitReport($d) {
   if ($rs.Count -gt 10) { $rs = @($rs | Select-Object -First 9) + [pscustomobject]@{ name = "…$($rs.Count - 9) more"; by = '—'; gb = (@($rs | Select-Object -Skip 9 | ForEach-Object { [double]$_.gb }) | Measure-Object -Sum).Sum } }
   if ($rs.Count) {
     $reportLines.Add(''); $reportLines.Add('| Resource | Used by | RAM |'); $reportLines.Add('|---|---|---|')
-    foreach ($r in $rs) { $reportLines.Add("| $($r.name) | $(if ($r.by) { $r.by } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' }) |") }
+    foreach ($r in $rs) { $reportLines.Add("| $(Format-KitCell $r.name) | $(if ($r.by) { Format-KitCell $r.by } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' }) |") }
   }
   # 3. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs)
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))

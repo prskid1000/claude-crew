@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L910 tracker · L1145 git-host · L1261 kitlog ·
-  L1373 params · L1536 entry-scripts
+Sections: L10 paths · L98 config · L178 OS · L350 leases · L733 status · L927 tracker · L1162 git-host · L1278 kitlog ·
+  L1390 params · L1553 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -885,16 +885,33 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   }
   @($rows)
 }
-# markdown, one line per row (the coordinator pastes it as is); worst states first; cells cut to one line
+# a markdown cell Claude Code can wrap: it breaks only at spaces and draws cards when the longest words do not fit, so no word
+# is over $Max (ids compacted, then long words split after - _ . : , / \ = or at camelCase); nothing is cut
+function Format-KitCell($Text, [int]$Max = 14) {
+  $t = ("$Text" -replace '[\r\n|]+', ' ') -replace '\bwf_([0-9a-f]{8})[0-9a-f-]*', '$1' -replace '\b20\d\d-\d\d-\d\d-(?=\S)', ''
+  $out = [Collections.Generic.List[string]]::new()
+  foreach ($w in @($t -split '\s+' | Where-Object { $_ })) {
+    if ($w.Length -le $Max) { $out.Add($w); continue }
+    $cur = ''
+    foreach ($p in [regex]::Split($w, '(?<=[-_.:,;/\\=])(?=.)|(?<=[a-z])(?=[A-Z])')) {
+      if ($cur -and ($cur + $p).Length -gt $Max) { $out.Add($cur); $cur = '' }
+      $cur += $p
+      while ($cur.Length -gt $Max) { $out.Add($cur.Substring(0, $Max)); $cur = $cur.Substring($Max) }
+    }
+    if ($cur) { $out.Add($cur) }
+  }
+  $out -join ' '
+}
+# markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell)
 function Format-KitStatusTable($Rows, $Now, $Versions) {
   $Now = if ($Now) { [datetime]$Now } else { Get-Date }
-  $cut = { param($t, [int]$n = 60) $t = ("$t" -replace '[\r\n|]+', ' ').Trim(); if ($t.Length -gt $n) { $t.Substring(0, $n - 1) + '…' } else { $t } }
+  $cut = { param($t) Format-KitCell $t }
   $hm = { param($t) if ($t) { ([datetime]$t).ToString('HH:mm') } else { '—' } }
   '| Agent | Task / run | State | Since | Last progress | Next |'; '|---|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object { @{ STUCK = 0; STOPPED = 1; WAITING = 2; ACTIVE = 3; FINISHED = 4 }[$_.state] }, name)) {
     $sc = switch ($r.state) { 'ACTIVE' { "ACTIVE$(if ($r.left) { " ($($r.left) step$(if ($r.left -ne 1) { 's' }) left)" })" } 'WAITING' { "WAITING ($($r.wait))" } 'FINISHED' { "FINISHED: $($r.done)" }
       'STUCK' { "STUCK ($(if ($r.last) { "$([int]($Now - [datetime]$r.last).TotalMinutes) min" } else { 'no progress seen' }))" } default { "STOPPED ($($r.stopped))" } }
-    "| $(& $cut $r.name 30) | $(& $cut $r.task) | $(& $cut $sc 80) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (& $cut $r.doing) }) | $(if ($r.next) { & $cut $r.next 80 } else { '—' }) |"
+    "| $(& $cut $r.name) | $(& $cut $r.task) | $(& $cut $sc) | $(& $hm $r.since) | $(& $hm $r.last)$(if ($r.doing) { ' ' + (& $cut $r.doing) }) | $(if ($r.next) { & $cut $r.next } else { '—' }) |"
   }
   if (-not @($Rows).Count) { '| — | nothing running | — | — | — | — |' }
   if ($Versions -and $Versions.Count) { "transcripts read: $(@($Versions.Values | Sort-Object) -join ', ')" }
