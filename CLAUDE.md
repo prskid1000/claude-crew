@@ -7,3 +7,5 @@ Everything above this line is shared with Codex and Antigravity (README "Install
   -Quiet` (async). Agents, workflows and hooks are ported to Codex / Antigravity by the `ports` goody (`kitbag.py port`).
 - **Skills** (`skills/*/SKILL.md`): loaded by name through the Skill tool. Launch workflows by path:
   `Workflow({ scriptPath: "<kit>/workflows/<name>.js", args })` (named lookup fails after a `cd`).
+- **Heartbeat** (bossy E1): while a run or agent is live, every coordinator turn ends with one heartbeat one-shot armed (CronList);
+  none -> arm it at once to the last `NEXT <n> min` (none seen: `supervise.heartbeatMinutes`). After a compaction or restart, check first.
