@@ -632,7 +632,7 @@ foreach ($name in $Lanes) {
     Wait-KitPoll 3
     $qemu = EmuProcs $l.port | Sort-Object Created -Descending | Select-Object -First 1
     if ($qemu -and $onGpu -and (Get-Command Use-KitGpu -ErrorAction SilentlyContinue)) { $null = Use-KitGpu -Kind emulator -Holder $name -ProcessId $qemu.Id -WaitMinutes 0 }   # the running emulator holds the GPU until it exits
-    if ($qemu) { @{ pid = $qemu.Id; need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
+    if ($qemu) { @{ pid = $qemu.Id; start = (Get-KitPidStart $qemu.Id); need = 4.5; kind = 'emulator'; cmd = "emulator $name"; dir = $c.dir; started = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content (Join-Path $ledger "$($qemu.Id).json") }
   }
   $out += [pscustomobject]@{ lane = $name; serial = $serial; port = $l.port }
 }

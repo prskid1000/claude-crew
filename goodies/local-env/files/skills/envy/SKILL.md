@@ -27,7 +27,8 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   (README "Leases") and is used (calls, traffic); unused `leaseIdleMinutes` (default `idle.graceMinutes`) it is released; only
   a person's `-Owner` lease ends at a time. A train waits for leases on what it changes at most `leaseMinutes` (30), then tells
   the holders ("deploy of <svc> starting, pause"; board inbox + `status -Agent` NOTICE), deploys, and tells them "deploy done,
-  re-run your checks"; their leases stay. Only leases and holds start (or crash-restart) services, each in a start worker; no
+  re-run your checks"; their leases stay. A train whose worker is gone (pid + start time: a reused pid is not it) or whose
+  phase and log stay quiet `trainStallMinutes` (45) is killed and its requests requeue (supervise ACT TRAIN STALLED). Only leases and holds start (or crash-restart) services, each in a start worker; no
   holder: stop after the idle grace, at once under memory pressure; an out-of-memory line in a running service's log restarts
   it. Starts wait for RAM + CPU: the keep-free floor is learned from 24 h of free-RAM samples (`status` shows it and why;
   `keepFreeGB` fixes it). A start waits for its `dependsOn` to be healthy; one failing on a dependency connection waits

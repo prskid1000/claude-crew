@@ -1,9 +1,9 @@
 <#
 localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
-env rows, owner holds, STALE LAYER drops, RESTART LOOP, UNKNOWN port owners, ERROR SPIKE. Its hook runs inside supervise (uses $now, Left);
-Invoke-KitPauseLocalEnv in bossy.ps1 pause.
+env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
+Its hook runs inside supervise (uses $now, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L35 rows · L57 pause · L69 spike · L91 flags
+Sections: L9 logs · L35 rows · L57 pause · L69 spike · L91 flags · L140 waits
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -89,7 +89,7 @@ function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
   [pscustomobject]@{ level = 'ACT'; what = "ERROR SPIKE: $where, $n new error line(s), $($L.cls): $($L.first)"; action = "& $($KitCmd.local) logs -Env $(if ($ev) { $ev.env } else { '<env>' }) -Service $svc; a branch layer in that release caused it -> its agent (board msg), else kitty kind env" }
 }
 # ---- flags: supervise section 7 (status -Json only): env rows and flags, owner holds (info), restart loops, trains
-# waiting on leases, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
+# waiting on leases or stalled, RAM floor moves, mark expiry / baseline age / short binlog, seed drift, unknown port owners, new log errors
 # (sizes cached per round)
 function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
@@ -112,6 +112,11 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
     if ($ev.train -and @($ev.train.waitingFor).Count -and $ev.train.waitSince -and ($now - [datetime]$ev.train.waitSince).TotalMinutes -ge $waitMin) {
       & $watch "TRAIN WAITS: $($ev.env) train $($ev.train.id) waits $([int]($now - [datetime]$ev.train.waitSince).TotalMinutes) min for the lease(s) of $(@($ev.train.waitingFor) -join ', ')" 'holders: release when done (it deploys at leaseMinutes and tells them)'
     }
+    $td = $ev.trainDead; if ($td) { $seenEnv["$($ev.env)/trainDead"] = $td.id }   # envy Prune ended it (worker gone or quiet past trainStallMinutes): once per train
+    if ($td -and $td.id -ne $last["$($ev.env)/trainDead"]) {
+      $fl = @($td.failed | Where-Object { $_ }); [pscustomobject]@{ level = 'ACT'; what = "TRAIN STALLED: $($ev.env) train $($td.id) in '$($td.phase)' ended $(([datetime]$td.at).ToString('HH:mm')): $($td.why); $(@($td.requests).Count) request(s) requeued$(if ($fl.Count) { ", $($fl -join ', ') failed (stalled twice)" })"
+        action = "& $($KitCmd.local) status -Env $($ev.env) (the next train runs them); $(if ($fl.Count) { 'failed: their agents look at the build log and redeploy; ' })repeats: kitty kind env with envy.ps1 logs -Env $($ev.env)" }
+    }
     $kf = $ev.keepFreeGB; $was = $last["$($ev.env)/keepFreeGB"]; if ($null -ne $kf) { $seenEnv["$($ev.env)/keepFreeGB"] = [double]$kf }   # a failed / older status has no floor: nothing cached
     if ($null -ne $kf -and $null -ne $was -and [math]::Abs([double]$kf - [double]$was) -ge 1) { [pscustomobject]@{ level = 'INFO'; what = "RAM FLOOR: $($ev.env) keep-free moved $was -> $kf GB ($($ev.keepFree))"; action = 'Nothing to do (learned from 24 h of free RAM; localEnv.keepFreeGB fixes it).' } }
     if ($ev.marks) {
@@ -131,4 +136,15 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   $seen = @{}
   foreach ($l in @(Get-KitLogErrors $logs $sizes)) { $seen[$l.path] = $l.size; foreach ($x in @(Get-KitSpikeFlag $l $envs -AutoFix:$AutoFix)) { $x } }
   $seen | ConvertTo-Json | Set-Content $sizesFile
+}
+# ---- waits: status rows (lib.ps1 status): an agent whose env request is queued or in a train is WAITING, not STUCK, while the
+# env's controller beats (none: nothing serves the queue, the agent may be STUCK)
+function Get-KitStatusWaitLocalEnv {
+  foreach ($f in @(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object Name -match '^[^.]+\.json$')) {   # <env>.json, not <env>.seed.json
+    $st = try { Invoke-KitLocked $f.FullName { Get-Content -LiteralPath $f.FullName -Raw } | ConvertFrom-Json } catch { continue }
+    if (-not ($st.loop.beat -and ((Get-Date) - [datetime]$st.loop.beat).TotalMinutes -lt 5 -and (Test-KitPid $st.loop.pid $st.loop.pstart))) { continue }
+    foreach ($r in @($st.requests | Where-Object { $_.agent -and $_.status -in 'queued', 'in-train' })) {
+      [pscustomobject]@{ agent = $r.agent; why = "local $($r.kind) $($r.id) ($($f.BaseName) $($r.status)$(if ($st.train) { ": train $($st.train.id) $($st.train.phase)" }))"; at = $r.at; next = "envy.ps1 wait -Env $($f.BaseName) -Id $($r.id); a hung train: TRAIN STALLED" }
+    }
+  }
 }

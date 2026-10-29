@@ -15,8 +15,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L27 config · L194 state · L238 layer drops · L310 leases · L391 code · L423 migrations · L669 hooks · L741 marks ·
-  L879 seed · L925 processes · L1212 daemon · L1656 cleanup · L1728 doctor · L1778 verbs
+Sections: L27 config · L195 state · L242 layer drops · L314 leases · L414 code · L446 migrations · L692 hooks · L764 marks ·
+  L902 seed · L948 processes · L1235 daemon · L1680 cleanup · L1752 doctor · L1802 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -58,6 +58,7 @@ if ($script:LE.envs) {
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
 $script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
 $script:MaxLeaseMin = [int](Opt 'maxLeaseMinutes' 120)
+$script:TrainStallMin = [double](Opt 'trainStallMinutes' 45)   # a train phase with no log line this long hangs: worker killed, requests requeued (TODO-PARAM)
 $script:EnvLeaseWhy = @{}   # Prune's reason per "leases|<key>" / "holds|<key>" (leases.jsonl)
 $script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitParam 'idle.graceMinutes' 10))   # a lease unused this long is released (learned unless set)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
@@ -225,13 +226,16 @@ function Update-State([string]$e, [scriptblock]$Change) {
 }
 function Alive($p) { $p -and [bool](Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue) }
 function PStart($p) { try { (Get-Process -Id ([int]$p) -ErrorAction Stop).StartTime } catch { $null } }
-function Owned($x) {
+# a recorded process (pid + pstart): a reused pid is not ours; an old record without pstart: its command line must hold $Tag
+function Owned($x, [string]$Tag) {
   if (-not ($x -and $x.pid -and (Alive $x.pid))) { return $false }
-  if (-not $x.pstart) { return $true }
-  $now = PStart $x.pid; $now -and [math]::Abs(($now - [datetime]$x.pstart).TotalSeconds) -lt 2
+  if ($x.pstart) { return Test-KitPid $x.pid $x.pstart }
+  -not $Tag -or (CmdLine ([int]$x.pid)).Contains($Tag)
 }
+function Mine([int]$p) { @{ pid = $p; pstart = "$(Get-KitPidStart $p)" } }
+function CmdLine([int]$p) { if ($KitIsWindows) { "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)" } else { "$(ps -o args= -p $p 2>$null)" } }
 function EnvProcess([int]$p, [string]$e) {
-  $c = if ($KitIsWindows) { "$((Get-CimInstance Win32_Process -Filter "ProcessId=$p" -Property CommandLine -ErrorAction SilentlyContinue).CommandLine)" } else { "$(ps -o args= -p $p 2>$null)" }
+  $c = CmdLine $p
   $c -and ($c.Contains((Get-KitPath localenv)) -or $c -match [regex]::Escape("localenv-$e-") -or $c -match [regex]::Escape("_exec -Env $e "))
 }
 function Layers($st, [string]$rn) { @($st.release.repos[$rn].layers | Where-Object { $_ }) }
@@ -320,10 +324,29 @@ function Prune($st) {
   if ($st.notices -isnot [hashtable]) { $st.notices = @{} }
   foreach ($a in @($st.notices.Keys)) { if (((Get-Date) - [datetime]$st.notices[$a].at).TotalHours -ge 2) { $st.notices.Remove($a) } }
   $st.requests = @($st.requests | Where-Object { $_.status -ne 'done' -or ((Get-Date) - [datetime]$_.at).TotalHours -lt 24 } | Select-Object -Last 60)
-  if ($st.train -and -not (Alive $st.train.pid) -and ($st.train.pid -or ((Get-Date) - [datetime]$st.train.at).TotalSeconds -gt 60)) {
-    foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($st.train.requests)) { $r.status = 'queued' } }   # worker died: the train runs again
+  $t = $st.train; $stall = if ($t) { TrainStall $st $e }
+  if ($t -and ($stall -or (-not (Owned $t "-Train $($t.id)") -and ($t.pid -or ((Get-Date) - [datetime]$t.at).TotalSeconds -gt 60)))) {
+    if ($stall -and (Owned $t "-Train $($t.id)")) { if ($KitIsWindows) { taskkill /PID $t.pid /T /F 2>&1 | Out-Null } else { Stop-SysProcess ([int]$t.pid) } }
+    $why = if ($stall) { $stall } else { 'worker gone (or its pid reused)' }; $failed = @()
+    foreach ($r in $st.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($t.requests)) {   # worker died or hung: the train runs again; a second stall fails the request
+      if ($stall) { $r.stalls = [int]$r.stalls + 1 }
+      if ([int]$r.stalls -ge 2) { $r.status = 'done'; $r.result = @{ outcome = 'failed'; message = "train stalled twice: $why" }; $failed += $r.id } else { $r.status = 'queued' }
+    } }
+    $st.trainDead = @{ id = $t.id; phase = $t.phase; why = $why; at = (Now); requests = @($t.requests); failed = $failed }   # supervise: TRAIN STALLED
+    Event $e 'train-dead' @{ id = $t.id; pid = $t.pid; phase = $t.phase; why = $why; failed = $failed }
     $st.train = $null
   }
+}
+# a train quiet (no phase change, no train / build / migrations / smoke log line) for trainStallMinutes hangs; lease waits have their
+# own clock; a loop that has not beaten for 3 min (laptop asleep, loop dead) judges nothing: its next tick restarts the clock
+function TrainQuietMin($t, [string]$e) {
+  $logs = @(Get-ChildItem -LiteralPath (Get-KitPath localenv-logs -Create) -Filter "$e-*.log" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$([regex]::Escape($e))-(train(-\w+)?|.+-build|migrations|smoke)\.log$" })
+  $last = @(@($t.phaseAt, $t.at) + @($logs.LastWriteTime) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
+  if ($last) { [int]((Get-Date) - $last).TotalMinutes } else { 0 }
+}
+function TrainStall($st, [string]$e) {
+  $t = $st.train; if ("$($t.phase)" -like 'waiting for leases*' -or -not $st.loop.beat -or ((Get-Date) - [datetime]$st.loop.beat).TotalMinutes -ge 3) { return $null }
+  $q = TrainQuietMin $t $e; if ($q -ge $script:TrainStallMin) { "phase '$($t.phase)' quiet $q min (localEnv.trainStallMinutes $($script:TrainStallMin))" }
 }
 function Set-Notice($st, [string]$agent, [string]$text) { if ($st.notices -isnot [hashtable]) { $st.notices = @{} }; $st.notices[$agent] = @{ at = (Now); text = $text } }   # status -Agent shows it
 # a use of the lease (use, status / logs / events / deploy / wait by its agent, client traffic on its services): resets its idle clock
@@ -631,9 +654,9 @@ function AotFile([string]$artifact) { if ($artifact) { Join-Path $(if (Test-Path
 # after a start that is up: one background training run per artifact (gated: RAM), never two at a time
 function Start-AotTrain([string]$e, $s, [string]$artifact) {
   if (-not $s.aotTrain -or -not $artifact -or (Test-Path -LiteralPath (AotFile $artifact))) { return }
-  $x = (Read-State $e).services[$s.name]; if ($x.aotPid -and (Alive $x.aotPid)) { return }
+  $x = (Read-State $e).services[$s.name]; if (Owned $x.aot) { return }
   $p = Start-Pwsh @('_daemon', '-Env', $e, '-Aot', $s.name, '-Artifact', $artifact) $PSScriptRoot "_daemon -Env $e -Aot $($s.name)" (LogFile $e "aot-$($s.name)")
-  Update-State $e { param($z) if ($z.services[$s.name]) { $z.services[$s.name].aotPid = $p } }
+  Update-State $e { param($z) if ($z.services[$s.name]) { $z.services[$s.name].aot = Mine $p } }
 }
 function Invoke-AotTrain([string]$e, $s, [string]$artifact) {
   $f = AotFile $artifact; $tmp = "$f.tmp"; Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
@@ -1023,7 +1046,7 @@ function Healthy([string]$e, $s) {
     try { $r = Invoke-WebRequest (Expand-Placeholders $s.health $e $s (SvcDir $e $s) '') -ConnectionTimeoutSeconds 5 -OperationTimeoutSeconds 10 -UseBasicParsing -SkipCertificateCheck -SkipHttpErrorCheck; return $r.StatusCode -gt 0 -and $r.StatusCode -lt 500 } catch { return $false }
   }
   if ($s.port) { return $true }
-  Alive (Read-State $e).services[$s.name].pid
+  Owned (Read-State $e).services[$s.name]
 }
 function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
   $st = Read-State $e; $x = $st.services[$s.name]
@@ -1036,7 +1059,7 @@ function Stop-Svc([string]$e, $s, [string]$why = 'stopped') {
   if ($s.port) { foreach ($p in Get-PortPids ([int]$s.port)) { if ($p -gt 4 -and ($p -in $mine -or (EnvProcess $p $e))) { Stop-SysProcess $p } } }
   $script:ListenSnap = $null
   if ($x.peakGB) { Save-LocalEnvHistory "$e/$($s.name)" ([double]$x.peakGB) }   # the learned need: its peak while it ran, not its size at start
-  Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts); aotPid = $o.aotPid } }
+  Update-State $e { param($z) $o = $z.services[$s.name]; $z.services[$s.name] = @{ status = 'down'; port = $s.port; at = (Now); release = $o.release; artifact = $o.artifact; why = $why; restarts = @($o.restarts); aot = $o.aot } }
   if ($ran) { Event $e 'stop' @{ service = $s.name; why = $why } }
 }
 function Get-LocalEnvHistory { $h = try { Get-Content (Get-KitPath localenv-history) -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if ($h -isnot [hashtable]) { $h = @{} }; $h }
@@ -1090,10 +1113,10 @@ function KeepFreeGB { [double](Get-KeepFree).gb }
 function Pressure {
   if ((Get-GateAvailGB (Get-SysMem)) -lt (KeepFreeGB)) { return 'RAM below the keep-free floor' }
   $q = Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue'
-  $w = @(Get-ChildItem $q -Filter *.json -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 1 -and (Alive ([int]$_.BaseName)) })
+  $w = @(Get-ChildItem $q -Filter *.json -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -gt 1 -and $(try { $tk = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json; Test-KitPid $tk.pid $tk.start } catch { $false }) })
   if ($w.Count) { return "$($w.Count) gated build(s) waiting for RAM" }
   # a start waiting in any env: idle unleased services elsewhere make room (the caller stops them biggest first)
-  $ws = @(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $v = $st.services[$k]; if ($v.status -eq 'waiting' -and $v.waitPid -and (Alive ([int]$v.waitPid))) { "$n/$k" } } })
+  $ws = @(foreach ($n in EnvNames) { $st = Read-State $n; foreach ($k in @($st.services.Keys)) { $v = $st.services[$k]; if ($v.status -eq 'waiting' -and (Test-KitPid $v.waitPid $v.waitStart)) { "$n/$k" } } })
   if ($ws.Count) { return "start(s) waiting for RAM: $($ws -join ', ')" }
   $null
 }
@@ -1106,7 +1129,7 @@ function Wait-Room([string]$e, $s) {
       $m = Get-SysMem; $cpu = Get-SysCpu; $avail = Get-GateAvailGB $m
       $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
       if ($ramOk -and $cpuOk) { return }
-      if (-not $marked) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitPid = $PID }; $marked = $true }
+      if (-not $marked) { Update-State $e { param($x) $x.services[$s.name].status = 'waiting'; $x.services[$s.name].waitPid = $PID; $x.services[$s.name].waitStart = Get-KitPidStart $PID }; $marked = $true }
       if ((Get-Date) -gt $until) {
         if (-not $ramOk) {
           $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
@@ -1181,7 +1204,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     "[$e] starting $($s.name)$(if ($release) { " (release $release)" }): $cmd"
     $t0 = Get-Date
     $p = Start-Pwsh @('_exec', '-Env', $e, '-Service', $s.name, '-Artifact', "$artifact") $dir "_exec -Env $e -Service $($s.name)" "$log.wrapper"
-    Update-State $e { param($x) $o = $x.services[$s.name]; $x.services[$s.name] = @{ status = 'starting'; pid = $p; pstart = "$(if (PStart $p) { (PStart $p).ToString('o') })"; port = $s.port; startedAt = (Now); lastNeed = (Now); release = $release; artifact = $artifact; restarts = @($o.restarts); aotPid = $o.aotPid } }
+    Update-State $e { param($x) $o = $x.services[$s.name]; $x.services[$s.name] = @{ status = 'starting'; pid = $p; pstart = "$(if (PStart $p) { (PStart $p).ToString('o') })"; port = $s.port; startedAt = (Now); lastNeed = (Now); release = $release; artifact = $artifact; restarts = @($o.restarts); aot = $o.aot } }
     $limit = (Get-Date).AddMinutes((StartMin $s))
     $fail = if ($s.failPattern) { [string]$s.failPattern } else { $script:FailPattern }
     $ready = if ($s.readyPattern) { [string]$s.readyPattern } else { $script:ReadyPattern }
@@ -1217,7 +1240,7 @@ $ErrorActionPreference = 'Stop'
 
 # ==== train worker
 function Phase([string]$p, [string[]]$blockServices = @(), [string[]]$blockRepos = @()) {
-  Update-State $e { param($x) if ($x.train) { $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
+  Update-State $e { param($x) if ($x.train) { if ($x.train.phase -ne $p) { $x.train.phaseAt = (Now) }; $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
   "[$e] train $Train : $p"
 }
 function Key($l) { "$($l.branch)@$($l.sha)" }
@@ -1526,7 +1549,8 @@ try {
     $tick++
     try {   # a failing tick is logged and retried with backoff; the controller keeps running
       $beat = ((Get-Date) - $beatAt).TotalSeconds -ge 60
-      Update-State $e { param($x) Prune $x; if ($beat -or -not $x.loop -or $x.loop.pid -ne $PID) { $x.loop = @{ pid = $PID; beat = (Now) } } }   # a write only on change or once a minute
+      Update-State $e { param($x) if ($x.train -and $x.loop.beat -and ((Get-Date) - [datetime]$x.loop.beat).TotalMinutes -ge 3) { $x.train.phaseAt = (Now) }   # asleep or a new loop: the stall clock restarts
+        Prune $x; if ($beat -or -not $x.loop -or $x.loop.pid -ne $PID) { $x.loop = (Mine $PID) + @{ beat = (Now) } } }   # a write only on change or once a minute
       if ($beat) { $beatAt = Get-Date }
       if (((Get-Date) - $ramAt).TotalSeconds -ge 60) { Add-RamSample (Get-GateAvailGB (Get-SysMem)); $ramAt = Get-Date }
       $st = Read-State $e
@@ -1541,7 +1565,7 @@ try {
         $tid = [guid]::NewGuid().ToString('n').Substring(0, 6); $ids = @($queued.id)
         Update-State $e { param($x) $x.train = @{ id = $tid; pid = $null; phase = 'starting'; requests = $ids; at = (Now); blockServices = @(); blockRepos = @() }; foreach ($r in $x.requests) { if ($r.id -in $ids) { $r.status = 'in-train' } } }
         $wp = Start-Pwsh @('_daemon', '-Env', $e, '-Train', $tid) $PSScriptRoot "_daemon -Env $e -Train $tid" (LogFile $e "train-$tid")
-        Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $x.train.pid = $wp } }
+        Update-State $e { param($x) if ($x.train -and $x.train.id -eq $tid) { $m = Mine $wp; $x.train.pid = $m.pid; $x.train.pstart = $m.pstart } }
         Say "train $tid started for $($ids.Count) request(s): $(($queued | ForEach-Object { "$($_.kind) $($_.branch)" }) -join '; ')"
         $st = Read-State $e
       }
@@ -1600,19 +1624,19 @@ try {
           Update-State $e { param($z) if (-not $z.services[$s.name]) { $z.services[$s.name] = @{ status = 'down' } }; $z.services[$s.name].lastNeed = (Now); $z.services[$s.name].need = $nw }
         }
         if ($s.name -in $block) { continue }
-        if ($starters[$s.name] -and (Alive $starters[$s.name])) { continue }   # its start worker runs
+        if (Owned $starters[$s.name]) { continue }   # its start worker runs
         if (Healthy $e $s) { $misses[$s.name] = 0; if ($x.status -ne 'up') { Update-State $e { param($z) $z.services[$s.name].status = 'up' } }; continue }
         if ($x.status -eq 'up' -and (Owned $x) -and ++$misses[$s.name] -lt 3) { continue }   # a busy service: 3 health misses in a row first
         if (-not (Leased $need[$s.name])) { continue }
         if ($x.status -eq 'starting' -and (Owned $x) -and $x.startedAt -and ((Get-Date) - [datetime]$x.startedAt).TotalMinutes -lt (StartMin $s)) { continue }
-        if ($x.status -eq 'waiting' -and $x.waitPid -and (Alive ([int]$x.waitPid))) { continue }   # a worker of an earlier controller waits for RAM
+        if ($x.status -eq 'waiting' -and (Test-KitPid $x.waitPid $x.waitStart)) { continue }   # a worker of an earlier controller waits for RAM
         if (@($s.dependsOn | Where-Object { $_ -and -not (Healthy $e (Svc $e $_)) }).Count) { continue }   # dependencies first
         $recent = @($x.restarts | Where-Object { $_ -and ((Get-Date) - [datetime]$_).TotalMinutes -lt 30 })
         if ($x.status -eq 'failed' -and $recent.Count -ge 3) { continue }   # backoff: 3 tries / 30 min
         if ($s.repo -and ([int]$st.release.n -eq 0 -or ($s.artifact -and -not ($x.artifact -and (Test-Path $x.artifact))))) { $needsBuild = $true; continue }
         Update-State $e { param($z) $z.services[$s.name].restarts = @(@($recent) + @(Now)) }
-        $starters[$s.name] = Start-Pwsh @('_daemon', '-Env', $e, '-Start', $s.name, '-Release', "$([int]$st.release.n)", '-Artifact', "$($x.artifact)") $PSScriptRoot "_daemon -Env $e -Start $($s.name)" (LogFile $e "start-$($s.name)")
-        Say "start of $($s.name): worker pid $($starters[$s.name])"
+        $starters[$s.name] = Mine (Start-Pwsh @('_daemon', '-Env', $e, '-Start', $s.name, '-Release', "$([int]$st.release.n)", '-Artifact', "$($x.artifact)") $PSScriptRoot "_daemon -Env $e -Start $($s.name)" (LogFile $e "start-$($s.name)"))
+        Say "start of $($s.name): worker pid $($starters[$s.name].pid)"
         $st = Read-State $e
       }
       if ($needsBuild -and -not $st.train -and -not @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count) {
@@ -1634,7 +1658,7 @@ try {
       # ---- exit when idle
       $st = Read-State $e
       $busy = $st.train -or @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count -or $st.leases.Count -or $st.holds.Count -or
-        @($starters.Values | Where-Object { Alive $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
+        @($starters.Values | Where-Object { Owned $_ }).Count -or @(EnvServices $e | Where-Object { (Managed $_) -and $st.services[$_.name].status -in 'up', 'starting' }).Count
       if ($busy) { $quietSince = Get-Date } elseif (((Get-Date) - $quietSince).TotalMinutes -ge $LoopExitM) { if (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue) { try { foreach ($k in @(Invoke-DbPool $e -Now)) { Say $k } } catch { } }; Say 'idle: loop exits'; break }
     } catch {
       $fails++; $m = "$_".Split("`n")[0]
@@ -1799,7 +1823,7 @@ if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark'
 
 function Ensure-Loop {
   $st = Read-State $e
-  if ($st.loop -and (Alive $st.loop.pid)) { return }
+  if (Owned $st.loop "_daemon -Env $e") { return }
   $null = Start-Pwsh @('_daemon', '-Env', $e) $PSScriptRoot "_daemon -Env $e" (LogFile $e 'loop')
   for ($i = 0; $i -lt 20; $i++) { Start-Sleep -Milliseconds 300; if ((Read-State $e).loop) { break } }
 }
@@ -1864,7 +1888,9 @@ function Show-Status([string]$env1) {
   $o = [pscustomobject]@{
     env = $env1; release = $st.release.n; releasedAt = $st.release.at; lastUsed = Format-KitLeaseLast (Get-KitLeaseLast)["env|$env1"]
     repos = @($st.release.repos.Keys | ForEach-Object { $rr = $st.release.repos[$_]; [pscustomobject]@{ repo = $_; target = $rr.target; targetSha = "$($rr.targetSha)".Substring(0, [math]::Min(9, "$($rr.targetSha)".Length)); layers = @($rr.layers | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ branch = $_.branch; agent = $_.agent; sha = "$($_.sha)".Substring(0, [math]::Min(9, "$($_.sha)".Length)); migrations = [bool]$_.migrations; promoted = $(if ($_.promoted) { "release $($_.promoted.release)" }) } }) } })
-    train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); waitSince = $st.train.waitSince; requests = @($st.train.requests).Count } })
+    train = $(if ($st.train) { [pscustomobject]@{ id = $st.train.id; phase = $st.train.phase; waitingFor = @($st.train.waitingFor); waitSince = $st.train.waitSince; requests = @($st.train.requests).Count
+      quietMin = TrainQuietMin $st.train $env1; stallMin = $script:TrainStallMin } })
+    trainDead = $(if ($st.trainDead -and ((Get-Date) - [datetime]$st.trainDead.at).TotalHours -lt 2) { [pscustomobject]$st.trainDead })
     queue = @($st.requests | Where-Object status -eq 'queued' | ForEach-Object { "$($_.agent): $($_.kind) $($_.branch)" })
     services = @($svc)
     leases = @($st.leases.Keys | ForEach-Object { $l = $st.leases[$_]; [pscustomobject]@{ agent = $_; services = @($l.services); until = $(if ($l.owner) { ([datetime]$l.until).ToString('HH:mm') }); release = $l.release; note = $l.note; graceLeft = $l.graceLeft
@@ -1877,7 +1903,7 @@ function Show-Status([string]$env1) {
     marks = $(if (@($st.marks | Where-Object { $_ }).Count -or $st.binlog) { $ms = @($st.marks | Where-Object { $_ }); $b = @($ms | Where-Object kind -eq 'baseline')[-1]
       [pscustomobject]@{ count = $ms.Count; newest = @($ms)[-1].name; baseline = $b.name; baselineAgeDays = $(if ($b) { [math]::Round(((Get-Date) - [datetime]$b.at).TotalDays, 1) }); expired = @($st.expiredMarks | Where-Object { $_ }); binlogDays = $st.binlog.days } })
     seed = $(if ($st.seed) { [pscustomobject]@{ at = $st.seed.at; ok = [bool]$st.seed.ok; missing = @($st.seed.missing | Where-Object { $_ }); drift = @($st.seed.drift | Where-Object { $_ }) } })
-    loop = $(if ($st.loop -and (Alive $st.loop.pid)) { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
+    loop = $(if (Owned $st.loop "_daemon -Env $env1") { "running (pid $($st.loop.pid))" } else { 'stopped (starts on the next request)' })
   }
   if ($Agent -and $st.notices[$Agent]) { $o | Add-Member -NotePropertyName notice -NotePropertyValue "$(([datetime]$st.notices[$Agent].at).ToString('HH:mm')) $($st.notices[$Agent].text)" }
   if ($Agent -and $Agent -ne 'main' -and $st.leases[$Agent]) {
@@ -1889,7 +1915,8 @@ function Show-Status([string]$env1) {
   }
   if ($Json) { return $o }
   "== $env1  release $($o.release)$(if ($o.releasedAt) { " ($(([datetime]$o.releasedAt).ToString('HH:mm')))" })   controller: $($o.loop)   keep-free $($o.keepFree)   last used $($o.lastUsed)"
-  if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s))" }
+  if ($o.train) { "  TRAIN $($o.train.id): $($o.train.phase)$(if ($o.train.waitingFor.Count) { " - waiting for $($o.train.waitingFor -join ', ')" }) ($($o.train.requests) request(s); quiet $($o.train.quietMin)/$($o.train.stallMin) min)" }
+  if ($o.trainDead) { "  TRAIN $($o.trainDead.id) ended $(([datetime]$o.trainDead.at).ToString('HH:mm')): $($o.trainDead.why); requeued$(if (@($o.trainDead.failed).Count) { ", failed: $(@($o.trainDead.failed) -join ', ')" })" }
   if ($o.queue) { "  queued: $($o.queue -join '; ')" }
   if ($o.due) { "  on the next lease: $($o.due -join '; ')" }
   foreach ($x in $o.services) {

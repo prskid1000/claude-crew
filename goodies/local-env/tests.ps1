@@ -25,6 +25,19 @@ $lv = & { . $L2; $b = Get-KitPath board -Create; & $J @{ agent = 'B1'; session =
   & $J @{ at = (Get-Date).ToString('o'); running = @('build:R1'); labels = @('build:R1', 'local:X1') } (Get-KitPath live-steps -Create)
   "$(Test-KitLive @{ session = 'B1-s'; holderPid = 999999 })$(Test-KitLive @{ agent = 'R1' })$(Test-KitLive @{ agent = 'X1'; holderPid = $PID })" }
 Expect "leases: live by a board beat or a running workflow step; a finished step is not ($lv)" ($lv -eq 'TrueTrueFalse')
+# pid reuse: a worker record names its process start, another process on that pid is not it; a train quiet past trainStallMinutes is killed + requeued
+$hide = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }; $hung = Start-Process (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru @hide
+$hung2 = Start-Process (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru @hide
+$pu =& { . $L2; $me = Mine $PID; $old = (Get-Date).AddHours(-2).ToString('o'); $reused = @{ pid = $PID; pstart = (Get-Date).AddDays(-1).ToString('o') }
+  $mk = { param($t, $n = 0, $beat = (Now)) @{ requests = @(@{ id = 'q1'; status = 'in-train'; stalls = $n }); train = $t; loop = @{ beat = $beat }; leases = @{}; holds = @{}; notices = @{} } }
+  $a = & $mk (@{ id = 'tA'; at = $old; phase = 'merging and building'; requests = @('q1') } + $reused); Prune $a
+  $b = & $mk (@{ id = 'tB'; at = (Get-Date).ToString('o'); phase = 'merging and building'; requests = @('q1') } + $me); Prune $b
+  $c = & $mk (@{ id = 'tC'; at = $old; phaseAt = $old; phase = 'merging and building'; requests = @('q1') } + (Mine $hung.Id)); Prune $c
+  $d = & $mk (@{ id = 'tD'; at = $old; phaseAt = $old; phase = 'merging and building'; requests = @('q1') } + (Mine $hung2.Id)) 1; Prune $d   # its second stall
+  $s = & $mk (@{ id = 'tS'; at = $old; phaseAt = $old; phase = 'merging and building'; requests = @('q1') } + $me) 0 $old; Prune $s   # the loop slept
+  "$(Owned $reused)|$(Owned $me)|$(Owned @{ pid = $PID } '-Train zz')|$($null -eq $a.train)$($a.requests[0].status)|$($b.train.id)$($b.requests[0].status)|$($null -eq $c.train)$($c.requests[0].status)$($c.trainDead.id)|$($d.requests[0].status)$($d.requests[0].result.outcome)$($d.trainDead.failed)|$($s.train.id)" }
+foreach ($hp in $hung, $hung2) { $hp.WaitForExit(5000) | Out-Null }; $killed = $hung.HasExited -and $hung2.HasExited; foreach ($hp in $hung, $hung2) { if (-not $hp.HasExited) { $hp.Kill() } }
+Expect "pid reuse: a reused pid (start differs) or an old record whose command line lacks its tag is not the worker; train requeued; a live train stays; a hung one is killed + requeued, failed at its second stall; no stall judged while the loop slept ($pu, killed $killed)" ($pu -eq 'False|True|False|Truequeued|tBin-train|TruequeuedtC|donefailedq1|tS' -and $killed)
 $lf = & { . (Join-Path $k2 'skills/crafty/lib.ps1'); Join-Path (Get-KitPath localenv -Create) 'shop.json' }; '{"holds":{"main":{"services":["api"],"agent":"main"}}}' | Set-Content $lf
 $u1 = Px $L2 up -Env shop 2>&1 | Out-String; $c4 = $LASTEXITCODE; $null = Px $L2 unhold -Env shop -Agent main 2>&1
 Expect "localenv: up refuses without -Services; unhold ends a hold" ($c4 -eq 1 -and $u1 -match 'up needs -Services' -and -not @((Get-Content $lf -Raw | ConvertFrom-Json).holds.PSObject.Properties).Count)
@@ -301,6 +314,9 @@ $wl = & { . $L3; function Ensure-Loop { }; $q = @((Read-State t).requests); Writ
   $due = $st0 -match 'on the next lease: .*A1: drop mrg \(merged: mrg merged into main\)'; $rec = $st0 -match 'layer orphan: gone1 is gone from origin \(LV, \d\d:\d\d\); layer finished: fin \(agent finished\) \(RA'
   "$(@($lg | ForEach-Object { "$($_.event)/$($_.agent)" }) -join ',')|$due|$rec|$(@((Read-State t).requests | Where-Object status -eq 'queued').Count)" }
 Expect "layer log: each drop one release line with its reason; status shows due and recent drops; a lease wakes the due ones ($wl)" ($wl -eq 'release/A1,release/X9,release/LV,release/RA|True|True|4')
+$null = & { . $L3; Update-State t { param($x) $x.loop = @{ pid = 999999; beat = (Now) }; $x.requests = @(@{ id = 'r1'; kind = 'deploy'; agent = 'D1'; status = 'in-train'; at = (Now) })
+    $x.train = @{ id = 't9'; pid = $PID; pstart = (Get-Date).AddDays(-1).ToString('o'); phase = 'merging and building'; at = (Now); requests = @('r1') } } }   # the 10-hour train: its pid now another process's
+$sj = Px $L3 status -Env t -Json 2>$null | Out-String; $sq1 = & { . $L3; "$(@((Read-State t).requests)[0].status)|$($null -eq (Read-State t).train)" }
 Remove-TestKit $k3
 # supervise rows from this goody (skills/bossy/adapters/localenv_supervise.ps1): idle vs leased down services, new log errors
 $k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad
@@ -324,6 +340,15 @@ Expect "ERROR SPIKE classes: an expected 4xx while a lease tests = no flag (else
 $hk = (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"down","restarts30":3},{"service":"web","state":"up (adopted)","port":4200}],"leases":[],"holds":[],"seed":{"ok":false,"missing":["roleA"],"drift":[]},"marks":{"count":1,"baseline":null,"expired":[],"binlogDays":30},"train":{"id":"t1","waitingFor":["H1"],"waitSince":"2020-01-01T00:00:00"}}]' } }
   @(Get-KitSuperviseFlagsLocalEnv) | ForEach-Object { "$($_.what)$($_.name)" } }) -join "`n"
 Expect 'supervise hook (status -Json only): env row, RESTART LOOP (3 in 30 min), TRAIN WAITS, NO BASELINE MARK, SEED DRIFT, UNKNOWN port owner' ($hk -match 'TRAIN WAITS: shop train t1 waits \d+ min for the lease\(s\) of H1' -and $hk -match 'NO BASELINE MARK: shop' -and $hk -match 'SEED DRIFT: shop roleA' -and $hk -match 'shop · web' -and $hk -match 'RESTART LOOP: shop api restarted 3 times' -and $hk -match 'UNKNOWN: shop web port 4200')
+$ts = @(foreach ($n in 1, 2) { (& { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = $sj } }; @(Get-KitSuperviseFlagsLocalEnv) | Where-Object level -eq 'ACT' | ForEach-Object { "$($_.what) => $($_.action)" } }) -join "`n" })
+Expect "supervise TRAIN STALLED (status -Json after its prune): a train on a reused pid ends, its request requeues; ACT names env, train, phase, why and the next command, once per train ($sq1 | $($ts[0]) | $($ts[1]))" ($sq1 -eq 'queued|True' -and $ts[0] -match "TRAIN STALLED: t train t9 in 'merging and building' ended \d\d:\d\d: worker gone \(or its pid reused\); 1 request\(s\) requeued" -and $ts[0] -match 'status -Env t' -and -not $ts[1])
+$wq = & { . $O; $ld = Get-KitPath localenv -Create; $lp = "{`"pid`":$PID,`"pstart`":`"$(Get-KitPidStart $PID)`",`"beat`":`"$((Get-Date).ToString('o'))`"}"
+  "{`"loop`":$lp,`"requests`":[{`"id`":`"r7`",`"kind`":`"deploy`",`"agent`":`"devy-x`",`"status`":`"queued`",`"at`":`"2026-01-01T00:00:00`"},{`"id`":`"r8`",`"kind`":`"deploy`",`"agent`":`"devy-x`",`"status`":`"done`"}],`"train`":{`"id`":`"t9`",`"phase`":`"merging and building`"}}" | Set-Content "$ld/wq.json"
+  '{"requests":[{"id":"r9","kind":"deploy","agent":"devy-y","status":"queued"}]}' | Set-Content "$ld/wn.json"   # no controller: nothing serves it
+  "{`"loop`":$lp,`"requests`":[{`"id`":`"s1`",`"agent`":`"devy-z`",`"status`":`"queued`"}]}" | Set-Content "$ld/wq.seed.json"
+  $w = @(Get-KitStatusWaitLocalEnv | Where-Object agent -like 'devy-*'); Remove-Item "$ld/wq.json", "$ld/wn.json", "$ld/wq.seed.json"
+  "$($w.Count)|$($w[0].agent)|$($w[0].why)|$([bool](Get-Command 'Get-KitStatusWait*' | Where-Object Name -eq 'Get-KitStatusWaitLocalEnv'))" }
+Expect "status: an agent whose env request is queued while its controller beats is WAITING (local deploy <id>), not STUCK; no controller or a seed file: no wait ($wq)" ($wq -eq '1|devy-x|local deploy r7 (wq queued: train t9 merging and building)|True')
 $rf = @(foreach ($j in '[{"env":"shop","services":[]}]', '[{"env":"shop","services":[],"keepFreeGB":8}]', '[{"env":"shop","services":[],"keepFreeGB":10}]') { & { . $O; function Left { 30 }; $now = Get-Date; function Invoke-KitExe { [pscustomobject]@{ code = 0; out = $j } }; @(Get-KitSuperviseFlagsLocalEnv | Where-Object { "$($_.what)" -match 'RAM FLOOR' }).Count } })
 Expect "supervise RAM FLOOR: a status without keepFreeGB caches nothing (no bogus 0 -> 8); a real move flags ($($rf -join ','))" ($rf -join ',' -eq '0,0,1')
 $ph = (& { . $O; $global:downs = @(); function Invoke-KitExe([string]$Exe, [string[]]$A, [int]$T) { if ($A -contains 'down') { $global:downs += $A[-1]; return [pscustomobject]@{ code = 0 } }
