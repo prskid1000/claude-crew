@@ -18,6 +18,10 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- envy deploy REFUSED by a foreign layer whose branch is not based on the published head: board msg its holder; holder off the board -> raise an ENV-FIX, never deploy over it. (2x)
+- Re-run devtools.py finish after any new testing doc, final rebase or flaky tracker call: it updates the doc link on task and MR and the status; check the tracker status after it. (4x)
+- MR body limits (260 words, How tested bullets, one standalone Not run line): run kitbag.py prose --kind mr-body and fix the body before devtools.py mr, not after its warning. (4x)
+- MR state in reports comes from the host mergeState field of the final query; re-query before writing the summary, never infer open/merged from earlier output. (3x)
 - Test cleanup deleting several rows: collect each failure and assert once at the end, so one 409 does not leave the rest behind (1x, hard failure).
 - A rule that says name only items that exist (statuses, keys): check every listed name against its source before commit; no invented or stale entries (2x).
 - Run every script through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`): `& x.py` or `.\x.py` opens the file in its Windows association (an editor on the owner's screen); the guard denies it, and doc openers, `--web`, `gh browse`.
@@ -51,7 +55,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 
 ## pokey
 - pokey.ps1 api -OutDir refused 9x with a number: the variable was reused (PowerShell names are case-insensitive, $o is $O); pass -OutDir from crafty.ps1 dir in a distinctly named variable (9x)
-- Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x). (2×)
+- Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x). (3×)
 - Run pokey.ps1 -Check before every publish: it catches missing or renamed evidence references so no broken report goes out (1x win).
 - A publish run that exits 0 without a published report or tracker comment is a failure: check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start needs free RAM for the gate (its need + gate.keepFreeGB): check RAM first, or run the API checks first. (3×)
@@ -80,6 +84,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
 - Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x)
 - pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
 - A helper adding agents/<x>.md must update the router row, reach mentions and manifest in the same commit; pre-commit lint (ROUTER-UNROUTED, REACH-MENTION, MANIFEST) blocks a lone file. (3x)
