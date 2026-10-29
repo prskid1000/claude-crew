@@ -96,6 +96,9 @@ $v4 = & { . $L3; $l4 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,
   $l6 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::IPv6Loopback, 0); $l6.Start(); $p6 = $l6.LocalEndpoint.Port
   try { "$(Test-PortListening $p4)|$(Test-PortListening $p6)" } finally { $l4.Stop(); $l6.Stop() } }
 Expect "health: listening means an IPv4 127.0.0.1 connect; a ::1-only server is not up ($v4)" ($v4 -eq 'True|False')
+$lr = & { . $L3; $rows = @([pscustomobject]@{ State = 'Listen'; RemoteAddress = '0.0.0.0'; RemotePort = 0 }, [pscustomobject]@{ State = $null; RemoteAddress = '0.0.0.0'; RemotePort = 0 },
+    [pscustomobject]@{ State = $null; RemoteAddress = '::'; RemotePort = 0 }, [pscustomobject]@{ State = 'Established'; RemoteAddress = '127.0.0.1'; RemotePort = 9201 }); ($rows | ForEach-Object { Test-ListenRow $_ }) -join '|' }
+Expect "listen table: a listener with state 0 (no remote end) still counts; a connection does not ($lr)" ($lr -eq 'True|True|True|False')
 # running services' logs: only new out-of-memory lines count; logs -Grep / -Since read from the end
 $lg = Join-Path (Kd) 'svc.log'; "$((Get-Date).AddMinutes(-90).ToString('yyyy-MM-dd HH:mm:ss')) old ERROR x`n<--- JS stacktrace --->`nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory" | Set-Content $lg
 $om = & { . $L3; $pos = @{}; $a = Find-NewLogLine $lg $script:OomPattern $pos; Add-Content $lg "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) new ERROR y"; Add-Content $lg 'FATAL ERROR: Reached heap limit again'

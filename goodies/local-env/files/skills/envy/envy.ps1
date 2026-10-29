@@ -16,7 +16,7 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L27 config · L195 state · L242 layer drops · L314 leases · L414 code · L446 migrations · L692 hooks · L764 marks ·
-  L902 seed · L948 processes · L1235 daemon · L1680 cleanup · L1752 doctor · L1802 verbs
+  L902 seed · L948 processes · L1237 daemon · L1682 cleanup · L1754 doctor · L1804 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -960,10 +960,12 @@ function Get-SysCpu {
 }
 # one listen-table snapshot per 2 s (Windows: Get-NetTCPConnection is slow; status and the loop check many ports); Stop-Svc drops it
 $script:ListenSnap = $null
+# a listener = state Listen or no remote end: some Windows boots report listeners with state 0 (2026-10-29: -State Listen missed them)
+function Test-ListenRow($c) { "$($c.State)" -eq 'Listen' -or ([int]$c.RemotePort -eq 0 -and "$($c.RemoteAddress)" -in '0.0.0.0', '::') }
 function Get-PortPids([int]$Port) {
   if ($KitIsWindows) {
     if (-not $script:ListenSnap -or ((Get-Date) - $script:ListenSnap.at).TotalSeconds -gt 2) {
-      $m = @{}; foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
+      $m = @{}; foreach ($c in @(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { Test-ListenRow $_ })) { $k = "$($c.LocalPort)"; if (-not $m[$k]) { $m[$k] = [Collections.Generic.List[int]]::new() }; if (-not $m[$k].Contains([int]$c.OwningProcess)) { $m[$k].Add([int]$c.OwningProcess) } }
       $script:ListenSnap = @{ at = Get-Date; ports = $m }
     }
     return @($script:ListenSnap.ports["$Port"] | Where-Object { $_ })
