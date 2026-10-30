@@ -15,7 +15,7 @@ feature goes to the `goodies` branch, not the core.
   node, README row, ports; lint refuses a half-added part.
 
 ## Hard rules
-- **31 content + 8 plumbing files** [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports and `tests/`; plumbing = LICENSE,
+- **Content and plumbing file caps** (`_manifest.caps`) [FILE-CAP, PLUMBING-CAP] (`git ls-files` minus the ports and `tests/`; plumbing = LICENSE,
   .gitignore, .gitattributes, .githooks/*, .github/*, settings.json; git-ignored local files never count). One script per area;
   templates fold into a SKILL.md, an agent or `skills/crafty/templates.md`; tests in `tests/<area>.tests.ps1` (shared helpers:
   `tests/harness.ps1`).
