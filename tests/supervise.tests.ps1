@@ -220,10 +220,10 @@ Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
 $um = @'
 $o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
 function Get-KitHostUser { 'me' }
-function Get-KitValue($n, $d) { if ($n -eq 'repos') { @([pscustomobject]@{ name = 'shop'; deploys = @([pscustomobject]@{ branch = 'staging/x' }) }) } else { $d } }
+function Get-KitValue($n, $d) { if ($n -eq 'repos') { @(@{ name = 'shop'; target = 'main'; deploys = @(@{ branch = 'staging/x' }, @{ branch = 'main' }) }, @{ name = 'web' }) } else { $d } }   # a deploys entry equal to the repo's target is no deploy branch
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
   $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
-  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; author = @{ username = 'me' }; merged_at = (& $h 1) },
+  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; target_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
     [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
     [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
     [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }, [pscustomobject]@{ iid = 4; title = 'd'; source_branch = 'deploy/x'; author = 'me'; merged_at = (& $h 1) },

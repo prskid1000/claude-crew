@@ -1615,9 +1615,9 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
   $line = '^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected or deploy/* source = a deploy / promotion MR, no task
-  $dep = @(@(Get-KitValue 'repos' @()).deploys.branch | Where-Object { $_ })   # into a configured deploy branch (repos[].deploys[].branch): a deploy MR
+  $dep = @{}; foreach ($r in @(Get-KitValue 'repos' @())) { $dep["$($r.name)"] = @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }) }   # into that repo's deploy branch (repos[].deploys[].branch, never its task target): a deploy MR
   $ig = @{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and "$($_.target)" -notin $dep -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and "$($_.target)" -notin @($dep["$($_.repo)"]) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
