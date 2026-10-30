@@ -29,5 +29,14 @@ with contextlib.redirect_stdout(io.StringIO()):
     pt.port_deploy()
 ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents/mine.txt').exists() and not (ws / '.codex/agents/old.toml').exists() \
     and (ws / '.codex/agents/a.toml').read_text(encoding='utf-8') == 'x' and pt.deployed_stale() == []
+# owner decisions: blocking -> the native tool where it exists (Codex request_user_input in Plan mode, Antigravity ask_question
+# only when listed), the text otherwise; FYI -> a numbered list; ported agents say a subagent never asks the user
+f = {'name': 'w', 'description': 'd', 'phases': []}
+cx, ag = pt.workflow_procedure_doc(f, 'Codex', 'h'), pt.workflow_procedure_doc(f, 'Antigravity', 'h')
+pt.write_codex('b', {'description': 'd'}, 'body\n' + pt.AGENT_DECIDE)
+ok_ask = all(x in cx for x in ('## Owner decisions', '`request_user_input`', 'Plan mode', '-Ask -Json -Max 3', 'decide list -Fyi', 'decide list -Ask` (question')) \
+    and 'only when `ask_question` is in your tool list' in ag and 'decide list -Fyi' in ag and 'request_user_input' not in ag \
+    and 'never asks the user directly' in tomllib.loads((tmp / 'c' / 'b.toml').read_text(encoding='utf-8'))['developer_instructions']
+print(f'ports-ask:{ok_ask}')
 print(f'ports-escape:{ok_toml}')
 print(f'ports-deploy:{ok_deploy}')

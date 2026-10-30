@@ -1,7 +1,7 @@
 #Requires -Version 7
 # report-gdocs (goody): the styled HTML QA report (colour chips, zebra tables, gallery) for Google Docs import. pokey.ps1 finalize
 # writes report.html with Build-QaReport and publishes it instead of report.md when this file is present (dot-sourced).
-# Sections: L5 helpers · L30 build
+# Sections: L5 helpers · L32 build
 # ---- helpers: HTML escape, palette, chips, images
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
 # escaped text with its `backtick` spans monospace on grey (a span: Docs' import drops <code> styles)

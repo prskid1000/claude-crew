@@ -7,7 +7,7 @@ them to the workspace root, where codex / agy look. --check compares a fresh gen
 prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py loads this file and shares
 its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L29 characters · L64 agents · L111 hooks · L129 workflows · L166 deploy · L248 command
+Sections: L29 characters · L64 agents · L111 hooks · L129 workflows · L184 deploy · L266 command
 """
 import contextlib, io, json, re, shutil, tempfile
 from pathlib import Path
@@ -101,8 +101,8 @@ def port_agents():
     for src in sorted((KIT / "agents").glob("*.md")):
         fields, body = agent_parts(src.read_text(encoding="utf-8").replace("\r\n", "\n"))
         name = fields.get("name", src.stem)
-        write_codex(name, fields, body)
-        write_gravity(name, fields, body)
+        write_codex(name, fields, body.rstrip("\n") + "\n" + AGENT_DECIDE)
+        write_gravity(name, fields, body.rstrip("\n") + "\n" + AGENT_DECIDE)
         made.add(name)
     prune(CODEX_AGENTS, '.toml', made)
     prune(GRAVITY_AGENTS, '.md', made)
@@ -137,12 +137,30 @@ def workflow_meta(text):
     fields["phases"] = re.findall(r"\{\s*title:\s*'([^']*)'\s*,\s*detail:\s*'((?:[^'\\]|\\.)*)'\s*\}", phases.group(1)) if phases else []
     return fields
 
+# owner decisions (bossy E4): `decide ask` records {key, label, description, recommended} + blocking; blocking ones go to the
+# tool's native question tool where it has one, else the text; FYI ones are always a numbered list in the report
+ASK_NATIVE = {
+  "Codex": "in Plan mode, as the root thread: ONE `request_user_input` call from `bossy.ps1 decide list -Ask -Json -Max 3` "
+    "(per question: header, question, options = label + description, recommended first; the client adds \"Other\")",
+  "Antigravity": "only when `ask_question` is in your tool list (its schema is not published): one `ask_question` per question of "
+    "`bossy.ps1 decide list -Ask -Json`, options = the labels, recommended first (it shows its own write-in field)"}
+AGENT_DECIDE = ("\n> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing "
+  "waits); a subagent never asks the user directly: the coordinator relays it.\n")
+
+def decisions_section(tool):
+    return ["## Owner decisions", "",
+      f"- **Blocking** (an item waits): {ASK_NATIVE[tool]}; otherwise the text of `bossy.ps1 decide list -Ask` (question, options "
+      "table, recommendation first). Then `decide answer -Id <id> -Answer '<choice>'` per pick.",
+      "- **FYI** (nothing waits): a numbered list in your report (`decide list -Fyi`); map the owner's \"1 A, 2 B\" back with "
+      "`decide answer -Id <id>` per number.", ""]
+
 def workflow_procedure_doc(fields, tool, how):
     lines = [f"# {fields['name']} (ported procedure, not a native {tool} workflow)", "", f"> {fields['description']}", "",
       f"**When to run it:** {fields.get('whenToUse', '(see the workflow source)')}", "",
       f"{tool} has no workflow engine: you are the coordinator. {how}", "", "## Phases", ""]
     lines += [f"{i}. **{title}** -- {detail}" for i, (title, detail) in enumerate(fields["phases"], 1)]
-    lines += ["", f"Arguments and step details: `.claude/workflows/{fields['name']}.js` (its header comment) and the `bossy` skill."]
+    lines += [""] + decisions_section(tool)
+    lines += [f"Arguments and step details: `.claude/workflows/{fields['name']}.js` (its header comment) and the `bossy` skill."]
     return "\n".join(lines) + "\n"
 
 def port_workflows():
