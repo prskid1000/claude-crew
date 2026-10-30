@@ -1059,7 +1059,7 @@ function Limit-KitCell($Text, [int]$Max = 80) {
   if ($Max -le 0 -or $t.Length -le $Max) { return $t }
   $c = $t.Substring(0, $Max); $cl = @([regex]::Matches($c, '[;:.](?=\s)|\s\(') | Where-Object Index -ge 12)[-1]
   if ($cl) { return $t.Substring(0, $cl.Index).TrimEnd() }
-  $c = $t.Substring(0, $Max - 2); $sp = $c.LastIndexOf(' '); "$($c.Substring(0, [math]::Max($sp, 1)).TrimEnd(' ', ',', ';', ':', '-')) …"
+  $c = $t.Substring(0, $Max - 2); if ([char]::IsHighSurrogate($c[-1])) { $c = $c.Substring(0, $c.Length - 1) }; $sp = $c.LastIndexOf(' '); "$($c.Substring(0, $(if ($sp -gt 0) { $sp } else { $c.Length })).TrimEnd(' ', ',', ';', ':', '-')) …"
 }
 # markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell); -Cap: Limit-KitCell
 function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
@@ -1164,7 +1164,7 @@ function Format-KitReport($d) {
     $gs = if ($rs.Count -le 4) { 1 } elseif ($rs.Count -le 8) { 2 } else { 3 }
     $reportLines.Add(''); $reportLines.Add('|' + ' Resource | Used by | RAM |' * $gs); $reportLines.Add('|' + '---|' * (3 * $gs))
     $rc = @(foreach ($r in $rs) { "$(Limit-KitCell (Format-KitCell $r.name 9) 24) | $(if ($r.by) { Limit-KitCell (Format-KitCell $r.by 9) 24 }) | $(if ($r.gb) { & $g1 $r.gb })" })
-    for ($i = 0; $i -lt $rc.Count; $i += $gs) { $reportLines.Add('| ' + (@($rc[$i..([math]::Min($i + $gs, $rc.Count) - 1)]) -join ' | ') + ' |') }
+    for ($i = 0; $i -lt $rc.Count; $i += $gs) { $row = @($rc[$i..([math]::Min($i + $gs, $rc.Count) - 1)]); while ($row.Count -lt $gs) { $row += ' |  | ' }; $reportLines.Add('| ' + ($row -join ' | ') + ' |') }   # empty cells, no filler
   }
   $reportLines.Add('')
   foreach ($l in @(Format-KitShellTable $d.shells)) { $reportLines.Add($l) }   # 4. agents' background shells, only when any: last

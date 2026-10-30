@@ -38,8 +38,8 @@ $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -Er
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
 Expect 'supervise: without -Session the lock owner is the session, stable per round (no step-aside from itself), detached too' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
-$ec = & { . $O; "$((Limit-KitCell ('x' * 74 + '😀' * 9)) -match '\p{Cs}')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")" }
-Expect 'report cells: a cut never splits an emoji' ($ec -eq 'FalseTrue')
+$ec = & { . $O; "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")" }
+Expect 'cut: emojis whole' ($ec -eq 'FalseTrue')
 $tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
 Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
 Remove-Item Env:KIT_TRACKER_TYPE

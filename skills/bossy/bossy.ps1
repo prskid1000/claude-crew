@@ -1129,7 +1129,7 @@ Invoke-KitLocked $lk {
   if (-not $Takeover -and $held -and $held.session -ne $me -and ((Get-Date) - [datetime]$held.at).TotalMinutes -lt [math]::Max(15, [math]::Min(45, 1.5 * (Get-KitBeatMinutes)))) { $script:aside = "another session's supervisor ran $([int]((Get-Date) - [datetime]$held.at).TotalMinutes) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"; return }   # 1.5 beats: a live heartbeat elsewhere
   Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } | ConvertTo-Json)
 }
-if ($script:aside) { $script:aside; "NEXT $(Get-KitBeatMinutes) min (another session supervises)"; return }
+if ($script:aside) { $script:aside; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
 $budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
@@ -2106,7 +2106,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
   $crashed = @(Set-KitBoardCrashed)
   foreach ($s in @(Get-StoppedRuns -Hours 72 | Where-Object { -not $_.paused })) { foreach ($x in @($s.file, $s.selfFile) | Where-Object { $_ }) { try { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if (-not $j.crashed) { $j | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); Write-KitAtomic $x ($j | ConvertTo-Json -Depth 30) } } } catch {} } }
   $stopped = @(& $KitCmd.orch launch -List -Brief -Hours 72 2>$null)
-  if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; bossy E3); finished ones: bossy.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (bossy E1: a one-shot timer in $(Get-KitBeatMinutes) min, bossy.ps1 supervise -AutoFix -Brief, re-armed to each NEXT <n> min)" }
+  if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; bossy E3); finished ones: bossy.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (bossy E1: a one-shot timer in $(Get-KitBeatMinutes) min, bossy.ps1 supervise -AutoFix -Brief, re-armed to each stderr NEXT=<n>)" }
 }
 if ($py) {
   $lint =& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null
