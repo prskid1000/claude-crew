@@ -583,7 +583,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
     $body = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)`n$(if ($guideUrl) { "- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)`n" })`n" + (($entries | ForEach-Object md) -join "`n")
     if ($s.id) {   # a name someone changed since the last finalize stays
-      $cur = try { [string](Get-TrackerTask $s.id).name } catch { '' }
+      Clear-TrackerMemo $s.id; $cur = try { [string](Get-TrackerTask $s.id).name } catch { '' }
       if (-not $s.name -or -not $cur -or $cur -eq $s.name) { $null = Set-TrackerName $s.id $name } else { $name = $cur }
       $null = Set-TrackerDescription $s.id $body
     }

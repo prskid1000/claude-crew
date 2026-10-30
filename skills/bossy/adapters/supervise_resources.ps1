@@ -337,11 +337,13 @@ function Get-KitRecoverLinesResources {
 }
 
 # ---- cleanup: idle resources
-# cleanup: test browsers with no live tab holder, idle or surplus browser profiles, idle Gradle / Kotlin daemons
-# cleanup: a deploymerge-* worktree (goody deploys) no board entry claims, idle past idle.graceMinutes: it blocks the next deploy merge
+# cleanup: a deploymerge-* worktree (goody deploys) no board entry claims, idle past idle.graceMinutes (60 min at least: a merge
+# waiting for its pipeline writes nothing): it blocks the next deploy merge
 function Test-KitIdleDeployMerge([string]$Name, [string]$Dir, [string[]]$Claimed, $Newest, [datetime]$Now) {
-  $Name -like 'deploymerge-*' -and $Dir.ToLower() -notin $Claimed -and $Newest -and ($Now - $Newest).TotalMinutes -ge [double](Get-KitParam 'idle.graceMinutes')
-}function Invoke-KitCleanupResources {
+  $Name -like 'deploymerge-*' -and $Dir.ToLower() -notin $Claimed -and $Newest -and ($Now - $Newest).TotalMinutes -ge [math]::Max(60, [double](Get-KitParam 'idle.graceMinutes'))
+}
+# cleanup: test browsers with no live tab holder, idle or surplus browser profiles, idle Gradle / Kotlin daemons
+function Invoke-KitCleanupResources {
   $profiles = Get-KitPath chrome-profiles
   $chromes = Get-SysProcs -Name '(?i)^(chrome|msedge|chromium(-browser)?|chrome-headless-shell|headless_shell|google chrome|microsoft edge|firefox|MiniBrowser|WebKitWebProcess)(\.exe)?$' | Where-Object { $_.CommandLine -match '--?headless|-juggler' -and $_.CommandLine -match [regex]::Escape($profiles) }
   $qaRuns = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)

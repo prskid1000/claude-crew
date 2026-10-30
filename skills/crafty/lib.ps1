@@ -1804,7 +1804,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ' ' } elseif ($vals.Count) { $vals[0] } else { '' }
     } else { $pos.Add($Tokens[$i]); $i++ }
   }
-  $miss = @($own | Where-Object { $pa = @($meta[$_].Attributes | Where-Object { $_ -is [Parameter] -and $_.Mandatory }); $pa.Count -and -not $named.ContainsKey($_) -and -not ($pa[0].Position -ge 0 -and $pa[0].Position -lt $pos.Count) })
+  $miss = @($own | Where-Object { $pa = @($meta[$_].Attributes | Where-Object { $_ -is [Parameter] -and $_.Mandatory -and $_.ParameterSetName -eq '__AllParameterSets' -and -not $_.ValueFromPipeline -and -not $_.ValueFromRemainingArguments }); $pa.Count -and -not $named.ContainsKey($_) -and -not ($pa[0].Position -ge 0 -and $pa[0].Position -lt $pos.Count) })
   if ($miss.Count) { & $usage "$($Fn -replace '^Invoke-', ''): missing -$($miss -join ', -')." $true }   # an interactive host would prompt (a hung tool call)
   & $run $pos.ToArray() $named
 }
