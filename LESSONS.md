@@ -55,6 +55,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## pokey
+- Before a QA run starts, check its targets and alsoTargets cover every env each task's checks call (e.g. a second product's staging); a missing one leaves the task untested for env-data (2×)
 - Setting-dependent checks: change the setting, wait for the cache, check, restore and verify the restore by GET; log each step in lead-notes.md (1×)
 - Write QA observed and verify text in sentences of <= 25 words and <= 40 words per observed text before evidence -Check, so the first -Check passes (2x)
 - API checks replay the body the real client sends (capture it from the web UI network log or the client source), never a hand-built body: a richer hand body passed while the UI request wrote wrong data (1x, defect missed)
@@ -92,7 +93,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 ## kitty
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
-- Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x)
+- Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x) (2×)
 - pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
 - A helper adding agents/<x>.md must update the router row, reach mentions and manifest in the same commit; pre-commit lint (ROUTER-UNROUTED, REACH-MENTION, MANIFEST) blocks a lone file. (3x)
 - Kit token cap work: measure the whole pass's headroom first (one trim plan), then one file per agent; never trim or reformat a file another agent edits; prove each trim by token or AST equality before pushing. (4×)
