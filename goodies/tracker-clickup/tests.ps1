@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests.ps1 (goody tracker-clickup): the ClickUp tracker on recorded clickup CLI answers (an unknown call fails): view, status,
-comment, create (assignee looked up, parent kept), list; a dry-run comment from a file.
+comment, create (assignee looked up, parent kept, no list: the parent's), list; a dry-run comment from a file.
 Usage: pwsh -NoProfile -File goodies/tracker-clickup/tests.ps1 [-Kit <kit>] (the adapter comes from files/ beside this file).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -14,15 +14,15 @@ $global:fx = [ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"st
   'comment list C1 --json' = '[{"id":"55","user":{"username":"kit"},"date":"1700000000000","comment_text":"round one\n\n[kit:qa-result]"},{"id":"56","user":{"username":"ann"},"date":"1700000001000","comment_text":"a person"}]'
   'comment edit 55 round two' = '{}'
   'status set in test C1' = 'Status set'; 'comment add C1 two words' = '{"id":"90"}'; 'member list' = '[{"id":7,"username":"Ann Lee"}]'
-  'task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
+  'task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task create --list-id L9 --name x .*--parent C1' = '{"id":"C6"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
 try {
   Initialize-KitTracker -Type clickup
-  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description 'd' -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest) }
-  $pass = $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'C5' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 7 -and ($global:log -join "`n") -match '--priority 2'
+  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description 'd' -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest); p = __TrA 'create' @{ name = 'x'; description = 'd'; parent = 'C1' } }
+  $pass = $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'C5' -and $r.p.id -eq 'C6' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 7 -and ($global:log -join "`n") -match '--priority 2'
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
-"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create, list on recorded answers"
-$global:log.Clear(); try { $null = Set-TrackerKitComment C1 qa-result 'round two'; $pass = ($global:log -join "`n") -match '(?m)^comment edit 55 round two\s+\[kit:qa-result\]$' -and ($global:log -join "`n") -notmatch 'comment (add|delete)|56' } catch { $pass = $false; "  clickup error: $_" }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: view, status, comment, create (no list: the parent's), list on recorded answers"
+$global:log.Clear(); try { $null = Set-TrackerKitComment C1 qa-result 'round two'; $pass = ($global:log -join "`n") -match '(?m)^comment edit 55 round two$' -and ($global:log -join "`n") -notmatch 'comment (add|delete)|56' } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a kit comment's next round edits it (comment edit <id>); a person's comment untouched"
 $global:log.Clear(); $nl = try { @(Get-TrackerTasks '' inTest 3>$null); 'no throw' } catch { "$_" }

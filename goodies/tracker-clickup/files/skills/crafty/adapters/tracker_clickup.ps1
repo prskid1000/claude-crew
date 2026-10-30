@@ -25,7 +25,9 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'comment-edit' = { param($a) __TrCli 'clickup' @('comment', 'edit', $a.comment, (ConvertTo-KitPlainText $a.text)) }   # a kit comment's next round (lib.ps1 Set-TrackerKitComment)
   'comment-delete' = { param($a) __TrCli 'clickup' @('comment', 'delete', $a.comment, '--yes') }
   'create' = { param($a)
-    $c = @('task', 'create', '--list-id', $a.list, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
+    $lid = $a.list; if (-not $lid -and $a.parent -and -not $__trDry) { $lid = [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id }   # no list: the parent's
+    if (-not $lid -and -not $__trDry) { throw 'tracker (clickup) create: no list (-List, tracker.list) and no parent to take it from' }
+    $c = @('task', 'create', '--list-id', $lid, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee
     if ($a.priority) { $c += @('--priority', $a.priority) }
     if ($as -and $as -notmatch '^\d+$') {
       $as = try { __TrClickupMemberId $as } catch { Write-Warning "tracker: member lookup failed ($($_.Exception.Message))"; $null }
