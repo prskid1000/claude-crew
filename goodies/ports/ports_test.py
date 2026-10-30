@@ -34,7 +34,7 @@ ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents
 f = {'name': 'w', 'description': 'd', 'phases': []}
 cx, ag = pt.workflow_procedure_doc(f, 'Codex', 'h'), pt.workflow_procedure_doc(f, 'Antigravity', 'h')
 pt.write_codex('b', {'description': 'd'}, 'body\n' + pt.AGENT_DECIDE)
-ok_ask = all(x in cx for x in ('## Owner decisions', '`request_user_input`', 'Plan mode', '-Ask -Json -Max 3', 'decide list -Fyi', 'decide list -Ask` (question')) \
+ok_ask = all(x in cx for x in ('## Owner decisions', '`request_user_input`', 'Plan mode', '-Ask -Json -Max 3', 'decide list -Fyi', 'decide list -Ask` (question', "payload's `ids` in order", 'missing from `ids`', 'at most 3')) \
     and 'only when `ask_question` is in your tool list' in ag and 'decide list -Fyi' in ag and 'request_user_input' not in ag \
     and 'never asks the user directly' in tomllib.loads((tmp / 'c' / 'b.toml').read_text(encoding='utf-8'))['developer_instructions']
 print(f'ports-ask:{ok_ask}')

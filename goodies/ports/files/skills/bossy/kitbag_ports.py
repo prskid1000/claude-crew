@@ -7,7 +7,7 @@ them to the workspace root, where codex / agy look. --check compares a fresh gen
 prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py loads this file and shares
 its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L29 characters · L64 agents · L111 hooks · L129 workflows · L184 deploy · L266 command
+Sections: L29 characters · L64 agents · L111 hooks · L129 workflows · L186 deploy · L268 command
 """
 import contextlib, io, json, re, shutil, tempfile
 from pathlib import Path
@@ -141,7 +141,8 @@ def workflow_meta(text):
 # tool's native question tool where it has one, else the text; FYI ones are always a numbered list in the report
 ASK_NATIVE = {
   "Codex": "in Plan mode, as the root thread: ONE `request_user_input` call from `bossy.ps1 decide list -Ask -Json -Max 3` "
-    "(per question: header, question, options = label + description, recommended first; the client adds \"Other\")",
+    "(per question: header, question, options = label + description, recommended first, at most 3: name a 4th in the question; "
+    "the client adds \"Other\")",
   "Antigravity": "only when `ask_question` is in your tool list (its schema is not published): one `ask_question` per question of "
     "`bossy.ps1 decide list -Ask -Json`, options = the labels, recommended first (it shows its own write-in field)"}
 AGENT_DECIDE = ("\n> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing "
@@ -149,8 +150,9 @@ AGENT_DECIDE = ("\n> Ported note: owner decisions go only through `bossy.ps1 dec
 
 def decisions_section(tool):
     return ["## Owner decisions", "",
-      f"- **Blocking** (an item waits): {ASK_NATIVE[tool]}; otherwise the text of `bossy.ps1 decide list -Ask` (question, options "
-      "table, recommendation first). Then `decide answer -Id <id> -Answer '<choice>'` per pick.",
+      f"- **Blocking** (an item waits): {ASK_NATIVE[tool]}; the questions map to the payload's `ids` in order. No tool, or a pending "
+      "id missing from `ids` (fewer than 2 options): the text of `bossy.ps1 decide list -Ask` (question, options table, "
+      "recommendation first). Then `decide answer -Id <id> -Answer '<choice>'` per pick.",
       "- **FYI** (nothing waits): a numbered list in your report (`decide list -Fyi`); map the owner's \"1 A, 2 B\" back with "
       "`decide answer -Id <id>` per number.", ""]
 
