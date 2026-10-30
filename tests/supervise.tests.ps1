@@ -232,6 +232,6 @@ Invoke-Supervise -Json -Takeover
 $u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
 $uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
 Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked -> gone; host listed once per beat ($uc)" ($u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
-  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -notmatch 'shop!(8725|1|2|3)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
+  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Remove-TestKit $k
 Complete-Tests

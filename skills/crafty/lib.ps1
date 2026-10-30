@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1132 tracker · L1421 git-host · L1562 kitlog · L1678 params · L1991 entry-scripts
+  L1092 supervise report · L1132 tracker · L1421 git-host · L1564 kitlog · L1680 params · L1993 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1554,9 +1554,11 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   $line = '^(?:main|master|develop|release/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected source = a deploy / promotion MR, no task
   $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) })
   if (-not $un.Count) { return }
-  $tg = Get-KitTaskTagRx; $f = $un[0]; $tid = if ($tg -and "$($f.branch) $($f.title)" -match $tg) { $Matches.id } else { '<task>' }
+  $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
+  $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
+  # the table cell is cut at 90 chars: refs in problem, a short next; every full command in the report's "All flags"
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: & $($KitCmd.orch) track add -Task $tid -Mrs '$($f.repo)!$($f.iid)', then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = 'merged MR on no task' }
+    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$($refs -join ', ') merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)
