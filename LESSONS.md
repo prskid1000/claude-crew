@@ -18,6 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Stacked MR after a fix round on its base: rebuild it on the new base plus a revert of the moved commit so the stacked diff stays clean. (1x)
 - envy deploy REFUSED by a foreign layer whose branch is not based on the published head: board msg its holder; holder off the board -> raise an ENV-FIX, never deploy over it. (2x)
 - Re-run devtools.py finish after a doc change, final rebase or flaky tracker call: it updates the same two docs, the links block and the solution comment in place; check the tracker status after it. (4x)
 - MR body limits (260 words, How tested bullets, one standalone Not run line): run kitbag.py prose --kind mr-body and fix the body before devtools.py mr, not after its warning. (4x)
@@ -54,6 +55,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## pokey
+- A NOT_TESTED undeployed check whose MR sits in a running deploy job: wait on that job (glab api jobs/<id>), then test, instead of failing the task. (1x)
 - pokey.ps1 api -OutDir refused 9x with a number: the variable was reused (PowerShell names are case-insensitive, $o is $O); pass -OutDir from crafty.ps1 dir in a distinctly named variable (9x)
 - Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x). (3×)
 - Run pokey.ps1 -Check before every publish: it catches missing or renamed evidence references so no broken report goes out (1x win).
@@ -84,6 +86,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
 - Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x)
 - pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
