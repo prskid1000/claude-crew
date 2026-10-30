@@ -118,9 +118,10 @@ What must hold before merge:
 ## Testing doc (AI)
 The local test record of the dev flow. devy writes it from `goals.md` at the start of the local loop: every positive,
 negative, edge and regression case (invalid input, role / permission denials, boundaries, empty or missing data,
-concurrency where relevant, nearby features, impact-check edge cases), one row each. Each loop round fills Result and
-Evidence (images inline, a request / response excerpt + link) and republishes: `devtools.py doc --key <task>:testing-ai
---label "loop round <n>"` (same link, a dated section per round; refused without a negative row). It shows the local PASS.
+concurrency where relevant, nearby features, impact-check edge cases), one row each. Each loop round (and each fix round
+after failedTesting) fills Result and Evidence (images inline, a request / response excerpt + link), appends its Rounds row
+and republishes: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"` (same link; earlier rounds stay whole
+below; refused without a negative row, without the Rounds table or with an earlier row dropped). It shows the local PASS.
 ```markdown
 # Testing doc (AI): <task id> <title>
 Setup and cleanup: <data created via the API (prefixed), feature switches, logins by key; what is deleted after>.
@@ -131,6 +132,10 @@ Cases:
 | A2 | negative | same as <role without the right> | 403 `<message>` | PASS | `403 {"error": ...}` [json](<link>) |
 | A3 | edge | <empty / boundary / concurrent> | <exact> | | |
 | A4 | regression | <nearby feature> | unchanged: <exact> | | |
+Rounds (one row per round, appended; bugs found by you or checky go back to the code until 0 are open):
+| Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |
+|---|---|---|---|---|---|---|
+| 1 | <yyyy-MM-dd> | A1-A4 | 3 PASS, 1 FAIL | A3: <what broke> | <sha> | A3 PASS in round 2 |
 ```
 
 ## Human testing doc
@@ -139,7 +144,8 @@ Result and Evidence EMPTY: its evidence only ever comes from a deployed env (loc
 `devtools.py finish` publishes it as `<task>:testing-doc` (refused before a loop PASS checkpoint, without the case table,
 with a negative row, an image or a filled Result / Evidence); a fix round updates the same doc after its own PASS. Testers
 and /testy follow it (pokey H1-H3, L1); each deployed-env run (`pokey.ps1 finalize`, or a person) fills Result / Evidence
-in place (images inline) and adds a dated "<env> run <date>" section with its report.
+in place (images inline) and adds a dated "<env> run <date>" section with its report; a retest after a fix adds another, earlier
+runs stay.
 ```markdown
 # Testing: <feature / change>
 | | |

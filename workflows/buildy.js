@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L253 ship-prompt · L276 plan · L290 spike ·
-//   L303 local-loop · L367 stages · L493 ship · L564 deploy · L581 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L255 ship-prompt · L278 plan · L292 spike ·
+//   L305 local-loop · L369 stages · L495 ship · L566 deploy · L583 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -189,10 +189,12 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fix
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." -Recommend <A|B>
  -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.
+- LOCAL LOOP until 0 open bugs and every goal PASS (bugs you or checky find come back to the code): each round appends its row to
+ the AI doc's Rounds table (round, date, cases, result, bugs, fix commit, retest) and republishes it (--label "loop round <n>").
 - Every goal PASS: crafty.ps1 checkpoint -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
  then the human doc (positive cases) + the AI doc (every case) and devtools.py finish <task> testing.md solution.md review --ai ai.md,
- then devtools.py mr again with both links (edits the MR). A fix round: the same commands update the same docs, comment and MR
- after its own PASS, never a new doc. Do NOT merge (the workflow reviews, waits for CI, merges; merge refuses an MR without
+ then devtools.py mr again with both links (edits the MR). A fix round (review, CI, failedTesting): a new AI doc round, then the same
+ commands update the same docs, comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow reviews, waits for CI, merges; merge refuses an MR without
  both doc links): merged=false, mergeState OPEN.`
 
 function buildPrompt(a) {
@@ -242,7 +244,7 @@ function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push update the
-MR body ("How tested", "Risks") and the testing doc to match the fix. An already-merged MR:
+MR body ("How tested", "Risks") and append the round to the AI testing doc. An already-merged MR:
 put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {

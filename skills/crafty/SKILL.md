@@ -29,16 +29,16 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it in the testing-goals doc
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
-#   4. goals.md (local) + AI testing doc FIRST (templates.md) + automated tests (Rules > Tests); each loop round:
+#   4. goals.md (local) + AI testing doc FIRST (templates.md) + automated tests (Rules > Tests); per round, a Rounds row:
 #      devtools.py doc "<title>" ai.md --key <task>:testing-ai --label "round <n>"
 & $D check -Dir <wt>/<module>                                                  #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched             #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations                                 #    if you touched migrations: ISSUES 0
 & $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks run
-#   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run every goal; failed -> back to 3 (max 3 rounds,
-#      then report FAIL with the failing goals: a stronger round follows, then the coordinator); never BLOCKED for an env
-#      reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting, pause" -> stop checks there until "deploy
-#      done", then re-run them; 0 errors + every goal reached -> release the lease -> 6
+#   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run every goal; a failed goal or bug (yours, checky's)
+#      -> back to 3 until 0 open bugs (max 3 rounds; then FAIL + the failing goals: a stronger round, then the
+#      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
+#      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
 & $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; git -C <wt> push -u origin <branch>
 python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md              # 6. MR ("MR body"); after finish: again, both links
@@ -102,7 +102,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
   caller; overrides opt-in; key shared formatters by field; a round-trip test; list the callers in the MR and the testing goals.
   A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
-  every render path of the field) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
+  every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
   never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.

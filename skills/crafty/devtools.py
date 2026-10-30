@@ -17,8 +17,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L975 plugins ·
-  L989 keepboth · L1008 selftest · L1271 CLI
+Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L996 plugins ·
+  L1010 keepboth · L1029 selftest · L1306 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -791,6 +791,7 @@ PUB_KINDS = {'testing-doc': 'append', 'testing-ai': 'append', 'qa-report': 'appe
 GOALS_MARK = re.compile(r'(?m)^#{1,2} (Testing goals\b|Goals \(what must be true\))')   # templates.md "Testing goals"
 CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Human testing doc" (positive cases)
 AI_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Type\s*\|\s*Steps\s*/\s*API call[^|]*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Testing doc (AI)"
+ROUNDS_TABLE = re.compile(r'(?im)^\|\s*Round\s*\|\s*Date\s*\|\s*Cases run\s*\|\s*Result\s*\|\s*Bugs found\s*\|\s*Fix commit\s*\|\s*Retest\s*\|[^\n]*\n\|[-:| ]+\|[ \t]*\n?((?:\|[^\n]*\n?)*)')   # its loop history
 
 
 def _pub_file(key):
@@ -872,11 +873,18 @@ def _table_rows(md, cells=None):
     return rows, '\n'.join(out)
 
 
+def _round_rows(md):
+    """The first cells (round numbers) of the AI doc's Rounds table; None without one."""
+    m = ROUNDS_TABLE.search(md or '')
+    return None if not m else [_cells(l)[0] for l in m.group(1).splitlines() if l.strip()]
+
+
 def _compose(title, rounds, runs=()):
-    """The newest version on top (Result / Evidence filled by the newest env run), then env runs and earlier rounds newest
-    first under dated headings ('## <env> run <date>', '## Round <n> — <date>'); one round, no run = unchanged. -> (text, ext)"""
+    """The newest version on top (Result / Evidence filled by the newest env run when it is newer than that version: a fix round
+    after a run starts empty), then env runs and earlier rounds newest first under dated headings ('## <env> run <date>',
+    '## Round <n> — <date>'), each kept whole; one round, no run = unchanged. -> (text, ext)"""
     top = rounds[-1]
-    if runs and top['ext'] == '.md':
+    if runs and top['ext'] == '.md' and ((runs[-1]['seq'] > top['seq']) if 'seq' in runs[-1] and 'seq' in top else runs[-1]['at'] >= top['at']):
         top = dict(top, body=_table_rows(top['body'], runs[-1].get('cells') or {})[1])
     secs = [(f'{r["label"] or "env"} run {r["at"]}', r) for r in reversed(runs)]
     secs += [(f'Round {i + 1} — {r["at"]}{" " + r["label"] if r["label"] else ""}', r) for i, r in reversed(list(enumerate(rounds[:-1])))]
@@ -929,11 +937,24 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
         key, kind, run = f'{scope}:qa-report', 'qa-report', None
     if kind in ('testing-doc', 'testing-ai') and run is None:
         _check_doc(kind, scope, path, body)
+    if kind in ('testing-doc', 'testing-ai') and mode == 'replace':
+        print(f'[publish] {key}: a testing doc keeps every round and run: --mode replace ignored', file=sys.stderr)
+        mode = 'append'
     f = _pub_file(key)
     with locked(f):
         rec = _pub_read(key)
         rounds, runs = list(rec.get('rounds') or []), list(rec.get('runs') or [])
-        new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
+        if kind == 'testing-ai' and run is None:   # the loop history: appended, never rewritten
+            had, have = _round_rows(rounds[-1]['body']) if rounds else None, _round_rows(body)
+            if have is None and (not rounds or had is not None):
+                raise SystemExit(f'{path} has no Rounds table "| Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |" (templates.md'
+                                 ' "Testing doc (AI)"): one row per loop round. Nothing was published.')
+            lost = [r for r in had or [] if r not in have]
+            if lost:
+                raise SystemExit(f'{path} dropped Rounds row(s) {", ".join(lost)} of the published doc: rounds are appended, earlier rows stay. Nothing was published.')
+            if have is None:
+                print(f'[publish] {key}: no Rounds table (a doc from before it): add one from templates.md "Testing doc (AI)"', file=sys.stderr)
+        new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'seq': time.time(), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
         if run is not None:
             runs.append(dict(new, cells=run))
         else:
@@ -1156,15 +1177,17 @@ def _publish_selftest(expect, refused):
                '| T1 | 1. Open the list. | Newest first. | | |\n'
                '## Out of scope\n| Item | Why |\n|---|---|\n| Email | qa.outOfScope |\n## Result (testers)\nAll pass -> close.\n')
         ait = '| # | Type | Steps / API call + payload | Expected | Result | Evidence |\n|---|---|---|---|---|---|\n'
+        rt = 'Rounds:\n| Round | Date | Cases run | Result | Bugs found | Fix commit | Retest |\n|---|---|---|---|---|---|---|\n'
         aidoc = ('# Testing doc (AI): X\nCases:\n' + ait + '| A1 | positive | GET /list | 200, newest first | | |\n'
-                 '| A2 | negative | GET /list as viewer | 403 | | |\n| A3 | edge | GET /list, no rows | 200, [] | | |\n')
+                 '| A2 | negative | GET /list as viewer | 403 | | |\n| A3 | edge | GET /list, no rows | 200, [] | | |\n'
+                 + rt + '| 1 | 2026-10-29 | A1-A3 | 2 PASS, 1 FAIL | A3: 500 | abc123 | round 2 |\n')
         human, ai = w(os.path.join(tmp, 'h.md'), doc), w(os.path.join(tmp, 'a.md'), aidoc)
         tf = os.path.join(KIT, 'templates.md')
         if os.path.isfile(tf):   # a full kit (goody test kits copy scripts only)
             tpl = open(tf, encoding='utf-8').read()
             blk = lambda n: re.search(rf'(?ms)^## {re.escape(n)}\n.*?```markdown\n(.*?)```', tpl).group(1)
             expect('templates: the AI doc has negative rows and its case table; the human doc has positive rows only',
-                   '| negative |' in blk('Testing doc (AI)') and AI_TABLE.search(blk('Testing doc (AI)')) and CHECKS_TABLE.search(blk('Human testing doc'))
+                   '| negative |' in blk('Testing doc (AI)') and AI_TABLE.search(blk('Testing doc (AI)')) and ROUNDS_TABLE.search(blk('Testing doc (AI)')) and CHECKS_TABLE.search(blk('Human testing doc'))
                    and 'negative' not in blk('Human testing doc').lower())
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
@@ -1193,8 +1216,13 @@ def _publish_selftest(expect, refused):
                body.index('| T2 |') < body.index('## Round 1') < body.index('| T1 |') and _pub_read('T9:testing-doc')['url'] == u1)
         ix = state_read(os.path.join(kp('tasks'), 'T9.json')) or {}
         expect('publish by key: the task index points at the doc (docs.testing-doc, schemaVersion 1)', ix.get('docs', {}).get('testing-doc', {}).get('url') == u1 and ix.get('schemaVersion') == 1)
-        ua2 = publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a2.md'), aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS |')), label='loop round 2')
-        expect('testing-ai: round 2 (filled Result) updates the same doc', ua2 == ua and '| PASS |' in open(ua2, encoding='utf-8').read())
+        refused('testing-ai: no Rounds table -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a1.md'), aidoc.split('Rounds:')[0])), 'no Rounds table')
+        refused('testing-ai: a round that drops an earlier Rounds row -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a3.md'), aidoc.replace('| 1 | 2026-10-29', '| 2 | 2026-10-30'))), 'dropped Rounds row(s) 1')
+        a2 = aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS |') + '| 2 | 2026-10-30 | A1-A3 | 3 PASS | none | def456 | A3 PASS |\n'
+        a2p = w(os.path.join(tmp, 'a2.md'), a2); ua2 = publish('T9:testing-ai', 'X', a2p, label='loop round 2', mode='replace')
+        ab = open(ua2, encoding='utf-8').read()
+        expect('testing-ai: round 2 updates the same doc, round 1 kept whole below (its rows, its Rounds row); --mode replace ignored',
+               ua2 == ua and ab.index('| 2 | 2026-10-30') < ab.index('## Round 1') < ab.rindex('| A1 | positive | GET /list | 200, newest first | | |') and ab.count('| 1 | 2026-10-29') == 2)
         rep = w(os.path.join(tmp, 'r.md'), '# QA\n## Results\n| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T2 | PASS | ok | |\n')
         expect('the human doc starts with Result / Evidence empty', _table_rows(open(u2, encoding='utf-8').read())[0][0] == ('T2', '', ''))
         ur = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'PASS', 'evidence': '![T2: list](https://img/s2.png)'}})
@@ -1202,6 +1230,13 @@ def _publish_selftest(expect, refused):
         expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',
                ur == u1 and '| T2 | 1. Open the list. | Newest first. | PASS | ![T2: list](https://img/s2.png) |' in hb
                and hb.index('| T2 |') < hb.index('## stg run ') < hb.index('## Round 1') and not _pub_read('T9:qa-report'))
+        ur2 = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'FAIL', 'evidence': 'x'}})
+        hb2 = open(ur2, encoding='utf-8').read()
+        expect('a retest run adds a second "<env> run" section; the first stays', ur2 == u1 and hb2.count('## stg run ') == 2 and '| T2 | 1. Open the list. | Newest first. | FAIL | x |' in hb2)
+        u3 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h3.md'), doc.replace('| T1 |', '| T3 |')), label='fix round')
+        hb3 = open(u3, encoding='utf-8').read()
+        expect('a fix round after a run: a fresh version on top with Result / Evidence empty; both runs and the earlier rounds stay',
+               u3 == u1 and '| T3 | 1. Open the list. | Newest first. | | |' in hb3 and hb3.count('## stg run ') == 2 and hb3.index('| T3 |') < hb3.index('## stg run '))
         nr = publish('T7:testing-doc', 'X', rep, run={})
         expect('a run without a human doc: the report is published by <task>:qa-report', _pub_read('T7:qa-report').get('url') == nr)
         legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
@@ -1212,13 +1247,13 @@ def _publish_selftest(expect, refused):
         g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': 'Testing doc: https://old\n\nThe ask.'}
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         expect('finish refused before any tracker write', not calls)
-        finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=ai)
+        finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=a2p)
         d = next(a[2] for a in calls if a[0] == 'describe'); c = next(a for a in calls if a[0] == 'comment')
         expect('finish: links block (human + AI) on top, solution comment of kind comment-solution with the one human link, status review',
                d.startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')
                and c[2].count(u1) == 1 and '<link>' not in c[2] and calls[-1] == ('status', 'T9', 'review'))
         calls.clear(); st['s'] = 'promoted'
-        finish('T9', human, '**Solution** — x\n**Testing doc**: <link>', ai=ai)
+        finish('T9', human, '**Solution** — x\n**Testing doc**: <link>', ai=a2p)
         expect('finish on a promoted task: docs and comment, status never moved back', not [a for a in calls if a[0] == 'status'] and [a for a in calls if a[0] == 'comment'])
         hc = []
         g.update(remote=lambda w: ('gitlab', 'g/r'), _run=lambda *a, **k: 'f/x', _host=lambda v, **a: hc.append(v) or (
