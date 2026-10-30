@@ -13,6 +13,8 @@ $k2 = New-LocalEnvKit le2; $L2 = Join-Path $k2 'skills/envy/envy.ps1'
 & $J @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ snapshot = 'echo s'; restore = 'echo r' } }; mig = @{ services = @(); db = @{ engine = 'postgres' } } } } } (Join-Path $k2 'skills/crafty/kit.local.json') 6
 $xo = Px $L2 deploy -Env mig -Branch b 2>&1 | Out-String; $xc = $LASTEXITCODE
 Expect "localenv: db.engine without its presets stops with the goody line, exit 1 ($xc)" ($xc -eq 1 -and ($xo -replace '\s*\|?\s+', ' ') -match 'db\.engine presets are a goody: run kitbag\.py goody add db-engine-presets')
+$hv = Px $L2 help 2>&1 | Out-String; $hc = $LASTEXITCODE
+Expect "localenv: help prints the verbs, exit 0 ($hc)" ($hc -eq 0 -and $hv -match 'Verbs: envs' -and $hv -notmatch 'No local environments')
 $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
 $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
 $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
