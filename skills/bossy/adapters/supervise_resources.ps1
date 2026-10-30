@@ -7,16 +7,20 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L42 supervise · L180 shells · L294 release · L323 lines · L348 cleanup
+Sections: L13 builds · L46 supervise · L184 shells · L298 release · L327 lines · L352 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
-# gate history keys whose last 3 builds failed; old failures (a path since fixed) are no news: the last one must be < 24 h old
-function Get-KitBuildFailures($Hist, [datetime]$Now) {
+# gate history keys whose last 3 builds failed -> @{ key; who }: stale (last failure 60+ min old), its agent gone, or its agent built that dir green since -> no news
+function Get-KitBuildFailures($Hist, [datetime]$Now, $Log = @(), [int]$Minutes = 60) {
   if (-not $Hist) { return }   # no gate history yet
   foreach ($k in @($Hist.Keys)) {
     $last = @($Hist[$k] | Select-Object -Last 3)
-    if ($last.Count -eq 3 -and -not ($last | Where-Object { $_.ok }) -and $last[-1].at -and ($Now - [datetime]$last[-1].at).TotalHours -lt 24) { $k }
+    if ($last.Count -ne 3 -or ($last | Where-Object { $_.ok }) -or -not $last[-1].at -or ($Now - [datetime]$last[-1].at).TotalMinutes -ge $Minutes) { continue }
+    $failAt = [datetime]$last[-1].at; $dir = ($k -split '\|', 2)[-1]; $ends = @($Log | Where-Object { $_.event -eq 'end' -and $_.at })
+    $who = @($ends | Where-Object { "$($_.kind)|$($_.project)" -eq $k -and [int]$_.code } | ForEach-Object owner)[-1]
+    if ($who -and ((Test-KitLive @{ agent = $who }) -eq $false -or @($ends | Where-Object { $_.owner -eq $who -and -not [int]$_.code -and [datetime]$_.at -gt $failAt -and ("$($_.project)" -eq $dir -or "$($_.project)" -like "$dir/*" -or $dir -like "$($_.project)/*") }).Count)) { continue }
+    [pscustomobject]@{ key = $k; who = $who }
   }
 }
 # a starved gate (its head waited 10+ min) while the file cache holds 25%+ of RAM: run gate.cacheFlush (an org command line, e.g. an
@@ -62,8 +66,8 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-  foreach ($k in Get-KitBuildFailures $hist $now) {   # the agent that ran them names the row
-    $who = @(Read-KitLog builds $now.AddHours(-24) | Where-Object { $_.event -eq 'end' -and "$($_.kind)|$($_.project)" -eq $k -and [int]$_.code } | ForEach-Object owner)[-1]
+  foreach ($bfx in Get-KitBuildFailures $hist $now @(Read-KitLog builds $now.AddHours(-24))) {   # the agent that ran them names the row
+    $k = $bfx.key; $who = $bfx.who
     [pscustomobject]@{ level = 'WATCH'; what = "builds '$k' failed 3 times in a row"; kind = 'BUILDS'; who = $(if ($who) { $who } else { $k }); problem = "$k failed 3 times in a row"; next = "Check that agent's last build log"
       action = 'Repeated failing builds burn memory and turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else help it or fix its brief.' } }
   if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))) }

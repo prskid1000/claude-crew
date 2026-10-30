@@ -3,7 +3,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   seat acquire|release|status ...                  memory seat + item claim
   deployed -Mrs <repo>!<iid>,... [-Detail] [-Json] [-TimeoutSec 100]  live on a test env? (goody deploys)
   api -Target <t> -As <user> -Method <M> -Path '/...' [-Body <json>] [-ContentType <type>] [-Save <name> -OutDir <abs dir>]
-  finalize -RunDir <run> -Code <code> [-Check -FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
+  finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L703 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L706 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -324,6 +324,8 @@ param(
   [string]$Date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 )
 $ErrorActionPreference = 'Stop'
+if ($Results -ne 'results.json' -and -not $Check) { throw '-Results works only with -Check (publishing reads results.json)' }
+$publishAfter = $FixNames -and -not $Check   # -FixNames alone: rename, then publish on a clean check
 if ($FixNames) { $Check = [switch]$true }   # renaming needs the check pass
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
 $RunDir = (Resolve-Path $RunDir).Path
@@ -331,7 +333,6 @@ $run = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
 if (-not $item) { throw "no item $Code in $RunDir/run.json" }
 $D = "$RunDir/$Code"
-if ($Results -ne 'results.json' -and -not $Check) { throw '-Results works only with -Check (publishing reads results.json)' }
 $res = Get-Content (Join-Path $D $Results) -Raw | ConvertFrom-Json
 if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   $m = "$Code`: $Results has $(@($res.checks).Count) check(s), the workflow sent $ExpectChecks - a truncated copy; nothing published. Write the JSON again, complete."
@@ -461,7 +462,9 @@ if ($Check) {
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   # one rerun fixes all: the names (-FixNames) and the re-checked text together
   if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: pokey.ps1 finalize -RunDir $RunDir -Code $Code -Check$(if (@($suggest.Values | Where-Object { $_ }).Count) { ' -FixNames' })$(if ($Results -ne 'results.json') { " -Results $Results" })"; exit 1 }
-  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"; exit 0
+  "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
+  if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
+  exit 0
 }
 if ($lostList.Count) {
   throw "$Code`: $($lostList.Count) evidence file(s) listed in results.json are missing - nothing was published: $($lostList -join '; '). Save them or fix results.json, then re-run."

@@ -143,9 +143,6 @@ $nb = Invoke-KitCacheFlush 12 $m $n 2
 "budget:$($global:polls -eq 1 -and $nb.what -match 'available 3 -> 3 GB')"
 '@
 Expect-Each (Invoke-PsTest 'cache-flush' $cft @($O)) 'cache flush: #' @('once', 'short', 'small', 'fail', 'budget')
-$bf = & { . $O; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddHours(-$h).ToString('o') } }
-  @(Get-KitBuildFailures @{ old = @((& $f 150 $false), (& $f 149 $false), (& $f 148 $false)); new = @((& $f 3 $false), (& $f 2 $false), (& $f 1 $false)); mixed = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n) -join ',' }
-Expect 'build failures: 3 failed in a row flag only when the last is < 24 h old' ($bf -eq 'new')
 # a gone session's QA seat + claims freed in ONE line; board show lists seats and env leases
 $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -WindowStyle Hidden; $dp.WaitForExit()
 $qs = TkPath $k qa-seats -Create; foreach ($x in 'seats/s1', 'claims/r1__A1', 'claims/r1__A2') { Set-JsonFile (Join-Path $qs "$x.json") @{ agent = 'test:Q9'; holderPid = $dp.Id } }

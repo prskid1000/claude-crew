@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
-(the guard's note, supervise's Shells sweep); the supervise -Brief report.
+(the guard's note, supervise's Shells sweep); the supervise -Brief report; bossy.ps1 track add / show (MRs comment, -Task wins); build-failure flags.
 Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -104,7 +104,24 @@ $fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' });
   (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
 $rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ name = "r$_"; gb = $_ } }); $fo = & { . $O; Format-KitReport $rd }; "$(@($fo -match '^\| Resource \|').Count)$(@($fo -match '^\| r\d').Count)$(@($fo -match '^\| r\d.*—').Count)$(@($fo -match '^\| r\d' | Where-Object { ($_ -split '\|').Count -ne (@($fo -match '^\| Resource')[0] -split '\|').Count }).Count)$(@(($fo -join "`n") -split "`n`n" | Where-Object { $_.Trim() -and -not $_.StartsWith('|') -and $_ -notmatch '^\*\*RAM\*\* [^\n]+$' }).Count)" }
 Expect "report: tables only (no titles but RAM's, no loose lines), widths ($fw) <= 95, cells <= 80 whole words; RAM groups by rows, no filler ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '12000 13000 14000' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{83}') -and $r1 -cnotmatch 'full: report|\*\*Flags|\*\*Shells|NEXT|transcripts' -and $fr[1] -match ' p …? \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
-$bnv = (pwsh @np $O board 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE   # the raw line, not the wrapped error view
-Expect "a missing verb: exit 2 with the verb list ($bnc)" ($bnc -eq 2 -and $bnv -match 'missing -Action\. Verbs: join, beat, show')
+$bnv = (pwsh @np $D wt 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE; $bdv = pwsh @np $O board 2>&1 | Out-String   # the raw line, not the wrapped error view
+Expect "a missing verb: exit 2 with the verb list ($bnc); board without one: show" ($bnc -eq 2 -and $bnv -match 'missing -Action\. Verbs: new, sync' -and $bdv -match '^board: ')
+$mc = Invoke-PsTest 'mrs-comment' @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/$($A.n)" } else { [pscustomobject]@{ state = 'opened'; title = "T$($A.n)" } } }
+function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened'; title = 'CU-m1 x' } }
+function Start-Process { }
+$null = Invoke-Track add -Task m1 -Mrs 'g/web!12'; $null = Invoke-Track add -Task m1 -Mrs 'g/api!7' -MergeAfter 'g/web!12>g/api!7'; $KitConf.TrackerTag = 'CU-'; $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
+$c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '^MRs \(merge order\)' })
+"mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open — https://h/g/api/7\s+- g/web !12 — T12 — open')"
+"tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| open$')"
+'@ @($O)
+Expect 'track add: ONE MRs comment, edited per round, producers first then by number' ("$mc" -match 'mrs:True')
+Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task ($mc)" ("$mc" -match 'tb:True')
+$bf = & { . $O; function Test-KitLive($l) { $l.agent -ne 'gone' }; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddMinutes(-$h).ToString('o') } }; $x = { param($h) (& $f ($h + 2) $false), (& $f ($h + 1) $false), (& $f $h $false) }
+  $e = { param($p, $o, $c, $h) @{ event = 'end'; kind = 'm'; project = $p; owner = $o; code = $c; at = $n.AddMinutes(-$h).ToString('o') } }
+  @(Get-KitBuildFailures @{ 'm|old' = & $x 70; 'm|new' = & $x 5; 'm|gone' = & $x 5; 'm|fixed' = & $x 5; 'm|mix' = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n @((& $e new w 1 5), (& $e gone gone 1 5), (& $e fixed w2 1 5), (& $e fixed/sub w2 0 2)) | ForEach-Object { "$($_.key)@$($_.who)" }) -join ',' }
+Expect "build failures: 3 in a row flag only < 60 min old, while their agent lives and has no green build of that dir since ($bf)" ($bf -eq 'm|new@w')
 Remove-TestKit $k
 Complete-Tests
