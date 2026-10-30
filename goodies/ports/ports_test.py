@@ -1,5 +1,5 @@
 """ports_test.py (goody ports): kitbag_ports internals. Usage: python -X utf8 ports_test.py <kitbag.py> <kitbag_ports.py>"""
-import ast, asyncio, contextlib, importlib.util, io, json, shutil, sys, tempfile, tomllib
+import ast, asyncio, base64, contextlib, importlib.util, io, json, re, shutil, sys, tempfile, tomllib
 from pathlib import Path
 
 def load(name, path, shared=None):
@@ -24,10 +24,11 @@ for p in ('.codex/agents/a.toml', '.agents/agents/a.md', 'AGENTS.md', 'GEMINI.md
 ws = kit.parent
 for p in ('.codex/config.local.toml', '.codex/agents/old.toml', '.agents/agents/mine.txt'):
     (ws / p).parent.mkdir(parents=True, exist_ok=True); (ws / p).write_text('user', encoding='utf-8')
+(ws / '.codex/agents/old.toml').write_text('> Ported note: an old port', encoding='utf-8'); (ws / '.agents/agents/own.md').write_text('mine', encoding='utf-8')
 pt.KIT, pt.WORKSPACE = kit, ws
 with contextlib.redirect_stdout(io.StringIO()):
     pt.port_deploy()
-ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents/mine.txt').exists() and not (ws / '.codex/agents/old.toml').exists() \
+ok_deploy = (ws / '.codex/config.local.toml').exists() and (ws / '.agents/agents/mine.txt').exists() and (ws / '.agents/agents/own.md').exists() and not (ws / '.codex/agents/old.toml').exists() \
     and (ws / '.codex/agents/a.toml').read_text(encoding='utf-8') == 'x' and pt.deployed_stale() == []
 # owner decisions: blocking -> the native tool where it exists (Codex request_user_input in Plan mode, Antigravity ask_question
 # only when listed), the text otherwise; FYI -> a numbered list; ported agents say a subagent never asks the user
@@ -48,7 +49,8 @@ ag = json.loads(pt.gravity_hooks_text('D:/w/.claude', True)); agx = json.loads(p
 agc = [h['command'] for h in ag['kit-health']['SessionStart']] + [h['command'] for h in ag['guard']['PreToolUse'][0]['hooks']]
 ok_hooks = all('D:/w/.claude/skills/' in c and '"' not in c for c in cmds + agc) and cx['hooks']['SessionStart'][1]['hooks'][0].get('async') is True \
     and cx['shell_environment_policy']['set']['KIT_TOOL'] == 'codex' and agc[1].count('-WindowStyle Hidden') == 2 and agc[1].endswith("'{}'") \
-    and agx['kit-health']['SessionStart'][1]['command'].startswith('nohup ') and "-Command & 'C:/a b/.claude/skills/crafty/crafty.ps1' guard" in pt.hook_cmd(pt.GUARD, 'C:/a b/.claude')
+    and agx['kit-health']['SessionStart'][1]['command'].startswith('nohup ') and base64.b64decode(pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude").split()[-1]).decode('utf-16-le') == "& 'C:/a b''c/.claude/skills/crafty/crafty.ps1' guard" \
+    and not re.search(r'["&]', pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude")) and not re.search(r'["&]', pt.detached(pt.hook_cmd(pt.CLEANUP, 'C:/a b/.claude'), True))
 print(f'ports-hooks:{ok_hooks}')
 # workspace: skill links, org rules (agy always-on, split under 24 KB; Codex AGENTS.override.md), nothing org-only in the kit
 kit2 = tmp / 'ws2' / '.claude'; ws2 = kit2.parent
@@ -66,7 +68,7 @@ print(f'ports-workspace:{ok_ws}')
 # run_workflow bridge: the kit's .js runs under node; its agent() calls become Antigravity agents (type, role, workspace inherit)
 wfd = kit2 / 'workflows'; wfd.mkdir(exist_ok=True)
 (wfd / 't.js').write_text("export const meta = {\n name: 't',\n}\nphase('P'); log('hi', args.n)\n"
-  "const [x, y] = await Promise.all([agent('p1', { label: 'a', agentType: 'devy' }), agent('p2', { label: 'b', model: 'haiku' })])\n"
+  "const [x, y] = await pipeline([1], (i) => agent('p1', { label: 'a', agentType: 'devy' }), async (r, i) => [r, await agent('p2', { label: 'b', model: 'haiku' })]).then((v) => v[0])\n"
   "return { x, y, z: await agent('boom', { label: 'c' }) }\n", encoding='utf-8')
 calls, logs = [], []
 async def fake_agent(prompt, schema=None, role=None, type_name='self', workspace='branch', model=None):
@@ -80,6 +82,14 @@ out = io.StringIO()
 with contextlib.redirect_stdout(out):
     asyncio.run(eval(compile(src, 'wf', 'exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), g))
 res = json.loads(out.getvalue().strip().splitlines()[-1]) if shutil.which('node') else None
-ok_wf = res is None or (res == {'x': {'got': 'p1'}, 'y': {'got': 'p2'}, 'z': None} and ('a', 'devy', 'inherit', 'inherit') in calls
+(wfd / 'u.js').write_text("export const meta = {\n name: 'u',\n}\nconst = \n", encoding='utf-8')
+g2 = dict(g, args={})
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        asyncio.run(eval(compile(pt.RUNNER.format(name='u', shim=pt.SHIM, description='d', when='w'), 'wf2', 'exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), g2))
+    bad_ok = False
+except RuntimeError as e:
+    bad_ok = 'SyntaxError' in str(e) or 'without a result' in str(e)
+ok_wf = res is None or bad_ok and (res == {'x': {'got': 'p1'}, 'y': {'got': 'p2'}, 'z': None} and ('a', 'devy', 'inherit', 'inherit') in calls
     and ('b', 'self', 'inherit', 'flash') in calls and logs[:2] == ['P', 'hi 7'])
 print(f'ports-workflow:{ok_wf}')
