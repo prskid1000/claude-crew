@@ -113,7 +113,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
   change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with
   `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
-  MR state: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
+  MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
 - **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once the MR, both docs and
@@ -126,4 +126,4 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 
 **Learn:** something cost time, failed or worked unusually well ->
 `& $O learn -Skill crafty -Kind <kind> -Text "<what + fix>"`.
-The guard hook's message names the right command when it blocks something.
+A guard hook block names the right command.
