@@ -39,7 +39,7 @@ function Test-KitRuntimeUp([string]$Name, [int]$TimeoutSec = 20) {
 }
 # an auto lease (the guard's) lives while its agent keeps running matching commands; an explicit one by the README "Leases" rule
 function Test-KitRuntimeLease($l) {
-  if ($l.auto) { return ((Get-Date) - [datetime]$l.used).TotalMinutes -lt [double](Get-KitSetting 'idle.beatMinutes' 20) -and (Test-KitHolder $l) -ne $false }
+  if ($l.auto) { return ((Get-Date) - [datetime]$l.used).TotalMinutes -lt [double](Get-KitParam 'idle.beatMinutes') -and (Test-KitHolder $l) -ne $false }
   Test-KitLive $l
 }
 # ---- leases: use, release, stop

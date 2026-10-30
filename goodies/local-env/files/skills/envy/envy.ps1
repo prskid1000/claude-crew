@@ -56,9 +56,9 @@ if ($script:LE.envs) {
   foreach ($__s in @($__envs.Values | ForEach-Object { @($_.services) } | Where-Object { $_ -and $_.static -and -not $_.artifact })) { $__s | Add-Member artifact ([string]$__s.static) -Force }
 }
 function Opt([string]$k, $def) { $v = Get-KitSetting "localEnv.$k" $null; if ($null -eq $v) { $def } else { $v } }
-$script:LeaseMin = [int](Opt 'leaseMinutes' 30)   # how long a train waits for a lease before it deploys anyway (holders are told) (TODO-PARAM)
+$script:LeaseMin = [int](Get-KitParam 'localEnv.leaseMinutes')   # how long a train waits for a lease before it deploys anyway (holders are told)
 $script:MaxLeaseMin = [int](Opt 'maxLeaseMinutes' 120)
-$script:TrainStallMin = [double](Opt 'trainStallMinutes' 45)   # a train phase with no log line this long hangs: worker killed, requests requeued (TODO-PARAM)
+$script:TrainStallMin = [double](Get-KitParam 'localEnv.trainStallMinutes')   # a train phase with no log line this long hangs: worker killed, requests requeued
 $script:EnvLeaseWhy = @{}   # Prune's reason per "leases|<key>" / "holds|<key>" (leases.jsonl)
 $script:LeaseIdleMin = [double](Opt 'leaseIdleMinutes' (Get-KitParam 'idle.graceMinutes' 10))   # a lease unused this long is released (learned unless set)
 $script:CpuMax = [int](Opt 'cpuMaxPct' 90)
@@ -540,7 +540,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
   # services[].prepare: a local-only edit of the env worktree after every sync (a build cache path, ...): committed on localenv/<env>, never pushed
   foreach ($s in EnvServices $e | Where-Object { $_.prepare -and $_.repo -and (Get-RepoCfg $_.repo).name -eq $r.name }) {
     $sd = SvcDir $e $s; $cd = if ($KitIsWindows) { "cd /d `"$sd`"" } else { "cd `"$sd`"" }
-    $code = Invoke-Shell "$cd && $(Expand-Placeholders ([string]$s.prepare) $e $s $sd '')" (LogFile $e "$($s.name)-build") (EnvVars $e $s) 300   # TODO-PARAM (fixed default)
+    $code = Invoke-Shell "$cd && $(Expand-Placeholders ([string]$s.prepare) $e $s $sd '')" (LogFile $e "$($s.name)-build") (EnvVars $e $s) ([int](Get-KitParam 'localEnv.prepareTimeoutSec'))
     if ($code) { Write-Warning "[$e] $($s.name) prepare failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')"; continue }
     if (@(git -C $d status --porcelain --untracked-files=no).Count) { G $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost commit -q -a -m "localenv prepare $($s.name) (local only)" | Out-Null }
   }
@@ -636,7 +636,7 @@ function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
 # unpackLib, default lib); each library file is kept once by content hash in <service>/_lib and hard-linked into the release
 function Expand-Artifact([string]$e, $s, [string]$file, [string]$to) {
   $cmd = (Expand-Placeholders ([string]$s.unpack) $e $s (SvcDir $e $s) $file).Replace('{out}', $to)
-  $code = Invoke-Shell $cmd (LogFile $e "$($s.name)-build") (EnvVars $e $s) 600   # TODO-PARAM (fixed default)
+  $code = Invoke-Shell $cmd (LogFile $e "$($s.name)-build") (EnvVars $e $s) ([int](Get-KitParam 'localEnv.buildTimeoutSec'))
   if ($code) { throw "[$e] $($s.name): unpack failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 3) -join ' | ')" }
   $store = Join-Path (Split-Path $to) '_lib'; New-Item -ItemType Directory -Force $store | Out-Null; $map = [ordered]@{}
   foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $to $(if ($s.unpackLib) { [string]$s.unpackLib } else { 'lib' })) -File -Recurse -ErrorAction SilentlyContinue)) {
@@ -1042,7 +1042,7 @@ function Read-LogTail([string]$f, [int]$tail, [string]$grep, [double]$sinceMin) 
   if ($cut -and -not $done) { foreach ($h in $hold) { if (-not $grep -or $h -match $grep) { $lines.Add($h) } } }
   $out = @($lines); [array]::Reverse($out); @($out | Select-Object -Last $tail)
 }
-function StartMin($s) { [double]$(if ($s.startMinutes) { $s.startMinutes } else { 10 }) }   # TODO-PARAM (fixed default)
+function StartMin($s) { [double]$(if ($s.startMinutes) { $s.startMinutes } else { Get-KitParam 'localEnv.startMinutes' }) }
 function Healthy([string]$e, $s) {
   if ($s.port -and -not (Test-PortListening ([int]$s.port))) { return $false }   # nothing listens: no HTTP wait (status -Json stays fast)
   if ($s.health) {
@@ -1213,8 +1213,8 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
   try {
     for ($round = 1; ; $round++) {
       Wait-Room $e $s
-      try { $got = $mx.WaitOne([TimeSpan]::FromMinutes(45)) } catch [Threading.AbandonedMutexException] { $got = $true }   # TODO-PARAM (fixed default)
-      if (-not $got) { throw "[$e] $($s.name): another service start held the machine-wide start lock for 45 min - not started (envy.ps1 events)" }
+      try { $got = $mx.WaitOne([TimeSpan]::FromMinutes((Get-KitParam 'localEnv.startLockMinutes'))) } catch [Threading.AbandonedMutexException] { $got = $true }
+      if (-not $got) { throw "[$e] $($s.name): another service start held the machine-wide start lock for $(Get-KitParam 'localEnv.startLockMinutes') min (localEnv.startLockMinutes) - not started (envy.ps1 events)" }
       if (Test-Room $e $s ((Get-Date) - $tw).TotalMinutes) { break }
       $mx.ReleaseMutex(); $got = $false
       if ($round -ge 3) { throw "[$e] $($s.name): RAM was taken while it waited for the start lock (3 rounds) - not started" }

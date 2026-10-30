@@ -113,7 +113,7 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   $script:KitEnvStatus = $null; $er = Get-KitEnvRows $envs $now
   if (-not $early) { $er.rows }; $er.flags; foreach ($o in $er.owner) { [pscustomobject]@{ info = $o } }
   $cf = Join-Path (Get-KitPath cache -Create) 'localenv-supervise.json'; $last = try { Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $last) { $last = @{} }; $seenEnv = @{}
-  $waitMin = [double](Get-KitSetting 'localEnv.trainWaitFlagMinutes' 10)   # TODO-PARAM (fixed default)
+  $waitMin = [double](Get-KitParam 'localEnv.trainWaitFlagMinutes')
   foreach ($ev in $envs) {   # all from status -Json: never the env's state files
     foreach ($s in @($ev.services | Where-Object { [int]$_.restarts30 -gt 2 })) { & $watch "RESTART LOOP: $($ev.env) $($s.service) restarted $($s.restarts30) times in 30 min" "evidence envy.ps1 logs -Env $($ev.env) -Service $($s.service)" }
     if ($ev.train -and @($ev.train.waitingFor).Count -and $ev.train.waitSince -and ($now - [datetime]$ev.train.waitSince).TotalMinutes -ge $waitMin) {

@@ -37,7 +37,7 @@ Expect 'deploy plan: skips a task live on every test env and a done task without
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
 $dps = Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw
-Expect 'deploy plan: -TimeoutSec 100 by default; supervise passes planTimeoutSec (600 s, kit.example.json)' ($dps -match '\[int\]\$TimeoutSec = 100\)' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitSetting 'deploy\.planTimeoutSec' 600\)" -and (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).deploy.planTimeoutSec -eq 600)
+Expect 'deploy plan: -TimeoutSec 100 by default; supervise passes deploy.planTimeoutSec (600 s, params.registry.json); a record triggers a learn pass' ($dps -match '\[int\]\$TimeoutSec = 100\)' -and $dps -match "'-TimeoutSec', \[int\]\(Get-KitParam 'deploy\.planTimeoutSec'\)" -and $dps -match 'Add-KitParamTrigger deploy' -and (Get-Content (Join-Path $src 'skills/bossy/params.registry.json') -Raw | ConvertFrom-Json).params.'deploy.planTimeoutSec' -match 'default=600\b')
 # one pokey.ps1 deployed per target, in parallel: a crashed or slow target is UNKNOWN (never NOTHING), the others stand
 & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'bad' }, @{ target = 'slow' }, @{ target = 'good' }, @{ target = 'part' }, @{ target = 'crash' }) }) } $cfgF
 & $J @{ tasks = @{ u = @{ task = 'u'; mrs = @('api!1', 'api!2'); done = $false } }; automerge = @{} } $tf

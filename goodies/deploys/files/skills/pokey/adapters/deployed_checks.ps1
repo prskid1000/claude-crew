@@ -88,7 +88,7 @@ function Test-DeployedExtra($d) {
 # pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk: goody
 # android-swarm; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 function Invoke-Deployed {
-param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = 100)   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
+param([Parameter(Mandatory)][string[]]$Mrs, [string]$Target, [switch]$Json, [switch]$Detail, [string]$Exclude, [switch]$Lines, [int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))   # -Exclude <regex>: skip those targets; -Lines: one JSON row per line as each is known (deploy plan keeps them on a timeout); -TimeoutSec: past it the MRs left are UNKNOWN (the first is always checked)
 $ErrorActionPreference = 'SilentlyContinue'
 $group = $KitConf.GitlabGroup
 $repos = @(Get-KitValue 'repos' @())

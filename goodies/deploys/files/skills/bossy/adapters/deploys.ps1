@@ -155,7 +155,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   if ($Action -eq 'record') {
     if (-not $Env) { 'usage: deploy record -Env <target> [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
-    Write-KitLog deploy-log record ([ordered]@{ target = $Env; mrs = $Mrs; by = $By; note = $Note })
+    Write-KitLog deploy-log record ([ordered]@{ target = $Env; mrs = $Mrs; by = $By; note = $Note }); Add-KitParamTrigger deploy   # learned params re-evaluated
     $done = @($Mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })
     if (Test-Path $pf) { & $pendEdit { param($p) foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { -not $done.Count -or (Get-CanonMr (ConvertTo-MrRef $_)) -notin $done }) }; $p.requests = @(@($p.requests) | Where-Object { @($_.mrs).Count }) } }
     "recorded the deploy of $Env$(if ($Mrs.Count) { " ($($Mrs -join ', '))" }). Next: once pokey.ps1 deployed shows them live, bossy.ps1 deploy intest -Apply"
@@ -283,7 +283,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
-      $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitSetting 'deploy.planTimeoutSec' 600)) | Out-String | ConvertFrom-Json | Where-Object { $_ })
+      $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')) | Out-String | ConvertFrom-Json | Where-Object { $_ })
       $cache = [pscustomobject]@{ at = $now.ToString('o'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
       $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8
     }
