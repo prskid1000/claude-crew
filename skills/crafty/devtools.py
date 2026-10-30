@@ -1384,6 +1384,9 @@ def _cli():
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
+        elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, never "unknown option"
+            print(f'devtools.py {cmd}: {f} needs a value (an empty variable?)\n' + '\n'.join(ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)), file=sys.stderr)
+            sys.exit(2)
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
     if PROSE_OK:

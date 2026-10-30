@@ -20,7 +20,8 @@ Expect "guard: git commit in a nested worktree passes; a tracked folder, an igno
 # guard: a raw MR create needs a task id (branch or title); a raw merge needs the MR in task tracking; KIT_NO_TASK=<reason> passes, logged
 $shop = Join-Path (Kd) 'shop'; git init -q -b f/TT-42-x $shop; git -C $shop commit -q --allow-empty -m init; git -C $shop remote add origin 'https://h.example/g/shop.git'
 $plain = Join-Path (Kd) 'plain'; git init -q -b fix/plain $plain; git -C $plain commit -q --allow-empty -m init; git -C $plain remote add origin 'https://h.example/g/shop.git'
-& $J @{ tracker = @{ type = 'command'; branchTag = 'TT-' } } $kl
+$hf = Join-Path (Kd) 'mrget.ps1'; Set-Content $hf '@{ source_branch = $(if ($args[0] -eq 77) { ''deploy/s'' } else { ''f'' }) } | ConvertTo-Json'
+& $J @{ tracker = @{ type = 'command'; branchTag = 'TT-' }; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$hf`" {n}" } } } $kl
 $mg = Invoke-PsTest 'guard-mr' @'
 $d, $kd, $shop, $plain = $args; . "$kd/skills/crafty/lib.ps1"
 Update-KitTracking { param($t) $t.tasks['T1'] = @{ task = 'T1'; mrs = @('shop!12') } }
@@ -29,6 +30,7 @@ $cases = @(
   @('c-branch', $shop, 'glab mr create --title "fix: x" --fill', ''),
   @('c-title', $plain, 'glab mr create -t "fix: x (TT-42)" -s fix/plain', ''),
   @('c-head', $plain, 'gh pr create -H f/TT-9-y -t x', ''),
+  @('c-deploy', $plain, 'glab mr create -t x -s deploy/s -b main', ''), @('m-deploy', $shop, 'glab mr merge 77', ''),
   @('m-tracked', $shop, 'glab mr merge 12 --auto-merge --yes', ''),
   @('m-url', $plain, 'gh pr merge https://h.example/g/shop/-/merge_requests/12 --squash', ''),
   @('m-untracked', $shop, 'glab mr merge 13 -s', "track add -Task <id> -Mrs 'shop!13'"),
@@ -50,7 +52,7 @@ $env:KIT_TRACKER_TYPE = 'none'; $j = @{ tool_name = 'Bash'; cwd = $shop; tool_in
 "logged:$(@(Read-KitLog guard (Get-Date).AddMinutes(-5) | Where-Object { $_.event -eq 'no-task' -and $_.reason -eq 'hotfix, no task' }).Count -eq 1)"
 '@ @($D, $k, $shop, $plain)
 Remove-Item $kl
-Expect-Each $mg 'guard MR task link: # (c-*: create needs TT-<id> in branch or title; m-*: merge needs the MR tracked; escape: KIT_NO_TASK)' @('c-plain', 'c-branch', 'c-title', 'c-head', 'm-tracked', 'm-url', 'm-untracked', 'm-other-repo', 'm-no-number', 'm-cd', 'escape', 'quoted', 'heredoc', 'in-quotes', 'continued', 'no-tracker', 'logged') 17
+Expect-Each $mg 'guard MR task link: # (c-*: create needs TT-<id> in branch or title; m-*: merge needs the MR tracked; escape: KIT_NO_TASK)' @('c-plain', 'c-branch', 'c-title', 'c-head', 'm-tracked', 'm-url', 'm-untracked', 'm-other-repo', 'm-no-number', 'm-cd', 'escape', 'quoted', 'heredoc', 'in-quotes', 'continued', 'no-tracker', 'logged', 'c-deploy', 'm-deploy') 19
 $gbad = '{not json' | Px $D guard | Out-String
 $gnone = '' | Px $D guard | Out-String
 Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
@@ -102,5 +104,7 @@ $fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' });
   (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
 $rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ name = "r$_"; gb = $_ } }); $fo = & { . $O; Format-KitReport $rd 'ACT: 1' }; "$(@($fo -match '^\| Resource \|').Count)$(@($fo -match '^\| r\d').Count)$(@($fo -match '— \| — \|$').Count)$(($fo -join ' ') -match 'INFO.+ACT: 1 +\*\*RAM')" }
 Expect "report: widths ($fw) <= 95, cells <= 90; RAM last; 2/3/7 resources 3 a row ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '112True 111True 132True' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
+$bnv = (pwsh @np $O board 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE   # the raw line, not the wrapped error view
+Expect "a missing verb: exit 2 with the verb list ($bnc)" ($bnc -eq 2 -and $bnv -match 'missing -Action\. Verbs: join, beat, show')
 Remove-TestKit $k
 Complete-Tests

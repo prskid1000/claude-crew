@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L912 pipes · L950 guard · L1524 dir · L1534 checkpoint ·
-  L1559 tracker · L1610 host
+Sections: L20 init · L26 wt · L289 stack · L464 gate · L730 check · L915 pipes · L953 guard · L1530 dir · L1540 checkpoint ·
+  L1565 tracker · L1616 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -134,7 +134,10 @@ switch ($Action) {
     $Repo = (Resolve-Path $Repo).Path
     if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
-    if (Test-Path $path) { throw "$path exists: resume there (wt status -Dir $path) or pick another -Name" }
+    if (Test-Path $path) {   # name the blocker: its branch, last commit, board holder
+      $bh = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and "$($_.worktrees)" -match [regex]::Escape($path) } | ForEach-Object agent)
+      throw "$path exists (branch $(git -C $path branch --show-current 2>$null), last commit $(git -C $path log -1 --format=%cr 2>$null), holder: $(if ($bh) { $bh -join ', ' } else { 'none on the board' })): resume there (wt status -Dir $path), pick another -Name, or with no holder: wt remove -Dir $path"
+    }
     # a missing configured dep source is an error, no fallback
     $r = $null
     $kc = $KitConf.ConfigFile
@@ -1382,6 +1385,7 @@ if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
       if ($mm.Groups['verb'].Value -ne 'merge') {
         if (-not $tagRx) { continue }
         $src = OptVal $ws '-s', '--source-branch', '-H', '--head'; if (-not $src -and $gd) { $src = "$(git -C $gd branch --show-current 2>$null)".Trim() }
+        if (Test-KitDeployMr $(if ($gd) { "$(git -C $gd remote get-url origin 2>$null)" -replace '\.git$' -replace '.*[/:]' }) $src (OptVal $ws '-b', '--target-branch', '-B', '--base')) { continue }   # a deploy MR: no task
         if ("$(OptVal $ws '-t', '--title') $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag<id> in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a $tag<id> branch, or put $tag<id> in the title; $esc." }
         continue
       }
@@ -1393,6 +1397,8 @@ if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
       if (-not $n) { Deny "kit guard: $tool $(if ($tool -eq 'gh') { 'pr' } else { 'mr' }) merge needs the MR number (merge <iid>), so the guard can check that a task tracks it; $esc." }
       if (-not $repo -and $gd -and "$(git -C $gd remote get-url origin 2>$null)".Trim() -match '^(?:\w+://(?:[^@/]+@)?[^/]+/|[^@]+@[^:]+:)(?<p>.+?)(?:\.git)?/?$') { $repo = $Matches.p -replace '/_git/', '/' }
       if (-not (Test-KitMrTracked "$repo" $n)) {
+        $h = if ($repo) { try { Invoke-HostVerb 'mr.get' @{ repo = "$repo"; n = $n } } catch { $null } }
+        if ($h -and (Test-KitDeployMr "$repo" "$($h.source_branch)" "$($h.target_branch)")) { continue }   # a deploy MR: no task
         $leaf = if ($repo) { ($repo -split '/')[-1] } else { '<repo>' }
         Deny "kit guard: $leaf!$n is in no task's tracking: the owner never sees it on the task and it is never promoted. First & $($KitCmd.orch) track add -Task <id> -Mrs '$leaf!$n' (the task its fix belongs to, or a new one), then merge; $esc."
       }

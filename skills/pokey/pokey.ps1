@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L694 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L701 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -324,7 +324,7 @@ param(
   [string]$Date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 )
 $ErrorActionPreference = 'Stop'
-if ($FixNames -and -not $Check) { throw '-FixNames works only together with -Check' }
+if ($FixNames) { $Check = [switch]$true }   # renaming needs the check pass
 $rtype = if ($Report) { $Report } else { $KitConf.ReportType }
 $RunDir = (Resolve-Path $RunDir).Path
 $run = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
@@ -577,15 +577,22 @@ function Add-NewDefects($st, [object[]]$defects) {
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
     $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``") }
     $n = [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
-    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
+    # "<prefix> <the ask's product part, no [Feature] tag> — <first defect> (+N more)"
+    $prod = (("$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', '') -split ' [—-] ', 2)[0].Trim()
+    $first = [regex]::Match((($entries | ForEach-Object md) -join "`n"), '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
+    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
     $body = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)`n$(if ($guideUrl) { "- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)`n" })`n" + (($entries | ForEach-Object md) -join "`n")
-    if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
+    if ($s.id) {   # a name someone changed since the last finalize stays
+      $cur = try { [string](Get-TrackerTask $s.id).name } catch { '' }
+      if (-not $s.name -or -not $cur -or $cur -eq $s.name) { $null = Set-TrackerName $s.id $name } else { $name = $cur }
+      $null = Set-TrackerDescription $s.id $body
+    }
     else {
       $t = New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2'
       if (-not $t.id) { return $null }
       $s.id = $t.id; $s.url = $(if ($t.url) { $t.url } else { TaskLink $t.id })
     }
-    $s.entries = $entries; $groups[$key] = $s
+    $s.entries = $entries; $s | Add-Member -Force NoteProperty name $name; $groups[$key] = $s
     [pscustomobject]@{ groups = $groups } | ConvertTo-Json -Depth 8 | Out-File $f -Encoding utf8
     [pscustomobject]@{ id = $s.id; url = $s.url }
   } finally { if ($own) { $mx.ReleaseMutex() }; $mx.Dispose() }

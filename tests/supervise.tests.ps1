@@ -109,9 +109,10 @@ $s6 = @(Get-Content (TkPath $k signals) | ForEach-Object { $_ | ConvertFrom-Json
 Expect "launch -Done on a run without a Learn phase: no skipped-Learn signal ($($s6.Count))" (-not $s6.Count -and $d6 -match 'learn: run r6 stopped by launch -Done - nothing to record')
 $wr = Join-Path (Kd) 'wtr'; $bo = Join-Path (Kd) 'wto.git'; git init -q --bare -b main $bo; git clone -q $bo "$wr-main" 2>$null; 'a' | Set-Content "$wr-main/a.txt"; Save-GitRepo "$wr-main" init; git -C "$wr-main" push -q origin main 2>$null
 foreach ($n in 'gone', 'dirty') { git -C "$wr-main" worktree add -q -b "f/$n" "$wr/$n" 2>$null; "$n" | Set-Content "$wr/$n/$n.txt"; Save-GitRepo "$wr/$n" $n; git -C "$wr/$n" push -q -u origin "f/$n" 2>$null; git -C "$wr-main" push -q origin --delete "f/$n" 2>$null }
+$dw = "$wr/deploymerge-s-wtr-main"; git -C "$wr-main" worktree add -q -b d $dw; $wn = pwsh @np "$k/skills/crafty/crafty.ps1" wt new -Repo "$wr-main" -Branch b -Target main -Name deploymerge-s -Root $wr 2>&1
 'edit' | Add-Content "$wr/dirty/dirty.txt"; foreach ($f in Get-ChildItem $wr -Recurse -File -Force) { $f.LastWriteTime = (Get-Date).AddDays(-9) }
 $wp = pwsh @np $O cleanup -WorktreesOnly -WorktreeRoot $wr 2>&1 | Out-String
-Expect "cleanup: a clean worktree whose remote branch is gone goes after worktreeDays (branch kept); one with uncommitted files is only reported" (-not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'remote branch gone' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
+Expect "cleanup: a clean worktree with a gone remote branch goes after worktreeDays (branch kept), an ownerless deploymerge-* after grace; uncommitted files only reported" (-not (Test-Path $dw) -and "$wn" -match 'holder: none' -and -not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'remote branch gone' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
 Remove-Item Env:KIT_TRANSCRIPTS
 Remove-TestKit $k
 # ---- resources (was the goody supervise-resources)

@@ -128,8 +128,8 @@ Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/crafty/devtools.py'
-$dv = & $py -X utf8 $DT 2>&1 | Out-String; $dvc = $LASTEXITCODE; $dmiss = & $py -X utf8 $DT doc t (Join-Path $k 'none.md') 2>&1 | Out-String; $ddc = $LASTEXITCODE
-Expect "devtools: no verb = the verb list, exit 0; a doc file that is missing = a usage line, exit 2 ($dvc $ddc)" ($dvc -eq 0 -and $dv -match '^devtools\.py verbs: .*\bfinish\b' -and $ddc -eq 2 -and $dmiss -match 'file not found' -and $dmiss -notmatch 'Traceback')
+$dv = & $py -X utf8 $DT 2>&1 | Out-String; $dvc = $LASTEXITCODE; $dmiss = & $py -X utf8 $DT doc t (Join-Path $k 'none.md') 2>&1 | Out-String; $ddc = $LASTEXITCODE; $dai = & $py -X utf8 $DT finish t a b review --ai 2>&1 | Out-String
+Expect "devtools: no verb = the verb list, exit 0; a missing doc file or a bare --ai = usage, exit 2 ($dvc $ddc)" ($dvc -eq 0 -and $dv -match '^devtools\.py verbs: .*\bfinish\b' -and $ddc -eq 2 -and $dmiss -match 'file not found' -and $dmiss -notmatch 'Traceback' -and $dai -match '--ai needs a value')
 $th = & $py -X utf8 $DT comment --help 2>&1 | Out-String; $thc = $LASTEXITCODE; $null = & $py -X utf8 $DT comment T1 --bogus 2>&1; $tbc = $LASTEXITCODE; $null = & $py -X utf8 $DT finish T1 2>&1; $tmc = $LASTEXITCODE
 $fk = Join-Path (Kd) 'flaky.py'; [IO.File]::WriteAllText($fk, "import sys, subprocess as sp; sys.path.insert(0, sys.argv[1]); import devtools as d`nn = []; hang = [0]`ndef fake(cmd, **kw):`n    n.append(cmd)`n    if hang[0]: raise sp.TimeoutExpired(cmd, 1)`n    return sp.CompletedProcess(cmd, 1 if len(n) == 1 else 0, 'connection reset' if len(n) == 1 else 'ok', '')`nd.subprocess.run = fake`nr = d._tracker('view', 'T1'); a = len(n); n.clear()`ntry: d._tracker('create', 'x')`nexcept SystemExit: pass`nw = len(n); n.clear(); hang[0] = 1; d._run(['glab', 'api', 'x']); print(r, a, w, len(n))`n")
 $rt = & $py -X utf8 $fk (Split-Path $DT) 2>$null | Out-String

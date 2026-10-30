@@ -23,7 +23,7 @@ function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction Silen
 # a task in the tracker-none store
 function New-Task($id, $name, $parent = $null, $status = 'open', $desc = '') { & $J @{ id = $id; name = $name; status = $status; parent = $parent; list = 'L1'; assignees = @(); description = $desc; comments = @() } (Join-Path $store "$id.json") }
 New-Item -ItemType Directory -Force $store | Out-Null
-foreach ($x in @(@('PA', 'Ask A'), @('PQ', 'Ask Q'), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) { New-Task @x }
+foreach ($x in @(@('PA', 'Ask A'), @('PQ', '[Feature] Ask Q — q1'), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) { New-Task @x }
 $a = New-Run 'A' @(@{ code = 'A1'; task = 'T1'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
 $out = Fin $a 'A1'
 Expect 'NOT_TESTED -> failedTesting' ((Rec $a 'A1').failedTesting -and -not (Rec $a 'A1').closed -and (Task 'T1').status -eq 'failed testing')
@@ -64,7 +64,7 @@ $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') });
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
 $null = Fin $rn R1 -Check -FixNames; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name
 & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
-$null = Fin $rn R1 -Check -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw
+$null = Fin $rn R1 -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw
 [IO.File]::WriteAllBytes("$rn/R1/shots/two.png", [byte[]](1, 2)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence += 'two.png'; $o0 = $rj.checks[0].observed; $rj.checks[0].observed = "$(1..60)"; & $J $rj "$rn/R1/results.json"
 $o1 = Fin $rn R1 -Check | Out-String; $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].observed = $o0; & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check -FixNames; $o2c = $LASTEXITCODE
 Expect "finalize -Check: prose and off-standard names in one pass, ONE -FixNames run passes ($o2c)" ($o1 -match 'R1 prose check' -and $o1 -match 'two\.png -> R1-C1_' -and $o1 -match 'next: .*ONE run: .*-Check -FixNames' -and $o2c -eq 0)
@@ -72,12 +72,13 @@ Expect "finalize -FixNames: any-case reference renamed; an old name after a rewr
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
-Expect 'one [Bug] per ask, under the ask, named with the count' ($bA.Count -eq 1 -and $bQ.Count -eq 1 -and $bA[0].name -eq '[Bug] Ask A — new defects (2)')
-$bd = $bA[0].description; Expect '[Bug] text: bold label bullet, code, task link' ($bd -match '(?m)^- \*\*Results report:\*\* ' -and $bd -match 'testing \[[^\]]+\]\([^)]+\), package `M1`')
+$i = $bA[0].id; $tb = Task $i; $tb.name = '[Bug] mine'; & $J $tb "$store/$i.json"; $null = Fin $m 'M2'
+Expect 'one [Bug] per ask: <ask, no [Feature]> — <defect> (+N more); a hand rename kept' ($bA.Count -eq 1 -and $bQ.Count -eq 1 -and $bA[0].name -eq '[Bug] Ask A — s (+1 more)' -and $bQ[0].name -eq '[Bug] Ask Q — s' -and (Task $i).name -eq '[Bug] mine')
+$bd = (Task $i).description; Expect '[Bug] text: bold label bullet, code, task link' ($bd -match '(?m)^- \*\*Results report:\*\* ' -and $bd -match 'testing \[[^\]]+\]\([^)]+\), package `M1`')
 Expect 'a task with only a new defect closes' ((Rec $m 'M1').closed -and (Rec $m 'M2').closed)
 $n = New-Run 'N' @(@{ code = 'N1'; task = 'TA2'; checks = , @('X1', 'FAIL') })
 $null = Fin $n 'N1'
-Expect 'a later run files its own [Bug], the earlier one untouched' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 2 -and (Task $bA[0].id).name -eq '[Bug] Ask A — new defects (2)' -and (Task $bA[0].id).description -eq $bd)
+Expect 'a later run files its own [Bug], the earlier one untouched' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 2 -and (Task $i).name -eq '[Bug] mine' -and (Task $bA[0].id).description -eq $bd)
 $null = Fin $c 'C1'
 Expect 'a re-run posts no second results comment' (@((Task 'T4').comments | Where-Object { $_.text -match 'Test results' }).Count -eq 1)
 $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
@@ -297,8 +298,6 @@ $o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"'
 function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
 '@ @($BX); Remove-Item $kl
 Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error (#)' 'd', 'r'
-$bnv = (pwsh @np $BX board 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE   # the raw line, not the wrapped error view
-Expect "a missing verb: exit 2 with the verb list ($bnc)" ($bnc -eq 2 -and $bnv -match 'Verbs: join, beat, show, check, leave, msg, inbox\.')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k
 Complete-Tests

@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1084 supervise sweep ·
-  L1136 supervise report · L1199 tracker · L1533 git-host · L1686 kitlog · L1802 params · L2115 entry-scripts
+  L1136 supervise report · L1199 tracker · L1533 git-host · L1691 kitlog · L1811 params · L2124 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1657,6 +1657,13 @@ function Add-KitMrIgnore([string[]]$Mrs, [string]$Reason) {
 function Get-KitHostUser {
   switch ($script:HostType) { 'gitlab' { if (Get-Command __GlEnv -ErrorAction SilentlyContinue) { __GlEnv }; [string](__Cli glab 'user').username } 'github' { [string](__Cli gh 'user').login } default { '' } }
 }
+# a deploy / promotion MR (no task; supervise's watch, the guard): a protected or deploy/* source, or a target that is the repo's
+# deploy branch (repos[].deploys[].branch, never its task target)
+function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
+  if ($Source -match ('^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$')) { return $true }
+  $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
+  [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
+}
 # supervise: ONE WATCH for the owner's MRs merged in 24 h that no task tracks (a raw merge past track add); one host list per
 # repo (trackerRepos, else repos[]) cached a beat in $State, the login a day; tracking re-read every round
 function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
@@ -1671,10 +1678,8 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
     $State.untrackedMrs = $um
   }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
-  $line = '^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected or deploy/* source = a deploy / promotion MR, no task
-  $dep = @{}; foreach ($r in @(Get-KitValue 'repos' @())) { $dep["$($r.name)"] = @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }) }   # into that repo's deploy branch (repos[].deploys[].branch, never its task target): a deploy MR
-  $ig = @{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and "$($_.target)" -notin @($dep["$($_.repo)"]) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
@@ -1769,14 +1774,16 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   # call lines (calls stream): start, then end with rc (0 returned, 1 crash, 2 bad parameters; a verb's own exit: rc 'exit', its code is not visible here) and ms
   $script:KitLogOn = $Fn -notmatch '^Invoke-Guard'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards run on every tool call: they log their denials
   $end = { param([string]$Why) if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($Why) { @{ error = $Why } } else { @{} })) } }   # rc 2: the usage message (tidy digest "Script errors")
+  # bad parameters: exit 2 with the verb's header line (+ its verbs when missing), never the host's prompt for a mandatory one
+  $usage = { param([string]$why, [bool]$missing)
+    $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $missing) { $why += " Verbs: $($vs -join ', ')." }   # a wrong one: the set is in the message
+    $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }
+    $script:KitRc = 2; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
   # a crash exits 1 (2 = bad parameters), never 0: a statement error alone lets `pwsh -File` exit 0, a throw keeps a caller's stale $LASTEXITCODE
   $run = { param([object[]]$pa, [hashtable]$nm)
     $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
-    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { $script:KitRc = 2; $why = "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)"
-      $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $_.Exception.ErrorId -eq 'MissingMandatoryParameter') { $why += " Verbs: $($vs -join ', ')." }   # a missing verb names them (a wrong one: the set is in the message)
-      $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }   # the verb's header line, not just the binder's text
-      & $end $why; [Console]::Error.WriteLine($why); exit 2 }
+    if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { & $usage "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)" ($_.Exception.ErrorId -eq 'MissingMandatoryParameter') }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
     if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
@@ -1797,6 +1804,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ' ' } elseif ($vals.Count) { $vals[0] } else { '' }
     } else { $pos.Add($Tokens[$i]); $i++ }
   }
+  $miss = @($own | Where-Object { $pa = @($meta[$_].Attributes | Where-Object { $_ -is [Parameter] -and $_.Mandatory }); $pa.Count -and -not $named.ContainsKey($_) -and -not ($pa[0].Position -ge 0 -and $pa[0].Position -lt $pos.Count) })
+  if ($miss.Count) { & $usage "$($Fn -replace '^Invoke-', ''): missing -$($miss -join ', -')." $true }   # an interactive host would prompt (a hung tool call)
   & $run $pos.ToArray() $named
 }
 # ---- params: tunable parameters (skills/bossy/params.registry.json: every key, how it learns or its fixed default; README "Configuration" params)

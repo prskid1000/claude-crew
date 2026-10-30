@@ -161,7 +161,7 @@ switch ($Action) {
     Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-Date).ToString('o'); if ($Status) { $x.status = $Status }; $script:beatEntry = $x; $x }
     if ($script:beatTaken) { $me = $script:beatTaken; "TAKEN OVER: session $($me.takenOverBy) replaced $Session at $(([datetime]$me.takenOverAt).ToString('HH:mm')). Stop without writing and tell the coordinator."; exit 1 }
     $me = $script:beatEntry
-    # spend = this agent's transcript (found by its SESSION line); at the handoff point a fresh agent continues from a resume brief
+    # spend = this agent's transcript (its SESSION line); at the handoff point a fresh agent continues from a resume brief
     $rt = if ($me.tool) { Invoke-KitAdapter transcript (Get-KitTranscriptKind $me.tool) root }
     $tf = if ($me.transcript) { $me.transcript } elseif ($rt -and -not ($me.txTry -and ((Get-Date) - [datetime]$me.txTry).TotalMinutes -lt 10)) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty txTry (Get-Date).ToString('o'); $x }; Find-KitTranscript "SESSION $Session" $rt.filter $rt.dir }; $sp = Get-KitSpend $tf
     if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # no Claude usage lines (Codex, Antigravity): the status row still reads it
@@ -403,7 +403,7 @@ function Get-KitLineage($S, $WfDirs = @()) {
   for ($n = 0; $n -lt 10 -and ($pk = Get-KitParentKey $a); $n++) {
     $par = @($all | Where-Object { [datetime]$_.at -lt $before -and @(@($_.runId, $_.run) | Where-Object { $_ } | ForEach-Object { "$(ConvertTo-KitSlug $_).resume.md" }) -contains $pk } | Sort-Object { [datetime]$_.at } | Select-Object -Last 2); if (-not $par.Count) { break }; $a = $null
     foreach ($p in $par) { $t = [datetime]$p.at; if ($p.runId) { $o.ids += $p.runId }
-      # a typed launch record names no run: the self record its transcript ran (never the nearest by time: runs start in the same minute)
+      # a typed launch record names no run: the self record its transcript ran (never by time: runs start in the same minute)
       $m = if ($p.run) { $p } elseif ($p.runId) { @($all | Where-Object { $_.run -and $_.file -like '*self-*' -and [math]::Abs(([datetime]$_.at - $t).TotalMinutes) -le 30 -and (Resolve-KitRunId ([pscustomobject]@{ selfFile = $_.file; leaf = (Split-Path ([string]$_.script) -Leaf); run = $_.run }) $WfDirs -FnvOnly) -eq $p.runId })[0] }
       foreach ($x in @($p, $m) | Where-Object { $_ }) { if ([datetime]$x.at -lt $o.since) { $o.since = [datetime]$x.at }; if ([datetime]$x.at -lt $before) { $before = [datetime]$x.at } }; if ($m) { $o.runs += $m.run; if (-not $a) { $a = $m.args } } }
   }
@@ -685,7 +685,7 @@ foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run 
   $jl = @(if ($wf -and (Test-Path (Join-Path $wf.FullName 'journal.jsonl'))) { Get-Content (Join-Path $wf.FullName 'journal.jsonl') | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } })
   $res = @($jl | Where-Object type -eq 'result' | ForEach-Object agentId)
   $steps = @($jl | Where-Object type -eq 'started' | ForEach-Object { [pscustomobject]@{ who = ($_.label -split ':', 2)[-1] -replace '@.*$', ''; done = $_.agentId -in $res } })
-  $mrs = @(); $noMr = 0   # agents: the launch args, the board and every checkpoint of the run (checky checkpoints under its <CODE>)
+  $mrs = @(); $noMr = 0   # agents: launch args, board and every checkpoint of the run (checky's under its <CODE>)
   $cks = @(Get-ChildItem (Get-KitPath agents) -Filter 'resume.json' -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.run -eq $s.run } | ForEach-Object agent)
   $lines = @(foreach ($ag in @(@(@($lr.args.agents) | ForEach-Object { $_.id }) + @($board.agent) + $cks | Where-Object { $_ } | Select-Object -Unique)) {
     $mySteps = @($steps | Where-Object who -eq $ag)
@@ -952,7 +952,7 @@ switch ($Action) {
       $o = Load $id; if (-not $o -or $o.done) { continue }   # fresh: a hold added meanwhile counts
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      # status vs MR state every 30 min: an open MR on an open task moves it to review; merged 60+ min but not promoted = LAG
+      # status vs MR state every 30 min: an open MR on an open task -> review; merged 60+ min but not promoted = LAG
       if ($o.lagLine -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }   # every round until fixed
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
@@ -1374,7 +1374,7 @@ $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVe
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
-if ($Brief) {   # the final markdown the coordinator pastes verbatim; the long detail goes to a file read only on ACT
+if ($Brief) {   # the final markdown pasted verbatim; long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report)
   Write-KitSuperviseReport $report $md $lines $nextLine; $nAct = @($flags | Where-Object level -eq 'ACT').Count
   $tail = if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" } elseif ("$md" -match '\(full: report\)') { "cut cells whole: $(Get-KitPath supervise-report)" }
@@ -1867,7 +1867,7 @@ function Old($item, $hours) {
 $notes = @()
 
 if (-not $WorktreesOnly) {
-Invoke-KitHooks Invoke-KitCleanup   # adapters/supervise_resources.ps1: test browsers, their profiles, idle Gradle / Kotlin daemons
+Invoke-KitHooks Invoke-KitCleanup   # adapters/supervise_resources.ps1: test browsers + profiles, idle Gradle / Kotlin daemons
 
 # retention: kit.example.json _paths.keep (hours, [hours, newest N kept]); tab registries + locks belong to live browsers, pending decisions wait
 $pm = $script:KitPathMap
@@ -1913,13 +1913,13 @@ foreach ($root in $WorktreeRoot) {
     $newest = (Get-ChildItem $d -File -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object FullName -notmatch '[\\/](node_modules|\.git|target|build)[\\/]' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     $old = $newest -and ($now - $newest).TotalDays -ge $wtDays
     if (git -C $d status --porcelain 2>$null) { if ($old) { $notes += "worktree $d ($br): uncommitted files, idle $([int]($now - $newest).TotalDays) d: kept (never deleted; commit or remove it by hand)" }; continue }
-    if ($newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
+    if (-not ($dm = Test-KitIdleDeployMerge $w.Name $d $claimed $newest $now) -and $newest -and ($now - $newest).TotalHours -lt $WorktreeIdleHours) { continue }
     if (-not (Invoke-GitFetch -Dir $d)) { continue }
     $main = "$(git -C $d rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim()
     $tip = (git -C $d rev-parse HEAD 2>$null); $ob = "$(git -C $d symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim()
-    # its MR merged at this tip (host state: squash merges too), or the tip already in origin's default branch: nothing is lost
-    # (contained: idle 24 h+, a fresh worktree has no commits yet; a claimed one is in use)
-    $why = if (-not $main -or $d.ToLower() -in $claimed) { $null } elseif ($tip -in @(MergedTip $main $br)) { 'MR merged at its tip' } elseif ($ob -and (-not $newest -or ($now - $newest).TotalHours -ge 24) -and $(git -C $d merge-base --is-ancestor $tip $ob 2>$null; $LASTEXITCODE -eq 0)) { "contained in $ob" }
+    # its MR merged at this tip (squash too) or the tip in origin's default branch: nothing is lost (contained: idle 24 h+,
+    # a fresh worktree has no commits; a claimed one is in use)
+    $why = if (-not $main -or $d.ToLower() -in $claimed) { $null } elseif ($dm) { 'ownerless deploy merge (branch kept)' } elseif ($tip -in @(MergedTip $main $br)) { 'MR merged at its tip' } elseif ($ob -and (-not $newest -or ($now - $newest).TotalHours -ge 24) -and $(git -C $d merge-base --is-ancestor $tip $ob 2>$null; $LASTEXITCODE -eq 0)) { "contained in $ob" }
       elseif ($old -and "$(git -C $d for-each-ref --format='%(upstream:track)' "refs/heads/$br" 2>$null)".Trim() -eq '[gone]') { "remote branch gone, idle $wtDays d+ (local branch kept)" }
     if (-not $why) { continue }
     $sz = [long](Size $d); $script:freed += $sz
@@ -1946,7 +1946,7 @@ foreach ($repo in @($repos.Keys)) {
 
 if (-not $WorktreesOnly) {
 # service logs and the durable log streams keep their last 5000 lines
-$envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # live service logs: the local env rotates them itself (logMaxMB); rewriting one races its writer
+$envLogs = [IO.Path]::GetFullPath((Get-KitPath localenv-logs))   # live service logs: the local env rotates them (logMaxMB); rewriting one races its writer
 foreach ($f in @(@(Get-ChildItem (Get-KitPath logs) -Filter '*.log' -File -Recurse | ForEach-Object FullName | Where-Object { -not $_.StartsWith($envLogs, [StringComparison]::OrdinalIgnoreCase) }) + @($script:KitLogMap.streams | Where-Object { $pm.durable.$_ -and -not $script:KitLogTrim.ContainsKey($_) } | ForEach-Object { Get-KitPath $_ }))) {
   # shared read: a writer may hold it
   $over = try { $lr = [IO.StreamReader]::new([IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete')); try { $ln = 0; while ($ln -le 5000 -and $null -ne $lr.ReadLine()) { $ln++ }; $ln -gt 5000 } finally { $lr.Dispose() } } catch { $false }
@@ -2070,7 +2070,7 @@ $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
 if ($Flow -or $Fetch) {
   if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
     git -C $kit fetch --quiet 2>$null
-    # goodies the config needs, installed in the background (this hook is async): a failure is one hook-error line (bossy.ps1 audit)
+    # goodies the config needs, installed in the background (async hook): a failure = one hook-error line (bossy.ps1 audit)
     if ($py) { $sync = & $py -X utf8 $KitCmd.kitbag goody sync 2>&1; if ($LASTEXITCODE) { Write-KitLog calls hook-error @{ error = "goody sync failed: $($sync -join ' ')" } } }
     $null = Test-KitWake   # a reboot or wake since the last session: learned params re-evaluated (trigger)
   }
