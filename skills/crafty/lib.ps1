@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1132 tracker · L1428 git-host · L1571 kitlog · L1687 params · L2000 entry-scripts
+  L1092 supervise report · L1142 tracker · L1476 git-host · L1619 kitlog · L1735 params · L2048 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1129,6 +1129,16 @@ function Get-KitFlagCells($f) {
   if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -][A-Z]{3,})*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
   [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
 }
+# supervise -Brief's report file (whole cells): title, result line, the heartbeat table ($Md), then one table per section
+function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$Next) {
+  $ag = { param($st) Format-KitMdTable 'Agent', 'Task', 'State', 'Doing', 'Next' @($d.rows | Where-Object { ($_.state -eq 'FINISHED') -eq $st } | ForEach-Object { , @($_.name, $_.task, "$($_.state) $($_.wait)$($_.done)$($_.stopped)", $_.doing, $_.next) }) }
+  $n = { param($l) @($d.flags | Where-Object level -eq $l).Count }
+  @("# Supervise report $($d.at.ToString('yyyy-MM-dd HH:mm'))", "**Result:** $(& $n ACT) ACT · $(& $n WATCH) WATCH · $(@($d.rows | Where-Object state -ne 'FINISHED').Count) live · $Next", '') + $Md +
+    @('', '## Agents (whole cells)', '') + @(& $ag $false) + @('', '## Finished today', '') + @(& $ag $true) + @('', '## All flags', '') +
+    @(Format-KitMdTable 'Level', 'Flag', 'Action' @(@($d.flags | ForEach-Object { , @($_.level, $_.what, $_.action) }) + @($d.info | Where-Object { $_ } | ForEach-Object { , @('INFO', $_, '') }))) +
+    @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) + @('', '## Sweep', '', '```text') + $Sweep + '```' |
+    Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
+}
 # ---- tracker: adapter (a Register-KitAdapter block per tracker.type)
 
 function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
@@ -1404,6 +1414,44 @@ function Format-KitMdLink([string]$Url, [string]$Text = 'open') { if ($Url -matc
 function ConvertTo-KitPlainText([string]$Text) {
   $t = [regex]::Replace($Text, '\[([^\]\n]+)\]\((https?://[^)\s]+)\)', { if ($args[0].Groups[1].Value -eq $args[0].Groups[2].Value) { $args[0].Groups[2].Value } else { "$($args[0].Groups[1].Value) ($($args[0].Groups[2].Value))" } })
   [regex]::Replace(($t -replace '\*\*([^*\n]+)\*\*', '$1'), '`([^`\n]+)`', '$1')
+}
+# a Markdown table for reports people read (rows: , @(cells)): | escaped, line breaks flattened, an empty cell = —
+function Format-KitMdTable([string[]]$Head, $Rows) {
+  "| $($Head -join ' | ') |"; "|$('---|' * $Head.Count)"
+  foreach ($r in @($Rows)) { "| $(@($r | ForEach-Object { $s = ("$_" -replace '[\r\n]+', ' ' -replace '\|', '\|').Trim(); if ($s) { $s } else { '—' } }) -join ' | ') |" }
+}
+# decide ask -Options "A: <label> — <trade-off>" -> {key, label, description, recommended}: the native question tools' shape
+function Get-KitDecisionChoices([string[]]$Options, [string]$Recommend) {
+  foreach ($o in $Options) {
+    $k, $t = if ($o -match '^\s*(\w+)\s*[:)]\s*(.*)$') { $Matches[1], $Matches[2] } else { '', $o }
+    $l, $d = "$t" -split '\s+(?:—|–|--?)\s+', 2
+    [pscustomobject]@{ key = $k; label = "$l".Trim(); description = "$d".Trim(); recommended = [bool]($k -and $Recommend -match "^\s*$k\b") }
+  }
+}
+# a decision's choices, recommended first (a v1 record holds "A: ..." strings)
+function Get-KitDecisionOrder($d) {
+  $ch = @(foreach ($o in @($d.options)) { if ($o -is [string]) { Get-KitDecisionChoices $o $d.recommend } else { $o } })
+  @($ch | Where-Object recommended) + @($ch | Where-Object { -not $_.recommended })
+}
+# the decision as text: the contracts note and the fallback where a CLI has no question tool
+function Format-KitDecision($d) {
+  $mr = @($d.mrs | Where-Object { $_ })
+  "## DECISION NEEDED $($d.id) ($($d.agent), item $($d.item))$(if ($d.task) { " [Task: $($d.task)]" })$(if ($mr.Count) { " [MRs: $($mr -join ', ')]" })"
+  "**Question:** $($d.question)"; "**Blocking:** $(if ($d.blocking -eq $false) { 'no (FYI): the item goes on' } else { "yes: item $($d.item) waits" })"; ''
+  Format-KitMdTable 'Option', 'Choice', 'Trade-off' @(foreach ($c in Get-KitDecisionOrder $d) { , @("$($c.key)$(if ($c.recommended) { ' (recommended)' })", $c.label, $c.description) })
+  ''; "**Recommended:** $(if ($d.recommend) { $d.recommend } else { 'none' })"; '**Answer:** pending (the coordinator appends it below)'
+}
+# non-blocking decisions for the coordinator's report: numbered, recommendation first, so the owner answers "1 A, 2 B"
+function Format-KitFyiList($Decisions) {
+  $n = 0; foreach ($d in @($Decisions)) { $n++; "$n. $($d.question) (``$($d.id)``): $(@(Get-KitDecisionOrder $d | ForEach-Object { "$($_.key) $($_.label)$(if ($_.recommended) { ' (recommended)' })" }) -join ' · ')" }
+}
+# blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
+function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
+  $ds = @($Decisions | Select-Object -First $Max)
+  [pscustomobject]@{ ids = @($ds.id); questions = @(foreach ($d in $ds) {
+    $h = if ("$($d.item)") { "$($d.item)" } else { 'Decision' }
+    [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
+      options = @(Get-KitDecisionOrder $d | Select-Object -First $Max | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
 }
 function Test-KitTaskDocLink([string]$Task) {
   try { $tt = Get-TrackerTask $Task } catch { return $null }   # unread = unknown, never "no doc"

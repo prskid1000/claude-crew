@@ -67,7 +67,9 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  Then -Skill <s> -Trim for every skill you touched (never delete lessons by hand).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".
 3. Scripts, defaults, templates (guard blocks, script errors, slow builds, failed upkeep steps): ${A.applyScripts ? 'apply the smallest fix, re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check every changed .js/.mjs; revert one that breaks.' : 'list each with the exact edit (file, function, new value); do not apply.'}
-4. Write the report to ${rp('retros')}/retro-<yyyy-MM-dd-HHmm>.md: changed (with the digest counts), awaiting approval, rejected.
+4. Write the report to ${rp('retros')}/retro-<yyyy-MM-dd-HHmm>.md: "# Retro <date>", "**Result:** <n> applied · <n> awaiting approval · <n> rejected",
+ then "## Changed" (table: Change | File | Digest count), "## Awaiting approval" (table: Proposal | Exact edit), "## Rejected" (table: Signal | Why);
+ ids, paths and commands in backticks; check it: python -X utf8 ${C}/skills/bossy/kitbag.py prose --kind kit-report <report>.
 5. python -X utf8 ${C}/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty' })

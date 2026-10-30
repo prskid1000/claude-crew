@@ -152,7 +152,7 @@ $za = "$k/skills/bossy/adapters/z.ps1"; 'function Get-KitSuperviseGuardZ { @{ in
 $sb = Px $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String; Remove-Item $za
 $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix: a gone session''s QA seat + claims freed in ONE line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count -and $sr -match 'gate: \d+ running')
-$wc = ($sr -split '## Agents \(whole cells\)')[1]; Expect 'supervise -Brief: whole cells + INFO in the report, named under a cut' ($wc -match '## All flags' -and $wc -notmatch '\(full: report\)' -and $wc -match 'INFO\] zi' -and $sb -match 'cut cells whole: ')
+$wc = ($sr -split '## Agents \(whole cells\)')[1]; Expect 'supervise -Brief: whole cells + INFO in the report, named under a cut' ($wc -match '## All flags' -and $wc -notmatch '\(full: report\)' -and $wc -match '\| INFO \| zi' -and $sb -match 'cut cells whole: ')
 $sd = Join-Path $qs 'seats'; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"
 # the env's leases come from envy.ps1 status -Json (a stub here): never its state files

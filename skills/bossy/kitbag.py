@@ -1574,7 +1574,7 @@ REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
   'path': r'[\w./-]+\.(?:md|ps1|py|mjs|js|ts|json|java|xml|ya?ml|cs|go|rs|kt|sql|html?)\b(?::\d+)?|<kit>/\S+',
   'cmd': r'`[^`]*\b(?:pwsh|python|node|git|crafty\.ps1|bossy\.ps1|pokey\.ps1|phoney\.ps1|envy\.ps1|kitbag\.py|devtools\.py|npm|&)\b[^`]*`',
   'evidence': r'\.(?:png|jpe?g|json|log|txt|html?)\b|https?://\S+',
-  'expected': r'(?i)\bexpected\b', 'options': r'(?m)^\s*[-*]?\s*(?:Option\s+)?A[:)]', 'recommended': r'(?i)\brecommended\b',
+  'expected': r'(?i)\bexpected\b', 'options': r'(?m)^\s*[-*|]?\s*(?:Option\s+)?A(?:[:)]|\s+(?:\||\())', 'recommended': r'(?i)\brecommended\b',
   'verdict': r'\b(?:PASS|FAIL|BLOCKED|PASS_WITH_NOTE|NOT_TESTED)\b',
   'conv': r'^(?:feat|fix|refactor|perf|docs|test|chore|build|ci|style|revert)(?:\([^)]+\))?!?: \S'}
 
@@ -2404,7 +2404,7 @@ def state_lint(since_min=0):
             miss = [k for k in req if k not in o]
             if miss:
                 out.append(('BAD', name, rel, f'missing {", ".join(miss)} ({name}: {spec})'))
-            if ver and form != 'jsonl' and o.get('schemaVersion') != ver:
+            if ver and form != 'jsonl' and o.get('schemaVersion') not in (ver, ver - 1):   # readers accept n-1 (STATE.md)
                 out.append(('WARN' if 'schemaVersion' not in o else 'BAD', name, rel, f'schemaVersion {o.get("schemaVersion")}, want {ver}'))
             t = o.get('updated') or o.get('at')
             if isinstance(t, str) and t and not ISO_TIME.match(t):

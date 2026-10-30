@@ -187,7 +187,7 @@ const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules (loc
 ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fixing; record it in the testing-goals doc.\n' : ''}- Evidence links in a task (videos, recordings, screenshots): pokey.ps1 evidence index <link> first; frames marked unread: run vidy -> spawn vidy (R19) with the task, its testing doc and your question; use its report (read-chunk only to check one point) (goody media-evidence).
 - Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
-- DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." -Recommend <A|B>
+- DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> (-Fyi: nothing waits)
  -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.
 - LOCAL LOOP until 0 open bugs and every goal PASS (bugs you or checky find come back to the code): each round appends its row to
  the AI doc's Rounds table (round, date, cases, result, bugs, fix commit, retest) and republishes it (--label "loop round <n>").

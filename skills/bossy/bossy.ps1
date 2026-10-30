@@ -21,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1067 anomalies · L1085 supervise · L1388 report · L1467 audit · L1527 storage · L1738 bugbrief · L1840 cleanup ·
-  L1964 learn · L1994 decide · L2060 health · L2123 retro due · L2133 tidy · L2203 the kit origin's main and goodies ·
-  L2219 setup · L2285 guard-sendmessage
+Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L608 pause · L652 resume · L710 program · L755 param ·
+  L761 track · L1065 anomalies · L1083 supervise · L1389 report · L1468 audit · L1528 storage · L1739 bugbrief · L1841 cleanup ·
+  L1965 learn · L1995 decide · L2063 health · L2126 retro due · L2136 tidy · L2206 the kit origin's main and goodies ·
+  L2222 setup · L2288 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -585,11 +585,9 @@ foreach ($s in $runs) {
   if ($s.leaf -eq 'testy.js' -and $a.runDir) { "  QA run folder: $($a.runDir) (unpublished items: below)" }
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) {
     $rf = Join-Path (Get-KitPath launches -Create) "$(ConvertTo-KitSlug $(if ($s.runId) { $s.runId } else { $s.run })).resume.md"
-    $txt = @("# Resume brief: $($s.run) ($($s.leaf) $($s.runId))", "Original brief: $($a.brief) (it wins where this differs). Mode: resume.",
-      'A stopped agent''s work is below. Join the board with its id + -Resume (TAKEOVER, not DUPLICATE). Before editing: crafty.ps1 wt status',
-      '-Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it stopped (testing goals, local test',
-      'loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.', 'Steps per item (host + tracker, checked at recovery): build, review, ci,',
-      'merge, testing-doc, tracker. Done steps are skipped; run only the missing ones. unknown = a call failed: check it first.', '', '## State at recovery') + $brief
+    $txt = @("# Resume brief: $($s.run) (``$($s.leaf)`` $($s.runId))", "**Result:** mode resume; the original brief ``$($a.brief)`` wins where this differs.",
+      "**Takeover:** ``$($KitConf.Kit -replace '\\', '/')/skills/crafty/templates.md`` ""Resume brief"". Steps per item (host + tracker, checked now): build, review,",
+      'ci, merge, testing-doc, tracker; done ones are skipped, run the missing ones; unknown = a call failed: check it first.', '', '## State at recovery', '') + $brief
     Write-KitAtomic $rf (($txt -join "`n") + "`n")
     "  resume brief: $rf"
   }
@@ -692,11 +690,11 @@ foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run 
     $mySteps = @($steps | Where-Object who -eq $ag)
     $ck = Get-KitCheckpoint $ag
     if (-not $ck -or $ck.done -or ($ck.run -and $ck.run -ne $s.run)) { "  $ag`: no open checkpoint$(if ($mySteps.Count -and -not @($mySteps | Where-Object { -not $_.done }).Count) { '; its steps have journal results: not relaunched (resumeFromRunId keeps them)' })"; continue }
-    $b = @("# Resume brief $ag (run $($s.run))", "Start AT step: $($ck.next). The steps below are done and were verified now: never redo them.", '', '## Done (verified)')
+    $b = @("# Resume brief: $ag (run ``$($s.run)``)", "**Result:** Start AT step: $($ck.next). The steps below are done and were verified now: never redo them.", '', '## Done (verified)', '')
     if (-not @($ck.steps | Where-Object step -eq 'mr').Count) { $noMr++ }
-    foreach ($st in @($ck.steps)) { $v = Test-KitStepEvidence $st; if ($v.mr) { $mrs += $v }; $b += "- $($st.step)$(if ($st.item) { " [$($st.item)]" }): $($st.evidence) -> $($v.text)" }
-    $b += @('', "## Interrupted step '$($ck.next)': rerun it from the kept diff (never discard it)") + @(foreach ($d in @($ck.worktrees)) { $w = Get-KitWtState $d; "- $d $(if ($w.gone) { 'GONE: recreate the worktree from its branch' } else { "branch $($w.branch) @ $($w.head); uncommitted, kept: $(if ($w.dirty.Count) { $w.dirty -join ', ' } else { 'none' })" })" })
-    $b += @('', "## Open: leases to take again: $(@($ck.leases) -join ', '); decisions: $(@($ck.decisions) -join ', ')")
+    $b += Format-KitMdTable 'Step', 'Item', 'Evidence', 'Check' @(foreach ($st in @($ck.steps)) { $v = Test-KitStepEvidence $st; if ($v.mr) { $mrs += $v }; , @($st.step, $st.item, $st.evidence, $v.text) })
+    $b += @('', "## Interrupted step ``$($ck.next)``", 'Rerun it from the kept diff (never discard it).', '') + @(Format-KitMdTable 'Worktree', 'Branch @ head', 'Uncommitted (kept)' @(foreach ($d in @($ck.worktrees)) { $w = Get-KitWtState $d; , @("``$d``", $(if ($w.gone) { 'GONE: recreate the worktree from its branch' } else { "$($w.branch) @ $($w.head)" }), "$($w.dirty -join ', ')") }))
+    $b += @('', '## Open', '', "**Leases to take again:** $(@($ck.leases) -join ', ')", "**Decisions:** $(@($ck.decisions) -join ', ')")
     $bf = Join-Path (Split-Path (Get-KitCheckpointFile $ag)) 'resume-brief.md'; Write-KitAtomic $bf (($b -join "`n") + "`n")
     "  $ag`: resume at '$($ck.next)' -> $bf"
   })
@@ -1324,12 +1322,17 @@ if (Within 'failedTesting tasks') {
 }
 
 # 6. decisions and ENV-FIX requests: every round until answered
-foreach ($d in @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ })) {
-  $mins = "$([int]($now - [datetime]$d.at).TotalMinutes) min"; $age = "waiting $mins"
-  $cols = @{ kind = $(if ($d.kind -eq 'envfix') { 'ENV-FIX' } else { 'DECISION' }); who = "$($d.agent) ($($d.run)), item $($d.item)"; age = $mins; problem = $d.question }
-  if ($d.kind -eq 'envfix') { Flag 'ACT' "ENV-FIX $($d.id) $age ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Fix it (you or kitty kind env: config, paths, a hung train, shared DB repair; never start a service no live lease or person asked for), then & $($KitCmd.orch) decide answer -Id $($d.id) -By coordinator -Answer 'done: <what you did>' (cannot: 'cannot: <why>')" $cols; continue }
-  Flag 'ACT' "DECISION $($d.id) $age ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Ask the owner (options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { "; recommended: $($d.recommend)" })), then & $($KitCmd.orch) decide answer -Id $($d.id) -Answer '<their words>'" $cols
+$pd = @(Invoke-Decide list -Pending -Json | Out-String | ConvertFrom-Json | Where-Object { $_ })
+foreach ($d in @($pd | Where-Object kind -eq 'envfix')) {
+  $mins = "$([int]($now - [datetime]$d.at).TotalMinutes) min"
+  Flag 'ACT' "ENV-FIX $($d.id) waiting $mins ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Fix it (you or kitty kind env: config, paths, a hung train, shared DB repair; never start a service no live lease or person asked for), then & $($KitCmd.orch) decide answer -Id $($d.id) -By coordinator -Answer 'done: <what you did>' (cannot: 'cannot: <why>')" @{ kind = 'ENV-FIX'; who = "$($d.agent) ($($d.run)), item $($d.item)"; age = $mins; problem = $d.question }
 }
+$dd = @($pd | Where-Object kind -ne 'envfix'); $blk = @($dd | Where-Object blocking -ne $false); $fyi = @($dd | Where-Object blocking -eq $false)
+for ($i = 0; $i -lt $blk.Count; $i += 4) {   # an agent's item waits: the native question tool, 4 per call
+  $b = @($blk[$i..([math]::Min($i + 3, $blk.Count - 1))]); $mins = "$([int]($now - [datetime]$b[0].at).TotalMinutes) min"
+  $q = @($b.question) -join ' / '; Flag 'ACT' "DECISION $(@($b.id) -join ', ') (blocking, oldest $mins): $q" "ONE AskUserQuestion call from bossy.ps1 decide list -Ask -Json (no such tool: its text); then decide answer -Id <id> per pick" @{ kind = 'DECISION'; who = @($b.agent) -join ', '; age = $mins; problem = $q }
+}
+if ($fyi.Count) { Flag 'ACT' "DECISION $($fyi.Count) FYI: $(@($fyi.id) -join ', ')" "List them in your report (decide list -Fyi); the owner's '1 A, 2 B' -> decide answer -Id <id> per number" @{ kind = 'DECISION FYI'; who = @($fyi.agent) -join ', '; problem = @($fyi.question) -join ' / ' } }
 
 # 7. goodies' checks (deploys, local env, ...): the same result shapes as section 3
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseFlags @{ AutoFix = $AutoFix })) { Add-KitResult $x }
@@ -1372,9 +1375,7 @@ L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # the final markdown the coordinator pastes verbatim; the long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report)
-  $fin = @($report.rows | Where-Object state -eq 'FINISHED'); $ln = { "- $($_.name) | $($_.task) | $($_.state) $($_.wait)$($_.done)$($_.stopped) | $($_.doing) | next: $($_.next)" -replace '[\r\n]+', ' ' }
-  @("# supervise $($now.ToString('s'))") + $md + @('', '## Agents (whole cells)') + @($report.rows | Where-Object state -ne 'FINISHED' | ForEach-Object $ln) + @('', '## Finished today') + @($fin | ForEach-Object $ln) + @('', '## All flags') + @($flags | ForEach-Object { "- [$($_.level)] $($_.what) -> $($_.action)" }) + @($report.info | Where-Object { $_ } | ForEach-Object { "- [INFO] $_" }) + @('', '## Resources') + @($report.resources | ForEach-Object { "- $($_.name) | $($_.by) | $($_.gb) GB" }) + @('', '## Sweep') + @($lines) | Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
-  $nAct = @($flags | Where-Object level -eq 'ACT').Count
+  Write-KitSuperviseReport $report $md $lines $nextLine; $nAct = @($flags | Where-Object level -eq 'ACT').Count
   $tail = if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" } elseif ("$md" -match '\(full: report\)') { "cut cells whole: $(Get-KitPath supervise-report)" }
   $shown = $report.PSObject.Copy(); $shown.rows = @(Select-KitBriefRows $report.rows $now)   # finished > finishedMinutes: report file only
   Format-KitReport $shown $tail; $nextLine; $global:LASTEXITCODE = 0; exit 0
@@ -1995,7 +1996,7 @@ function Invoke-Learn {
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
-    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json,
+    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale)
   $dir = Get-KitPath decisions -Create
@@ -2004,19 +2005,19 @@ function Invoke-Decide {
   $save = {
     param($o)
     $f = Join-Path $dir "$($o.id).json"
-    Invoke-KitLocked $f { Write-KitState $f $o }
+    Invoke-KitLocked $f { Write-KitState $f $o 2 }
     Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at, schemaVersion, updated, holder)   # at = this line's time; the pending line's is the ask's
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
   switch ($Action) {
     'ask' {
-      if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: ..","B: .." [-Recommend A] [-Contracts <file>]'; exit 2 }
-      $opts = @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+      if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." [-Recommend A] [-Fyi] [-Contracts <file>]'; exit 2 }
+      $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
       $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
         kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
-        options = $opts; recommend = $Recommend; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('o')
+        options = $opts; recommend = $Recommend; blocking = -not $Fyi; contracts = $Contracts; status = 'pending'; at = (Get-Date).ToString('o')
         task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId }
       & $save ([pscustomobject]$o)
       if ($resolvedTask) {
@@ -2026,14 +2027,16 @@ function Invoke-Decide {
         & $note $Contracts "## ENV-FIX NEEDED $($o.id) ($Agent, item $Item)$(if ($resolvedTask) { " [Task: $resolvedTask]" })`n$Question`nDone: pending (the coordinator appends it below)"
         "ENV-FIX $($o.id) pending: the coordinator fixes the local env; item $Item waits. Wait: bossy.ps1 decide wait -Id $($o.id)"; return
       }
-      $null = Test-KitProse -Kind decision-request -Text ("$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $Recommend")
-      & $note $Contracts ("## DECISION NEEDED $($o.id) ($Agent, item $Item)$(if ($resolvedTask) { " [Task: $resolvedTask]" })$(if ($mrsClean.Count) { " [MRs: $($mrsClean -join ', ')]" })`n$Question`nOptions:`n$(($opts | ForEach-Object { "- $_" }) -join "`n")`nRecommended: $(if ($Recommend) { $Recommend } else { 'none' })`nAnswer: pending (the coordinator appends it below)")
-      "DECISION $($o.id) pending: item $Item stops (needs decision); continue your other items. Wait: bossy.ps1 decide wait -Id $($o.id)"
+      $txt = (Format-KitDecision ([pscustomobject]$o)) -join "`n"; $null = Test-KitProse -Kind decision-request -Text $txt; & $note $Contracts $txt
+      "DECISION $($o.id) pending: $(if ($Fyi) { "FYI, item $Item goes on" } else { "item $Item stops (needs decision); continue your other items" }). Wait: bossy.ps1 decide wait -Id $($o.id)"
     }
     'list' {
-      $all = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not $Pending -or $_.status -eq 'pending' })
+      $all = @(Get-ChildItem $dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { -not ($Pending -or $Ask -or $Fyi) -or $_.status -eq 'pending' })
+      if ($Ask -or $Fyi) { $all = @($all | Where-Object { $_.kind -ne 'envfix' -and ($_.blocking -eq $false) -eq [bool]$Fyi }) }   # -Ask: blocking, -Fyi: the rest
+      if ($Ask) { if ($Json) { ConvertTo-KitAskPayload $all $Max | ConvertTo-Json -Depth 6 } else { $all | Select-Object -First $Max | ForEach-Object { (Format-KitDecision $_) -join "`n"; '' } }; return }
+      if ($Fyi) { Format-KitFyiList $all; return }
       if ($Json) { ConvertTo-Json @($all) -Depth 5; return }
-      foreach ($d in $all) { "$($d.status.ToUpper()) $($d.id) $($d.run)/$($d.agent) item $($d.item)$(if ($d.task) { " [Task: $($d.task)]" }): $($d.question) | options: $(@($d.options) -join ' ; ')$(if ($d.recommend) { " | recommended: $($d.recommend)" })$(if ($d.answer) { " | answer: $($d.answer)" })$(if ($d.rationale) { " | rationale: $($d.rationale)" })" }
+      foreach ($d in $all) { "$($d.status.ToUpper()) $($d.id) $($d.run)/$($d.agent) item $($d.item)$(if ($d.task) { " [Task: $($d.task)]" }): $($d.question) | options: $(@(Get-KitDecisionOrder $d | ForEach-Object { "$($_.key): $($_.label)" }) -join ' ; ')$(if ($d.recommend) { " | recommended: $($d.recommend)" })$(if ($d.answer) { " | answer: $($d.answer)" })$(if ($d.rationale) { " | rationale: $($d.rationale)" })" }
       if (-not $all.Count) { 'no decisions' }
     }
     'answer' {

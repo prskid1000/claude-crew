@@ -1510,9 +1510,9 @@ $c.next = if ($Next) { $Next } elseif ($Step -eq 'done') { 'none' } elseif ($i -
 if ($PSBoundParameters.ContainsKey('Leases')) { $c.leases = @(Split-KitList $Leases) }
 $c.decisions = @(Get-ChildItem (Get-KitPath decisions) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.agent -eq $Agent -and $_.status -eq 'pending' } | ForEach-Object id)
 Write-KitState $jf $c
-$md = @("# Checkpoint $Agent (run $($c.run)), $($c.updated)", "Next: $($c.next) (start here; the steps below are done: verify, never redo)", '', '## Done') +
-  @($c.steps | ForEach-Object { "- $($_.at) $($_.step)$(if ($_.item) { " [$($_.item)]" }): $($_.evidence)$(if ($_.head) { " ($($_.dir) @ $($_.head))" })" }) +
-  @('', '## Open', "- worktrees: $(@($c.worktrees) -join ', ')", "- leases: $(@($c.leases) -join ', ')", "- decisions pending: $(@($c.decisions) -join ', ')")
+$md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next) (start here; the steps below are done: verify, never redo) · $($c.updated)", '', '## Done', '') +
+  @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Worktree @ head' @($c.steps | ForEach-Object { , @($_.at, $_.step, $_.item, $_.evidence, $(if ($_.head) { "``$($_.dir)`` @ $($_.head)" })) })) +
+  @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')")
 Write-KitAtomic $mf (($md -join "`n") + "`n")
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }

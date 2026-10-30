@@ -23,6 +23,10 @@ $KT = Join-Path $src 'skills/bossy/kitbag.py'; $pf = Join-Path $k 'mr.md'
 function KtPy($code) { python -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $KT)'); import kitbag as k; $code" }   # kitbag internals
 "## Summary`nhttps://t.example.com/T-1 — keep the offset`n## Changes`n- ISO dates`n## How tested`n- tests ``ExportTest```n## Risks`n- none`n## Links`n- doc" | Set-Content $pf
 $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-shaped MR body passes' ($LASTEXITCODE -eq 0)
+"# Lead notes: r1`n**Result:** 2 in, 1 left out · target ``local```n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| P1 | flag ``x`` ON | ready |" | Set-Content $pf
+$tj = Get-Content (Join-Path $src 'workflows/tidy.js') -Raw
+Expect 'retro + lead notes: tidy prompt and checky name the headings and the kit-report check; a lead-notes sample passes' ($tj -match '## Changed.*## Awaiting approval.*## Rejected' -and $tj -match '--kind kit-report' -and
+  (Get-Content (Join-Path $src 'agents/checky.md') -Raw) -match '# Lead notes: .*## Prerequisites' -and (Test-Prose kit-report $pf))
 "Hi, I hope this is basically fine`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler, missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')

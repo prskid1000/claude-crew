@@ -64,6 +64,7 @@ function Set-JsonFile([string]$Path, $Obj, [int]$Depth = 8) {
   $Obj | ConvertTo-Json -Depth $Depth | Set-Content $Path -Encoding utf8
 }
 $J = { param($o, $f, [int]$d = 8) Set-JsonFile $f $o $d }
+function Test-Prose($Kind, $File) { $null = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') prose --kind $Kind $File; $LASTEXITCODE -eq 0 }   # vs the source kit's templates.md
 function Read-Json($Path) { Get-Content $Path -Raw | ConvertFrom-Json }
 # commit everything in $Dir (a git repo first if it is none)
 function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git -C $Dir init -q }; git -C $Dir add -A; git -C $Dir commit -q -m $Message }

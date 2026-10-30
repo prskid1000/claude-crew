@@ -50,7 +50,7 @@ try {
   $pu = pwsh @np $D pipes 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE
   $null = pwsh @np $D checkpoint -Agent c9 -Step build 2>&1; $cr = Read-Json (Join-Path (TkPath $k agents) 'c9/resume.json')
   Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage; checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
-    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $cr.run -eq 'adhoc-c9')
+    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters
 $gh = @'

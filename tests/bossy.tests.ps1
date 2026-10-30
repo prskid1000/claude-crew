@@ -9,7 +9,7 @@ $k = New-TestKit orch; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Pa
 $lw = New-LinkedKit 'kit main' @{ localOnly = @('secret.txt') } 'skills/bossy/bossy.ps1'
 $mk = "$(Kd)/kit main"; Add-Content "$mk/.git/info/exclude" "# >>> kit localOnly (managed by an older setup)`n/old.txt`n# <<< kit localOnly"
 $kx = (pwsh @np "$lw/skills/bossy/bossy.ps1" setup -Exclude 2>&1 | Out-String)
-Expect 'setup -Exclude in a kit worktree: excludes to the main clone (an older block replaced), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
+Expect 'setup -Exclude in a kit worktree: excludes to the main clone (older block replaced), no memory' ((Get-Content "$mk/.git/info/exclude" -Raw) -match '/secret\.txt' -and (Get-Content "$mk/.git/info/exclude" -Raw) -notmatch '/old\.txt' -and $kx -match 'linked kit worktree' -and -not (Test-Path "$lw/memory"))
 git -C $mk remote add origin https://github.com/o/r.git; foreach ($b in 'main', 'goodies') { git -C $mk update-ref "refs/remotes/origin/$b" HEAD }
 $po = Invoke-PsTest kit-protect @'
 $null = . $args[0] 6>$null; $global:seen = @()
@@ -17,16 +17,16 @@ Register-KitAdapter 'git-host' 'github' @{ 'branch.protect' = { param($a) $globa
 Set-KitOriginProtection; $global:seen -join ' '
 '@ @("$mk/skills/bossy/bossy.ps1") | Out-String
 $ph = pwsh @np "$mk/skills/bossy/bossy.ps1" health 2>&1 | Out-String
-Expect 'setup: protects the kit origin main + goodies (fake host), no verb -> by-hand line; health reports it' ($po -match 'protect: main set' -and
+Expect 'setup: protects origin main + goodies (fake host), no verb -> by-hand line; health shows it' ($po -match 'protect: main set' -and
   $po -match 'goodies failed: set it by hand on github\.com/o/r' -and $po -match 'o/r#main o/r#goodies' -and $ph -match 'protection: goodies failed')
-$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (the type alone: no clickup call, so the goody tracker-clickup is not needed)
+$env:KIT_TRACKER_TYPE = 'clickup'   # tag CU- (type only: no clickup call, no goody)
 $out = pwsh @np $O track add -Task 0 -Mrs 'web!1' 2>&1 | Out-String
 Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -match 'needs a real -Task id')
 & $J @{ tasks = @{ old1 = @{ task = 'old1'; mrs = @('api!9'); done = $true } } } $tf   # a tracking.json from before tasks/
 $out = pwsh @np $O track add -Task 'CU-abc123' -Mrs 'web!1,web!2' -MergeAfter 'web!2>api!7' 2>&1 | Out-String
 $trk = { & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Read-KitTracking).tasks } }; $tasks = & $trk; $td = TkPath $k tasks
 $tk = Read-Json "$td/abc123.json"; $am = Read-Json (Join-Path (Split-Path $td) 'automerge.json')
-Expect 'state: tracking.json moved into tasks/<id>.json (schemaVersion, holder, track.mrs in order) + automerge.json, then deleted (no .migrated)' ($tk.schemaVersion -eq 1 -and $tk.holder.pid -and
+Expect 'state: tracking.json -> tasks/<id>.json (schemaVersion, holder, mrs in order) + automerge.json, deleted (no .migrated)' ($tk.schemaVersion -eq 1 -and $tk.holder.pid -and
   (@($tk.track.mrs) -join ',') -eq 'web!1,web!2' -and (Read-Json "$td/old1.json").track.done -and $am.schemaVersion -eq 1 -and -not (Test-Path $tf) -and -not (Test-Path "$tf.migrated"))
 Copy-Item (Join-Path $src 'skills/bossy/STATE.md') (Join-Path $k 'skills/bossy'); '{bad' | Set-Content "$td/bad1.json"
 $sl = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') state lint 2>&1 | Out-String; $slc = $LASTEXITCODE; Remove-Item "$td/bad1.json"
@@ -37,17 +37,18 @@ Expect 'track run: a task with 0 MRs is held, never promoted' (-not (& $trk).zer
 $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -ErrorAction SilentlyContinue
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
-Expect 'supervise: without -Session the lock owner is the session, the same every round (no step-aside from itself), also from a detached shell' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
+Expect 'supervise: without -Session the lock owner is the session, stable per round (no step-aside from itself), detached too' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
 $ec = & { . $O; "$((Limit-KitCell ('x' * 74 + '😀' * 9)) -match '\p{Cs}')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")" }
 Expect 'report cells: a cut never splits an emoji' ($ec -eq 'FalseTrue')
 $tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
 Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
 Remove-Item Env:KIT_TRACKER_TYPE
 $cf =Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
-$out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'A: keep','B: recompute' -Recommend A -Contracts $cf | Out-String
+$out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Question 'Keep the old total?' -Options 'B: recompute','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
 $id = if ($out -match 'DECISION (\S+) pending') { $Matches[1] }
 $pend = @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json)
-Expect 'decide ask: pending + contracts note' ($id -and $pend.Count -eq 1 -and (Get-Content $cf -Raw) -match "DECISION NEEDED $id")
+Expect 'decide ask: structured, blocking; note table, recommended first' ($id -and $pend.Count -eq 1 -and $pend[0].blocking -and $pend[0].options[1].description -eq 'no data change' -and
+  (Get-Content $cf -Raw) -match "DECISION NEEDED $id(?s).*\| A \(recommended\) \| keep \| no data change \|\n\| B \|" -and (Test-Prose decision-request $cf))
 $null = pwsh @np $O decide answer -Id $id -Answer 'A, keep it'
 $w = pwsh @np $O decide wait -Id $id -MaxMinutes 1 | Out-String
 Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_ }).Count)
@@ -57,10 +58,11 @@ $pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $
 $null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
 $w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
 Expect 'decide envfix: pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
-$i1, $i2 = 'A1', 'A2' | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -Item $_ -Question "q$_" -Options 'A: a','B: b' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
+$i1, $i2 = @('A1'), @('A2', '-Fyi') | ForEach-Object { (Px $O decide ask -Run w1 -Agent X9 -Item $_[0] -Question "q$($_[0])" -Options 'A: a','B: b' -Recommend B @($_ | Select-Object -Skip 1) | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1' }
+$ak = Px $O decide list -Ask -Json | ConvertFrom-Json; $fy = Px $O decide list -Fyi | Out-String
 $null = Px $O board check -Session s1 2>&1; $bc = $LASTEXITCODE
 $hp = Px (Join-Path $k 'skills/bossy/bossy.ps1') setup --help 2>&1 | Out-String; $hc = $LASTEXITCODE
-Expect 'decide ids unique within a second; board check without -Worktree exit 2; bossy.ps1 setup --help prints usage, exit 0' ($i1 -ne $i2 -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
+Expect 'decide: unique ids, -Ask payload, -Fyi list; board check w/o -Worktree exit 2; setup --help exit 0' ($i1 -ne $i2 -and "$($ak.ids)" -eq $i1 -and $ak.questions[0].header -eq 'A1' -and $ak.questions[0].options[0].label -eq 'B: b (Recommended)' -and $fy -match "^1\. qA2 \(``$i2``\): B b \(recommended\) · A a" -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
 $dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
 $pp = Px $O precommit 2>&1 | Out-String; $ppc = $LASTEXITCODE
 Expect 'deploy / precommit without their goody (deploys, kit-admin): its one line, exit 1' ($ppc -eq 1 -and $pp.Trim() -eq 'bossy.ps1 precommit is a goody: run kitbag.py goody add kit-admin' -and $dxc -eq 1 -and $dx2.Trim() -eq 'bossy.ps1 deploy is a goody: run kitbag.py goody add deploys')
@@ -93,7 +95,7 @@ $null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1"
 Expect 'launch -Self: 2 launches, one run name: 2 records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
 '{"kitDir":"C:/k","runDir":"C:/r"}' | Set-Content (Join-Path $ld 'args-testy-r.json'); '{"script":"","at":"bad"}' | Set-Content (Join-Path $ld 'broken.json')
 $ll = pwsh @np $O launch -List 2>&1 | Out-String; $cl = pwsh @np $O cleanup -IfDue -Quiet 2>&1 | Out-String; $clc = $LASTEXITCODE
-Expect 'launch records: args dumps / broken records skipped; -List points to recover; SessionStart hook shows no error' ($ll -notmatch 'Exception|Cannot bind' -and $ll.TrimEnd() -match 'resume calls, resume briefs, finalize lines: bossy.ps1 recover$' -and $cl -notmatch 'Exception|Cannot bind' -and $clc -eq 0)
+Expect 'launch records: args dumps / broken ones skipped; -List points to recover; SessionStart shows no error' ($ll -notmatch 'Exception|Cannot bind' -and $ll.TrimEnd() -match 'resume calls, resume briefs, finalize lines: bossy.ps1 recover$' -and $cl -notmatch 'Exception|Cannot bind' -and $clc -eq 0)
 $tt = @'
 $env:KIT_TRACKER_TYPE = 'none'
 . $args[0]
@@ -157,7 +159,8 @@ $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
 $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String
 $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
-Expect 'supervise: a goody''s hook sees the sweep''s variables, adds a sweep line, a flag, a report row, an owner line, a RAM need' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info'); Remove-Item $ad -Recurse -Force
+Expect 'supervise: a goody hook adds a sweep line, flag, report row, owner line, RAM need; kit-report shape; ACT: blocking -> tool, FYI -> list' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
+  $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item $ad -Recurse -Force
 $lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
 & $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
@@ -236,7 +239,7 @@ $hr = & { . $O; $n = Get-Date
   "$($a.skip -and $a.flag.what -match 'silent 2 days')|$($b.skip -and -not $b.flag)|$(-not $c.skip)|$([bool]$d.flag)" }
 Expect 'supervise: a run silent 2+ days is flagged once, then skipped' ($hr -eq 'True|True|True|True')
 $jr = & { . $O; $s = @(@{ agentId = 'a1'; label = 'build:X1' }, @{ agentId = 'a2'; label = 'build:X1' }, @{ agentId = 'a3'; label = 'review:X1' }, @{ agentId = 'a4'; label = 'test:Q1@2' }, @{ agentId = 'a5'; label = 'test:Q1' }, @{ agentId = 'a6'; label = 'test:Q1' }); (@(Get-JournalRunning $s @('a3')) | ForEach-Object agentId) -join ',' }
-Expect 'journal: running = no result, not superseded by a later finished start of the item or a restart of the label' ($jr -eq 'a4,a6')
+Expect 'journal: running = no result, not superseded by a later finished start or a restart of the label' ($jr -eq 'a4,a6')
 # crash, pause, resume (MR states: a fake git host)
 $DV = Join-Path $k 'skills/crafty/crafty.ps1'; $cw = Join-Path (Kd) 'cwt'; New-Item -ItemType Directory -Force $cw | Out-Null; 'a' | Set-Content "$cw/a.txt"; Save-GitRepo $cw base
 $cs = if ((Px $O board join -Agent C1 -Run cr -Claims $cw | Out-String) -match 'SESSION (\S+)') { $Matches[1] }
@@ -256,12 +259,12 @@ $env:KIT_OFFLINE = '1'; $off = Invoke-TestScript $O resume -All; $env:KIT_OFFLIN
 $rs = Px $O resume -All | Out-String; $ag = TkPath $k agents
 $b1 = Get-Content "$ag/c1/resume-brief.md" -Raw; $b2 = Get-Content "$ag/c2/resume-brief.md" -Raw; $rj = Px $O board join -Agent C1 -Run cr -Resume | Out-String
 $bad = @(Get-ChildItem (TkPath $k work) -Recurse -Filter '*.json' | Where-Object { try { $null = Get-Content $_.FullName -Raw | ConvertFrom-Json; $false } catch { $true } })
-Expect 'crash: an agent killed holding the board lock -> health marks it crashed at once, no lock left, all state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
+Expect 'crash: agent killed holding the board lock -> health marks it crashed, no lock left, state parses' ($hh -match 'paused/crashed runs: \d' -and $hh -match 'resume -All' -and (Read-Json $bf).crashed -and $hs -lt 60 -and -not (Test-Path "$bf.lock") -and -not $bad.Count)
 Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -and $off.out -match 'OFFLINE' -and $off.out -cnotmatch 'RESUME|RELAUNCH')
-Expect 'resume after a crash: brief at the next step, done steps verified, diff kept; join prints CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match 'uncommitted, kept: b\.txt' -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
+Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })
-Expect 'resume after MR opened: starts at review, MR verified (no new MR); an all-merged run still relaunches' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 -> MR opened' -and $rs -match '(?s)run cm.*all 1 MR\(s\) merged: the relaunch')
-Expect 'recover: area state from the host + tracker -> RELAUNCH skip list (open: build; merged + task promoted: all), item table in the brief' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and
+Expect 'resume after MR opened: starts at review, MR verified; an all-merged run still relaunches' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 \| MR opened' -and $rs -match '(?s)run cm.*all 1 MR\(s\) merged: the relaunch')
+Expect 'recover: host + tracker area state -> RELAUNCH skip list (open: build; merged + promoted: all), item table in the brief' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and
   "$($rl.resume.C2.skip)" -eq 'build' -and "$($rl.resume.C1.state)" -eq 'start' -and "$($rl.resume.C3.skip)" -eq 'build review ci merge testing-doc tracker' -and
   (Get-Content (Join-Path (TkPath $k launches) 'cm.resume.md') -Raw) -match '\| tsk123 g/api!6 \| done \| build, .*, tracker \|  \| g/api!6 merged \| promoted')
 $ps = if ((Px $O board join -Agent P1 -Run pr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O board join -Agent P2 -Run pr; $null = & $self buildy.js pr '{"brief":"C:/b/pr.md"}'

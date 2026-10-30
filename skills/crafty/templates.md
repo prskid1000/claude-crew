@@ -1,12 +1,12 @@
 # Templates (crafty)
 
-Every brief, doc, body and report the flows fill. Copy the section you need into a file in the scratchpad or run folder,
-fill the `<...>` parts, delete what does not apply. Which step fills which section: the Files index of the skill that uses it.
+Every brief, doc, body and report the flows fill: copy a section into the scratchpad or run folder, fill the `<...>` parts,
+drop what does not apply. Which step fills which: the Files index of the skill using it.
 
 ## Writing standards (every artefact the kit reads or writes)
-The rules: AGENTS.md "Writing". Every limit is a ceiling, not a target. `kitbag.py prose --kind <kind> <file>` measures a text
-(exit 1 = findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
-`pokey.ps1 finalize`) run it and print findings, never truncate. A finding is fixed by rewriting.
+Rules: AGENTS.md "Writing"; every limit is a ceiling. `kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
+findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
+`pokey.ps1 finalize`) run it, print findings, never truncate; fix a finding by rewriting.
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
@@ -14,9 +14,8 @@ Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence
 Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
 "in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
 "happy to" · "great job" · "as an AI" · task recap · restating the template's own words.
-Markdown: commands, paths, class names, config keys and ids in `backticks` (docs render them monospace; nothing else is
-guessed); labels `**Label:**`; links `[text](url)`; one blank line between blocks. Tracker comments render as plain text on some
-trackers: there the adapter drops the markup.
+Markdown: commands, paths, class names, config keys and ids in `backticks` (monospace; nothing else is guessed); labels
+`**Label:**`; links `[text](url)`; a blank line between blocks; a tracker showing plain text: its adapter drops the markup.
 
 | Kind | Purpose | Format (sections in order) | Limits | Required facts |
 |---|---|---|---|---|
@@ -44,26 +43,27 @@ trackers: there the adapter drops the markup.
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
 | comment-deploy | a deploy record (+ the batched ask, only under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
+| kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
 | final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 ```markdown
 # Wave brief: <wave name>, <date>
-Read <kit>/skills/crafty/SKILL.md first. This brief wins where they differ.
-Items: <tracker epic / sheet>. Decisions: <decisions doc>; final, don't re-ask (a NEW choice -> a decision request, crafty D1).
-Local env: <env name in kit.local.json localEnv, or "none: <why>">. Test env after deploy: <name> (never production).
-
+**Read first:** `<kit>/skills/crafty/SKILL.md`; this brief wins where they differ.
+**Items:** <tracker epic / sheet> · **Decisions:** <doc>; final, don't re-ask (a NEW choice -> crafty D1).
+**Local env:** <kit.local.json localEnv name, or "none: <why>"> · **Test env after deploy:** <name> (never production).
+## Repos
 | Repo | Main checkout | Target | Link deps from | Migrations |
 |---|---|---|---|---|
 | <repo> | `<repos root>/<repo>` | `main` | | <tool / none> |
-
+## Agents
 | Agent | Items | Area (screens / packages / files) | Repos | Migration range | Services (leased, nothing else) | Complex? |
 |---|---|---|---|---|---|---|
 | X1 | <ids> | <area> | <repos> | <range or —> | <api; api-only items: no web> | <yes: why / no> |
 
-Overlaps: <who touches what in a shared file>. Contracts: <field / endpoint X1 adds, X2 consumes after X1 merges>.
-Branch `f/<tag><task>-<slug>`, worktree name = agent id. Tracker task under <epic> in <list>, assigned to <user>.
-Rule changes during the wave are appended below and in <brief>.contracts.md: re-read both before every push.
+**Overlaps:** <who touches what in a shared file> · **Contracts:** <field / endpoint X1 adds, X2 consumes after X1 merges>
+**Branch:** `f/<tag><task>-<slug>`, worktree name = agent id · **Tracker:** task under <epic> in <list>, assigned to <user>.
+Rule changes during the wave are appended below and to the contracts file: re-read both before every push.
 
 ## openQuestions
 <question> · blocks <item> · answers: rechy | owner (or "none")
@@ -75,9 +75,9 @@ Rule changes during the wave are appended below and in <brief>.contracts.md: re-
 ## Bug-fix brief
 `bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos). A bug brief adds to the wave brief:
 ```markdown
-1. Read the bug: crafty.ps1 tracker view <id> + comments (the QA comment of a failedTesting task carries the failed and untested checks).
+1. Read the bug: crafty.ps1 tracker view <id> + comments (a failedTesting task's QA comment lists its failed and untested checks).
 2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps on the local env, logs, DB state, debugger.
-   Record steps + evidence in the testing-goals doc. Cannot reproduce locally -> say why, then reproduce on the test env.
+   Steps + evidence -> the testing-goals doc. Not reproducible locally -> say why, reproduce on the test env.
 3. Classify each check: real bug (root cause + regression test red before, green after) · stale deploy (name the missing commit)
    · expected (cite the decision) · config/data (what to set where).
 4. Fix, then re-run the same reproduction as the first local check; then the full testing goals.
@@ -85,17 +85,24 @@ Rule changes during the wave are appended below and in <brief>.contracts.md: re-
 ```
 
 ## Resume brief
+`bossy.ps1 recover` writes it after a crash, a budget handoff by hand. The next agent joins with the same id + `-Resume`
+(TAKEOVER), runs `crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
 ```markdown
-A stopped agent's work is in worktrees <root>/<prefix>-*. Join the board with its id + -Resume (TAKEOVER, not DUPLICATE).
-Before editing: crafty.ps1 wt status -Dir <wt> per worktree, the task + comments, open/merged MRs of the branch. Continue where it
-stopped (testing goals, local test loop, MRs); never redo finished work. Files changing under you = another writer: stop, report.
+# Resume brief: <agent> (run `<run>`)
+**Result:** Start AT step: <next>. The steps below are done and verified: never redo them.
+## Done (verified)
+| Step | Item | Evidence | Check |
+|---|---|---|---|
+## Interrupted step `<next>`
+| Worktree | Branch @ head | Uncommitted (kept) |
+|---|---|---|
+## Open
+**Leases to take again:** <ids> · **Decisions:** <ids> · **Next:** <what to do, in order>
 ```
-`bossy.ps1 recover` adds one table per area: each item's done steps (skipped) and missing steps (run), MRs, tracker, testing doc.
 
 ## Testing goals
-Written by devy FIRST, before the local test loop (crafty step 4). A LOCAL working file (`goals.md`), never published: the
-AI testing doc below grows out of it. Every doc lists checks and facts as tables, a short intro line above each; cell text
-keeps the prose limits.
+devy writes it FIRST, before the local loop (crafty step 4): a local `goals.md`, never published; the AI doc grows from it.
+Docs list checks and facts as tables, an intro line above each; cells keep the prose limits.
 ```markdown
 # Testing goals: <task id> <title>
 Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.ps1 status), services <the leased ones>.
@@ -119,12 +126,11 @@ What must hold before merge:
 ```
 
 ## Testing doc (AI)
-The local test record of the dev flow. devy writes it from `goals.md` at the start of the local loop: every positive,
-negative, edge and regression case (invalid input, role / permission denials, boundaries, empty or missing data,
-concurrency where relevant, nearby features, impact-check edge cases), one row each. Each loop round (and each fix round
-after failedTesting) fills Result and Evidence (images inline, a request / response excerpt + link), appends its Rounds row
-and republishes: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"` (same link; earlier rounds stay whole
-below; refused without a negative row, without the Rounds table or with an earlier row dropped). It shows the local PASS.
+The dev flow's local test record, by devy from `goals.md` when the loop starts: one row per positive, negative, edge and
+regression case (invalid input, role denials, boundaries, empty data, concurrency where relevant, nearby features,
+impact-check edges). Each round (fix rounds too) fills Result and Evidence (images inline, request / response excerpt +
+link), appends its Rounds row, republishes: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"` (same link,
+earlier rounds kept; refused without a negative row or the Rounds table, or with a row dropped). It shows the local PASS.
 ```markdown
 # Testing doc (AI): <task id> <title>
 Setup and cleanup: <data created via the API (prefixed), feature switches, logins by key; what is deleted after>.
@@ -142,13 +148,12 @@ Rounds (one row per round, appended; bugs found by you or checky go back to the 
 ```
 
 ## Human testing doc
-The steps for a person: POSITIVE cases only (the happy paths), no negative rows. Written after the local loop PASS with
-Result and Evidence EMPTY: its evidence only ever comes from a deployed env (local evidence lives in the AI doc).
-`devtools.py finish` publishes it as `<task>:testing-doc` (refused before a loop PASS checkpoint, without the case table,
-with a negative row, an image or a filled Result / Evidence); a fix round updates the same doc after its own PASS. Testers
-and /testy follow it (pokey H1-H3, L1); each deployed-env run (`pokey.ps1 finalize`, or a person) fills Result / Evidence
-in place (images inline) and adds a dated "<env> run <date>" section with its report; a retest after a fix adds another, earlier
-runs stay.
+A person's steps: POSITIVE cases only, no negative rows. Written after the local PASS with Result and Evidence EMPTY:
+evidence comes only from a deployed env (local evidence: the AI doc). `devtools.py finish` publishes it as
+`<task>:testing-doc` (refused before a loop PASS checkpoint, without the case table, with a negative row, an image or a
+filled Result / Evidence); a fix round updates it after its own PASS. Testers and /testy follow it (pokey H1-H3, L1); each
+deployed-env run (`pokey.ps1 finalize` or a person) fills Result / Evidence in place (images inline) and adds a dated
+"<env> run <date>" section with its report; each retest adds one, earlier runs stay.
 ```markdown
 # Testing: <feature / change>
 | | |
@@ -201,8 +206,7 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 - **Testing doc:** [open](<url>)
 - **Sibling MRs:** <refs> (merge order: producers first)
 ```
-The MR opens before the human doc exists (`Testing doc: pending`); after the loop PASS, `devtools.py mr` again with the link
-edits the same MR body. Merge refuses an MR with a task link and no `Testing doc: <url>` line.
+The MR opens with `Testing doc: pending`; after the loop PASS, `devtools.py mr` with the link edits the same body. Merge refuses an MR with a task link and no `Testing doc: <url>` line.
 
 ## Task solution comment
 ```markdown
@@ -214,15 +218,16 @@ A task has three kit comments, each edited in place: MRs (merge order; a status 
 The testing doc links (human + AI) live only on top of the task description (`devtools.py finish`), never in a comment.
 
 ## Decision request
-Written by `bossy.ps1 decide ask` into the contracts file; the coordinator relays it, the owner answers.
+`bossy.ps1 decide ask` writes it to the contracts file; its options stay structured for the question tools (bossy E4).
 ```markdown
 ## DECISION NEEDED <id> (<agent>, item <item>)
-<the question: which behaviour / design / data handling / migration strategy / UX>
-Options:
-- A: <option> — <trade-off>
-- B: <option> — <trade-off>
-Recommended: <A/B, one line why>
-Answer: pending
+**Question:** <which behaviour / design / data handling / migration strategy / UX>
+**Blocking:** yes: item <item> waits (`-Fyi`: no)
+| Option | Choice | Trade-off |
+|---|---|---|
+| A (recommended) | <label> | <trade-off> |
+**Recommended:** <A, one line why>
+**Answer:** pending
 ```
 
 ## Final reports (one shape per crew member, <= 200 words)

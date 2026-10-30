@@ -52,8 +52,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - D1. **Decision pause**: about to change existing user-visible behaviour the task did not ask for (internal logic with the
   same behaviour: no pause), or several valid paths
   (design, data handling, migration strategy, UX)? `& $O decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options
-  "A: ..","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md`, stop THAT item (report it as `needsDecision`), continue the
-  others. The answer comes back in the contracts file (`decide wait -Id <id>`); then finish the item from it.
+  "A: <label> — <why>","B: .." -Recommend <A|B> -Contracts <brief>.contracts.md` (`-Fyi`: nothing waits), stop THAT item
+  (`needsDecision`), continue the others. The answer: contracts file (`decide wait -Id <id>`); finish the item from it.
 - D2. **ENV-FIX**: a local-env fix only the coordinator may do (`up`/`down`/`refresh`/`drop`, shared DB repair): `& $O decide ask
   -Kind envfix -Run <run> -Agent <id> -Item <item> -Question "<the fix>"`, stop THAT item (`needsEnvFix`), continue the others.
   `localTest` BLOCKED only for an owner decision or a remote-only dependency (`blockedKind`, `blockedReason`).
