@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L856 status · L1079 supervise sweep ·
-  L1131 supervise report · L1193 tracker · L1527 git-host · L1680 kitlog · L1796 params · L2109 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1084 supervise sweep ·
+  L1136 supervise report · L1199 tracker · L1533 git-host · L1686 kitlog · L1802 params · L2115 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -569,10 +569,15 @@ function Remove-KitGpu([int]$ProcessId = $PID, [string]$Holder) {
 # named machine-wide locks (repos[].exclusiveTests: crafty.ps1 check -Step test): one holder process per lock, waiters in arrival
 # order; a holder or waiter whose process ended is dropped (logged). runtimes/locks.json { held: { <lock>: h }, waiting: [w] }
 function Get-KitLockFile { Join-Path (Get-KitPath runtimes -Create) 'locks.json' }
+# alive: its process, or a build its gate started (a killed check leaves its test process running)
+function Test-KitLockHolder($H) {
+  if (Test-KitPid $H.pid $H.pidStart) { return $true }
+  @(Get-ChildItem (Join-Path (Get-KitTemp) 'claude-build-gate') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { "$($_.gate)" -eq "$($H.pid)" -and (Test-KitPid $_.pid $_.start) }).Count -gt 0
+}
 function Get-KitLockState {
   $s = try { Get-Content (Get-KitLockFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
   $h = if ($s.held -is [hashtable]) { $s.held } else { @{} }
-  $script:KitLockDropped = @(foreach ($k in @($h.Keys)) { if (-not (Test-KitPid $h[$k].pid $h[$k].pidStart)) { $h[$k]; $h.Remove($k) } })
+  $script:KitLockDropped = @(foreach ($k in @($h.Keys)) { if (-not (Test-KitLockHolder $h[$k])) { $h[$k]; $h.Remove($k) } })
   @{ held = $h; waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }) }
 }
 function Save-KitLockState($St) {
@@ -591,7 +596,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
       $ahead = @($st.waiting | Where-Object { $_.lock -eq $Name -and $_.pid -ne $ProcessId -and [datetime]$_.at -lt [datetime]$me.at } | Sort-Object { [datetime]$_.at })
       $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
       $by = if ($h -and $h.pid -ne $ProcessId) { $h } elseif ($ahead.Count) { $ahead[0] + @{ queued = $true } } else { $null }
-      if ($by) { $st.waiting += $me } else { $st.held[$Name] = $me }
+      if ($by) { $st.waiting += $me } else { $g = $me.Clone(); $g.at = (Get-Date).ToString('o'); $st.held[$Name] = $g }   # held since = taken, not queued
       Save-KitLockState $st; $by
     }
     if (-not $o) { Write-KitLeaseLog acquire lock $Name @{ agent = $Holder; at = $me.at }; if ($n) { Write-Host "[lock] $Name taken after $([int]((Get-Date) - [datetime]$me.at).TotalMinutes) min" }; return $true }
@@ -1139,7 +1144,6 @@ function Format-KitReport($d, [string[]]$Tail = @()) {
   $reportLines = [Collections.Generic.List[string]]::new()
   # 1. one row per agent and workflow run (lib.ps1 status)
   foreach ($l in @(Format-KitStatusTable $d.rows $d.at $d.versions -Cap 90) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
-  foreach ($l in @(Format-KitShellTable $d.shells)) { $reportLines.Add($l) }   # 1b. agents' background shells, only when any
   # 2. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs); then -Brief's ACT line ($Tail)
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
   $reportLines.Add("**Flags**$(if (-not $fl.Count) { ': none' })")
@@ -1161,6 +1165,7 @@ function Format-KitReport($d, [string[]]$Tail = @()) {
     for ($i = 0; $i -lt $rc.Count; $i += 3) { $reportLines.Add('| ' + (@(0..2 | ForEach-Object { if ($i + $_ -lt $rc.Count) { $rc[$i + $_] } else { '— | — | —' } }) -join ' | ') + ' |') }
   }
   $reportLines.Add('')
+  foreach ($l in @(Format-KitShellTable $d.shells)) { $reportLines.Add($l) }   # 4. agents' background shells, only when any: last
   @($reportLines)
 }
 # the Shells table (supervise_resources.ps1 Get-KitShellSweep rows): problems first, oldest first; nothing when no shell is listed
@@ -1186,8 +1191,9 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
   @("# Supervise report $($d.at.ToString('yyyy-MM-dd HH:mm'))", "**Result:** $(& $n ACT) ACT · $(& $n WATCH) WATCH · $(@($d.rows | Where-Object state -ne 'FINISHED').Count) live · $Next", '') + $Md +
     @('', '## Agents (whole cells)', '') + @(& $ag $false) + @('', '## Finished today', '') + @(& $ag $true) + @('', '## All flags', '') +
     @(Format-KitMdTable 'Level', 'Flag', 'Action' @(@($d.flags | ForEach-Object { , @($_.level, $_.what, $_.action) }) + @($d.info | Where-Object { $_ } | ForEach-Object { , @('INFO', $_, '') }))) +
+    @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) +
     @('', '## Shells (whole commands)', '') + @(Format-KitMdTable 'PID', 'Owner', 'Age min', 'State', 'Dir', 'Command', 'Next' @($d.shells | ForEach-Object { , @($_.pid, $_.owner, $_.age, $_.state, $_.dir, ($_.cmd -replace '\r?\n', ' \n '), $_.next) })) +
-    @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) + @('', '## Sweep', '', '```text') + $Sweep + '```' |
+    @('', '## Sweep', '', '```text') + $Sweep + '```' |
     Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
 }
 # ---- tracker: adapter (a Register-KitAdapter block per tracker.type)

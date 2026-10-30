@@ -190,12 +190,13 @@ $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = 
 '{ "stack": "custom", "commands": { "test": "node t.js {tests}" } }' | Set-Content "$lr/api/.claude-stack.json"
 'const f=require("fs"),a=w=>f.appendFileSync(process.env.LOCK_LOG,w);a("s");setTimeout(()=>a("e"),1500)' | Set-Content "$lr/api/t.js"
 'BaseDb' | Set-Content "$lr/api/ADb.java"; 'C' | Set-Content "$lr/api/C.java"; Save-GitRepo $lr i
-& $J @{ repos = @(@{ name = 'lr'; checkout = $lr; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
-$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -RedirectStandardOutput "$lr/o$t$c" }
+git init -q "$lr-s"; git -C "$lr-s" -c protocol.file.allow=always submodule add -q $lr sub; git -C "$lr-s/sub" worktree add -q "$lr-w"   # a submodule's worktree
+& $J @{ repos = @(@{ name = 'lr'; checkout = "$lr-s/sub"; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
+$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -RedirectStandardOutput "$lr/o$t$c" }
 $wx = { foreach ($p in $args) { $null = $p.Handle; $p.WaitForExit() } }; $p1 = & $lp ADb; $p2 = & $lp ADb#m 2; & $wx $p1 $p2; $t = Get-Content $env:LOCK_LOG -Raw; $wt = Get-Content "$lr/oADb*" -Raw
 $h = Start-Process $pwshExe "-NoProfile -Command . '$(Lib)'; `$null = Use-KitLock db hx; sleep 60" -PassThru; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
 $c3 = & $lp C; $c4 = & $lp ADb 4 0.03; & $wx $c3 $c4; $h.Kill(); $h.WaitForExit(); $free = pwsh -NoProfile -Command ". '$(Lib)'; (Get-KitLockState).held.Count"
-Expect "check: exclusiveTests serial ($t), non-match free, cap exit 3, dead holder dropped" ($t -eq 'sese' -and $p1.ExitCode + $p2.ExitCode + $c3.ExitCode -eq 0 -and $wt -match 'waiting for lock db held by' -and $c4.ExitCode -eq 3 -and (gc "$lr/oADb4" -Raw) -match 'held by hx since' -and $free -eq 0)
+Expect "check: exclusiveTests serial ($t), non-match free, cap exit 3, dead holder dropped" ($t -eq 'sese' -and $p1.ExitCode + $p2.ExitCode + $c3.ExitCode -eq 0 -and (gc "$lr/oC" -Raw) -notmatch 'for lock' -and $wt -match 'waiting for lock db held by' -and $c4.ExitCode -eq 3 -and (gc "$lr/oADb4" -Raw) -match 'held by hx since' -and $free -eq 0)
 Remove-Item "$k/skills/crafty/kit.local.json"
 # gate: half the file cache counts; the queue head starts after 20 min above a 5% floor
 $gt = @'
@@ -243,17 +244,6 @@ Expect 'params: past 2x one WATCH; param approve lifts it' ($pr -contains 'ask:4
 Expect "params: a timeout of a timeout key moves nothing (RFC 6298); no hold; -10% a day after 5 new observations ($(@($pr -match '^(fail|hold|down1|wait5|down2|beat):') -join ' '))" ($pr -contains 'fail:60' -and $pr -contains 'hold:31.89' -and $pr -contains 'down1:28.7' -and $pr -contains 'wait5:28.7' -and $pr -contains 'down2:25.83')
 Expect 'params: 2+ new ACTs halve the beat (AIMD), an overnight gap is censored; a holder back after grace = short (once); show: last change + next risky step' ($pr -contains 'beat:7.5' -and $pr -contains 'censor:1' -and $pr -contains 'back:False:1' -and "$pr" -match 'last change \d\d-\d\d \d\d:\d\d down: .*next risky step from')
 Expect 'params: env > kit.local.json > pin (no -Context: all) > learned; unknown key refused' ($pr -contains 'pin:7:9:12:5' -and "$pr" -match "unknown param 'no.such'")
-
-$rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
-  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }
-$ef = { param($a, $q) @{ level = 'ACT'; kind = 'ENV-FIX'; who = "$a (wave-brief-a8da)"; age = '34 min'; what = $a; problem = $q; action = "& D:\Kit\.claude\skills\bossy\bossy.ps1 decide answer -Id e-20261029090127-$a-e69a" } }
-$rd.flags = @(@{ level = 'WATCH'; what = 'RESTART LOOP: hm search 3x'; action = 'logs' }, (& $ef W 'devy-3dy3-put'), ((& $ef J ('p ' * 60)) + @{ next = 'nx' }), (& $ef J1 'C:\d\|x'))
-$r1 = (& { . $O; Format-KitReport $rd }) -join "`n"; $rd.mem.AvailGB = 6; $rd.rows = @(); $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
-$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '', '**Flags**', '') -join "`n"
-$fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' }); $fw = @($r1 -split "`n`n" | Where-Object { $_.StartsWith('|') } | ForEach-Object { $tl = $_ -split "`n"; $nc = ($tl[0] -split '\|').Count - 2
-  (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
-$rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ name = "r$_"; gb = $_ } }); $fo = & { . $O; Format-KitReport $rd 'ACT: 1' }; "$(@($fo -match '^\| Resource \|').Count)$(@($fo -match '^\| r\d').Count)$(@($fo -match '— \| — \|$').Count)$(($fo -join ' ') -match 'INFO.+ACT: 1 +\*\*RAM')" }
-Expect "report: widths ($fw) <= 95, cells <= 90; RAM last; 2/3/7 resources 3 a row ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '112True 111True 132True' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
 Remove-TestKit $k
 # ---- OS helpers on Linux / macOS
 $k = New-TestKit posix

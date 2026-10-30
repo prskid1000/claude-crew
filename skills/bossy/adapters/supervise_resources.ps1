@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L42 supervise · L171 shells · L276 release · L305 lines · L330 cleanup
+Sections: L13 builds · L42 supervise · L171 shells · L285 release · L314 lines · L339 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -179,10 +179,19 @@ function Get-KitShellCommand([string]$CommandLine) {
   if ($c -match '(?is)\s-(?:c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace '\\"', '"').Trim() }
   ($c -replace '^\s*("[^"]*"|\S+)\s*', '').Trim()
 }
-# its first line without a leading cd, for the table
+# the table cell: shell quoting ('"'"' / '\'') undone, cd / export preambles skipped, a heredoc as "<cmd> <<EOF (heredoc, N lines)", 60 chars
 function Get-KitShellShort([string]$Cmd) {
-  $s = ((@("$Cmd" -split "`r?`n" | Where-Object { $_.Trim() })[0]) -replace '^\s*(cd|Set-Location|pushd)\s+("[^"]*"|''[^'']*''|\S+)\s*(&&|;)\s*', '' -replace '\s+', ' ').Trim()
-  if ($s) { $s } else { "$Cmd".Trim() }
+  $lines = @(("$Cmd" -replace "'""'""'", "'" -replace "'\\''", "'") -split "`r?`n"); $pre = '^\s*(?:(?:cd|Set-Location|pushd|export)\s+(?:"[^"]*"|''[^'']*''|[^\s;&]+)[^;&]*|\$env:\w+\s*=\s*[^;&]+)\s*(?:&&|;|$)\s*'
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $s = $lines[$i]; for ($n = 0; $n -lt 9 -and $s -match $pre; $n++) { $s = $s -replace $pre, '' }
+    if (-not $s.Trim()) { continue }
+    if ($s -match '<<-?\s*[''"]?(\w+)[''"]?') {
+      $w = $Matches[1]; $end = $lines.Count; for ($j = $i + 1; $j -lt $lines.Count; $j++) { if ($lines[$j].Trim() -eq $w) { $end = $j; break } }
+      $s = "$($s.Substring(0, $s.IndexOf('<<')).Trim()) <<$w (heredoc, $($end - $i - 1) lines)"
+    }
+    $s = ($s -replace '\s+', ' ').Trim(); return $(if ($s.Length -gt 60) { $s.Substring(0, 59) + '…' } else { $s })
+  }
+  "$Cmd".Trim()
 }
 # the folder it works in: its first cd, else -Dir (Git Bash /d/x -> D:/x); '' when unknown or not absolute
 function Get-KitShellDir([string]$Cmd) {
@@ -266,10 +275,10 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
   $State.shells = $new
   [pscustomobject]@{ rows = @($rows); flags = @($flags); line = "shells: $all agent shell(s), $($rows.Count) listed" }
 }
-# supervise hook (section 3; the verb's $state, $now, Within): the sweep line and flags; the rows go to $script:KitShells (report)
+# supervise hook (section 3; the verb's $state, $now, Within): the sweep line and flags; the rows go to $script:KitShellRows (report)
 function Get-KitSuperviseGuardShells([switch]$AutoFix) {
-  $script:KitShells = @(); if (-not (Within 'shells')) { return }
-  try { $sh = Get-KitShellSweep $state $now -AutoFix:$AutoFix; $script:KitShells = $sh.rows; $sh.line; $sh.flags }
+  $script:KitShellRows = @(); if (-not (Within 'shells')) { return }
+  try { $sh = Get-KitShellSweep $state $now -AutoFix:$AutoFix; $script:KitShellRows = $sh.rows; $sh.line; $sh.flags }
   catch { [pscustomobject]@{ level = 'WATCH'; what = "shell sweep failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Get-KitShellSweep.' } }
 }
 

@@ -1370,7 +1370,7 @@ $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else 
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 Complete-KitSweep $kitSweep $state; $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 if ($kitSweep.skipped.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($kitSweep.skipped) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
-$report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShells; flags = @($flags); info = $script:ownerInfo }
+$report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }

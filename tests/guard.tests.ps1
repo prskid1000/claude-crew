@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
-(the guard's note, supervise's Shells sweep).
+(the guard's note, supervise's Shells sweep); the supervise -Brief report.
 Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -79,12 +79,28 @@ $st = @{}; $rs = foreach ($i in 0, 1, 1.2, 2) { $w = Get-KitShellSweep $st $t0.A
 "cmd:$((Get-KitShellCommand (& $cl $c2)) -eq $c2)"; "dir:$((Get-KitShellDir 'cd /tmp/x && npm run dev') -eq '')"; "k1:$($p1.HasExited)"; "k2:$($p2.HasExited)"
 foreach ($i in 0..3) { "s${i}:$(@($rs[$i].rows | ForEach-Object { "$($_.owner)=$($_.state)" }) -join ',')|$(@($rs[$i].flags | ForEach-Object what) -join '|')" }
 "log:$(@(Read-KitLog calls $t0.AddMinutes(-1) | Where-Object event -eq 'shell-kill').Count)"; Format-KitShellTable $rs[1].rows
+$hd = "cd /d/x && export A=1; python - <<'`"'`"'EOF'`"'`"'`nimport a`nb`nEOF"; "short:$(Get-KitShellShort $hd)|$((Get-KitShellShort ('npm run x ' * 9)).Length)"
+$dd = @{ at = $t0; rows = @(); flags = @(); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1; resources = @(@{ name = 'r'; gb = 1 }); shells = $rs[1].rows }
+$rp = (Format-KitReport $dd) -join "`n"; Write-KitSuperviseReport $dd @($rp) @() n; $f = Get-Content (Get-KitPath supervise-report) -Raw
+"order:$($rp.IndexOf('| Resource |') -lt $rp.IndexOf('**Shells**') -and $f.IndexOf('## Resources') -lt $f.IndexOf('## Shells'))"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
+Expect "shells: cell unquoted, heredoc collapsed, preambles skipped, 60 chars; the table after RAM in -Brief and the report ($($sh -match '^(short|order):'))" ($sh -contains 'short:python - <<EOF (heredoc, 2 lines)|60' -and $sh -contains 'order:True')
 $s0, $s1, $s9, $s2 = @($sh -match '^s\d:')
 Expect "shells: finished owner + dir gone = killed, + STUCK 2 sweeps = killed; coordinator's kept; young / non-agent unlisted ($s1)" (
   $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'log:2' -and
   $s0 -match '^s0:H2=ORPHAN,coordinator=running\|auto-fixed: killed shell \d+ of devy \(owner devy finished; dir gone: .+gone-wt\): until crafty' -and
   $s1 -match '^s1:H2=ORPHAN, STUCK,coordinator=STUCK\|SHELL ORPHAN, STUCK pid \d+ of H2 \(cat > /dev/null; python - <<.+\|SHELL STUCK pid 999999 of coordinator' -and
   $s2 -match '^s3:coordinator=STUCK\|auto-fixed: killed shell \d+ of H2' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 61 min \| STUCK \| yours: stop it')
+$O = Join-Path $k 'skills/bossy/bossy.ps1'   # supervise -Brief report
+$rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
+  mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }
+$ef = { param($a, $q) @{ level = 'ACT'; kind = 'ENV-FIX'; who = "$a (wave-brief-a8da)"; age = '34 min'; what = $a; problem = $q; action = "& D:\Kit\.claude\skills\bossy\bossy.ps1 decide answer -Id e-20261029090127-$a-e69a" } }
+$rd.flags = @(@{ level = 'WATCH'; what = 'RESTART LOOP: hm search 3x'; action = 'logs' }, (& $ef W 'devy-3dy3-put'), ((& $ef J ('p ' * 60)) + @{ next = 'nx' }), (& $ef J1 'C:\d\|x'))
+$r1 = (& { . $O; Format-KitReport $rd }) -join "`n"; $rd.mem.AvailGB = 6; $rd.rows = @(); $r2 = (& { . $O; Format-KitReport $rd }) -join "`n"
+$want1 = @('| Agent | Task / run | State | Since | Last progress | Next |', '|---|---|---|---|---|---|', '| J1 | rm-staging- 2xyz e8c577f7 | WAITING: hm deploy 0abbaa36, train d09409 waits for leases (switch- over) | 10:00 | — | envy.ps1 wait -Id 0abbaa36 |', '| W1 | T1 | ACTIVE | 10:00 | 10:05 Structured Output | — |', '', '**Flags**', '') -join "`n"
+$fr = @($r1 -split "`n" | Where-Object { $_ -match '^\| (ACT|WATCH|INFO) \|' }); $fw = @($r1 -split "`n`n" | Where-Object { $_.StartsWith('|') } | ForEach-Object { $tl = $_ -split "`n"; $nc = ($tl[0] -split '\|').Count - 2
+  (1..$nc | ForEach-Object { $ci = $_; @($tl | ForEach-Object { ($_ -split '(?<!\\)\|')[$ci] -split ' ' | ForEach-Object Length }) | Measure-Object -Maximum } | Measure-Object Maximum -Sum).Sum + 3 * $nc + 1 })
+$rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ name = "r$_"; gb = $_ } }); $fo = & { . $O; Format-KitReport $rd 'ACT: 1' }; "$(@($fo -match '^\| Resource \|').Count)$(@($fo -match '^\| r\d').Count)$(@($fo -match '— \| — \|$').Count)$(($fo -join ' ') -match 'INFO.+ACT: 1 +\*\*RAM')" }
+Expect "report: widths ($fw) <= 95, cells <= 90; RAM last; 2/3/7 resources 3 a row ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '112True 111True 132True' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{93}') -and $fr[1] -match 'p \(full: report\) \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|&D:\Kit\.claude\skills\bossy\bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
 Remove-TestKit $k
 Complete-Tests

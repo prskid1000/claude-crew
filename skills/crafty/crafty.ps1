@@ -786,7 +786,7 @@ function Get-TestLock([string[]]$Names) {
         $cls = (($n -split '#')[0] -split '\.')[-1]
         $src = @($files | Where-Object { [IO.Path]::GetFileNameWithoutExtension($_) -eq $cls } | ForEach-Object { Join-Path $st.dir $_ })[0]
       }
-      if ($src -and (Test-Path -LiteralPath $src -PathType Leaf) -and (Select-String -LiteralPath $src -Pattern $x.match -Quiet)) { return $x }
+      if (-not $src -or (Select-String -LiteralPath $src -Pattern $x.match -Quiet)) { return $x }   # no source found (a pattern, a package): locked
     }
   }
 }
