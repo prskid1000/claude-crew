@@ -956,7 +956,7 @@ function Get-KitLiveTranscripts([datetime]$Now, [double]$Minutes, [string]$Kind 
   $r = Invoke-KitAdapter transcript $Kind root; if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return }
   $cf = Get-KitPath transcript-dirs -Create; $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $c) { $c = @{} }
   $hit = $c[$r.dir]; $dirs = if ($hit -and ((Get-Date) - [datetime]$hit.at).TotalSeconds -lt 60) { @($hit.dirs) } else {
-    $w = @(Get-Item -Force -Path (Join-Path $r.dir $(if ($r.sub) { $r.sub } else { '*/subagents' })) -ErrorAction SilentlyContinue | Where-Object PSIsContainer | ForEach-Object FullName)
+    $w = @(Get-Item -Force -Path (Join-Path ([WildcardPattern]::Escape($r.dir)) $(if ($r.sub) { $r.sub } else { '*/subagents' })) -ErrorAction SilentlyContinue | Where-Object PSIsContainer | ForEach-Object FullName)
     $c[$r.dir] = @{ at = (Get-Date).ToString('o'); dirs = $w }; try { Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 4 -Compress) } catch {}; $w }
   foreach ($sd in $dirs) { Get-ChildItem -LiteralPath $sd -Filter $r.filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $Now.AddMinutes(-$Minutes) } }
 }

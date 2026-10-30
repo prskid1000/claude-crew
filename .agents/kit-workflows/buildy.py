@@ -6,7 +6,7 @@
 # (worktrees stay where crafty.ps1 wt puts them); a failed agent returns null to the script, as in Claude Code.
 import asyncio, json, os, shutil
 WF = 'buildy'
-SHIM = "\nconst fs = require('fs'), rl = require('readline')\nconst [src, aj] = process.argv.slice(1)\nconst body = fs.readFileSync(src, 'utf8').replace(/^export\\s+const\\s+meta\\s*=/m, 'const meta =')\nconst send = (o, done) => process.stdout.write(JSON.stringify(o) + '\\n', done)\nconst pend = new Map(); let n = 0\nrl.createInterface({ input: process.stdin }).on('line', (l) => { const m = JSON.parse(l), r = pend.get(m.id); if (r) { pend.delete(m.id); r(m.result) } })\nconst agent = (prompt, opts) => new Promise((res) => { const id = ++n; pend.set(id, res); send({ t: 'agent', id, prompt, opts: opts || {} }) })\nconst phase = (name) => send({ t: 'phase', name })\nconst log = (...x) => send({ t: 'log', text: x.join(' ') })\nconsole.log = log\nconst AF = Object.getPrototypeOf(async function () {}).constructor\nnew AF('args', 'agent', 'phase', 'log', body)(JSON.parse(aj), agent, phase, log).then(\n  (r) => send({ t: 'done', result: r === undefined ? null : r }, () => process.exit(0)),\n  (e) => send({ t: 'error', text: String((e && e.stack) || e) }, () => process.exit(1)))\n"
+SHIM = "\nconst fs = require('fs'), rl = require('readline')\nconst [src] = process.argv.slice(1)\nconst body = fs.readFileSync(src, 'utf8').replace(/^export\\s+const\\s+meta\\s*=/m, 'const meta =')\nlet args = null\nconst send = (o, done) => process.stdout.write(JSON.stringify(o) + '\\n', done)\nconst pend = new Map(); let n = 0\nrl.createInterface({ input: process.stdin }).on('line', (l) => { const m = JSON.parse(l); if (args === null) { args = m; run(); return }\n  const r = pend.get(m.id); if (r) { pend.delete(m.id); r(m.result) } })\nconst agent = (prompt, opts) => new Promise((res) => { const id = ++n; pend.set(id, res); send({ t: 'agent', id, prompt, opts: opts || {} }) })\nconst phase = (name) => send({ t: 'phase', name })\nconst log = (...x) => send({ t: 'log', text: x.join(' ') })\nconsole.log = log\n// pipeline(items, ...stages): per item, each stage gets (the previous stage's result, the item); items run side by side\nconst pipeline = (items, ...stages) => Promise.all(items.map(async (it) => { let v = it; for (const s of stages) v = await s(v, it); return v }))\nconst AF = Object.getPrototypeOf(async function () {}).constructor\nconst fail = (e) => send({ t: 'error', text: String((e && e.stack) || e) }, () => process.exit(1))\nfunction run() {\n  let fn; try { fn = new AF('args', 'agent', 'phase', 'log', 'pipeline', body) } catch (e) { return fail(e) }\n  fn(args, agent, phase, log, pipeline).then((r) => send({ t: 'done', result: r === undefined ? null : r }, () => process.exit(0)), fail)\n}\n"
 MODELS = {'haiku': 'flash'}   # Claude model names -> agy tiers; the rest inherit
 ws = WORKSPACES[0] if WORKSPACES else os.getcwd()
 A = dict(args or {})
@@ -14,8 +14,9 @@ A.setdefault('kitDir', os.path.join(ws, '.claude').replace('\\', '/'))
 node = shutil.which('node')
 if not node:
     raise RuntimeError('node is not on PATH: the kit workflows are JavaScript')
-proc = await asyncio.create_subprocess_exec(node, '-e', SHIM, os.path.join(A['kitDir'], 'workflows', WF + '.js'), json.dumps(A),
+proc = await asyncio.create_subprocess_exec(node, '-e', SHIM, os.path.join(A['kitDir'], 'workflows', WF + '.js'),
     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=1 << 26)
+proc.stdin.write((json.dumps(A) + '\n').encode())   # the args: stdin, never the command line (32K cap on Windows)
 
 async def answer(m):
     o = m['opts']
@@ -28,7 +29,7 @@ async def answer(m):
     proc.stdin.write((json.dumps({'id': m['id'], 'result': r}) + '\n').encode())
     await proc.stdin.drain()
 
-running, result = [], None
+running, result, done = [], None, False
 while line := await proc.stdout.readline():
     m = json.loads(line)
     if m['t'] == 'agent':
@@ -40,7 +41,9 @@ while line := await proc.stdout.readline():
     elif m['t'] == 'error':
         raise RuntimeError(m['text'])
     else:
-        result = m['result']
+        result, done = m['result'], True
         break
 await proc.wait()
+if not done:
+    raise RuntimeError(f'workflow {WF}: node ended (exit {proc.returncode}) without a result')
 print(json.dumps(result, ensure_ascii=False))
