@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1491 dir · L1501 checkpoint ·
-  L1526 tracker · L1577 host
+Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L912 pipes · L950 guard · L1524 dir · L1534 checkpoint ·
+  L1559 tracker · L1610 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -724,7 +724,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
 exit $code
 }
 
-# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate, 4 no container engine, 5 UNRUN)
+# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate or a repos[].exclusiveTests lock, 4 no container engine, 5 UNRUN)
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -760,11 +760,40 @@ function Get-WtTarget {
   $gd = git -C $st.dir rev-parse --git-dir 2>$null; if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
   if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim() }
 }
+# the repos[] entry of this checkout: its main checkout for a worktree, core.worktree for a submodule's
+function Get-CheckRepo {
+  $top = "$(git -C $st.dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top) { return }
+  $common = "$(git -C $top rev-parse --path-format=absolute --git-common-dir)".Trim(); $cw = git --git-dir="$common" config core.worktree
+  $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
+  $full = { param($p) "$((Resolve-Path -LiteralPath $p -ErrorAction SilentlyContinue).Path)".TrimEnd('\', '/') }
+  $roots = @((& $full $main), (& $full $top) | Where-Object { $_ })
+  [pscustomobject]@{ top = $top; conf = (@(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and ($c = & $full $_.checkout) -and $c -in $roots } | Select-Object -First 1) }
+}
+# repos[].exclusiveTests [{ dir, match, lock }]: a test run under <dir> whose test names or test sources match <match> (regex; no
+# names = all tests) holds lock <lock> machine-wide (tests that rebuild one shared fixture)
+function Get-TestLock([string[]]$Names) {
+  $r = Get-CheckRepo; if (-not $r.conf.exclusiveTests) { return }
+  $rel = [IO.Path]::GetRelativePath($r.top, $st.dir).Replace('\', '/'); $files = $null
+  foreach ($x in @($r.conf.exclusiveTests)) {
+    $d = "$($x.dir)".Replace('\', '/').Trim('/')
+    if ($d -and $rel -ne $d -and -not $rel.StartsWith("$d/", [StringComparison]::OrdinalIgnoreCase)) { continue }
+    if (-not $Names.Count) { return $x }
+    foreach ($n in $Names) {
+      if ($n -match $x.match) { return $x }
+      $src = Join-Path $st.dir $n
+      if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        if ($null -eq $files) { $files = @(git -C $st.dir ls-files 2>$null) }
+        $cls = (($n -split '#')[0] -split '\.')[-1]
+        $src = @($files | Where-Object { [IO.Path]::GetFileNameWithoutExtension($_) -eq $cls } | ForEach-Object { Join-Path $st.dir $_ })[0]
+      }
+      if ($src -and (Test-Path -LiteralPath $src -PathType Leaf) -and (Select-String -LiteralPath $src -Pattern $x.match -Quiet)) { return $x }
+    }
+  }
+}
 # repos[].migrations.check runs (in the worktree); else Liquibase XML -> lbcheck (goody liquibase); any other tool or changelog format = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
-  $main = Split-Path (git -C $top rev-parse --path-format=absolute --git-common-dir).Trim()
-  $chk = (@(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and "$((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path)".TrimEnd('\', '/') -in $main, $top } | Select-Object -First 1).migrations.check
+  $chk = (Get-CheckRepo).conf.migrations.check
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
   $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue   # goody liquibase: its XML masters (+ the rest UNRUN)
   $lbm = Get-Command Get-LiquibaseMasters -ErrorAction SilentlyContinue
@@ -864,7 +893,11 @@ foreach ($s in $steps) {
   $unrun = $false   # 'unrun' (not a pass, exit 5): goody ts-typecheck's verdict on a huge tsc baseline
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }   # goody ts-typecheck
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
-  else { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE }
+  else {
+    $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
+    if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
+    try { & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE } finally { if ($lk) { Remove-KitLock "$($lk.lock)" } }
+  }
   $ran++
   if ($rc -and $s -eq 'typecheck' -and $cmd -match '\btsc\b' -and -not $tc) { Write-Host '[check] errors outside your changes fail here: the baseline split is a goody: run kitbag.py goody add ts-typecheck' }
   if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }

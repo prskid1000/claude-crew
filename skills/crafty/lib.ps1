@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1154 tracker · L1488 git-host · L1641 kitlog · L1757 params · L2070 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L856 status · L1079 supervise sweep ·
+  L1131 supervise report · L1193 tracker · L1527 git-host · L1680 kitlog · L1796 params · L2109 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -565,6 +565,45 @@ function Remove-KitGpu([int]$ProcessId = $PID, [string]$Holder) {
   $mine = { param($x) if ($Holder) { $x.holder -eq $Holder } else { $x.pid -eq $ProcessId } }
   $gone = Invoke-KitLocked $f { $st = Get-KitGpuState; $g = @($st.leases | Where-Object { & $mine $_ }); $st.leases = @($st.leases | Where-Object { -not (& $mine $_) }); $st.waiting = @($st.waiting | Where-Object { -not (& $mine $_) }); Save-KitGpuState $f $st; $g }
   foreach ($g in @($gone)) { Write-KitLeaseLog release gpu $g.kind @{ agent = $g.holder; at = $g.at } }
+}
+# named machine-wide locks (repos[].exclusiveTests: crafty.ps1 check -Step test): one holder process per lock, waiters in arrival
+# order; a holder or waiter whose process ended is dropped (logged). runtimes/locks.json { held: { <lock>: h }, waiting: [w] }
+function Get-KitLockFile { Join-Path (Get-KitPath runtimes -Create) 'locks.json' }
+function Get-KitLockState {
+  $s = try { Get-Content (Get-KitLockFile) -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; if ($s -isnot [hashtable]) { $s = @{} }
+  $h = if ($s.held -is [hashtable]) { $s.held } else { @{} }
+  $script:KitLockDropped = @(foreach ($k in @($h.Keys)) { if (-not (Test-KitPid $h[$k].pid $h[$k].pidStart)) { $h[$k]; $h.Remove($k) } })
+  @{ held = $h; waiting = @($s.waiting | Where-Object { $_ -and (Test-KitPid $_.pid $_.pidStart) }) }
+}
+function Save-KitLockState($St) {
+  Write-KitAtomic (Get-KitLockFile) ($St | ConvertTo-Json -Depth 5)
+  foreach ($d in @($script:KitLockDropped)) { Write-KitLeaseLog release lock $d.lock @{ agent = $d.holder; at = $d.at } 'holder process ended' }; $script:KitLockDropped = @()
+}
+# $true held · $false another process still holds it (or waits ahead) after WaitMinutes (-1: learned gate.waitMinutes, context
+# lock:<name>, learned from hold times); $script:KitLockRefused = that holder
+function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]$WaitMinutes = -1, [int]$ProcessId = $PID) {
+  $ctx = "lock:$Name"; $learned = $WaitMinutes -lt 0; if ($learned) { $WaitMinutes = [double](Get-KitParam 'gate.waitMinutes' $null $ctx) }
+  $me = @{ lock = $Name; holder = $Holder; pid = $ProcessId; pidStart = (Get-KitPidStart $ProcessId); at = (Get-Date).ToString('o'); dir = $Dir }
+  $f = Get-KitLockFile; $end = (Get-Date).AddMinutes($WaitMinutes); $n = 0; $script:KitLockRefused = $null
+  while ($true) {
+    $o = Invoke-KitLocked $f {
+      $st = Get-KitLockState; $h = $st.held[$Name]
+      $ahead = @($st.waiting | Where-Object { $_.lock -eq $Name -and $_.pid -ne $ProcessId -and [datetime]$_.at -lt [datetime]$me.at } | Sort-Object { [datetime]$_.at })
+      $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId })
+      $by = if ($h -and $h.pid -ne $ProcessId) { $h } elseif ($ahead.Count) { $ahead[0] + @{ queued = $true } } else { $null }
+      if ($by) { $st.waiting += $me } else { $st.held[$Name] = $me }
+      Save-KitLockState $st; $by
+    }
+    if (-not $o) { Write-KitLeaseLog acquire lock $Name @{ agent = $Holder; at = $me.at }; if ($n) { Write-Host "[lock] $Name taken after $([int]((Get-Date) - [datetime]$me.at).TotalMinutes) min" }; return $true }
+    if ($n++ % 20 -eq 0) { Write-Host "[lock] waiting for lock $Name $(if ($o.queued) { 'behind' } else { 'held by' }) $($o.holder) since $(([datetime]$o.at).ToString('HH:mm')) (wait cap $WaitMinutes min)" }
+    if ((Get-Date) -ge $end) { Remove-KitLock $Name $ProcessId; if ($learned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes $ctx 'timeout' 90 }; $script:KitLockRefused = $o; return $false }
+    Wait-KitPoll 15
+  }
+}
+function Remove-KitLock([string]$Name, [int]$ProcessId = $PID) {
+  $f = Get-KitLockFile; if (-not (Test-Path $f)) { return }
+  $h = Invoke-KitLocked $f { $st = Get-KitLockState; $st.waiting = @($st.waiting | Where-Object { $_.pid -ne $ProcessId }); $x = $st.held[$Name]; if ($x -and $x.pid -eq $ProcessId) { $st.held.Remove($Name) } else { $x = $null }; Save-KitLockState $st; $x }
+  if ($h) { Write-KitLeaseLog release lock $Name @{ agent = $h.holder; at = $h.at }; Add-KitParamObs 'gate.waitMinutes' ((Get-Date) - [datetime]$h.at).TotalMinutes "lock:$Name" -Default 90 }
 }
 # bossy.ps1 supervise: who holds the GPU, who waits for it; -AutoFix writes out (and logs) the leases of ended processes
 function Get-KitSuperviseGuardGpu([switch]$AutoFix) {

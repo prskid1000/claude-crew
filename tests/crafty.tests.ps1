@@ -186,6 +186,17 @@ $out = pwsh @np $D stack -Dir $sd 2>&1 | Out-String
 Expect 'stack: a .claude-stack.json alone names the stack' ($out -match 'stack: custom' -and $out -notmatch 'FAILED')   # in-process: git's exit code leaks
 $out = pwsh @np $D gate -Dir $ud -Cmd 'echo gradlew build' 2>&1 | Out-String
 Expect 'gate: runs the command; no heap cap without the goody build-heap' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
+$lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = "$lr/log"
+'{ "stack": "custom", "commands": { "test": "node t.js {tests}" } }' | Set-Content "$lr/api/.claude-stack.json"
+'const f=require("fs"),a=w=>f.appendFileSync(process.env.LOCK_LOG,w);a("s");setTimeout(()=>a("e"),1500)' | Set-Content "$lr/api/t.js"
+'BaseDb' | Set-Content "$lr/api/ADb.java"; 'C' | Set-Content "$lr/api/C.java"; Save-GitRepo $lr i
+& $J @{ repos = @(@{ name = 'lr'; checkout = $lr; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
+$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -RedirectStandardOutput "$lr/o$t$c" }
+$wx = { foreach ($p in $args) { $null = $p.Handle; $p.WaitForExit() } }; $p1 = & $lp ADb; $p2 = & $lp ADb#m 2; & $wx $p1 $p2; $t = Get-Content $env:LOCK_LOG -Raw; $wt = Get-Content "$lr/oADb*" -Raw
+$h = Start-Process $pwshExe "-NoProfile -Command . '$(Lib)'; `$null = Use-KitLock db hx; sleep 60" -PassThru; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
+$c3 = & $lp C; $c4 = & $lp ADb 4 0.03; & $wx $c3 $c4; $h.Kill(); $h.WaitForExit(); $free = pwsh -NoProfile -Command ". '$(Lib)'; (Get-KitLockState).held.Count"
+Expect "check: exclusiveTests serial ($t), non-match free, cap exit 3, dead holder dropped" ($t -eq 'sese' -and $p1.ExitCode + $p2.ExitCode + $c3.ExitCode -eq 0 -and $wt -match 'waiting for lock db held by' -and $c4.ExitCode -eq 3 -and (gc "$lr/oADb4" -Raw) -match 'held by hx since' -and $free -eq 0)
+Remove-Item "$k/skills/crafty/kit.local.json"
 # gate: half the file cache counts; the queue head starts after 20 min above a 5% floor
 $gt = @'
 . $args[0]
