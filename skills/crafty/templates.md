@@ -85,7 +85,7 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ```
 
 ## Resume brief
-`bossy.ps1 recover` writes it after a crash, a budget handoff by hand. The next agent joins with the same id + `-Resume`
+`bossy.ps1 recover` writes it (crash), an agent at a budget handoff. The next agent joins with the same id + `-Resume`
 (TAKEOVER), runs `crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
 ```markdown
 # Resume brief: <agent> (run `<run>`)
@@ -97,8 +97,9 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 | Worktree | Branch @ head | Uncommitted (kept) |
 |---|---|---|
 ## Open
-**Leases to take again:** <ids> · **Decisions:** <ids> · **Next:** <what to do, in order>
+**Leases to take again:** <ids> · **Decisions:** <ids>
 ```
+`<run>.resume.md`: a table per area: done (skipped) and missing (run) steps, MRs, tracker, doc.
 
 ## Testing goals
 devy writes it FIRST, before the local loop (crafty step 4): a local `goals.md`, never published; the AI doc grows from it.
@@ -218,7 +219,7 @@ A task has three kit comments, each edited in place: MRs (merge order; a status 
 The testing doc links (human + AI) live only on top of the task description (`devtools.py finish`), never in a comment.
 
 ## Decision request
-`bossy.ps1 decide ask` writes it to the contracts file; its options stay structured for the question tools (bossy E4).
+`bossy.ps1 decide ask` writes it to the contracts file; structured options feed the question tools (bossy E4).
 ```markdown
 ## DECISION NEEDED <id> (<agent>, item <item>)
 **Question:** <which behaviour / design / data handling / migration strategy / UX>

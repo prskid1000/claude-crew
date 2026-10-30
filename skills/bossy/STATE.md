@@ -34,6 +34,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep | new: replaces `tracking` |
 | `tracking` | none (legacy) | `json v0: tasks` | read until the first tracking write moves it into `tasks` and deletes it | cleanup deletes `.migrated` |
 | `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges | new (was in `tracking`) |
+| `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep | new: MRs the untracked-MR watch skips |
 | `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep | schemaVersion |
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) | trigger queue, boot / wake |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) | new |

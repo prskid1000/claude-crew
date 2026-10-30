@@ -5,7 +5,7 @@
 A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
 local env shape, test env, deploy mechanism and tracker. Org specifics live only in git-ignored config
 (`skills/crafty/kit.local.json`, `rules/*.local.md`); the kit assumes no tenants, no web + API + app trio, no database.
-Every diagram is generated at pre-commit (`kitbag.py flow --readme`) from the manifest, the Router and the flow model.
+Every diagram is generated at pre-commit (`kitbag.py flow --readme`) from the manifest, Router and flow model.
 
 ## The crew
 The owner talks to the coordinator; it routes each request to a workflow or one crew member (`kit.example.json` `_manifest`).
@@ -130,17 +130,17 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 <!-- kit-graph:end -->
 
 ## Leases
-One rule (lib.ps1 `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (goody `runtimes`);
+One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (goody `runtimes`);
 only owner holds (`envy.ps1 up -Owner`, phone `manual`; goody `local-env`, goody `android-swarm`) keep minutes, with a reminder.
 The local STT server (`local-stt`; goody `media-evidence`): one job at a time, bound to the job's process, its RAM through the memory gate.
-The GPU (`gpu.exclusive.<kind>`, lib.ps1 `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
+The GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
 shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
 it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
 caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
 - **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env and its layers, GPU, build, tabs);
   `board leave` and /buildy, /testy after each agent stage repeat it. A holder on the board with no live entry is dead (its holder
   pid is the shared session process); `supervise -AutoFix` reclaims every kind after the grace (lanes stop with `emu kill`).
-- **Log:** `.state/leases.jsonl` (lib.ps1 `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
+- **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
   session, run, since, reason); the newest half kept past 1 MB. Last used: `bossy.ps1 status`, the lane and env status (goody `android-swarm`, goody `local-env`).
 
 ## Pause and resume
@@ -168,7 +168,7 @@ git clone https://github.com/prskid1000/claude-crew <workspace>/.claude
 pwsh -File <workspace>/.claude/skills/bossy/bossy.ps1 setup -WriteLocal   # git hooks, excludes, .runtime/.state, local config stubs
 ```
 Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker CLI, `gws`, the Android SDK. Fill
-`skills/crafty/kit.local.json`, `skills/pokey/targets.local.json` (the only place for passwords), phones: `swarm.config.json` (goody android-swarm);
+`skills/crafty/kit.local.json`, `skills/pokey/targets.local.json` (the only place for passwords), phones: `swarm.config.json` (goody `android-swarm`);
 `npm install` in `skills/pokey`. Update: `git pull` once nothing runs.
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
 Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only

@@ -8,7 +8,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   program set|get|list -Program <name> [-Key <k>] [-Value <v>]   the coordinator's program state in .state
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
-  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail]   task <-> MRs; promoted when all merged
+  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -21,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L608 pause · L652 resume · L710 program · L755 param ·
-  L761 track · L1065 anomalies · L1083 supervise · L1389 report · L1468 audit · L1528 storage · L1739 bugbrief · L1841 cleanup ·
-  L1965 learn · L1995 decide · L2063 health · L2126 retro due · L2136 tidy · L2206 the kit origin's main and goodies ·
-  L2222 setup · L2288 guard-sendmessage
+Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L609 pause · L653 resume · L711 program · L756 param ·
+  L762 track · L1067 anomalies · L1085 supervise · L1391 report · L1470 audit · L1530 storage · L1741 bugbrief · L1843 cleanup ·
+  L1967 learn · L1997 decide · L2065 health · L2128 retro due · L2138 tidy · L2208 the kit origin's main and goodies ·
+  L2224 setup · L2290 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -586,8 +586,9 @@ foreach ($s in $runs) {
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) {
     $rf = Join-Path (Get-KitPath launches -Create) "$(ConvertTo-KitSlug $(if ($s.runId) { $s.runId } else { $s.run })).resume.md"
     $txt = @("# Resume brief: $($s.run) (``$($s.leaf)`` $($s.runId))", "**Result:** mode resume; the original brief ``$($a.brief)`` wins where this differs.",
-      "**Takeover:** ``$($KitConf.Kit -replace '\\', '/')/skills/crafty/templates.md`` ""Resume brief"". Steps per item (host + tracker, checked now): build, review,",
-      'ci, merge, testing-doc, tracker; done ones are skipped, run the missing ones; unknown = a call failed: check it first.', '', '## State at recovery', '') + $brief
+      '**Takeover:** `board join -Agent <id> -Resume` (TAKEOVER); `crafty.ps1 wt status -Dir <wt>` per worktree; read the task, comments, open / merged MRs;',
+      'continue, never redo finished work; files changing under you (another writer): stop, report. Steps per item (host + tracker, checked now): build, review,',
+      'ci, merge, testing-doc, tracker; done: skipped, missing: run; unknown = a call failed: check it first.', '', '## State at recovery', '') + $brief
     Write-KitAtomic $rf (($txt -join "`n") + "`n")
     "  resume brief: $rf"
   }
@@ -690,7 +691,7 @@ foreach ($s in @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run 
     $mySteps = @($steps | Where-Object who -eq $ag)
     $ck = Get-KitCheckpoint $ag
     if (-not $ck -or $ck.done -or ($ck.run -and $ck.run -ne $s.run)) { "  $ag`: no open checkpoint$(if ($mySteps.Count -and -not @($mySteps | Where-Object { -not $_.done }).Count) { '; its steps have journal results: not relaunched (resumeFromRunId keeps them)' })"; continue }
-    $b = @("# Resume brief: $ag (run ``$($s.run)``)", "**Result:** Start AT step: $($ck.next). The steps below are done and were verified now: never redo them.", '', '## Done (verified)', '')
+    $b = @("# Resume brief: $ag (run ``$($s.run)``)", "**Result:** Start AT step: $($ck.next); the steps below are done, verified: never redo them.", '', '## Done (verified)', '')
     if (-not @($ck.steps | Where-Object step -eq 'mr').Count) { $noMr++ }
     $b += Format-KitMdTable 'Step', 'Item', 'Evidence', 'Check' @(foreach ($st in @($ck.steps)) { $v = Test-KitStepEvidence $st; if ($v.mr) { $mrs += $v }; , @($st.step, $st.item, $st.evidence, $v.text) })
     $b += @('', "## Interrupted step ``$($ck.next)``", 'Rerun it from the kept diff (never discard it).', '') + @(Format-KitMdTable 'Worktree', 'Branch @ head', 'Uncommitted (kept)' @(foreach ($d in @($ck.worktrees)) { $w = Get-KitWtState $d; , @("``$d``", $(if ($w.gone) { 'GONE: recreate the worktree from its branch' } else { "$($w.branch) @ $($w.head)" }), "$($w.dirty -join ', ')") }))
@@ -783,12 +784,13 @@ function Get-TaskMrBranches([string[]]$Tasks) {
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() } }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'rebuild')][string]$Action, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'rebuild', 'ignore')][string]$Action, [string]$Reason, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # a throw is swallowed under SilentlyContinue
 function Fail([string]$m) { [Console]::Error.WriteLine("track: $m"); exit 1 }
-if (-not $Action) { Fail 'usage: bossy.ps1 track add|run|rebuild ... (or -Rebuild)' }
+if (-not $Action) { Fail 'usage: bossy.ps1 track add|run|rebuild|ignore ... (or -Rebuild)' }
+if ($Action -eq 'ignore') { Add-KitMrIgnore @(Split-KitList $Mrs) $Reason; return }
 $wavesDir = Get-KitPath waves
 $script:holds = 0
 function Hold($s) { if ($Quiet) { return }; if ($Detail) { $s } else { $script:holds++ } }
@@ -1328,11 +1330,11 @@ foreach ($d in @($pd | Where-Object kind -eq 'envfix')) {
   Flag 'ACT' "ENV-FIX $($d.id) waiting $mins ($($d.run)/$($d.agent), item $($d.item)): $($d.question)" "Fix it (you or kitty kind env: config, paths, a hung train, shared DB repair; never start a service no live lease or person asked for), then & $($KitCmd.orch) decide answer -Id $($d.id) -By coordinator -Answer 'done: <what you did>' (cannot: 'cannot: <why>')" @{ kind = 'ENV-FIX'; who = "$($d.agent) ($($d.run)), item $($d.item)"; age = $mins; problem = $d.question }
 }
 $dd = @($pd | Where-Object kind -ne 'envfix'); $blk = @($dd | Where-Object blocking -ne $false); $fyi = @($dd | Where-Object blocking -eq $false)
-for ($i = 0; $i -lt $blk.Count; $i += 4) {   # an agent's item waits: the native question tool, 4 per call
-  $b = @($blk[$i..([math]::Min($i + 3, $blk.Count - 1))]); $mins = "$([int]($now - [datetime]$b[0].at).TotalMinutes) min"
-  $q = @($b.question) -join ' / '; Flag 'ACT' "DECISION $(@($b.id) -join ', ') (blocking, oldest $mins): $q" "ONE AskUserQuestion call from bossy.ps1 decide list -Ask -Json (no such tool: its text); then decide answer -Id <id> per pick" @{ kind = 'DECISION'; who = @($b.agent) -join ', '; age = $mins; problem = $q }
+if ($blk.Count) {   # an agent's item waits: the native question tool, the first 4 per call
+  $b = @($blk | Select-Object -First 4); $mins = "$([int]($now - [datetime]$b[0].at).TotalMinutes) min"; $q = @($b.question) -join ' / '
+  Flag 'ACT' "DECISION $(@($b.id) -join ', ') (blocking, oldest $mins$(if ($blk.Count -gt 4) { "; $($blk.Count - 4) more next" })): $q" "ONE AskUserQuestion call from bossy.ps1 decide list -Ask -Json (no tool or a missing id: its text); then decide answer -Id <id> per pick" @{ kind = 'DECISION'; who = @($b.agent) -join ', '; age = $mins; problem = $q }
 }
-if ($fyi.Count) { Flag 'ACT' "DECISION $($fyi.Count) FYI: $(@($fyi.id) -join ', ')" "List them in your report (decide list -Fyi); the owner's '1 A, 2 B' -> decide answer -Id <id> per number" @{ kind = 'DECISION FYI'; who = @($fyi.agent) -join ', '; problem = @($fyi.question) -join ' / ' } }
+if ($fyi.Count) { Flag 'WATCH' "DECISION $($fyi.Count) FYI: $(@($fyi.id) -join ', ')" "In your report: decide list -Fyi; the owner's '1 A, 2 B' -> decide answer per number" @{ kind = 'DECISION FYI'; who = @($fyi.agent) -join ', '; problem = @($fyi.question) -join ' / ' } }
 
 # 7. goodies' checks (deploys, local env, ...): the same result shapes as section 3
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseFlags @{ AutoFix = $AutoFix })) { Add-KitResult $x }

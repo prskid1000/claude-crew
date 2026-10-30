@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1142 tracker · L1476 git-host · L1619 kitlog · L1735 params · L2048 entry-scripts
+  L1092 supervise report · L1142 tracker · L1476 git-host · L1628 kitlog · L1744 params · L2057 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1424,7 +1424,7 @@ function Format-KitMdTable([string[]]$Head, $Rows) {
 function Get-KitDecisionChoices([string[]]$Options, [string]$Recommend) {
   foreach ($o in $Options) {
     $k, $t = if ($o -match '^\s*(\w+)\s*[:)]\s*(.*)$') { $Matches[1], $Matches[2] } else { '', $o }
-    $l, $d = "$t" -split '\s+(?:—|–|--?)\s+', 2
+    $l, $d = "$t" -split '\s+[—–]\s+', 2
     [pscustomobject]@{ key = $k; label = "$l".Trim(); description = "$d".Trim(); recommended = [bool]($k -and $Recommend -match "^\s*$k\b") }
   }
 }
@@ -1447,11 +1447,11 @@ function Format-KitFyiList($Decisions) {
 }
 # blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
 function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
-  $ds = @($Decisions | Select-Object -First $Max)
+  $ds = @($Decisions | Where-Object { @(Get-KitDecisionOrder $_).Count -ge 2 } | Select-Object -First $Max)   # the tools need 2-4 options: fewer -> its text
   [pscustomobject]@{ ids = @($ds.id); questions = @(foreach ($d in $ds) {
     $h = if ("$($d.item)") { "$($d.item)" } else { 'Decision' }
     [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
-      options = @(Get-KitDecisionOrder $d | Select-Object -First $Max | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
+      options = @(Get-KitDecisionOrder $d | Select-Object -First 4 | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
 }
 function Test-KitTaskDocLink([string]$Task) {
   try { $tt = Get-TrackerTask $Task } catch { return $null }   # unread = unknown, never "no doc"
@@ -1588,6 +1588,14 @@ function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$
   $q = @{ repo = $path; type = $type; source_branch = $Branch; state = $State; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
   @(Invoke-HostVerb 'mr.list' $q | Where-Object { $_ -and (-not $Target -or $_.target_branch -eq $Target) })
 }
+# track ignore: MRs the untracked-MR watch skips (.state/mr-ignore.json mrs.<repo>!<iid> = {reason, at})
+function Add-KitMrIgnore([string[]]$Mrs, [string]$Reason) {
+  if (-not ($Mrs.Count -and $Reason)) { [Console]::Error.WriteLine("usage: bossy.ps1 track ignore -Mrs '<repo>!<iid>' -Reason '<why>'"); exit 2 }
+  $f = Get-KitPath mr-ignore -Create
+  Invoke-KitLocked $f { $m = [ordered]@{}; $o = Read-KitState $f; if ($o.mrs) { foreach ($n in $o.mrs.Keys) { $m[$n] = $o.mrs[$n] } }
+    foreach ($r in $Mrs) { $m[$r] = [ordered]@{ reason = $Reason; at = (Get-Date).ToString('o') } }; Write-KitState $f ([ordered]@{ mrs = $m }) }
+  $Mrs | ForEach-Object { "ignored $_ ($Reason): the untracked-MR watch skips it" }
+}
 # the git-host login of this machine's CLI (gitlab: glab, github: gh); '' = unknown
 function Get-KitHostUser {
   switch ($script:HostType) { 'gitlab' { if (Get-Command __GlEnv -ErrorAction SilentlyContinue) { __GlEnv }; [string](__Cli glab 'user').username } 'github' { [string](__Cli gh 'user').login } default { '' } }
@@ -1607,13 +1615,14 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
   $line = '^(?:main|master|develop|release/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected source = a deploy / promotion MR, no task
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) })
+  $ig = @{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
   # the table cell is cut at 90 chars: refs in problem, a short next; every full command in the report's "All flags"
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
+    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)
