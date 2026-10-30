@@ -1244,7 +1244,7 @@ $state.load = @{ at = $now.ToString('o'); availGB = $mem.AvailGB; cpu = (Get-Sys
 $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
 # goodies' hooks (adapters/*.ps1) see this sweep's variables ($now, $mem, $keepFree, Within, Left) and return { level, what, action } = a
 # flag, { name, by, gb } = a report row, { info } = an owner line, { ramNeed } = GB a waiting build needs, a string = a sweep line
-$res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.report.at) { [datetime]$state.report.at } else { $now.AddHours(-1) })); $script:ramNeed = 0   # SETTINGS: changed since the last beat
+$res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.settingsSeen) { [datetime]$state.settingsSeen } else { $now.AddHours(-1) })); if ($AutoFix) { $state.settingsSeen = $now.ToString('o') }; $script:ramNeed = 0   # SETTINGS: changed since the last heartbeat
 function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
 # machine guards first, inside the sweep budget (build gate, cache flush, phones, QA seats: adapters/supervise_resources.ps1)
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix })) { Add-KitResult $x }
@@ -1368,7 +1368,7 @@ Add-KitActObs $state $acts $now
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 Complete-KitSweep $kitSweep $state; $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
-if ($kitSweep.skipped.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $($kitSweep.skipped -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
+if ($kitSweep.skipped.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($kitSweep.skipped) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"

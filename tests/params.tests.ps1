@@ -14,9 +14,11 @@ $pr = Invoke-PsTest params @'
 $sg = Get-KitPath signals -Create; $n0 = [datetime]'2026-10-30T10:00'
 @(@{ at = '2026-03-10T10:00'; skill = 'kitty'; kind = 'friction'; text = 'old a' }, @{ at = '2026-03-11T10:00'; skill = 'kitty'; kind = 'friction'; text = 'old a' },
   @{ at = '2026-04-01T10:00'; skill = 'bossy'; kind = 'retired'; text = 'kept' }, @{ at = '2026-10-28T10:00'; skill = 'kitty'; kind = 'idea'; text = 'new' }) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $sg
-$tr = @(Invoke-KitLogTrim -Now $n0); $left = @(Get-Content $sg | ConvertFrom-Json); $sm = @(Get-Content (Get-KitPath logs-summary) | ConvertFrom-Json)
-"trim:$($tr[0].rolled):$($left.text -join ','):$($sm[0].stream):$($sm[0].period):$($sm[0].n):$($sm[0].by.'kitty/friction'):$($sm[0].facts[0]):$($tr[0].days)"
-$null = Read-KitLog signals (Get-Date).AddDays(-40); "look:$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.key -eq 'logs.keepDays' -and $_.ctx -eq 'signals' -and $_.v -gt 39 }).Count)"
+$n0.AddDays(-50).ToString('o') | Set-Content (Get-KitPath last-retro -Create); $hw = [IO.FileStream]::new($sg, 'Append', 'Write', 'ReadWrite, Delete')   # an appender holds it (Write-KitLog's share)
+try { $tr = @(Invoke-KitLogTrim -Now $n0); $lb = [Text.Encoding]::UTF8.GetBytes('{"at":"2026-10-30T09:00","skill":"x","kind":"idea","text":"late"}' + "`n"); $hw.Write($lb, 0, $lb.Length) } finally { $hw.Dispose() }
+$null = Invoke-KitLogTrim -Now $n0; $left = @(Get-Content $sg | ConvertFrom-Json); $sm = @(Get-Content (Get-KitPath logs-summary) | ConvertFrom-Json)
+"trim:$($tr[0].rolled):$($left.text -join ','):$($sm.Count):$($sm[0].stream):$($sm[0].period):$($sm[0].n):$($sm[0].by.'kitty/friction'):$($sm[0].facts[0]):$($tr[0].days):$(([datetime]$sm[0].from).Day -eq 10)"
+"look:$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.key -eq 'logs.keepDays' -and $_.ctx -eq 'signals' -and [math]::Round($_.v) -eq 50 }).Count)"
 # a reboot since the last look: one trigger line
 $w1 = Test-KitWake; $s = Read-KitParams; $s.boot = (Get-Date).AddDays(-3).ToString('o'); $s | ConvertTo-Json -Depth 8 | Set-Content (Get-KitPath param-state); $w3 = Test-KitWake
 "wake:$w1|$w3|$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.event -eq 'trig' -and $_.why -eq 'reboot' }).Count)"
@@ -39,14 +41,20 @@ Ln 440; $p = Read-KitParams; "queue:${q1}:$([bool]$p.queue['gate.waitMinutes|w']
 $sh = (Invoke-KitParamVerb show gate.waitMinutes) -join ' '; $all = @(Invoke-KitParamVerb show)
 "show:$($sh -match 'cadence 15 min, due \d\d-\d\d \d\d:\d\d, trigger deploy; p90 by load: busy 30'):$($all -contains '| Trigger | Effect |'):$(@($all -match '^supervise\.stuckMinutes: 20 \(default; config\)').Count)"
 $null = Invoke-KitParamVerb pin idle.graceMinutes 9; "changes:$((Get-KitParamChanges $t) -join '|')"
+# a stable key (cadence 1 d) with a fail trigger: evaluated after 15 min, not a day; a frozen key's trigger drains
+$s = Read-KitParams; $e = $s.byKey['gate.waitMinutes']['w']; $e.cad = @{ min = 1440; stable = 0; due = $t.AddDays(3).ToString('o') }; $e.evalAt = $t.AddMinutes(440).ToString('o')
+$s.byKey['gate.waitMinutes']['z'] = @{ d = 90; obs = @(); since = $t.ToString('o'); frozen = $t.AddYears(1).ToString('o') }; $s | ConvertTo-Json -Depth 8 -Compress | Set-Content (Get-KitPath param-state)
+$env:KIT_NOW = $t.AddMinutes(470).ToString('o'); Add-KitParamObs gate.waitMinutes 400 w short 90; Add-KitParamTrigger wake gate.waitMinutes z; Ln 480; $p = Read-KitParams
+"urgent:$($p.byKey['gate.waitMinutes']['w'].evalAt -eq $t.AddMinutes(480).ToString('o')):$($p.byKey['gate.waitMinutes']['w'].cad.min):$($p.queue.Count)"
 '@ @((Lib))
-Expect "params: owner decision 3: old lines roll into logs-summary (month, counts, facts), retired stay, raw for logs.keepDays ($(@($pr -match '^trim:') -join ' '))" ($pr -contains 'trim:2:kept,new:signals:2026-03:2:2:2x old a:30')
-Expect 'params: a look back into a trimmed log is a logs.keepDays observation; a reboot is one trigger' ($pr -contains 'look:1' -and $pr -contains 'wake:|reboot|1')
+Expect "params: owner decision 3: old lines roll into logs-summary once (month, counts, facts, span), retired stay, raw for logs.keepDays; an appender's handle neither blocks nor loses a line ($(@($pr -match '^trim:') -join ' '))" ($pr -contains 'trim:2:kept,new,late:1:signals:2026-03:2:2:2x old a:30:True')
+Expect 'params: the gap since the last retro is a logs.keepDays observation (each trim); a reboot is one trigger' ($pr -contains 'look:2' -and $pr -contains 'wake:|reboot|1')
 Expect 'params: the registry gives config defaults; kit.local.json pins; an unknown key is null' ($pr -contains 'reg:20:30:0:config')
 Expect "params: an observation carries load (busy at cpu 91), host and minutes since a wake ($(@($pr -match '^tags:') -join ' '))" ($pr -contains 'tags:busy:91:5:True')
 Expect "params: raw 14 d, hourly sketches within 2%, past 90 d gone ($(@($pr -match '^win:') -join ' '))" ($pr -contains 'win:1:2:2:True:2')
 Expect "params: a deploy trigger is queued until the cadence minimum passed, then evaluated; p90 per load bucket ($(@($pr -match '^queue:') -join ' '))" ($pr -contains 'queue:deploy:False:True:6')
 Expect "params: show has cadence, due, trigger, state and the What-learns-when table ($(@($pr -match '^show:') -join ' '))" ($pr -contains 'show:True:True:1')
+Expect "params: an urgent trigger on a key with a 1 d cadence is evaluated within 15 min; a frozen key's trigger drains ($(@($pr -match '^urgent:') -join ' '))" ($pr -contains 'urgent:True:15:0')
 Expect "params: a pin is a params-changes line; Settings since a time ($(@($pr -match '^changes:') -join ' '))" (@($pr -match '^changes:SETTINGS: idle\.graceMinutes \[_\] default -> 9 \(pin by').Count -eq 1)
 # supervise sweep: costs (EWMA) and starved sections; a slow -Background verb runs detached, its last result next sweep
 $bs = Join-Path (Kd) 'bg.ps1'; "'bg-out'; Start-Sleep -Milliseconds 300" | Set-Content $bs
@@ -60,17 +68,27 @@ $i1 = @(Invoke-KitSweepCall $sw quick $args[1] @() -Background); $b1 = @(Invoke-
 $wait = { $r = Get-Content (Join-Path (Get-KitPath background) 'bgx.json') -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 150 -and (Test-KitPid $r.pid $r.start); $i++) { Start-Sleep -Milliseconds 100 } }
 & $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @() -Background); & $wait
 "bg:$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
+$s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
+$hp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -PassThru -WindowStyle Hidden; $hb = Join-Path (Get-KitPath background) 'hung.json'
+@{ pid = $hp.Id; start = (Get-KitPidStart $hp.Id); at = (Get-Date).AddHours(-2).ToString('o') } | ConvertTo-Json | Set-Content $hb
+$hu = @(Invoke-KitBackground hung $args[1] @() $null 5); $null = $hp.WaitForExit(5000)
+$eb = Join-Path (Get-KitPath background) 'crash'; '' | Set-Content "$eb.out"; 'boom: no tracker' | Set-Content "$eb.err"; @{ pid = 1; start = 'x'; at = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content "$eb.json"
+$cr = @(Invoke-KitBackground crash $args[1] @()); "hung:$($hu[0] -match '^WATCH background hung hung 120 min: stopped')$($hp.HasExited):$($cr[0] -eq 'WATCH background crash failed: boom: no tracker')"
+& $wait; Start-Sleep -Seconds 2
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background: the last result, a fresh detached run ($(@($sr -match '^bg:') -join ' '))" ($sr -contains 'bg:bg-out:True:0:bg-out:True')
+Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)
 $nr = Invoke-PsTest net @'
 . $args[0]; $script:seen = @(); $script:ok = $false; $env:KIT_NET_TIMEOUT_SEC = 40
 function Invoke-KitExe($Exe, $A, $T) { $script:seen += $T; [pscustomobject]@{ code = $(if ($script:ok) { 0 } else { -1 }); out = ''; err = ''; timedOut = -not $script:ok } }
 $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x'); $script:ok = $true; $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x'); "backoff:$($seen -join ',')"
-Remove-Item (Get-KitPath net-budget) -ErrorAction SilentlyContinue; 1..24 | ForEach-Object { $null = Add-KitNetCount }
-"budget:$(@(1..4 | ForEach-Object { Add-KitNetCount -Retry -Check }) -join ',')"
+Remove-Item (Get-KitPath net-budget) -ErrorAction SilentlyContinue; '999999' | Set-Content "$(Get-KitPath net-budget).lock"; 1..24 | ForEach-Object { $null = Add-KitNetCount }
+"budget:$(@(1..4 | ForEach-Object { Add-KitNetCount -Retry -Check }) -join ','):$(Test-Path "$(Get-KitPath net-budget).lock")"
 $script:ok = $false; $r = Invoke-KitRetry { Invoke-KitNetExe gh @('x') } 3; "spent:$($r.err -match 'hang retry budget spent')"
+$env:KIT_NET_TIMEOUT_SEC = ''; $env:KIT_PARAM_NET_TIMEOUTSEC = 30; $null = Invoke-KitNetExe gh @('x'); $null = Invoke-KitNetExe gh @('x')
+"tobs:$(@(Read-KitLog params (Get-Date).AddHours(-1) | Where-Object { $_.key -eq 'net.timeoutSec' -and $_.r -eq 'timeout' } | ForEach-Object v) -join ',')|$($seen[-2..-1] -join ',')"
 $root = Join-Path (Get-KitPath cache -Create) 'tx'; New-Item -ItemType Directory -Force "$root/s1/subagents", "$root/s2" | Out-Null; 'x' | Set-Content "$root/s1/subagents/a.jsonl"
 function Invoke-KitAdapter { [pscustomobject]@{ dir = $root; filter = '*.jsonl' } }
 $n1 = @(Get-KitLiveTranscripts (Get-Date) 10).Count; New-Item -ItemType Directory -Force "$root/s2/subagents" | Out-Null; 'x' | Set-Content "$root/s2/subagents/b.jsonl"; $n2 = @(Get-KitLiveTranscripts (Get-Date) 10).Count
@@ -78,12 +96,16 @@ $cf = Get-KitPath transcript-dirs; $c = Get-Content $cf -Raw | ConvertFrom-Json 
 "tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"
 '@ @((Lib))
 Expect "net: after a timeout the next call waits x1.5, then back ($(@($nr -match '^backoff:') -join ' '))" ($nr -contains 'backoff:40,60,60,40')
-Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False' -and $nr -contains 'spent:True')
+Expect "net: a timeout is observed at the learned value, not the x1.5 back-off ($(@($nr -match '^tobs:') -join ' '))" ($nr -contains 'tobs:30,30|45,45')
+Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
 Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' '))" ($nr -contains 'tx:112')
 # cleanup: tracking.json.migrated goes (owner decision 3)
 '{}' | Set-Content "$(TkPath $k tracking -Create).migrated"
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
 Expect 'cleanup: tracking.json.migrated goes' ($cd -match 'tracking\.json\.migrated')
+# heartbeat SETTINGS: shown until a heartbeat (-AutoFix) saw them; a manual run does not consume them
+$null = pwsh @np $O param pin idle.graceMinutes 8; $sv = foreach ($af in $false, $true, $true) { pwsh @np $O supervise -Json -AutoFix:$af 2>$null | Out-String }
+Expect 'supervise: SETTINGS lines until a heartbeat saw them; a manual run leaves them' ($sv[0] -match 'SETTINGS: idle\.graceMinutes' -and $sv[1] -match 'SETTINGS: idle\.graceMinutes' -and $sv[2] -notmatch 'SETTINGS: idle\.graceMinutes')
 # kitbag lint: PARAM-UNREG, PARAM-DEFAULT; tunable literals over the _literals baseline WARN; --ratchet records, then only lowers
 '$x = Get-KitParam ''supervise.stuckMinutes'' 25; $y = Get-KitParam ''no.key''; Start-Sleep 5' | Set-Content "$k/a.ps1"
 $pl = @'
@@ -95,9 +117,12 @@ out = []; kb.params_lint(k, lambda c, w, m: out.append(c + ' ' + w)); print('lin
 print('warn:' + '|'.join(f'{w} {m.split(",")[0]}' for c, w, m in kb.literal_warns(k)))
 print('ratchet:' + str(len(kb.literal_warns(k, True))))
 k.texts['b.py'] += 'time.sleep(9)\n'; print('again:' + '|'.join(w for c, w, m in kb.literal_warns(k)))
+import json; p = k.dir + '/' + kb.PARAMS_JSON; r = json.load(open(p, encoding='utf-8')); r['_literals'] = {}; json.dump(r, open(p, 'w', encoding='utf-8'))
+print('zero:' + str(len(kb.literal_warns(k, True))))
 '@
+$rj = "$k/skills/bossy/params.registry.json"; $rg = Get-Content $rj -Raw | ConvertFrom-Json -AsHashtable; $rg.Remove('_literals'); $rg | ConvertTo-Json -Depth 5 | Set-Content $rj   # no baseline yet
 $plf = Join-Path (Kd) 'pl.py'; Set-Content $plf $pl; $lr = @(& $py -X utf8 $plf $k 2>&1 | ForEach-Object { "$_" })
 Expect "lint: an unregistered key, a literal other than the registry default ($(@($lr -match '^lint:') -join ' '))" ($lr -contains 'lint:PARAM-DEFAULT a.ps1:1|PARAM-UNREG a.ps1:1')
-Expect "lint: tunable literals WARN over the baseline; --ratchet records them; a new one warns again ($(@($lr -match '^(warn|ratchet|again):') -join ' '))" ($lr -contains 'warn:a.ps1 1 tunable literal(s)|b.py 2 tunable literal(s)|c.mjs 1 tunable literal(s)' -and $lr -contains 'ratchet:0' -and $lr -contains 'again:b.py')
+Expect "lint: tunable literals WARN over the baseline; --ratchet records them; a new one warns again ($(@($lr -match '^(warn|ratchet|again):') -join ' '))" ($lr -contains 'warn:a.ps1 1 tunable literal(s)|b.py 2 tunable literal(s)|c.mjs 1 tunable literal(s)' -and $lr -contains 'ratchet:0' -and $lr -contains 'again:b.py' -and $lr -contains 'zero:3')
 Remove-TestKit $k
 Complete-Tests

@@ -19,7 +19,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L984 README graph · L1090 lint command · L1126 audit ·
-  L1235 registry · L1569 prose · L1714 sections · L1844 budget · L1862 goodies · L2365 state lint · L2436 main
+  L1235 registry · L1571 prose · L1716 sections · L1846 budget · L1864 goodies · L2367 state lint · L2438 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1539,21 +1539,23 @@ def literal_sites(k):
     return {f: sorted(v) for f, v in hits.items() if v}
 
 def literal_warns(k, ratchet=False):
-    """WARN PARAM-LITERAL lines: files over their _literals baseline (none: 0); --ratchet writes the lower counts (the first: all)."""
+    """WARN PARAM-LITERAL lines: files over their _literals baseline (none: 0); --ratchet writes the lower counts (no _literals key
+    yet: records all; {} = zero everywhere, so a file down to 0 literals stays held)."""
     p = osp.join(k.dir, PARAMS_JSON)
     reg, err = load_json(p)
     if err:
         return []
-    sites, base = literal_sites(k), reg.get('_literals') or {}
+    sites, base = literal_sites(k), reg.get('_literals')
     if ratchet:
-        new = {f: len(v) for f, v in sorted(sites.items())} if not base else {f: min(n, len(sites.get(f, []))) for f, n in base.items() if f in sites}
+        new = {f: len(v) for f, v in sorted(sites.items())} if base is None else {f: min(n, len(sites.get(f, []))) for f, n in base.items() if f in sites}
         if new != base:
-            t = read(p)
-            t = re.sub(r'"_literals":\s*\{[^}]*\}', '"_literals": ' + json.dumps(new, separators=(', ', ': ')), t)
+            t, lit = read(p), '"_literals": ' + json.dumps(new, separators=(', ', ': '))
+            t = re.sub(r'"_literals":\s*\{[^}]*\}', lit, t) if base is not None else re.sub(r'\s*\}\s*$', lambda m: f',\n {lit}\n}}\n', t)
             with open(p, 'w', encoding='utf-8', newline='') as fh:
                 fh.write(t)
             print(f'kitbag lint --ratchet: {PARAMS_JSON} _literals updated ({sum(new.values())} literal(s) in {len(new)} file(s))')
         base = new
+    base = base or {}
     return [('PARAM-LITERAL', f, f'{len(v)} tunable literal(s), baseline {base.get(f, 0)}: lines {", ".join(map(str, v[:8]))}{" ..." if len(v) > 8 else ""} '
              f'-> a {PARAMS_JSON} key + Get-KitParam') for f, v in sorted(sites.items()) if len(v) > base.get(f, 0)]
 

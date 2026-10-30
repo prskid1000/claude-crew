@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L116 config · L196 OS · L384 leases · L795 status · L1018 supervise sweep ·
-  L1063 supervise report · L1103 tracker · L1381 git-host · L1497 kitlog · L1615 params · L1917 entry-scripts
+Sections: L10 paths · L62 state · L116 config · L196 OS · L387 leases · L801 status · L1024 supervise sweep ·
+  L1076 supervise report · L1116 tracker · L1394 git-host · L1510 kitlog · L1626 params · L1939 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -372,6 +372,9 @@ function Get-SuperviseOwner([string]$Session) {
   for ($i = 0; $p -and $i -lt 12; $i++) { $p = $p.Parent; if ($p) { $top = $p.Id } }
   if ($top -ne $PID) { "shell$top" } else { "pid$PID" }
 }
+# the boot time: Windows TickCount64 counts sleep; Linux /proc/stat btime, macOS kern.boottime (their monotonic clock stops in a suspend)
+function Get-KitBootTime { try { if ($KitIsWindows) { (Get-Date).AddMilliseconds(-[Environment]::TickCount64) } elseif ($KitIsMac) { [DateTimeOffset]::FromUnixTimeSeconds([long]([regex]::Match((sysctl -n kern.boottime), 'sec = (\d+)').Groups[1].Value)).LocalDateTime }
+    else { [DateTimeOffset]::FromUnixTimeSeconds([long](((Get-Content /proc/stat) -match '^btime ' -split ' ')[1])).LocalDateTime } } catch { (Get-Date).AddMilliseconds(-[Environment]::TickCount64) } }
 function Get-KitPidStart([int]$Id) { try { (Get-Process -Id $Id -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch { '' } }
 # the same process only with the same start time: a cold boot reuses pids. $Start untyped: JSON gives a DateTime
 function Test-KitPid($Id, $Start) {
@@ -591,22 +594,25 @@ function Get-KitNetTimeout([string]$Cli = '') { if ($env:KIT_NET_TIMEOUT_SEC) { 
 # one network CLI call, timed per CLI for net.timeoutSec (a timeout counts only under the learned value, not a caller's own cap); after a
 # timeout the next call of this process waits x1.5 (RFC 6298 back-off, that call only)
 function Invoke-KitNetExe([string]$Exe, [string[]]$A) {
-  $cli = [IO.Path]::GetFileNameWithoutExtension($Exe).ToLower(); $t = [int]((Get-KitNetTimeout $cli) * $(if ($script:KitNetBackoff) { 1.5 } else { 1 })); $script:KitNetBackoff = $false
+  $cli = [IO.Path]::GetFileNameWithoutExtension($Exe).ToLower(); $t0 = Get-KitNetTimeout $cli; $t = [int]($t0 * $(if ($script:KitNetBackoff) { 1.5 } else { 1 })); $script:KitNetBackoff = $false
   $sw = [Diagnostics.Stopwatch]::StartNew(); $r = Invoke-KitExe $Exe $A $t; $null = Add-KitNetCount
-  if (-not $r.timedOut -and $r.code -ne 127) { Add-KitParamObs 'net.timeoutSec' $sw.Elapsed.TotalSeconds $cli -Default 60 } elseif ($r.timedOut) { $script:KitNetBackoff = $true; if (-not $env:KIT_NET_TIMEOUT_SEC) { Add-KitParamObs 'net.timeoutSec' $t $cli 'timeout' 60 } }
+  if (-not $r.timedOut -and $r.code -ne 127) { Add-KitParamObs 'net.timeoutSec' $sw.Elapsed.TotalSeconds $cli -Default 60 } elseif ($r.timedOut) { $script:KitNetBackoff = $true; if (-not $env:KIT_NET_TIMEOUT_SEC) { Add-KitParamObs 'net.timeoutSec' $t0 $cli 'timeout' 60 } }
   $r
 }
 # the machine's network calls and hang retries per minute (.runtime cache/net-budget.json, 10 min); a hang retry (the same call again
 # after a timeout) only within the budget: 10% of the calls of the last 10 min, at least 1 a minute (a retry storm on a dead host stops)
 function Add-KitNetCount([switch]$Retry, [switch]$Check) {
-  $f = Get-KitPath net-budget -Create; $m = (Get-Date).ToString('yyyyMMddHHmm'); $res = @{ ok = $true }
-  try { Invoke-KitLocked $f { $s = try { Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $s) { $s = @{} }
-      foreach ($k in @($s.Keys)) { if ([long]$k -lt [long](Get-Date).AddMinutes(-10).ToString('yyyyMMddHHmm')) { $s.Remove($k) } }
-      if ($Check) { $c = ($s.Values | ForEach-Object { [int]$_.c } | Measure-Object -Sum).Sum; $rt = ($s.Values | ForEach-Object { [int]$_.r } | Measure-Object -Sum).Sum
-        $res.ok = [int]$s[$m].r -lt 1 -or $rt -lt 0.1 * $c; if (-not $res.ok) { return } }
-      if (-not $s[$m]) { $s[$m] = @{ c = 0; r = 0 } }; if ($Retry) { $s[$m].r = [int]$s[$m].r + 1 } else { $s[$m].c = [int]$s[$m].c + 1 }
-      Write-KitAtomic $f ($s | ConvertTo-Json -Compress) } } catch {}
-  $res.ok
+  $f = Get-KitPath net-budget -Create; $m = (Get-Date).ToString('yyyyMMddHHmm'); $ok = $true; $lk = $null
+  for ($i = 0; $i -lt 20 -and -not $lk; $i++) {   # a lock whose writer pid is gone is stale
+    try { $lk = [IO.File]::Open("$f.lock", 'CreateNew', 'Write', 'Read'); $pb = [Text.Encoding]::ASCII.GetBytes("$PID"); $lk.Write($pb, 0, $pb.Length); $lk.Flush() }
+    catch { try { $hp = ([IO.File]::ReadAllText("$f.lock")).Trim(); if ($hp -and -not (Test-KitPid ([int]$hp) $null)) { [IO.File]::Delete("$f.lock") } } catch {}; [void][Threading.Thread]::Yield() } }
+  if (-not $lk) { return $true }   # busy: best effort (20 tries, no sleep), never a wait on a network call
+  try { $s = try { Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $s) { $s = @{} }
+    foreach ($k in @($s.Keys)) { if ([long]$k -lt [long](Get-Date).AddMinutes(-10).ToString('yyyyMMddHHmm')) { $s.Remove($k) } }
+    if ($Check) { $c = ($s.Values | ForEach-Object { [int]$_.c } | Measure-Object -Sum).Sum; $rt = ($s.Values | ForEach-Object { [int]$_.r } | Measure-Object -Sum).Sum; $ok = [int]$s[$m].r -lt 1 -or $rt -lt 0.1 * $c }
+    if ($ok) { if (-not $s[$m]) { $s[$m] = @{ c = 0; r = 0 } }; if ($Retry) { $s[$m].r = [int]$s[$m].r + 1 } else { $s[$m].c = [int]$s[$m].c + 1 }; Write-KitAtomic $f ($s | ConvertTo-Json -Compress) }
+  } catch {} finally { $lk.Dispose(); try { [IO.File]::Delete("$f.lock") } catch {} }
+  $ok
 }
 function Wait-KitPoll([int]$Seconds) { Start-Sleep -Milliseconds $(if ($env:KIT_POLL_MS) { [int]$env:KIT_POLL_MS } else { 1000 * $Seconds }) }   # KIT_POLL_MS: the tests' fake clock
 function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
@@ -1020,12 +1026,12 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
 # starved last sweep (skipped: they go first) still ahead; a section's cost runs from its Within to the next one
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary]) { $sw.cost = @{} }
-  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new() }
+  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }
 function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
   $left = ($Sw.deadline - $Now).TotalSeconds
-  $go = $left -gt 0 -and ($Name -in $Sw.starved -or $left -ge [double]$Sw.cost[$Name] + (@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)
+  $go = $left -gt 0 -and $(if ($Name -in $Sw.starved) { $left -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -ge [double]$Sw.cost[$Name] + (@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum })
   if ($go) { $Sw.cur = $Name; $Sw.t = $Now } elseif ($Name -notin $Sw.skipped) { $Sw.skipped.Add($Name) }
   $go
 }
@@ -1041,24 +1047,31 @@ function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, 
   $left = [math]::Max(5, [int]($Sw.deadline - (Get-Date)).TotalSeconds); $c = $Sw.cost[$Name]
   if (-not $Background -or $null -eq $c -or [double]$c -le $left / 2) {
     $t0 = Get-Date; $r = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $Script) + $A) $left; $s = ((Get-Date) - $t0).TotalSeconds
-    $Sw.cost[$Name] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.skipped.Add("$Name (timed out)") }
+    $Sw.cost[$Name] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.timedOut.Add($Name) }
     return @($r.out -split "`r?`n" | Where-Object { $_ })
   }
-  @(Invoke-KitBackground $Name $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) })
+  @(Invoke-KitBackground $Name $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) } ([double]$c))
 }
-function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds) {
-  $d = Get-KitPath background -Create; $base = Join-Path $d (ConvertTo-KitSlug $Name); $run = try { Get-Content -LiteralPath "$base.json" -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
-  $busy = $run -and (Test-KitPid $run.pid $run.start); $out = @()
-  if ($run -and -not $busy -and (Test-Path -LiteralPath "$base.out")) {
-    $out = @(Get-Content -LiteralPath "$base.out" | Where-Object { $_ }); if (-not $run.read -and $OnSeconds) { & $OnSeconds ((Get-Item -LiteralPath "$base.out").LastWriteTime - [datetime]$run.at).TotalSeconds }
-    $run | Add-Member -Force NoteProperty read $true; Write-KitAtomic "$base.json" ($run | ConvertTo-Json -Compress)
+# a run past max(10 x its cost, 30 min) hangs: stopped; an empty result with errors is one WATCH line, never "nothing to report"
+function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {
+  $d = Get-KitPath background -Create; $base = Join-Path $d (ConvertTo-KitSlug $Name); $res = @{ out = @() }
+  Invoke-KitLocked "$base.json" {
+    $run = try { Get-Content -LiteralPath "$base.json" -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+    $busy = $run -and (Test-KitPid $run.pid $run.start)
+    if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30, 10 * $Cost / 60)) { Stop-Process -Id $run.pid -Force -ErrorAction SilentlyContinue; $busy = $false; $res.out = @("WATCH background $Name hung $([int]((Get-Date) - [datetime]$run.at).TotalMinutes) min: stopped, started again") }
+    elseif ($run -and -not $busy -and (Test-Path -LiteralPath "$base.out")) {
+      $res.out = @(Get-Content -LiteralPath "$base.out" | Where-Object { $_ }); $er = @(Get-Content -LiteralPath "$base.err" -ErrorAction SilentlyContinue | Where-Object { $_ })
+      if (-not $res.out.Count -and $er.Count) { $res.out = @("WATCH background $Name failed: $($er[0])") }
+      if (-not $run.read -and $OnSeconds) { & $OnSeconds ((Get-Item -LiteralPath "$base.out").LastWriteTime - [datetime]$run.at).TotalSeconds }
+      $run | Add-Member -Force NoteProperty read $true; Write-KitAtomic "$base.json" ($run | ConvertTo-Json -Compress)
+    }
+    if (-not $busy) {
+      $a = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
+      $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" } else { Start-Process pwsh -ArgumentList $a -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
+      Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress)
+    }
   }
-  if (-not $busy) {
-    $a = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
-    $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" } else { Start-Process pwsh -ArgumentList $a -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
-    Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress)
-  }
-  $out
+  $res.out
 }
 # ---- supervise report: -Brief = the owner's round report as final markdown (no LLM step); pure on $d, so fixtures test it
 # -Brief's table: a FINISHED row stays supervise.finishedMinutes after it ended (the report file keeps it); other states always show
@@ -1537,11 +1550,9 @@ function Write-KitLog([Parameter(Mandatory)][string]$Stream, [string]$Event = ''
     for ($i = 0; $i -lt 40; $i++) { try { $fs = [IO.FileStream]::new($file, 'Append', 'Write', 'ReadWrite, Delete'); try { $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() }; break } catch [IO.IOException] { Start-Sleep -Milliseconds 25 } }
   } catch {}
 }
-# the lines of streams since a time (default 24 h), each with .stream; a bad line is skipped; a look back into a trimmed stream is
-# an observation of logs.keepDays (Invoke-KitLogTrim)
+# the lines of streams since a time (default 24 h), each with .stream; a bad line is skipped
 function Read-KitLog([string[]]$Stream = $script:KitLogMap.streams, [datetime]$Since = (Get-Date).AddDays(-1)) {
   foreach ($s in $Stream) {
-    if ($PSBoundParameters.ContainsKey('Since') -and $script:KitLogTrim.ContainsKey($s)) { Add-KitParamObs 'logs.keepDays' ((Get-Date) - $Since).TotalDays $s }
     $files = if ($script:KitPathMap.durable.PSObject.Properties.Name -contains $s) { Get-KitPath $s } else { Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | Where-Object Name -ge $Since.ToString('yyyy-MM-dd') | Sort-Object Name | ForEach-Object { Join-Path $_.FullName "$s.jsonl" } }
     foreach ($f in @($files | Where-Object { Test-Path -LiteralPath $_ })) {
       foreach ($l in Get-Content -LiteralPath $f) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o.at -and [datetime]$o.at -ge $Since) { $o | Add-Member -Force NoteProperty stream $s; $o } }
@@ -1654,7 +1665,7 @@ function Get-KitLoadTags { Get-KitMemo $script:KitParamMemo load 60 { $l = try {
 function Add-KitParamObs([string]$Key, [double]$Value, [string]$Context = '', [string]$Result = 'ok', [double]$Default = 0) {
   $sp = Get-KitParamSpec $Key; if (-not $sp -or $sp.how -eq 'config' -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
   $w = if ($Result -eq 'ok' -and $sp.sample -gt 1) { if ([long]((Get-KitNow).Ticks / 10000) % [int]$sp.sample) { return }; [int]$sp.sample } else { 1 }   # 1 in N ok lines, weight N; failures always
-  if (-not $script:KitBoot) { $script:KitBoot = (Get-Date).AddMilliseconds(-[Environment]::TickCount64).ToString('yyyy-MM-ddTHH:mmzzz') }   # a reboot changes it
+  if (-not $script:KitBoot) { $script:KitBoot = (Get-KitBootTime).ToString('yyyy-MM-ddTHH:mmzzz') }   # a reboot changes it
   $now = Get-KitNow; $ld = Get-KitLoadTags; $o = [ordered]@{ at = $now.ToString('o'); key = $Key; ctx = $Context; v = [math]::Round($Value, 3); r = $Result; d = $Default; w = $w; boot = $script:KitBoot; host = [Environment]::MachineName; lb = $ld.lb }
   if ($null -ne $ld.availGB) { $o.load = [ordered]@{ availGB = $ld.availGB; cpu = $ld.cpu; agents = $ld.agents } }
   $wk = (Get-KitParamState).wakeAt; if ($wk -and ($now - [datetime]$wk).TotalMinutes -lt 60) { $o.wake = [int]($now - [datetime]$wk).TotalMinutes }
@@ -1664,7 +1675,7 @@ function Add-KitParamObs([string]$Key, [double]$Value, [string]$Context = '', [s
 function Add-KitParamTrigger([string]$Why, [string]$Key = '*', [string]$Context = '') { Write-KitLog params trig ([ordered]@{ at = (Get-KitNow).ToString('o'); key = $Key; ctx = $Context; why = $Why }) }
 # SessionStart (health -Fetch, async): a reboot (the boot time moved) or a wake (Windows: the newest power wake event) since the last look
 function Test-KitWake {
-  $boot = (Get-Date).AddMilliseconds(-[Environment]::TickCount64)
+  $boot = Get-KitBootTime
   $wake = if ($KitIsWindows) { try { (Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1 } -MaxEvents 1 -ErrorAction Stop).TimeCreated } catch { $null } }
   $f = Get-KitPath param-state -Create; $res = @{}   # the locked body runs in a child scope: results through a shared table
   Invoke-KitLocked $f { $s = Read-KitParams -Strict
@@ -1746,6 +1757,7 @@ function Get-KitParamChanges([datetime]$Since) { @(Read-KitLog params-changes $S
 # Triggers queue key|ctx (fail, newCtx, newRule, n:5, load, hourly; trig lines: wake, reboot, deploy); a queued key is evaluated once its
 # cadence minimum passed since its last evaluation (15 min, x2 after 3 stable passes up to 1 d, x4 after a rollback), any key when its
 # cadence is due. Rollback = after a change, over 2x the failure rate with 2+ failures: the old value back, frozen 7 d, WATCH. Returns flags.
+$script:KitUrgent = 'fail', 'newCtx', 'newRule', 'load', 'wake', 'reboot', 'deploy'
 function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxValue) {
   $mode = "$(Get-KitSetting 'params.learning' 'on')"; if ($mode -eq 'off') { return }
   $now = Get-KitNow; $file = Get-KitPath param-state -Create; $flags = [Collections.Generic.List[object]]::new()
@@ -1793,9 +1805,11 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
     foreach ($key in @($st.byKey.Keys)) {
       $sp = Get-KitParamSpec $key; if (-not $sp -or $sp.how -eq 'config') { continue }
       foreach ($ctx in @($st.byKey[$key].Keys)) {
-        $e = $st.byKey[$key][$ctx]; & $respec $e $sp $key $ctx; $d = [double]$e.d; if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { continue }
-        $c = if ($e.cad -is [Collections.IDictionary]) { $e.cad } else { @{ min = 60; stable = 0 } }; $q = $st.queue["$key|$ctx"]
-        if (-not (($q -and (-not $e.evalAt -or ($now - [datetime]$e.evalAt).TotalMinutes -ge [double]$c.min)) -or -not $c.due -or $now -ge [datetime]$c.due)) { continue }   # debounced to its cadence
+        $e = $st.byKey[$key][$ctx]; & $respec $e $sp $key $ctx; $d = [double]$e.d; $q = $st.queue["$key|$ctx"]
+        if ($d -le 0 -or ($e.frozen -and [datetime]$e.frozen -gt $now)) { $st.queue.Remove("$key|$ctx"); continue }
+        $c = if ($e.cad -is [Collections.IDictionary]) { $e.cad } else { @{ min = 60; stable = 0 } }
+        $mn = if (@($q.why | Where-Object { $_ -in $script:KitUrgent }).Count) { 15 } else { [double]$c.min }   # an urgent trigger waits 15 min at most
+        if (-not (($q -and (-not $e.evalAt -or ($now - [datetime]$e.evalAt).TotalMinutes -ge $mn)) -or -not $c.due -or $now -ge [datetime]$c.due)) { continue }   # debounced to its cadence
         $whys = @(if ($q) { $q.why } else { 'cadence' }); $st.queue.Remove("$key|$ctx"); $e.evalAt = $now.ToString('o'); Update-KitParamWindow $e $now $null
         $lo = if ($sp.floor) { [double]$sp.floor } else { $d / 4 }; $hi = if ($sp.ceil) { [double]$sp.ceil } else { 4 * $d }
         # rollback: since the last change over 2x the failure rate before it, with 2+ failures -> the old value back, frozen 7 d
@@ -1821,7 +1835,7 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
         }
         $e.byLoad = @{}; foreach ($g in @($e.obs | Where-Object { $_.Count -gt 4 -and $_[4] -and $_[2] -eq 'ok' } | Group-Object { $_[4] })) { $e.byLoad[$g.Name] = @{ n = $g.Count; p90 = [math]::Round((Get-KitQuantile ([double[]]@($g.Group | ForEach-Object { [double]$_[1] })) 0.9), 3) } }   # per load bucket: shown, not applied
         # cadence: an urgent trigger -> the minimum (15); 3 stable passes -> x2 (max 1 d)
-        if (@($whys | Where-Object { $_ -in 'fail', 'drift', 'newCtx', 'newRule', 'load', 'wake', 'reboot', 'deploy' }).Count) { $c.min = 15; $c.stable = 0 }
+        if (@($whys | Where-Object { $_ -in @($script:KitUrgent) + 'drift' }).Count) { $c.min = 15; $c.stable = 0 }
         elseif ($moved) { $c.stable = 0 } elseif ([int]$c.stable -ge 2) { $c.min = [math]::Min(1440, 2 * [double]$c.min); $c.stable = 0 } else { $c.stable = [int]$c.stable + 1 }
         $c.lastTrig = "$($whys -join ',') $($now.ToString('o'))"; $c.due = $now.AddMinutes([double]$c.min).ToString('o'); $e.cad = $c
         $acc = $sp.gate -ne 'accuracy' -or (@($e.errs).Count -ge 10 -and (@($e.errs) | Measure-Object -Average).Average -le 0.2)
@@ -1846,7 +1860,7 @@ function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget
 function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
   $new = @($Acts | Where-Object { $_ -notin @($State.acts) }).Count   # 2+ new ACTs in one sweep piled up between beats: short (the beat was too long)
   # censored: a gap over 2 beats since the last sweep (sleep, a stopped coordinator) or a reboot since the last ACT: no observation
-  $boot = (Get-Date).AddMilliseconds(-[Environment]::TickCount64)
+  $boot = Get-KitBootTime
   $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5, [double]$State.nextBeat)
   if ($gap -or ($State.lastAct -and $boot -gt [datetime]$State.lastAct)) { $State.lastAct = $null }
   if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
@@ -1890,26 +1904,34 @@ function Invoke-KitParamVerb([string]$Action, [string]$Key, [string]$Value, [str
   }
   "param $Key$(if ($Context) { " [$Context]" }): $Action$(if ($Action -eq 'pin') { " $Value" }) done"
 }
-# logs.keepDays: each raw line of signals, decisions-log, deploy-log stays that long (learned: 2 x the longest look back its readers
-# take, Read-KitLog; >= 30 d) or as kit.local.json pins it; older ones roll into one line per stream and month in logs-summary.jsonl
-# (count, counts by kind, up to 5 key facts) and go; retired lessons stay raw (tidy compares new signals with them). bossy.ps1 cleanup.
+# logs.keepDays: each raw line of signals, decisions-log, deploy-log stays that long (learned: 2 x the longest gap between retros, which
+# read the signals since the last one; >= 30 d) or as kit.local.json pins it; older ones roll into one line per stream and month in
+# logs-summary.jsonl (count, counts by kind, up to 5 key facts, first / last time) and go; retired lessons stay raw (tidy compares new
+# signals with them). One handle shared with the appenders: a line written meanwhile stays; a summary already there is not added again.
 $script:KitLogTrim = @{ 'signals' = @('skill', 'kind', 'text'); 'decisions-log' = @('event', 'agent', 'question'); 'deploy-log' = @('event', 'target', 'note') }
 function Invoke-KitLogTrim([switch]$DryRun, [datetime]$Now = (Get-KitNow)) {
+  $rs = Get-KitPath last-retro; if (-not $DryRun -and (Test-Path -LiteralPath $rs)) { try { Add-KitParamObs 'logs.keepDays' ($Now - [datetime](Get-Content -LiteralPath $rs -Raw).Trim()).TotalDays 'signals' } catch {} }
+  $sumF = Get-KitPath logs-summary -Create; $seen = @{}; foreach ($l in @(Get-Content -LiteralPath $sumF -ErrorAction SilentlyContinue)) { $o = try { $l | ConvertFrom-Json } catch { $null }; if ($o) { $seen["$($o.stream)|$($o.period)|$($o.from)|$($o.to)|$($o.n)"] = 1 } }
   foreach ($sn in @($script:KitLogTrim.Keys | Sort-Object)) {
     $f = Get-KitPath $sn; if (-not (Test-Path -LiteralPath $f)) { continue }
     $by = $script:KitLogTrim[$sn]; $cut = $Now.AddDays(-[double](Get-KitParam 'logs.keepDays' $null $sn)); $old = [Collections.Generic.List[object]]::new(); $keep = [Collections.Generic.List[string]]::new()
     Invoke-KitLocked $f {
-      $raw = [IO.File]::ReadAllText($f)
-      foreach ($l in @($raw -split "`r?`n" | Where-Object { $_ })) { $o = try { $l | ConvertFrom-Json } catch { $null }
-        if (-not $o.at -or [datetime]$o.at -ge $cut -or ($sn -eq 'signals' -and $o.kind -eq 'retired')) { $keep.Add($l) } else { $old.Add($o) } }
-      if ($DryRun -or -not $old.Count) { return }
-      foreach ($g in @($old | Group-Object { ([datetime]$_.at).ToString('yyyy-MM') })) {
-        $cnt = [ordered]@{}; foreach ($x in $g.Group) { $kk = "$($x.($by[0]))$(if ($x.($by[1])) { "/$($x.($by[1]))" })"; $cnt[$kk] = [int]$cnt[$kk] + 1 }
-        $facts = @($g.Group | Where-Object { "$($_.($by[2]))" } | Group-Object { "$($_.($by[2]))" } | Sort-Object Count -Descending | Select-Object -First 5 | ForEach-Object { $t = $_.Name; "$($_.Count)x $($t.Substring(0, [math]::Min(160, $t.Length)))" })
-        Write-KitLog logs-summary summary ([ordered]@{ at = $Now.ToString('o'); stream = $sn; period = $g.Name; n = $g.Count; by = $cnt; facts = $facts })
-      }
-      $add = ([IO.File]::ReadAllText($f)).Substring($raw.Length)   # appended meanwhile (writers append without the lock): kept
-      [IO.File]::WriteAllText($f, (@($keep) + @($add -split "`r?`n" | Where-Object { $_ }) | ForEach-Object { "$_`n" }) -join '', [Text.UTF8Encoding]::new($false))
+      $fs = [IO.FileStream]::new($f, 'Open', 'ReadWrite', 'ReadWrite, Delete'); $enc = [Text.UTF8Encoding]::new($false)
+      try {
+        $sr = [IO.StreamReader]::new($fs, $enc, $true, 65536, $true); $raw = $sr.ReadToEnd()
+        foreach ($l in @($raw -split "`r?`n" | Where-Object { $_ })) { $o = try { $l | ConvertFrom-Json } catch { $null }
+          if (-not $o.at -or [datetime]$o.at -ge $cut -or ($sn -eq 'signals' -and $o.kind -eq 'retired')) { $keep.Add($l) } else { $old.Add($o) } }
+        if ($DryRun -or -not $old.Count) { return }
+        foreach ($g in @($old | Group-Object { ([datetime]$_.at).ToString('yyyy-MM') })) {
+          $cnt = [ordered]@{}; foreach ($x in $g.Group) { $kk = "$($x.($by[0]))$(if ($x.($by[1])) { "/$($x.($by[1]))" })"; $cnt[$kk] = [int]$cnt[$kk] + 1 }
+          $facts = @($g.Group | Where-Object { "$($_.($by[2]))" } | Group-Object { "$($_.($by[2]))" } | Sort-Object Count -Descending | Select-Object -First 5 | ForEach-Object { $t = $_.Name; "$($_.Count)x $($t.Substring(0, [math]::Min(160, $t.Length)))" })
+          $ats = @($g.Group | ForEach-Object { [datetime]$_.at } | Sort-Object); $from = $ats[0].ToString('o'); $to = $ats[-1].ToString('o')
+          if (-not $seen["$sn|$($g.Name)|$from|$to|$($g.Count)"]) { Write-KitLog logs-summary summary ([ordered]@{ at = $Now.ToString('o'); stream = $sn; period = $g.Name; n = $g.Count; from = $from; to = $to; by = $cnt; facts = $facts }) }
+        }
+        $tail = $sr.ReadToEnd()   # appended since the first read: kept
+        $b = $enc.GetBytes((@($keep) + @($tail -split "`r?`n" | Where-Object { $_ }) | ForEach-Object { "$_`n" }) -join '')
+        $fs.Position = 0; $fs.Write($b, 0, $b.Length); $fs.SetLength($b.Length); $fs.Flush()
+      } finally { $fs.Dispose() }
     }
     if ($old.Count) { [pscustomobject]@{ stream = $sn; rolled = $old.Count; kept = $keep.Count; days = [math]::Round(($Now - $cut).TotalDays) } }
   }
