@@ -190,7 +190,7 @@ function Get-KitShellDir([string]$Cmd) {
 # shells whose parent is Claude Code (claude, or node running it); never this sweep's own chain
 function Get-KitAgentShells($Procs) {
   $byId = @{}; foreach ($p in $Procs) { $byId[$p.Id] = $p }
-  $mine = @{}; for ($q = $byId[$PID]; $q -and -not $mine[$q.Id]; $q = $byId[$q.ParentId]) { $mine[$q.Id] = 1 }
+  $mine = @{}; $q = $byId[$PID]; for ($i = 0; $q -and -not $mine[$q.Id] -and $i -lt 64; $i++) { $mine[$q.Id] = 1; $q = $byId[$q.ParentId] }
   foreach ($p in $Procs) {
     $par = $byId[$p.ParentId]
     if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^claude(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
