@@ -51,3 +51,5 @@ when it changes readability materially.
 
 **Self-improvement:**
 `pwsh -File <kit>/skills/bossy/bossy.ps1 learn -Skill revy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
+
+> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.

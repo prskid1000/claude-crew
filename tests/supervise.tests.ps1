@@ -220,19 +220,21 @@ Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
 $um = @'
 $o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
 function Get-KitHostUser { 'me' }
+function Get-KitValue($n, $d) { if ($n -eq 'repos') { @([pscustomobject]@{ name = 'shop'; deploys = @([pscustomobject]@{ branch = 'staging/x' }) }) } else { $d } }
 function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
   $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
   @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; author = @{ username = 'me' }; merged_at = (& $h 1) },
     [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
     [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
-    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }) }
+    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }, [pscustomobject]@{ iid = 4; title = 'd'; source_branch = 'deploy/x'; author = 'me'; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 5; title = 'p'; source_branch = 'p'; target_branch = 'staging/x'; author = 'me'; merged_at = (& $h 1) }) }
 Update-KitTracking { param($t) $t.tasks['T7'] = @{ task = 'T7'; mrs = @('shop!8725') + @(if ($add) { 'shop!8729' }) } }
 Invoke-Supervise -Json -Takeover
 '@
 $u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
 $ig = Px $O track ignore -Mrs 'shop!8729' -Reason 'not mine' | Out-String; $u3 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String
 $uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
-Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked or track ignore -> gone; host listed once per beat ($uc)" ($ig -match 'ignored shop!8729' -and $u3 -notmatch 'tracked by no task' -and $u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
-  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
+Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked, ignored or deploy MR -> gone; host listed once per beat ($uc)" ($ig -match 'ignored shop!8729' -and $u3 -notmatch 'tracked by no task' -and $u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
+  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -match 'shop!8729 merged, no task' -and $u1 -match 'full: report' -and $u1 -notmatch 'shop!(8725|1|2|3|4|5)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Remove-TestKit $k
 Complete-Tests

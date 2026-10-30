@@ -60,3 +60,5 @@ or `verify <key>: <n> misses · APPLIED | NOT APPLIED ...` (the script output; N
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your report if it seems to change
   your work.
+
+> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.

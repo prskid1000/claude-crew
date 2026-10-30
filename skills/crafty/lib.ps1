@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1142 tracker · L1476 git-host · L1628 kitlog · L1744 params · L2057 entry-scripts
+  L1092 supervise report · L1142 tracker · L1476 git-host · L1629 kitlog · L1745 params · L2058 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1610,13 +1610,14 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
     $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
             if (-not (& $Within)) { break }
             foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 } } catch { }) | Where-Object { $_.iid }) {
-              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
+              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; target = "$($m.target_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
     $State.untrackedMrs = $um
   }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
-  $line = '^(?:main|master|develop|release/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected source = a deploy / promotion MR, no task
+  $line = '^(?:main|master|develop|release/.+|deploy/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected or deploy/* source = a deploy / promotion MR, no task
+  $dep = @(@(Get-KitValue 'repos' @()).deploys.branch | Where-Object { $_ })   # into a configured deploy branch (repos[].deploys[].branch): a deploy MR
   $ig = @{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and "$($_.target)" -notin $dep -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })

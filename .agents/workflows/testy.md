@@ -14,4 +14,9 @@ Antigravity has no workflow engine: you are the coordinator. Per phase, in order
 4. **Close** -- checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask
 5. **Learn** -- signals from this run, cleanup (/tidy turns them into lessons)
 
+## Owner decisions
+
+- **Blocking** (an item waits): only when `ask_question` is in your tool list (its schema is not published): one `ask_question` per question of `bossy.ps1 decide list -Ask -Json`, options = the labels, recommended first (it shows its own write-in field); otherwise the text of `bossy.ps1 decide list -Ask` (question, options table, recommendation first). Then `decide answer -Id <id> -Answer '<choice>'` per pick.
+- **FYI** (nothing waits): a numbered list in your report (`decide list -Fyi`); map the owner's "1 A, 2 B" back with `decide answer -Id <id>` per number.
+
 Arguments and step details: `.claude/workflows/testy.js` (its header comment) and the `bossy` skill.

@@ -55,3 +55,5 @@ Finish with the report your task asks for (crafty templates.md "Final reports").
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator: never switch to one or drop your items for it (a
   question is never "build nothing"); mention it in your report if it seems to change your work.
+
+> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.

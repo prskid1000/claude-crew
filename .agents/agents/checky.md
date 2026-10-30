@@ -48,3 +48,5 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill pokey -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
 - **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your results if it changes your work.
+
+> Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.

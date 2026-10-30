@@ -14,4 +14,9 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 4. **Close** -- checky lead: report (Google Doc or Markdown) + tracker comment + result rule: closed / failedTesting / [Bug] per ask
 5. **Learn** -- signals from this run, cleanup (/tidy turns them into lessons)
 
+## Owner decisions
+
+- **Blocking** (an item waits): in Plan mode, as the root thread: ONE `request_user_input` call from `bossy.ps1 decide list -Ask -Json -Max 3` (per question: header, question, options = label + description, recommended first; the client adds "Other"); otherwise the text of `bossy.ps1 decide list -Ask` (question, options table, recommendation first). Then `decide answer -Id <id> -Answer '<choice>'` per pick.
+- **FYI** (nothing waits): a numbered list in your report (`decide list -Fyi`); map the owner's "1 A, 2 B" back with `decide answer -Id <id>` per number.
+
 Arguments and step details: `.claude/workflows/testy.js` (its header comment) and the `bossy` skill.
