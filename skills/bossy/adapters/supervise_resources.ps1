@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L42 supervise · L177 shells · L291 release · L320 lines · L345 cleanup
+Sections: L13 builds · L42 supervise · L180 shells · L294 release · L323 lines · L348 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -62,7 +62,10 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   if ($wait -ge 30) { & $flag 'ACT' "gate: $($oldest.owner) $($oldest.kind) has waited $wait min" 'Memory-bound: start no new agents, run bossy.ps1 cleanup, ask the owner to close big apps; fewer agents per wave.' }
   elseif ($queue.Count -ge 6) { & $flag 'WATCH' "gate: $($queue.Count) builds queued" 'Do not launch more build-heavy agents until the queue drains.' }
   $hist = try { Get-Content (Join-Path $ledger 'history.json') -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }
-  foreach ($k in Get-KitBuildFailures $hist $now) { & $flag 'WATCH' "builds '$k' failed 3 times in a row" 'Look at that agent: repeated failing builds burn memory turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else it may need help or a brief fix.' }
+  foreach ($k in Get-KitBuildFailures $hist $now) {   # the agent that ran them names the row
+    $who = @(Read-KitLog builds $now.AddHours(-24) | Where-Object { $_.event -eq 'end' -and "$($_.kind)|$($_.project)" -eq $k -and [int]$_.code } | ForEach-Object owner)[-1]
+    [pscustomobject]@{ level = 'WATCH'; what = "builds '$k' failed 3 times in a row"; kind = 'BUILDS'; who = $(if ($who) { $who } else { $k }); problem = "$k failed 3 times in a row"; next = "Check that agent's last build log"
+      action = 'Repeated failing builds burn memory and turns; a setup-data cause (fixture, seed drift) -> spawn datay kind fixture, else help it or fix its brief.' } }
   if ($AutoFix -and (Within 'cache flush')) { Invoke-KitCacheFlush $wait $mem $now ([math]::Min(120, (Left))) }
 
   # phone leases whose holder is gone (phoney.ps1 shuts lanes down; dead emulators reboot on acquire)

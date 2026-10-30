@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L609 pause · L653 resume · L711 program · L756 param ·
-  L762 track · L1067 anomalies · L1085 supervise · L1390 report · L1469 audit · L1529 storage · L1740 bugbrief · L1842 cleanup ·
-  L1966 learn · L1996 decide · L2064 health · L2127 retro due · L2137 tidy · L2207 the kit origin's main and goodies ·
-  L2223 setup · L2289 guard-sendmessage
+  L762 track · L1067 anomalies · L1085 supervise · L1389 report · L1468 audit · L1528 storage · L1739 bugbrief · L1841 cleanup ·
+  L1965 learn · L1995 decide · L2063 health · L2126 retro due · L2136 tidy · L2206 the kit origin's main and goodies ·
+  L2222 setup · L2288 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -603,7 +603,7 @@ foreach ($q in Get-OrphanQaItems -Hours $Hours) { "== QA $($q.run): tested, neve
 Invoke-KitHooks Get-KitRecoverLines   # adapters/supervise_resources.ps1: env and phone leases with no live holder
 foreach ($b in @(Get-KitHandoffs $Hours)) { "== HANDOFF $($b.agent) ($($b.run)): a fresh $(if ($b.type) { $b.type } else { 'agent' }) with the same -Agent and -Run continues from $($b.handoffBrief) (a workflow agent: its workflow starts it)" }
 foreach ($l in @(Invoke-KitOutbox -DryRun)) { "== tracker outbox: $l (bossy.ps1 supervise -AutoFix replays it)" }
-"== heartbeat: a new session has none; arm ONE timer in $(Get-KitBeatMinutes) min, then re-arm it to the NEXT <n> min each supervise prints (bossy E1), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (bossy E1)"""
+"== heartbeat: a new session has none; arm ONE timer in $(Get-KitBeatMinutes) min, then re-arm it to the NEXT=<n> each supervise prints on stderr (bossy E1), prompt: ""Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action (bossy E1)"""
 }
 
 # ---- pause: agents checkpoint, commit WIP, release leases, stop; a .state record lets resume start each at its next step
@@ -1376,10 +1376,9 @@ L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # the final markdown pasted verbatim; long detail goes to a file read only on ACT
   $md = @(Format-KitReport $report)
-  Write-KitSuperviseReport $report $md $lines $nextLine; $nAct = @($flags | Where-Object level -eq 'ACT').Count
-  $tail = if ($nAct) { "ACT: $nAct line(s): act on each now (bossy E2; whole lines: $(Get-KitPath supervise-report)); the next heartbeat re-checks" } elseif ("$md" -match '\(full: report\)') { "cut cells whole: $(Get-KitPath supervise-report)" }
+  Write-KitSuperviseReport $report $md $lines $nextLine
   $shown = $report.PSObject.Copy(); $shown.rows = @(Select-KitBriefRows $report.rows $now)   # finished > finishedMinutes: report file only
-  Format-KitReport $shown $tail; $nextLine; $global:LASTEXITCODE = 0; exit 0
+  Format-KitReport $shown; [Console]::Error.WriteLine("NEXT=$($next.min)"); $global:LASTEXITCODE = 0; exit 0   # tables only; NEXT for the re-arm, not the paste
 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines; Format-KitStatusTable $rows $now $script:KitTxVersions
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }

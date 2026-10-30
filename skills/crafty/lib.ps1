@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1084 supervise sweep ·
-  L1136 supervise report · L1199 tracker · L1459 prior · L1574 git-host · L1732 kitlog · L1852 params · L2165 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1086 supervise sweep ·
+  L1138 supervise report · L1201 tracker · L1461 prior · L1576 git-host · L1734 kitlog · L1854 params · L2167 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1052,17 +1052,19 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
   }
   $out -join ' '
 }
-# a cell over $Max chars draws the whole table as cards (Claude Code fits the box to the terminal): cut at a word + " (full: report)"
-function Limit-KitCell($Text, [int]$Max = 90) {
-  $t = ("$Text" -replace '\s+', ' ').Trim(); $tag = ' (full: report)'
+# a cell over $Max chars draws the whole table as cards (Claude Code fits the box to the terminal): its first clauses up to $Max
+# (a cut at ; : . or " ("), else whole words + " …"; never a cut word; the whole text: supervise-report.md
+function Limit-KitCell($Text, [int]$Max = 80) {
+  $t = ("$Text" -replace '\s+', ' ' -replace '&\s*\S*[\\/](\w+\.ps1)\b', '$1').Trim()   # a kit script by its name
   if ($Max -le 0 -or $t.Length -le $Max) { return $t }
-  $c = $t.Substring(0, $Max - $tag.Length); if ([char]::IsHighSurrogate($c[-1])) { $c = $c.Substring(0, $c.Length - 1) }; $sp = $c.LastIndexOf(' '); if ($sp -gt $Max / 2) { $c = $c.Substring(0, $sp) }
-  $c.TrimEnd(' ', ',', ';', ':', '-') + $tag
+  $c = $t.Substring(0, $Max); $cl = @([regex]::Matches($c, '[;:.](?=\s)|\s\(') | Where-Object Index -ge 12)[-1]
+  if ($cl) { return $t.Substring(0, $cl.Index).TrimEnd() }
+  $c = $t.Substring(0, $Max - 2); $sp = $c.LastIndexOf(' '); "$($c.Substring(0, [math]::Max($sp, 1)).TrimEnd(' ', ',', ';', ':', '-')) …"
 }
 # markdown, one line per row (the coordinator pastes it as is); worst states first; long cells wrap (Format-KitCell); -Cap: Limit-KitCell
 function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
   $Now = if ($Now) { [datetime]$Now } else { Get-Date }
-  $cut = { param($t) Limit-KitCell (Format-KitCell $t) $Cap }
+  $cut = { param($t) Format-KitCell (Limit-KitCell $t $Cap) }
   $hm = { param($t) if ($t) { ([datetime]$t).ToString('HH:mm') } else { '—' } }
   '| Agent | Task / run | State | Since | Last progress | Next |'; '|---|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object { @{ STUCK = 0; STOPPED = 1; WAITING = 2; ACTIVE = 3; FINISHED = 4 }[$_.state] }, name)) {
@@ -1139,30 +1141,30 @@ function Select-KitBriefRows($Rows, [datetime]$Now) {
   $fm = [double](Get-KitSetting 'supervise.finishedMinutes' 30)
   @($Rows | Where-Object { $_.state -ne 'FINISHED' -or -not $_.ended -or ($Now - [datetime]$_.ended).TotalMinutes -le $fm })
 }
-function Format-KitReport($d, [string[]]$Tail = @()) {
+function Format-KitReport($d) {
   $g1 = { param($x) [math]::Round([double]$x, 1) }
   $reportLines = [Collections.Generic.List[string]]::new()
   # 1. one row per agent and workflow run (lib.ps1 status)
-  foreach ($l in @(Format-KitStatusTable $d.rows $d.at $d.versions -Cap 90) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
-  # 2. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs); then -Brief's ACT line ($Tail)
+  foreach ($l in @(Format-KitStatusTable $d.rows $d.at $null -Cap 80) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
+  # 2. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs); no table when none
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
-  $reportLines.Add("**Flags**$(if (-not $fl.Count) { ': none' })")
-  if ($fl.Count) { $reportLines.Add(''); $reportLines.Add('| Level | Flag | Who / item | Age | Problem | Next step |'); $reportLines.Add('|---|---|---|---|---|---|') }
+  if ($fl.Count) { $reportLines.Add('| Level | Flag | Who / item | Age | Problem | Next step |'); $reportLines.Add('|---|---|---|---|---|---|') }
   foreach ($f in $fl) {
     $c = Get-KitFlagCells $f
-    $reportLines.Add("| $($f.level) | $(@($c.kind, $c.who, $c.age, $c.problem, $c.action | ForEach-Object { if ("$_".Trim()) { Limit-KitCell (Format-KitCell $_ -Exact) 90 } else { '—' } }) -join ' | ') |")
+    $reportLines.Add("| $($f.level) | $(@($c.kind, $c.who, $c.age, $c.problem, $c.action | ForEach-Object { if ("$_".Trim()) { Format-KitCell (Limit-KitCell $_ 80) -Exact } else { '—' } }) -join ' | ') |")
   }
-  $reportLines.Add('')   # GFM: a plain line right after a table becomes a row (ACT:, RAM, NEXT)
-  foreach ($t in @($Tail | Where-Object { $_ })) { $reportLines.Add($t); $reportLines.Add('') }
+  if ($fl.Count) { $reportLines.Add('') }   # GFM: a plain line right after a table becomes a row
   # 3. RAM in one line, then what the kit holds (below the flags: the owner reads those first)
   $m = $d.mem
   $reportLines.Add("**RAM** $(& $g1 ($m.TotalGB - $m.AvailGB)) / $(& $g1 $m.TotalGB) GB used, $(& $g1 $m.AvailGB) GB free$(if ($m.AvailGB -lt $d.keepFree) { " (below the floor $($d.keepFree) GB)" })")
   $rs = @($d.resources | Sort-Object { -[double]$_.gb })
   if ($rs.Count) {
-    # three per row, largest first; 9 columns fit the box only with short cells: words broken at 9, cells cut at 24 (whole: report)
-    $reportLines.Add(''); $reportLines.Add('|' + ' Resource | Used by | RAM |' * 3); $reportLines.Add('|' + '---|' * 9)
-    $rc = @(foreach ($r in $rs) { "$(Limit-KitCell (Format-KitCell $r.name 9) 24) | $(if ($r.by) { Limit-KitCell (Format-KitCell $r.by 9) 24 } else { '—' }) | $(if ($r.gb) { & $g1 $r.gb } else { '—' })" })
-    for ($i = 0; $i -lt $rc.Count; $i += 3) { $reportLines.Add('| ' + (@(0..2 | ForEach-Object { if ($i + $_ -lt $rc.Count) { $rc[$i + $_] } else { '— | — | —' } }) -join ' | ') + ' |') }
+    # largest first; 1 column group up to 4 rows, else 2 or 3 side by side (9 columns fit only short cells: words broken at 9,
+    # cells cut at 24, whole: report); a short last row ends early, no filler cells
+    $gs = if ($rs.Count -le 4) { 1 } elseif ($rs.Count -le 8) { 2 } else { 3 }
+    $reportLines.Add(''); $reportLines.Add('|' + ' Resource | Used by | RAM |' * $gs); $reportLines.Add('|' + '---|' * (3 * $gs))
+    $rc = @(foreach ($r in $rs) { "$(Limit-KitCell (Format-KitCell $r.name 9) 24) | $(if ($r.by) { Limit-KitCell (Format-KitCell $r.by 9) 24 }) | $(if ($r.gb) { & $g1 $r.gb })" })
+    for ($i = 0; $i -lt $rc.Count; $i += $gs) { $reportLines.Add('| ' + (@($rc[$i..([math]::Min($i + $gs, $rc.Count) - 1)]) -join ' | ') + ' |') }
   }
   $reportLines.Add('')
   foreach ($l in @(Format-KitShellTable $d.shells)) { $reportLines.Add($l) }   # 4. agents' background shells, only when any: last
@@ -1172,9 +1174,9 @@ function Format-KitReport($d, [string[]]$Tail = @()) {
 function Format-KitShellTable($Shells) {
   if (-not @($Shells | Where-Object { $_ }).Count) { return }
   $cut = { param($t, [int]$m) if ("$t".Trim()) { Limit-KitCell (Format-KitCell $t -Exact) $m } else { '—' } }
-  '**Shells**'; ''; '| Shell | Owner | Age | State | Next |'; '|---|---|---|---|---|'
+  '| Shell | Owner | Age | State | Next |'; '|---|---|---|---|---|'
   foreach ($s in @($Shells | Sort-Object { $_.state -eq 'running' }, { -$_.age })) {
-    "| $(& $cut $s.short 60) | $(& $cut $s.owner 40) | $(if ($s.age -ge 120) { '{0:0.#} h' -f ($s.age / 60) } else { "$($s.age) min" }) | $($s.state) | $(& $cut $s.next 90) |"
+    "| $(& $cut $s.short 60) | $(& $cut $s.owner 40) | $(if ($s.age -ge 120) { '{0:0.#} h' -f ($s.age / 60) } else { "$($s.age) min" }) | $($s.state) | $(& $cut $s.next 80) |"
   }
   ''
 }
@@ -1188,7 +1190,7 @@ function Get-KitFlagCells($f) {
 function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$Next) {
   $ag = { param($st) Format-KitMdTable 'Agent', 'Task', 'State', 'Doing', 'Next' @($d.rows | Where-Object { ($_.state -eq 'FINISHED') -eq $st } | ForEach-Object { , @($_.name, $_.task, "$($_.state) $($_.wait)$($_.done)$($_.stopped)", $_.doing, $_.next) }) }
   $n = { param($l) @($d.flags | Where-Object level -eq $l).Count }
-  @("# Supervise report $($d.at.ToString('yyyy-MM-dd HH:mm'))", "**Result:** $(& $n ACT) ACT · $(& $n WATCH) WATCH · $(@($d.rows | Where-Object state -ne 'FINISHED').Count) live · $Next", '') + $Md +
+  @("# Supervise report $($d.at.ToString('yyyy-MM-dd HH:mm'))", "**Result:** $(& $n ACT) ACT · $(& $n WATCH) WATCH · $(@($d.rows | Where-Object state -ne 'FINISHED').Count) live · $Next$(if ($d.versions.Count) { " · transcripts: $(@($d.versions.Values | Sort-Object) -join ', ')" })", '') + $Md +
     @('', '## Agents (whole cells)', '') + @(& $ag $false) + @('', '## Finished today', '') + @(& $ag $true) + @('', '## All flags', '') +
     @(Format-KitMdTable 'Level', 'Flag', 'Action' @(@($d.flags | ForEach-Object { , @($_.level, $_.what, $_.action) }) + @($d.info | Where-Object { $_ } | ForEach-Object { , @('INFO', $_, '') }))) +
     @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) +

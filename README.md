@@ -181,7 +181,7 @@ and Skill tools, the Antigravity tools allow-list; the board, learn signals and 
 procedures.
 
 ## Using it
-- Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its last line `NEXT <n> min`
+- Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its stderr `NEXT=<n>`
   sets the next one, 5-30 min by state) prints the owner's report: one row per agent / run (ACTIVE, WAITING, FINISHED, STUCK,
   STOPPED; alone: `bossy.ps1 status [-Watch]`), flags (ACT, WATCH, ❓ ASK), then RAM and the resources' holders. After a restart: `bossy.ps1 resume -All`.
   Every script prints its usage without arguments.
