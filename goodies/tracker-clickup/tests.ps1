@@ -33,5 +33,8 @@ Initialize-KitTracker -Type clickup -DryRun
 $out = Add-TrackerComment 12 $f 6>&1 | Out-String; Remove-Item $f
 $pass = $out -match 'comment add 12 "body text'; if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a dry-run comment sends the file's text"
+$out = Add-TrackerComment 12 '**Solution:** fixed `a.b` · [MR !7](https://h/7) · https://h/8 · [https://h/9](https://h/9)' 6>&1 | Out-String
+$pass = $out -match [regex]::Escape('Solution: fixed a.b · MR !7 (https://h/7) · https://h/8 · https://h/9') -and $out -notmatch '\*\*|`|\]\('; if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a comment goes as plain text (bold and code marks dropped, [text](url) -> text (url)) ($($out.Trim()))"
 "$failed failure(s)"   # the per-extra count: kitbag.py goody test prints only the total
 exit [int]($failed -gt 0)

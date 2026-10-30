@@ -27,7 +27,7 @@ function __TrAdfText($n) {
   $inner = (@($n.content) | ForEach-Object { __TrAdfText $_ }) -join ''
   if ($n.type -in 'paragraph', 'heading', 'listItem', 'codeBlock') { "$inner`n" } else { $inner }
 }
-function __TrJDoc([string]$t) { if ($__trType -eq 'jira') { __TrAdf $t } else { $t } }
+function __TrJDoc([string]$t) { $t = ConvertTo-KitPlainText $t; if ($__trType -eq 'jira') { __TrAdf $t } else { $t } }   # ADF / wiki text: Markdown marks would show as typed
 function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
   $h = if ($__trType -ne 'jira' -and $env:JIRA_TOKEN) { Get-KitAuth JIRA_TOKEN } elseif ($env:JIRA_EMAIL -and $env:JIRA_API_TOKEN) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($env:JIRA_EMAIL):$($env:JIRA_API_TOKEN)")) } } else { @{} }
   if (-not $__trDry -and -not ($env:JIRA_BASE_URL -and $h.Authorization)) { throw "tracker ($__trType): set JIRA_BASE_URL and JIRA_EMAIL + JIRA_API_TOKEN$(if ($__trType -ne 'jira') { ' (or JIRA_TOKEN)' })" }

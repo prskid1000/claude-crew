@@ -7,6 +7,7 @@ function __TrClickupMemberId([string]$Who) {
   $m = @(__TrJson (__TrCli 'clickup' @('member', 'list', '--json'))) | Where-Object { $_ -and ($_.username -eq $Who -or ($_.email -and $_.email -eq $Who)) } | Select-Object -First 1
   if ($m) { [string]$m.id } else { $null }
 }
+# comments: the CLI posts plain text (Markdown shows as typed) -> lib.ps1 ConvertTo-KitPlainText; descriptions render Markdown
 # adapter:tracker/clickup: clickup CLI
 Register-KitAdapter 'tracker' 'clickup' @{
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
@@ -19,9 +20,9 @@ Register-KitAdapter 'tracker' 'clickup' @{
     foreach ($n in $names) { $out = __TrCli 'clickup' @('status', 'set', $n, $a.id); if ("$out" -notmatch 'no matching status') { return $out } }
     if (-not $__trDry) { throw "tracker (clickup): no status '$($names -join "' / '")' on the list of task $($a.id) (set tracker.statuses.$($a.logical) in kit.local.json)" }
   }
-  'comment' = { param($a) __TrCli 'clickup' @('comment', 'add', $a.id, $a.text) }
+  'comment' = { param($a) __TrCli 'clickup' @('comment', 'add', $a.id, (ConvertTo-KitPlainText $a.text)) }
   'comments' = { param($a) @(__TrJson (__TrCli 'clickup' @('comment', 'list', $a.id, '--json'))) | Where-Object { $_ } | ForEach-Object { __TrComment $_.user.username $_.date $_.comment_text $_.id } }
-  'comment-edit' = { param($a) __TrCli 'clickup' @('comment', 'edit', $a.comment, $a.text) }   # a kit comment's next round (lib.ps1 Set-TrackerKitComment)
+  'comment-edit' = { param($a) __TrCli 'clickup' @('comment', 'edit', $a.comment, (ConvertTo-KitPlainText $a.text)) }   # a kit comment's next round (lib.ps1 Set-TrackerKitComment)
   'comment-delete' = { param($a) __TrCli 'clickup' @('comment', 'delete', $a.comment, '--yes') }
   'create' = { param($a)
     $c = @('task', 'create', '--list-id', $a.list, '--name', $a.name, '--markdown-description', $a.description, '--json'); $as = $a.assignee

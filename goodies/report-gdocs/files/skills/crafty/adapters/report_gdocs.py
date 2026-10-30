@@ -97,7 +97,7 @@ def selftest(expect, tmp, md):
         html_up = open(calls[0][1]['upload'], encoding='utf-8').read()
         expect('gdocs: an earlier link is updated in place (files.update, same id and link, no create / share); tables upload as HTML tables',
                u2 == 'https://docs.google.com/document/d/1AbC/edit' and len(up) == 1 and len(calls) == 1 and calls[0][1]['params']['fileId'] == '1AbC'
-               and '<th>Steps</th>' in html_up and '<td>T1</td>' in html_up)
+               and '<b>Steps</b></th>' in html_up and '>T1</td>' in html_up)
         use({}); ev = dt.make_evidence('ev', [png])
         expect('gdocs evidence: a Drive folder, an image src per file', calls[0][1]['body']['mimeType'].endswith('folder') and ev['files']['g.png']['src'].endswith('id=1AbC'))
     finally:

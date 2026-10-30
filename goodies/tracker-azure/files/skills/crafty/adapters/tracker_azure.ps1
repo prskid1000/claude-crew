@@ -20,7 +20,7 @@ function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$
   __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
 }
 function __TrAzSet($Id, $F) { __TrAz 'PATCH' "wit/workitems/$Id" @(foreach ($k in @($F.Keys)) { @{ op = 'add'; path = "/fields/$k"; value = $F[$k] } }) 'application/json-patch+json' }
-function __TrHtml([string]$t) { [Net.WebUtility]::HtmlEncode($t) -replace "`r?`n", '<br>' }
+function __TrHtml([string]$t) { [Net.WebUtility]::HtmlEncode((ConvertTo-KitPlainText $t)) -replace "`r?`n", '<br>' }   # Markdown marks would show as typed
 function __TrUnHtml([string]$t) { [Net.WebUtility]::HtmlDecode(($t -replace '<br\s*/?>|</(p|div|li)>', "`n" -replace '<[^>]+>')).Trim() }
 Register-KitAdapter 'tracker' 'azure' @{
   'url' = { param($a) "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '<tracker.org>')/$(Get-KitSetting 'tracker.project' '<tracker.project>')/_workitems/edit/$($a.id)" }

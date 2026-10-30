@@ -4,6 +4,8 @@
 # Sections: L5 helpers · L30 build
 # ---- helpers: HTML escape, palette, chips, images
 function Esc($t) { [System.Net.WebUtility]::HtmlEncode([string]$t) }
+# escaped text with its `backtick` spans monospace on grey (a span: Docs' import drops <code> styles)
+function EscCode($t) { [regex]::Replace((Esc $t), '`([^`]+)`', { "<span style=`"font-family:'Roboto Mono';font-size:9pt;background-color:#f1f3f4`">$($args[0].Groups[1].Value)</span>" }) }
 
 $script:Palette = @{
   PASS           = @{ fg = '#166534'; bg = '#dcfce7'; label = 'PASS' }
@@ -73,14 +75,14 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   # Results table
   A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Results</h2>"
   A "<table style='border-collapse:collapse;width:100%'><tr>"
-  foreach ($c in @(@('Check', '14%'), @('Result', '12%'), @('Observed', '34%'), @('Evidence', '40%'))) { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff;width:$($c[1])'><b>$($c[0])</b></td>" }
+  foreach ($c in @(@('Check', '14%'), @('Result', '12%'), @('Observed', '34%'), @('Evidence', '40%'))) { A "<th style='$script:Cell;background:#1f3a68;color:#ffffff;text-align:left;width:$($c[1])'><b>$($c[0])</b></th>" }   # th: Docs repeats the header row on each page
   A "</tr>"
   $i = 0
   foreach ($c in $checks) {   # evidence inline in its row: images, then one line per data file
     $p = (Pal $c.result); $zebra = if ($i++ % 2) { '#f8fafc' } else { '#ffffff' }
     $v = if ($vs = VStatus $c) { "<br><span style='font-size:8pt;color:#374151'>re-test: $(Esc $vs)</span>" } else { '' }
     $ev = (@($c.evidence | Where-Object { $_ -and $Map.files[$_] }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$') { Img $Map $_ ([math]::Min(260, (ImgWidth $_))) } else { "file: <a href='$($Map.files[$_].link)'>$(Esc $_)</a><br>" } }) -join ''
-    A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b> $(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(Esc $c.observed)</td><td style='$script:Cell'>$ev</td></tr>"
+    A "<tr style='background:$zebra'><td style='$script:Cell'><b>$(Esc $c.id)</b> $(Esc $c.screen)</td><td style='$script:Cell;background:$($p.bg);color:$($p.fg)'><b>$($p.label)</b>$v</td><td style='$script:Cell'>$(EscCode $c.observed)</td><td style='$script:Cell'>$ev</td></tr>"
   }
   A "</table>"
 
@@ -89,7 +91,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
     A "<h2 style='font-size:13pt;border-bottom:2px solid #991b1b;padding-bottom:3px;margin-top:16px;color:#991b1b'>Failures in detail</h2>"
     foreach ($c in $fails) {
       A "<h3 style='font-size:11.5pt;margin:12px 0 4px 0'>$(Esc $c.id) — $(Esc $c.screen)</h3><table style='border-collapse:collapse;width:100%'>"
-      A (Fact 'Steps' (Esc $c.what_was_done)); A (Fact 'What we saw' (Esc $c.observed))
+      A (Fact 'Steps' (EscCode $c.what_was_done)); A (Fact 'What we saw' (EscCode $c.observed))
       if ($c.verify) { A (Fact 'Independent re-test' (VFull $c)) }
       A "</table>"
     }
@@ -110,7 +112,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   $all = @($Map.files.Keys | Sort-Object)
   if ($all.Count) {
     A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Evidence index</h2><table style='border-collapse:collapse;width:100%'><tr>"
-    foreach ($c in 'File', 'Check', 'Type', 'Shows') { A "<td style='$script:Cell;background:#1f3a68;color:#ffffff'><b>$c</b></td>" }
+    foreach ($c in 'File', 'Check', 'Type', 'Shows') { A "<th style='$script:Cell;background:#1f3a68;color:#ffffff;text-align:left'><b>$c</b></th>" }
     A "</tr>"
     foreach ($f in $all) {
       $chk = if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+)') { $Matches[1] } else { '' }
