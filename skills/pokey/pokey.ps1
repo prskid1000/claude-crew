@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L705 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L694 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -562,7 +562,7 @@ function Get-Ask($st) {
   $script:askCache[$st.id] = [pscustomobject]@{ id = $pid_; name = $pname }
   $script:askCache[$st.id]
 }
-# one [Bug] per ask (bugs.json, mutex)
+# one [Bug] per ask and QA run (bugs.json, mutex): only a [Bug] this run created is edited; another open one under the ask is never touched
 function Add-NewDefects($st, [object[]]$defects) {
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
   $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
@@ -573,23 +573,12 @@ function Add-NewDefects($st, [object[]]$defects) {
     $f = "$RunDir/bugs.json"
     $all = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
     $groups = [ordered]@{}; if ($all.groups) { foreach ($p in $all.groups.PSObject.Properties) { $groups[$p.Name] = $p.Value } }
-    $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; base = ''; baseCount = 0; entries = @() } }
-    if (-not $s.id -and $ask.id) {
-      $tested = @(@($run.items) | ForEach-Object { @($_.subtasks) | ForEach-Object id })
-      $bp = [WildcardPattern]::Escape([string](Get-KitSetting 'tracker.bugPrefix' '[Bug]'))
-      $open = try { @((Get-TrackerTask $ask.id).subtasks | Where-Object { "$($_.name)" -like "$bp *" -and $_.id -notin $tested -and -not (Test-TrackerStatus $_.status 'closed') }) | Select-Object -First 1 } catch { $null }
-      if ($open) {
-        $o = Get-TrackerTask $open.id
-        $s.id = $open.id; $s.url = $(if ($open.url) { $open.url } else { TaskLink $open.id }); $s.base = [string]$o.description
-        $s.baseCount = if ("$($o.name)" -match '\((\d+)\)\s*$') { [int]$Matches[1] } else { 0 }
-      }
-    }
+    $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; entries = @() } }
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
     $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``") }
-    $n = [int]$s.baseCount + [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
+    $n = [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
     $body = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)`n$(if ($guideUrl) { "- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)`n" })`n" + (($entries | ForEach-Object md) -join "`n")
-    if ($s.base) { $body = "$($s.base.TrimEnd())`n`n$body" }
     if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
     else {
       $t = New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2'

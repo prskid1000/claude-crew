@@ -18,6 +18,9 @@ claim.
 **Load first:** `<kit>/skills/pokey/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead its
 Lead steps L0-L3; app lanes also `skills/phoney/SKILL.md` A1-A4 (goody `android-swarm`; lead: L1, a run's lane APK).
 Then the task's guide and context; the run's `lead-notes.md` before each check.
+Lead: `lead-notes.md` = `# Lead notes: <run>`, `**Result:** <n> in, <n> left out · target <env>`, then `## Prerequisites`
+(table: Item, Flags / accounts / data ids, State), `## Left out` (Task, Reason), `## Answers (newest last)` (`- <time>
+<code>: <question> -> <answer>`); decision and ENV-FIX notes append below.
 
 Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - Board first (`bossy.ps1 board join -Type checky -Agent <CODE> -Run <run> -Claims <phone serial>`; it lists every live agent on
