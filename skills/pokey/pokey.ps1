@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L702 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L703 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -589,7 +589,8 @@ function Add-NewDefects($st, [object[]]$defects) {
     }
     else {
       $t = try { New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2' } catch {   # a related open task grows (owner rule), never a second one
-        if ("$_" -notmatch 'possible duplicate of (\S+)') { throw }; $null = Add-TrackerScope $Matches[1] $body; [pscustomobject]@{ id = $Matches[1]; url = (TaskLink $Matches[1]) } }
+        if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2' -NewTask 'finalize: duplicate check unavailable' }
+        elseif ("$_" -match 'possible duplicate of (\S+)') { $null = Add-TrackerScope $Matches[1] $body; [pscustomobject]@{ id = $Matches[1]; url = (TaskLink $Matches[1]) } } else { throw } }
       if (-not $t.id) { return $null }
       $s.id = $t.id; $s.url = $(if ($t.url) { $t.url } else { TaskLink $t.id })
     }

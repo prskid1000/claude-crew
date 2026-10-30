@@ -18,8 +18,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L36 config · L70 run · L154 tracker · L320 git host · L403 MR · L481 merge · L725 docs · L858 publish · L1068 plugins ·
-  L1082 keepboth · L1101 selftest · L1402 CLI
+Sections: L36 config · L70 run · L154 tracker · L319 git host · L402 MR · L480 merge · L724 docs · L857 publish · L1067 plugins ·
+  L1081 keepboth · L1100 selftest · L1401 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -215,16 +215,15 @@ def prior_gate(task, repo, what):
         kitlog('calls', 'prior-override', {'task': task, 'what': what, 'reason': OVERRIDE})
         return
     p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
-    reg = json.load(open(os.path.join(KIT_DIR, 'skills', 'bossy', 'params.registry.json'), encoding='utf-8'))['params']
-    hours = float(re.search(r'default=([\d.]+)', reg['prior.validHours']).group(1))
-    try:
-        fresh = (datetime.now().astimezone() - datetime.fromisoformat(p['at'])).total_seconds() < hours * 3600
+    try:   # validUntil: crafty.ps1 prior stores it from prior.validHours (pins and learned values included)
+        fresh = datetime.now().astimezone() < datetime.fromisoformat(p['validUntil'])
     except (KeyError, TypeError, ValueError):
         fresh = False
     if not fresh:
         raise SystemExit(f'{what} refused: run crafty.ps1 prior -Task {task} first (check before create)')
     leaf = lambda r: re.split(r'[\\/]', r or '')[-1]
-    hit = [f for f in p.get('found') or [] if isinstance(f, dict) and f.get('kind') and (f.get('kind') == 'task' or not repo or not f.get('repo') or leaf(f['repo']) == leaf(repo))]
+    hit = [f for f in p.get('found') or [] if isinstance(f, dict) and f.get('kind') not in (None, '', 'doc', 'qa')
+           and (f.get('kind') == 'task' or not repo or not f.get('repo') or leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))))]
     if hit:
         kitlog('calls', 'prior-refused', {'task': task, 'what': what, 'found': f"{hit[0].get('kind')} {hit[0].get('ref')}"})
         raise SystemExit(f"{what} refused: already exists: {'; '.join(f'{h.get("kind")} {h.get("ref")} {h.get("title")}' for h in hit)}: "

@@ -1463,15 +1463,15 @@ function Get-KitTitleWords([string]$Text) {
   @(([regex]::Replace("$Text".ToLower(), '\[[^\]]*\]|\S*\d\S*', ' ') -split '[^a-z]+') | Where-Object { $_.Length -ge 3 -and $_ -notin $stop } | Select-Object -Unique)
 }
 # tasks like $Name: the list's open ones (no parent) or the parent's subtasks, and the -Related ones: [{ id, name, score }] best first;
-# score = shared key words / the shorter title's (2+ shared, or all of a one-word title), over tracker.duplicateScore
+# score = shared key words (2+) / the shorter title's, over tracker.duplicateScore
 function Find-KitSimilarTasks([string]$Name, [string]$List, [string]$Parent, [string[]]$Related, [string[]]$Skip = @()) {
   $mine = @(Get-KitTitleWords $Name); if (-not $mine.Count) { return }
   $c = @{}; if (-not $Parent -or $Parent -eq '-') { foreach ($st in @($__trStatus.Keys | Where-Object { $_ -ne 'closed' })) { foreach ($x in @(Get-TrackerTasks $List $st)) { $c["$($x.id)"] = $x } } }
-  foreach ($id in @(@($Parent) + @($Related) | Where-Object { $_ -and $_ -ne '-' })) { $v = Get-TrackerTask $id; if ($id -ne $Parent -and $v.name) { $c[$id] = $v }; foreach ($s in @($v.subtasks)) { $c["$($s.id)"] = $s } }
+  foreach ($id in @(@($Parent) + @($Related) | Where-Object { $_ -and $_ -ne '-' })) { $v = Get-TrackerTask $id; if ($id -ne $Parent -and $v.name) { $c[$id] = $v }; foreach ($s in @($v.subtasks)) { if (-not (Test-TrackerStatus "$($s.status)" 'closed')) { $c["$($s.id)"] = $s } } }
   $min = [double](Get-KitParam 'tracker.duplicateScore')
   @(foreach ($x in $c.Values) { if ("$($x.id)" -in $Skip -or "$($x.id)" -eq $Parent) { continue }
-      $w = @(Get-KitTitleWords $x.name); $n = @($w | Where-Object { $_ -in $mine }).Count; $lo = [math]::Max(1, [math]::Min($w.Count, $mine.Count))
-      if ($n -ge [math]::Min(2, $lo) -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
+      $w = @(Get-KitTitleWords $x.name); $n = @($w | Where-Object { $_ -in $mine }).Count; $lo = [math]::Max(2, [math]::Min($w.Count, $mine.Count))
+      if ($n -ge 2 -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
 }
 # a related task grows instead of a new one: a dated section at the end; the old text (doc links on top) stays as it was
 function Add-TrackerScope([string]$Id, [string]$Item) {
@@ -1486,7 +1486,7 @@ function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$O
   if ($Override) { Write-KitLog calls prior-override @{ task = $Task; what = $What; reason = $Override }; return }
   $p = (Read-KitState (Get-KitTaskFile $Task)).prior
   if (-not $p.at -or ((Get-Date) - [datetime]$p.at).TotalHours -ge [double](Get-KitParam 'prior.validHours')) { throw "$What refused: run crafty.ps1 prior -Task $Task first (check before create)" }
-  $hit = @($p.found | Where-Object { $_ -and $_.kind } | Where-Object { $_.kind -eq 'task' -or -not $Repo -or -not $_.repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })
+  $hit = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' } | Where-Object { $_.kind -eq 'task' -or -not $Repo -or -not $_.repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })
   if ($hit.Count) { Write-KitLog calls prior-refused @{ task = $Task; what = $What; found = "$($hit[0].kind) $($hit[0].ref)" }
     throw "$What refused: already exists: $(@($hit | ForEach-Object { "$($_.kind) $($_.ref) $($_.title)" }) -join '; '): reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or -Override '<reason>'" }
 }

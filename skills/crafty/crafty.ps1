@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1538 dir · L1548 checkpoint ·
-  L1573 prior · L1602 tracker · L1654 host
+  L1573 prior · L1606 tracker · L1658 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1317,7 +1317,7 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
 # a task branch made by hand skips wt new's prior-work gate: the same gate here (crafty.ps1 prior first)
-if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB])\s+(?<br>[^\s;|&]+)') {
+if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB]|branch(\s+-[fct]\S*)*)\s+(?<br>[^\s;|&]+)') {
   $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt new -Override')" } }
 }
 # a Git Bash drive path (/d/x) given to a Windows program lands in \d\x on the current drive: MSYS never converts strings, JSON, env or code
@@ -1576,27 +1576,31 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
   $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
   $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # the branches wt new made for this task: its own work
-  $add = { param($k, $r, $ref, $ti) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti" }) }
+  $add = { param($k, $r, $ref, $ti) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }) }) }
+  $idRx = "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])"   # CU-12 is no hit for CU-123
   $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }
   foreach ($d in @(Find-KitSimilarTasks $words $tt.list $tt.parent @() @($Task))) { & $add task '' $d.id "$($d.name) (score $($d.score))" }
   foreach ($r in @(if ($Repo) { $Repo } elseif ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()) | ForEach-Object name })) {
     $n = ($r -split '[\\/]')[-1]
     foreach ($q in @($tag) + @($Query | Where-Object { $_ })) {
       foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = $since.ToString('o') })) {
-        if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title } } }
+        if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed -and ($q -ne $tag -or "$($m.title) $($m.source_branch)" -match $idRx)) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title } } }
     $dir = @($r, (Get-RepoConf $n checkout $null), (Join-Path $KitConf.ReposRoot $n)) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ '.git')) } | Select-Object -First 1
     if (-not $dir) { continue }
-    foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])" -and ($b -replace '^origin/') -notin $claimed) { & $add branch $n $b '' } }
-    foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 5 2>$null)) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] }
+    foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match $idRx -and ($b -replace '^origin/') -notin $claimed) { & $add branch $n $b '' } }
+    foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 5 2>$null)) {   # a commit on a claimed branch is this task's own
+      $on = @(git -C $dir branch -a --format='%(refname:short)' --contains ($c -split ' ')[0] 2>$null | ForEach-Object { $_ -replace '^origin/' })
+      if ($c -match $idRx -and -not @($on | Where-Object { $_ -in $claimed }).Count) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] } }
     if ($Symbol) { foreach ($g in @(git -C $dir grep -n -F $Symbol "origin/$(Get-RepoConf $n target 'main')" -- 2>$null | Select-Object -First 3)) { & $add code $n (($g -split ':', 4)[1..2] -join ':') '' } }
   }
   $st = Read-KitState (Get-KitTaskFile $Task)
   foreach ($k in @(if ($st.docs) { $st.docs.Keys })) { & $add doc '' $k $st.docs[$k].url }
   foreach ($e in @($st.envRuns | Where-Object { $_ })) { & $add qa '' "$($e.env) $($e.at)" $e.result }
   $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
-  Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); found = $priorHits; claimed = $claimed } }
-  if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "FOUND $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } } else { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
-  exit $(if ($priorHits.Count) { 1 } else { 0 })
+  $gate = @($priorHits | Where-Object { $_.kind -notin 'doc', 'qa' })   # its own docs and QA runs: shown, never a stop
+  Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); validUntil = (Get-Date).AddHours([double](Get-KitParam 'prior.validHours')).ToString('o'); found = $gate; claimed = $claimed } }
+  if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "$(if ($_.kind -in 'doc', 'qa') { 'INFO' } else { 'FOUND' }) $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } }; if (-not $gate.Count) { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
+  exit $(if ($gate.Count) { 1 } else { 0 })
 }
 
 # ---- tracker: lib.ps1 tracker adapters
