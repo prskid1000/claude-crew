@@ -93,12 +93,13 @@ $root = Join-Path (Get-KitPath cache -Create) 'tx'; New-Item -ItemType Directory
 function Invoke-KitAdapter { [pscustomobject]@{ dir = $root; filter = '*.jsonl' } }
 $n1 = @(Get-KitLiveTranscripts (Get-Date) 10).Count; New-Item -ItemType Directory -Force "$root/s2/subagents" | Out-Null; 'x' | Set-Content "$root/s2/subagents/b.jsonl"; $n2 = @(Get-KitLiveTranscripts (Get-Date) 10).Count
 $cf = Get-KitPath transcript-dirs; $c = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; $c[$root].at = (Get-Date).AddMinutes(-2).ToString('o'); $c | ConvertTo-Json -Depth 4 | Set-Content $cf
-"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"
+"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"; '{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":75}}}}' | Set-Content "$root/c.jsonl"; "spend:$((Get-KitSpend "$root/c.jsonl").spend)"; "ss:$(Format-KitSessionStart 'hi' @{ conversationId = 'c' })|$(Format-KitSessionStart '' @{ conversationId = 'c' })|$(ConvertTo-KitAskPayload @() | ConvertTo-Json -Compress)"
 '@ @((Lib))
 Expect "net: after a timeout the next call waits x1.5, then back ($(@($nr -match '^backoff:') -join ' '))" ($nr -contains 'backoff:40,60,60,40')
 Expect "net: a timeout is observed at the learned value, not the x1.5 back-off ($(@($nr -match '^tobs:') -join ' '))" ($nr -contains 'tobs:30,30|45,45')
 Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
-Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' '))" ($nr -contains 'tx:112')
+Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75')
+Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
 # cleanup: tracking.json.migrated goes (owner decision 3)
 '{}' | Set-Content "$(TkPath $k tracking -Create).migrated"
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String

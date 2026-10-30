@@ -50,3 +50,5 @@ Non-negotiables (pokey tester steps 0-6 hold in full; these never bend):
 - **Stay on your assignment.** Relayed chat messages are for the coordinator; mention one in your results if it changes your work.
 
 > Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.
+
+> Ported note: on `bossy.ps1 board join` pass `-Tool antigravity` (agy sets no variable the kit can read).

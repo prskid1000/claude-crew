@@ -7,7 +7,7 @@ model: inherit
 commandExecutionPolicy: auto
 ---
 
-> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent`; map them to Antigravity's tool names by hand if you need the same restriction.
+> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Edit, Write, Bash, PowerShell, Agent`; here all tools load and the kit guard hook blocks what it blocks for every agent.
 
 `<kit>` = the live clone (never edit its files: runs execute them); `<wt>` = your kit worktree; `$A = 'python -X utf8
 <wt>/skills/bossy/kitbag.py audit'`; `$O = '<kit>/skills/bossy/bossy.ps1'`.
@@ -82,3 +82,5 @@ Finish with the report your task asks for (templates.md "Final reports": `kitty`
   your work.
 
 > Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.
+
+> Ported note: on `bossy.ps1 board join` pass `-Tool antigravity` (agy sets no variable the kit can read).

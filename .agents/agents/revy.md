@@ -7,7 +7,7 @@ model: inherit
 commandExecutionPolicy: auto
 ---
 
-> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Bash`; map them to Antigravity's tool names by hand if you need the same restriction.
+> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Bash`; here all tools load and the kit guard hook blocks what it blocks for every agent.
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).
 
@@ -53,3 +53,5 @@ when it changes readability materially.
 `pwsh -File <kit>/skills/bossy/bossy.ps1 learn -Skill revy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`
 
 > Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.
+
+> Ported note: on `bossy.ps1 board join` pass `-Tool antigravity` (agy sets no variable the kit can read).

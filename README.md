@@ -176,9 +176,13 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
 Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
 skills listed in `localOnly`.
-Not ported to Codex / Antigravity: the SendMessage guard hook, the live-kit edit guard on Antigravity file edits, the Workflow
-and Skill tools, the Antigravity tools allow-list; the board, learn signals and decision pauses run by hand from the ported
-procedures.
+Codex / Antigravity (goody `ports`, `kitbag.py port`): start them in the workspace root (Codex: a trusted project in
+`~/.codex/config.toml`, kit hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>`
+links, the org rules (`.agents/rules/` always-on, `AGENTS.override.md` for Codex; local only) and each CLI's mechanics
+(GEMINI.md, AGENTS.override.md). Antigravity runs the workflows (`run_workflow` on `.agents/kit-workflows/<name>.py`); Codex
+follows `.codex/workflows/*.md` by hand. Not ported: the SendMessage guard, the guard on file edits outside shell commands,
+Claude's per-agent tool lists (all tools load; the guard covers both), Artifacts, the CronList check (the heartbeat:
+Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Codex outside Plan mode.
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its stderr `NEXT=<n>`
@@ -294,7 +298,7 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
   to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1` in the session env or the command),
   a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
   task tracks (an MR with no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One
-  machine (the memory gate is local); workflows, hooks and skills are Claude Code-only (Codex / Antigravity get ported agents and procedures).
+  machine (the memory gate is local); Codex runs no workflows (ported procedures, "Install").
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main; an optional feature goes to the `goodies` branch, not the core.

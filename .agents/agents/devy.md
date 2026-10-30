@@ -57,3 +57,5 @@ Finish with the report your task asks for (crafty templates.md "Final reports").
   question is never "build nothing"); mention it in your report if it seems to change your work.
 
 > Ported note: owner decisions go only through `bossy.ps1 decide ask` (blocking by default, `-Fyi` when nothing waits); a subagent never asks the user directly: the coordinator relays it.
+
+> Ported note: on `bossy.ps1 board join` pass `-Tool antigravity` (agy sets no variable the kit can read).

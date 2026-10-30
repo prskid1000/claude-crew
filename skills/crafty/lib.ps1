@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1086 supervise sweep ·
-  L1138 supervise report · L1201 tracker · L1461 prior · L1576 git-host · L1734 kitlog · L1854 params · L2167 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L406 leases · L864 status · L1095 supervise sweep ·
+  L1147 supervise report · L1210 tracker · L1470 prior · L1585 git-host · L1743 kitlog · L1863 params · L2176 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -356,6 +356,9 @@ function Get-KitSpend([string]$File) {
   if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
   $t = @(Get-Content -LiteralPath $File -Tail 300)
   for ($i = $t.Count - 1; $i -ge 0; $i--) {
+    if ($t[$i] -match '"token_count"') {   # Codex rollout: the last request's context = its compaction measure
+      $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.payload.info.last_token_usage; if ($u) { return [pscustomobject]@{ spend = [int]$u.total_tokens; model = '' } }
+    }
     if ($t[$i] -notmatch '"usage"') { continue }
     $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.message.usage; if (-not $u) { continue }
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
@@ -912,7 +915,7 @@ Register-KitAdapter 'transcript' 'claude' @{
 # adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl {timestamp, type, payload}; line 1 session_meta (cli_version);
 # the newest turn marker: task_complete = its turn ended
 Register-KitAdapter 'transcript' 'codex' @{
-  'root' = { @{ dir = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions'; filter = 'rollout-*.jsonl' } }
+  'root' = { @{ dir = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions'; filter = 'rollout-*.jsonl'; sub = '*/*/*' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file 'function_call"|task_started|task_complete' { param($o, $s) $p = $o.payload
       if (-not $s.tool -and $o.type -eq 'response_item' -and $p.type -eq 'function_call') { $s.tool = "$($p.name)"; $g = try { "$($p.arguments)" | ConvertFrom-Json } catch { $null }; $s.what = "$(if ($g.cmd) { $g.cmd } else { $g.command })" }
       elseif ($null -eq $s.ended -and $o.type -eq 'event_msg' -and $p.type -in 'task_started', 'task_complete') { $s.ended = $p.type -eq 'task_complete' }
@@ -922,7 +925,7 @@ Register-KitAdapter 'transcript' 'codex' @{
 # adapter:transcript/antigravity: brain/<id>/.system_generated/logs/transcript.jsonl {step_index, type, status, tool_calls[{name, args}]};
 # the parent's brain/<parent>/.system_generated/subagents/<id>.json state SUBAGENT_STATE_KILLED = killed
 Register-KitAdapter 'transcript' 'antigravity' @{
-  'root' = { @{ dir = Join-Path $HOME '.gemini/antigravity-cli/brain'; filter = 'transcript.jsonl' } }
+  'root' = { @{ dir = Join-Path $HOME '.gemini/antigravity-cli/brain'; filter = 'transcript.jsonl'; sub = '*/.system_generated/logs' } }
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_calls"' { param($o, $s) $c = @($o.tool_calls)[-1]; if ($c.name) { $s.tool = "$($c.name)"; $s.what = "$($c.args.toolSummary)" }; [bool]$c.name }
     if ($s) { $id = Split-Path (Split-Path (Split-Path (Split-Path $s.file))) -Leaf; $brain = Split-Path (Split-Path (Split-Path (Split-Path $s.file)))
       $k = @(Get-Item -Force -Path (Join-Path $brain "*/.system_generated/subagents/$id.json") -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })[0]
@@ -931,6 +934,11 @@ Register-KitAdapter 'transcript' 'antigravity' @{
 # adapter:transcript/none: no transcript (another tool): board and journal only
 Register-KitAdapter 'transcript' 'none' @{ 'root' = { $null }; 'last' = { $null } }
 # adapter-end:transcript
+# a SessionStart hook's output: Antigravity (its input has a conversationId) takes injectSteps; Claude Code and Codex a systemMessage
+function Format-KitSessionStart([string]$Text, $Hook) {
+  if ($Hook.conversationId) { @{ injectSteps = @($(if ($Text) { @{ systemMessage = @{ systemMessage = $Text } } })) } | ConvertTo-Json -Compress -Depth 5 }
+  elseif ($Text) { @{ systemMessage = $Text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } } | ConvertTo-Json -Compress -Depth 4 }
+}
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
 # first rule that holds: STOPPED (crashed, error, killed, session gone) · FINISHED (left, a journal result, turn complete) · WAITING
 # (a named wait) · ACTIVE (progress within $StuckMin) · STUCK; then the since and next cells of that state
@@ -942,12 +950,13 @@ function Set-KitStatusState($R, [datetime]$Now, [double]$StuckMin) {
   $R | Add-Member -Force NoteProperty next $(switch ($s) { 'WAITING' { $R.waitNext } 'STUCK' { "read its transcript tail; resume it or $rc" } 'STOPPED' { $rc } default { $R.next } }); $R
 }
 # agent transcripts (not workflow steps: <root>/<session>/subagents/*) written in the last $Minutes: live agents, board row or not; the
-# walk over every session folder is cached 60 s (cache/transcript-dirs.json: the subagents folders per root)
+# walk over every session folder is cached 60 s (cache/transcript-dirs.json: the folders per root; root.sub, Claude: */subagents)
 function Get-KitLiveTranscripts([datetime]$Now, [double]$Minutes, [string]$Kind = 'claude') {
+  if ($Kind -eq '*') { foreach ($k in 'claude', 'codex', 'antigravity') { Get-KitLiveTranscripts $Now $Minutes $k }; return }
   $r = Invoke-KitAdapter transcript $Kind root; if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return }
   $cf = Get-KitPath transcript-dirs -Create; $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $c) { $c = @{} }
   $hit = $c[$r.dir]; $dirs = if ($hit -and ((Get-Date) - [datetime]$hit.at).TotalSeconds -lt 60) { @($hit.dirs) } else {
-    $w = @(Get-ChildItem -LiteralPath $r.dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'subagents' } | Where-Object { Test-Path -LiteralPath $_ })
+    $w = @(Get-Item -Force -Path (Join-Path $r.dir $(if ($r.sub) { $r.sub } else { '*/subagents' })) -ErrorAction SilentlyContinue | Where-Object PSIsContainer | ForEach-Object FullName)
     $c[$r.dir] = @{ at = (Get-Date).ToString('o'); dirs = $w }; try { Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 4 -Compress) } catch {}; $w }
   foreach ($sd in $dirs) { Get-ChildItem -LiteralPath $sd -Filter $r.filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $Now.AddMinutes(-$Minutes) } }
 }
@@ -1548,7 +1557,7 @@ function Format-KitFyiList($Decisions) {
 # blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
 function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
   $ds = @($Decisions | Where-Object { @(Get-KitDecisionOrder $_).Count -ge 2 } | Select-Object -First $Max)   # the tools need 2-4 options: fewer -> its text
-  [pscustomobject]@{ ids = @($ds.id); questions = @(foreach ($d in $ds) {
+  [pscustomobject]@{ ids = @($ds | ForEach-Object id); questions = @(foreach ($d in $ds) {
     $h = if ("$($d.item)") { "$($d.item)" } else { 'Decision' }
     [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
       options = @(Get-KitDecisionOrder $d | Select-Object -First 4 | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }

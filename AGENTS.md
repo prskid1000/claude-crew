@@ -66,9 +66,8 @@ the **Target**. A mixed request is split and each part routed on its own.
   reused, never re-read).
   Each loads its skill first; its Character shapes judgement and tone, never a rule or the Writing standards. Step 0 of every
   agent reads the board (who is alive on this machine); a disagreement with another agent's result: `board msg` it, still
-  split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the same agents are ported
-  to `.codex/agents/*.toml` / `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` /
-  `.agents/workflows/*.md` by hand.
+  split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the ported agents,
+  workflows and mechanics are in AGENTS.override.md / GEMINI.md (goody `ports`).
 - **Autonomous:** user invocation is the standing opt-in. The coordinator and agents run all routed steps (worktrees, checks, edits, local test loops, reviews, CI, merging) without approval pauses. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then `opsy` runs it end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
