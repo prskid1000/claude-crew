@@ -23,7 +23,7 @@ Non-negotiables:
 - Board first (`bossy.ps1 board join -Type devy -Agent <your id> ...`; it lists every live agent on this machine); DUPLICATE
   for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
   `board msg` the holder, never collide; at the end `bossy.ps1 release -Agent <your id>` (every lease: lane, env, GPU,
-  build, tabs; leave and the workflow repeat it), then `leave`.
+  build, tabs; leave and the workflow repeat it), kill your background shells (crafty Rules), then `leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` at each step boundary and `board beat` after it (spend / budget, PAUSE: do
   what it says); HANDOFF -> write the resume brief it names, WIP commit, `board leave -Handoff <brief>`, return `handoff` =
   that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").

@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L609 pause · L653 resume · L711 program · L756 param ·
-  L762 track · L1067 anomalies · L1085 supervise · L1391 report · L1470 audit · L1530 storage · L1741 bugbrief · L1843 cleanup ·
-  L1967 learn · L1997 decide · L2065 health · L2128 retro due · L2138 tidy · L2208 the kit origin's main and goodies ·
-  L2224 setup · L2290 guard-sendmessage
+  L762 track · L1067 anomalies · L1085 supervise · L1390 report · L1469 audit · L1529 storage · L1740 bugbrief · L1842 cleanup ·
+  L1966 learn · L1996 decide · L2064 health · L2127 retro due · L2137 tidy · L2207 the kit origin's main and goodies ·
+  L2223 setup · L2289 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1118,7 +1118,6 @@ $idleMin = [double](Get-KitParam 'supervise.stuckMinutes')   # a row with no pro
 $wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $toolErr = 0; $errRun = ''; $now = Get-Date; $t0 = $now
 $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList
 $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
-# a timed-out sweep still shows them
 # $cols (optional): kind, who, age, problem = the Flags table cells; what stays the whole line (dedupe, -Ack, detail file)
 function Flag($lvl, $what, $action, $cols) { [void]$flags.Add([pscustomobject](@{ level = $lvl; what = $what; action = $action } + $(if ($cols) { $cols } else { @{} }))) }
 function L($s) { [void]$lines.Add($s) }
@@ -1371,7 +1370,7 @@ $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else 
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 Complete-KitSweep $kitSweep $state; $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 if ($kitSweep.skipped.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($kitSweep.skipped) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
-$report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); flags = @($flags); info = $script:ownerInfo }
+$report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShells; flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }

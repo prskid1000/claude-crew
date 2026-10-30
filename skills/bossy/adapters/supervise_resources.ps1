@@ -2,12 +2,12 @@
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, env leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of
-the supervise report, seats and leases in board show and recover, the status resource rows, release (every lease of an agent).
+the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), seats and leases in board show and recover, the status resource rows, release (every lease of an agent).
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L42 supervise · L168 release · L197 lines · L222 cleanup
+Sections: L13 builds · L42 supervise · L168 shells · L273 release · L302 lines · L327 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -100,7 +100,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   "qa seats: $(@(Get-ChildItem (Join-Path $seatDir 'seats') -Filter *.json -ErrorAction SilentlyContinue).Count) taken"
 
   # RAM rows: test browsers, phones (up or waiting), builds; one process snapshot, each process counted once
-  $ps = @(Get-SysProcs); $kids = @{}; $byId = @{}; foreach ($p in $ps) { $kids[$p.ParentId] = @($kids[$p.ParentId]) + $p; $byId[$p.Id] = $p }
+  $ps = @(Get-KitSweepProcs); $kids = @{}; $byId = @{}; foreach ($p in $ps) { $kids[$p.ParentId] = @($kids[$p.ParentId]) + $p; $byId[$p.Id] = $p }
   $seen = @{}; $tree = { param($r) $g = 0.0; $st = [Collections.Stack]::new(); $st.Push($r); while ($st.Count) { $q = $st.Pop(); if (-not $q -or $seen[$q.Id]) { continue }; $seen[$q.Id] = 1; $g += $q.WorkingSet; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }; $g / 1GB }
   $ports = try { Get-Content (Get-KitPath browser-ports) -Raw | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $ports) { $ports = @{} }; $keyOf = @{}; foreach ($k in $ports.Keys) { $keyOf["$($ports[$k])"] = $k }
   $isBrowser = { param($p) $p.Name -match '^(chrome|msedge|chromium)(\.exe)?$' }
@@ -163,6 +163,111 @@ function Format-KitResourceTable($Rows) {
   if (-not @($Rows).Count) { return }
   ''; '| Resource | Holder | Since | Last seen | Last used |'; '|---|---|---|---|---|'
   foreach ($r in @($Rows | Sort-Object resource)) { "| $($r.resource) | $($r.holder) | $(if ($r.since) { ([datetime]$r.since).ToString('HH:mm') } else { '—' }) | $($r.seen) | $($r.used) |" }
+}
+
+# ---- shells: background shells Claude Code agents started (supervise Shells table, ORPHAN / STUCK flags, -AutoFix kills)
+# one full process snapshot per supervise sweep (RAM rows, shells)
+function Get-KitSweepProcs { if ($null -eq $script:KitSweepProcs) { $script:KitSweepProcs = @(Get-SysProcs) }; $script:KitSweepProcs }
+# the command a tool shell runs: the body of the harness's eval '...' (bash), else what follows -Command / -c
+function Get-KitShellCommand([string]$CommandLine) {
+  $c = "$CommandLine"
+  if ($c -match "(?s)\beval '(.*)'\s*(<\s*/dev/null\s*)?&&\s*pwd -P" -or $c -match "(?s)\beval '(.*)'") { return ($Matches[1] -replace "'\\''", "'" -replace '\\"', '"').Trim() }
+  if ($c -match '(?i)\s-(?:e|enc|EncodedCommand)\s+([A-Za-z0-9+/=]{8,})') { try { return [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])).Trim() } catch {} }
+  if ($c -match '(?is)\s-(?:c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace '\\"', '"').Trim() }
+  ($c -replace '^\s*("[^"]*"|\S+)\s*', '').Trim()
+}
+# its first line without a leading cd, for the table
+function Get-KitShellShort([string]$Cmd) {
+  $s = ((@("$Cmd" -split "`r?`n" | Where-Object { $_.Trim() })[0]) -replace '^\s*(cd|Set-Location|pushd)\s+("[^"]*"|''[^'']*''|\S+)\s*(&&|;)\s*', '' -replace '\s+', ' ').Trim()
+  if ($s) { $s } else { "$Cmd".Trim() }
+}
+# the folder it works in: its first cd, else -Dir (Git Bash /d/x -> D:/x); '' when unknown or not absolute
+function Get-KitShellDir([string]$Cmd) {
+  if ($Cmd -notmatch '(?:^|[\s;&|(])(?:cd|Set-Location|pushd)\s+("[^"]+"|''[^'']+''|[^\s;&|)]+)' -and $Cmd -notmatch '\s-Dir\s+("[^"]+"|''[^'']+''|[^\s;&|)]+)') { return '' }
+  $d = $Matches[1].Trim('"', "'"); if ($KitIsWindows) { $d = $d -replace '^/([A-Za-z])(?=/|$)', '$1:' }
+  if ($d -match '[$%`~]' -or ($KitIsWindows -and $d -notmatch '^[A-Za-z]:[\\/]|^\\\\') -or -not [IO.Path]::IsPathRooted($d)) { return '' }; $d
+}
+# shells whose parent is Claude Code (claude, or node running it); never this sweep's own chain
+function Get-KitAgentShells($Procs) {
+  $byId = @{}; foreach ($p in $Procs) { $byId[$p.Id] = $p }
+  $mine = @{}; for ($q = $byId[$PID]; $q -and -not $mine[$q.Id]; $q = $byId[$q.ParentId]) { $mine[$q.Id] = 1 }
+  foreach ($p in $Procs) {
+    $par = $byId[$p.ParentId]
+    if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^claude(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
+  }
+}
+# the transcript whose Bash / PowerShell tool_use ran this command, nearest in time to the shell's start; $null: none
+function Find-KitShellTranscript([string]$Cmd, [datetime]$Created) {
+  $frag = "$(@([regex]::Matches($Cmd, '[^"\\\r\n\t]{8,}') | Sort-Object Length -Descending)[0])"; if (-not $frag) { return $null }
+  $frag = $frag.Substring(0, [math]::Min(120, $frag.Length)); $r = Invoke-KitAdapter transcript claude root
+  if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return $null }
+  $files = @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $Created.AddMinutes(-1) } | ForEach-Object FullName)
+  $best = $null
+  foreach ($h in @(if ($files) { Select-String -LiteralPath $files -SimpleMatch -Pattern $frag -ErrorAction SilentlyContinue })) {
+    if ($h.Line -notmatch '"tool_use"') { continue }
+    $o = try { $h.Line | ConvertFrom-Json -Depth 80 } catch { continue }
+    $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frag) })[0]; if (-not $u) { continue }
+    $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Created).TotalSeconds) } else { 1e9 }
+    if ($gap -le 120 -and (-not $best -or $gap -lt $best.gap)) { $best = [pscustomobject]@{ file = $h.Path; bg = [bool]$u.input.run_in_background; gap = $gap } }
+  }
+  $best
+}
+# its owner: a main session transcript = the coordinator (never finished); a workflow step: finished = a journal result; an
+# Agent-tool subagent: its .meta.json finished; a board entry on that transcript: finished once left
+function Get-KitShellOwner([string]$Tx, $Board) {
+  if (-not $Tx) { return [pscustomobject]@{ name = 'unknown'; finished = $false; coordinator = $false } }
+  $full = { param($x) [IO.Path]::GetFullPath("$x").TrimEnd('\', '/') }
+  if ((& $full (Split-Path $Tx)) -eq (& $full (Invoke-KitAdapter transcript claude root).dir)) { return [pscustomobject]@{ name = 'coordinator'; finished = $false; coordinator = $true } }
+  $e = @($Board | Where-Object { $_.transcript -and (& $full $_.transcript) -eq (& $full $Tx) } | Sort-Object { [datetime]$_.joined })[-1]
+  $name = $e.agent; $fin = $e.status -eq 'left'; $id = if ($Tx -match 'agent-(\w+)\.jsonl$') { $Matches[1] } else { '' }
+  $j = Join-Path (Split-Path $Tx) 'journal.jsonl'
+  if (Test-Path -LiteralPath $j) {
+    foreach ($l in @(Select-String -LiteralPath $j -SimpleMatch "`"$id`"" | ForEach-Object { try { $_.Line | ConvertFrom-Json } catch {} })) { if ($l.type -eq 'started' -and -not $name) { $name = (($l.label -split ':', 2)[-1] -split '@')[0] }; if ($l.type -eq 'result') { $fin = $true } }
+  } else { $m = try { Get-Content -LiteralPath ($Tx -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }; if (-not $name) { $name = $m.agentType }; if ($m.finished) { $fin = $true } }
+  [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false }
+}
+# supervise: Shells rows + flags; State.shells (pid@start): transcript, CPU sample, flat and STUCK sweeps. ORPHAN = owner finished or
+# its dir gone; STUCK = no CPU growth since the last sweep and older than supervise.shellStuckMinutes (learned: lifetimes of shells
+# that ended on their own). -AutoFix kills only a finished owner's shell whose dir is gone or that was STUCK 2+ sweeps
+function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs)) {
+  $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
+  $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
+  $board = @(Read-KitJsonFiles (Get-KitPath board)); $rows = [Collections.Generic.List[object]]::new(); $flags = [Collections.Generic.List[object]]::new(); $all = 0
+  foreach ($p in @(Get-KitAgentShells $Procs)) {
+    $all++; $made = if ($p.Created) { [datetime]$p.Created } else { $Now }; $age = ($Now - $made).TotalMinutes; $key = "$($p.Id)@$($made.ToString('s'))"
+    $s = if ($old[$key] -is [Collections.IDictionary]) { $old[$key] } else { @{} }; $new[$key] = $s; if ($s.killed) { continue }; $cmd = Get-KitShellCommand $p.CommandLine
+    if (-not $s.ContainsKey('tx')) { $f = Find-KitShellTranscript $cmd $made; $s.tx = "$($f.file)"; $s.bg = [bool]$f.bg }   # once: the tool_use line is written before the shell starts
+    $tree = @{}; $cpu = 0.0; $st = [Collections.Stack]::new(); $st.Push($p)
+    while ($st.Count) { $q = $st.Pop(); if ($tree[$q.Id]) { continue }; $tree[$q.Id] = 1; $cpu += [double]$q.Cpu; foreach ($c in @($kids[$q.Id])) { if ($c) { $st.Push($c) } } }
+    $flat = $null -ne $p.Cpu -and $null -ne $s.cpu -and [math]::Abs($cpu - [double]$s.cpu) -lt 0.02
+    $s.cpu = $cpu; $s.age = [math]::Round($age, 1)
+    if (-not $s.bg -and $age -lt 10) { continue }   # a foreground tool call ends within the Bash tool's 10 min cap
+    $s.listed = $true; $o = Get-KitShellOwner $s.tx $board; $dir = Get-KitShellDir $cmd; $gone = $dir -and -not (Test-Path -LiteralPath $dir)
+    $stuck = $flat -and $age -ge $stuckMin
+    if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge [double](Get-KitParam 'supervise.heartbeatMinutes')) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
+    $why = @($(if ($o.finished) { "owner $($o.name) finished" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU growth, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
+    $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim()
+    if ($o.finished -and ($gone -or $s.stuck -ge 2) -and $AutoFix -and (Test-KitPid $p.Id $made)) {
+      if ($KitIsWindows) { taskkill /PID $p.Id /T /F 2>&1 | Out-Null } else { foreach ($t in @($tree.Keys)) { Stop-SysProcess $t } }
+      $s.killed = $true; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = $o.name; why = $why; dir = $dir; what = "killed shell $($p.Id) ($why): $($one.Substring(0, [math]::Min(300, $one.Length)))" })
+      $flags.Add([pscustomobject]@{ level = 'INFO'; what = "auto-fixed: killed shell $($p.Id) of $($o.name) ($why): $short"; action = 'Nothing to do.' }); continue
+    }
+    $shellState = @($(if ($o.finished -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
+    $tk = "taskkill /PID $($p.Id) /T /F"
+    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($o.finished) { "supervise -AutoFix kills it once its dir is gone or STUCK 2 sweeps; now: $tk" } else { "$($o.name) ends it, else $tk" }
+    $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir })
+    $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
+    if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }
+  }
+  foreach ($k in @($old.Keys)) { $g = $old[$k]; if (-not $new.ContainsKey($k) -and $g -is [Collections.IDictionary] -and $g.listed -and -not $g.killed) { Add-KitParamObs 'supervise.shellStuckMinutes' ([double]$g.age) -Default 30 } }   # it ended on its own
+  $State.shells = $new
+  [pscustomobject]@{ rows = @($rows); flags = @($flags); line = "shells: $all agent shell(s), $($rows.Count) listed" }
+}
+# supervise hook (section 3; the verb's $state, $now, Within): the sweep line and flags; the rows go to $script:KitShells (report)
+function Get-KitSuperviseGuardShells([switch]$AutoFix) {
+  $script:KitShells = @(); if (-not (Within 'shells')) { return }
+  try { $sh = Get-KitShellSweep $state $now -AutoFix:$AutoFix; $script:KitShells = $sh.rows; $sh.line; $sh.flags }
+  catch { [pscustomobject]@{ level = 'WATCH'; what = "shell sweep failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Get-KitShellSweep.' } }
 }
 
 # ---- release: every lease of an agent (bossy.ps1 release, board leave, the workflows after each agent stage); idempotent

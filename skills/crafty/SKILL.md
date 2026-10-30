@@ -68,12 +68,12 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
   a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo
-  directly; waiting is normal, a killed build is not a code failure. Tool timeout 600000 ms (or `run_in_background`). A gate
-  still queued when you must stop: push, open the MR as Draft with `Not run: <gate>`, report NOT_MERGED. No dev servers by hand
-  (the local env runs them), at most one headless browser; phones only through
-  `phoney.ps1 acquire` (never `up`/`down`; goody `android-swarm`); Docker / WSL / VMs: `crafty.ps1 runtime use -Name <r>` first,
-  `release` when done (goody `runtimes`; the guard leases for an agent that forgets).
-- **Tests** (stack-agnostic; reviewers check them, the dev loop is the guard because CI may skip tests):
+  directly; waiting is normal; a killed build is no bug. Tool timeout 600000 ms, or `run_in_background` bounded
+  (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
+  `Not run: <gate>`, report NOT_MERGED. No dev servers by hand (the local env runs them), at most one headless browser; phones
+  only through `phoney.ps1 acquire` (never `up`/`down`; goody `android-swarm`); Docker / WSL / VMs: `crafty.ps1 runtime use
+  -Name <r>` first, `release` when done (goody `runtimes`; the guard leases if you forget).
+- **Tests** (any stack; reviewers check them; CI may skip tests, the dev loop guards):
   - Ship: unit tests for new/changed logic; a regression test per fixed bug (red before, green after); integration/API tests
     for endpoints touched; UI/component tests for screens touched where the stack supports it.
   - Shape: arrange / act / assert; one behaviour per test; names `should_<behaviour>_when_<condition>` (or the repo's style);
@@ -88,9 +88,9 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
     `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
     move the logic into a pure helper the component calls, spec that helper (never a local copy), list the wiring as a live check.
   - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
-    (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or its local manual check.
-- **Commits:** subject per `commitStyle` (default Conventional Commits) + the attribution trailer your harness or org asks
-  for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config, never `git stash`.
+    (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or local manual check.
+- **Commits:** subject per `commitStyle` (default Conventional Commits) + any attribution trailer your harness or org
+  asks for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config or `git stash`.
 - **Checkpoint** (crash, pause): at each step boundary (worktree, commit sha, testing goals, loop round N + result, MR url,
   review round, CI result, testing doc url, tracker, merge) `& $D checkpoint -Agent <id> -Run <run> -Step <worktree|commit|goals|
   loop|mr|review|ci|doc|tracker|merge> -Evidence "<sha|url|result>" -Dir <wt>`, and a WIP commit (`chore(wip): <step>`) after

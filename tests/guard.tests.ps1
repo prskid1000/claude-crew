@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes.
+guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
+(the guard's note, supervise's Shells sweep).
 Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -58,5 +59,32 @@ $dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
 Expect 'guard: a write off the layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
 $gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
 Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
+$bgc = foreach ($c in @('until curl -s x; do sleep 5; done', 1), @("cd x; cat > /dev/null; python - <<'EOF'`nEOF", 1), @('until x; do sleep 5; done', 0), @('timeout 5 curl x; until curl -s x; do sleep 2; done', 1), @('git log | cat', 1), @("python - <<'PY'`nprint(1)`nPY", 1), @('for i in $(seq 1 20); do sleep 5; done', 1), @('timeout 600 bash -c "until x; do sleep 5; done"', 1), @("cat <<'EOF' > n.md`nx`nEOF", 1)) {
+  "$(((@{ tool_name = 'Bash'; tool_input = @{ command = $c[0]; run_in_background = [bool]$c[1] } } | ConvertTo-Json -Compress) | Px $D guard | Out-String) -match 'background shell may never end')" }
+Expect "guard: a background sleep loop with no bound or a stdin read gets a note; bounded, foreground or a heredoc into a file: none ($bgc)" (($bgc -join ' ') -eq 'True True False True False False False False False')
+# agents' background shells: owner from its transcript (Agent-tool meta, workflow journal, main session = coordinator); -AutoFix kills
+$sh = Invoke-PsTest 'shells' @'
+. $args[0]; $tr = Join-Path $args[1] 'tx-sh'; $env:KIT_TRANSCRIPTS = $tr; $env:KIT_PARAM_SUPERVISE_SHELLSTUCKMINUTES = '0'; $env:KIT_PARAM_SUPERVISE_HEARTBEATMINUTES = '1'; $t0 = Get-Date
+$gone = (Join-Path $args[1] 'gone-wt') -replace '\\', '/'; $c1 = "cd $gone; until crafty.ps1 pipes -Dir $gone; do sleep 30; done"; $c2 = "cat > /dev/null; python - <<'EOF' 2>&1 || true`nEOF"
+$tu = { param($f, $c, $at) New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Add-Content $f (@{ type = 'assistant'; timestamp = ([datetime]$at).ToUniversalTime().ToString('o'); message = @{ content = @(@{ type = 'tool_use'; name = 'Bash'; input = @{ command = $c; run_in_background = $true } }) } } | ConvertTo-Json -Compress -Depth 6) }
+$p1, $p2 = 1, 2 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -NoNewWindow }
+& $tu "$tr/s9/subagents/agent-k1.jsonl" $c1 $p1.StartTime; '{"agentType":"devy","finished":true}' | Set-Content "$tr/s9/subagents/agent-k1.meta.json"
+& $tu "$tr/s9/subagents/workflows/wf_1/agent-w2.jsonl" $c2 $p2.StartTime; '{"type":"started","agentId":"w2","label":"build:H2"}', '{"type":"result","agentId":"w2","result":{}}' | Set-Content "$tr/s9/subagents/workflows/wf_1/journal.jsonl"
+& $tu "$tr/s9.jsonl" 'sleep 900; echo coordinator' $t0.AddMinutes(-60)
+$cl = { param($c) "`"C:\Git\bin\bash.exe`" -c `"source s && eval '$($c -replace "'", "'\''" -replace '"', '\"')' < /dev/null && pwd -P >| /tmp/c`"" }
+$sp = { param($id, $par, $c, $at) [pscustomobject]@{ Id = $id; ParentId = $par; Name = 'bash.exe'; CommandLine = (& $cl $c); Created = $at; Cpu = 1 } }
+$procs = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe'; CommandLine = 'claude'; Cpu = 9 }, (& $sp $p1.Id 50 $c1 $p1.StartTime), (& $sp $p2.Id 50 $c2 $p2.StartTime),
+  (& $sp 999999 50 'sleep 900; echo coordinator' $t0.AddMinutes(-60)), (& $sp 999998 50 'npm run lint' $t0.AddMinutes(-2)), (& $sp 999997 7 'sleep 900; echo coordinator' $t0.AddMinutes(-60)))
+$st = @{}; $rs = foreach ($i in 0, 1, 1.2, 2) { $w = Get-KitShellSweep $st $t0.AddMinutes($i) -AutoFix -Procs $procs; Start-Sleep -Milliseconds 300; $w }
+"cmd:$((Get-KitShellCommand (& $cl $c2)) -eq $c2)"; "dir:$((Get-KitShellDir 'cd /tmp/x && npm run dev') -eq '')"; "k1:$($p1.HasExited)"; "k2:$($p2.HasExited)"
+foreach ($i in 0..3) { "s${i}:$(@($rs[$i].rows | ForEach-Object { "$($_.owner)=$($_.state)" }) -join ',')|$(@($rs[$i].flags | ForEach-Object what) -join '|')" }
+"log:$(@(Read-KitLog calls $t0.AddMinutes(-1) | Where-Object event -eq 'shell-kill').Count)"; Format-KitShellTable $rs[1].rows
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
+$s0, $s1, $s9, $s2 = @($sh -match '^s\d:')
+Expect "shells: finished owner + dir gone = killed, + STUCK 2 sweeps = killed; coordinator's kept; young / non-agent unlisted ($s1)" (
+  $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'log:2' -and
+  $s0 -match '^s0:H2=ORPHAN,coordinator=running\|auto-fixed: killed shell \d+ of devy \(owner devy finished; dir gone: .+gone-wt\): until crafty' -and
+  $s1 -match '^s1:H2=ORPHAN, STUCK,coordinator=STUCK\|SHELL ORPHAN, STUCK pid \d+ of H2 \(cat > /dev/null; python - <<.+\|SHELL STUCK pid 999999 of coordinator' -and
+  $s2 -match '^s3:coordinator=STUCK\|auto-fixed: killed shell \d+ of H2' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 61 min \| STUCK \| yours: stop it')
 Remove-TestKit $k
 Complete-Tests

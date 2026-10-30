@@ -9,7 +9,7 @@
   "holdMerge": "repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval",
   "repos": "role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: goody liquibase; another tool: UNRUN); regenerate: wt sync conflicts in these files -> target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = MRs get no pipeline (CI only on deploy branches): pipes says no-ci, devtools.py merge merges on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: goody deploys",
   "driveParent": "Drive folder or shared drive for testing docs and reports (reports.type gdocs)",
-  "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT <n> min (5-30; manyAgents 8); stuckMinutes (20): idle, no named wait = STUCK; finishedMinutes (30): -Brief drops older FINISHED rows",
+  "supervise": "heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT <n> min (5-30; manyAgents 8); stuckMinutes (20): idle, no named wait = STUCK; shellStuckMinutes (30, learned): a flat-CPU agent shell older = STUCK; finishedMinutes (30): -Brief drops older FINISHED rows",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: browser profiles kept; worktreeDays (7): a clean worktree whose remote branch is gone goes after that idle time (branch kept); dirty: only reported",
   "localOnly, orgTerms, goodies": "org-only kit paths kept out of git; words the pre-push gate blocks; goodies: goody sync always installs them (add lists, remove unlists)",
@@ -145,7 +145,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 33, "plumbing": 8, "totalTokens": 322000, "testTokens": 62000 },
+  "caps": { "content": 33, "plumbing": 8, "totalTokens": 322000, "testTokens": 64000 },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
    "tracker": { "config": "tracker.type", "file": "skills/crafty/lib.ps1", "verbs": "view url status comment comments create describe rename attach list owner", "names": "command none" },

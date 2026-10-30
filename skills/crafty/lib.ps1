@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1142 tracker · L1476 git-host · L1629 kitlog · L1745 params · L2058 entry-scripts
+  L1092 supervise report · L1154 tracker · L1488 git-host · L1641 kitlog · L1757 params · L2070 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1100,6 +1100,7 @@ function Format-KitReport($d, [string[]]$Tail = @()) {
   $reportLines = [Collections.Generic.List[string]]::new()
   # 1. one row per agent and workflow run (lib.ps1 status)
   foreach ($l in @(Format-KitStatusTable $d.rows $d.at $d.versions -Cap 90) + '') { $reportLines.Add($l) }   # longer cells: whole in the report file
+  foreach ($l in @(Format-KitShellTable $d.shells)) { $reportLines.Add($l) }   # 1b. agents' background shells, only when any
   # 2. flags: ACT, WATCH, then what waits for the owner as info (deploy-ready envs); then -Brief's ACT line ($Tail)
   $fl = @(@($d.flags | Where-Object { $_.level -ne 'INFO' } | Sort-Object { @{ ACT = 0; WATCH = 1 }[$_.level] }) + @($d.info | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }))
   $reportLines.Add("**Flags**$(if (-not $fl.Count) { ': none' })")
@@ -1123,6 +1124,16 @@ function Format-KitReport($d, [string[]]$Tail = @()) {
   $reportLines.Add('')
   @($reportLines)
 }
+# the Shells table (supervise_resources.ps1 Get-KitShellSweep rows): problems first, oldest first; nothing when no shell is listed
+function Format-KitShellTable($Shells) {
+  if (-not @($Shells | Where-Object { $_ }).Count) { return }
+  $cut = { param($t, [int]$m) if ("$t".Trim()) { Limit-KitCell (Format-KitCell $t -Exact) $m } else { '—' } }
+  '**Shells**'; ''; '| Shell | Owner | Age | State | Next |'; '|---|---|---|---|---|'
+  foreach ($s in @($Shells | Sort-Object { $_.state -eq 'running' }, { -$_.age })) {
+    "| $(& $cut $s.short 60) | $(& $cut $s.owner 40) | $(if ($s.age -ge 120) { '{0:0.#} h' -f ($s.age / 60) } else { "$($s.age) min" }) | $($s.state) | $(& $cut $s.next 90) |"
+  }
+  ''
+}
 # a flag's table cells: the producer's kind / who / age / problem / next (short action); else an upper-case lead ("RESTART LOOP: ...") is the kind
 function Get-KitFlagCells($f) {
   $kind = $f.kind; $problem = $f.problem
@@ -1136,6 +1147,7 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
   @("# Supervise report $($d.at.ToString('yyyy-MM-dd HH:mm'))", "**Result:** $(& $n ACT) ACT · $(& $n WATCH) WATCH · $(@($d.rows | Where-Object state -ne 'FINISHED').Count) live · $Next", '') + $Md +
     @('', '## Agents (whole cells)', '') + @(& $ag $false) + @('', '## Finished today', '') + @(& $ag $true) + @('', '## All flags', '') +
     @(Format-KitMdTable 'Level', 'Flag', 'Action' @(@($d.flags | ForEach-Object { , @($_.level, $_.what, $_.action) }) + @($d.info | Where-Object { $_ } | ForEach-Object { , @('INFO', $_, '') }))) +
+    @('', '## Shells (whole commands)', '') + @(Format-KitMdTable 'PID', 'Owner', 'Age min', 'State', 'Dir', 'Command', 'Next' @($d.shells | ForEach-Object { , @($_.pid, $_.owner, $_.age, $_.state, $_.dir, ($_.cmd -replace '\r?\n', ' \n '), $_.next) })) +
     @('', '## Resources', '') + @(Format-KitMdTable 'Resource', 'Holder', 'GB' @($d.resources | ForEach-Object { , @($_.name, $_.by, $_.gb) })) + @('', '## Sweep', '', '```text') + $Sweep + '```' |
     Set-Content (Get-KitPath supervise-report -Create) -Encoding utf8
 }

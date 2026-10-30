@@ -230,7 +230,7 @@ scaffolding, the duel mode, evidence videos to a text index) live on the origin'
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge says NOT_MERGED held for approval |
 | `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = the repo's own migration check (else Liquibase: goody liquibase; another tool: UNRUN); regenerate: wt sync conflicts in these files -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = MRs get no pipeline (CI only on deploy branches): pipes says no-ci, devtools.py merge merges on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual: goody deploys |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
-| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT &lt;n&gt; min (5-30; manyAgents 8); stuckMinutes (20): idle, no named wait = STUCK; finishedMinutes (30): -Brief drops older FINISHED rows |
+| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (a big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT &lt;n&gt; min (5-30; manyAgents 8); stuckMinutes (20): idle, no named wait = STUCK; shellStuckMinutes (30, learned): a flat-CPU agent shell older = STUCK; finishedMinutes (30): -Brief drops older FINISHED rows |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: browser profiles kept; worktreeDays (7): a clean worktree whose remote branch is gone goes after that idle time (branch kept); dirty: only reported |
 | `localOnly`, `orgTerms`, `goodies` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words the pre-push gate blocks; goodies: goody sync always installs them (add lists, remove unlists) |
@@ -301,7 +301,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 (lint BUDGET; UTF-8 bytes / 4, README graph sections excluded; `kitbag.py budget` prints both totals). The kit total measures
 what agents load; `tests/` has its own cap (all tests, lint BUDGET-TESTS) because agents never load it:
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 322000 · all tests 62000 · files: 33 content + 8 plumbing
+always 3500 · skill 3200 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 15000 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · tests 9000 · total 322000 · all tests 64000 · files: 33 content + 8 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: core in `tests/`, a goody's in `goodies/<name>/tests.ps1`, shared setup in `tests/harness.ps1`; a case name

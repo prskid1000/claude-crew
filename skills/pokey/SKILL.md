@@ -25,7 +25,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    Check the SQL/MCP tools once, note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
-1. **Seat + board:** `pokey.ps1 seat acquire` (as the workflow says; exit 4 = still waiting: run it again);
+1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);
    `bossy.ps1 board join -Agent <CODE> -Run <run> -Claims <phone serial>`; CLAIM/DUPLICATE -> stop and
    report. Phones: `phoney.ps1 acquire|release` (goody `android-swarm`; keep it through waits < 30 min). Local env
    "pause": stop its checks; "deploy done": re-run them.
@@ -50,12 +50,12 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
      health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
-   - **Retests of a fix** fail on the sibling path: run whole reported flow end to end and every screen reading
+   - **Retests of a fix** fail on the sibling path: run the whole flow end to end and every screen reading
      same record/rule; date/shift fixes also cross midnight.
    - **NOT_TESTED**: only when truly impossible here, with the reason, what you tried and `cause` (`no-mail-sandbox` |
      `phone-only` | `undeployed` | `env-data` | `tool-down`). An unexercised part of an Expected is its own NOT_TESTED check.
      NOT_TESTED gets ONE stronger retry (`models.retest`, told your blocker); still
-     NOT_TESTED -> the task goes to failedTesting: never use it for "no time" (shared test envs).
+     NOT_TESTED -> the task goes to failedTesting: never for "no time" (shared test envs).
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
    - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, every answer with its UTC time; set
@@ -68,7 +68,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report: `kitbag.py prose` first), run `pokey.ps1
    finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
-   `board leave`, release seat / phone, close your tab (`s.done()`; never `killSession` or log out); return the results.
+   kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession` or log
+   out); return the results.
 
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**

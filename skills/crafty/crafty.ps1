@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1485 dir · L1495 checkpoint ·
-  L1520 tracker · L1571 host
+Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1491 dir · L1501 checkpoint ·
+  L1526 tracker · L1577 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1473,10 +1473,16 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
+# a background shell must end on its own: an unbounded wait loop or a stdin read hangs for hours after its agent finished
+$bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
+  $bgWhy = @($(if ($raw -match '(?s)\b(until|while)\b[^;{\n]*(;\s*do\b(?:(?!\bdone\b).)*?\bsleep\b|\{[^}]*?\bStart-Sleep\b)' -and $Matches[0] -notmatch '\$SECONDS|\s-(lt|le|gt|ge)\s|\(\(.*[<>].*\)\)' -and $raw -notmatch '\btimeout\s+\d+\s+(ba|z)?sh\s+-c') { 'a sleep loop with no max count or timeout' }),
+    $(if ($raw -match '(?m)(^\s*|[;&(]\s*)cat\s*(>\s*\S+\s*)?($|[;&|)])') { 'cat with no file reads stdin' }),
+    $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
+  if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
 # installed goodies add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason, @{ note = '<line for the agent>' } or nothing> } }
 # ($a: cmd without quoted data, raw, config, hook input); last, so a note's side effect only follows a command that runs
 $notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
-LayoutCheck; $notes = @(@($notes) + $script:layoutNote | Where-Object { $_ })
+LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
 elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
 exit 0
