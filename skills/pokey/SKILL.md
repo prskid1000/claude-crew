@@ -20,7 +20,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
-## Tester / verifier steps (test environment only)
+## Tester / verifier steps (test environment only, never production)
 0. `bossy.ps1 learn -Read -Skill pokey`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
    Check the SQL/MCP tools once, note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
@@ -34,7 +34,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / 4xx / 5xx; status and body still print);
-   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`);
+   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`: goody `android-swarm`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
@@ -96,8 +96,7 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
 - H0. `bossy.ps1 learn -Read -Skill pokey`; the doc is the task's testing doc (written by its developer at crafty step 6:
   `crafty/templates.md` "Human testing doc"). Missing or incomplete for this change: write it from that template first.
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
-- H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or request/response (API) each;
-  add them to the doc as a dated "<env> run <date>" section; earlier runs stay.
+- H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);
   own check failed or not testable -> `failedTesting` + a comment with the check ids, what you saw and the evidence; a new defect
   -> `crafty.ps1 tracker create -Parent <ask> -Key <ask>-<defect> -Name "[Bug] <ask> — <defect>"`: steps, saw, expected, evidence.

@@ -17,8 +17,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L996 plugins ·
-  L1010 keepboth · L1029 selftest · L1306 CLI
+Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L999 plugins ·
+  L1013 keepboth · L1032 selftest · L1311 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -239,8 +239,8 @@ def _doc_url(tid, kind, doc):
     if not re.match(r'https?://', doc):
         raise SystemExit(f'{kind} {doc!r}: neither a file nor a URL')
     rec = _pub_read(f'{tid}:{kind}')
-    if rec.get('url') and rec['url'] != doc:
-        print(f'[finish] {tid}:{kind} already has {rec["url"]}; {doc} replaces it on the task (pass the file to update one doc)', file=sys.stderr)
+    if rec.get('url') and rec['url'] != doc:   # a second link would take the next publish (and its history) to another doc
+        raise SystemExit(f'finish {tid}: {kind} already is {rec["url"]}; pass the file (it updates that doc, rounds kept), not {doc}. Nothing was written.')
     _pub_update(f'{tid}:{kind}', url=doc)
     return doc
 
@@ -955,8 +955,11 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
             if have is None:
                 print(f'[publish] {key}: no Rounds table (a doc from before it): add one from templates.md "Testing doc (AI)"', file=sys.stderr)
         new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'seq': time.time(), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
+        stale = bool(rounds and runs) and ((runs[-1]['seq'] > rounds[-1]['seq']) if 'seq' in runs[-1] and 'seq' in rounds[-1] else runs[-1]['at'] >= rounds[-1]['at'])
         if run is not None:
             runs.append(dict(new, cells=run))
+        elif kind in ('testing-doc', 'testing-ai') and rounds and rounds[-1]['body'] == body and not stale:
+            pass   # the same text again (finish after the last loop round): no second round
         else:
             rounds = (rounds if (mode or PUB_KINDS.get(kind, 'replace')) == 'append' else []) + [new]
         text, ext = _compose(rec.get('title') or title, rounds, runs)
@@ -1248,6 +1251,8 @@ def _publish_selftest(expect, refused):
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         expect('finish refused before any tracker write', not calls)
         finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=a2p)
+        expect('finish with the last loop round\'s AI doc adds no second round', open(ua, encoding='utf-8').read().count('## Round ') == 1)
+        refused('finish: a URL other than the doc the key has -> refused (pass the file)', lambda: finish('T9', human, '**Solution** — x', ai='https://other/doc'), 'already is')
         d = next(a[2] for a in calls if a[0] == 'describe'); c = next(a for a in calls if a[0] == 'comment')
         expect('finish: links block (human + AI) on top, solution comment of kind comment-solution with the one human link, status review',
                d.startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')

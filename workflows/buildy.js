@@ -244,7 +244,7 @@ function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `An independent reviewer or CI found these problems in your MRs (blocking and should-fix; resolve all):
 ${findings.map((f) => `- ${f.mr} ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem} -> ${f.fix}`).join('\n')}
 Fix each or explain why it is not a problem. Then run the local test loop again (every goal) before you push; in the same push update the
-MR body ("How tested", "Risks") and append the round to the AI testing doc. An already-merged MR:
+MR body ("How tested", "Risks"), append the round to the AI testing doc and update the human doc if its cases changed. An already-merged MR:
 put the fix on a new branch from the target (crafty.ps1 wt new) and open a follow-up MR.`)
 }
 function ciPrompt(r, a) {
