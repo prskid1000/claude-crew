@@ -42,6 +42,8 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'rename' = { param($a) __TrCli 'clickup' @('task', 'edit', $a.id, '--name', $a.name) }
   'attach' = { param($a) __TrCli 'clickup' @('attachment', 'add', $a.id, $a.file); __TrNote $a }
   'list' = { param($a)
+    # lib.ps1 Get-TrackerTasks already fell back to tracker.list; without one the CLI exits 1 'no list specified'
+    if (-not $a.list) { throw 'tracker list needs -List <id> (or tracker.list in kit.local.json)' }
     foreach ($pg in 0..6) {
       $arr = @(@(__TrJson (__TrCli 'clickup' @('task', 'list', '--list-id', $a.list, '--status', $a.status, '--page', "$pg", '--json'))) | Where-Object { $_ -and $_.id })
       foreach ($t in $arr) { __TrRow ([string]$t.id) ([string]$t.name) $a.status @($t.assignees | ForEach-Object { __TrWho $_.id $_.username }) }

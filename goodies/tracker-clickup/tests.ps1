@@ -25,6 +25,9 @@ if (-not $pass) { $failed++ }
 $global:log.Clear(); try { $null = Set-TrackerKitComment C1 qa-result 'round two'; $pass = ($global:log -join "`n") -match '(?m)^comment edit 55 round two\s+\[kit:qa-result\]$' -and ($global:log -join "`n") -notmatch 'comment (add|delete)|56' } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a kit comment's next round edits it (comment edit <id>); a person's comment untouched"
+$global:log.Clear(); $nl = try { @(Get-TrackerTasks '' inTest 3>$null); 'no throw' } catch { "$_" }
+$pass = $nl -match 'tracker list needs -List <id>' -and -not ($global:log -match 'task list'); if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: list with no -List and no tracker.list stops before the CLI ($nl)"
 $f = Join-Path ([IO.Path]::GetTempPath()) "clickup-body-$PID.md"; 'body text' | Set-Content $f
 Initialize-KitTracker -Type clickup -DryRun
 $out = Add-TrackerComment 12 $f 6>&1 | Out-String; Remove-Item $f
