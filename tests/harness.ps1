@@ -71,7 +71,7 @@ function Save-GitRepo($Dir, $Message) { if (-not (Test-Path "$Dir/.git")) { git 
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
   foreach ($f in 'skills/crafty/lib.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
-      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/kitbag.py', 'LESSONS.md') {
+      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md') {
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path $src $f) $d
   }
   $k

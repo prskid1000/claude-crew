@@ -219,7 +219,7 @@ Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of
 $gt = & { . (Lib); Update-KitTracking { param($t) $t.tasks['g1'] = @{ task = 'g1' }; $t.tasks['g2'] = @{ task = 'g2' } }; "$(Remove-KitGoneTask g1 'HTTP 404 Task not found, deleted') $(Remove-KitGoneTask g2 '404 Not Found') $((Read-KitTracking).tasks.ContainsKey('g1')) $((Read-KitTracking).tasks.ContainsKey('g2'))|$(Test-KitPid $PID (Get-Date).AddHours(-9)) $(Test-KitPid $PID (Get-KitPidStart $PID)) $(Test-KitPid $PID 'x')" }
 Expect 'lib: a deleted task leaves tracking (not on outage); reused pid, bad start: dead' ($gt -eq 'True False False True|False True False')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
-$pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk
+$pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk, "$pk/../bossy" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk; Copy-Item "$k/skills/bossy/params.registry.json" "$pk/../bossy"
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
 $pr = Invoke-PsTest params @'
 . $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()

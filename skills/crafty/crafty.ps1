@@ -496,7 +496,7 @@ param(
   [double]$NeedGB = 0,
   [int]$MaxParallel = 0
 )
-$waitLearned = $WaitMinutes -lt 0; if ($waitLearned) { $WaitMinutes = Get-KitParam 'gate.waitMinutes' 90 }
+$waitLearned = $WaitMinutes -lt 0; if ($waitLearned) { $WaitMinutes = Get-KitParam 'gate.waitMinutes' }
 $keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
 if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'

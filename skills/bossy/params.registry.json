@@ -1,0 +1,30 @@
+{
+ "_readme": "Every tunable kit parameter, one entry each: '<how> [field=value ...]'. how: quantile, peak, ewma, aimd = learned from live observations (lib.ps1 params, README Configuration params); config = fixed. Fields: default, unit, floor, ceil (learned range; else default/4..x4), q, k, up, down, min, safe, gate, class, sample. Read with Get-KitParam <key> (no literal default at the site: lint PARAM-UNREG, PARAM-DEFAULT); a kit.local.json value at the key's path pins it; bossy.ps1 param show. _literals: tunable literals still in code per file (kitbag.py lint WARN PARAM-LITERAL above it; lint --ratchet lowers it).",
+ "params": {
+  "idle.graceMinutes": "quantile q=.95 k=1.5 default=10 unit=min",
+  "net.timeoutSec": "quantile q=.99 k=3 class=timeout sample=10 default=60 unit=s",
+  "gate.waitMinutes": "quantile q=.95 k=2 default=90 unit=min",
+  "gate.needGB": "peak k=1.15 up=.5 unit=GB",
+  "supervise.heartbeatMinutes": "aimd min=5 safe=down default=15 unit=min",
+  "budget.estimate": "ewma k=1 min=10 gate=accuracy unit=tokens",
+  "logs.keepDays": "peak k=2 default=90 floor=30 ceil=365 unit=d",
+  "deploy.planTimeoutSec": "config default=600 unit=s",
+  "deploy.deployedTimeoutSec": "config default=100 unit=s",
+  "localEnv.startMinutes": "config default=10 unit=min",
+  "localEnv.prepareTimeoutSec": "config default=300 unit=s",
+  "localEnv.buildTimeoutSec": "config default=600 unit=s",
+  "localEnv.trainStallMinutes": "config default=45 unit=min",
+  "localEnv.leaseMinutes": "config default=30 unit=min",
+  "localEnv.startLockMinutes": "config default=45 unit=min",
+  "localEnv.trainWaitFlagMinutes": "config default=10 unit=min",
+  "supervise.stuckMinutes": "config default=20 unit=min",
+  "supervise.manyAgents": "config default=8 unit=agents",
+  "idle.beatMinutes": "config default=20 unit=min",
+  "qa.bugsLockSec": "config default=120 unit=s",
+  "qa.finalizeLockSec": "config default=600 unit=s",
+  "cleanup.worktreeDays": "config default=7 unit=d",
+  "goodies.pruneDays": "config default=30 unit=d",
+  "tidy.judgeMinutes": "config default=3 unit=min"
+ },
+ "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 9, "skills/bossy/bossy.ps1": 43, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 7, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 30, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
+}

@@ -2,7 +2,7 @@
 <#
 kit-tests.ps1: offline kit tests (throw-away kit copies, local git repos, mocked CLIs, no real services).
 Runs tests/<area>.tests.ps1 files in parallel, one pwsh each; each area file also runs on its own.
-Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|goodies[,...]] [-Slow]
+Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|bossy|crafty|pokey|kitbag|workflows|supervise|params|goodies[,...]] [-Slow]
 (goodies: each installed goody's tests.ps1 from the goodies branch, kitbag.py goody test; none installed = 0 checks)
  -Slow: also the checks that need real tools and take seconds each (KIT_TESTS_SLOW=1, e.g. a real headless Chrome).
 Outputs: each area's PASS / FAIL lines, its time, TEST-DUP lines (one case name in two places), a recap of the failed checks, then a total.
@@ -16,7 +16,7 @@ if ($Slow) { $env:KIT_TESTS_SLOW = '1' }   # the area processes inherit it
 $pyReal = foreach ($p in 'python', 'python3') { if (Get-Command $p -ErrorAction SilentlyContinue) { & $p -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1; break } }
 if ($pyReal) { $env:PATH = (Split-Path $pyReal) + [IO.Path]::PathSeparator + $env:PATH }
 # one file per area; each dot-sources harness.ps1
-$files = 'bossy.tests.ps1', 'crafty.tests.ps1', 'pokey.tests.ps1', 'kitbag.tests.ps1', 'workflows.tests.ps1', 'supervise.tests.ps1'
+$files = 'bossy.tests.ps1', 'crafty.tests.ps1', 'pokey.tests.ps1', 'kitbag.tests.ps1', 'workflows.tests.ps1', 'supervise.tests.ps1', 'params.tests.ps1'
 $all = @($files | ForEach-Object { $_ -replace '\.tests\.ps1$' }) + 'goodies'
 $areas = if ($Area -contains 'all') { $all } else { @($Area | ForEach-Object { $_ -split ',' } | Where-Object { $_ }) }
 $unknown = @($areas | Where-Object { $_ -notin $all })

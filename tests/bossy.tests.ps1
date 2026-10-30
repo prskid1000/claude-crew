@@ -26,8 +26,8 @@ Expect "track: placeholder task '0' refused" ($LASTEXITCODE -ne 0 -and $out -mat
 $out = pwsh @np $O track add -Task 'CU-abc123' -Mrs 'web!1,web!2' -MergeAfter 'web!2>api!7' 2>&1 | Out-String
 $trk = { & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Read-KitTracking).tasks } }; $tasks = & $trk; $td = TkPath $k tasks
 $tk = Read-Json "$td/abc123.json"; $am = Read-Json (Join-Path (Split-Path $td) 'automerge.json')
-Expect 'state: tracking.json moved into tasks/<id>.json (schemaVersion, holder, track.mrs in order) + automerge.json, kept as .migrated' ($tk.schemaVersion -eq 1 -and $tk.holder.pid -and
-  (@($tk.track.mrs) -join ',') -eq 'web!1,web!2' -and (Read-Json "$td/old1.json").track.done -and $am.schemaVersion -eq 1 -and -not (Test-Path $tf) -and (Test-Path "$tf.migrated"))
+Expect 'state: tracking.json moved into tasks/<id>.json (schemaVersion, holder, track.mrs in order) + automerge.json, then deleted (no .migrated)' ($tk.schemaVersion -eq 1 -and $tk.holder.pid -and
+  (@($tk.track.mrs) -join ',') -eq 'web!1,web!2' -and (Read-Json "$td/old1.json").track.done -and $am.schemaVersion -eq 1 -and -not (Test-Path $tf) -and -not (Test-Path "$tf.migrated"))
 Copy-Item (Join-Path $src 'skills/bossy/STATE.md') (Join-Path $k 'skills/bossy'); '{bad' | Set-Content "$td/bad1.json"
 $sl = & $py -X utf8 (Join-Path $k 'skills/bossy/kitbag.py') state lint 2>&1 | Out-String; $slc = $LASTEXITCODE; Remove-Item "$td/bad1.json"
 Expect "state lint: a broken task file is BAD (exit 1), readers skip it ($slc)" ($slc -eq 1 -and $sl -match 'BAD .*bad1\.json: unreadable' -and $tasks.ContainsKey('old1'))

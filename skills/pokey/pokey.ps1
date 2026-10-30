@@ -565,8 +565,8 @@ function Add-NewDefects($st, [object[]]$defects) {
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
   $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
   $mx = [Threading.Mutex]::new($false, "Global\kit-bugs-$h")
-  $own = $true; try { $own = $mx.WaitOne(120000) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
-  if (-not $own) { $mx.Dispose(); throw "bugs.json of $RunDir is locked by another finalize for 2 min: re-run finalize -Code $Code" }
+  $own = $true; try { $own = $mx.WaitOne(1000 * [int](Get-KitParam 'qa.bugsLockSec')) } catch [Threading.AbandonedMutexException] { $own = $true }   # abandoned = ours now
+  if (-not $own) { $mx.Dispose(); throw "bugs.json of $RunDir is locked by another finalize for $(Get-KitParam 'qa.bugsLockSec') s (qa.bugsLockSec): re-run finalize -Code $Code" }
   try {
     $f = "$RunDir/bugs.json"
     $all = if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null }
@@ -630,8 +630,8 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
 # one tracker step per run at a time (siblings deadlocked)
 $fh = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
 $fmx = [Threading.Mutex]::new($false, "Global\kit-finalize-$fh")
-$fOwn = $true; try { $fOwn = $fmx.WaitOne(600000) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
-if (-not $fOwn) { $fmx.Dispose(); throw "another finalize of $RunDir held the tracker step for 10 min: re-run finalize -Code $Code" }
+$fOwn = $true; try { $fOwn = $fmx.WaitOne(1000 * [int](Get-KitParam 'qa.finalizeLockSec')) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
+if (-not $fOwn) { $fmx.Dispose(); throw "another finalize of $RunDir held the tracker step for $(Get-KitParam 'qa.finalizeLockSec') s (qa.finalizeLockSec): re-run finalize -Code $Code" }
 function Save-Fin { Write-KitAtomic $fin ($out | ConvertTo-Json -Depth 6) }
 try {
 foreach ($st in @($item.subtasks)) {

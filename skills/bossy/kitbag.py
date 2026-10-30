@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kitbag.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget, goodies (and their commands).
 
-  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--org-terms <kit.local.json | a,b>] [--json <out>]
+  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: goody flow-map)
   python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (goody ports)
   python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: goody kit-admin
@@ -18,10 +18,10 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L983 README graph · L1089 lint command · L1122 audit ·
-  L1231 registry · L1460 prose · L1605 sections · L1735 budget · L1753 goodies · L2256 state lint · L2327 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L984 README graph · L1090 lint command · L1126 audit ·
+  L1235 registry · L1569 prose · L1714 sections · L1844 budget · L1862 goodies · L2365 state lint · L2436 main
 """
-import contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
+import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -960,6 +960,7 @@ def lint(k, g=None, org_terms=None):
                     bad('CONFIG-UNDOC', f, f'key "{key}" is not documented in README.md "Configuration"')
     # ---- registry, schemas, old names, agent types, scaffold stubs
     registry_lint(k, bad)
+    params_lint(k, bad)
     # ---- PS-CASE on the .ps1 files changed vs origin/main (audit scan: every file, as a WARN)
     rc, o, _ = git(k.dir, 'diff', '--name-only', 'origin/main', '--')
     for f in (o.splitlines() if rc == 0 else []):
@@ -1108,6 +1109,7 @@ def cmd_lint(a):
     if '--json' in flags:
         with open(flags['--json'], 'w', encoding='utf-8') as fh:
             json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], fh, indent=1)
+    warns = [] if '--summary' in flags else literal_warns(k, '--ratchet' in flags)   # not counted (3a: WARN; an error later)
     if '--summary' in flags:
         if problems:
             c, w, m = problems[0]
@@ -1115,6 +1117,8 @@ def cmd_lint(a):
     else:
         for c, w, m in problems:
             print(f'{c:15} {w}: {m}')
+        for c, w, m in warns:
+            print(f'WARN {c:10} {w}: {m}')
         print(f'kitbag lint: {len(problems)} problem(s) in {kit} ({len(k.files)} files, {len(k.skills)} skills, '
          f'{len(k.workflows)} workflows, {len(k.agents)} agents)')
     return 1 if problems and '--warn' not in flags else 0
@@ -1447,6 +1451,111 @@ def registry_lint(k, bad):
         m = re.search(r'(?<!no )\b(?:Explore|Plan|general-purpose) agents?\b', t) if f.startswith(('agents/', 'workflows/')) or f.endswith('SKILL.md') else None
         if m:
             bad('NON-CREW', ln(m), f'"{m.group(0)}": only crew agents ({", ".join(sorted(crew))}) are spawned')
+
+# params registry (skills/bossy/params.registry.json): every Get-KitParam / Add-KitParamObs / kitParam key registered, no other default
+# at a site; tunable literals still in code (PS: the parser's AST, py: ast, js: regex, any: a TODO-PARAM line) ratchet down from _literals
+PARAMS_JSON = 'skills/bossy/params.registry.json'
+PARAM_HOWS = {'quantile', 'peak', 'ewma', 'aimd', 'config'}
+PARAM_SITE = re.compile(r"(Get-KitParam|&\s*\$gp|kitParam\(|Add-KitParamObs)\s*'([\w.]+)'(?:,?\s+(-?\d+(?:\.\d+)?)\b(?![.\w]))?")
+PS_LITERALS = r'''$ErrorActionPreference = 'SilentlyContinue'; $L = 'System.Management.Automation.Language'
+$num = { param($a) $v = $null; if ($a -is "$L.ConstantExpressionAst" -and $a.Value -is [ValueType] -and $a.Value -isnot [bool]) { $v = [double]$a.Value } elseif ($a -is "$L.UnaryExpressionAst" -and $a.Child -is "$L.ConstantExpressionAst" -and $a.Child.Value -is [ValueType]) { $v = [double]$a.Child.Value }; $null -ne $v -and [math]::Abs($v) -gt 1 }
+$pred = { param($n)
+  if ($n -is "$L.CommandAst") { $el = @($n.CommandElements)
+    if ($n.GetCommandName() -in 'Get-KitSetting', 'Get-KitValue', 'Opt', 'Start-Sleep') { return [bool]@($el | Select-Object -Skip 1 | Where-Object { & $num $_ }).Count }
+    for ($i = 1; $i -lt $el.Count - 1; $i++) { if ($el[$i] -is "$L.CommandParameterAst" -and $el[$i].ParameterName -match '(?i)^(TimeoutSec|Seconds|Minutes|Milliseconds|\w+TimeoutSeconds)$' -and (& $num $el[$i + 1])) { return $true } }
+    return $false }
+  if ($n -is "$L.InvokeMemberExpressionAst" -and "$($n.Member)" -match '^(Add|From)(Milliseconds|Seconds|Minutes|Hours|Days)$|^(WaitOne|WaitForExit)$') { return [bool]@($n.Arguments | Where-Object { & $num $_ }).Count }
+  if ($n -is "$L.BinaryExpressionAst" -and "$($n.Operator)" -match '^I?(gt|ge|lt|le)$') { foreach ($s in @(@($n.Left, $n.Right), @($n.Right, $n.Left))) { if ($s[0] -is "$L.MemberExpressionAst" -and "$($s[0].Member)" -match '^Total(Milliseconds|Seconds|Minutes|Hours|Days)$' -and (& $num $s[1])) { return $true } } }
+  $false }
+$out = @(foreach ($f in $env:KIT_LIT_FILES -split '\|') { $tk = $null; $er = $null; $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tk, [ref]$er)
+  foreach ($h in @($ast.FindAll($pred, $true))) { @{ file = $f; line = $h.Extent.StartLineNumber } } })
+ConvertTo-Json -InputObject $out -Compress'''
+
+def param_spec(s):
+    """A registry entry as a dict: the shorthand '<how> k=v ...' or an object (kind config / learn)."""
+    if isinstance(s, dict):
+        return dict(s, how='config' if s.get('kind') not in (None, 'learn') else s.get('how', 'quantile'))
+    w = str(s).split()
+    return dict([('how', w[0] if w else '')] + [tuple((x.split('=', 1) + [''])[:2]) for x in w[1:]])
+
+def params_lint(k, bad):
+    """PARAM-REG (registry shape), PARAM-UNREG (a key read or observed in code but not registered), PARAM-DEFAULT (a site literal
+    other than the registry default)."""
+    reg, err = load_json(osp.join(k.dir, PARAMS_JSON))
+    if err:
+        bad('PARAM-REG', PARAMS_JSON, err)
+        return
+    params = reg.get('params') or {}
+    for key, s in params.items():
+        sp = param_spec(s)
+        if sp['how'] not in PARAM_HOWS:
+            bad('PARAM-REG', PARAMS_JSON, f'{key}: how "{sp["how"]}" (one of {", ".join(sorted(PARAM_HOWS))})')
+        elif sp['how'] == 'config' and not re.match(r'-?\d+(\.\d+)?$', str(sp.get('default', ''))):
+            bad('PARAM-REG', PARAMS_JSON, f'{key}: a config key needs a number default=')
+    for f in k.files:
+        t = (k.texts.get(f) or '') if f.endswith(('.ps1', '.py', '.mjs', '.js')) and not f.startswith('tests/') else ''
+        for m in PARAM_SITE.finditer(t):
+            key, lit, where = m.group(2), m.group(3), f'{f}:{t.count(chr(10), 0, m.start()) + 1}'
+            if key not in params:
+                bad('PARAM-UNREG', where, f'{key} is read here but not in {PARAMS_JSON}: register it (how, default, unit)')
+            elif lit is not None and m.group(1) != 'Add-KitParamObs' and 'default' in param_spec(params[key]) and float(lit) != float(param_spec(params[key])['default']):
+                bad('PARAM-DEFAULT', where, f'{key}: {lit} here, default={param_spec(params[key])["default"]} in the registry: drop the literal')
+
+def literal_sites(k):
+    """{file: sorted line numbers} of tunable literals in the core's code files (registered keys read through Get-KitParam are none)."""
+    files = [f for f in k.files if f.endswith(('.ps1', '.py', '.mjs', '.js')) and not f.startswith(('tests/', '.githooks/'))]
+    hits = defaultdict(set)
+    for f in files:
+        t = k.texts.get(f) or ''
+        for i, l in enumerate(t.split('\n'), 1):
+            if 'TODO-PARAM' in l and re.search(r'\d', l):   # a marked literal (a mention without a number is none)
+                hits[f].add(i)
+        if f.endswith('.py'):
+            try:
+                tree = ast.parse(t)
+            except SyntaxError:
+                continue
+            num = lambda n: isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool) and abs(n.value) > 1
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Call):
+                    fn = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, 'id', '')
+                    if any(num(kw.value) and re.match(r'(timeout|stale|seconds|minutes|hours|days)$', kw.arg or '') for kw in n.keywords) or (fn in ('sleep', 'timedelta') and any(map(num, n.args))):
+                        hits[f].add(n.lineno)
+        elif f.endswith(('.js', '.mjs')):
+            code = js_code(t)
+            for m in re.finditer(r'\b(?:timeout|\w+(?:Ms|Sec|Seconds|Minutes))\s*[:=]\s*\d{2,}|setTimeout\([^;]*?,\s*\d{2,}\s*\)', code):
+                hits[f].add(code.count('\n', 0, m.start()) + 1)
+    ps = [osp.join(k.dir, f) for f in files if f.endswith('.ps1')]
+    pw = shutil.which('pwsh')
+    if ps and pw:
+        import base64
+        r = subprocess.run([pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_LITERALS.encode('utf-16-le')).decode()],
+          capture_output=True, text=True, encoding='utf-8', timeout=120, env=dict(os.environ, KIT_LIT_FILES='|'.join(ps)))
+        try:
+            for h in json.loads(r.stdout or '[]'):
+                hits[osp.relpath(h['file'], k.dir).replace('\\', '/')].add(int(h['line']))
+        except (ValueError, KeyError, TypeError):
+            pass
+    return {f: sorted(v) for f, v in hits.items() if v}
+
+def literal_warns(k, ratchet=False):
+    """WARN PARAM-LITERAL lines: files over their _literals baseline (none: 0); --ratchet writes the lower counts (the first: all)."""
+    p = osp.join(k.dir, PARAMS_JSON)
+    reg, err = load_json(p)
+    if err:
+        return []
+    sites, base = literal_sites(k), reg.get('_literals') or {}
+    if ratchet:
+        new = {f: len(v) for f, v in sorted(sites.items())} if not base else {f: min(n, len(sites.get(f, []))) for f, n in base.items() if f in sites}
+        if new != base:
+            t = read(p)
+            t = re.sub(r'"_literals":\s*\{[^}]*\}', '"_literals": ' + json.dumps(new, separators=(', ', ': ')), t)
+            with open(p, 'w', encoding='utf-8', newline='') as fh:
+                fh.write(t)
+            print(f'kitbag lint --ratchet: {PARAMS_JSON} _literals updated ({sum(new.values())} literal(s) in {len(new)} file(s))')
+        base = new
+    return [('PARAM-LITERAL', f, f'{len(v)} tunable literal(s), baseline {base.get(f, 0)}: lines {", ".join(map(str, v[:8]))}{" ..." if len(v) > 8 else ""} '
+             f'-> a {PARAMS_JSON} key + Get-KitParam') for f, v in sorted(sites.items()) if len(v) > base.get(f, 0)]
 
 def _sub_file(kit, rel, fn):   # goody kit-admin (scaffold, admin) edits kit files with it, keeping each file's line endings
     p = osp.join(kit, rel)
@@ -2326,7 +2435,7 @@ def collections_counter(items):
 
 # ---- main: argument checks, command dispatch
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
-ARGS = {'lint': ({'--summary', '--warn', '--no-flow'}, {'--org-terms', '--json'}, True),
+ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days'}, False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False)}
