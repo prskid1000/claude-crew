@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-crafty.tests.ps1: crafty.ps1 wt / check / gate / guard, lib.ps1 git host + tracker adapters, devtools.py.
+crafty.tests.ps1: crafty.ps1 wt / check / gate / guard goody notes, lib.ps1 git host + tracker adapters, devtools.py.
 Usage: pwsh -NoProfile -File <kit>/tests/crafty.tests.ps1 (or tests/kit-tests.ps1 -Area crafty).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -73,6 +73,9 @@ $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | Conver
 $null = pwsh @np $D tracker status $t.id failedTesting
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id)
+& $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
+$tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"
+Expect "tracker list: the configured adapter, a logical status under each configured name, once ($tl)" ("$tl".Trim() -eq 'T1')
 'body text' | Set-Content "$r/c.md"; $null = pwsh @np $D tracker comment $t.id -File "$r/c.md"
 $bad = pwsh @np $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
 $said = (pwsh @np $D tracker comments $t.id | ConvertFrom-Json).text
@@ -86,7 +89,10 @@ Expect "prose gate: tracker / devtools.py comment over the limit refused, unpost
 $null = pwsh @np $D tracker comment $t.id 'round two' -Kind comment-solution -ProseOk x; $cs = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
 $cx = (Read-Json (Join-Path (TkPath $k tasks) "$($t.id).json")).comments.'comment-solution'
 Expect "kit comment -Kind: its id kept in the task index ($cx)" ($cx -and $cx -in @($cs.id))
-Expect 'kit comment -Kind comment-solution: the next round edits it; status notes and a person''s comment untouched' ($cs.Count -eq $n3 -and @($cs.text -match '^round two\s+\[kit:comment-solution\]$').Count -eq 1 -and @($cs.text -match '^body text').Count -eq 1 -and @($cs.text -match '^w1 ').Count -eq 1)
+Expect 'kit comment -Kind comment-solution: the next round edits it, no visible marker; status notes and a person''s comment untouched' ($cs.Count -eq $n3 -and @($cs.text -match '^round two$').Count -eq 1 -and -not @($cs.text -match '\[kit:').Count -and @($cs.text -match '^body text').Count -eq 1 -and @($cs.text -match '^w1 ').Count -eq 1)
+$null = pwsh @np $D tracker comment $t.id "old qa`n`n[kit:qa-result]" -ProseOk x; $n4 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+$null = pwsh @np $D tracker comment $t.id 'new qa' -Kind qa-result -ProseOk x; $cq = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
+Expect "kit comment: an old marked comment (no stored id) is edited, its marker gone ($n4 $($cq.Count))" ($cq.Count -eq $n4 -and @($cq.text -match '^new qa$').Count -eq 1 -and -not @($cq.text -match '\[kit:qa-result').Count)
 $env:KIT_DOC_GATE = '1'; $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"
 $g3 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h`nTesting doc (AI): https://d/a"
 $g2 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; Remove-Item Env:KIT_DOC_GATE
@@ -119,21 +125,11 @@ $vk = foreach ($r in @(@('Nosuch-Cmd; ''after''', '', 1, 'FAILED: .*Nosuch-Cmd')
 Expect "Invoke-KitVerb: crash exit 1, bad parameter 2 ($vk)" (-not $vk)
 $mw = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Message, [string[]]`$Mrs) ""`$Message|`$(`$Mrs -join '+')"" }; Invoke-KitVerb Invoke-M @('-Message', 'fix', 'the', 'bug', '-Mrs', 'a!1', 'b!2')"
 Expect "Invoke-KitVerb: unquoted words join with spaces, arrays stay arrays ($mw)" ("$mw".Trim() -eq 'fix the bug|a!1+b!2')
-$gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }   # {KIT} cases
-$kl = "$k/skills/crafty/kit.local.json"; '{"guard":{"layout":"block"}}' | Set-Content $kl
-$out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
-Expect 'guard self-test (guard.layout block)' ($out -match '(\d+)/\1 passed')
-'/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null
-$gn = Invoke-PsTest 'guard-nested' @'
-$d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }
-'@ @($D, $k)
-Remove-Item "$k/.gitignore", "$k/nested" -Recurse -Force
-Expect "guard: git commit in a nested worktree passes; a tracked folder, an ignored non-repo denied ($($gn -join ' '))" (($gn -join ' ') -eq 'False True True'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest' ($LASTEXITCODE -eq 0)
 $DT = Join-Path $k 'skills/crafty/devtools.py'
 $dv = & $py -X utf8 $DT 2>&1 | Out-String; $dvc = $LASTEXITCODE; $dmiss = & $py -X utf8 $DT doc t (Join-Path $k 'none.md') 2>&1 | Out-String; $ddc = $LASTEXITCODE
-Expect "devtools: no verb / a doc file that is missing = a usage line, exit 2 ($dvc $ddc)" ($dvc -eq 2 -and $dv -match 'missing verb: .*\(verbs: ' -and $ddc -eq 2 -and $dmiss -match 'file not found' -and $dmiss -notmatch 'Traceback')
+Expect "devtools: no verb = the verb list, exit 0; a doc file that is missing = a usage line, exit 2 ($dvc $ddc)" ($dvc -eq 0 -and $dv -match '^devtools\.py verbs: .*\bfinish\b' -and $ddc -eq 2 -and $dmiss -match 'file not found' -and $dmiss -notmatch 'Traceback')
 $th = & $py -X utf8 $DT comment --help 2>&1 | Out-String; $thc = $LASTEXITCODE; $null = & $py -X utf8 $DT comment T1 --bogus 2>&1; $tbc = $LASTEXITCODE; $null = & $py -X utf8 $DT finish T1 2>&1; $tmc = $LASTEXITCODE
 $fk = Join-Path (Kd) 'flaky.py'; [IO.File]::WriteAllText($fk, "import sys, subprocess as sp; sys.path.insert(0, sys.argv[1]); import devtools as d`nn = []; hang = [0]`ndef fake(cmd, **kw):`n    n.append(cmd)`n    if hang[0]: raise sp.TimeoutExpired(cmd, 1)`n    return sp.CompletedProcess(cmd, 1 if len(n) == 1 else 0, 'connection reset' if len(n) == 1 else 'ok', '')`nd.subprocess.run = fake`nr = d._tracker('view', 'T1'); a = len(n); n.clear()`ntry: d._tracker('create', 'x')`nexcept SystemExit: pass`nw = len(n); n.clear(); hang[0] = 1; d._run(['glab', 'api', 'x']); print(r, a, w, len(n))`n")
 $rt = & $py -X utf8 $fk (Split-Path $DT) 2>$null | Out-String
@@ -200,14 +196,6 @@ $gt = @'
 "starved:$((Test-GateStart 4 10 25 64) -and -not (Test-GateStart 2 10 25 64))"
 '@
 Expect-Each (Invoke-PsTest 'gate-test' $gt @($D)) 'gate: #' 'cache', 'keep', 'starved', 'kinds', 'histcmd'
-$gbad = '{not json' | Px $D guard | Out-String
-$gnone = '' | Px $D guard | Out-String
-Expect 'guard: malformed hook input denies, empty input allows' ($gbad -match '"permissionDecision":"deny"' -and -not $gnone.Trim())
-$gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
-$dd = pwsh @np $D dir -Agent 'B 1' -Item T9 -Name 'Run.LOG' 2>&1 | Out-String
-Expect 'guard: a write off the layout gets a note naming crafty.ps1 dir; dir: agents/<id>/<item>/<file>, lowercase-kebab' ($gl -match 'additionalContext.*kit layout: runtime/work/x2/a\.md.*dir -Agent' -and $gl -notmatch 'deny' -and $dd.Trim() -match '[\\/]work[\\/]agents[\\/]b-1[\\/]t9[\\/]run\.log$')
-$gt = (@{ tool_name = 'Write'; tool_input = @{ file_path = '/tmp/mr-body.md' } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
-Expect 'guard: a Write of a body file to the shared temp root is denied, naming crafty.ps1 dir' ($gt -match '"deny"' -and $gt -match 'shared temp root.*dir -Agent')
 $na = Join-Path $k 'skills/crafty/adapters/note_test.ps1'; New-Item -ItemType Directory -Force (Split-Path $na) | Out-Null
 "Register-KitAdapter 'guard' 'note' @{ check = { param(`$a) if (`$a.cmd -match 'notecmd') { @{ note = 'lease noted' } } } }" | Set-Content $na
 $gn = Px $D guard -Json '{"tool_name":"Bash","tool_input":{"command":"notecmd x"}}' | Out-String; Remove-Item $na

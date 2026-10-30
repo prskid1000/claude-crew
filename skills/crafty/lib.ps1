@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L116 config · L196 OS · L387 leases · L801 status · L1024 supervise sweep ·
-  L1076 supervise report · L1116 tracker · L1394 git-host · L1510 kitlog · L1626 params · L1939 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
+  L1092 supervise report · L1132 tracker · L1421 git-host · L1562 kitlog · L1678 params · L1991 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -111,6 +111,22 @@ function Remove-KitGoneTask([string]$Id, $Err) {
 }
 function Set-KitTaskFields([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][hashtable]$Fields) {
   Update-KitTracking { param($t) if ($t.tasks[$Task]) { foreach ($k in $Fields.Keys) { $t.tasks[$Task][$k] = $Fields[$k] } } }
+}
+# a task's tracker id in a branch or MR title (tracker.branchTag); '' = no tag configured
+function Get-KitTaskTagRx { if ($KitConf.TrackerTag) { "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)" } else { '' } }
+# repo!iid in some task's track: repos compare by their last path segment, through repoAliases; $Repo '' = any repo
+function Test-KitMrTracked([string]$Repo, [string]$Iid, $Tracking) {
+  if (-not $Tracking) { $Tracking = Read-KitTracking }
+  $al = @{}; if ($KitConf.RepoAliases) { foreach ($p in $KitConf.RepoAliases.PSObject.Properties) { $al[$p.Name.ToLower()] = [string]$p.Value } }
+  $names = { param($r) $l = ("$r".TrimEnd('/') -split '/')[-1].ToLower(); @($l) + @(if ($al[$l]) { ($al[$l] -split '/')[-1].ToLower() }) }
+  $want = @(& $names $Repo)
+  foreach ($x in @($Tracking.tasks.Values)) {
+    foreach ($r in @($x.mrs)) {
+      $r = "$r".Trim(); if (($u = ConvertFrom-MrUrl $r)) { $r = "$($u.repo)!$($u.n)" }
+      if ($r -match '^(?<r>[\w./-]+)!(?<i>\d+)$' -and $Matches.i -eq $Iid -and (-not $Repo -or @(& $names $Matches.r | Where-Object { $_ -in $want }).Count)) { return $true }
+    }
+  }
+  $false
 }
 
 # ---- config: kit.local.json
@@ -1314,17 +1330,21 @@ function Add-TrackerComment([string]$Id, [string]$Text) { $t = __TrText $Text; I
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
-# a kit comment ends with its marker '[kit:<kind>]': a new round edits the task's latest one of that kind (adapter comment-edit),
-# else posts and deletes it (comment-delete), else only posts; comments without the marker (people's) are never touched
+# a kit comment of a kind is ONE comment, edited in place (adapter comment-edit), else posted and the old one deleted (comment-delete),
+# else only posted. No visible marker: its id lives in the task index (comments.<kind>); none -> the text last posted (comments.<kind>#text:
+# a queued post) or an old comment's '[kit:<kind>]' marker. People's comments are never touched
 function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
+function Get-KitCommentSig([string]$Text) { $n = ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', '' -replace '[^\p{L}\p{N}]', '').ToLower(); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text) {
-  $mark = "[kit:$Kind]"; $body = "$((__TrText $Text).TrimEnd())`n`n$mark"; $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit')
-  $keep = { param($cid) if ($cid) { try { Update-KitTaskIndex $Id { param($x) $x.comments[$Kind] = "$cid" } } catch { } } }   # the task index: the next edit skips the comment scan
-  $known = "$((Read-KitState (Get-KitTaskFile $Id)).comments.$Kind)"
+  $body = (__TrText $Text).TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
+  $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
+  $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$($ix.$Kind)"; $last = "$($ix["$Kind#text"])"
   if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
-  $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and "$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') } | Select-Object -Last 1
+  $old = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and ("$($_.text)" -match ('\\?\[kit:' + [regex]::Escape($Kind) + '\\?\]\s*$') -or ($last -and (Get-KitCommentSig $_.text) -eq $last)) } | Select-Object -Last 1
   if ($old -and $edit) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $old.id; text = $body }; & $keep $old.id; return $r }
-  $r = Add-TrackerComment $Id $body; & $keep $r.id
+  $r = Add-TrackerComment $Id $body; $cid = $r.id
+  if (-not $cid -and "$r" -notmatch '^QUEUED') { $cid = (@(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { $_.id -and (Get-KitCommentSig $_.text) -eq $sig } | Select-Object -Last 1).id }   # adapters that print no id
+  & $keep $cid
   # queued (offline): the old one stays
   if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
@@ -1353,7 +1373,14 @@ function Add-TrackerAttachment([string]$Id, [string]$File, [string]$Text) {
 }
 function Get-TrackerTasks([string]$List, [string]$Status) {
   if (-not $List) { $List = [string]$(if ($__trType -in 'github', 'gitlab') { $__trRepo } else { Get-KitSetting 'tracker.list' '' }) }
-  __TrA 'list' @{ list = $List; status = (Resolve-TrackerStatus $Status); logical = $Status }
+  # a logical status lists under every name tracker.statuses gives it (lists name it differently: "in test" / "for test")
+  $names = @(foreach ($k in @($__trStatus.Keys)) { if ($k -ieq $Status) { @($__trStatus[$k]) } }); if (-not $names.Count) { $names = @($Status) }
+  $seen = @{}; $err = $null; $ok = 0
+  foreach ($n in $names) {
+    try { foreach ($t in @(__TrA 'list' @{ list = $List; status = $n; logical = $Status })) { $tk = if ($t.id) { [string]$t.id } else { [guid]::NewGuid() }; if ($t -and -not $seen[$tk]) { $seen[$tk] = 1; $t } }; $ok++ }
+    catch { if (-not $err) { $err = $_ }; Write-Warning "tracker list $List '$n' failed: $_" }   # a name the list lacks may throw
+  }
+  if (-not $ok -and $err) { throw $err }
 }
 
 # failed checks in tracker texts (pokey.ps1 Format-Checks: "### <id> — <screen>" + "**Saw:**"), an id once (the first text
@@ -1450,7 +1477,7 @@ function __GhMr($p) {
   if (-not $p -or -not $p.number) { return $null }
   __Mr @{ iid = $p.number; title = $p.title; state = $(if ($p.merged_at -or $p.merged) { 'merged' } elseif ($p.state -eq 'open') { 'opened' } else { 'closed' }); source_branch = $p.head.ref; target_branch = $p.base.ref
     sha = $p.head.sha; merge_commit_sha = $p.merge_commit_sha; merged_at = $p.merged_at; created_at = $p.created_at; updated_at = $p.updated_at; draft = [bool]$p.draft; has_conflicts = ($p.mergeable -eq $false)
-    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url }
+    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url; author = $p.user.login }
 }
 # adapter:git-host/command: gitHostApi.commands.<verb>
 Register-KitAdapter 'git-host' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'git-host' (__HostSet 'commands' $null) $v $a } }
@@ -1505,6 +1532,31 @@ function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$
   if ($type -eq 'gitlab') { $env:GITLAB_HOST = $hostName }
   $q = @{ repo = $path; type = $type; source_branch = $Branch; state = $State; per_page = 20 }; if ($Target) { $q.target_branch = $Target }
   @(Invoke-HostVerb 'mr.list' $q | Where-Object { $_ -and (-not $Target -or $_.target_branch -eq $Target) })
+}
+# the git-host login of this machine's CLI (gitlab: glab, github: gh); '' = unknown
+function Get-KitHostUser {
+  switch ($script:HostType) { 'gitlab' { if (Get-Command __GlEnv -ErrorAction SilentlyContinue) { __GlEnv }; [string](__Cli glab 'user').username } 'github' { [string](__Cli gh 'user').login } default { '' } }
+}
+# supervise: ONE WATCH for the owner's MRs merged in 24 h that no task tracks (a raw merge past track add); one host list per
+# repo (trackerRepos, else repos[]) cached a beat in $State, the login a day; tracking re-read every round
+function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
+  $um = $State.untrackedMrs
+  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge (Get-KitBeatMinutes)) {
+    $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
+    $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
+    $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
+            if (-not (& $Within)) { break }
+            foreach ($m in @(try { Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $rp -Raw); state = 'merged'; author_username = $hu; updated_after = $since; per_page = 50 } } catch { }) | Where-Object { $_.iid }) {
+              @{ repo = $rp; iid = "$($m.iid)"; title = "$($m.title)"; branch = "$($m.source_branch)"; author = $(if ($m.author.username) { $m.author.username } else { "$($m.author)" }); merged_at = "$($m.merged_at)" } } } }) }
+    $State.untrackedMrs = $um
+  }
+  $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
+  $line = '^(?:main|master|develop|release/.+' + (@($KitConf.ProtectedBranches | Where-Object { $_ } | ForEach-Object { '|' + [regex]::Escape($_) }) -join '') + ')$'   # a protected source = a deploy / promotion MR, no task
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and "$($_.branch)" -notmatch $line -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) })
+  if (-not $un.Count) { return }
+  $tg = Get-KitTaskTagRx; $f = $un[0]; $tid = if ($tg -and "$($f.branch) $($f.title)" -match $tg) { $Matches.id } else { '<task>' }
+  [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
+    action = "Link each to its task: & $($KitCmd.orch) track add -Task $tid -Mrs '$($f.repo)!$($f.iid)', then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = 'merged MR on no task' }
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)

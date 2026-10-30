@@ -37,7 +37,7 @@ Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is w
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name | `[Feature/Bug/Chore] <area> — <outcome>` | 1l 100ch | — |
 | task-description | tracker task description | Problem, Goal, Acceptance (bullets), Links | 200w each:6b | link |
-| comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | link |
+| comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | — |
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
 | comment-deploy | a deploy record (+ the batched ask, only under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
@@ -201,9 +201,11 @@ edits the same MR body. Merge refuses an MR with a task link and no `Testing doc
 ## Task solution comment
 ```markdown
 **Solution** — <what was wrong / built, and the fix>
-**MRs**: <ref (MERGED|SCHEDULED|OPEN)> · **Local proof**: <env r<n>, goals passed> · **Testing doc**: <link>
+**MRs**: <ref (MERGED|SCHEDULED|OPEN)> · **Local proof**: <env r<n>, goals passed>
 **After deploy**: <settings/data to seed, or "nothing"> · **Deferred**: <item — reason, or "none">
 ```
+A task has three kit comments, each edited in place: MRs (merge order; a status line once all merged), solution, QA result.
+The testing doc links (human + AI) live only on top of the task description (`devtools.py finish`), never in a comment.
 
 ## Decision request
 Written by `bossy.ps1 decide ask` into the contracts file; the coordinator relays it, the owner answers.

@@ -62,6 +62,9 @@ $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') });
 $null = Fin $rn R1 -Check -FixNames; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name
 & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
 $null = Fin $rn R1 -Check -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw
+[IO.File]::WriteAllBytes("$rn/R1/shots/two.png", [byte[]](1, 2)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence += 'two.png'; $o0 = $rj.checks[0].observed; $rj.checks[0].observed = "$(1..60)"; & $J $rj "$rn/R1/results.json"
+$o1 = Fin $rn R1 -Check | Out-String; $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].observed = $o0; & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check -FixNames; $o2c = $LASTEXITCODE
+Expect "finalize -Check: prose and off-standard names in one pass, then ONE -FixNames run passes ($o2c)" ($o1 -match 'R1 prose check' -and $o1 -match 'two\.png -> R1-C1_' -and $o1 -match 'next: .*ONE run: .*-Check -FixNames' -and $o2c -eq 0)
 Expect "finalize -FixNames: any-case reference renamed; an old name after a rewrite resolves and is fixed ($new $f2c)" ($new -match '^R1-C1_' -and $f1 -match [regex]::Escape($new) -and $f1 -notmatch '(?i)"shotone\.png"' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new))
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'

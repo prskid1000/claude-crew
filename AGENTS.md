@@ -43,7 +43,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R3 | The owner asks to audit, review, recover or repair the whole kit, set it up or fix missing config, or the local env or the phone lanes need admin (start, stop, refresh, wiring, create or reset lanes) or an ENV-FIX | `kitty` agent (one at a time; kind audit / recover / setup / env) | — (the agent holds its steps) |
 | R4 | A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective | `/tidy` | `bossy` |
 | R5 | Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens) | `/buildy` | `bossy` |
-| R6 | Coding: one small change in one repo (one screen, file or endpoint, a quick fix, a config edit) | direct, crafty steps | `crafty` |
+| R6 | Coding: one small change in one repo (one screen, file or endpoint, a quick fix, a config edit) | direct, crafty steps (a task, `track add` before merge) | `crafty` |
 | R7 | A person says `deploy <env>` (or approves an ask under `deploy.trigger: ask`), deployed tasks are to move to in test, a deploy is to be rolled back, or a deploy secret is to be moved or rotated | `opsy` agent (kind deploy / rollback / status / secret; bossy E5) | — (the agent loads `bossy`) |
 | R8 | Deployed tasks on a test environment, each with a human testing doc, are to be tested by agents | `/testy` | `bossy` |
 | R9 | A person tests by hand from a human testing doc | `pokey` → H steps | — |
@@ -69,7 +69,7 @@ the **Target**. A mixed request is split and each part routed on its own.
   split -> the owner judges (`bossy.ps1 decide ask`, both sides' evidence). Codex / Antigravity: the same agents are ported
   to `.codex/agents/*.toml` / `.agents/agents/*.md`; no workflow engine there: follow `.codex/workflows/*.md` /
   `.agents/workflows/*.md` by hand.
-- **Autonomous:** user invocation is the standing opt-in. The coordinator and agents execute all routed steps autonomously (worktrees, checks, code edits, local test loops, reviews, CI, and merging) without pausing for approvals. A request running in a workflow is never launched twice: add via contracts.
+- **Autonomous:** user invocation is the standing opt-in. The coordinator and agents run all routed steps (worktrees, checks, edits, local test loops, reviews, CI, merging) without approval pauses. A request running in a workflow is never launched twice: add via contracts.
 - **Deploys start only from a person's word**, never from an agent: with `deploy.trigger: owner` (default) nobody asks or proposes;
   the person says `deploy <env>`, then `opsy` runs it end to end. Merges into branches that deploy (`holdMerge`) need a yes too; merges
   into the main line after review, CI and the local test loop need none.

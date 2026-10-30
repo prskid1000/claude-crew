@@ -216,5 +216,22 @@ const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: '
 console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
 '@ (Join-Path $src 'workflows/buildy.js')
 Expect-Each $jr 'buildy: # (after the build stage and the run)' 'release'
+# supervise: the owner's MRs merged in 24 h that no task tracks = one WATCH; the host list is cached one beat, tracking re-read
+$um = @'
+$o, $add = $args; . $o; $KitConf.TrackerType = 'command'; $KitConf.TrackerTag = 'TT-'; $KitConf.TrackerRepos = @('shop')
+function Get-KitHostUser { 'me' }
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -ne 'mr.list') { return }; "hostcalls:1"| Out-File -Append (Join-Path (Get-KitPath cache -Create) 'um-calls.txt')
+  $h = { param($n) (Get-Date).ToUniversalTime().AddHours(-$n).ToString('o') }
+  @([pscustomobject]@{ iid = 8729; title = 'fix: test support root'; source_branch = 'fix/TT-7-root'; author = @{ username = 'me' }; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 8725; title = 'feat: x'; source_branch = 'f/TT-7-x'; author = @{ username = 'me' }; merged_at = (& $h 2) },
+    [pscustomobject]@{ iid = 1; title = 'other'; author = @{ username = 'you' }; merged_at = (& $h 1) }, [pscustomobject]@{ iid = 3; title = 'deploy'; source_branch = 'main'; author = @{ username = 'me' }; merged_at = (& $h 1) },
+    [pscustomobject]@{ iid = 2; title = 'old'; author = 'me'; merged_at = (& $h 30) }) }
+Update-KitTracking { param($t) $t.tasks['T7'] = @{ task = 'T7'; mrs = @('shop!8725') + @(if ($add) { 'shop!8729' }) } }
+Invoke-Supervise -Json -Takeover
+'@
+$u1 = Invoke-PsTest 'untracked-mr' $um @($O, '') | Out-String; $u2 = Invoke-PsTest 'untracked-mr' $um @($O, '1') | Out-String
+$uc = @(Get-Content (Join-Path (TkPath $k cache) 'um-calls.txt') -ErrorAction SilentlyContinue).Count
+Expect "supervise: an untracked merged MR of the owner = one WATCH with its track add; tracked -> gone; host listed once per beat ($uc)" ($u1 -match '1 MR\(s\) of me merged in 24 h tracked by no task: shop!8729 \(fix: test support root\)' -and
+  $u1 -match "track add -Task 7 -Mrs 'shop!8729'" -and $u1 -notmatch 'shop!(8725|1|2|3)\b' -and $u2 -notmatch 'tracked by no task' -and $uc -eq 1)
 Remove-TestKit $k
 Complete-Tests

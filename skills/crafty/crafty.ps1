@@ -13,8 +13,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1434 dir · L1444 checkpoint ·
-  L1469 tracker · L1520 host
+Sections: L20 init · L26 wt · L286 stack · L461 gate · L727 check · L879 pipes · L917 guard · L1485 dir · L1495 checkpoint ·
+  L1520 tracker · L1571 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1315,6 +1315,57 @@ if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
 $hl = "GUI windows on the owner's screen are not allowed (headless rule)."
 if ($cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?(gh|glab)(\.exe)?\s+(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
+# a raw MR create / merge skips the task: no tracker id, no track add -> the owner never sees the MR on the task (KIT_NO_TASK=<reason>: none)
+$mrRx = '(?m)(?:^|[;&|({\n]|\$\()\s*(?:&\s*)?(?:\w+=(?:"[^"]*"|''[^'']*''|\S*)\s+)*(?:\S*[\\/])?(?<tool>glab|gh)(?:\.exe)?\s+(?:mr|pr)\s+(?<verb>create|new|merge)\b'
+if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
+  # same-length copies: $mrJ joins \ / ` line continuations; $mrM also blanks quoted text, heredoc and here-string bodies (data)
+  $blank = { param($m) [regex]::Replace($m.Value, '[^\r\n]', ' ') }
+  $mrJ = [regex]::Replace($raw, '[\\`](?=\r?\n)\r?\n', { param($m) ' ' * $m.Length })
+  $mrM = [regex]::Replace([regex]::Replace([regex]::Replace($mrJ, '(?ms)<<-?\s*([''"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$', $blank), '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', $blank), '"(?:[^"\\]|\\.)*"|''[^'']*''', { param($m) $m.Value[0] + (' ' * ($m.Length - 2)) + $m.Value[0] })
+  $noTask = if ($env:KIT_NO_TASK) { $env:KIT_NO_TASK } elseif (($em = [regex]::Match($mrM, '(?:^|[\s;(])(?:\$env:)?KIT_NO_TASK\s*=\s*')).Success -and $mrJ.Substring($em.Index + $em.Length) -match '^(?:"([^"]+)"|''([^'']+)''|([^\s;''"]+))') { $Matches[1] + $Matches[2] + $Matches[3] }
+  if ($noTask) { Write-KitLog guard no-task @{ session = "$($in.session_id)"; reason = $noTask; cmd = $raw.Substring(0, [math]::Min(300, $raw.Length)) } }
+  else {
+    # one command's words from $i: quotes unwrapped, up to an unquoted ; | & ) or line end
+    function CliWords([string]$t, [int]$i) {
+      $ws = [Collections.Generic.List[string]]::new(); $sb = [Text.StringBuilder]::new(); $q = ''; $has = $false
+      for (; $i -lt $t.Length; $i++) {
+        $ch = [string]$t[$i]
+        if ($q) { if ($ch -eq $q) { $q = '' } else { [void]$sb.Append($ch) }; continue }
+        if ($ch -eq '"' -or $ch -eq "'") { $q = $ch; $has = $true; continue }
+        if ($ch -in ';', '|', '&', ')', "`n", "`r") { break }
+        if ($ch -match '\s') { if ($sb.Length -or $has) { $ws.Add($sb.ToString()); [void]$sb.Clear(); $has = $false }; continue }
+        [void]$sb.Append($ch)
+      }
+      if ($sb.Length -or $has) { $ws.Add($sb.ToString()) }
+      , $ws.ToArray()
+    }
+    function OptVal([string[]]$ws, [string[]]$names) { for ($j = 0; $j -lt $ws.Count; $j++) { foreach ($n in $names) { if ($ws[$j] -ceq $n -and $j + 1 -lt $ws.Count) { return $ws[$j + 1] }; if ($ws[$j].StartsWith("$n=")) { return $ws[$j].Substring($n.Length + 1) } } } }
+    $tagRx = Get-KitTaskTagRx; $tag = $KitConf.TrackerTag; $esc = 'no task at all: KIT_NO_TASK=<reason> <command> (logged)'
+    foreach ($mm in [regex]::Matches($mrM, $mrRx)) {
+      $ws = CliWords $mrJ ($mm.Index + $mm.Length); $tool = $mm.Groups['tool'].Value
+      # the repo's checkout: the last cd before it, else the hook's cwd
+      $gd = $here; foreach ($cm in [regex]::Matches($raw.Substring(0, $mm.Index), '\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location)\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))')) {
+        $cx = ($cm.Groups[1].Value + $cm.Groups[2].Value + $cm.Groups[3].Value) -replace '^/([A-Za-z])(?=/|$)', '$1:'; $gd = if ([IO.Path]::IsPathRooted($cx)) { $cx } elseif ($gd) { Join-Path $gd $cx } }
+      if ($mm.Groups['verb'].Value -ne 'merge') {
+        if (-not $tagRx) { continue }
+        $src = OptVal $ws '-s', '--source-branch', '-H', '--head'; if (-not $src -and $gd) { $src = "$(git -C $gd branch --show-current 2>$null)".Trim() }
+        if ("$(OptVal $ws '-t', '--title') $src" -notmatch $tagRx) { Deny "kit guard: this MR names no tracker task ($tag<id> in neither its title nor its source branch '$src'): the owner never sees it on the task. Open it with python -X utf8 $($KitCmd.devtools) mr <wt> '<title>' <body.md> from a $tag<id> branch, or put $tag<id> in the title; $esc." }
+        continue
+      }
+      if ($tool -eq 'gh' -and $ws -contains '--disable-auto') { continue }
+      $valued = if ($tool -eq 'gh') { '-R', '--repo', '-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email' } else { '-R', '--repo', '-m', '--message', '--squash-message', '--sha' }
+      $target = $null; for ($j = 0; $j -lt $ws.Count; $j++) { if ($ws[$j] -cin $valued) { $j++; continue }; if ($ws[$j] -like '-*') { continue }; $target = $ws[$j]; break }
+      $repo = OptVal $ws '-R', '--repo'; $n = $null
+      if (($u = ConvertFrom-MrUrl "$target")) { $repo = $u.repo; $n = $u.n } elseif ("$target" -match '^!?(\d+)$') { $n = $Matches[1] }
+      if (-not $n) { Deny "kit guard: $tool $(if ($tool -eq 'gh') { 'pr' } else { 'mr' }) merge needs the MR number (merge <iid>), so the guard can check that a task tracks it; $esc." }
+      if (-not $repo -and $gd -and "$(git -C $gd remote get-url origin 2>$null)".Trim() -match '^(?:\w+://(?:[^@/]+@)?[^/]+/|[^@]+@[^:]+:)(?<p>.+?)(?:\.git)?/?$') { $repo = $Matches.p -replace '/_git/', '/' }
+      if (-not (Test-KitMrTracked "$repo" $n)) {
+        $leaf = if ($repo) { ($repo -split '/')[-1] } else { '<repo>' }
+        Deny "kit guard: $leaf!$n is in no task's tracking: the owner never sees it on the task and it is never promoted. First & $($KitCmd.orch) track add -Task <id> -Mrs '$leaf!$n' (the task its fix belongs to, or a new one), then merge; $esc."
+      }
+    }
+  }
+}
 # a script or doc run or opened directly pops up its Windows file association (an editor, a viewer, the browser); 'script' | 'doc' | $null
 function Test-OpenDoc([string]$text, [string]$tool) {
   $de = 'md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|gif|svg|pdf|docx?|xlsx?|pptx?'; $se = 'pyw?|[cm]?js|ts'

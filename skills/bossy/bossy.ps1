@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L226 budget · L254 launch · L526 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1072 anomalies · L1090 supervise · L1391 report · L1470 audit · L1530 storage · L1741 bugbrief · L1843 cleanup ·
-  L1967 learn · L1997 decide · L2063 health · L2126 retro due · L2136 tidy · L2206 the kit origin's main and goodies ·
-  L2222 setup · L2288 guard-sendmessage
+  L763 track · L1067 anomalies · L1085 supervise · L1388 report · L1467 audit · L1527 storage · L1738 bugbrief · L1840 cleanup ·
+  L1964 learn · L1994 decide · L2060 health · L2123 retro due · L2133 tidy · L2203 the kit origin's main and goodies ·
+  L2219 setup · L2285 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -810,7 +810,7 @@ function TaskOfMr($ref) {
   if (-not $KitConf.TrackerTag -or $ref -notmatch '^(?<repo>[\w./-]+)!(?<iid>\d+)$') { return '' }
   $proj = ProjPath $Matches.repo; if (-not $proj) { return '' }
   $m = Invoke-HostApi "projects/$($proj -replace '/', '%2F')/merge_requests/$($Matches.iid)"
-  foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match "(?i)$([regex]::Escape($KitConf.TrackerTag))(?<id>[A-Za-z0-9]+)") { return (NormTask $Matches.id) } }
+  foreach ($s in @($m.title, $m.source_branch)) { if ("$s" -match (Get-KitTaskTagRx)) { return (NormTask $Matches.id) } }
   ''
 }
 # re-arming would break merge order
@@ -877,7 +877,7 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
-# the task's ONE MRs comment ([kit:mrs-<task>], edited in place): merge order (producers first), then MR number
+# the task's ONE MRs comment (kind mrs-<task>, edited in place): merge order (producers first), then MR number; all merged: + the status
 function Set-KitMrsComment($o) {
   $prod = @(@($o.mergeAfter) | ForEach-Object { NormRef (($_ -split '>', 2)[-1]) })
   $rows = @(@($o.mrs) | Where-Object { $_ -match '^(?<repo>[\w./-]+)!(?<iid>\d+)$' } | Sort-Object { if ($prod -contains $_) { 0 } else { 1 } }, { [int]($_ -replace '^.*!', '') } | ForEach-Object {
@@ -885,7 +885,8 @@ function Set-KitMrsComment($o) {
       $m = if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $Matches.iid } } catch { $null } }   # any git host
       $u = if ($pp) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $Matches.iid } } catch { '' } }
       "- $($Matches.repo) !$($Matches.iid) — $(if ($m.title) { $m.title } else { '(title unknown)' }) — $(switch ("$($m.state)") { 'opened' { 'open' } '' { 'unknown' } default { $_ } })$(if ($u) { " — $u" })" })
-  if ($rows.Count) { try { $null = Set-TrackerKitComment $o.task "mrs-$($o.task)" ("MRs (merge order):`n" + ($rows -join "`n")) } catch { Write-Warning "MRs comment of $($o.task) not updated: $_" } }
+  $st = if ($o.mergedCommentAt -and @($o.onMerged).Count -and -not @($rows | Where-Object { $_ -notmatch ' — merged( — |$)' }).Count) { "`nAll merged: status $(@($o.onMerged)[-1])." }
+  if ($rows.Count) { try { $null = Set-TrackerKitComment $o.task "mrs-$($o.task)" ("MRs (merge order):`n" + ($rows -join "`n") + $st) } catch { Write-Warning "MRs comment of $($o.task) not updated: $_" } }
 }
 switch ($Action) {
   'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch
@@ -1024,15 +1025,9 @@ switch ($Action) {
       $setFailed = $false
       foreach ($s in $todo) { try { $null = Set-TrackerStatus $o.task $s } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
       if ($setFailed) { continue }
-      # a run killed before Save would post again
-      $allC = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
-      if (-not $o.mergedCommentAt -and -not @($allC | Where-Object { $_ -match '^All MRs merged' }).Count) {
-        $o.mergedCommentAt = (Get-Date).ToString('o'); Save $o -Run
-        Set-KitMrsComment $o   # the MRs comment now says merged
-        try { $null = Add-TrackerComment $o.task "All MRs merged (see the MRs comment). Status set to $($o.onMerged[-1]) automatically by the coordinator's tracker." } catch {}
-      }
-      $cmts = @($allC | Where-Object { $_ -notmatch '^All MRs merged' })
-      if (-not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
+      if (-not $o.mergedCommentAt) { $o.mergedCommentAt = (Get-Date).ToString('o'); Save $o -Run; Set-KitMrsComment $o }   # the MRs comment says merged + the status: no extra comment
+      $cmts = @(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
+      if ((Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {
               $j = try { $line | ConvertFrom-Json } catch { $null }
@@ -1291,6 +1286,8 @@ if ($AutoFix -and (Within 'tracker checks')) {
   if ($pct -ge 85) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
 }
+# 4b. the owner's MRs merged in 24 h that no task tracks (lib.ps1 Get-KitUntrackedMrFlag)
+if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }
 
 # 5. QA results back to the dev flow: new [Bug] tasks, failedTesting tasks (bossy E6)
 if (Within 'QA bug tasks') {

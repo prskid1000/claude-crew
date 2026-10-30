@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L120 seat · L188 api · L311 finalize · L703 retest
+Sections: L23 report · L120 seat · L188 api · L311 finalize · L704 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -458,7 +458,8 @@ if ($Check) {
   }
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
-  if ($fail) { exit 1 }
+  # one rerun fixes all: the names (-FixNames) and the re-checked text together
+  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: pokey.ps1 finalize -RunDir $RunDir -Code $Code -Check$(if (@($suggest.Values | Where-Object { $_ }).Count) { ' -FixNames' })$(if ($Results -ne 'results.json') { " -Results $Results" })"; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"; exit 0
 }
 if ($lostList.Count) {
@@ -511,10 +512,10 @@ $cells = @{}
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl -Cells $cells
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
+# the task's human testing doc takes the run: Result / Evidence per row + a dated "<env> run" section (same doc); none: a report by key
+$hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
 else {   # devtools doc (reports.type); kept-file types keep it in $D
-  # the task's human testing doc takes the run: Result / Evidence per row + a dated "<env> run" section (same doc); none: a report by key
-  $hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
   $pa = if ($hDoc) { [IO.File]::WriteAllText("$D/cells.json", (ConvertTo-Json $cells -Depth 4), [Text.UTF8Encoding]::new($false)); @("$D/report.md", '--key', "${pubKey}:testing-doc", '--run', "$D/cells.json") }
     else { @("$D/report.$(if ($html -and $rtype -eq 'gdocs') { 'html' } else { 'md' })", '--key', "${pubKey}:qa-report") }
   $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" $pa[0] $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype @($pa | Select-Object -Skip 1) --label "$(if ($item.target) { $item.target } else { $run.target })" 2>&1 | ForEach-Object { "$_" }
@@ -671,9 +672,9 @@ foreach ($st in @($item.subtasks)) {
       else { $rec.bugError = '[Bug] task could not be created'; Write-Warning "$($st.id): could not create the [Bug] task for $(($newDefects | ForEach-Object id) -join ', ')" }
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
-    $msg += ". Report with screenshots and evidence: $docUrl"
+    $msg += if ($hDoc -and (Test-KitTaskDocLink $st.id) -eq $true) { '. Screenshots and evidence: the human testing doc in the description' } else { ". Report with screenshots and evidence: $docUrl" }   # testing doc links live only in the description
     # own failures + untested: failedTesting
-    $text = $msg   # one line: counts, failed / untested ids, the doc link; the details live in the doc
+    $text = $msg   # one line: counts, failed / untested ids, where the evidence is; the details live in the doc
     $posted = if ($reportFile) { TrySay { $null = Add-TrackerAttachment $st.id $reportFile $text; $true } "post the report on $($st.id)" }
     else { TrySay { $null = Set-TrackerKitComment $st.id 'qa-result' $text; $true } "comment on $($st.id)" }   # a new run edits the last result comment
     $out.subtasks += $rec

@@ -36,6 +36,7 @@ Invoking the coordinator is the only action needed: all steps run autonomously t
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
 steps: AGENTS.md "The two flows"): merged work waits silently (`deploy request`) until a person says `deploy <env>` -> E5.
+Your own small or urgent fix (R6) still goes through a task (existing or new): `devtools.py mr`, `track add` before the merge.
 
 Only these dev paths need you (the workflow handles the rest: `workflows/buildy.js`):
 

@@ -104,19 +104,20 @@ function Get-TrackerTask($id) { [pscustomobject]@{ status = 'promoted'; subtasks
 function Set-TrackerStatus($id, $s) { $global:sets += "$id=$s" }
 function Add-TrackerComment($id, $text) { $global:cmts += [pscustomobject]@{ id = $id; text = $text } }
 function Get-TrackerComments($id) { @($global:cmts | Where-Object { $_.id -eq $id }) }
+function Set-TrackerKitComment($id, $kind, $text) { $global:cmts = @(@($global:cmts | Where-Object { -not ($_.id -eq $id -and $_.kind -eq $kind) }) + [pscustomobject]@{ id = $id; kind = $kind; text = $text }) }   # edited in place (crafty tests cover it)
 function Start-Process { }   # no background cleanup from a test
 $null = Invoke-Track add -Task t5 -Mrs 'g/web!9' -OnMerged 'review,promoted'
 $null = Invoke-Track run -Detail
 Update-KitTracking { param($t) $t.tasks['t5'].done = $false }
 $null = Invoke-Track run -Detail
 "skip:$(-not @($global:sets | Where-Object { $_ -like 't5=*' }).Count)"
-"once:$(@($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match '^All MRs merged' }).Count -eq 1)"
+"once:$(@($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match 'All merged: status promoted' }).Count -eq 1 -and -not @($global:cmts | Where-Object { $_.text -match '^All MRs merged|\[kit:' }).Count)"
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
-$c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -notmatch '\[kit:mrs-' }).Count
+$c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: status' }).Count
 $null = Invoke-Track add -Task t6 -HoldPromotion ''
 $null = Invoke-Track run -Detail
-"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -notmatch '\[kit:mrs-' }).Count -eq 1)"
+"hold:$($h -match 'promotion HELD' -and $r1 -match 'HOLD t6: promotion held' -and $c1 -eq 0 -and @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: status' }).Count -eq 1)"
 $KitConf.TrackerRepos = @('g/web'); $KitConf.TrackerTag = 'CU-'; $null = Invoke-Track add -Task t7 -Discover -Mrs 'g/web!7'; $global:q = 0
 $null = Invoke-Track run; $q1 = $global:q; $null = Invoke-Track run
 "throttle:$($q1 -ge 1 -and $global:q -eq $q1 -and (Read-KitTracking).tasks['t7'].checkedAt)"
@@ -136,7 +137,7 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { 
 function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened' } }
 function Start-Process { }
 $null = Invoke-Track add -Task m1 -Mrs 'g/web!12'; $null = Invoke-Track add -Task m1 -Mrs 'g/api!7' -MergeAfter 'g/web!12>g/api!7'
-$c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '\[kit:mrs-m1\]' })
+$c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '^MRs \(merge order\)' })
 "mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open — https://h/g/api/7\s+- g/web !12 — T12 — open')"
 '@ @($O)
 Expect 'track add: ONE MRs comment, edited per round, producers first then by number' ("$mc" -match 'mrs:True')

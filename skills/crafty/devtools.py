@@ -17,8 +17,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L35 config · L69 run · L153 tracker · L278 git host · L361 MR · L431 merge · L675 docs · L789 publish · L999 plugins ·
-  L1013 keepboth · L1032 selftest · L1311 CLI
+Sections: L35 config · L69 run · L153 tracker · L286 git host · L369 MR · L439 merge · L683 docs · L797 publish · L1007 plugins ·
+  L1021 keepboth · L1040 selftest · L1327 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -219,7 +219,10 @@ def set_status(tid, status):
 
 
 def comment(tid, text, kind='comment-status'):
-    """A kit comment of this kind: the tracker edits (or replaces) the task's latest one of the same kind."""
+    """A kit comment of this kind: the tracker edits (or replaces) the task's latest one of the same kind; no doc links."""
+    text = no_doc_links(text)
+    if not text.strip():   # only doc links: they live in the description
+        return ''
     prose_gate(kind, text)
     return _tracker('comment', tid, text, '-Kind', kind, '-ProseOk', f'devtools.py checked it ({kind})')
 
@@ -230,6 +233,13 @@ LINK_LINE = re.compile(r'(?im)^[ \t]*(\*\*)?(Testing doc( \((human|AI)\))?|Testi
 def links_block(desc, human, ai):
     """The description with one fixed links block on top; every older testing-doc line removed."""
     return f'Testing doc (human): {human}\nTesting doc (AI): {ai}\n\n' + LINK_LINE.sub('', desc or '').lstrip()
+
+
+def no_doc_links(md):
+    """A comment without testing-doc links: a 'Testing doc: x' field at a line start or after ' · ' goes, up to the next ' · '."""
+    md = re.sub(r'(?im)(?:^[ \t]*|[ \t]+·[ \t]*)(?:\*\*)?Testing (?:doc|goals)(?: \((?:human|AI)\))?(?:\*\*)?[ \t]*:[^\n]*?(?=[ \t]+·[ \t]|$)', '', md or '')
+    md = re.sub(r'(?m)^[ \t]*·[ \t]*', '', md)
+    return re.sub(r'\n{3,}', '\n\n', '\n'.join(ln for ln in md.split('\n') if ln.strip() or not ln)).strip() + '\n' if md.strip() else ''
 
 
 def _doc_url(tid, kind, doc):
@@ -250,7 +260,8 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
     if not ai:
         raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Testing doc (AI)"); both docs are linked on every task. Nothing was written.')
-    prose_gate('comment-solution', solution_md if 'Testing doc' in solution_md else f'{solution_md.rstrip()}\n\n**Testing doc**: https://doc')   # before doc, describe, status
+    solution_md = no_doc_links(solution_md)   # the doc links live only in the description
+    prose_gate('comment-solution', solution_md)   # before doc, describe, status
     if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
         ok, ev = local_pass(tid)
         if not ok:
@@ -262,9 +273,6 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     # failed lookup: describing would wipe the description
     if t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
-    solution_md = re.sub(r'\*\*Testing doc\*\*:[^\n]*', lambda m: f'**Testing doc**: {guide_url}', solution_md)   # the last field of its line
-    if guide_url not in solution_md:
-        solution_md = f'{solution_md.rstrip()}\n\n**Testing doc**: {guide_url}'
     comment(tid, solution_md, 'comment-solution')
     cs = (CFG.get('tracker') or {}).get('statuses') or {}   # a name or a list of names (lib.ps1 tracker statuses)
     past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in ([cs[k]] if isinstance(cs.get(k), str) else cs.get(k) or
@@ -1245,21 +1253,29 @@ def _publish_selftest(expect, refused):
         legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
         expect('links block: 7 legacy lines -> one human + one AI line, the rest kept',
                links_block(legacy, 'https://h', 'https://a') == 'Testing doc (human): https://h\nTesting doc (AI): https://a\n\nThe ask.\n')
-        calls, st = [], {'s': 'in progress'}
-        g['_tracker'] = lambda *a: calls.append(a) or ''
-        g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': 'Testing doc: https://old\n\nThe ask.'}
+        calls, st = [], {'s': 'in progress', 'd': 'Testing doc: https://old\n\nThe ask.'}
+        g['_tracker'] = lambda *a: calls.append(a) or (a[0] == 'describe' and st.update(d=a[2])) or ''
+        g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': st['d']}
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         expect('finish refused before any tracker write', not calls)
         finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=a2p)
         expect('finish with the last loop round\'s AI doc adds no second round', open(ua, encoding='utf-8').read().count('## Round ') == 1)
         refused('finish: a URL other than the doc the key has -> refused (pass the file)', lambda: finish('T9', human, '**Solution** — x', ai='https://other/doc'), 'already is')
         d = next(a[2] for a in calls if a[0] == 'describe'); c = next(a for a in calls if a[0] == 'comment')
-        expect('finish: links block (human + AI) on top, solution comment of kind comment-solution with the one human link, status review',
+        expect('finish: links block (human + AI) on top, solution comment of kind comment-solution without doc links, status review',
                d.startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')
-               and c[2].count(u1) == 1 and '<link>' not in c[2] and calls[-1] == ('status', 'T9', 'review'))
-        calls.clear(); st['s'] = 'promoted'
-        finish('T9', human, '**Solution** — x\n**Testing doc**: <link>', ai=a2p)
+               and u1 not in c[2] and 'Testing doc' not in c[2] and '**MRs**: a' in c[2] and calls[-1] == ('status', 'T9', 'review'))
+        all_c = [a[2] for a in calls if a[0] == 'comment']; calls.clear(); st['s'] = 'promoted'
+        finish('T9', human, '**Solution** — x\n**Testing doc**: <link>\n**Testing doc (AI)**: <ai>', ai=a2p)
+        all_c += [a[2] for a in calls if a[0] == 'comment']
         expect('finish on a promoted task: docs and comment, status never moved back', not [a for a in calls if a[0] == 'status'] and [a for a in calls if a[0] == 'comment'])
+        expect('no_doc_links: prose and other fields kept, a links-only text empty',
+               no_doc_links('Fixed the Testing goals: now 5 rows pass.\nDone') == 'Fixed the Testing goals: now 5 rows pass.\nDone\n'
+               and no_doc_links('**MRs**: a · **Testing doc**: https://d · **After deploy**: seed') == '**MRs**: a · **After deploy**: seed\n'
+               and no_doc_links('**Testing doc**: x · **After deploy**: y') == '**After deploy**: y\n' and no_doc_links('Testing doc (human): https://x') == '')
+        expect('finish twice: no comment holds a doc link; the description holds both links once, on top',
+               len(all_c) == 2 and not [x for x in all_c if 'Testing doc' in x or u1 in x or ua in x or '<link>' in x]
+               and st['d'].startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and st['d'].count(u1) == 1 and st['d'].count(ua) == 1)
         hc = []
         g.update(remote=lambda w: ('gitlab', 'g/r'), _run=lambda *a, **k: 'f/x', _host=lambda v, **a: hc.append(v) or (
             [{'iid': 5, 'web_url': 'https://h/g/r/5'}] if v == 'mr.list' else {'web_url': 'https://h/g/r/5'}))
@@ -1331,13 +1347,16 @@ def _cli():
     PROSE_OK = opt.get('--prose-ok') or ''
     if PROSE_OK:
         print(f'[prose] --prose-ok: {PROSE_OK}', file=sys.stderr)
+    if not cmd:   # agents call it bare to see the verbs: no usage error
+        print(f"devtools.py verbs: {', '.join(sorted(set(ARITY) | set(VERBS)))}\n{__doc__}")
+        sys.exit(0)
     if cmd in ('-h', '--help', 'help') or (use and any(x in ('-h', '--help') for x in a[1:])):
         print('\n'.join(use) if use else __doc__)
         sys.exit(0)
     bad = [x for x in a[1:] if re.match(r'^--?[A-Za-z][\w-]*$', x) and x not in FLAGS.get(cmd, set())]
     if cmd not in ARITY or bad or len(a) - 1 < ARITY[cmd]:
         print((f'devtools.py {cmd}: unknown option {bad[0]}' if bad else f'devtools.py {cmd}: missing arguments') if cmd in ARITY
-              else f"devtools.py: {f'unknown verb {cmd}' if cmd else 'missing verb'}: python -X utf8 devtools.py <verb> ... (verbs: {', '.join(sorted(ARITY))})\n{__doc__}", file=sys.stderr)
+              else f"devtools.py: unknown verb {cmd}: python -X utf8 devtools.py <verb> ... (verbs: {', '.join(sorted(ARITY))})\n{__doc__}", file=sys.stderr)
         print('\n'.join(use) if use else '', file=sys.stderr)
         sys.exit(2)
     if cmd == 'comment':

@@ -100,9 +100,9 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Scope:** only your items; additive changes (optional fields, new endpoints/params, flags); never remove features or inputs;
   DTOs not entities in APIs; foreign files only as one-line hooks you list; decisions in the brief are final, a NEW one -> D1.
 - **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
-  caller; overrides opt-in; key shared formatters by field; a round-trip test; list the callers in the MR and the testing goals.
+  caller; overrides opt-in; key shared formatters by field; a round-trip test; list callers in the MR and the testing goals.
   A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
-  every render path of the field) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
+  every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.
 - **Text files:** write with the Write tool, change with Edit, pass file paths (`devtools.py doc <file>`, MR body from a file);
   never heredocs / sed / string-replace for text with backslashes, quotes or CRLF.
@@ -113,12 +113,12 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
   change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with
   `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
-  MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
+  MR state: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
-- **Tracker:** always `crafty.ps1 tracker` (any backend; statuses `inProgress` -> `review` once the MR, both docs and
+- **Tracker:** always `crafty.ps1 tracker` (any backend; `inProgress` -> `review` once the MR, both docs and
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
-  `inTest` or `closed` yourself; `promoted` needs both doc links.
+  `inTest` or `closed` yourself; `promoted` needs both doc links, only atop the description, never in a comment.
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
   section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one); `devtools.py mr` edits the open MR.
 - **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;

@@ -64,7 +64,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      failedTesting, new -> [Bug] tagged flaky); never PASS_WITH_NOTE.
    - **OUT_OF_SCOPE**: the step only exercises a channel agent QA never tests (`qa.outOfScope`, run.json `outOfScope` wins):
      never tested, never counted; the in-app part of the same check is still tested.
-   - **PENDING**: tested later in another lane (the workflow adds an app follow-up `<code>A`). **findings**: context only.
+   - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report: `kitbag.py prose` first), run `pokey.ps1
    finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
@@ -73,7 +73,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
 (logical status; fallback `inProgress` + comment),
-the comment lists the failed / untested checks and why, NO new task · a new / unexpected
+the one QA comment (no doc link) lists failed / untested checks and why, NO new task · a new / unexpected
 defect -> ONE `[Bug] <ask> — new defects (n)` task under the task's original ask (appended to an open one) · PENDING -> open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
