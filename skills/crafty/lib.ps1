@@ -1558,7 +1558,7 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
   # the table cell is cut at 90 chars: refs in problem, a short next; every full command in the report's "All flags"
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$($refs -join ', ') merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
+    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack)."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)
