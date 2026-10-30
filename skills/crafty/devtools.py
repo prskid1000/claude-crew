@@ -6,6 +6,7 @@
   by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status
  python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
+ finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
@@ -17,8 +18,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L35 config · L69 run · L153 tracker · L287 git host · L370 MR · L447 merge · L691 docs · L824 publish · L1034 plugins ·
-  L1048 keepboth · L1067 selftest · L1368 CLI
+Sections: L36 config · L70 run · L154 tracker · L320 git host · L403 MR · L481 merge · L725 docs · L858 publish · L1068 plugins ·
+  L1082 keepboth · L1101 selftest · L1402 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -29,7 +30,7 @@ from datetime import datetime
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking   # one path map, lock, call log and goodies' usage stamps for every kit script
+from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking, kitlog   # one path map, lock, call log and goodies' usage stamps for every kit script
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -201,6 +202,38 @@ def prose(kind, text):
 
 
 PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
+OVERRIDE = ''   # --override "<why>": past the prior-work gate, logged
+TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github': 'GH-', 'gitlab': 'GL-'}.get(TRACKER_TYPE, '')
+
+
+def prior_gate(task, repo, what):
+    """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate): prior ran within prior.validHours and found
+    nothing for this repo (or a duplicate task); --override passes, logged."""
+    if not task:
+        return
+    if OVERRIDE:
+        kitlog('calls', 'prior-override', {'task': task, 'what': what, 'reason': OVERRIDE})
+        return
+    p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
+    reg = json.load(open(os.path.join(KIT_DIR, 'skills', 'bossy', 'params.registry.json'), encoding='utf-8'))['params']
+    hours = float(re.search(r'default=([\d.]+)', reg['prior.validHours']).group(1))
+    try:
+        fresh = (datetime.now().astimezone() - datetime.fromisoformat(p['at'])).total_seconds() < hours * 3600
+    except (KeyError, TypeError, ValueError):
+        fresh = False
+    if not fresh:
+        raise SystemExit(f'{what} refused: run crafty.ps1 prior -Task {task} first (check before create)')
+    leaf = lambda r: re.split(r'[\\/]', r or '')[-1]
+    hit = [f for f in p.get('found') or [] if isinstance(f, dict) and f.get('kind') and (f.get('kind') == 'task' or not repo or not f.get('repo') or leaf(f['repo']) == leaf(repo))]
+    if hit:
+        kitlog('calls', 'prior-refused', {'task': task, 'what': what, 'found': f"{hit[0].get('kind')} {hit[0].get('ref')}"})
+        raise SystemExit(f"{what} refused: already exists: {'; '.join(f'{h.get("kind")} {h.get("ref")} {h.get("title")}' for h in hit)}: "
+                         f"reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or --override '<reason>'")
+
+
+def task_of_branch(branch):
+    m = re.search(rf'(?i){re.escape(TAG)}([A-Za-z0-9]+)', branch or '') if TAG else None
+    return m.group(1) if m else ''
 
 
 def prose_gate(kind, text):
@@ -417,6 +450,7 @@ def mr_create(worktree, title, body_md, tgt=None):
         body_md = body_md.rstrip() + '\n\n' + FOOTER + '\n'
     host, proj = remote(worktree)
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
+    prior_gate(task_of_branch(src), proj, f'devtools.py mr {src}')
     tgt = tgt or target_of(worktree)
     if not tgt:
         raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
@@ -1367,7 +1401,7 @@ def _report_selftest(expect):
 
 # ---- CLI: argument checks, verb dispatch
 def _cli():
-    global REPORT_TYPE, PROSE_OK
+    global REPORT_TYPE, PROSE_OK, OVERRIDE
     a = sys.argv[1:]
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
@@ -1381,7 +1415,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai') if cmd in ('comment', 'finish', 'mr') else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, never "unknown option"
@@ -1389,6 +1423,7 @@ def _cli():
             sys.exit(2)
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
     PROSE_OK = opt.get('--prose-ok') or ''
+    OVERRIDE = opt.get('--override') or ''
     if PROSE_OK:
         print(f'[prose] --prose-ok: {PROSE_OK}', file=sys.stderr)
     if not cmd:   # agents call it bare to see the verbs: no usage error
@@ -1406,6 +1441,7 @@ def _cli():
     if cmd == 'comment':
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
+        prior_gate(a[1], '', f'devtools.py finish {a[1]}')
         finish(a[1], a[2], _body(a[3]), *(a[4:5] or ['review']), ai=opt.get('--ai'))
         print('done')
     elif cmd == 'mr':
@@ -1428,6 +1464,8 @@ def _cli():
         if opt.get('--mode') not in (None, 'append', 'replace'):
             print('devtools.py doc: --mode append|replace', file=sys.stderr)
             sys.exit(2)
+        if (opt.get('--key') or '').rpartition(':')[2] in ('testing-doc', 'testing-ai') and not opt.get('--run'):   # a dev round's task doc
+            prior_gate(opt['--key'].rpartition(':')[0], '', f"devtools.py doc --key {opt['--key']}")
         print(publish(opt['--key'], title, path, *(a[3:4] or [None]), mode=opt.get('--mode'), label=opt.get('--label') or '',
                       run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None) if opt.get('--key')
               else make_doc(title, path, *(a[3:4] or [])))

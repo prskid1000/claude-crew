@@ -17,6 +17,8 @@ args); `<kit>/skills/crafty/templates.md` "Wave brief", "Bug-fix brief" and "Wri
 `leave` at the end.
 
 Non-negotiables:
+- Find or reuse a task first (`crafty.ps1 prior -Task <id> -Query '<words>'` per item): an existing one is extended
+  (`tracker scope`), never duplicated; a new one only with `tracker create -NewTask '<why it cannot be folded in>'`.
 - You write only the brief, its `<brief>.contracts.md` and appended rule changes; no product code, branches, tracker status
   or launches (the coordinator launches).
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Step brief -Evidence "<brief path>"` per kind and `board beat` (spend /

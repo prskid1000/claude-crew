@@ -21,8 +21,9 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
 ## Tester / verifier steps (test environment only, never production)
-0. `bossy.ps1 learn -Read -Skill pokey`; read the guide (the human testing doc) and the run's `context` / `contextFiles`.
-   Check the SQL/MCP tools once, note their state; a tool being down alone is never NOT_TESTED (use the product's read APIs).
+0. `bossy.ps1 learn -Read -Skill pokey`; [Bug] / task: `crafty.ps1 prior` (FOUND: tracker scope);
+   read the guide (testing doc), the run's `context` / `contextFiles`.
+   Check SQL/MCP tools once; a tool down alone is never NOT_TESTED (use read APIs).
    Only the run's target (run.json `target`, `alsoTargets`; `pokey.ps1 api` refuses others): a local run never calls a shared env;
    no load, stress or parallel request floods on a shared env, even when a guide asks (local env only).
 1. **Seat + board:** `pokey.ps1 seat acquire` (exit 4 = still waiting: run it again);

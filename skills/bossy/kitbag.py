@@ -18,8 +18,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L984 README graph · L1090 lint command · L1126 audit ·
-  L1235 registry · L1571 prose · L1716 sections · L1846 budget · L1864 goodies · L2367 state lint · L2438 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L992 README graph · L1098 lint command · L1134 audit ·
+  L1243 registry · L1579 prose · L1724 sections · L1854 budget · L1872 goodies · L2375 state lint · L2446 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -865,6 +865,14 @@ def lint(k, g=None, org_terms=None):
                 continue
             if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
                 bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (kit-admin.md "Shapes", goody kit-admin)')
+    # ---- a shell started without a hidden window opens a console (a terminal tab) on the owner's screen
+    for f in counted:
+        if not f.endswith('.ps1') or f.startswith(GENERATED):
+            continue
+        for i, line in enumerate(k.texts.get(f, '').splitlines()):
+            if re.search(r'Start-Process\s+(?:-FilePath\s+)?\S*(?:pwsh|powershell|cmd)', line, re.I) and not re.search(r'WindowStyle|NoNewWindow|@hide', line) \
+                    and not re.match(r"\s*(#|@\(\s*')", line):
+                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a shell without -WindowStyle Hidden / -NoNewWindow: a console window opens on the desktop')
     # ---- every lease or hold is written with its holder (README "Leases")
     for f in counted:
         if f.endswith('.ps1') and not f.startswith(('tests/',) + GENERATED):

@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L42 supervise · L171 shells · L285 release · L314 lines · L339 cleanup
+Sections: L13 builds · L42 supervise · L177 shells · L291 release · L320 lines · L345 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -134,6 +134,12 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
 }
 
 # status rows (lib.ps1 status): agents queued at the build gate or waiting for a phone lane
+# an agent past the prior-work gate (-Override / -NewTask, lib.ps1 Assert-KitPrior): one WATCH per override since the last beat
+function Get-KitSuperviseFlagsPrior([switch]$AutoFix) {
+  foreach ($e in @(Read-KitLog calls (Get-Date).AddMinutes(-(Get-KitBeatMinutes)) | Where-Object event -eq 'prior-override')) {
+    [pscustomobject]@{ level = 'WATCH'; what = "prior override: $($e.what) $($e.task) ($($e.reason))"; action = 'Check it is no duplicate (crafty.ps1 prior -Task <id>); a duplicate: stop it, reuse the existing work' }
+  }
+}
 function Get-KitStatusWaitResources {
   foreach ($t in @(Get-ChildItem (Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.owner -and (Test-KitPid $_.pid $_.start) })) {
     [pscustomobject]@{ agent = $t.owner; why = "build gate: RAM for $($t.kind)"; at = $t.since; next = 'the gate starts it when RAM frees' }

@@ -4,7 +4,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]  gated checks
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], scope -Task -Add, list, ...)
+ prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes -Mrs <url>,... [-MaxMinutes 8]  wait for MR pipelines (JSON)
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
@@ -13,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L20 init · L26 wt · L289 stack · L464 gate · L730 check · L915 pipes · L953 guard · L1530 dir · L1540 checkpoint ·
-  L1565 tracker · L1616 host
+Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1538 dir · L1548 checkpoint ·
+  L1573 prior · L1602 tracker · L1654 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -28,7 +29,7 @@ function Invoke-Wt {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
-  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs
+  [string]$Dir, [string]$Message, [string]$MessageFile, [switch]$Force, [switch]$NoStage, [string]$ProseOk, [string]$Mrs, [string]$Task, [string]$Override
 )
 $ErrorActionPreference = 'Stop'
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
@@ -138,6 +139,9 @@ switch ($Action) {
       $bh = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and "$($_.worktrees)" -match [regex]::Escape($path) } | ForEach-Object agent)
       throw "$path exists (branch $(git -C $path branch --show-current 2>$null), last commit $(git -C $path log -1 --format=%cr 2>$null), holder: $(if ($bh) { $bh -join ', ' } else { 'none on the board' })): resume there (wt status -Dir $path), pick another -Name, or with no holder: wt remove -Dir $path"
     }
+    $tk = if ($Task) { $Task } elseif (($rx = Get-KitTaskTagRx) -and $Branch -match $rx) { $Matches.id }   # check before create (crafty.ps1 prior)
+    Assert-KitPrior $tk $Repo "wt new $Branch" $Override
+    if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
     # a missing configured dep source is an error, no fallback
     $r = $null
     $kc = $KitConf.ConfigFile
@@ -1312,6 +1316,10 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
+# a task branch made by hand skips wt new's prior-work gate: the same gate here (crafty.ps1 prior first)
+if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB])\s+(?<br>[^\s;|&]+)') {
+  $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt new -Override')" } }
+}
 # a Git Bash drive path (/d/x) given to a Windows program lands in \d\x on the current drive: MSYS never converts strings, JSON, env or code
 function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
   if ($depth -gt 3) { return }
@@ -1562,14 +1570,43 @@ Write-KitAtomic $mf (($md -join "`n") + "`n")
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 
+# ---- prior: what already exists for a task (last 30 days), stored in its state for the gate (lib.ps1 Assert-KitPrior)
+function Invoke-Prior {
+param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
+  if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
+  $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
+  $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # the branches wt new made for this task: its own work
+  $add = { param($k, $r, $ref, $ti) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti" }) }
+  $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }
+  foreach ($d in @(Find-KitSimilarTasks $words $tt.list $tt.parent @() @($Task))) { & $add task '' $d.id "$($d.name) (score $($d.score))" }
+  foreach ($r in @(if ($Repo) { $Repo } elseif ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()) | ForEach-Object name })) {
+    $n = ($r -split '[\\/]')[-1]
+    foreach ($q in @($tag) + @($Query | Where-Object { $_ })) {
+      foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = $since.ToString('o') })) {
+        if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title } } }
+    $dir = @($r, (Get-RepoConf $n checkout $null), (Join-Path $KitConf.ReposRoot $n)) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ '.git')) } | Select-Object -First 1
+    if (-not $dir) { continue }
+    foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])" -and ($b -replace '^origin/') -notin $claimed) { & $add branch $n $b '' } }
+    foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 5 2>$null)) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] }
+    if ($Symbol) { foreach ($g in @(git -C $dir grep -n -F $Symbol "origin/$(Get-RepoConf $n target 'main')" -- 2>$null | Select-Object -First 3)) { & $add code $n (($g -split ':', 4)[1..2] -join ':') '' } }
+  }
+  $st = Read-KitState (Get-KitTaskFile $Task)
+  foreach ($k in @(if ($st.docs) { $st.docs.Keys })) { & $add doc '' $k $st.docs[$k].url }
+  foreach ($e in @($st.envRuns | Where-Object { $_ })) { & $add qa '' "$($e.env) $($e.at)" $e.result }
+  $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
+  Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); found = $priorHits; claimed = $claimed } }
+  if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "FOUND $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } } else { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
+  exit $(if ($priorHits.Count) { 1 } else { 0 })
+}
+
 # ---- tracker: lib.ps1 tracker adapters
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Add)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
@@ -1599,17 +1636,18 @@ function Invoke-Tracker {
         $null = Set-TrackerName $old.id $__trOpt.Name; $null = Set-TrackerDescription $old.id $__trOpt.Description
         __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
       }
-      $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority
+      $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority -NewTask $__trOpt.NewTask -Related @(Split-KitList $__trOpt.Related)
       if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
+    'scope' { $__s = if ($__trOpt.Task) { $__trOpt.Task } else { $__id }; if (-not ($__s -and $__trOpt.Add)) { "usage: tracker scope -Task <id> -Add '<item>'"; exit 2 }; Add-TrackerScope $__s $__trOpt.Add }
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
     'describe' { Set-TrackerDescription $__id $(if ($__x) { $__x } else { $__trOpt.Description }) }
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|status|comment|comments|create|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|status|comment|comments|create|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 
@@ -1631,6 +1669,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'check' { Invoke-KitVerb Invoke-Check $__rest }
     'pipes' { Invoke-KitVerb Invoke-Pipes $__rest }
     'guard' { Invoke-KitVerb Invoke-Guard $__rest }
+    'prior' { Invoke-KitVerb Invoke-Prior $__rest }
     'tracker' { Invoke-KitVerb Invoke-Tracker $__rest }
     'host' { Invoke-KitVerb Invoke-Host $__rest }
     'runtime' { if (Get-Command Invoke-Runtime -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Runtime $__rest } else { [Console]::Error.WriteLine('crafty.ps1 runtime is a goody: run kitbag.py goody add runtimes'); exit 1 } }

@@ -25,7 +25,9 @@
   "qa.finalizeLockSec": "config default=600 unit=s",
   "cleanup.worktreeDays": "config default=7 unit=d",
   "goodies.pruneDays": "config default=30 unit=d",
-  "tidy.judgeMinutes": "config default=3 unit=min"
+  "tidy.judgeMinutes": "config default=3 unit=min",
+  "tracker.duplicateScore": "config default=0.6 unit=share",
+  "prior.validHours": "config default=12 unit=h"
  },
  "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 9, "skills/bossy/bossy.ps1": 43, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 7, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 30, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }

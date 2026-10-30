@@ -195,9 +195,9 @@ $oldWf = 'dev' + '-wave'; $oldSk = 'tech' + '-audit'   # built: no old name in t
 Add-Content (Join-Path $kc 'workflows/tidy.js') "`nawait agent('x', { label: 'gp' })`nappendFileSync('a.jsonl', x)" -Encoding utf8; Add-Content (Join-Path $kc 'README.md') "`nsee $oldWf" -Encoding utf8
 Add-Content (Join-Path $kc 'skills/crafty/templates.md') "`nsee last-${oldSk}s" -Encoding utf8
 Add-Content (Join-Path $kc 'README.md') '', 'run `skills/gone/x.ps1` (goody `demo`)', 'run `skills/gone/y.ps1`', 'see goody `nope`' -Encoding utf8   # a path a goody brings: cited with its goody
-$qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8   # PS-VERSION
+$qa2 = Join-Path $kc 'skills/pokey/pokey.ps1'; @(Get-Content $qa2) | Where-Object { $_ -notmatch '^#Requires' } | Set-Content $qa2 -Encoding utf8; Add-Content $qa2 "Start-Process $('pw' + 'sh') -ArgumentList x"   # PS-VERSION, HIDDEN-WINDOW
 $l2 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect 'kitbag lint: AGENT-TYPE, LOG-DIRECT, PS-VERSION, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real goody' ($l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
+Expect 'kitbag lint: AGENT-TYPE, LOG-DIRECT, PS-VERSION, HIDDEN-WINDOW, OLD-NAME (also last-<old>s), REF-DANGLING unless the line names a real goody' ($l2 -match 'HIDDEN-WINDOW\s+skills/pokey/pokey\.ps1:\d+' -and $l2 -match 'AGENT-TYPE\s+workflows/tidy\.js' -and $l2 -match 'LOG-DIRECT\s+workflows/tidy\.js:\d+' -and $l2 -match "OLD-NAME\s+README\.md.*$oldWf" -and $l2 -match "OLD-NAME\s+skills/crafty/templates\.md.*$oldSk" -and
   $l2 -match 'REF-DANGLING\s+README\.md: skills/gone/y\.ps1' -and $l2 -notmatch 'gone/x\.ps1' -and $l2 -match 'REF-DANGLING\s+README\.md: goody .nope.: no such goody' -and $l2 -match 'PS-VERSION\s+skills/pokey/pokey\.ps1')
 # goodies' section maps: lint checks installed files; goody test the branch's, with or without a tests.ps1
 ('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/goodies/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/goodies/big/GOODY.md"

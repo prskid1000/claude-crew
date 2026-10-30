@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L861 status · L1084 supervise sweep ·
-  L1136 supervise report · L1199 tracker · L1533 git-host · L1691 kitlog · L1811 params · L2124 entry-scripts
+  L1136 supervise report · L1199 tracker · L1459 prior · L1574 git-host · L1732 kitlog · L1852 params · L2165 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1427,8 +1427,15 @@ function Get-TrackerOwner {
   }
   $script:__trOwner = ([string]$o).Trim(); $script:__trOwner
 }
-function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority) {
+# -NewTask '<why it cannot be folded in>' skips the duplicate check (logged); -Related: tasks the owner named this session
+function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related) {
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
+  if ($NewTask) { Write-KitLog calls prior-override @{ what = "task $Name"; reason = $NewTask } }
+  else {
+    $dup = try { @(Find-KitSimilarTasks $Name $List $Parent $Related) } catch { throw "tracker create: UNKNOWN: the duplicate check failed ($_): retry, or -NewTask '<why it differs>'" }
+    if ($dup.Count) { Write-KitLog calls prior-refused @{ what = "task $Name"; found = $dup[0].id }
+      throw "tracker create refused: possible duplicate of $($dup[0].id) $($dup[0].name) (score $($dup[0].score)): extend it (crafty.ps1 tracker scope -Task $($dup[0].id) -Add '<item>'), or -NewTask '<why it cannot be folded in>'" }
+  }
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
   __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = $Priority }
 }
@@ -1448,6 +1455,40 @@ function Get-TrackerTasks([string]$List, [string]$Status) {
     catch { if (-not $err) { $err = $_ }; Write-Warning "tracker list $List '$n' failed: $_" }   # a name the list lacks may throw
   }
   if (-not $ok -and $err) { throw $err }
+}
+# ---- prior: check before creating (owner rule: an existing task, branch, MR or doc is reused or its task's scope extended)
+# a title's key words: lowercase, 3+ letters; tags ([Bug]), ids and filler words dropped
+function Get-KitTitleWords([string]$Text) {
+  $stop = 'the', 'and', 'for', 'with', 'from', 'into', 'when', 'that', 'this', 'not', 'are', 'was', 'has', 'have', 'its', 'all', 'can', 'via', 'per', 'but', 'more'
+  @(([regex]::Replace("$Text".ToLower(), '\[[^\]]*\]|\S*\d\S*', ' ') -split '[^a-z]+') | Where-Object { $_.Length -ge 3 -and $_ -notin $stop } | Select-Object -Unique)
+}
+# tasks like $Name: the list's open ones (no parent) or the parent's subtasks, and the -Related ones: [{ id, name, score }] best first;
+# score = shared key words / the shorter title's (2+ shared, or all of a one-word title), over tracker.duplicateScore
+function Find-KitSimilarTasks([string]$Name, [string]$List, [string]$Parent, [string[]]$Related, [string[]]$Skip = @()) {
+  $mine = @(Get-KitTitleWords $Name); if (-not $mine.Count) { return }
+  $c = @{}; if (-not $Parent -or $Parent -eq '-') { foreach ($st in @($__trStatus.Keys | Where-Object { $_ -ne 'closed' })) { foreach ($x in @(Get-TrackerTasks $List $st)) { $c["$($x.id)"] = $x } } }
+  foreach ($id in @(@($Parent) + @($Related) | Where-Object { $_ -and $_ -ne '-' })) { $v = Get-TrackerTask $id; if ($id -ne $Parent -and $v.name) { $c[$id] = $v }; foreach ($s in @($v.subtasks)) { $c["$($s.id)"] = $s } }
+  $min = [double](Get-KitParam 'tracker.duplicateScore')
+  @(foreach ($x in $c.Values) { if ("$($x.id)" -in $Skip -or "$($x.id)" -eq $Parent) { continue }
+      $w = @(Get-KitTitleWords $x.name); $n = @($w | Where-Object { $_ -in $mine }).Count; $lo = [math]::Max(1, [math]::Min($w.Count, $mine.Count))
+      if ($n -ge [math]::Min(2, $lo) -and $n / $lo -ge $min) { [pscustomobject]@{ id = "$($x.id)"; name = $x.name; score = [math]::Round($n / $lo, 2) } } }) | Sort-Object score -Descending
+}
+# a related task grows instead of a new one: a dated section at the end; the old text (doc links on top) stays as it was
+function Add-TrackerScope([string]$Id, [string]$Item) {
+  $d = "$((Get-TrackerTask $Id).description)".TrimEnd(); if (-not (Get-TrackerTask $Id).name) { throw "tracker scope: task $Id not found (UNKNOWN)" }
+  $null = Set-TrackerDescription $Id "$d`n`n**Scope (extended $(Get-Date -Format yyyy-MM-dd)):**`n$Item"; Write-KitLog calls task-scope @{ task = $Id; item = $Item }
+  "scope of $Id extended: work and open MRs under it"
+}
+# the gate before work on a task (wt new, devtools.py mr / finish / doc): prior ran within prior.validHours and found nothing for
+# this repo (or a duplicate task); -Override '<reason>' passes, logged (a supervise WATCH)
+function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override) {
+  if (-not $Task) { return }
+  if ($Override) { Write-KitLog calls prior-override @{ task = $Task; what = $What; reason = $Override }; return }
+  $p = (Read-KitState (Get-KitTaskFile $Task)).prior
+  if (-not $p.at -or ((Get-Date) - [datetime]$p.at).TotalHours -ge [double](Get-KitParam 'prior.validHours')) { throw "$What refused: run crafty.ps1 prior -Task $Task first (check before create)" }
+  $hit = @($p.found | Where-Object { $_ -and $_.kind } | Where-Object { $_.kind -eq 'task' -or -not $Repo -or -not $_.repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })
+  if ($hit.Count) { Write-KitLog calls prior-refused @{ task = $Task; what = $What; found = "$($hit[0].kind) $($hit[0].ref)" }
+    throw "$What refused: already exists: $(@($hit | ForEach-Object { "$($_.kind) $($_.ref) $($_.title)" }) -join '; '): reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or -Override '<reason>'" }
 }
 
 # failed checks in tracker texts (pokey.ps1 Format-Checks: "### <id> — <screen>" + "**Saw:**"), an id once (the first text

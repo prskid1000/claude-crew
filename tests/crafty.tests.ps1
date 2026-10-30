@@ -73,6 +73,17 @@ $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | Conver
 $null = pwsh @np $D tracker status $t.id failedTesting
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id)
+$d1 = pwsh @np $D tracker create -List L1 -Name 'T one again' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
+$d2 = (pwsh @np $D tracker create -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
+$d3 = (pwsh @np $D tracker create -List L1 -Name 'T one copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
+Expect 'check before create: a near-duplicate is refused (extend it: tracker scope), another title and -NewTask pass; scope appends' ($c1 -eq 1 -and $d1 -match "(?s)duplicate of $($t.id).*tracker scope" -and $d2 -and $d3 -and (pwsh @np $D tracker view $t.id | Out-String) -match 'Scope \(extended .*also X')
+$lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"; & $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } }; tracker = @{ type = 'none'; branchTag = 'TK-' } } "$k/skills/crafty/kit.local.json"
+$gr = Join-Path (Kd) 'pr'; git init -q -b main $gr; git -C $gr commit -q --allow-empty -m i; git -C $gr remote add origin $gr; git -C $gr branch TK-7-old
+$w = { param($b, $o) $wa = @('wt', 'new', '-Repo', $gr, '-Branch', $b, '-Target', 'main', '-Name', $b, '-Root', (Join-Path (Kd) 'pw')) + @(if ($o) { '-Override', $o }); pwsh @np $D @wa 2>&1 | Out-String; $LASTEXITCODE }
+$w0 = & $w TK-7-new; $p7 = pwsh @np $D prior -Task 7 -Repo $gr | Out-String; $p7c = $LASTEXITCODE; $w1 = & $w TK-7-new; $w2 = & $w TK-7-new 'retest round'
+$p8 = pwsh @np $D prior -Task 8 -Repo $gr | Out-String; $p8c = $LASTEXITCODE; $w3 = & $w TK-8-a
+$gd = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-9-x"}}' | pwsh @np $D guard | Out-String; $fy = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 9 a b 2>&1 | Out-String
+Expect 'prior gate: wt new refused before prior and on a found branch, -Override passes; NONE passes; guard and devtools.py finish refuse without prior' ($w0[-1] -eq 1 -and "$w0" -match 'run crafty.ps1 prior' -and $p7c -eq 1 -and $p7 -match 'FOUND branch .*TK-7-old' -and $w1[-1] -eq 1 -and "$w1" -match 'already exists: branch' -and $w2[-1] -eq 0 -and $p8c -eq 0 -and $p8 -match '^NONE' -and $w3[-1] -eq 0 -and $gd -match '"deny"' -and $gd -match 'prior -Task 9' -and $fy -match 'prior -Task 9 first')
 & $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
 $tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"
 Expect "tracker list: the configured adapter, a logical status under each configured name, once ($tl)" ("$tl".Trim() -eq 'T1')
@@ -108,7 +119,7 @@ $fx = [ordered]@{ '^view T1' = '{"id":"T1","name":"Bug","status":"In Progress","
  '^list B in test' = '[{"id":"T3","name":"A","assignees":[{"id":"ann"}]}]' }
 function mytr { $global:LASTEXITCODE = 0; $c = "$($args -join ' ')"; $global:log.Add($c); foreach ($k in $fx.Keys) { if ($c -match $k) { return $fx[$k] } }; throw "404 no fixture: $c" }
 Initialize-KitTracker -Type command
-$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description 'd' -Parent T1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks B inTest) }
+$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description 'd' -Parent T1 -Assignee 'Ann Lee' -Priority 2 -NewTask fixture; l = @(Get-TrackerTasks B inTest) }
 "command:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'T9' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
 '@
 $res = Invoke-PsTest 'tracker-test' $tb @(Lib)
@@ -192,9 +203,9 @@ $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = 
 'BaseDb' | Set-Content "$lr/api/ADb.java"; 'C' | Set-Content "$lr/api/C.java"; Save-GitRepo $lr i
 git init -q "$lr-s"; git -C "$lr-s" -c protocol.file.allow=always submodule add -q $lr sub; git -C "$lr-s/sub" worktree add -q "$lr-w"   # a submodule's worktree
 & $J @{ repos = @(@{ name = 'lr'; checkout = "$lr-s/sub"; exclusiveTests = @(@{ dir = 'api'; match = 'BaseDb'; lock = 'db' }) }) } "$k/skills/crafty/kit.local.json"
-$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -RedirectStandardOutput "$lr/o$t$c" }
+$lp = { param($t, $c = '', $w = 5) Start-Process $pwshExe "-NoProfile -Command `$env:KIT_PARAM_GATE_WAITMINUTES='$w'; & '$D' check -Dir '$lr-w/api' -Step test -Tests $t; exit `$LASTEXITCODE" -PassThru -NoNewWindow -RedirectStandardOutput "$lr/o$t$c" }
 $wx = { foreach ($p in $args) { $null = $p.Handle; $p.WaitForExit() } }; $p1 = & $lp ADb; $p2 = & $lp ADb#m 2; & $wx $p1 $p2; $t = Get-Content $env:LOCK_LOG -Raw; $wt = Get-Content "$lr/oADb*" -Raw
-$h = Start-Process $pwshExe "-NoProfile -Command . '$(Lib)'; `$null = Use-KitLock db hx; sleep 60" -PassThru; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
+$h = Start-Process $pwshExe "-NoProfile -Command . '$(Lib)'; `$null = Use-KitLock db hx; sleep 60" -PassThru -NoNewWindow; for ($i = 0; $i -lt 50 -and -not (Select-String hx "$(TkPath $k runtimes)/locks.json" -Quiet -EA 0); $i++) { sleep -m 200 }
 $c3 = & $lp C; $c4 = & $lp ADb 4 0.03; & $wx $c3 $c4; $h.Kill(); $h.WaitForExit(); $free = pwsh -NoProfile -Command ". '$(Lib)'; (Get-KitLockState).held.Count"
 Expect "check: exclusiveTests serial ($t), non-match free, cap exit 3, dead holder dropped" ($t -eq 'sese' -and $p1.ExitCode + $p2.ExitCode + $c3.ExitCode -eq 0 -and (gc "$lr/oC" -Raw) -notmatch 'for lock' -and $wt -match 'waiting for lock db held by' -and $c4.ExitCode -eq 3 -and (gc "$lr/oADb4" -Raw) -match 'held by hx since' -and $free -eq 0)
 Remove-Item "$k/skills/crafty/kit.local.json"

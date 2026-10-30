@@ -23,7 +23,8 @@ review; a person's `deploy <env>` starts the deploy), testers through the human 
 ## Steps (every devy; your brief wins where it differs)
 ```powershell
 $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L = '<kit>/skills/envy/envy.ps1'
-& $O learn -Read -Skill crafty                                                # 0. lessons
+& $O learn -Read -Skill crafty   # 0. lessons
+& $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
 & $O board join -Agent <id> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
@@ -31,10 +32,10 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. goals.md (local) + AI testing doc FIRST (templates.md) + automated tests (Rules > Tests); each loop round:
 #      devtools.py doc "<title>" ai.md --key <task>:testing-ai --label "round <n>"
-& $D check -Dir <wt>/<module>                                                  #    compile + typecheck + lint (gated)
-& $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched             #    targeted + every test of the touched files
-& $D check -Dir <wt>/<module> -Step migrations                                 #    if you touched migrations: ISSUES 0
-& $D wt commit -Dir <wt> -Message "feat(scope): ..."                           #    hooks run
+& $D check -Dir <wt>/<module>   #    compile + typecheck + lint (gated)
+& $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched   #    targeted + every test of the touched files
+& $D check -Dir <wt>/<module> -Step migrations   #    if you touched migrations: ISSUES 0
+& $D wt commit -Dir <wt> -Message "feat(scope): ..."   #    hooks run
 #   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run every goal; a failed goal or bug (yours, checky's)
 #      -> back to 3 until 0 open bugs (max 3 rounds; then FAIL + failing goals: a stronger round, then the
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
@@ -45,9 +46,9 @@ python <kit>/skills/crafty/devtools.py mr <wt> "<title>" body.md              # 
 python <kit>/skills/crafty/devtools.py finish <task> testing.md solution.md review --ai ai.md   # human doc, links block, comment, status
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       #    producers first; last line MERGED|SCHEDULED|WAIT|...
-& $O track add -Task <task> -Mrs <repo>!<iid>,...                              #    promoted once all merge (automatic)
-& $O deploy request -Mrs <repo>!<iid>,... -Run <run>                           # 8. deploy batch, silently (goody deploys; never deploy, never ask)
-& $O board leave -Session <token> -Status done                                 # 9. final report (templates.md "Final reports")
+& $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic)
+& $O deploy request -Mrs <repo>!<iid>,... -Run <run>   # 8. deploy batch, silently (goody deploys; never deploy, never ask)
+& $O board leave -Session <token> -Status done   # 9. final report (templates.md "Final reports")
 ```
 - D1. **Decision pause**: about to change existing user-visible behaviour the task did not ask for (internal logic with the
   same behaviour: no pause), or several valid paths
