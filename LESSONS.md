@@ -91,6 +91,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Over a per-file test cap: move a self-contained block to an area file with room (e.g. report test -> guard.tests) instead of golfing assertions (1x)
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
 - Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x) (2×)
