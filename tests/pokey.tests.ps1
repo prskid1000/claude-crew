@@ -73,6 +73,7 @@ $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
 Expect 'one [Bug] per ask, under the ask, named with the count' ($bA.Count -eq 1 -and $bQ.Count -eq 1 -and $bA[0].name -eq '[Bug] Ask A — new defects (2)')
+$bd = $bA[0].description; Expect '[Bug] text: bold label bullet, code, task link' ($bd -match '(?m)^- \*\*Results report:\*\* ' -and $bd -match 'testing \[[^\]]+\]\([^)]+\), package `M1`')
 Expect 'a task with only a new defect closes' ((Rec $m 'M1').closed -and (Rec $m 'M2').closed)
 $n = New-Run 'N' @(@{ code = 'N1'; task = 'TA2'; checks = , @('X1', 'FAIL') })
 $null = Fin $n 'N1'

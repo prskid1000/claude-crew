@@ -585,10 +585,10 @@ function Add-NewDefects($st, [object[]]$defects) {
       }
     }
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
-    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects found while testing $($st.name) ($(TaskLink $st.id)), package $Code") }
+    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``") }
     $n = [int]$s.baseCount + [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $(if ($ask.name) { $ask.name } else { $title }) — new defects ($n)$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
-    $body = "QA run **$title** on $(if ($item.target) { $item.target } else { $run.target }) ($Date) found these defects outside what the tested tasks changed. Results report: $docUrl`n$(if ($guideUrl) { "Tester guide (check ids refer to it): $guideUrl`n" })`n" + (($entries | ForEach-Object md) -join "`n")
+    $body = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)`n$(if ($guideUrl) { "- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)`n" })`n" + (($entries | ForEach-Object md) -join "`n")
     if ($s.base) { $body = "$($s.base.TrimEnd())`n`n$body" }
     if ($s.id) { $null = Set-TrackerName $s.id $name; $null = Set-TrackerDescription $s.id $body }
     else {
@@ -673,7 +673,7 @@ foreach ($st in @($item.subtasks)) {
       else { $rec.bugError = '[Bug] task could not be created'; Write-Warning "$($st.id): could not create the [Bug] task for $(($newDefects | ForEach-Object id) -join ', ')" }
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
-    $msg += if ($hDoc -and (Test-KitTaskDocLink $st.id) -eq $true) { '. Screenshots and evidence: the human testing doc in the description' } else { ". Report with screenshots and evidence: $docUrl" }   # testing doc links live only in the description
+    $msg += if ($hDoc -and (Test-KitTaskDocLink $st.id) -eq $true) { '. Screenshots and evidence: the human testing doc in the description' } else { ". Screenshots and evidence: $docUrl" }   # testing doc links live only in the description
     # own failures + untested: failedTesting
     $text = $msg   # one line: counts, failed / untested ids, where the evidence is; the details live in the doc
     $posted = if ($reportFile) { TrySay { $null = Add-TrackerAttachment $st.id $reportFile $text; $true } "post the report on $($st.id)" }

@@ -17,8 +17,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L35 config · L69 run · L153 tracker · L286 git host · L369 MR · L439 merge · L683 docs · L797 publish · L1007 plugins ·
-  L1021 keepboth · L1040 selftest · L1327 CLI
+Sections: L35 config · L69 run · L153 tracker · L287 git host · L370 MR · L447 merge · L691 docs · L824 publish · L1034 plugins ·
+  L1048 keepboth · L1067 selftest · L1368 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -231,8 +231,9 @@ LINK_LINE = re.compile(r'(?im)^[ \t]*(\*\*)?(Testing doc( \((human|AI)\))?|Testi
 
 
 def links_block(desc, human, ai):
-    """The description with one fixed links block on top; every older testing-doc line removed."""
-    return f'Testing doc (human): {human}\nTesting doc (AI): {ai}\n\n' + LINK_LINE.sub('', desc or '').lstrip()
+    """The description with one fixed links block on top (bold labels, web links as [open](url)); every older testing-doc line removed."""
+    md = lambda u: f'[open]({u})' if re.match(r'https?://\S+$', u or '') else u
+    return f'**Testing doc (human):** {md(human)}\n\n**Testing doc (AI):** {md(ai)}\n\n' + LINK_LINE.sub('', desc or '').lstrip()   # a blank line: Markdown joins adjacent lines
 
 
 def no_doc_links(md):
@@ -378,6 +379,11 @@ def _verified_gaps(body_md):
     return bool(m) and not re.search(r'(?im)^\s*[-*|]?\s*(\*\*)?(not run|pure logic)(\*\*)?\s*[:|]', sec)   # a line or a table row
 
 
+def _how_tested_table(body_md):
+    """True when '## How tested' starts with a Markdown table (templates.md "MR body": | Check | Result |)."""
+    return bool(re.search(r'(?m)^## How tested[^\n]*\n\s*\|', body_md))
+
+
 UI_FILES = re.compile(r'\.(html?|s?css|less|sass|tsx|jsx|vue|svelte)$|(^|/)res/layout[^/]*/[^/]+\.xml$', re.I)
 
 
@@ -402,6 +408,8 @@ def mr_create(worktree, title, body_md, tgt=None):
     if _verified_gaps(body_md):
         print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
              ' - say what was not run (or "Not run: nothing") - see templates.md "MR body"', file=sys.stderr)
+    if '## How tested' in body_md and not _how_tested_table(body_md):
+        print('[mr] "## How tested" is not a table: use "| Check | Result |" rows (templates.md "MR body")', file=sys.stderr)
     link = TASK_LINK.get(TRACKER_TYPE)
     if link and link not in body_md:
         print(f'[mr] body has no tracker ({TRACKER_TYPE}) task link', file=sys.stderr)
@@ -703,20 +711,39 @@ def _cells(row):
     return [c.strip() for c in (r[:-1] if r.endswith('|') and not r.endswith('\\|') else r).split('|')]
 
 
+# Inline styles, not <code> / <col> / classes: Google Docs' HTML import keeps span and cell styles and the header cells' widths only
+CODE_CSS = "font-family:'Roboto Mono';font-size:9pt;background-color:#f1f3f4"
+CELL_CSS = 'vertical-align:top;padding:4pt'
+HEAD_CSS = CELL_CSS + ';background-color:#e8eaed'
+COL_ROLES = ((5, r'#|no\.?|id|round'), (10, r'type|result|status|date|verdict|retest'), (20, r'evidence|links?|fix commit|bugs found'),
+             (25, r'expected|observed|pass rule|saw|why|value'), (40, r'steps?\b.*|check|goal|how checked|what.*|cases run|item|setting'))
+
+
+def col_widths(headers):
+    """Column widths in % by header role (# 5, Step 40, Expected 25, Result 10, Evidence 20; others share the rest), summing to
+    100; None when no header has a known role (the renderer's default widths)."""
+    w = [next((p for p, rx in COL_ROLES if re.fullmatch(rx, re.sub(r'[*_`]', '', h).strip().lower())), 0) for h in headers]
+    if not any(w):
+        return None
+    w = [x or max(10, (100 - sum(w)) // max(1, w.count(0))) for x in w]
+    return [round(x * 100 / sum(w), 1) for x in w]
+
+
 def md_to_html(md, title=''):
-    """Dependency-free Markdown -> HTML for `doc` (gws uploads Markdown as plain text): headings, tables, lists, emphasis, code,
-    links, rules."""
-    import html as _h
+    """Dependency-free Markdown -> HTML for `doc` (gws uploads Markdown as plain text): headings, tables (header bold and shaded,
+    widths by role, cells padded and top-aligned), lists, emphasis, monospace code spans and blocks, links, images, rules."""
 
     def inline(t):
         t = html.escape(t, quote=False).replace('&lt;br&gt;', '<br>')   # a line break inside a table cell (evidence previews)
-        t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
+        code = []   # code spans set aside: emphasis and link rules never touch them
+        t = re.sub(r'`([^`]+)`', lambda m: code.append(m[1]) or f'\0{len(code) - 1}\0', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
-        # images before links: ![alt](url "width px"), default 600 px
+        # images before links: ![alt](url "width px"), default and cap 600 px (the page width)
         t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)',
-                   lambda m: f'<p><img src="{m[2]}" width="{m[3] or m[4] or 600}"><br><i>{m[1]}</i></p>', t)
-        return re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
+                   lambda m: f'<p><img src="{m[2]}" width="{min(600, int(m[3] or m[4] or 600))}"><br><i>{m[1]}</i></p>', t)
+        t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
+        return re.sub(r'\0(\d+)\0', lambda m: f'<span style="{CODE_CSS}">{code[int(m[1])]}</span>', t)
 
     out, lines, i, lst = [], md.splitlines(), 0, None
     def close():
@@ -730,14 +757,14 @@ def md_to_html(md, title=''):
             close(); j = i + 1
             while j < len(lines) and not lines[j].strip().startswith('```'):
                 j += 1
-            out.append('<pre><code>' + html.escape('\n'.join(lines[i + 1:j])) + '</code></pre>'); i = j + 1; continue
+            out.append(f'<pre style="{CODE_CSS}">' + html.escape('\n'.join(lines[i + 1:j])) + '</pre>'); i = j + 1; continue
         if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?\s*$', lines[i + 1]):
-            close(); cells = _cells
-            rows = ['<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in cells(l)) + '</tr>']
+            close(); head = _cells(l); cw = col_widths(head) or [None] * len(head)
+            rows = ['<tr>' + ''.join(f'<th style="{HEAD_CSS}{f";width:{w}%" if w else ""}"><b>{inline(c)}</b></th>' for c, w in zip(head, cw)) + '</tr>']
             i += 2
             while i < len(lines) and lines[i].startswith('|'):
-                rows.append('<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in cells(lines[i])) + '</tr>'); i += 1
-            out.append('<table border="1" cellpadding="4" style="border-collapse:collapse">' + ''.join(rows) + '</table>'); continue
+                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c)}</td>' for c in _cells(lines[i])) + '</tr>'); i += 1
+            out.append(f'<table border="1" style="border-collapse:collapse{";width:100%" if any(cw) else ""}">' + ''.join(rows) + '</table>'); continue
         m = re.match(r'^(#{1,6})\s+(.*)$', l)
         if m:
             close(); n = len(m.group(1)); out.append(f'<h{n}>{inline(m.group(2))}</h{n}>'); i += 1; continue
@@ -1164,6 +1191,11 @@ def selftest():
     finally:
         g['_run'] = run0
     expect('a 300-char tracker text goes via a temp file, then is removed', sent[1:] == ['x' * 300] and not os.path.exists(sent[0]))
+    tf = os.path.join(KIT, 'templates.md')
+    mrt = re.search(r'(?ms)^## MR body\n.*?```markdown\n(.*?)```', open(tf, encoding='utf-8').read()).group(1) if os.path.isfile(tf) else '## How tested\n| Check | Result |\n'
+    expect('MR body: the template\'s How tested is a table, Links has bold labels and a [text](url) doc link the merge gate reads; a bullet list is flagged',
+           _how_tested_table(mrt) and not _how_tested_table('## How tested\n- tests pass\n')
+           and (not os.path.isfile(tf) or ('- **Testing doc:** [open](<url>)' in mrt and DOC_LINK.search(mrt.replace('<url>', 'https://d/1')))))
     cfg0 = dict(CFG); CFG.clear(); CFG['gitHostType'] = 'github'
     expect('gitHostType, no gitHost: any origin', host_kind('git.corp.example') == 'github'); CFG.update(cfg0)
     _report_selftest(expect)
@@ -1203,9 +1235,17 @@ def _publish_selftest(expect, refused):
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
-        h = md_to_html(doc.replace('| | |\n', '| PASS | ![T1: list](https://img/1.png) |\n'))
-        expect('md_to_html (the gdocs upload): Markdown tables become HTML tables (Docs imports real tables), images inline in the cell',
-               '<th>Steps</th>' in h and '<th>Evidence</th>' in h and re.search(r'<td><p><img src="https://img/1.png"', h) and '| T1 |' not in h)
+        h = md_to_html(doc.replace('| | |\n', '| PASS | ![T1: list](https://img/1.png "900") |\n').replace('1. Open the list.', 'Run `tool check -Step test -Tests ALongClassNameSmokeTest`')
+                       + '```\n{"a": 1}\n```\n')
+        th = re.findall(r'<th style="([^"]*)"><b>([^<]*)</b></th>', h)
+        expect('md_to_html (the gdocs upload): tables stay HTML tables, header bold + shaded, widths by role (# 5, Steps 40, Expected 25,'
+               ' Result 10, Evidence 20), cells padded and top-aligned, images inline and capped at 600 px',
+               [(n, re.search(r'width:([\d.]+)%', s)[1]) for s, n in th[3:8]] == [('#', '5.0'), ('Steps', '40.0'), ('Expected', '25.0'), ('Result', '10.0'), ('Evidence', '20.0')]
+               and all(HEAD_CSS in s for s, _ in th) and re.search(rf'<td style="{CELL_CSS}"><p><img src="https://img/1.png" width="600"', h) and '| T1 |' not in h)
+        expect('md_to_html: backtick spans and fenced blocks are monospace on grey; text outside them stays plain; an unknown table'
+               ' gets no widths, an AI table sums to 100',
+               f'Run <span style="{CODE_CSS}">tool check -Step test -Tests ALongClassNameSmokeTest</span>' in h and f'<pre style="{CODE_CSS}">{{&quot;a&quot;: 1}}</pre>' in h
+               and h.count(CODE_CSS) == 2 and f'<span style="{CODE_CSS}">src/**/a/**</span>' in md_to_html('`src/**/a/**`') and col_widths(['Name', 'Owner']) is None and round(sum(col_widths(_cells(ait.split('\n')[0]))), 1) == 100.0)
         refused('testing-doc: local screenshots or results in the human doc -> refused', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'hi.md'), doc.replace('| | |\n', '| PASS | |\n'))), 'evidence or results')
         goals = w(os.path.join(tmp, 'g.md'), '# Testing goals: T9 X\n## Goals (what must be true)\n| G1 |\n')
         refused('testing-doc: no "| # | Steps | Expected | Result | Evidence |" table -> refused', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h0.md'), '# Testing: X\n## Checks\n### T1 — s\n')), 'no case table')
@@ -1252,7 +1292,8 @@ def _publish_selftest(expect, refused):
         expect('a run without a human doc: the report is published by <task>:qa-report', _pub_read('T7:qa-report').get('url') == nr)
         legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
         expect('links block: 7 legacy lines -> one human + one AI line, the rest kept',
-               links_block(legacy, 'https://h', 'https://a') == 'Testing doc (human): https://h\nTesting doc (AI): https://a\n\nThe ask.\n')
+               links_block(legacy, 'https://h', 'https://a') == '**Testing doc (human):** [open](https://h)\n\n**Testing doc (AI):** [open](https://a)\n\nThe ask.\n'
+               and links_block(links_block(legacy, 'https://h', 'https://a'), 'https://h', 'https://a').count('Testing doc') == 2)
         calls, st = [], {'s': 'in progress', 'd': 'Testing doc: https://old\n\nThe ask.'}
         g['_tracker'] = lambda *a: calls.append(a) or (a[0] == 'describe' and st.update(d=a[2])) or ''
         g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': st['d']}
@@ -1263,7 +1304,7 @@ def _publish_selftest(expect, refused):
         refused('finish: a URL other than the doc the key has -> refused (pass the file)', lambda: finish('T9', human, '**Solution** — x', ai='https://other/doc'), 'already is')
         d = next(a[2] for a in calls if a[0] == 'describe'); c = next(a for a in calls if a[0] == 'comment')
         expect('finish: links block (human + AI) on top, solution comment of kind comment-solution without doc links, status review',
-               d.startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')
+               d.startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and 'https://old' not in d and c[3:5] == ('-Kind', 'comment-solution')
                and u1 not in c[2] and 'Testing doc' not in c[2] and '**MRs**: a' in c[2] and calls[-1] == ('status', 'T9', 'review'))
         all_c = [a[2] for a in calls if a[0] == 'comment']; calls.clear(); st['s'] = 'promoted'
         finish('T9', human, '**Solution** — x\n**Testing doc**: <link>\n**Testing doc (AI)**: <ai>', ai=a2p)
@@ -1275,7 +1316,7 @@ def _publish_selftest(expect, refused):
                and no_doc_links('**Testing doc**: x · **After deploy**: y') == '**After deploy**: y\n' and no_doc_links('Testing doc (human): https://x') == '')
         expect('finish twice: no comment holds a doc link; the description holds both links once, on top',
                len(all_c) == 2 and not [x for x in all_c if 'Testing doc' in x or u1 in x or ua in x or '<link>' in x]
-               and st['d'].startswith(f'Testing doc (human): {u1}\nTesting doc (AI): {ua}\n') and st['d'].count(u1) == 1 and st['d'].count(ua) == 1)
+               and st['d'].startswith(f'**Testing doc (human):** {u1}\n\n**Testing doc (AI):** {ua}\n') and st['d'].count(u1) == 1 and st['d'].count(ua) == 1)
         hc = []
         g.update(remote=lambda w: ('gitlab', 'g/r'), _run=lambda *a, **k: 'f/x', _host=lambda v, **a: hc.append(v) or (
             [{'iid': 5, 'web_url': 'https://h/g/r/5'}] if v == 'mr.list' else {'web_url': 'https://h/g/r/5'}))

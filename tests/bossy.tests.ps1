@@ -127,7 +127,8 @@ $null = Invoke-Track add -Task t8 -Mrs 'g/web!6'; $null = Invoke-Track run
 $KitConf.TrackerType = 'fake'; $global:tdesc = 'Testing doc (human): https://d/h'; function Get-TrackerTask($id) { [pscustomobject]@{ name = 'n'; status = 'review'; subtasks = @(); description = $global:tdesc } }
 $null = Invoke-Track add -Task t9 -Mrs 'g/web!5'; $global:sets = @(); $nd = Invoke-Track run | Out-String; $s0 = @($global:sets)
 $global:tdesc += "`nTesting doc (AI): https://d/g"; $null = Invoke-Track run; $unk = & { function Get-TrackerTask { throw 'down' }; Test-KitTaskDocLink t9 }
-"nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk)"
+$global:tdesc = "**Testing doc (human):**`n`n**Testing doc (AI):** [open](https://d/g)"; $bl0 = Test-KitTaskDocLink t9; $global:tdesc = $global:tdesc -replace '(human\):\*\*)', '$1 [open](https://d/h)'; $bl1 = Test-KitTaskDocLink t9
+"nodoc:$($nd -match 'ATTENTION t9: MRs merged, no testing-doc link' -and -not $s0.Count -and $global:sets -contains 't9=promoted' -and $null -eq $unk -and -not $bl0 -and $bl1)"
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
 $mc = Invoke-PsTest 'mrs-comment' @'

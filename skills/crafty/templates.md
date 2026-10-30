@@ -14,6 +14,9 @@ Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence
 Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
 "in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
 "happy to" · "great job" · "as an AI" · task recap · restating the template's own words.
+Markdown: commands, paths, class names, config keys and ids in `backticks` (docs render them monospace; nothing else is
+guessed); labels `**Label:**`; links `[text](url)`; one blank line between blocks. Tracker comments render as plain text on some
+trackers: there the adapter drops the markup.
 
 | Kind | Purpose | Format (sections in order) | Limits | Required facts |
 |---|---|---|---|---|
@@ -164,7 +167,7 @@ Set these first, restore them after:
 <screen / area>:
 | # | Steps | Expected | Result | Evidence |
 |---|---|---|---|---|
-| T1 | 1. <step> 2. <step> | <exact result from the shipped code (final diff), never the brief> | | |
+| T1 | 1. <step> 2. Run `<command>` / open `<path>` | <exact result from the shipped code (final diff), never the brief> | | |
 ## Out of scope
 Not tested, and why (a qa.outOfScope channel: "out of scope for agent QA: <channel>"):
 | Item | Why |
@@ -178,9 +181,9 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 `devtools.py mr` checks it (kind `mr-body`): sections in this order, limits from "Writing standards".
 ```markdown
 ## Summary
-<task URL> — <one-line goal and outcome>
+[<task id>](<task URL>) — <one-line goal and outcome>
 ## Changes
-- <behaviour change, user terms> · Technical: <files / endpoints / migrations>
+- <behaviour change, user terms> · **Technical:** `<files / endpoints / migrations>`
 ## How tested
 | Check | Result |
 |---|---|
@@ -191,18 +194,21 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 | Pure logic | <spec file> (or "none") |
 | Regression | `<test>` red before the fix, green after (or "not a fix"); changed methods without a test: <names> (or "none") |
 ## Risks
-- <deferred item — reason> · Behaviour limits: <not handled> · Needs after deploy: <settings / data> (or "none")
+- <deferred item — reason>
+- **Behaviour limits:** <not handled>
+- **Needs after deploy:** <settings / data> (or "none")
 ## Links
-- Testing doc: <link> · Sibling MRs: <refs> (merge order: producers first)
+- **Testing doc:** [open](<url>)
+- **Sibling MRs:** <refs> (merge order: producers first)
 ```
 The MR opens before the human doc exists (`Testing doc: pending`); after the loop PASS, `devtools.py mr` again with the link
 edits the same MR body. Merge refuses an MR with a task link and no `Testing doc: <url>` line.
 
 ## Task solution comment
 ```markdown
-**Solution** — <what was wrong / built, and the fix>
-**MRs**: <ref (MERGED|SCHEDULED|OPEN)> · **Local proof**: <env r<n>, goals passed>
-**After deploy**: <settings/data to seed, or "nothing"> · **Deferred**: <item — reason, or "none">
+**Solution:** <what was wrong / built, and the fix>
+**MRs:** <ref (MERGED|SCHEDULED|OPEN)> · **Local proof:** <env r<n>, goals passed>
+**After deploy:** <settings/data to seed, or "nothing"> · **Deferred:** <item — reason, or "none">
 ```
 A task has three kit comments, each edited in place: MRs (merge order; a status line once all merged), solution, QA result.
 The testing doc links (human + AI) live only on top of the task description (`devtools.py finish`), never in a comment.

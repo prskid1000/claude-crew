@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L403 leases · L817 status · L1040 supervise sweep ·
-  L1092 supervise report · L1132 tracker · L1421 git-host · L1564 kitlog · L1680 params · L1993 entry-scripts
+  L1092 supervise report · L1132 tracker · L1428 git-host · L1571 kitlog · L1687 params · L2000 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1398,11 +1398,18 @@ function Get-KitFailedChecks([string[]]$Texts) {
   }
 }
 # the links block devtools.py finish writes in the description: both the human testing doc and the testing-goals doc
+# tracker / MR Markdown: a web link as [text](url) (a bare long URL otherwise); paths and empty values as they are
+function Format-KitMdLink([string]$Url, [string]$Text = 'open') { if ($Url -match '^https?://\S+$') { "[$Text]($Url)" } else { $Url } }
+# for tracker fields that show text as typed (adapters): **bold** and `code` lose their marks, [text](url) -> text (url)
+function ConvertTo-KitPlainText([string]$Text) {
+  $t = [regex]::Replace($Text, '\[([^\]\n]+)\]\((https?://[^)\s]+)\)', { if ($args[0].Groups[1].Value -eq $args[0].Groups[2].Value) { $args[0].Groups[2].Value } else { "$($args[0].Groups[1].Value) ($($args[0].Groups[2].Value))" } })
+  [regex]::Replace(($t -replace '\*\*([^*\n]+)\*\*', '$1'), '`([^`\n]+)`', '$1')
+}
 function Test-KitTaskDocLink([string]$Task) {
   try { $tt = Get-TrackerTask $Task } catch { return $null }   # unread = unknown, never "no doc"
   if (-not $tt -or -not $tt.name) { return $null }
   $d = [string]$tt.description
-  ($d -match '(?im)^\W{0,3}Testing doc \(human\)\W{0,3}:\s*\S') -and ($d -match '(?im)^\W{0,3}Testing doc \(AI\)\W{0,3}:\s*\S')
+  ($d -match '(?im)^\W{0,3}Testing doc \(human\)\W{0,3}:[ \t*_]*[^\s*_]') -and ($d -match '(?im)^\W{0,3}Testing doc \(AI\)\W{0,3}:[ \t*_]*[^\s*_]')   # an empty bold label is no link
 }
 # this request's mandate only (a stored one is an older session's words); sonnet unless the coordinator passes -Complex
 function Get-BugWfArgs($Brief, $RunName, $Agent, $Items, $Area, [string[]]$Mandate, [bool]$Complex, $KitDir) {
