@@ -55,6 +55,9 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Data-fix migrations: backup table with a restoring rollback; non-transactional DDL in separate steps, DROP IF EXISTS first; retried bookkeeping inserts need NOT EXISTS; derived totals recompute the original, parts sum to the whole. (4×)
 
 ## pokey
+- Write QA observed and verify text in sentences of <= 25 words and <= 40 words per observed text before evidence -Check, so the first -Check passes (2x)
+- API checks replay the body the real client sends (capture it from the web UI network log or the client source), never a hand-built body: a richer hand body passed while the UI request wrote wrong data (1x, defect missed)
+- A PowerShell helper param never reuses a script variable name in any case ( is ): use distinct names such as  / , or the helper runs the wrong value (1x, hard failure)
 - A NOT_TESTED undeployed check whose MR sits in a running deploy job: wait on that job (glab api jobs/<id>), then test, instead of failing the task. (1x)
 - pokey.ps1 api -OutDir refused 9x with a number: the variable was reused (PowerShell names are case-insensitive, $o is $O); pass -OutDir from crafty.ps1 dir in a distinctly named variable (9x)
 - Report -Check fails on prose limits: shorten the observed wording only; keep every evidence name and file reference (2x). (3×)
