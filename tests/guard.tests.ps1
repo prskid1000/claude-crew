@@ -119,10 +119,12 @@ $c = @(Get-TrackerComments m1); $h = 'https://h/g/'
 "mrs:$($c.Count -eq 2 -and $c[0].id -eq $first -and $c[1].text -eq 'MRs (merge order) wrong: !7 first' -and $c[0].text -ceq "**MRs (merge order)**`n**g/api**`n1. [!7]($($h)api/-/merge_requests/7) T7 · merged`n**g/web**`n2. [!12]($u) T12 · merged`n3. [!9]($($h)web/-/merge_requests/9) T9 · open`nWaiting: g/web !9 (open)")"
 $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
 "tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| open$')"
+foreach ($v in 'comment-edit', 'comment-delete') { $KitAdapters['tracker']['none'].Remove($v) }; 1..2 | ForEach-Object { $null = Invoke-Track add -Task m1 -Mrs 'g/web!30' 3>$null }
+"noedit:$(@(Get-TrackerComments m1).Count -eq 3)"   # no edit, no delete: a post per change only
 "ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: the MRs comment has one writer' -and $LASTEXITCODE -eq 1)"
 '@) @($O, $D)
 Expect "track add: ONE MRs comment (the oldest edited, duplicates gone, a person's kept) of every MR any copy listed, by repo, in merge order, footer; another task's MR dropped ($mc)" ("$mc" -match 'mrs:True')
-Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused ($mc)" ("$mc" -match 'tb:True.*ref:True')
+Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused ($mc)" ("$mc" -match 'tb:True.*noedit:True.*ref:True')
 $racer = Join-Path (Kd) 'mrs-race.ps1'; $env:MRS_POSTS = Join-Path (Kd) 'mrs-posts'; $go = (Get-Date).AddSeconds(6).ToString('o')
 Set-Content $racer ($mm + @'
 function Get-TrackerComments($Id) { $r = @(__TrA comments @{ id = $Id } | Where-Object { $_ }); if (-not $r.Count) { Start-Sleep 3 }; $r }   # none yet: a slow read (the race window)

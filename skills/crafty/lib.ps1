@@ -1479,7 +1479,7 @@ function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Head
   $all = @(Get-TrackerHeadComments $Id $Heading)   # a failed read throws: no post (a second comment is worse than a late one)
   $first = $all | Select-Object -First 1; $extra = @($all | Select-Object -Skip 1)
   if ($first -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }
-  elseif ($first -and -not $ad.ContainsKey('comment-delete') -and (ConvertTo-KitLetters $first.text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
+  elseif ($all.Count -and -not $ad.ContainsKey('comment-delete') -and (ConvertTo-KitLetters $all[-1].text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
   else {
     $r = Add-TrackerComment $Id $body; if ("$r" -match '^QUEUED') { return $r }
     $cid = (@(Get-TrackerHeadComments $Id $Heading) | Where-Object { @($all.id) -notcontains $_.id } | Select-Object -Last 1).id; $extra = $all
