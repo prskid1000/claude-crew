@@ -17,7 +17,6 @@ $d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain
 '@ @($D, $k)
 Remove-Item "$k/.gitignore", "$k/nested" -Recurse -Force
 Expect "guard: git commit in a nested worktree passes; a tracked folder, an ignored non-repo denied ($($gn -join ' '))" (($gn -join ' ') -eq 'False True True'); if ($gi) { Remove-Item -Recurse -Force "$k/.git" }
-# guard: a raw MR create needs a task id (branch or title); a raw merge needs the MR in task tracking; KIT_NO_TASK=<reason> passes, logged
 $shop = Join-Path (Kd) 'shop'; git init -q -b f/TT-42-x $shop; git -C $shop commit -q --allow-empty -m init; git -C $shop remote add origin 'https://h.example/g/shop.git'
 $plain = Join-Path (Kd) 'plain'; git init -q -b fix/plain $plain; git -C $plain commit -q --allow-empty -m init; git -C $plain remote add origin 'https://h.example/g/shop.git'
 $hf = Join-Path (Kd) 'mrget.ps1'; Set-Content $hf '@{ source_branch = $(if ($args[0] -eq 77) { ''deploy/s'' } else { ''f'' }) } | ConvertTo-Json'

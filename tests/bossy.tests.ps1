@@ -67,7 +67,7 @@ $dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
 $pp = Px $O precommit 2>&1 | Out-String; $ppc = $LASTEXITCODE
 Expect 'deploy / precommit without their goody (deploys, kit-admin): its one line, exit 1' ($ppc -eq 1 -and $pp.Trim() -eq 'bossy.ps1 precommit is a goody: run kitbag.py goody add kit-admin' -and $dxc -eq 1 -and $dx2.Trim() -eq 'bossy.ps1 deploy is a goody: run kitbag.py goody add deploys')
 $ld = TkPath $k launches -Create
-# launch -Self <script> <run> <json> [fnv]: $json written to an args file, -Fnv its hash unless given; more args passed on
+# launch -Self <script> <run> <json> [fnv] [args]
 $self = { param($s, $run, $json, $fnv) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv ($fnv ?? (& { . $O; Get-KitFnv $json })) @args | Out-String }
 $full = '{"brief":"C:/b/wave-x.md","agents":[{"id":"X1","items":"A1"}],"mandate":["do it"]}'
 $bad = & $self buildy.js wave-x $full 00000000; $badCode = $LASTEXITCODE
@@ -89,8 +89,10 @@ $jc = pwsh @np $O board join -Agent 'pokey:DZ1' -Run rc | Out-String; $sc = if (
 [IO.File]::WriteAllText((Join-Path $ld 'args-rel.json'), $full)
 $rl = pwsh @np $O launch -Self -Script buildy.js -Run rel -ArgsFile 'nowhere/args-rel.json' -Fnv (& { . $O; Get-KitFnv $full }) | Out-String; $null = pwsh @np $O launch -Done -Run rel 2>&1
 Expect "board join: a ':' in the agent name -> a file-safe session ($sc); launch -Self: a relative args path found in the launches folder" ($sc -match '^pokey-DZ1-\w{8}$' -and (Test-Path (Join-Path $bd "$sc.json")) -and $rl -match 'RECORDED')
-$lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String
-Expect 'board leave: an unknown session exits 1, records no handoff' ($LASTEXITCODE -eq 1 -and $lv -match 'unknown session')
+$lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String; $lvc = $LASTEXITCODE
+$null = pwsh -NoProfile -Command "& '$O' board join -Agent IA -Items A1,B2"; $fl = pwsh @np $O board leave -Agent IA -Force; $rf = (Get-ChildItem $bd -Filter 'IA-*')[0]
+(Get-Content $rf -Raw) -replace '"beat": "2', '"beat": "1' | Set-Content $rf; $fz = pwsh @np $O board leave -Agent IA -Force; $ir = Get-Content $rf -Raw | ConvertFrom-Json
+Expect 'board leave: unknown session exits 1; -Force spares a live row, leaves a quiet one; -Items A1,B2 kept' ("$lvc $lv|$fl|$fz|$($ir.status) $($ir.items)" -match '(?s)^1 [^|]*unknown[^|]*\|[^|]*unknown[^|]*\|.*left \(IA-.*\|left A1,B2$')
 $null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'
 Expect 'launch -Self: 2 launches, one run name: 2 records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
 '{"kitDir":"C:/k","runDir":"C:/r"}' | Set-Content (Join-Path $ld 'args-testy-r.json'); '{"script":"","at":"bad"}' | Set-Content (Join-Path $ld 'broken.json')

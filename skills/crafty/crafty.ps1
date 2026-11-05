@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1538 dir · L1548 checkpoint ·
-  L1573 prior · L1606 tracker · L1658 host
+Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1553 dir · L1563 checkpoint ·
+  L1588 prior · L1622 tracker · L1674 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1116,6 +1116,9 @@ if ($SelfTest) {
   )
   $gh = 'browser on Windows'   # git help pages (Git for Windows opens HTML); elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
+  $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # a kit repo: tracked CRLF, tracked LF, untracked CRLF
+  foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
+  $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $fail = 0
@@ -1196,6 +1199,17 @@ function LiveIgnored([string]$rel) {
 function LiveFile([string]$p, [string]$base) {
   $own = '^(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + '|' + [regex]::Escape($script:KitPathMap.stateDir.Trim('/\')) + ')([\\/]|$)'
   if (($rel = InLive $p $base) -and $rel -ne '.' -and $rel -notmatch $own) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 1 }
+}
+# a CRLF file tracked in a kit clone or kit worktree (sed -i from Git Bash writes it back LF): its path, else nothing (best effort: xargs / -exec / bash -c pass)
+function CrlfKitFile([string]$p, [string]$base) {
+  if (-not $p -or $p -match '[$*?<>|`]') { return }
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
+  $p = [IO.Path]::GetFullPath(($p -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'))
+  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return }
+  $top = "$(git -C (Split-Path $p) rev-parse --show-toplevel 2>$null)".Trim()
+  if (-not $top -or -not (Test-Path -LiteralPath (Join-Path $top 'skills/crafty/crafty.ps1'))) { return }
+  git -C $top ls-files --error-unmatch -- $p 2>$null | Out-Null; if ($LASTEXITCODE -ne 0) { return }
+  if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
@@ -1494,6 +1508,7 @@ if ($cmd) {
     elseif ($w -match '^(Copy-Item|cpi|cp|copy)$') { $hits += @($pa | Select-Object -Last 1) }
     elseif ($w -match '^(Set-Content|sc|Add-Content|ac|Out-File|Clear-Content|clc|Remove-Item|ri|rm|del|erase|rmdir|rd|Move-Item|mi|mv|move|Rename-Item|rni|ren|New-Item|ni|tee|Tee-Object|touch)$' -or ($w -eq 'sed' -and $seg -match '\s(-i|--in-place)')) { $hits += @($pa | Select-Object -Skip ([int]($w -eq 'sed'))) }
     foreach ($h in $hits) { if ($h -match '[\\/]|\.\w{1,8}$') { if (-not $liveOk -and (LiveFile $h $cur)) { Deny $liveWhy }; if ($w -notmatch '^(Remove-Item|ri|rm|del|erase|rmdir|rd)$') { $off += @(OffLayout $h $cur) } } }
+    if ($w -match '(^|[\\/])sed(\.exe)?$' -and @($tk | Where-Object { $_ -match '^(-[a-zA-Z]*i\S*|--in-place\S*)$' }).Count) { foreach ($h in $pa) { if (($cf = CrlfKitFile $h $cur)) { Deny "sed -i rewrites $cf (a tracked CRLF kit file) to LF: use the Edit tool" } } }
   }
 }
 # the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and goodies never forced, deleted or moved
@@ -1597,9 +1612,10 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   foreach ($k in @(if ($st.docs) { $st.docs.Keys })) { & $add doc '' $k $st.docs[$k].url }
   foreach ($e in @($st.envRuns | Where-Object { $_ })) { & $add qa '' "$($e.env) $($e.at)" $e.result }
   $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
-  $gate = @($priorHits | Where-Object { $_.kind -notin 'doc', 'qa' })   # its own docs and QA runs: shown, never a stop
+  $own = { param($h) $h.kind -in 'doc', 'qa' -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # wt new made a branch for it (the gate passed once): its other tagged branches are the same wave's
+  $gate = @($priorHits | Where-Object { -not (& $own $_) })   # its own docs, QA runs and tagged work: shown, never a stop
   Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); validUntil = (Get-Date).AddHours([double](Get-KitParam 'prior.validHours')).ToString('o'); found = $gate; claimed = $claimed } }
-  if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "$(if ($_.kind -in 'doc', 'qa') { 'INFO' } else { 'FOUND' }) $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } }; if (-not $gate.Count) { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
+  if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "$(if (& $own $_) { 'INFO' } else { 'FOUND' }) $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } }; if (-not $gate.Count) { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
   exit $(if ($gate.Count) { 1 } else { 0 })
 }
 
