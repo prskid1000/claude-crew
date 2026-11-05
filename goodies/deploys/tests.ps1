@@ -108,10 +108,10 @@ Update-KitTracking { param($t) $t.tasks['gone1'] = @{ task = 'gone1'; mrs = @('a
 $script:viewed = @(); function Get-TrackerTask($id) { $script:viewed += $id; if ($id -eq 'gone1') { throw "HTTP 404 'Task not found, deleted'" }; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
 $o = Invoke-MarkInTest -Apply | Out-String
 "gone:$($o -match 'GONE  gone1' -and $o -match 'missing: gone1' -and -not (Read-KitTracking).tasks.ContainsKey('gone1') -and (Read-KitTracking).tasks.ContainsKey('ok2'))"
-"scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2' -and $o -match 'mark-in-test: 2 candidate')"
+"scope:$((@($script:viewed | Sort-Object) -join ',') -eq 'gone1,ok2,qa5' -and $o -match 'mark-in-test: 3 candidate')"
 $script:viewed = @(); $null = Invoke-MarkInTest -Task old3; "task:$(($script:viewed -join ',') -eq 'old3')"
 '@
-Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days that no QA run covers, -Task any (#)' @('gone', 'scope', 'task')
+Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (#)' @('gone', 'scope', 'task')
 Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests
