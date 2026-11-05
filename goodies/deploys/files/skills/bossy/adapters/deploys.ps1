@@ -276,7 +276,9 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       # a QA run already covers it: skip the deploy lookup (10+ calls); exact id: 12 is no AB-12
       $covered = @(Get-ChildItem (Get-KitPath qa-runs) -Recurse -Filter 'run.json' -ErrorAction SilentlyContinue | Where-Object { $j = try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch { $null }; (@($j.items.subtasks.id) + @($j.tracker.parent) | ForEach-Object { "$_" }) -contains "$($o.task)" } | ForEach-Object { $_.Directory.Name })
       if ($covered.Count) { Set-KitTaskFields $o.task @{ qaCovered = @($covered) }; continue }
-      $rows = @(Invoke-Bounded $KitCmd.qa @('deployed', '-Mrs', (@($o.mrs) -join ','), '-Json') | Out-String | ConvertFrom-Json)
+      $raw = @(Invoke-Bounded $KitCmd.qa @('deployed', '-Mrs', (@($o.mrs) -join ','), '-Json'))   # a background run: none yet (started now, still running) or failed = ask again next round
+      if (($raw -join "`n").Trim() -notmatch '^[\[{]') { foreach ($w in @($raw -match '^WATCH ')) { & $flag 'WATCH' "deployed check $($o.task): $($w -replace '^WATCH ')" 'Supervise checks it again next round.' }; continue }
+      $rows = @($raw | Out-String | ConvertFrom-Json)
       $o.liveCheckedAt = $now.ToString('o')
       $live = @($rows.target | Where-Object { $_ } | Select-Object -Unique | Where-Object { $t = $_; -not @($rows | Where-Object { $_.target -eq $t -and $_.state -ne 'DEPLOYED' }).Count -and @($o.mrs).Count -eq @($rows | Where-Object { $_.target -eq $t }).Count })
       $new = @($live | Where-Object { $_ -notin @($o.liveOn) })
@@ -290,17 +292,18 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
   if (Within 'deploy plan') {
     $pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
-    $plan = $null
+    $plan = $null; $asked = $null
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
-      $out = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
+      $from = $cache.asked; $asked = $now.ToString('o')   # a background run: this call returns the plan started at the last ask and starts a fresh one
+      $out =@(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
       # timed out, still running in the background or failed (no JSON): keep the last good plan, plan again next round
       try { if (($out -join "`n").Trim() -match '^[\[{]') { $plan = @($out | Out-String | ConvertFrom-Json -ErrorAction Stop | Where-Object { $_ }) } } catch { $plan = $null }
       if ($null -eq $plan) { foreach ($w in @($out | Where-Object { $_ -match '^WATCH ' })) { & $flag 'WATCH' "deploy plan: $($w -replace '^WATCH ')" 'Kept the last good plan; supervise plans again next round.' } }
     }
     if ($null -ne $plan) {
-      $cache = [pscustomobject]@{ at = $now.ToString('o'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
-      $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8
+      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready =@($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
     }
+    if ($asked -and $cache) { $cache | Add-Member -Force NoteProperty asked $asked; $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8 }
     $askAge = if ($cache.at) { [int]($now - [datetime]$cache.at).TotalMinutes } else { 0 }
     $askStale = if ($askAge -ge 60) { " (plan $askAge min old, refresh pending: plan again before asking)" } else { '' }
     foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }

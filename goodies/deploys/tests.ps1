@@ -125,14 +125,17 @@ $now = (Get-Date).AddMinutes(90); $script:calls = 0; $script:planOut = @(); $r =
 "stale:$($script:calls -eq 1 -and ($r.info -join ';') -match 'deploy ready: stage .*plan 9\d min old, refresh pending')"
 $script:planOut = @('WATCH background x failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys)
 "watch:$(@($r | Where-Object level -eq 'WATCH').what -match 'deploy plan: background x failed: boom' -and ($r.info -join ';') -match 'stage')"
-$script:planOut = @('[]'); $r = @(Get-KitSuperviseFlagsDeploys)
-"empty:$(-not @($r | Where-Object info).Count -and (Get-Content $pc -Raw | ConvertFrom-Json).at)"
+$now = $now.AddMinutes(5); $script:planOut = @('[]'); $r = @(Get-KitSuperviseFlagsDeploys)   # a background plan: as old as the ask that started it (5 min ago)
+"empty:$(-not @($r | Where-Object info).Count -and [int]($now - [datetime](Get-Content $pc -Raw | ConvertFrom-Json).at).TotalMinutes -eq 5)"
+Update-KitTracking { param($t) $t.tasks.d1 = @{ task = 'd1'; mrs = @('api!1'); done = $true; doneAt = $now.ToString('o') } }
+$script:planOut = @('WATCH background d failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)   # a deployed check with no JSON: flagged, not stamped (asked again)
+"live:$(@($r.what -match '^deployed check d1: background d failed').Count -and -not (Read-KitTracking).tasks.d1.liveCheckedAt)"
 $gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
 @{ at = $now.AddMinutes(-90).ToString('o'); ready = @('stage (1 MR(s))'); ask = @('stage: 1 MR(s) (api!1)') } | ConvertTo-Json | Set-Content $pc
 $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 "ask:$(@($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending')"
 '@
-Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached (#)' @('none', 'good', 'stale', 'watch', 'empty', 'ask')
+Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'ask')
 Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests
