@@ -1641,7 +1641,7 @@ function Invoke-Tracker {
     'status' { Set-TrackerStatus $__id $__x }
     'comment' {   # -Kind comment-solution | comment-status | comment-deploy: over its prose limits = refused, nothing posted
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
-      if ("$($__trOpt.Kind)" -like 'mrs-*' -or (ConvertTo-KitLetters $__ct).StartsWith((ConvertTo-KitLetters $script:KitMrsHeading))) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
+      if ("$($__trOpt.Kind)" -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
       if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
       elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }

@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L227 budget · L255 launch · L527 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1073 anomalies · L1091 supervise · L1395 report · L1474 audit · L1534 storage · L1745 bugbrief · L1847 cleanup ·
-  L1971 learn · L2001 decide · L2069 health · L2129 retro due · L2139 tidy · L2209 the kit origin's main and goodies ·
-  L2225 setup · L2292 guard-sendmessage
+  L763 track · L1074 anomalies · L1092 supervise · L1396 report · L1475 audit · L1535 storage · L1746 bugbrief · L1848 cleanup ·
+  L1972 learn · L2002 decide · L2070 health · L2130 retro due · L2140 tidy · L2210 the kit origin's main and goodies ·
+  L2226 setup · L2293 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -880,18 +880,19 @@ function MrState0($ref) {
   if ($m.state -eq 'opened' -and ($m.has_conflicts -or $m.detailed_merge_status -eq 'conflict')) { return 'opened (conflict)' }
   $m.state
 }
-# the task's ONE MRs comment (lib.ps1 Format-KitMrsComment): MRs this copy tracks, earlier MRs comments list, the host finds
+# the task's ONE MRs comment: MRs tracked here, in earlier MRs comments, on the host (lib.ps1 Format-KitMrsComment)
 function Set-KitMrsComment($o) {
   $task = $o.task; $refRx = '^(?<repo>[\w./-]+)!(?<iid>\d+)$'; $prod = @(@($o.mergeAfter) | ForEach-Object { NormRef (($_ -split '>', 2)[-1]) })
   $mine = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ -match $refRx } | Select-Object -Unique)
-  $more = @(@(Get-KitMrsListed $task | ForEach-Object { NormRef $_ }) + @(if (@($KitConf.TrackerRepos).Count) { Find-TaskMrs $task }) | Where-Object { $_ -match $refRx -and $mine -notcontains $_ } | Select-Object -Unique)
-  $rows = foreach ($r in $mine + $more) {
-    $null = $r -match $refRx; $pp = ProjPath $Matches.repo; $iid = $Matches.iid
-    [pscustomobject]@{ repo = $Matches.repo; iid = [int]$iid; mine = $mine -contains $r; producer = $prod -contains $r
-      m = $(if ($pp) { try { Invoke-HostVerb 'mr.get' @{ repo = $pp; n = $iid } } catch { $null } }); u = $(if ($pp) { try { Invoke-HostVerb 'mr.url' @{ repo = $pp; n = $iid } } catch { '' } }) }
+  $build = {   # under the lock: sees a racing writer's MRs
+    $more = @(@(Get-KitMrsListed $task | ForEach-Object { NormRef $_ }) + @(if (@($KitConf.TrackerRepos).Count) { Find-TaskMrs $task }) | Where-Object { $_ -match $refRx -and $mine -notcontains $_ } | Select-Object -Unique)
+    $rows = foreach ($r in $mine + $more) {
+      $null = $r -match $refRx; $pp = ProjPath $Matches.repo; $iid = $Matches.iid
+      [pscustomobject]@{ repo = $Matches.repo; iid = [int]$iid; pp = $pp; mine = $mine -contains $r; producer = $prod -contains $r }
+    }
+    Format-KitMrsComment $task @($rows) $(if ($o.mergedCommentAt) { @($o.onMerged)[-1] })
   }
-  $text = Format-KitMrsComment $task @($rows) $(if ($o.mergedCommentAt) { @($o.onMerged)[-1] })
-  if ($text) { try { $null = Set-TrackerKitComment $task "mrs-$task" $text -Heading $script:KitMrsHeading } catch { Write-Warning "MRs comment of $task not updated: $_" } }
+  try { $null = Set-TrackerKitComment $task "mrs-$task" $build -Heading $script:KitMrsHeading } catch { Write-Warning "MRs comment of $task not updated: $_" }
 }
 switch ($Action) {
   'rebuild' { $rebuildFn = Assert-KitExtra Invoke-TrackRebuild 'track rebuild' 'track-rebuild'; & $rebuildFn }   # not $rebuild: that is the -Rebuild switch

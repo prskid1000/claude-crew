@@ -112,16 +112,16 @@ function Invoke-HostApi { @{ state = 'opened'; title = 'CU-m1 x' } }
 function Start-Process { }
 '@
 $mc = Invoke-PsTest mrs-comment ($mm + @'
-$u = 'https://h/g/web/-/merge_requests/12'; foreach ($t in "MRs (merge order):`n- g/web !12 — T12 — merged — $u", 'Solution: x', "MRs (merge order):`n- g/api !7 - T7`n- g/web !13 - T13") { $null = Add-TrackerComment m1 $t }
+$u = 'https://h/g/web/-/merge_requests/12'; foreach ($t in "MRs (merge order):`n- g/web !12 — T12 — merged — $u", 'MRs (merge order) wrong: !7 first', "MRs (merge order):`n- g/api !7 - T7`n- g/web !13 - T13") { $null = Add-TrackerComment m1 $t }
 $first = @(Get-TrackerComments m1)[0].id; $KitConf.TrackerTag = 'CU-'
 1..2 | ForEach-Object { $null = Invoke-Track add -Task m1 -Mrs 'g/web!9' }   # this copy tracks !9 only
 $c = @(Get-TrackerComments m1); $h = 'https://h/g/'
-"mrs:$($c.Count -eq 2 -and $c[0].id -eq $first -and $c[1].text -eq 'Solution: x' -and $c[0].text -ceq "**MRs (merge order)**`n**g/api**`n1. [!7]($($h)api/-/merge_requests/7) T7 · merged`n**g/web**`n2. [!12]($u) T12 · merged`n3. [!9]($($h)web/-/merge_requests/9) T9 · open`nWaiting: g/web !9 (open)")"
+"mrs:$($c.Count -eq 2 -and $c[0].id -eq $first -and $c[1].text -eq 'MRs (merge order) wrong: !7 first' -and $c[0].text -ceq "**MRs (merge order)**`n**g/api**`n1. [!7]($($h)api/-/merge_requests/7) T7 · merged`n**g/web**`n2. [!12]($u) T12 · merged`n3. [!9]($($h)web/-/merge_requests/9) T9 · open`nWaiting: g/web !9 (open)")"
 $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
 "tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| open$')"
 "ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: the MRs comment has one writer' -and $LASTEXITCODE -eq 1)"
 '@) @($O, $D)
-Expect "track add: ONE MRs comment (the oldest edited, duplicates gone, solution kept) of every MR any copy listed, by repo, in merge order, footer; another task's MR dropped ($mc)" ("$mc" -match 'mrs:True')
+Expect "track add: ONE MRs comment (the oldest edited, duplicates gone, a person's kept) of every MR any copy listed, by repo, in merge order, footer; another task's MR dropped ($mc)" ("$mc" -match 'mrs:True')
 Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused ($mc)" ("$mc" -match 'tb:True.*ref:True')
 $racer = Join-Path (Kd) 'mrs-race.ps1'; $env:MRS_POSTS = Join-Path (Kd) 'mrs-posts'; $go = (Get-Date).AddSeconds(6).ToString('o')
 Set-Content $racer ($mm + @'
@@ -131,8 +131,8 @@ while ((Get-Date) -lt [datetime]$args[1]) { Start-Sleep -Milliseconds 50 }
 $null = Invoke-Track add -Task c1 -Mrs "g/web!$($args[2])"
 '@)
 21, 22 | ForEach-Object { Start-Process pwsh (@($np) + $racer, $O, $go, $_) -PassThru -WindowStyle Hidden } | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
-$race = Invoke-PsTest mrs-count ($mm + '@(Get-TrackerComments c1).Count') @($O)
-Expect "two agents of one task write the MRs comment at once: one post, one comment ($race)" (@(Get-Content $env:MRS_POSTS).Count -eq 1 -and "$race" -eq '1')
+$race = Invoke-PsTest mrs-count ($mm + '$c = @(Get-TrackerComments c1); "$($c.Count) $($c.text -match ''!21\]'' -and $c.text -match ''!22\]'')"') @($O)
+Expect "two agents of one task write the MRs comment at once: one post, one comment with both MRs ($race)" (@(Get-Content $env:MRS_POSTS).Count -eq 1 -and "$race" -eq '1 True')
 $bf = & { . $O; function Test-KitLive($l) { $l.agent -ne 'gone' }; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddMinutes(-$h).ToString('o') } }; $x = { param($h) (& $f ($h + 2) $false), (& $f ($h + 1) $false), (& $f $h $false) }
   $e = { param($p, $o, $c, $h) @{ event = 'end'; kind = 'm'; project = $p; owner = $o; code = $c; at = $n.AddMinutes(-$h).ToString('o') } }
   @(Get-KitBuildFailures @{ 'm|old' = & $x 70; 'm|new' = & $x 5; 'm|gone' = & $x 5; 'm|fixed' = & $x 5; 'm|mix' = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n @((& $e new w 1 5), (& $e gone gone 1 5), (& $e fixed w2 1 5), (& $e fixed/sub w2 0 2)) | ForEach-Object { "$($_.key)@$($_.who)" }) -join ',' }

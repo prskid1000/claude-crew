@@ -941,7 +941,7 @@ def _table_rows(md, cells=None):
     return rows, '\n'.join(out)
 
 
-NO_RUN = re.compile(r'(?i)\s*(|[—-]|n/?a|not[ _]tested|out[ _]of[ _]scope|skip(ped)?|pending|blocked)\s*')
+NO_RUN = re.compile(r'(?is)\s*(|[—–-]|(n/?a|not[ _]tested|untested|out[ _]of[ _]scope|skip(ped)?|pending|blocked)\b.*)')
 EVIDENCE_LINK = re.compile(r'(?i)https?://|!\[|<img\b')
 
 

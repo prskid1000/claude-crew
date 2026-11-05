@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L406 leases · L866 status · L1097 supervise sweep ·
-  L1149 supervise report · L1212 tracker · L1529 prior · L1644 git-host · L1802 kitlog · L1922 params · L2235 entry-scripts
+  L1149 supervise report · L1212 tracker · L1532 prior · L1647 git-host · L1805 kitlog · L1925 params · L2238 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1417,25 +1417,27 @@ function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 $script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is its one writer
 function ConvertTo-KitLetters([string]$Text) { ("$Text" -replace '[^\p{L}\p{N}]', '').ToLower() }
-function Get-TrackerHeadComments([string]$Id, [string]$Heading) { $h = ConvertTo-KitLetters $Heading; @(Get-TrackerComments $Id | Where-Object { $_.id -and (ConvertTo-KitLetters $_.text).StartsWith($h) }) }
+function Test-KitHeadText([string]$Text, [string]$Heading) { (ConvertTo-KitLetters (("$Text".Trim() -split "`r?`n")[0])) -eq (ConvertTo-KitLetters $Heading) }   # the first line is the heading, nothing more
+function Get-TrackerHeadComments([string]$Id, [string]$Heading) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) }) }
 # MR URLs and '<repo>!<n>' refs the task's MRs comments list (any writer, any format: URLs, '<repo> !<n>', a repo line then '!<n>' lines)
 function Get-KitMrsListed([string]$Task) {
   foreach ($c in @(try { Get-TrackerHeadComments $Task $script:KitMrsHeading } catch { @() })) {
     $repo = ''
     foreach ($l in ("$($c.text)" -split "`r?`n")) {
       $t = $l.Trim() -replace '\*\*', ''
-      if ($t -match '^(?<r>[\w./-]+):?$') { $repo = $Matches.r; continue }
+      if ($t -match '^(?<r>[A-Za-z][\w./-]*-[\w./-]*|[A-Za-z][\w.-]*/[\w./-]+):?$' -or $l.Trim() -match '^\*\*(?<r>[\w./-]+)\*\*$') { $repo = $Matches.r; continue }   # a repo line: bold, or a name with '-' or '/'
       foreach ($u in [regex]::Matches($t, 'https?://[^\s)\]]+')) { $u.Value }
       if ($t -match '(?<r>[A-Za-z][\w./-]*) !(?<i>\d+)') { "$($Matches.r)!$($Matches.i)" } elseif ($repo -and $t -match '!(?<i>\d+)') { "$repo!$($Matches.i)" }
     }
   }
 }
-# rows {repo, iid, mine, producer, m (mr.get), u (url)} -> the MRs comment ('' = none): rows not tracked here go when closed or titled
-# for another task; merged by merge time, then open (producers first, by number); grouped by repo, one number across groups, a footer
+# rows {repo, iid, pp (host project), mine, producer} -> the MRs comment ('' = none): rows not tracked here go when closed, unread or
+# titled for another task; merged by merge time, then open (producers first, by number); grouped by repo, one number across groups, a footer
 function Format-KitMrsComment([string]$Task, $Rows, [string]$Status) {
+  foreach ($x in $Rows) { $a = @{ repo = $x.pp; n = "$($x.iid)" }; $x | Add-Member -Force NoteProperty m $(if ($x.pp) { try { Invoke-HostVerb 'mr.get' $a } catch { } }); $x | Add-Member -Force NoteProperty u $(if ($x.pp) { try { Invoke-HostVerb 'mr.url' $a } catch { } }) }
   $tg = [regex]::Escape("$($KitConf.TrackerTag)"); $tk = [regex]::Escape($Task); $trx = Get-KitTaskTagRx
   $other = { param($m) $trx -and @(@($m.title, $m.source_branch) | Where-Object { "$_" -match $trx -and $Matches.id -ne $Task }).Count }
-  $Rows = @($Rows | Where-Object { $_.mine -or ("$($_.m.state)" -ne 'closed' -and -not (& $other $_.m)) })
+  $Rows = @($Rows | Where-Object { $_.mine -or ("$($_.m.state)" -notin '', 'closed' -and -not (& $other $_.m)) })
   if (-not $Rows.Count) { return '' }
   $at = { param($x) try { [datetimeoffset]"$($x.m.merged_at)" } catch { [datetimeoffset]::MaxValue } }
   $Rows = @(@($Rows | Where-Object { "$($_.m.state)" -eq 'merged' } | Sort-Object { & $at $_ }, iid) + @($Rows | Where-Object { "$($_.m.state)" -ne 'merged' } | Sort-Object { -not $_.producer }, iid))
@@ -1455,9 +1457,9 @@ function Format-KitMrsComment([string]$Task, $Rows, [string]$Status) {
 }
 # -Heading: the comment is found on the task by its heading, not by this kit copy's index (agents run from several kit copies),
 # under a machine-wide lock (two agents of one task: one comment); the oldest is edited, the others deleted (no comment-delete: warned)
-function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text, [string]$Heading) {
+function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading) {
   if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading } }
-  $body = (__TrText $Text).TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
+  $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
   $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
   $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$($ix.$Kind)"; $last = "$($ix["$Kind#text"])"
   if ($known -and $edit) { try { Clear-TrackerMemo $Id; return __TrA 'comment-edit' @{ id = $Id; comment = $known; text = $body } } catch { Write-KitLog calls comment-index-stale @{ task = $Id; kind = $Kind; error = "$_" } } }
@@ -1470,19 +1472,20 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, [string]$Text, [strin
   if ($old -and $ad -and $ad.ContainsKey('comment-delete') -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
 }
-function Set-TrackerHeadComment([string]$Id, [string]$Kind, [string]$Text, [string]$Heading) {
-  $body = (__TrText $Text).TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]
+# $Text: a string or a scriptblock run under the lock (its text reads the task's comments too: a writer never drops another's MRs)
+function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Heading) {
+  if ($Text -is [scriptblock]) { $Text = & $Text }; if (-not "$Text".Trim()) { return }
+  $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; if (-not $ad) { throw "tracker: no adapter for type '$__trType'" }
   $all = @(Get-TrackerHeadComments $Id $Heading)   # a failed read throws: no post (a second comment is worse than a late one)
   $first = $all | Select-Object -First 1; $extra = @($all | Select-Object -Skip 1)
   if ($first -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }
+  elseif ($first -and -not $ad.ContainsKey('comment-delete') -and (ConvertTo-KitLetters $first.text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
   else {
     $r = Add-TrackerComment $Id $body; if ("$r" -match '^QUEUED') { return $r }
     $cid = (@(Get-TrackerHeadComments $Id $Heading) | Where-Object { @($all.id) -notcontains $_.id } | Select-Object -Last 1).id; $extra = $all
   }
-  foreach ($x in $extra) {
-    if ($ad.ContainsKey('comment-delete')) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $x.id } } catch { Write-Warning "tracker ($__trType): duplicate '$Heading' comment $($x.id) on $Id not deleted: $_" } }
-    else { Write-Warning "tracker ($__trType): duplicate '$Heading' comment $($x.id) on $Id (the adapter cannot delete): remove it by hand" }
-  }
+  if ($extra.Count -and -not $ad.ContainsKey('comment-delete')) { Write-Warning "tracker ($__trType): earlier '$Heading' comment(s) $($extra.id -join ', ') on $Id (the adapter cannot delete): remove by hand" }
+  elseif ($extra.Count) { foreach ($x in $extra) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $x.id } } catch { Write-Warning "tracker ($__trType): duplicate '$Heading' comment $($x.id) on $Id not deleted: $_" } } }
   try { Update-KitTaskIndex $Id { param($ix) if ($cid) { $ix.comments[$Kind] = "$cid" } } } catch { }
   $r
 }
