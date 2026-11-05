@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L414 leases · L874 status · L1106 supervise sweep ·
-  L1165 supervise report · L1274 tracker · L1594 prior · L1709 git-host · L1868 kitlog · L1988 params · L2301 entry-scripts
+  L1165 supervise report · L1274 tracker · L1594 prior · L1712 git-host · L1871 kitlog · L1991 params · L2304 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1615,13 +1615,16 @@ function Add-TrackerScope([string]$Id, [string]$Item) {
   "scope of $Id extended: work and open MRs under it"
 }
 # the gate before work on a task (wt new, devtools.py mr / finish / doc): prior ran within prior.validHours and found nothing for
-# this repo (or a duplicate task); -Override '<reason>' passes, logged (a supervise WATCH)
+# this repo (or a duplicate task); work tagged with the task in another repo = paired, INFO (devtools.py finish / doc: in any repo);
+# -Override '<reason>' passes, logged (a supervise WATCH)
 function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override) {
   if (-not $Task) { return }
   if ($Override) { Write-KitLog calls prior-override @{ task = $Task; what = $What; reason = $Override }; return }
   $p = (Read-KitState (Get-KitTaskFile $Task)).prior
   if (-not $p.at -or ((Get-Date) - [datetime]$p.at).TotalHours -ge [double](Get-KitParam 'prior.validHours')) { throw "$What refused: run crafty.ps1 prior -Task $Task first (check before create)" }
-  $hit = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' } | Where-Object { $_.kind -eq 'task' -or -not $Repo -or -not $_.repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })
+  $found = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' })
+  $hit = @($found | Where-Object { $_.kind -eq 'task' -or -not $_.repo -or -not $Repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })   # no -Repo (the guard: a hand-made branch, repo unknown): every hit stops
+  foreach ($pf in @($found | Where-Object { $_.tagged -and $_ -notin $hit })) { [Console]::Error.WriteLine("INFO ${What}: paired $($pf.kind) $($pf.ref) (task $Task, another repo)") }   # the same task id in another repo: never a stop
   if ($hit.Count) { Write-KitLog calls prior-refused @{ task = $Task; what = $What; found = "$($hit[0].kind) $($hit[0].ref)" }
     throw "$What refused: already exists: $(@($hit | ForEach-Object { "$($_.kind) $($_.ref) $($_.title)" }) -join '; '): reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or -Override '<reason>'" }
 }

@@ -78,6 +78,13 @@ const L = calls.map((c) => c.label), ord = calls[L.indexOf('order:F2')].prompt.r
 console.log(`order:${/u\/java>u\/py/.test(ord) && /u\/web>u\/java/.test(ord) && !L.includes('order:F1') && !L.includes('ship:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'WAIT')}`)
 '@
 Expect-Each (Invoke-Js dw-order $jsm $wfd) 'buildy merge order: #' 'order' -Show 9
+# buildy: the producer merges during the wait -> the consumer area merges itself in the same run
+$jsw = $jsm -replace "'order:F2':", "'producer-wait:F2': { ok: true, output: '{""done"":true,""mrs"":[{""mr"":""u/py/-/merge_requests/1"",""status"":""merged""}]}' }, 'ship:F2': _rep(lt, { mrs: [mr('java', 'MERGED'), mr('web', 'MERGED')] }), 'order:F2':" -replace '(?s)console\.log\(`order:.*', @'
+console.log(`consumer-merges:${/pipes -Mrs u\/py\S* -MaxMinutes 9 -UntilMerged/.test(calls[L.indexOf('producer-wait:F2')].prompt) && L.indexOf('ship:F2') > L.indexOf('producer-wait:F2') && o.agents[1].report.mrs.every((m) => m.mergeState === 'MERGED')}`)
+'@
+$jsx = $jsm -replace "mr\('py', 'WAIT'\)", "mr('py', 'NOT_MERGED')" -replace '(?s)console\.log\(`order:.*', "console.log(``no-poll:`${!L.includes('producer-wait:F2') && !L.includes('ship:F2')}``)`n"
+Expect-Each (Invoke-Js dw-pwait $jsw $wfd) 'buildy merge order: #' 'consumer-merges' -Show 9
+Expect-Each (Invoke-Js dw-nopoll $jsx $wfd) 'buildy merge order: a producer that will not merge by waiting (NOT_MERGED): #' 'no-poll' -Show 9
 # buildy: mode duel is a goody (refused, named); a removed arg is warned, not ignored
 $jso = @'
 const logs = [], base = { brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1', items: 'A1' }] }

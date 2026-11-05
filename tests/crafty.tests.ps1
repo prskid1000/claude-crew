@@ -83,6 +83,8 @@ $w0 = & $w TK-7-new; $p7 = pwsh @np $D prior -Task 7 -Repo $gr | Out-String; $p7
 $p8 = pwsh @np $D prior -Task 8 -Repo $gr | Out-String; $p8c = $LASTEXITCODE; $w3 = & $w TK-8-a; git -C $gr branch TK-8-sib; $p8s = pwsh @np $D prior -Task 8 -Repo $gr | Out-String; $p8r = $LASTEXITCODE
 $gd = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-9-x"}}' | pwsh @np $D guard | Out-String; $fy = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 9 a b 2>&1 | Out-String
 Expect 'prior gate: wt new refused before prior / on a found branch, -Override passes; NONE, own and sibling branches pass; guard + devtools.py finish need prior' ($w0[-1] -eq 1 -and "$w0" -match 'run crafty.ps1 prior' -and $p7c -eq 1 -and $p7 -match 'FOUND branch .*TK-7-old' -and $w1[-1] -eq 1 -and "$w1" -match 'already exists: branch' -and $w2[-1] -eq 0 -and $p8c -eq 0 -and $p8 -match '^NONE' -and $w3[-1] -eq 0 -and $p8r -eq 0 -and $p8s -match 'INFO branch .*8-sib' -and $gd -match '"deny"' -and $gd -match 'prior -Task 9' -and $fy -match 'prior -Task 9 first')
+Set-Content $lf "'[{""iid"":5,""state"":""opened"",""title"":""api"",""source_branch"":""TK-10-api""}]'"; $null = pwsh @np $D prior -Task 10 -Repo $gr; $f10 = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 10 a b 2>&1 | Out-String; $w10 = & $w TK-10-web; $g10 = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-10-dup"}}' | pwsh @np $D guard | Out-String; Set-Content $lf "'[]'"
+Expect 'prior gate: a tagged MR of the task in a repo is paired work (finish: INFO, passes); wt new in that repo and the guard (repo unknown) still stop' ($f10 -match 'INFO devtools.py finish 10: paired mr pr!5' -and $f10 -notmatch 'already exists' -and $w10[-1] -eq 1 -and "$w10" -match 'already exists: mr pr!5' -and $g10 -match '"deny"' -and $g10 -match 'already exists')
 & $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
 $tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"
 Expect "tracker list: the configured adapter, a logical status under each configured name, once ($tl)" ("$tl".Trim() -eq 'T1')
@@ -153,24 +155,6 @@ if ($IsWindows) {
   [IO.File]::WriteAllText("$sh/t.py", $sq); $so = & $py -X utf8 "$sh/t.py" (Split-Path $DT) "$sh\g.cmd" "$sh\p.cmd" 2>&1 | Out-String
   Expect "devtools: a .cmd shim gets RM<>HM |&^% intact (node direct), another shim refuses it ($so)" ($so -match [regex]::Escape('["RM<>HM |&^% \"q\""]') -and $so -match 'REFUSED p\.cmd is a cmd\.exe shim')
 }
-# pipes: busy only with a head pipeline
-$pt = @'
-. $args[0]
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
- if ($Verb -eq 'mr.get') { if ($A.n -ne '9') { [pscustomobject]@{ state = 'opened'; head_pipeline = $null; target_branch = 'main' } } }
- elseif ($Verb -eq 'ci.config') { if ($A.repo -match 'nocirepo') { $false } else { $null } }   # no CI file / a failed call
-}
-$a = Invoke-Pipes -Mrs 'https://h.example/g/nocirepo/-/merge_requests/1' -MaxMinutes 0 | ConvertFrom-Json
-$b = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json
-$c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinutes 0 | ConvertFrom-Json
-function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
-"mr-off:$((Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json).done)"
-"no-ci:$($a.done -and $a.mrs[0].status -eq 'no-ci')"
-"no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
-"unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
-'@
-$res = Invoke-PsTest 'pipes-test' $pt @($D)
-Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown', 'mr-off'
 # migrations: own check, Liquibase (goody), else UNRUN
 $ud = Join-Path (Kd) 'unrun-repo'; New-Item -ItemType Directory -Force $ud | Out-Null
 '{ "name": "x" }' | Set-Content "$ud/package.json"; '{ "stack": "custom", "commands": { "typecheck": "node tsc.js" } }' | Set-Content "$ud/.claude-stack.json"

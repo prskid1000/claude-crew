@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L255 ship-prompt · L278 plan · L292 spike ·
-//   L305 local-loop · L369 stages · L508 ship · L609 deploy · L626 learn
+//   L305 local-loop · L369 stages · L508 ship · L623 deploy · L640 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -543,6 +543,18 @@ async function askBlocking(a, r, open) {
  if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
  return id ? id[1] : ''
 }
+// a consumer re-checks its unmerged producer MRs each slice; all merged -> it merges in this run; a failed / closed one -> WAIT
+async function producersMerged(a, wait) {
+ for (let t = 0; t < WAIT_SLICES && wait.length; t++) {
+  const w = await runStep(`& ${DEV} pipes -Mrs ${wait.map((m) => m.url).join(',')} -MaxMinutes 9 -UntilMerged`, `producer-wait:${a.id}`, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })
+  let st
+  try { st = JSON.parse((w && w.output) || '').mrs || [] } catch (e) { break }
+  wait = wait.filter((m) => !st.some((s) => nu(s.mr) === nu(m.url) && s.status === 'merged'))
+  if (!wait.length) log(`${a.id}: producer MR(s) merged: merging its own`)
+  if (st.some((s) => ['failed', 'canceled', 'closed', 'bad-url'].includes(s.status))) break
+ }
+ return wait
+}
 async function ship(a, x) {
  const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
  if (held.length) log(`${a.id}: ${held.length} MR(s) held for approval (holdMerge): ${held.map((m) => m.url).join(', ')}`)
@@ -554,6 +566,8 @@ async function ship(a, x) {
   const missing = DEPS[a.id].filter((id, i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length)
   if (missing.length) return { ...x, shipFindings: [BLOCK(x.report.mrs, `Producer area(s) ${missing.join(', ')} reported no MRs: not merged (merge order).`, 'Ship the producer first, then merge these.')], mergeOrderHeld: true }
   wait = prods.flatMap((p) => p.report.mrs.filter((m) => !m.merged))
+  // only merges under way (scheduled, or waiting on their own producer); a held, failed or conflicting one never merges by waiting
+  if (wait.every((m) => ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) wait = await producersMerged(a, wait)
  }
  // the workflow registers the order (a ship agent once merged a consumer anyway); devtools.py merge then answers WAIT
  const open = toShip(x.report), cons = open.filter(isConsumer)

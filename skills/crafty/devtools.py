@@ -20,8 +20,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L156 tracker · L331 git host · L414 MR · L575 merge · L824 docs · L979 publish · L1295 plugins ·
-  L1309 keepboth · L1328 selftest · L1702 CLI
+Sections: L38 config · L72 run · L160 tracker · L344 git host · L427 MR · L588 merge · L837 docs · L992 publish · L1308 plugins ·
+  L1322 keepboth · L1341 selftest · L1715 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -105,12 +105,16 @@ def _argv(cmd):
     return cmd
 
 
-def _run(cmd, cwd=None, check=False, write=None):
+def net_sec():
+    return min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))
+
+
+def _run(cmd, cwd=None, check=False, write=None, sec=None):
     if not cmd[0]:
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
     write = _is_write(cmd) if write is None else write   # on the CLI's own words, before the shim swap shifts them
     cmd = _argv(cmd)
-    sec = min(120, int(os.environ.get('KIT_NET_TIMEOUT_SEC') or (CFG.get('net') or {}).get('timeoutSec') or 120))   # the whole deadline
+    sec = sec or net_sec()   # the whole deadline; sec: a caller's own (an idempotent retry with more time)
     tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
     end = min(time.time() + sec, STOP_AT[0] or float('inf'))
     for i in range(1, tries + 1):
@@ -210,7 +214,8 @@ TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github'
 
 def prior_gate(task, repo, what):
     """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate): prior ran within prior.validHours and found
-    nothing for this repo (or a duplicate task); --override passes, logged."""
+    nothing for this repo (or a duplicate task); work tagged with the task in another repo (finish / doc, no repo: any) = paired, INFO;
+    --override passes, logged."""
     if not task:
         return
     if OVERRIDE:
@@ -224,8 +229,16 @@ def prior_gate(task, repo, what):
     if not fresh:
         raise SystemExit(f'{what} refused: run crafty.ps1 prior -Task {task} first (check before create)')
     leaf = lambda r: re.split(r'[\\/]', r or '')[-1]
-    hit = [f for f in p.get('found') or [] if isinstance(f, dict) and f.get('kind') not in (None, '', 'doc', 'qa')
-           and (f.get('kind') == 'task' or not repo or not f.get('repo') or leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))))]
+    hit, paired = [], []
+    for f in p.get('found') or []:
+        if not isinstance(f, dict) or f.get('kind') in (None, '', 'doc', 'qa'):
+            continue
+        if f.get('kind') == 'task' or not f.get('repo') or (leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))) if repo else not f.get('tagged')):
+            hit.append(f)
+        elif f.get('tagged'):   # the same task id in another repo: its paired MR / branch, never a stop
+            paired.append(f)
+    for f in paired:
+        print(f"INFO {what}: paired {f.get('kind')} {f.get('ref')} (task {task}, another repo)", file=sys.stderr)
     if hit:
         kitlog('calls', 'prior-refused', {'task': task, 'what': what, 'found': f"{hit[0].get('kind')} {hit[0].get('ref')}"})
         raise SystemExit(f"{what} refused: already exists: {'; '.join(f'{h.get("kind")} {h.get("ref")} {h.get("title")}' for h in hit)}: "
