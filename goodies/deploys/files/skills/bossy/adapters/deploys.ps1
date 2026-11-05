@@ -2,10 +2,10 @@
 deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec 100]   merged-not-deployed MRs per test env, trigger, window
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
-  bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
+  bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>] [-Days 14]   promoted tasks (tracked, promoted in -Days; the owner's in trackerLists) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L139 deploy · L261 supervise
+Sections: L13 helpers · L61 intest · L141 deploy · L263 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -61,16 +61,18 @@ function Get-DeployedByAncestry([string[]]$Mrs, $Repos, [string[]]$Targets, [int
 # ---- intest: promoted tasks live on a test env -> inTest
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
-param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
+param([switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100, [int]$Days = 14)
 $ErrorActionPreference = 'SilentlyContinue'
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 
+# candidates: tasks this kit promoted in $Days and no QA run covers, plus list tasks assigned to the owner (tracker.owner); -Task: those
 $cand = [ordered]@{}
 $track = (Read-KitTracking).tasks   # tasks/<id>.json (skills/bossy/STATE.md)
-foreach ($id in @($track.Keys)) { $cand[$id] = @{ mrs = @($track[$id].mrs); name = '' } }
+foreach ($id in @($track.Keys)) { $o = $track[$id]; if ($Task.Count -or ($o.done -and $o.doneAt -and ((Get-Date) - [datetime]$o.doneAt).TotalDays -le $Days -and -not $o.qaCovered)) { $cand[$id] = @{ mrs = @($o.mrs); name = '' } } }
 $ownerId = try { "$(Get-TrackerOwner)".Trim() } catch { '' }
 $lists = @(Get-KitValue 'trackerLists' @()) | Where-Object { $_ } | Select-Object -Unique
-if ($lists.Count) {
+if ($lists.Count -and -not $ownerId -and -not $Task.Count) { Out-Line "SKIP  trackerLists: the owner is unknown (tracker.owner), so other people's tasks stay out" }
+elseif ($lists.Count) {
   foreach ($l in $lists) {
     $arr = try { @(Get-TrackerTasks $l 'promoted') } catch { Write-Warning "mark-in-test: list $l lookup failed: $($_.Exception.Message)"; @() }
     foreach ($t in $arr) {
@@ -143,7 +145,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <deploy branch> [-From <branch>] [-Push]" }
   if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
-  if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task; return }
+  if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days; return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create
   $fx = if ($Offline) { Get-Content $Offline -Raw | ConvertFrom-Json } else { $null }

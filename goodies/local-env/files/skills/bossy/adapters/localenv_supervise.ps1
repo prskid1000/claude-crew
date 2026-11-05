@@ -1,9 +1,9 @@
 <#
 localenv_supervise.ps1 (goody local-env): the local env in bossy.ps1 supervise, dot-sourced by bossy.ps1 (skills/bossy/adapters/):
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits.
-Its hook runs inside supervise (uses $now, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
+Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L9 logs · L35 rows · L57 pause · L69 spike · L92 flags · L147 waits
+Sections: L9 logs · L44 rows · L66 pause · L78 spike · L105 flags · L162 waits
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -25,12 +25,21 @@ function Get-KitLogErrors([string[]]$Files, $Sizes) {
     $new = if ($i.Length -gt $from) { $s = [IO.File]::Open($i.FullName, 'Open', 'Read', 'ReadWrite, Delete'); try { [void]$s.Seek($from, 'Begin'); [IO.StreamReader]::new($s).ReadToEnd() } finally { $s.Dispose() } } else { '' }
     $hits = @($new -split "`r?`n" | Where-Object { $_ -cmatch '\b(ERROR|FATAL)\b|Exception\b|Traceback|^\s*\w*Error:|(?i:\b(status|HTTP/\S+)\W+5\d\d\b)' })
     $C = $script:KitLogClasses; $real = @($hits | Where-Object { $_ -notmatch $C.expected -or $_ -match "$($C.startup)|$($C.connection)|$($C['5xx'])" })
-    $cls = @('startup', 'connection', '5xx' | Where-Object { $k = $_; @($real | Where-Object { $_ -match $C[$k] }).Count })[0]
-    $top = if ($cls) { @($real | Where-Object { $_ -match $C[$cls] })[0] } elseif ($real.Count) { $real[0] } else { @($hits)[0] }
-    $cl = @($real | Where-Object { $_ -match $C.connection })[0]   # the address after the connection words, never a log timestamp
-    $dep = if ("$cl" -match "(?:$($C.connection)).*?\b(?<h>localhost|\d{1,3}(?:\.\d{1,3}){3}|[A-Za-z][\w-]*(?:\.[\w-]+)*):(?<p>\d{2,5})\b") { "$($Matches.h):$($Matches.p)" }
-    [pscustomobject]@{ path = $i.FullName; size = $i.Length; errors = $real.Count; expected = $hits.Count - $real.Count; cls = $(if ($cls) { $cls } else { 'error' }); first = "$top".Trim(); dep = $dep }
+    [pscustomobject](@{ path = $i.FullName; size = $i.Length; expected = $hits.Count - $real.Count; lines = @($real | Select-Object -First 200) } + (Get-KitLogClass $real $hits))
   }
+}
+# error lines -> count, class, first line, dependency (host:port of a connection line)
+function Get-KitLogClass([string[]]$Real, [string[]]$Hits = @()) {
+  $C = $script:KitLogClasses; $cls = @('startup', 'connection', '5xx' | Where-Object { $k = $_; @($Real | Where-Object { $_ -match $C[$k] }).Count })[0]
+  $top = if ($cls) { @($Real | Where-Object { $_ -match $C[$cls] })[0] } elseif ($Real.Count) { $Real[0] } else { @($Hits)[0] }
+  $cl = @($Real | Where-Object { $_ -match $C.connection })[0]   # the address after the connection words, never a log timestamp
+  $dep = if ("$cl" -match "(?:$($C.connection)).*?\b(?<h>localhost|\d{1,3}(?:\.\d{1,3}){3}|[A-Za-z][\w-]*(?:\.[\w-]+)*):(?<p>\d{2,5})\b") { "$($Matches.h):$($Matches.p)" }
+  @{ errors = @($Real).Count; cls = $(if ($cls) { $cls } else { 'error' }); first = "$top".Trim(); dep = $dep }
+}
+# an error line's signature: no timestamp, [thread], ids, numbers or quoted values (known-noise key: supervise -Ack on the spike)
+function Get-KitErrorSignature([string]$Line) {
+  $t = ($Line -replace '^\W*\d{4}-\d\d-\d\d[T ][\d:.,]+\S*\s*', '' -replace '\[[^\]]*\]', '' -replace '(?i)\b[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '<id>' -replace '=\S+', '=<v>' -replace '(?i)\b0x[0-9a-f]+\b|\d+', '#' -replace '(["'']).*?\1', '<v>' -replace '\s+', ' ').Trim()
+  $t.Substring(0, [math]::Min(100, $t.Length))
 }
 # ---- rows: env rows
 # local-env rows (pure on status -Json): up services + holders; a down one only while a lease / hold needs it (no lease = idle);
@@ -69,12 +78,16 @@ function Invoke-KitPauseLocalEnv {
 # ---- spike: ERROR SPIKE flags
 # one log's new errors -> nothing (expected 4xx while a lease tests), ACT (startup, connection, 5xx: the cause, env, service,
 # release), WATCH (other errors); a startup failure whose dependency is up again: restarted once (-AutoFix)
-function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix) {
+# -Known: noise:<env>:<signature> keys a supervise -Ack on an earlier spike stored; those lines never count again (that env only)
+function Get-KitSpikeFlag($L, $Envs, [switch]$AutoFix, [string[]]$Known = @()) {
   $base = [IO.Path]::GetFileNameWithoutExtension($L.path); $ev = @($Envs | Where-Object { $_.env -and $base.StartsWith("$($_.env)-") } | Sort-Object { - "$($_.env)".Length })[0]
   $svc = if ($ev) { $base.Substring("$($ev.env)".Length + 1) } else { $base }; $where = if ($ev) { "$($ev.env) $svc (release r$($ev.release))" } else { $L.path }
+  $sigOf = { param($x) "noise:$(if ($ev) { $ev.env } else { $base }):$(Get-KitErrorSignature $x)" }
+  if ($Known.Count -and $L.lines) { $L = [pscustomobject](@{ path = $L.path; expected = $L.expected; lines = @($L.lines | Where-Object { (& $sigOf $_) -notin $Known }) } + (Get-KitLogClass @($L.lines | Where-Object { (& $sigOf $_) -notin $Known }))) }
   $n = $L.errors + $(if (-not @($ev.leases).Count) { $L.expected })   # 4xx with nobody testing: someone else's calls
   if ($n -le 0) { return }
-  $cells = @{ kind = 'ERROR SPIKE'; who = $(if ($ev) { "$($ev.env) $svc" } else { $base }); problem = "$n new error line$(if ($n -ne 1) { 's' }) in $(if ($ev) { "$($ev.env) $svc" } else { $base }) log"; next = "$($L.cls): $(("$($L.first)" -replace '\s+', ' ').Trim() | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 60) } else { $_ } })" }   # table cells (supervise -Brief, ~90 chars); what / action stay whole for the report
+  $cells = @{ kind = 'ERROR SPIKE'; who = $(if ($ev) { "$($ev.env) $svc" } else { $base }); problem = "$n new error line$(if ($n -ne 1) { 's' }) in $(if ($ev) { "$($ev.env) $svc" } else { $base }) log"; next = "$($L.cls): $(("$($L.first)" -replace '\s+', ' ').Trim() | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 60) } else { $_ } })"
+    refs = @($L.lines | ForEach-Object { & $sigOf $_ } | Select-Object -Unique) }   # table cells (supervise -Brief, ~90 chars); what / action stay whole for the report; refs: -Ack marks them known noise
   if ($L.cls -eq 'error') { return [pscustomobject](@{ level = 'WATCH'; what = "ERROR SPIKE: $n new error line(s) in $($L.path)"; action = "first: $($L.first)" } + $cells) }
   if ($L.cls -eq 'startup' -and $L.dep -and $ev) {
     $up = $false; $tc = [Net.Sockets.TcpClient]::new(); try { $h, $p = $L.dep -split ':'; $up = $tc.ConnectAsync($h, [int]$p).Wait(1000) -and $tc.Connected } catch {} finally { $tc.Dispose() }
@@ -102,9 +115,10 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   if (-not (Test-Path $KitCmd.local)) { return }
   $watch = { param($what, $action) [pscustomobject]@{ level = 'WATCH'; what = $what; action = $action } }
   # layers merged into the target, gone from origin or with no live holder past the grace: -AutoFix drops them, else WATCH
-  if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count) {
-    $sd = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $KitCmd.local, 'drop', '-Stale') + @(if (-not $AutoFix) { '-DryRun' })) ([math]::Min(120, (Left)))
-    foreach ($ln in @("$($sd.out)" -split "`r?`n" | Where-Object { $_ -match '^\[[^\]]+\] (drop|stale) ' })) {
+  # its git fetches took 33 s a round: in the background (lib.ps1 Invoke-KitBackground), this round shows the last finished run
+  if (@(Get-ChildItem (Get-KitPath localenv) -Filter '*.json' -ErrorAction SilentlyContinue).Count -and (Within 'stale layers')) {
+    $da = @('drop', '-Stale') + @(if (-not $AutoFix) { '-DryRun' })
+    foreach ($ln in @(Invoke-KitBackground "envy.ps1 $($da -join ' ')" $KitCmd.local $da | Where-Object { $_ -match '^\[[^\]]+\] (drop|stale) ' })) {
       if ($AutoFix) { [pscustomobject]@{ level = 'INFO'; what = "auto-fixed: $ln"; action = 'Nothing to do.' } } else { & $watch "STALE LAYER: $ln" 'supervise -AutoFix drops it (envy.ps1 drop -Stale).' }
     }
   }
@@ -141,7 +155,8 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
   $sizes = try { Get-Content $sizesFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $sizes) { $sizes = @{} }
   $logs = @(Get-ChildItem (Get-KitPath localenv-logs) -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $now.AddHours(-2) -and $_.BaseName -notmatch '-build$|^loop' } | ForEach-Object FullName)
   $seen = @{}
-  foreach ($l in @(Get-KitLogErrors $logs $sizes)) { $seen[$l.path] = $l.size; foreach ($x in @(Get-KitSpikeFlag $l $envs -AutoFix:$AutoFix)) { $x } }
+  $known = @(if ($state.known) { $state.known.Keys | Where-Object { "$_".StartsWith('noise:') } })   # supervise's state: -Ack on a spike
+  foreach ($l in @(Get-KitLogErrors $logs $sizes)) { $seen[$l.path] = $l.size; foreach ($x in @(Get-KitSpikeFlag $l $envs -AutoFix:$AutoFix -Known $known)) { $x } }
   $seen | ConvertTo-Json | Set-Content $sizesFile
 }
 # ---- waits: status rows (lib.ps1 status): an agent whose env request is queued or in a train is WAITING, not STUCK, while the
