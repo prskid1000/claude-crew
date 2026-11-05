@@ -18,17 +18,20 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Code that reads cloud secrets or creds at import passes on a laptop with creds and fails on a clean CI container: lazy-load secrets and run unit tests once with creds unset before the MR. (1x)
+- Wave branches of one task: the prior-work gate refuses devtools finish and mr on each sibling branch; pass --override with the wave id as reason until the gate counts the batch as one task. (2x)
+- Shared task doc (one testing-ai key per task, many wave agents): read the current doc first and keep every other area's section and Rounds rows when writing yours; write patches with the Edit tool or a file, not heredoc python (it collapses backslash-n). (4x)
 - Stacked MR after a fix round on its base: rebuild it on the new base plus a revert of the moved commit so the stacked diff stays clean. (1x)
 - envy deploy REFUSED by a foreign layer whose branch is not based on the published head: board msg its holder; holder off the board -> raise an ENV-FIX, never deploy over it. (2x)
 - Re-run devtools.py finish after a doc change, final rebase or flaky tracker call: it updates the same two docs, the links block and the solution comment in place; check the tracker status after it. (4x)
-- MR body limits (260 words, How tested bullets, one standalone Not run line): run kitbag.py prose --kind mr-body and fix the body before devtools.py mr, not after its warning. (4x)
+- MR body limits (260 words, How tested bullets, one standalone Not run line): run kitbag.py prose --kind mr-body and fix the body before devtools.py mr, not after its warning. (4x) (2×)
 - MR state in reports comes from the host mergeState field of the final query; re-query before writing the summary, never infer open/merged from earlier output. (3x)
 - Test cleanup deleting several rows: collect each failure and assert once at the end, so one 409 does not leave the rest behind (1x, hard failure).
 - A rule that says name only items that exist (statuses, keys): check every listed name against its source before commit; no invented or stale entries (2x).
 - Run every script through its interpreter (`python -X utf8 x.py`, `node x.mjs`, `& x.ps1` / `pwsh -File`): `& x.py` or `.\x.py` opens the file in its Windows association (an editor on the owner's screen); the guard denies it, and doc openers, `--web`, `gh browse`.
 - Before merge, confirm a pipeline exists for the MR head; none (rules skipped) -> trigger one or report NOT_MERGED with the reason, never wait silently. (2x)
 - Push a review-fix commit before asking for re-review or merge; check the MR head sha on the host equals the local HEAD. (2x)
-- Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (4×)
+- Every claim in the MR body or goals doc (PASS, cleanup added, red before the fix, 'no gate exists') names its proof from the final head (test, grep, request); a compile error is not a red test; update the goals doc before the MR is marked done. (5×)
 - An FK on an old table: count orphan refs first (local env and a replica) and clean them in an earlier changeSet; MySQL rechecks every row on the table copy (1452) and a failed DDL leaves a half-added column. (2×)
 - Feature gates: gate only what the feature introduced, on the flag, in the shared method (grep every caller); on/off tests; status-set gates list every terminal status; shared-aggregate fixes keep existing numbers; flags whose safety lives in a separately deployed service ship OFF. (14×)
 - Linked shared deps can be older than the target: typecheck / build / Jest (esbuild unresolvable) may fail; no reinstall: keep the earlier local result, CI decides. (7×)
@@ -94,12 +97,13 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Over a per-file test cap: move a self-contained block to an area file with room (e.g. report test -> guard.tests) instead of golfing assertions (1x)
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
-- Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x) (2×)
+- Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x) (3×)
 - pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
 - A helper adding agents/<x>.md must update the router row, reach mentions and manifest in the same commit; pre-commit lint (ROUTER-UNROUTED, REACH-MENTION, MANIFEST) blocks a lone file. (3x)
 - Kit token cap work: measure the whole pass's headroom first (one trim plan), then one file per agent; never trim or reformat a file another agent edits; prove each trim by token or AST equality before pushing. (4×)
 
 ## revy
+- MR review: a main checkout may sit on a detached head; read diffs with git show <sha>:path or git diff <base>...<sha>, never git checkout in the main checkout. (2x)
 
 ## Decisions
 - 2026-10-21 Kit size cap: context 400k tokens · decision (owner, replaces "no function removed") total <= 200k: drop dead code, duplication, features; optional parts on the `goodies` branch (`kitbag.py goody add <name>`); never minified · consequences cap 200000, lint BUDGET / BUDGET-CAP.
