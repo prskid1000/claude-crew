@@ -20,13 +20,13 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L160 tracker · L344 git host · L427 MR · L588 merge · L837 docs · L992 publish · L1308 plugins ·
-  L1322 keepboth · L1341 selftest · L1715 CLI
+Sections: L38 config · L72 run · L160 tracker · L347 git host · L430 MR · L591 merge · L840 docs · L995 publish · L1339 plugins ·
+  L1353 keepboth · L1372 selftest · L1770 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
-import contextlib, glob, html, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time
+import contextlib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time
 from datetime import datetime
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
@@ -316,8 +316,11 @@ def finish(tid, guide, solution_md, status='review', ai=None):
             raise SystemExit(f'finish {tid}: the local test loop is {"at " + repr(ev) if ev else "not recorded"}, not PASS (crafty.ps1 checkpoint -Step loop -Item {tid} -Evidence "round <n> PASS"). Nothing was written.')
     t = task(tid)
     rd = lambda f: open(f, encoding='utf-8').read()
-    ai_md = rd(ai) if os.path.isfile(ai) else ((_pub_read(f'{tid}:testing-ai').get('rounds') or [{}])[-1].get('body') or '')
-    gaps = case_gaps(ai_md, rd(guide) if os.path.isfile(guide) else None, t.get('description') or '') if ai_md.strip() else []
+    rounds = _pub_read(f'{tid}:testing-ai').get('rounds') or []
+    ai_md = rd(ai) if os.path.isfile(ai) else ((rounds or [{}])[-1].get('body') or '')
+    own = rounds[:-1] if rounds and rounds[-1].get('body') == ai_md else rounds   # the newest round, already published, is the caller's
+    gaps = case_gaps(ai_md, rd(guide) if os.path.isfile(guide) else None, t.get('description') or '', [r['body'] for r in own],
+                     f'finish {tid}', [r['body'] for r in _pub_read(f'{tid}:testing-doc').get('rounds') or []]) if ai_md.strip() else []
     if gaps:
         raise SystemExit(f'finish {tid}: ' + '; '.join(gaps) + '. Fix the AI doc (run the cases), then finish again. Nothing was written.')
     ai_url, guide_url = _doc_url(tid, 'testing-ai', ai), _doc_url(tid, 'testing-doc', guide)
@@ -1088,20 +1091,38 @@ QUALITY = (r'(?i)\b(must|should|needs? to|has to|to be|so that|make[sd]?)\W+(\w+
            r'readable|legible)\b|(?:<|<=|≤|under|within|below|less than|at most)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:ms|s|sec\w*|min\w*|px|%)(?!\w)')
 
 
-def case_gaps(ai_md, human_md=None, task_md=''):
-    """AI doc rule breaks, each naming its fix (pre-existing waiver, qa.notLocal PASS, qa.matrix gap); with the human doc and task:
-    a human check no AI row ran, a NOT_TESTED_LOCAL row no check carries, an unmeasured stated quality. -> [str]"""
+def split_rows(md, prior=()):
+    """AI doc case rows -> (fresh, earlier): earlier = a row unchanged from a published round (any agent's), grandfathered."""
+    rows, seen = _table_rows(md, full=True)[0], {r for p in prior for r in _table_rows(p, full=True)[0]}
+    return [r for r in rows if r not in seen], [r for r in rows if r in seen]
+
+
+def _warn_earlier(where, earlier):
+    """One WARN line per rule earlier rows break: they never block the caller's round."""
+    for rule, ids in earlier.items():
+        if ids:
+            print(f'WARN {where}: {len(ids)} earlier row(s) {rule} ({", ".join(ids[:8])}{" ..." if len(ids) > 8 else ""}): grandfathered;'
+                  ' their owner fixes them in a later round', file=sys.stderr)
+
+
+def case_gaps(ai_md, human_md=None, task_md='', prior=(), where='testing-ai', human_prior=()):
+    """AI doc rule breaks of the rows this round adds or changes (prior / human_prior = published round bodies; earlier rows
+    and checks: WARN only), each
+    naming its fix (pre-existing waiver, qa.notLocal PASS, qa.matrix gap); with the human doc and task: a human check no AI row
+    ran, a NOT_TESTED_LOCAL row no check carries, an unmeasured stated quality. -> [str]"""
     qa, out = CFG.get('qa') or {}, []
-    rows = _table_rows(ai_md, full=True)[0]
+    rows, earlier = split_rows(ai_md, prior)
     passed = lambda r: (m := RAN.match(r or '')) and m.group(1).lower() == 'pass'
     local = lambda r: (m := RAN.match(r or '')) and m.group(1).lower() != 'pass'
-    pre = [i for i, r, _, _ in rows if passed(r) and PRE_EXISTING.search(r)]
-    if pre:
+    pre_of = lambda rs: [i for i, r, _, _ in rs if passed(r) and PRE_EXISTING.search(r)]
+    old = {'waive a failure as pre-existing': pre_of(earlier)}
+    if pre := pre_of(rows):
         out.append(f'row(s) {", ".join(pre)} waive a failure as pre-existing: a case here is the task\'s own check: FAIL it, fix it'
                    ' (only a step outside the doc can be pre-existing)')
     for d in qa.get('notLocal') or []:
         try:
-            hit = [i for i, r, _, text in rows if passed(r) and re.search(d.get('match') or '(?!)', f'{i} | {text}', re.I)]
+            hit_of = lambda rs: [i for i, r, _, text in rs if passed(r) and re.search(d.get('match') or '(?!)', f'{i} | {text}', re.I)]
+            hit, old[f'PASS on {d.get("name")} (qa.notLocal)'] = hit_of(rows), hit_of(earlier)
         except re.error as e:
             raise SystemExit(f'kit.local.json qa.notLocal {d.get("name")!r}: match is no regex ({e}): fix it')
         if hit:
@@ -1109,18 +1130,25 @@ def case_gaps(ai_md, human_md=None, task_md=''):
                        ' NOT_TESTED_LOCAL naming the stub; the deployed run tests its human check')
     mx, norm = qa.get('matrix') or {}, lambda v: re.sub(r'[^a-z0-9.]+', '-', str(v).lower()).strip('-')
     want = [(k, str(v)) for k in ('viewports', 'fontScales', 'themes') for v in mx.get(k) or []]
-    if want and re.search(r'!\[|<img\b|\.(png|jpe?g)\b', ai_md, re.I):
+    ui = lambda t: re.search(r'!\[|<img\b|\.(png|jpe?g)\b', t, re.I)
+    if want and (ui(ai_md) if not prior else any(ui(' | '.join(r)) for r in rows + earlier)):
         toks = set(re.split(r'[\s,;_|()]+', ' '.join(re.findall(r'(?im)\bMatrix:(.*)$', ai_md)).lower()))   # values or matrix() tags
         miss = [v for k, v in want if norm(v) not in toks and not (k == 'fontScales' and 'f' + norm(v) in toks)]
-        if miss:
+        fresh_ui = not prior or any(ui(' | '.join(r)) for r in rows)
+        if miss and fresh_ui:
             out.append(f'UI cases miss qa.matrix value(s) {", ".join(miss)}: run each UI case per variant (browser.mjs matrix()),'
                        ' values or tags on a "Matrix:" line')
+        elif miss:
+            old[f'are UI cases missing qa.matrix value(s) {", ".join(miss)}'] = [r[0] for r in earlier if ui(' | '.join(r))]
+    _warn_earlier(where, old)
     if human_md is not None:
-        hid = [i for i, _, _ in _table_rows(human_md)[0] if i and i != '#']
+        hnew, hold = split_rows(human_md, human_prior)
+        hid = [r[0] for r in hnew + hold if r[0] and r[0] != '#']
         has = lambda h, i: re.search(rf'(?<![\w-]){re.escape(h)}(?![\w-])', i)   # the AI row's # cell names it: "A3 (T2)"
-        ran = [h for h in hid if any(has(h, i) and RAN.match(r or '') for i, r, _, _ in rows)]
-        if set(hid) - set(ran):
-            out.append(f'human check(s) {", ".join(h for h in hid if h not in ran)} have no AI row that ran them: the loop runs each'
+        ran = [h for h in hid if any(has(h, i) and RAN.match(r or '') for i, r, _, _ in rows + earlier)]
+        _warn_earlier(where, {'are human checks no AI row ran': [r[0] for r in hold if r[0] not in ran]})
+        if unran := [r[0] for r in hnew if r[0] and r[0] != '#' and r[0] not in ran]:
+            out.append(f'human check(s) {", ".join(unran)} have no AI row that ran them: the loop runs each'
                        ' (its AI row\'s # cell names it: "A3 (T2)")')
         orphan = [i for i, r, _, _ in rows if local(r) and not any(has(h, i) for h in hid)]
         if orphan:
@@ -1134,7 +1162,7 @@ def case_gaps(ai_md, human_md=None, task_md=''):
             raise SystemExit(f'kit.local.json qa.qualityWords is no regex ({e}): fix it, or "" to turn the check off')
         stem = lambda w: re.sub(r'(er|ly)$', '', w.lower())
         terms = {(g.get('n') or stem(g.get('w') or m.group(0))) for m in found for g in [m.groupdict()]}
-        miss = sorted(t for t in terms if not any(re.search(rf'(?<![\w.]){re.escape(t)}', text.lower()) and THRESHOLD.search(text) for *_, text in rows))
+        miss = sorted(t for t in terms if not any(re.search(rf'(?<![\w.]){re.escape(t)}', text.lower()) and THRESHOLD.search(text) for *_, text in rows + earlier))
         if miss:
             out.append(f'the task states {", ".join(repr(t) for t in miss)}: add a case per term measuring it, a threshold in'
                        ' Expected (contrast() >= 3, layoutIssues() count = 0, p95 of 5 runs <= the bound)')
@@ -1170,8 +1198,9 @@ def _compose(title, rounds, runs=()):
     return top['body'].rstrip() + '\n\n' + '\n\n'.join(f'## {n}\n\n{_demote(r["body"]).strip()}' for n, r in secs) + '\n', '.md'
 
 
-def _check_doc(kind, scope, path, body):
-    """testing-doc (human, positive cases, after the loop PASS) / testing-ai (the local loop record, every case): their tables."""
+def _check_doc(kind, scope, path, body, prior=()):
+    """testing-doc (human, positive cases, after the loop PASS) / testing-ai (the local loop record, every case): their tables;
+    row rules judge only rows not in a published round (prior: their bodies), so one agent's round passes on a shared doc."""
     if GOALS_MARK.search(body):
         raise SystemExit(f'{path} is the local goals file (templates.md "Testing goals"): never published; publish the AI doc'
                          ' ("Testing doc (AI)") and, after the loop PASS, the human doc. Nothing was published.')
@@ -1188,12 +1217,14 @@ def _check_doc(kind, scope, path, body):
     if kind == 'testing-ai':
         if not neg:
             raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "{tpl}"). Nothing was published.')
-        bare = bare_evidence(_table_rows(body)[0])
+        fresh, earlier = split_rows(body, prior)
+        _warn_earlier(f'{scope}:{kind}', {'lack an Evidence link': bare_evidence([r[:3] for r in earlier])})
+        bare = bare_evidence([r[:3] for r in fresh])
         if bare:
             raise SystemExit(f'{path}: row(s) {", ".join(bare)} have a Result but no Evidence link: upload the screenshot, request + response JSON'
                              ' or test run output (devtools.py evidence) and put its link or inline image in the cell, never a bare file or test name.'
                              ' Nothing was published.')
-        gaps = case_gaps(body)
+        gaps = case_gaps(body, prior=prior, where=f'{scope}:{kind}')
         if gaps:
             raise SystemExit(f'{path}: ' + '; '.join(gaps) + '. Nothing was published.')
         return   # published every loop round: it is the loop's record
@@ -1217,7 +1248,7 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
     if run is not None and not _pub_read(key).get('rounds'):
         key, kind, run = f'{scope}:qa-report', 'qa-report', None
     if kind in ('testing-doc', 'testing-ai') and run is None:
-        _check_doc(kind, scope, path, body)
+        _check_doc(kind, scope, path, body, [r['body'] for r in _pub_read(key).get('rounds') or []])
     bare = bare_evidence([(i, (c or {}).get('result'), (c or {}).get('evidence')) for i, c in (run or {}).items()])
     if bare:
         print(f'[publish] {key}: run row(s) {", ".join(bare)} have a Result but no Evidence link or inline image', file=sys.stderr)
@@ -1575,6 +1606,25 @@ def _publish_selftest(expect, refused):
         g['CFG'] = {**CFG, 'qa': {'matrix': {'viewports': ['1280x720', '1920x1080'], 'fontScales': [2], 'themes': ['High contrast']}}}
         expect('case_gaps: the "Matrix:" line may list matrix() tags (1280x720_f2_high-contrast)',
                not cg([row('A3', 's', 'PASS', '![a](https://i/a.png)'), 'Matrix: 1280x720_f2_high-contrast, 1920x1080_f2_high-contrast\n']))
+        g['CFG'] = {**CFG, 'qa': {'notLocal': [{'name': 'help service', 'match': r'/help\b'}], 'matrix': {'viewports': ['1280x720']}}}
+        legacy = ('# AI\n' + ait + row('L1', 'GET /help', 'PASS', '`test_help`') + '| L2 | negative | s | ok | PASS | ![a](https://i/a.png) |\n'
+                  + rt + '| 1 | 2026-11-01 | L1-L2 | 2 PASS | | | |\n')
+        _pub_write('TS:testing-ai', {'key': 'TS:testing-ai', 'title': 'X', 'rounds': [{'at': '2026-11-01 10:00', 'seq': 1.0, 'label': '', 'ext': '.md', 'body': legacy}], 'runs': []})
+        mine = lambda r: w(os.path.join(tmp, 'sh.md'), legacy.replace('Rounds:', r + 'Rounds:').replace('| 2 PASS | | | |\n', '| 2 PASS | | | |\n| 2 | 2026-11-05 | P1 | 1 PASS | | | |\n'))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            ok = publish('TS:testing-ai', 'X', mine(row('P1', 'GET /list', 'PASS')))
+        expect('testing-ai: a shared doc whose earlier rows (any agent) lack evidence, PASS on qa.notLocal or miss qa.matrix accepts a'
+               ' new compliant round; earlier rows only WARN', ok and 'WARN TS:testing-ai: 1 earlier row(s) lack an Evidence link (L1)' in err.getvalue()
+               and 'PASS on help service' in err.getvalue() and 'qa.matrix' in err.getvalue())
+        refused('testing-ai: a new row without an Evidence link on a shared doc -> refused', lambda: publish('TS:testing-ai', 'X', mine(row('P2', 'GET /x', 'PASS', 'test_x'))), 'P2 have a Result but no Evidence link')
+        refused('testing-ai: a new qa.notLocal PASS on a shared doc -> refused', lambda: publish('TS:testing-ai', 'X', mine(row('P3', 'GET /help', 'PASS'))), 'row(s) P3 PASS on help service')
+        hm3 = doc.replace('| T1 | 1. Open the list. | Newest first. | | |\n', '| T1 | 1. Open the list. | Newest first. | | |\n| T2 | 2. Sort. | Oldest first. | | |\n')
+        with contextlib.redirect_stderr(io.StringIO()):
+            hg = [case_gaps('# AI\n' + ait + row('P1 (T2)', 's', 'PASS'), hm, '', (), 'x', [doc]) for hm in (hm3, hm3.replace('| T2 | 2. Sort.', '| T2 | 2. Sort first.'))]
+        expect('case_gaps: an earlier human check (another agent\'s, T1) no AI row ran only WARNs; a new or changed one no row ran fails',
+               not hg[0] and not hg[1] and case_gaps('# AI\n' + ait + row('P1', 's', 'PASS'), hm3, '', (), 'x', [doc])[0].startswith('human check(s) T2 have'))
+        refused('testing-ai: a new UI row missing qa.matrix on a shared doc -> refused',lambda: publish('TS:testing-ai', 'X', mine(row('P4', 's', 'PASS', '![b](https://i/b.png)'))), 'UI cases miss qa.matrix')
         g['CFG'] = {**CFG, 'qa': {}}
         os.makedirs(os.path.join(kp('agents'), 'd1'))
         loop = lambda ev: w(os.path.join(kp('agents'), 'd1', 'resume.json'), json.dumps({'steps': [{'step': 'loop', 'item': 'T9', 'evidence': ev, 'at': '2026-10-29T10:00:00'}]}))
@@ -1632,6 +1682,11 @@ def _publish_selftest(expect, refused):
         g['task'] = lambda t: {'id': t, 'name': 'n', 'status': st['s'], 'description': st['d']}
         refused('finish: no AI doc -> refused, nothing written', lambda: finish('T8', human, '**Solution** — x'), 'no AI testing doc')
         refused('finish: a human check no AI row ran -> refused', lambda: finish('T9', w(os.path.join(tmp, 'h4.md'), hm2), '**Solution** — x', ai=a2p), 'T2 have no AI row')
+        a5 = w(os.path.join(tmp, 'a5.md'), a2.replace('| A3 | edge | GET /list, no rows | 200, [] | | |', '| A3 | edge | GET /list, no rows | 200, [] | NOT_TESTED_LOCAL | |'))
+        with contextlib.redirect_stderr(io.StringIO()):
+            publish('T5:testing-ai', 'X', a5)
+        refused('finish: the newest published AI round (the caller\'s) is judged: its NOT_TESTED_LOCAL row no human check carries -> refused',
+                lambda: finish('T5', human, '**Solution** — x', ai=a5), 'A3 are NOT_TESTED_LOCAL')
         expect('finish refused before any tracker write', not calls)
         finish('T9', human, '**Solution** — x\n**MRs**: a · **Testing doc**: <link>', ai=a2p)
         expect('finish with the last loop round\'s AI doc adds no second round', open(ua, encoding='utf-8').read().count('## Round ') == 1)
