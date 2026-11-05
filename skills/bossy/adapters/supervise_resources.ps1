@@ -87,7 +87,7 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
     else { & $flag 'ACT' "phone lease $($ls.lane) held by $($ls.agent): no live holder" "& $($KitCmd.swarm) release -Agent $($ls.agent)" }
   }
   # env leases and holds: envy.ps1 status prunes (and logs) the ones with no live holder past the grace
-  if ($AutoFix -and (Within 'env leases')) { $null = Get-KitLocalEnvStatus }
+  if ($AutoFix -and $null -eq $script:KitEnvStatus -and (Within 'env leases')) { $null = Get-KitLocalEnvStatus }   # the local-env guard's status this round pruned them already
 
   # QA seats and claims of gone sessions (one line per gone session), orphan browser tabs
   $seatDir = Get-KitPath qa-seats

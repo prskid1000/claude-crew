@@ -137,9 +137,6 @@ $global:tdesc = "**Testing doc (human):**`n`n**Testing doc (AI):** [open](https:
 '@
 $res = Invoke-PsTest 'track-test' $tt @($O)
 Expect-Each $res 'track: # (throttle: the MR search once per 30 min, tasks rotate by checkedAt; keep: a hold added mid-run survives; nodoc: promoted only with both doc links, the human one alone held)' @('skip', 'once', 'hold', 'throttle', 'keep', 'nodoc') 8
-$qr = Join-Path (Kd) 'qg'; foreach ($x in 'A1', 'B1') { $null = New-Item -ItemType Directory -Force "$qr/r1/$x", "$qr/r0"; '{}' | Set-Content "$qr/r1/$x/results.json" }; 'r' | Set-Content "$qr/r1/A1/report.md"
-$qg = pwsh -NoProfile -Command ". '$O'; Get-KitQaRunGap '$qr/r1'; Get-KitQaRunGap '$qr/r0'"
-Expect "tidy digest: QA reports are per item; the items without one named, an empty run said ($qg)" ("$qg" -eq ', no report: B1 , no item tested')
 $lkf = Join-Path (TkPath $k cache -Create) 'supervise.lock'
 Set-JsonFile $lkf @{ session = 'other'; at = (Get-Date).ToString('s'); pid = 1 }
 $sv = pwsh @np $O supervise -Brief -Session me | Out-String
@@ -148,8 +145,10 @@ $dp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThr
 $gb = Join-Path (TkPath $k board -Create) 'gone-s.json'; Set-JsonFile $gb @{ session = 'gone-s'; agent = 'X9'; run = 'r1'; status = 'working'; beat = (Get-Date).ToString('o'); joined = (Get-Date).ToString('o'); holderPid = $dp.Id }
 $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters')
 'function Get-KitSuperviseFlagsFake([switch]$AutoFix) { "fake line $AutoFix $($null -ne $now -and $null -ne $mem -and $null -ne $keepFree)"; [pscustomobject]@{ ramNeed = 9999 }; [pscustomobject]@{ level = "WATCH"; what = "fake flag"; action = "x" }; [pscustomobject]@{ name = "fake row"; by = "me"; gb = 1 }; [pscustomobject]@{ info = "fake info" } }' | Set-Content (Join-Path $ad 'fake.ps1')
-$sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String
-$sr = Get-Content (TkPath $k supervise-report) -Raw
+'Start-Sleep 20' | Set-Content ($zs = Join-Path (Kd) 'z.ps1'); "function Get-KitSuperviseFlagsSlow { `$null = Invoke-KitBackground slow '$zs' @() }" | Set-Content (Join-Path $ad 'slow.ps1')
+$w0 = Get-Date; $sv = pwsh @np $O supervise -AutoFix -Brief -Takeover -Session me 2>&1 | Out-String; $ws = ((Get-Date) - $w0).TotalSeconds
+$sr = Get-Content (TkPath $k supervise-report) -Raw; Stop-Process -Id (Read-Json (Join-Path (TkPath $k background) 'slow.json')).pid -ErrorAction SilentlyContinue
+Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt 20 -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: a goody hook adds a sweep line, flag, report row, owner line, RAM need; kit-report shape; ACT: blocking -> tool, FYI -> list' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
   $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item $ad -Recurse -Force

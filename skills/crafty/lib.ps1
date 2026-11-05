@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L414 leases · L874 status · L1106 supervise sweep ·
-  L1165 supervise report · L1274 tracker · L1594 prior · L1712 git-host · L1871 kitlog · L1991 params · L2304 entry-scripts
+  L1180 supervise report · L1289 tracker · L1609 prior · L1727 git-host · L1886 kitlog · L2006 params · L2319 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1106,9 +1106,12 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
 # ---- supervise sweep: sections by learned cost, starved first; slow calls in the background
 # a section (Within) runs when its learned cost (EWMA of its seconds, supervise-state sweep.cost) fits the time left after the sections
 # starved last sweep (skipped: they go first) still ahead; a section's cost runs from its Within to the next one
+# a section with a cadence (supervise.sectionMinutes, name -> minutes) runs at most that often: not due = neither skipped nor starved
 function New-KitSweep([datetime]$Deadline, $State) {
   $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs without the ungated work after a section (older ones learn again)
-  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
+  $every = @{ 'cleanup' = 30; 'deploy checks' = 10; 'stale layers' = 15 }   # one-shot (auto-fixed) results only: a section with standing flags would drop them off-round
+  $cf = Get-KitSetting 'supervise.sectionMinutes' $null; if ($cf) { foreach ($p in @($cf.PSObject.Properties | Where-Object MemberType -eq NoteProperty)) { $v = 0.0; if ([double]::TryParse("$($p.Value)", [ref]$v)) { $every[$p.Name] = $v } } }
+  [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); last = $(if ($sw.last -is [Collections.IDictionary]) { $sw.last } else { @{} }); every = $every; ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
 }
 # an ungated phase (~<name>) starts: the section before it stops being charged; its seconds show in the sweep line, never gate
 function Start-KitSweepPhase($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
@@ -1117,6 +1120,7 @@ function Start-KitSweepPhase($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
 }
 function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
+  if (-not $Sw.ran.ContainsKey($Name) -and $Sw.last[$Name] -and ($Now - [datetime]$Sw.last[$Name]).TotalMinutes -lt [double]$Sw.every[$Name]) { return $false }   # not due
   $left = ($Sw.deadline - $Now).TotalSeconds
   $hold = [math]::Min(0.5 * $left, [double](@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)   # starved ones keep at most half: an -AutoFix-only one never reached must not starve the rest
   $go = $left -gt 0 -and $(if ($Name -in $Sw.starved) { $left -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -ge [double]$Sw.cost[$Name] + $hold })
@@ -1126,37 +1130,48 @@ function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
 # the sweep's end: costs (EWMA 0.3) and the starved list into the state
 function Complete-KitSweep($Sw, $State, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
-  foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2) }
-  $State.sweep = @{ v = 2; cost = $Sw.cost; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
+  foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2); if ($Sw.every[$n]) { $Sw.last[$n] = $Now.ToString('o') } }
+  $State.sweep = @{ v = 2; cost = $Sw.cost; last = $Sw.last; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
   "slowest: $(@($Sw.ran.GetEnumerator() | Sort-Object { -$_.Value } | Select-Object -First 5 | ForEach-Object { '{0} {1:0.0} s' -f $_.Key, $_.Value }) -join ', ')"   # ~ = ungated phase
 }
 # a verb its sweep calls: inline (bounded by the time left); -Background and its learned cost over half the time left: in the background
 # (one run at a time, cache/background/<name>): its last finished result now, a fresh run for the next sweep
-function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, [switch]$Background) {
+function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, [switch]$Background, [string]$Job) {   # -Job: the background run's own name (default $Name)
   $left = [math]::Max(5, [int]($Sw.deadline - (Get-Date)).TotalSeconds); $c = $Sw.cost[$Name]
   if (-not $Background -or $null -eq $c -or [double]$c -le $left / 2) {
     $t0 = Get-Date; $r = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $Script) + $A) $left; $s = ((Get-Date) - $t0).TotalSeconds
-    $Sw.cost[$Name] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.timedOut.Add($Name) }
+    $Sw.cost[$Name] = [math]::Round($(if ($r.timedOut) { [math]::Max(2 * $s, [double]$c) } elseif ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.timedOut.Add($Name) }   # cut short: at least twice what it got (a -Background verb goes detached next)
     return @($r.out -split "`r?`n" | Where-Object { $_ })
   }
-  @(Invoke-KitBackground $Name $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) } ([double]$c))
+  @(Invoke-KitBackground $(if ($Job) { $Job } else { $Name }) $Script $A { param($s) $Sw.cost[$Name] = [math]::Round(0.7 * [double]$Sw.cost[$Name] + 0.3 * $s, 2) } ([double]$c))
 }
 # a run past max(10 x its cost, 30 min) hangs: stopped; an empty result with errors is one WATCH line, never "nothing to report"
 function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scriptblock]$OnSeconds, [double]$Cost = 0) {
-  $d = Get-KitPath background -Create; $base = Join-Path $d (ConvertTo-KitSlug $Name); $res = @{ out = @() }
+  $d = Get-KitPath background -Create; $sl = ConvertTo-KitSlug $Name
+  if ($sl.Length -gt 100) { $sl = $sl.Substring(0, 80) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([Text.Encoding]::UTF8.GetBytes($sl))).Substring(0, 12) }   # an -Mrs list: within MAX_PATH, still one job per list
+  $base = Join-Path $d $sl; $res = @{ out = @() }
   Invoke-KitLocked "$base.json" {
     $run = try { Get-Content -LiteralPath "$base.json" -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
     $busy = $run -and (Test-KitPid $run.pid $run.start)
-    if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30, 10 * $Cost / 60)) { Stop-Process -Id $run.pid -Force -ErrorAction SilentlyContinue; $busy = $false; $res.out = @("WATCH background $Name hung $([int]((Get-Date) - [datetime]$run.at).TotalMinutes) min: stopped, started again") }
-    elseif ($run -and -not $busy -and (Test-Path -LiteralPath "$base.out")) {
+    if ($busy -and ((Get-Date) - [datetime]$run.at).TotalMinutes -gt [math]::Max(30, 10 * $Cost / 60)) {
+      if ($KitIsWindows) { $null = & taskkill /PID ([int]$run.pid) /T /F 2>$null } else { Stop-Process -Id $run.pid -Force -ErrorAction SilentlyContinue }   # the launcher, its job and the job's children
+      $busy = $false; $res.out = @("WATCH background $Name hung $([int]((Get-Date) - [datetime]$run.at).TotalMinutes) min: stopped, started again")
+    }
+    elseif ($run -and -not $busy -and -not (Test-Path -LiteralPath "$base.out")) { $res.out = @("WATCH background $Name ended without output (launch failed): started again") }
+    elseif ($run -and -not $busy) {
       $res.out = @(Get-Content -LiteralPath "$base.out" | Where-Object { $_ }); $er = @(Get-Content -LiteralPath "$base.err" -ErrorAction SilentlyContinue | Where-Object { $_ })
       if (-not $res.out.Count -and $er.Count) { $res.out = @("WATCH background $Name failed: $($er[0])") }
       if (-not $run.read -and $OnSeconds) { & $OnSeconds ((Get-Item -LiteralPath "$base.out").LastWriteTime - [datetime]$run.at).TotalSeconds }
       $run | Add-Member -Force NoteProperty read $true; Write-KitAtomic "$base.json" ($run | ConvertTo-Json -Compress)
     }
     if (-not $busy) {
-      $a = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
-      $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" } else { Start-Process pwsh -ArgumentList $a -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
+      Remove-Item -LiteralPath "$base.out", "$base.err" -Force -ErrorAction SilentlyContinue
+      $fileArgs = @('-NoProfile', '-NonInteractive', '-File', "`"$Script`"") + @($A | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } })
+      # Windows: -Redirect* makes CreateProcess inherit every handle, the caller's stdout pipe too (a -Brief call ended only with the
+      # child, 120+ s): a shell-launched (inherits nothing) hidden pwsh starts the redirected job and waits for it
+      $sq = { param($s) "'$("$s" -replace '([\u2018-\u201B''])', '$1$1')'" }   # PowerShell reads the smart quotes as ' too
+      $bc = "(Start-Process pwsh -ArgumentList $(@($fileArgs | ForEach-Object { & $sq $_ }) -join ',') -NoNewWindow -PassThru -RedirectStandardOutput $(& $sq "$base.out") -RedirectStandardError $(& $sq "$base.err")).WaitForExit()"
+      $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bc))) -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $fileArgs -PassThru -RedirectStandardOutput "$base.out" -RedirectStandardError "$base.err" }
       Write-KitAtomic "$base.json" (@{ pid = $p.Id; start = (Get-KitPidStart $p.Id); at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress)
     }
   }

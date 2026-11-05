@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L227 budget · L255 launch · L527 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1075 supervise · L1377 report · L1456 audit · L1516 storage · L1727 bugbrief · L1829 cleanup · L1953 learn ·
-  L1983 decide · L2051 health · L2111 retro due · L2121 tidy · L2191 the kit origin's main and goodies · L2207 setup ·
-  L2274 guard-sendmessage
+  L763 track · L1075 supervise · L1378 report · L1457 audit · L1517 storage · L1728 bugbrief · L1830 cleanup · L1954 learn ·
+  L1984 decide · L2052 health · L2112 retro due · L2122 tidy · L2192 the kit origin's main and goodies · L2208 setup ·
+  L2275 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1115,7 +1115,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { Test-KitSweep $kitSweep $name }   # lib.ps1 supervise sweep: learned cost, starved first
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work: timed apart, never charged to the section before it
-function Invoke-Bounded([string]$Script, [string[]]$A) { Invoke-KitSweepCall $kitSweep "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')" $Script $A -Background:("$($A[0..1])" -in 'track run', 'deploy plan') }
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'deploy plan', 'budget -Run', 'deployed -Mrs') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # one background job per -Run / -Mrs value (budget -Run took 90 s, deployed timed out inline)
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params first: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1357,7 +1357,8 @@ Add-KitActObs $state $acts $now
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
-if ($kitSweep.skipped.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($kitSweep.skipped) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
+$late = @($kitSweep.skipped | Where-Object { -not $kitSweep.every[$_] -or -not $kitSweep.last[$_] -or ($now - [datetime]$kitSweep.last[$_]).TotalMinutes -ge 2 * $kitSweep.every[$_] })   # a cadence section one round late is no news
+if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($late) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"

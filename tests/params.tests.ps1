@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 params.tests.ps1: lib.ps1 params (registry, load tags, sketches, trigger queue, show, params-changes), the supervise sweep (learned
-section cost, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params lint.
+section cost, cadence, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params
+lint, the tidy digest's QA gaps.
 Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps1 -Area params).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -57,32 +58,35 @@ Expect "params: show has cadence, due, trigger, state and the What-learns-when t
 Expect "params: an urgent trigger on a key with a 1 d cadence is evaluated within 15 min; a frozen key's trigger drains ($(@($pr -match '^urgent:') -join ' '))" ($pr -contains 'urgent:True:15:0')
 Expect "params: a pin is a params-changes line; Settings since a time ($(@($pr -match '^changes:') -join ' '))" (@($pr -match '^changes:SETTINGS: idle\.graceMinutes \[_\] default -> 9 \(pin by').Count -eq 1)
 # supervise sweep: costs (EWMA) and starved sections; a slow -Background verb runs detached, its last result next sweep
-$bs = Join-Path (Kd) 'bg.ps1'; "'bg-out'; Start-Sleep -Milliseconds 300" | Set-Content $bs
+$bs = Join-Path (Kd) 'bg.ps1'; '"bg-out$($args -join '' '' -replace ''[^ -~]'', ''?'')"; Start-Sleep -Milliseconds 300' | Set-Content $bs
 $sr = Invoke-PsTest sweep @'
 . $args[0]; $st = @{ sweep = @{ v = 2; cost = @{ a = 10; b = 1; c = 5 }; starved = @('c') } }; $n0 = Get-Date
 $sw = New-KitSweep $n0.AddSeconds(12) $st
 "sweep:$(Test-KitSweep $sw a $n0)$(Test-KitSweep $sw b $n0)$(Test-KitSweep $sw c $n0.AddSeconds(2))$(Test-KitSweep $sw d $n0.AddSeconds(13))"
 Complete-KitSweep $sw $st $n0.AddSeconds(14); "sweep2:$($st.sweep.starved -join ','):$($st.sweep.cost.b):$($st.sweep.cost.c)"
 $sw = New-KitSweep (Get-Date).AddSeconds(30) @{ sweep = @{ v = 2; cost = @{ bgx = 50 } } }
-$i1 = @(Invoke-KitSweepCall $sw quick $args[1] @() -Background); $b1 = @(Invoke-KitSweepCall $sw bgx $args[1] @() -Background)
-$wait = { $r = Get-Content (Join-Path (Get-KitPath background) 'bgx.json') -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 150 -and (Test-KitPid $r.pid $r.start); $i++) { Start-Sleep -Milliseconds 100 } }
-& $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @() -Background); & $wait
+$i1 = @(Invoke-KitSweepCall $sw quick $args[1] @() -Background); $b1 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background)
+$wait = { param($wn = 'bgx') $r = Get-Content (Join-Path (Get-KitPath background) "$wn.json") -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 150 -and (Test-KitPid $r.pid $r.start); $i++) { Start-Sleep -Milliseconds 100 } }
+& $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background); & $wait
 "bg:$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
 $s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ v = 2; cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
 $s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
 $s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x = 4 }; starved = @('big') } }; "hold:$(Test-KitSweep $s4 x $n0):$((New-KitSweep $n0 @{ sweep = @{ cost = @{ old = 99 } } }).cost.Count)"
+$s5 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{}; last = @{ 'deploy checks' = "$($n0.AddMinutes(-5))"; cleanup = "$($n0.AddMinutes(-40))" } } }; $st5 = @{}
+"due:$(Test-KitSweep $s5 'deploy checks' $n0)$(Test-KitSweep $s5 cleanup $n0)$(Test-KitSweep $s5 cleanup $n0):$($s5.skipped.Count):$($null = Complete-KitSweep $s5 $st5 $n0.AddSeconds(1); [datetime]$st5.sweep.last.cleanup -gt $n0)"
 $top = Complete-KitSweep $s3 $st3 $n0.AddSeconds(8); "phase:$($st3.sweep.cost.a):$($st3.sweep.cost.b):$($st3.sweep.cost.ContainsKey('~hook')):$top"
 $hp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -PassThru -WindowStyle Hidden; $hb = Join-Path (Get-KitPath background) 'hung.json'
 @{ pid = $hp.Id; start = (Get-KitPidStart $hp.Id); at = (Get-Date).AddHours(-2).ToString('o') } | ConvertTo-Json | Set-Content $hb
 $hu = @(Invoke-KitBackground hung $args[1] @() $null 5); $null = $hp.WaitForExit(5000)
-$eb = Join-Path (Get-KitPath background) 'crash'; '' | Set-Content "$eb.out"; 'boom: no tracker' | Set-Content "$eb.err"; @{ pid = 1; start = 'x'; at = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content "$eb.json"
-$cr = @(Invoke-KitBackground crash $args[1] @()); "hung:$($hu[0] -match '^WATCH background hung hung 120 min: stopped')$($hp.HasExited):$($cr[0] -eq 'WATCH background crash failed: boom: no tracker')"
-& $wait; Start-Sleep -Seconds 2
+$ce = Join-Path (Split-Path $args[1]) 'ce.ps1'; '[Console]::Error.WriteLine("boom: no tracker"); exit 1' | Set-Content $ce; $null = Invoke-KitBackground crash $ce @(); & $wait crash
+$cr = @(Invoke-KitBackground crash $ce @()); "hung:$($hu[0] -match '^WATCH background hung hung 120 min: stopped')$($hp.HasExited):$($cr[0] -eq 'WATCH background crash failed: boom: no tracker')"
+& $wait; & $wait crash; Start-Sleep -Seconds 2
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
-Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background: the last result, a fresh detached run ($(@($sr -match '^bg:') -join ' '))" ($sr -contains 'bg:bg-out:True:0:bg-out:True')
-Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
+Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:bg-out:True:0:bg-out-X a'?b:True")
+Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
 Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
+Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)
 $nr = Invoke-PsTest net @'
 . $args[0]; $script:seen = @(); $script:ok = $false; $env:KIT_NET_TIMEOUT_SEC = 40
@@ -148,5 +152,8 @@ $rj = "$k/skills/bossy/params.registry.json"; $rg = Get-Content $rj -Raw | Conve
 $plf = Join-Path (Kd) 'pl.py'; Set-Content $plf $pl; $lr = @(& $py -X utf8 $plf $k 2>&1 | ForEach-Object { "$_" })
 Expect "lint: an unregistered key, a literal other than the registry default ($(@($lr -match '^lint:') -join ' '))" ($lr -contains 'lint:PARAM-DEFAULT a.ps1:1|PARAM-UNREG a.ps1:1')
 Expect "lint: tunable literals WARN over the baseline; --ratchet records them; a new one warns again ($(@($lr -match '^(warn|ratchet|again):') -join ' '))" ($lr -contains 'warn:a.ps1 1 tunable literal(s)|b.py 2 tunable literal(s)|c.mjs 1 tunable literal(s)' -and $lr -contains 'ratchet:0' -and $lr -contains 'again:b.py' -and $lr -contains 'zero:3')
+$qr = Join-Path (Kd) 'qg'; foreach ($x in 'A1', 'B1') { $null = New-Item -ItemType Directory -Force "$qr/r1/$x", "$qr/r0"; '{}' | Set-Content "$qr/r1/$x/results.json" }; 'r' | Set-Content "$qr/r1/A1/report.md"
+$qg = pwsh -NoProfile -Command ". '$O'; Get-KitQaRunGap '$qr/r1'; Get-KitQaRunGap '$qr/r0'"
+Expect "tidy digest: QA reports are per item; the items without one named, an empty run said ($qg)" ("$qg" -eq ', no report: B1 , no item tested')
 Remove-TestKit $k
 Complete-Tests
