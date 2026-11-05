@@ -20,8 +20,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L156 tracker · L326 git host · L409 MR · L524 merge · L768 docs · L923 publish · L1239 plugins ·
-  L1253 keepboth · L1272 selftest · L1630 CLI
+Sections: L38 config · L72 run · L156 tracker · L328 git host · L411 MR · L560 merge · L809 docs · L964 publish · L1280 plugins ·
+  L1294 keepboth · L1313 selftest · L1681 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -314,6 +314,8 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     if t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
+    for ref in refresh_mr_docs(tid):
+        print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
     cs = (CFG.get('tracker') or {}).get('statuses') or {}   # a name or a list of names (lib.ps1 tracker statuses)
     past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in ([cs[k]] if isinstance(cs.get(k), str) else cs.get(k) or
             {'promoted': ['promoted'], 'inTest': ['in test', 'for test'], 'closed': ['closed', 'complete', 'done']}[k])]
@@ -438,6 +440,35 @@ TASK_LINK = {'clickup': 'clickup.com', 'github': '/issues/', 'gitlab': '/issues/
              'linear': 'linear.app', 'azure': '_workitems', 'youtrack': '/issue/'}
 
 
+DOC_LABEL = {'testing-doc': re.compile(r'(?i)^[ \t>*_|-]*testing doc(?! \(ai\))[^:\n]{0,12}:'), 'testing-ai': re.compile(r'(?i)^[ \t>*_|-]*testing doc \(ai\)[ \t*_]*:')}
+
+
+def with_doc_lines(body, tid):
+    """(body, missing): both "Testing doc" lines from <tid>'s published records (devtools.py merge needs them; older lines of a
+    published kind replaced), under "## Links" or above the footer; missing = the kinds with no record."""
+    urls = {k: _pub_read(f'{tid}:{k}').get('url') for k in DOC_LABEL}
+    lines = [ln for ln in (body or '').split('\n') if not any(u and DOC_LABEL[k].match(ln) for k, u in urls.items())]
+    add = [f'- Testing doc{" (AI)" if k == "testing-ai" else ""}: {u}' for k, u in urls.items() if u]
+    at = next((i + 1 for i, ln in enumerate(lines) if ln.strip() == '## Links'), next((i for i, ln in enumerate(lines) if FOOTER in ln), len(lines)))
+    return '\n'.join(lines[:at] + add + lines[at:]) if add else body, [k for k, u in urls.items() if not u]
+
+
+def refresh_mr_docs(tid, host=None):
+    """The open MRs tracked for <tid> get both doc lines (finish publishes the docs after the MRs opened) -> the refs updated."""
+    host, done = host or host_kind(GITLAB_HOST), []
+    for ref in ((read_tracking().get('tasks') or {}).get(tid) or {}).get('mrs') or []:
+        r = _norm_ref(ref)
+        path = r and (r[0] if '/' in r[0] or host != 'gitlab' or not CFG.get('gitlabGroup') else f"{CFG['gitlabGroup']}/{r[0]}")
+        m = _host('mr.get', type=host, repo=path, n=r[1]) if r else None
+        if not isinstance(m, dict) or m.get('state') != 'opened':
+            continue
+        old = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
+        new = with_doc_lines(old, tid)[0]
+        if new != old and isinstance(_host('mr.update', type=host, repo=path, n=r[1], title=m.get('title') or '', body=new), dict):
+            done.append(ref)
+    return done
+
+
 def mr_create(worktree, title, body_md, tgt=None):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
@@ -457,6 +488,11 @@ def mr_create(worktree, title, body_md, tgt=None):
     host, proj = remote(worktree)
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
     prior_gate(task_of_branch(src), proj, f'devtools.py mr {src}')
+    if task_of_branch(src):   # the doc lines devtools.py merge needs, from the published records; a missing doc is said now, not at merge
+        body_md, nodoc = with_doc_lines(body_md, task_of_branch(src))
+        for k in nodoc:
+            print(f'[mr] WARNING: task {task_of_branch(src)} has no published {k} doc: devtools.py merge refuses this MR until it has one;'
+                  f' after the local loop PASS: devtools.py finish (it adds the line to this MR)', file=sys.stderr)
     tgt = tgt or target_of(worktree)
     if not tgt:
         raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
@@ -711,10 +747,15 @@ def _auto_merge(worktree, iid, max_wait):
     if NO_DOC.search(m.get('description') or m.get('body') or ''):   # merged 3x with no doc: testers had nothing to follow
         return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
                 f'put its link in the MR body, merge again\nNOT_MERGED')
-    body = m.get('description') or m.get('body') or ''
+    body = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
     if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
-        return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines; after the local loop PASS: devtools.py finish, then devtools.py mr'
-                f' with the link (edits this MR), merge again\nNOT_MERGED')
+        tid = task_of_branch(m.get('source_branch')) or next((t for t, x in (read_tracking().get('tasks') or {}).items() if any(
+            (lambda r: r and r[1] == iid and _same_repo(r[0], proj))(_norm_ref(y)) for y in (x or {}).get('mrs') or [])), '')
+        new, nodoc = with_doc_lines(body, tid) if tid else (body, list(DOC_LABEL))
+        if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # published docs: the body is fixed here, 4 runs lost merges to it
+            return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
+                    f' after the local loop PASS: devtools.py finish (it writes them), merge again\nNOT_MERGED')
+        _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs')
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
@@ -1347,6 +1388,16 @@ def selftest():
         calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: pending'); rp = auto_merge('.', '7'); pend = not merged()
         calls.clear(); g['_host'] = nd('https://app.clickup.com/t/9\n- Testing doc: [d](https://doc/1)\n- Testing doc (AI): https://doc/2'); g['TRACKER_TYPE'] = tt0
         expect('MR with a task link: "Testing doc: pending" NOT_MERGED, a linked doc merges', merge_word(rp) == 'NOT_MERGED' and pend and merge_word(auto_merge('.', '7')) == 'MERGED')
+        pr0, tag0 = g['_pub_read'], g['TAG']; g['TAG'] = 'CU-'; g['TRACKER_TYPE'] = 'clickup'
+        g['_pub_read'] = lambda key: {'url': f'https://d/{key.split(":")[1]}'} if key.startswith('T7:') and not key.endswith(g.get('_nodoc', '-')) else {}
+        tb = lambda body: (lambda f: lambda v, **a: dict(f(v, **a), source_branch='f/CU-T7-x') if v == 'mr.get' else f(v, **a))(nd(body))
+        lb = 'https://app.clickup.com/t/T7\n## Links\n- Testing doc: pending\n\n' + FOOTER
+        calls.clear(); g['_host'] = tb(lb); rf = merge_word(auto_merge('.', '7')); up = [a.get('body', '') for v, a in calls if v == 'mr.update']
+        g['_nodoc'] = 'testing-ai'; calls.clear(); g['_host'] = tb(lb); rn = auto_merge('.', '7'); nm = not merged()
+        wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc'); g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
+        expect(f'merge: a task MR without doc lines gets them from the published docs and merges; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
+               rf == 'MERGED' and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
+               and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl)
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
         repos0 = CFG.get('repos'); CFG['repos'] = [{'name': 'r', 'ci': {'mrPipelines': False}}]
