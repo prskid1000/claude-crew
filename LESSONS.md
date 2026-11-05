@@ -18,6 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- An MR body claim "changed methods without a test: none" is checked against the diff: every changed wiring or entry method (not only the core logic) needs a test or is listed (1x, hard miss)
 - Code that reads cloud secrets or creds at import passes on a laptop with creds and fails on a clean CI container: lazy-load secrets and run unit tests once with creds unset before the MR. (1x)
 - Wave branches of one task: the prior-work gate refuses devtools finish and mr on each sibling branch; pass --override with the wave id as reason until the gate counts the batch as one task. (2x)
 - Shared task doc (one testing-ai key per task, many wave agents): read the current doc first and keep every other area's section and Rounds rows when writing yours; write patches with the Edit tool or a file, not heredoc python (it collapses backslash-n). (4x)
