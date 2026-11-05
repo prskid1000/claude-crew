@@ -263,7 +263,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 
 # ---- supervise: inTest moves, the cached plan
 # supervise (called from Invoke-Supervise: $now, Within and Invoke-Bounded are its own): -AutoFix moves a done task that is live on a
-# test env to inTest (never before); the deploy plan is cached 1 h: READY envs are report info, DEPLOY ASK only under trigger ask
+# test env to inTest (never before); the deploy plan is cached 1 h (a failed refresh keeps the last good one, marked stale): READY envs are report info, DEPLOY ASK only under trigger ask
 function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
   $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }
   if ($AutoFix) {
@@ -290,14 +290,24 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
   if (Within 'deploy plan') {
     $pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'
     $cache = if (Test-Path $pc) { try { Get-Content $pc -Raw | ConvertFrom-Json } catch { $null } }
+    $plan = $null
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
-      $plan = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')) | Out-String | ConvertFrom-Json | Where-Object { $_ })
+      $out = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
+      # timed out, still running in the background or failed (no JSON): keep the last good plan, plan again next round
+      try { if (($out -join "`n").Trim() -match '^[\[{]') { $plan = @($out | Out-String | ConvertFrom-Json -ErrorAction Stop | Where-Object { $_ }) } } catch { $plan = $null }
+      if ($null -eq $plan) { foreach ($w in @($out | Where-Object { $_ -match '^WATCH ' })) { & $flag 'WATCH' "deploy plan: $($w -replace '^WATCH ')" 'Kept the last good plan; supervise plans again next round.' } }
+    }
+    if ($null -ne $plan) {
       $cache = [pscustomobject]@{ at = $now.ToString('o'); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
       $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8
     }
-    foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }
+    $askAge = if ($cache.at) { [int]($now - [datetime]$cache.at).TotalMinutes } else { 0 }
+    $askStale = if ($askAge -ge 60) { " (plan $askAge min old, refresh pending: plan again before asking)" } else { '' }
+    foreach ($a in @($cache.ask | Where-Object { ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) { & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply." }
   }
   # what waits for a person's deploy <env> (the cached plan): INFO lines of the supervise report
-  $ready = try { (Get-Content (Join-Path (Get-KitPath deploys) 'plan-cache.json') -Raw | ConvertFrom-Json).ready } catch { @() }
-  foreach ($r in @($ready | Where-Object { $_ })) { [pscustomobject]@{ info = "deploy ready: $r (waits for a person's deploy <env>)" } }
+  $pcd = try { Get-Content (Join-Path (Get-KitPath deploys) 'plan-cache.json') -Raw | ConvertFrom-Json } catch { $null }
+  $age = if ($pcd.at) { [int]($now - [datetime]$pcd.at).TotalMinutes } else { 0 }
+  $stale = if ($age -ge 60) { "; plan $age min old, refresh pending" } else { '' }
+  foreach ($r in @($pcd.ready | Where-Object { $_ })) { [pscustomobject]@{ info = "deploy ready: $r (waits for a person's deploy <env>$stale)" } }
 }

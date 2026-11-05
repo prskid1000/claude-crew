@@ -112,6 +112,27 @@ $o = Invoke-MarkInTest -Apply | Out-String
 $script:viewed = @(); $null = Invoke-MarkInTest -Task old3; "task:$(($script:viewed -join ',') -eq 'old3')"
 '@
 Expect-Each (Invoke-PsTest 'intest-gone' $it @($O)) 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (#)' @('gone', 'scope', 'task')
+$pt = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+function Within($n) { $true }; function Invoke-Bounded { $script:calls++; $script:planOut }
+$pc = Join-Path (Get-KitPath deploys -Create) 'plan-cache.json'; Remove-Item $pc -ErrorAction SilentlyContinue
+$now = Get-Date; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
+"none:$(-not (Test-Path $pc) -and -not $r.Count)"
+$script:planOut = @('[{"target":"stage","status":"READY","mrs":[{"mr":"api!1"}]}]'); $r = @(Get-KitSuperviseFlagsDeploys)
+"good:$(($r.info -join ';') -match '^deploy ready: stage \(1 MR\(s\)\) \(waits for a person.s deploy <env>\)$')"
+$now = (Get-Date).AddMinutes(90); $script:calls = 0; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
+"stale:$($script:calls -eq 1 -and ($r.info -join ';') -match 'deploy ready: stage .*plan 9\d min old, refresh pending')"
+$script:planOut = @('WATCH background x failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys)
+"watch:$(@($r | Where-Object level -eq 'WATCH').what -match 'deploy plan: background x failed: boom' -and ($r.info -join ';') -match 'stage')"
+$script:planOut = @('[]'); $r = @(Get-KitSuperviseFlagsDeploys)
+"empty:$(-not @($r | Where-Object info).Count -and (Get-Content $pc -Raw | ConvertFrom-Json).at)"
+$gs = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # trigger ask, the rest real
+@{ at = $now.AddMinutes(-90).ToString('o'); ready = @('stage (1 MR(s))'); ask = @('stage: 1 MR(s) (api!1)') } | ConvertTo-Json | Set-Content $pc
+$script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
+"ask:$(@($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending')"
+'@
+Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached (#)' @('none', 'good', 'stale', 'watch', 'empty', 'ask')
 Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests
