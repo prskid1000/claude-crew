@@ -295,14 +295,15 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $plan = $null; $asked = $null
     if (-not $cache -or ($now - [datetime]$cache.at).TotalMinutes -ge 60) {
       $from = $cache.asked; $asked = $now.ToString('o')   # a background run: this call returns the plan started at the last ask and starts a fresh one
-      $out =@(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
+      $out = @(Invoke-Bounded $KitCmd.orch @('deploy', 'plan', '-Json', '-TimeoutSec', [int](Get-KitParam 'deploy.planTimeoutSec')))
       # timed out, still running in the background or failed (no JSON): keep the last good plan, plan again next round
       try { if (($out -join "`n").Trim() -match '^[\[{]') { $plan = @($out | Out-String | ConvertFrom-Json -ErrorAction Stop | Where-Object { $_ }) } } catch { $plan = $null }
       if ($null -eq $plan) { foreach ($w in @($out | Where-Object { $_ -match '^WATCH ' })) { & $flag 'WATCH' "deploy plan: $($w -replace '^WATCH ')" 'Kept the last good plan; supervise plans again next round.' } }
     }
     if ($null -ne $plan) {
-      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready =@($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
+      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { $now.ToString('o') }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object status -eq 'ASK' | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }) }
     }
+    if ($asked -and $cache -and $null -eq $plan -and $cache.asked -and -not @($out -match '^WATCH ').Count) { $asked = $null }   # no output: the run of the last ask still goes, keep its time
     if ($asked -and $cache) { $cache | Add-Member -Force NoteProperty asked $asked; $cache | ConvertTo-Json -Depth 4 | Set-Content $pc -Encoding utf8 }
     $askAge = if ($cache.at) { [int]($now - [datetime]$cache.at).TotalMinutes } else { 0 }
     $askStale = if ($askAge -ge 60) { " (plan $askAge min old, refresh pending: plan again before asking)" } else { '' }

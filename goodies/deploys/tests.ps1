@@ -122,7 +122,7 @@ $now = Get-Date; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 $script:planOut = @('[{"target":"stage","status":"READY","mrs":[{"mr":"api!1"}]}]'); $r = @(Get-KitSuperviseFlagsDeploys)
 "good:$(($r.info -join ';') -match '^deploy ready: stage \(1 MR\(s\)\) \(waits for a person.s deploy <env>\)$')"
 $now = (Get-Date).AddMinutes(90); $script:calls = 0; $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
-"stale:$($script:calls -eq 1 -and ($r.info -join ';') -match 'deploy ready: stage .*plan 9\d min old, refresh pending')"
+"stale:$($script:calls -eq 1 -and ($r.info -join ';') -match 'deploy ready: stage .*plan 9\d min old, refresh pending' -and [int]($now - [datetime](Get-Content $pc -Raw | ConvertFrom-Json).asked).TotalMinutes -eq 90)"   # no output: the last ask's run still goes
 $script:planOut = @('WATCH background x failed: boom'); $r = @(Get-KitSuperviseFlagsDeploys)
 "watch:$(@($r | Where-Object level -eq 'WATCH').what -match 'deploy plan: background x failed: boom' -and ($r.info -join ';') -match 'stage')"
 $now = $now.AddMinutes(5); $script:planOut = @('[]'); $r = @(Get-KitSuperviseFlagsDeploys)   # a background plan: as old as the ask that started it (5 min ago)
