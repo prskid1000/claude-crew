@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, track status lag, bugbrief args, storage.
+supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, bugbrief args, storage.
 Usage: pwsh -NoProfile -File <kit>/tests/supervise.tests.ps1 (or tests/kit-tests.ps1 -Area supervise).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -13,14 +13,6 @@ $fc = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Get-KitFailedChec
 Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: env-data),R2=wrong')
 $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O board join -Run w8 2>&1 | Out-String; $juc = $LASTEXITCODE
 Expect "board join: -Type only = the agent id; neither = usage, exit 2 ($juc)" ($jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Agent')
-$lg = Invoke-PsTest 'track-lag' @'
-. $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review' }
-Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake
-function Invoke-HostApi($p) { @{ state = $(if ($p -match '/1$') { 'opened' } else { 'merged' }) } }
-Update-KitTracking { param($all) $all.tasks.t1 = @{ task = 't1'; mrs = @('web!1') }; $all.tasks.t2 = @{ task = 't2'; mrs = @('web!2'); holdPromotion = 'agent stopped'; mergedSeenAt = (Get-Date).AddHours(-2).ToString('s') } }
-Invoke-Track run -Detail; "t1:$($global:st.t1)"
-'@ @($O) | Out-String
-Expect 'track: an open MR moves an Open task to review; merged 60+ min but held = LAG' ($lg -match "DONE t1: status 'Open' -> review" -and $lg -match 't1:for review' -and $lg -match "LAG t2: all MRs merged at \d\d:\d\d, status still 'for review' \(promotion HELD: agent stopped\)")
 $pzf = Join-Path (TkPath $k pauses -Create) 'pause-zz.json'; & $J @{ at = '2026-10-23T12:34:00'; reason = 'C: full'; run = '*'; state = 'paused' } $pzf
 $pzw = pwsh -NoProfile -Command ". '$O'; (Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) @([pscustomobject]@{ run = 'rx' }) 0).what"
 $af = Join-Path (Kd) 'rx.json'; [IO.File]::WriteAllText($af, '{"brief":"C:/b/rx.md"}')
@@ -77,9 +69,10 @@ $nb = pwsh -NoProfile -Command ". '$O'; foreach (`$c in @(15, 1, 0, 0, 0, 2, 2, 
 Expect "heartbeat NEXT: ACT 5, ENV-FIX 5, storage / 3 failed builds / many agents 8, nothing runs 30, all idle 22, normal 15, back toward 15 from 5 and 30 ($($nb -join ' | '))" (($nb -join '|') -eq '5 1 ACT open|5 1 ENV-FIX open|8 storage anomaly|8 3 failed builds in a row|8 9 live agents|30 nothing runs|22 every agent idle|15 normal|10 back toward 15|22 back toward 15' -and $sj.nextBeat.min -ge 5 -and $sj.nextBeat.min -le 30 -and (Read-Json (TkPath $k supervise-state)).nextBeat -eq $sj.nextBeat.min)
 $bt = pwsh -NoProfile -Command ". '$O'; `$f = Get-KitPath supervise-state; `$s = Get-Content `$f -Raw | ConvertFrom-Json -AsHashtable; `$s.nextBeat = 30; `$s.report.at = (Get-Date).AddMinutes(-10).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes; `$s.report.at = (Get-Date).AddMinutes(-70).ToString('s'); `$s | ConvertTo-Json -Depth 5 | Set-Content `$f; Get-KitBeatMinutes"
 Expect "heartbeat: the last NEXT holds for 2 beats, then the base (a stopped coordinator) ($($bt -join ','))" (($bt -join ',') -eq '30,15')
-$ak = pwsh @np $O supervise -Ack 'ERROR SPIKE: 3 new error line(s) in D:\x\rm-api.log' -Reason 'expected 4xx' | Out-String
+$es = 'ERROR SPIKE: 3 new error line(s) in D:\x\rm-api.log'; $ss = Read-Json ($ssf = TkPath $k supervise-state); $ss.lastFlags = @(@{ what = $es; refs = @($null) }); & $J $ss $ssf
+$ak = pwsh @np $O supervise -Ack $es -Reason 'expected 4xx' | Out-String
 $sf = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; Select-KitFlags @([pscustomobject]@{ level = 'ACT'; what = 'ERROR SPIKE: 5 new error line(s) in D:\x\rm-api.log' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 16 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 17 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X2 (r) 16 min ago' }) `$a (Get-Date) | ForEach-Object what"
-Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per problem, ids apart (X1, X2)' ($ak -match 'acknowledged for 24 h' -and $sf.Count -eq 3 -and $sf[0] -eq 'HANDOFF X1 (r) 16 min ago' -and $sf[1] -eq 'HANDOFF X2 (r) 16 min ago' -and $sf[2] -match '1 acknowledged flag\(s\) hidden')
+Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per problem, ids apart (X1, X2)' ($ak -match 'acknowledged for 24 h[\s\S]*hides 1 flag' -and $sf.Count -eq 3 -and $sf[0] -eq 'HANDOFF X1 (r) 16 min ago' -and $sf[1] -eq 'HANDOFF X2 (r) 16 min ago' -and $sf[2] -match '1 acknowledged flag\(s\) hidden')
 # a seat whose agent returned (its Claude transcript ends in the final answer): -AutoFix leaves it, never STUCK
 foreach ($n in 'subagents/S10', 'S11') { & $se ($n -replace '.*/') @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) "$n.jsonl") '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) } }
 $w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S1[01]'

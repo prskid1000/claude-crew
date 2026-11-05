@@ -959,8 +959,8 @@ switch ($Action) {
       $o = Load $id; if (-not $o -or $o.done) { continue }   # fresh: a hold added meanwhile counts
       $o.checkedAt = (Get-Date).ToString('o'); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      # every 30 min: open MR + open task -> review; all merged 60+ min, not promoted = LAG
-      if ($o.lagLine -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }   # every round until fixed
+      # every 30 min: open MR + open task -> review; all merged 60+ min, not promoted, not HELD = LAG (a held one: its HOLD line, INFO)
+      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt 30 -and -not $Quiet) { $o.lagLine }   # every round until fixed
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge 30)) {
         $o.lagAt = (Get-Date).ToString('o'); $o.Remove('lagLine'); Save $o -Run
         $ms = @($o.mrs | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
@@ -969,7 +969,7 @@ switch ($Action) {
           if (-not $Quiet) { $lr }
         } elseif ($ls -and -not @($ms | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus $ls 'open', 'inProgress', 'review')) {
           if (-not $o.mergedSeenAt) { $o.mergedSeenAt = (Get-Date).ToString('o'); Save $o -Run }
-          elseif (((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge 60) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'$(if ($o.holdPromotion) { " (promotion HELD: $($o.holdPromotion))" })"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
+          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge 60) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
         }
       }
       foreach ($pair in @($o.mergeAfter)) {
@@ -1115,7 +1115,7 @@ $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
 $kitSweep = New-KitSweep $deadline $state; function Within($name) { Test-KitSweep $kitSweep $name }   # lib.ps1 supervise sweep: learned cost, starved first
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work: timed apart, never charged to the section before it
-function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'deploy plan', 'budget -Run', 'deployed -Mrs') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # one background job per -Run / -Mrs value (budget -Run took 90 s, deployed timed out inline)
+function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # one background job per -Run / -Mrs value (budget -Run took 90 s); plan and deployed never inline (their learned cost fit, then timed out every round)
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params first: 3 s, when due (d-20261029173533)
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
@@ -1253,7 +1253,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
   foreach ($l in @(Invoke-Bounded $KitCmd.orch @('track', 'run', '-Detail'))) {   # over half the time left (learned): the last background result
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
-    elseif ($l -match '^LAG') { Flag 'ACT' $l "Gone reason: bossy.ps1 track add -Task <id> -HoldPromotion '' (releases it); else & $($KitCmd.dev) tracker status <id> <status>." }
+    elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "MRs merged, the tracker refused the status (track retries each round): check auth and tracker.statuses (& $($KitCmd.dev) tracker view <id>), or set it by hand." }
     elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> <file.md>)." }
@@ -1349,7 +1349,7 @@ $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.lev
 $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; $state.acks = @{}; $a0 = $s1.acks   # re-read: an -Ack during this sweep
 $state.known = @{}; foreach ($r in @(if ($s1.known) { $s1.known.Keys })) { if (($now - [datetime]$s1.known[$r]).TotalDays -lt $(if ("$r".StartsWith('noise:')) { 30 } else { 2 })) { $state.known[$r] = $s1.known[$r] } }   # refs an -Ack stored: MRs past the 24 h merge window go, noise after 30 d
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
-$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ what = $_.what; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs) } })   # what supervise -Ack matches against
+$state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @{ what = $_.what; kind = $_.kind; who = $_.who; problem = $_.problem; refs = @($_.refs | Where-Object { $_ }) } })   # what supervise -Ack matches against
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }   # the failed-build streak, newest first
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })

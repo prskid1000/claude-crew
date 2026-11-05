@@ -1134,11 +1134,11 @@ function Complete-KitSweep($Sw, $State, [datetime]$Now = (Get-Date)) {
   $State.sweep = @{ v = 2; cost = $Sw.cost; last = $Sw.last; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
   "slowest: $(@($Sw.ran.GetEnumerator() | Sort-Object { -$_.Value } | Select-Object -First 5 | ForEach-Object { '{0} {1:0.0} s' -f $_.Key, $_.Value }) -join ', ')"   # ~ = ungated phase
 }
-# a verb its sweep calls: inline (bounded by the time left); -Background and its learned cost over half the time left: in the background
-# (one run at a time, cache/background/<name>): its last finished result now, a fresh run for the next sweep
-function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, [switch]$Background, [string]$Job) {   # -Job: the background run's own name (default $Name)
+# a verb its sweep calls: inline (bounded by the time left); -Background and its learned cost over half the time left, or -Detached
+# always: in the background (one run at a time, cache/background/<name>): its last finished result now, a fresh run for the next sweep
+function Invoke-KitSweepCall($Sw, [string]$Name, [string]$Script, [string[]]$A, [switch]$Background, [string]$Job, [switch]$Detached) {   # -Job: the background run's own name (default $Name)
   $left = [math]::Max(5, [int]($Sw.deadline - (Get-Date)).TotalSeconds); $c = $Sw.cost[$Name]
-  if (-not $Background -or $null -eq $c -or [double]$c -le $left / 2) {
+  if (-not $Detached -and (-not $Background -or $null -eq $c -or [double]$c -le $left / 2)) {
     $t0 = Get-Date; $r = Invoke-KitExe 'pwsh' (@('-NoProfile', '-NonInteractive', '-File', $Script) + $A) $left; $s = ((Get-Date) - $t0).TotalSeconds
     $Sw.cost[$Name] = [math]::Round($(if ($r.timedOut) { [math]::Max(2 * $s, [double]$c) } elseif ($null -ne $c) { 0.7 * [double]$c + 0.3 * $s } else { $s }), 2); if ($r.timedOut) { $Sw.timedOut.Add($Name) }   # cut short: at least twice what it got (a -Background verb goes detached next)
     return @($r.out -split "`r?`n" | Where-Object { $_ })
@@ -1249,10 +1249,10 @@ function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
 function Add-KitFlagAck([string]$Ack, [string]$Reason) {
   $sf0 = Get-KitPath supervise-state -Create; $k0 = Get-KitFlagKey $Ack; $script:ackOut = ''
   Invoke-KitLocked $sf0 { $s0 = try { Get-Content $sf0 -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $s0) { $s0 = @{} }; if (-not $s0.acks) { $s0.acks = @{} }
-    # the last round's flags it hides; flags with refs (UNTRACKED MR) remember those refs instead, so a new MR flags again
+    # the last round's flags it hides; flags with refs (UNTRACKED MR) remember those refs instead, so a new MR flags again; refs [null] = none
     $hit = @($s0.lastFlags | Where-Object { $_ -and (Test-KitAcked ([pscustomobject]$_) @($k0)) }); $refs = @($hit | ForEach-Object { @($_.refs) } | Where-Object { $_ })
     if ($refs.Count) { if (-not $s0.known) { $s0.known = @{} }; foreach ($r in $refs) { $s0.known[$r] = (Get-Date).ToString('o') } }
-    if (-not $hit.Count -or @($hit | Where-Object { -not @($_.refs).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-Date).ToString('o'); reason = $Reason } }
+    if (-not $hit.Count -or @($hit | Where-Object { -not @(@($_.refs) | Where-Object { $_ }).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-Date).ToString('o'); reason = $Reason } }
     Write-KitAtomic $sf0 ($s0 | ConvertTo-Json -Depth 5)
     $script:ackOut = "$(if ($refs.Count) { "known from now on (they no longer flag; a new one does): $(@($refs | Select-Object -First 5) -join ' · ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" })" } else { "acknowledged for 24 h: $k0" })$(if ($Reason) { " ($Reason)" })`n$(if ($hit.Count) { "hides $($hit.Count) flag(s) of the last round: $(@($hit | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')" } else { 'matches no flag of the last round: check the text (any later flag containing it hides)' })" }
   $script:ackOut

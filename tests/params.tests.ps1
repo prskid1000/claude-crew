@@ -2,7 +2,7 @@
 <#
 params.tests.ps1: lib.ps1 params (registry, load tags, sketches, trigger queue, show, params-changes), the supervise sweep (learned
 section cost, cadence, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params
-lint, the tidy digest's QA gaps.
+lint, the tidy digest's QA gaps, track status lag.
 Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps1 -Area params).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -68,7 +68,8 @@ $sw = New-KitSweep (Get-Date).AddSeconds(30) @{ sweep = @{ v = 2; cost = @{ bgx 
 $i1 = @(Invoke-KitSweepCall $sw quick $args[1] @() -Background); $b1 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background)
 $wait = { param($wn = 'bgx') $r = Get-Content (Join-Path (Get-KitPath background) "$wn.json") -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 150 -and (Test-KitPid $r.pid $r.start); $i++) { Start-Sleep -Milliseconds 100 } }
 & $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background); & $wait
-"bg:$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
+$dq = foreach ($r in 1, 2) { @(Invoke-KitSweepCall $sw dq $args[1] @() -Detached).Count; & $wait dq }
+"bg:$($dq -join '')$($sw.cost.dq -gt 0)$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
 $s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ v = 2; cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
 $s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
 $s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x = 4 }; starved = @('big') } }; "hold:$(Test-KitSweep $s4 x $n0):$((New-KitSweep $n0 @{ sweep = @{ cost = @{ old = 99 } } }).cost.Count)"
@@ -83,7 +84,7 @@ $cr = @(Invoke-KitBackground crash $ce @()); "hung:$($hu[0] -match '^WATCH backg
 & $wait; & $wait crash; Start-Sleep -Seconds 2
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
-Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:bg-out:True:0:bg-out-X a'?b:True")
+Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background, or cheap with -Detached: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:01Truebg-out:True:0:bg-out-X a'?b:True")
 Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
 Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
 Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
@@ -155,5 +156,15 @@ Expect "lint: tunable literals WARN over the baseline; --ratchet records them; a
 $qr = Join-Path (Kd) 'qg'; foreach ($x in 'A1', 'B1') { $null = New-Item -ItemType Directory -Force "$qr/r1/$x", "$qr/r0"; '{}' | Set-Content "$qr/r1/$x/results.json" }; 'r' | Set-Content "$qr/r1/A1/report.md"
 $qg = pwsh -NoProfile -Command ". '$O'; Get-KitQaRunGap '$qr/r1'; Get-KitQaRunGap '$qr/r0'"
 Expect "tidy digest: QA reports are per item; the items without one named, an empty run said ($qg)" ("$qg" -eq ', no report: B1 , no item tested')
+# track lag: t2 held (its HOLD, INFO), t4 held with an older cached LAG, t3 not held = LAG (supervise ACT)
+$lg = Invoke-PsTest 'track-lag' @'
+. $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review'; t3 = 'for review'; t4 = 'for review' }
+Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake
+function Invoke-HostApi($p) { @{ state = $(if ($p -match '/1$') { 'opened' } else { 'merged' }) } }
+$ago = (Get-Date).AddHours(-2).ToString('s'); Update-KitTracking { param($all) $all.tasks.t1 = @{ task = 't1'; mrs = @('web!1') }; foreach ($i in 2..4) { $all.tasks["t$i"] = @{ task = "t$i"; mrs = @("web!$i"); mergedSeenAt = $ago } }
+  $all.tasks.t2.holdPromotion = $all.tasks.t4.holdPromotion = 'agent stopped'; $all.tasks.t4.lagLine = 'LAG t4: cached'; $all.tasks.t4.lagAt = (Get-Date).ToString('s') }
+Invoke-Track run -Detail; "t1:$($global:st.t1)"
+'@ @($O) | Out-String
+Expect 'track: an open MR moves an Open task to review; merged 60+ min = LAG, held = HOLD only' ($lg -match "DONE t1: status 'Open' -> review" -and $lg -match 't1:for review' -and $lg -match "LAG t3: all MRs merged at \d\d:\d\d, status still 'for review'" -and $lg -notmatch 'LAG t[24]' -and $lg -match 'HOLD t2' -and $lg -match 'HOLD t4')
 Remove-TestKit $k
 Complete-Tests
