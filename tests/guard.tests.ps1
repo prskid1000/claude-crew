@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
-(the guard's note, supervise's Shells sweep); the supervise -Brief report; bossy.ps1 track add / show (MRs comment, -Task wins); build-failure flags.
+(the guard's note, supervise's Shells sweep); the supervise -Brief report; bossy.ps1 track add / show (MRs comment, -Task wins); build-failure flags;
+bossy.ps1 bugbrief.
 Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -144,5 +145,15 @@ $bf = & { . $O; function Test-KitLive($l) { $l.agent -ne 'gone' }; $n = Get-Date
   $e = { param($p, $o, $c, $h) @{ event = 'end'; kind = 'm'; project = $p; owner = $o; code = $c; at = $n.AddMinutes(-$h).ToString('o') } }
   @(Get-KitBuildFailures @{ 'm|old' = & $x 70; 'm|new' = & $x 5; 'm|gone' = & $x 5; 'm|fixed' = & $x 5; 'm|mix' = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n @((& $e new w 1 5), (& $e gone gone 1 5), (& $e fixed w2 1 5), (& $e fixed/sub w2 0 2)) | ForEach-Object { "$($_.key)@$($_.who)" }) -join ',' }
 Expect "build failures: 3 in a row flag only < 60 min old, while their agent lives and has no green build of that dir since ($bf)" ($bf -eq 'm|new@w')
+# bossy.ps1 bugbrief (a QA bug's brief) and a missing verb
+$BX = Join-Path $k 'skills/bossy/bossy.ps1'
+$kl = Join-Path $k 'skills/crafty/kit.local.json'; Set-JsonFile $kl @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }
+$bb = Invoke-PsTest bb @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; Update-KitTracking { param($tk) $tk.tasks.b1 = @{ task = 'b1' } }
+function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function Get-TrackerComments { }; function Get-TaskMrBranches { @{ repo = 'w'; branch = 'm' } }
+$o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
+function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
+'@ @($BX); Remove-Item $kl
+Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error (#)' 'd', 'r'
 Remove-TestKit $k
 Complete-Tests

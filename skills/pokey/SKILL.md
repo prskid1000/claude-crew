@@ -15,7 +15,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | File | Read / run at |
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `bossy.ps1 learn -Read -Skill pokey` |
-| `pokey.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and the goodies: `deploys`, `android-swarm`, `api-auth`, `report-gdocs`, `ios-simulator`) |
+| `pokey.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and their goodies) |
 | `<kit>/skills/crafty/crafty.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`, goody `local-env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
@@ -35,7 +35,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / 4xx / 5xx; status and body still print);
-   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; a visible browser only when the owner asks);
+   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; visible only when the owner asks): UI checks
+   at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`: goody `android-swarm`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
@@ -46,8 +47,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      (d) false conditional ("not applicable: <condition>", with evidence); `observed` starts with the class: `(b) <why>`.
    - **FAIL**: any defect: 5xx, unexpected 4xx, crash, stuck flow, unsaved data, broken navigation, missing screen,
      silent 200 with empty data, wrong answer stated as fact, restart errors. Set **`defect`**: `own` = task expected
-     behaviour failed (failedTesting -> back to dev);
-     `new` = regression outside change (goody checks `X1`, `X2`... -> [Bug] task).
+     behaviour failed, never "pre-existing" (failedTesting -> back to dev); `new` = regression outside change
+     (checks `X1`, `X2`... -> [Bug] task).
    - **Upstream 5xx** (502/503/504 or a killed long turn from a service the change does not touch): check that service's
      health and restart times first (service log, a control call). An outage -> NOT_TESTED `tool-down`, re-run after recovery;
      a real defect there -> `defect: new` under that service's owner, one bug per shared cause.
@@ -67,7 +68,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      never tested, never counted; the in-app part of the same check is still tested.
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
-   limits: 40 words per observed or finding, 25 per sentence, 900 per report: `kitbag.py prose` first), run `pokey.ps1
+   limits: 40 words per observed or finding, 25 per sentence, 900 per report), run `pokey.ps1
    finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
    kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession` or log
    out); return the results.
@@ -95,8 +96,8 @@ never deactivate, delete or re-password test logins; one shared Chrome per targe
   mask real customer data.
 
 ## Human testing doc (a person tests by hand)
-- H0. `bossy.ps1 learn -Read -Skill pokey`; the doc is the task's testing doc (written by its developer at crafty step 6:
-  `crafty/templates.md` "Human testing doc"). Missing or incomplete for this change: write it from that template first.
+- H0. `bossy.ps1 learn -Read -Skill pokey`; the doc: the task's testing doc (`crafty/templates.md` "Human testing doc");
+  missing or incomplete for this change: write it from that template first.
 - H1. Before you start: every feature switch ON (the doc's table), the logins and data it names; restore what you change.
 - H2. Each check: do the steps, compare with Expected exactly, save a screenshot (UI) or the request/response (API) per check.
 - H3. Result rule (above): all pass -> close the task (`crafty.ps1 tracker status <task> closed` + a comment with the evidence);

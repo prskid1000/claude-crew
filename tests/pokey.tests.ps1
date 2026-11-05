@@ -45,9 +45,9 @@ Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observe
   $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
 $pl = New-Run 'PL' @(@{ code = 'P1'; task = 'TP'; checks = @(1..3 | ForEach-Object { , @("C$_", 'PASS_WITH_NOTE') }) })
-$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) x'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
+$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = (1..60 | ForEach-Object { "word$_" }) -join ' '; $rj.checks[1].observed = '(b) pre-existing overlap'; $rj.checks[2] | Add-Member verify 'no'; & $J $rj "$pl/P1/results.json"
 $po = Fin $pl P1 -Check
-Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$')
+Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class; never pre-existing" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$' -and $po -match '(?m)P1 pre-existing check: .*: C2\r?$')
 $pp = Fin $pl P1; $ppc = $LASTEXITCODE
 Expect "finalize publish: over prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))
 $tm = New-Run 'TM' @(@{ code = 'M1'; task = 'TM1'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$tm/run.json"; $rj.items[0].subtasks[0].name = (1..15 | % { "name$_" }) -join ' '; $rj.items[0].subtasks[0] | Add-Member mrs ((1..13 | % { "repo!$_" }) -join ', '); & $J $rj "$tm/run.json"
@@ -227,6 +227,9 @@ if (Use-BrowserKit) {
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
     "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
   Expect 'browser.mjs pick: bad nth / hidden element errors' ("$res" -eq 'true true')
+  $res = NodeT matrix ("const vs = [], s = { page: { viewport: () => ({ width: 9, height: 9 }), setViewport: async (v) => vs.push(v.width) } }, o = (v, f) => ({ matrix: { viewports: v, fontScales: f } })`n" +
+    "const r = await m.matrix(s, async (v) => v.tag, o(['1280x720', '1920x1080'], [2])); console.log(r.map((x) => x.result).join(), vs.join(), await m.matrix(s, 0, o(['1280'])).catch((e) => /<width>x<height>/.test(e.message)))")
+  Expect 'browser.mjs matrix: each qa.matrix variant, viewport restored; a bad viewport names its fix' ("$res" -eq '1280x720_f2,1920x1080_f2 1280,1920,9 true')
   & $J @{ pins = @{ 'net.timeoutSec|gh' = @{ value = 33 } }; byKey = @{ 'idle.graceMinutes' = @{ _ = @{ value = 4.6 } } } } (TkPath $k param-state -Create)
   $ps = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitParam idle.graceMinutes 10; Get-KitParam net.timeoutSec 60 gh; Get-KitParam gate.waitMinutes 90"
   $res = NodeT param "console.log([m.kitParam('idle.graceMinutes', 10), m.kitParam('net.timeoutSec', 60, 'gh'), m.kitParam('gate.waitMinutes', 90)].join(' '))"
@@ -288,16 +291,6 @@ $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'ne
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
 Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PQ' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
-# bossy.ps1 bugbrief (a QA bug's brief) and a missing verb
-$BX = Join-Path $k 'skills/bossy/bossy.ps1'
-$kl = Join-Path $k 'skills/crafty/kit.local.json'; Set-JsonFile $kl @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }
-$bb = Invoke-PsTest bb @'
-. $args[0]; Update-KitTracking { param($tk) $tk.tasks.b1 = @{ task = 'b1' } }
-function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function Get-TrackerComments { }; function Get-TaskMrBranches { @{ repo = 'w'; branch = 'm' } }
-$o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"' -and (Get-Content (Join-Path (Get-KitPath briefs) b1.md) -Raw) -match '(?s)\*\*b1\*\* .*E500: spike.*\| w \| `C:/w` \| `m`')"
-function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
-'@ @($BX); Remove-Item $kl
-Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error (#)' 'd', 'r'
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k
 Complete-Tests

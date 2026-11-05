@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L706 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L709 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -454,6 +454,9 @@ if ($Check) {
   # a note without its class hides defects; a re-test's own note (verify) is exempt, a note audit's is not
   $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not ($_.verify -and "$($_.verify)" -notmatch '^Note audit') -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
   if ($noClass.Count) { $fail = $true; "$Code note check: PASS_WITH_NOTE without its class (observed starts with '(a|b|c|d) <why>', pokey SKILL.md step 5; else FAIL): $($noClass -join ', ')" }
+  # devtools.py PRE_EXISTING: a doc check is the task's own, never waived
+  $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$($_.observed)" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
+  if ($preEx.Count) { $fail = $true; "$Code pre-existing check: a check of the doc is the task's own: a defect in it is FAIL (defect own; outside the change: new), never waived as pre-existing: $($preEx -join ', ')" }
   if ($badTypes.Count) {
     $fail = $true; "$Code evidence check: $($badTypes.Count) file(s) listed but unsupported type (never published; supported: $($script:EvidenceExt -replace '^\^\\\.\(|\)\$$', '' -replace '\|', ' ')):"
     $badTypes | ForEach-Object { "  $_" }
@@ -461,7 +464,7 @@ if ($Check) {
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   # one rerun fixes all: the names (-FixNames) and the re-checked text together
-  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: pokey.ps1 finalize -RunDir $RunDir -Code $Code -Check$(if (@($suggest.Values | Where-Object { $_ }).Count) { ' -FixNames' })$(if ($Results -ne 'results.json') { " -Results $Results" })"; exit 1 }
+  if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: pokey.ps1 finalize -RunDir $RunDir -Code $Code -Check$(if (@($suggest.Values | Where-Object { $_ }).Count) { ' -FixNames' })$(if ($Results -ne 'results.json') { " -Results $Results" })"; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
   exit 0

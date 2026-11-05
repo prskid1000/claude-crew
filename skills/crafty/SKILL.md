@@ -30,7 +30,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D wt new -Repo <main checkout> -Branch <branch> -Target <target> -Name <prefix>; & $D wt sync -Dir <wt>   # 1. worktree, latest target
 #   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it in the testing-goals doc
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
-#   4. goals.md (local) + AI testing doc FIRST (templates.md) + automated tests (Rules > Tests); each loop round:
+#   4. FIRST (templates.md): the human doc's checks from the request (never the code), goals.md (local), the AI doc;
+#      automated tests (Rules > Tests); each loop round:
 #      devtools.py doc "<title>" ai.md --key <task>:testing-ai --label "round <n>"
 & $D check -Dir <wt>/<module>   #    compile + typecheck + lint (gated)
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched   #    targeted + every test of the touched files

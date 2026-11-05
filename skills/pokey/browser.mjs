@@ -7,7 +7,8 @@
 //   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
 //   const stop = await record(s, '<dir>/F2-T3_01_flow.mp4'); ...; await stop()   video + <file>.events.json (each action: at, target, box)
-// Sections: L18 config · L42 login · L126 browsers · L169 tabs · L246 session · L285 actions · L384 evidence
+//   await matrix(s, async ({ tag }) => [await layoutIssues(s.page), await shot(s.page, `<dir>/F2-T3_01_list-${tag}.jpeg`)])   each qa.matrix variant
+// Sections: L19 config · L43 login · L127 browsers · L170 tabs · L247 session · L286 actions · L385 ui checks · L407 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -380,6 +381,28 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   await settle(page, 500)
   return page.evaluate((e) => e.value, el)
 }
+
+// ---- ui checks: qa.matrix variants; layout and contrast checks (goody ui-checks)
+// fn({ viewport, fontScale, theme, tag }) per variant of kit.local.json qa.matrix ([] = axis off); fn sets the app's own font scale / theme
+export async function matrix(s, fn, { matrix: m = readJson(join(__HERE, '..', 'crafty', 'kit.local.json'), {}).qa?.matrix || {} } = {}) {
+  const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
+  try {
+    for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) {
+      if (viewport) {
+        const [width, height] = String(viewport).split('x').map(Number)
+        if (!(width > 0 && height > 0)) throw new Error(`qa.matrix.viewports "${viewport}" is not <width>x<height>, e.g. 1280x720: fix kit.local.json`)
+        await s.page.setViewport({ ...(v0 || {}), width, height })   // keeps scale factor / mobile / touch
+      }
+      const tag = [viewport, fontScale != null && 'f' + fontScale, theme].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-')).join('_')
+      out.push({ variant: tag, result: await fn({ viewport, fontScale, theme, tag }) })
+    }
+  } finally { if (v0) await s.page.setViewport(v0) }
+  return out
+}
+// layoutIssues(page, { scope, ignore }): covered controls, overlapping text, clipped text; contrast(page, selector, { min }): WCAG
+// ratio, pass; both in goody ui-checks (adapters/ui_checks.mjs)
+export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs', 'layoutIssues', 'ui-checks')).layoutIssues(...a)
+export const contrast = async (...a) => (await adapter('ui_checks.mjs', 'contrast', 'ui-checks')).contrast(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names (pokey SKILL.md "Evidence"); same literal as pokey.ps1 $script:EvidenceName
