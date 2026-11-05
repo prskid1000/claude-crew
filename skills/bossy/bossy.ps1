@@ -1209,8 +1209,8 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
 # one row per agent and run (lib.ps1 status; local files: before the network sections); a STUCK row is a flag
 Phase 'status rows'; $rows = @(Get-KitStatusRows $now $Session); foreach ($x in @(Get-KitStuckFlags $rows $now $idleMin)) { [void]$flags.Add($x) }
-# a seat whose agent returned (its transcript ends in the final answer) but never left: left, never STUCK
-foreach ($r in @($rows | Where-Object { $AutoFix -and $_.session -and $_.done -eq 'turn complete' -and $_.last -and ($now - [datetime]$_.last).TotalMinutes -ge $bm })) {
+# a subagent seat whose agent returned (its transcript ends in the final answer) but never left: left, never STUCK (a session waits)
+foreach ($r in @($rows | Where-Object { $AutoFix -and $_.session -and $_.done -eq 'turn complete' -and "$($_.tx)" -match '[\\/]subagents[\\/]' -and $_.last -and ($now - [datetime]$_.last).TotalMinutes -ge $bm })) {
   foreach ($e in @($entries | Where-Object { $_.session -eq $r.session -and $_.status -ne 'left' })) { & $markLeft $e 'finished'; Flag 'INFO' "auto-fixed: board entry $($e.agent) ($($e.run)) left: its agent returned" 'Nothing to do.' }
 }
 $nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10 '*').Count)   # live agents without a fresh beat or row

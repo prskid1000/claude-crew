@@ -81,9 +81,9 @@ $ak = pwsh @np $O supervise -Ack 'ERROR SPIKE: 3 new error line(s) in D:\x\rm-ap
 $sf = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; Select-KitFlags @([pscustomobject]@{ level = 'ACT'; what = 'ERROR SPIKE: 5 new error line(s) in D:\x\rm-api.log' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 16 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 17 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X2 (r) 16 min ago' }) `$a (Get-Date) | ForEach-Object what"
 Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per problem, ids apart (X1, X2)' ($ak -match 'acknowledged for 24 h' -and $sf.Count -eq 3 -and $sf[0] -eq 'HANDOFF X1 (r) 16 min ago' -and $sf[1] -eq 'HANDOFF X2 (r) 16 min ago' -and $sf[2] -match '1 acknowledged flag\(s\) hidden')
 # a seat whose agent returned (its Claude transcript ends in the final answer): -AutoFix leaves it, never STUCK
-& $se S10 @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) 'S10.jsonl') '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) }
-$w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S10'
-Expect "supervise -AutoFix: a returned agent's seat leaves ($w10)" ((Read-Json "$bd/s-S10.json").status -eq 'left' -and "$w10" -eq 'auto-fixed: board entry S10 (sx) left: its agent returned')
+foreach ($n in 'subagents/S10', 'S11') { & $se ($n -replace '.*/') @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) "$n.jsonl") '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) } }
+$w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S1[01]'
+Expect "supervise -AutoFix: a returned subagent's seat leaves, a session's stays ($w10)" ((Read-Json "$bd/s-S10.json").status -eq 'left' -and "$w10" -eq 'auto-fixed: board entry S10 (sx) left: its agent returned' -and (Read-Json "$bd/s-S11.json").status -ne 'left')
 # stopped runs learn once: launch -Done twice, pause twice
 New-Journal wf_r4 @(@{ type = 'started'; agentId = 'c1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'c1'; result = @{ error = 'boom: local env down' } })
 $null = pwsh @np $O launch -RunId wf_r4 -Script buildy.js -ArgsJson '{"brief":"C:/b/r4.md","run":"r4"}' 2>&1
