@@ -19,7 +19,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L992 README graph · L1098 lint command · L1134 audit ·
-  L1243 registry · L1579 prose · L1724 sections · L1854 budget · L1872 goodies · L2375 state lint · L2446 main
+  L1243 registry · L1579 prose · L1724 sections · L1854 budget · L1872 goodies · L2375 state lint · L2447 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -2389,8 +2389,9 @@ def state_schemas(kit=None):
 def state_lint(since_min=0):
     """[(level, name, file, problem)]: BAD = unreadable, wrong schemaVersion or a required key missing; WARN = written before
     STATE.md (no schemaVersion) or a time without an offset. since_min: only files written in the last N minutes."""
-    out, now = [], time.time()
-    for name, spec in state_schemas().items():
+    out, now, schemas = [], time.time(), state_schemas()
+    own = {osp.normcase(kit_path(n)) for n, s in schemas.items() if not s.startswith('dir') and (n in MAP['runtime'] or n in MAP['durable'])}   # a file with its own row (runtimes/locks.json) is not its dir's
+    for name, spec in schemas.items():
         m = re.match(r'(json|jsonl|text|dir)(?:=(\S+))?\s+v(\d+)(?::\s*(.*))?$', spec)
         if not m or (name not in MAP['runtime'] and name not in MAP['durable']):
             out.append(('BAD', name, STATE_DOC, f'Inventory {name}: {spec!r} (want "<form> v<n>: <keys>" for a _paths name)'))
@@ -2398,7 +2399,7 @@ def state_lint(since_min=0):
         form, pat, ver, req = m.group(1), m.group(2) or '*.json', int(m.group(3)), (m.group(4) or '').split()
         p = kit_path(name)
         for f in sorted(str(x) for x in Path(p).glob(pat)) if form == 'dir' else [p]:
-            if not osp.isfile(f) or (since_min and now - osp.getmtime(f) > since_min * 60) or form == 'text':
+            if not osp.isfile(f) or (since_min and now - osp.getmtime(f) > since_min * 60) or form == 'text' or (form == 'dir' and osp.normcase(f) in own):
                 continue
             rel = osp.relpath(f, KIT_DIR)
             try:

@@ -236,7 +236,7 @@ Rules: ${K}/SKILL.md Rules (scope, tests, migrations). Only real problems; "bloc
 user-visible behaviour change is blocking; same behaviour, other internals is not). Change no code; give each finding its suggested change. Only the brief and these MRs define the review.`
 }
 function migrationPrompt(a, r) {
- return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}) as your agent definition says; findings only.${PATHS}${AGENT_ENV(`datay-${a.id}`)}
+ return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}) as your agent definition says; findings only.${PATHS}${AGENT_ENV(`migration-review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo})`).join('\n')}
 blocking = data loss, no rollback, rows touched outside the change's filter. Return the findings (review schema).`
 }

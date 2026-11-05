@@ -13,8 +13,6 @@ $fc = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Get-KitFailedChec
 Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: env-data),R2=wrong')
 $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O board join -Run w8 2>&1 | Out-String; $juc = $LASTEXITCODE
 Expect "board join: -Type only = the agent id; neither = usage, exit 2 ($juc)" ($jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Agent')
-$cx = pwsh -NoProfile -Command ". '$O'; Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from the shared /tmp (fixed from history); halted the push'; Test-KitCollision 'Halted: another agent is editing the same worktree'"
-Expect 'supervise collision: a fix report naming another agent = no flag; a real collision = flag' ($cx[0] -eq 'False' -and $cx[1] -eq 'True')
 $lg = Invoke-PsTest 'track-lag' @'
 . $args[0]; $KitConf.GitlabGroup = 'g'; $global:st = @{ t1 = 'Open'; t2 = 'for review' }
 Register-KitAdapter 'tracker' 'fake' @{ view = { param($a) [pscustomobject]@{ id = $a.id; name = 'n'; status = $global:st[$a.id] } }; status = { param($a) $global:st[$a.id] = $a.status; 'ok' } }; Initialize-KitTracker -Type fake
@@ -82,6 +80,10 @@ Expect "heartbeat: the last NEXT holds for 2 beats, then the base (a stopped coo
 $ak = pwsh @np $O supervise -Ack 'ERROR SPIKE: 3 new error line(s) in D:\x\rm-api.log' -Reason 'expected 4xx' | Out-String
 $sf = pwsh -NoProfile -Command ". '$O'; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; Select-KitFlags @([pscustomobject]@{ level = 'ACT'; what = 'ERROR SPIKE: 5 new error line(s) in D:\x\rm-api.log' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 16 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X1 (r) 17 min ago' }, [pscustomobject]@{ level = 'ACT'; what = 'HANDOFF X2 (r) 16 min ago' }) `$a (Get-Date) | ForEach-Object what"
 Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per problem, ids apart (X1, X2)' ($ak -match 'acknowledged for 24 h' -and $sf.Count -eq 3 -and $sf[0] -eq 'HANDOFF X1 (r) 16 min ago' -and $sf[1] -eq 'HANDOFF X2 (r) 16 min ago' -and $sf[2] -match '1 acknowledged flag\(s\) hidden')
+# a seat whose agent returned (its Claude transcript ends in the final answer): -AutoFix leaves it, never STUCK
+& $se S10 @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) 'S10.jsonl') '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) }
+$w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S10'
+Expect "supervise -AutoFix: a returned agent's seat leaves ($w10)" ((Read-Json "$bd/s-S10.json").status -eq 'left' -and "$w10" -eq 'auto-fixed: board entry S10 (sx) left: its agent returned')
 # stopped runs learn once: launch -Done twice, pause twice
 New-Journal wf_r4 @(@{ type = 'started'; agentId = 'c1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'c1'; result = @{ error = 'boom: local env down' } })
 $null = pwsh @np $O launch -RunId wf_r4 -Script buildy.js -ArgsJson '{"brief":"C:/b/r4.md","run":"r4"}' 2>&1

@@ -52,6 +52,7 @@ object a line; the last is checked), text; v0 = written before this file (no sch
 | `browser-ports` | `browser.mjs` | `json v0` | keep | none |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep | none |
 | `runtimes` | goody `runtimes` | `dir v0: leases` | keep | none |
+| `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep | none |
 | `board` | `bossy.ps1 board` | `dir v1: agent session run beat status` | 14 d | schemaVersion; file-safe session |
 | `launches` | `bossy.ps1 launch`, workflows (`args-*`) | `dir=self-*.json v1: script run args` | 3 d | schemaVersion |
 | `agents` | `crafty.ps1 checkpoint` | `dir=*/resume.json v1: agent run steps` | 7 d | schemaVersion, ISO |

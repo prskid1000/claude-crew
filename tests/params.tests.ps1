@@ -59,16 +59,19 @@ Expect "params: a pin is a params-changes line; Settings since a time ($(@($pr -
 # supervise sweep: costs (EWMA) and starved sections; a slow -Background verb runs detached, its last result next sweep
 $bs = Join-Path (Kd) 'bg.ps1'; "'bg-out'; Start-Sleep -Milliseconds 300" | Set-Content $bs
 $sr = Invoke-PsTest sweep @'
-. $args[0]; $st = @{ sweep = @{ cost = @{ a = 10; b = 1; c = 5 }; starved = @('c') } }; $n0 = Get-Date
+. $args[0]; $st = @{ sweep = @{ v = 2; cost = @{ a = 10; b = 1; c = 5 }; starved = @('c') } }; $n0 = Get-Date
 $sw = New-KitSweep $n0.AddSeconds(12) $st
 "sweep:$(Test-KitSweep $sw a $n0)$(Test-KitSweep $sw b $n0)$(Test-KitSweep $sw c $n0.AddSeconds(2))$(Test-KitSweep $sw d $n0.AddSeconds(13))"
 Complete-KitSweep $sw $st $n0.AddSeconds(14); "sweep2:$($st.sweep.starved -join ','):$($st.sweep.cost.b):$($st.sweep.cost.c)"
-$sw = New-KitSweep (Get-Date).AddSeconds(30) @{ sweep = @{ cost = @{ bgx = 50 } } }
+$sw = New-KitSweep (Get-Date).AddSeconds(30) @{ sweep = @{ v = 2; cost = @{ bgx = 50 } } }
 $i1 = @(Invoke-KitSweepCall $sw quick $args[1] @() -Background); $b1 = @(Invoke-KitSweepCall $sw bgx $args[1] @() -Background)
 $wait = { $r = Get-Content (Join-Path (Get-KitPath background) 'bgx.json') -Raw | ConvertFrom-Json; for ($i = 0; $i -lt 150 -and (Test-KitPid $r.pid $r.start); $i++) { Start-Sleep -Milliseconds 100 } }
 & $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @() -Background); & $wait
 "bg:$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
-$s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
+$s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ v = 2; cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
+$s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
+$s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x = 4 }; starved = @('big') } }; "hold:$(Test-KitSweep $s4 x $n0):$((New-KitSweep $n0 @{ sweep = @{ cost = @{ old = 99 } } }).cost.Count)"
+$top = Complete-KitSweep $s3 $st3 $n0.AddSeconds(8); "phase:$($st3.sweep.cost.a):$($st3.sweep.cost.b):$($st3.sweep.cost.ContainsKey('~hook')):$top"
 $hp = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -PassThru -WindowStyle Hidden; $hb = Join-Path (Get-KitPath background) 'hung.json'
 @{ pid = $hp.Id; start = (Get-KitPidStart $hp.Id); at = (Get-Date).AddHours(-2).ToString('o') } | ConvertTo-Json | Set-Content $hb
 $hu = @(Invoke-KitBackground hung $args[1] @() $null 5); $null = $hp.WaitForExit(5000)
@@ -79,6 +82,7 @@ $cr = @(Invoke-KitBackground crash $args[1] @()); "hung:$($hu[0] -match '^WATCH 
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background: the last result, a fresh detached run ($(@($sr -match '^bg:') -join ' '))" ($sr -contains 'bg:bg-out:True:0:bg-out:True')
 Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
+Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)
 $nr = Invoke-PsTest net @'
 . $args[0]; $script:seen = @(); $script:ok = $false; $env:KIT_NET_TIMEOUT_SEC = 40
@@ -93,12 +97,13 @@ $root = Join-Path (Get-KitPath cache -Create) 'tx'; New-Item -ItemType Directory
 function Invoke-KitAdapter { [pscustomobject]@{ dir = $root; filter = '*.jsonl' } }
 $n1 = @(Get-KitLiveTranscripts (Get-Date) 10).Count; New-Item -ItemType Directory -Force "$root/s2/subagents" | Out-Null; 'x' | Set-Content "$root/s2/subagents/b.jsonl"; $n2 = @(Get-KitLiveTranscripts (Get-Date) 10).Count
 $cf = Get-KitPath transcript-dirs; $c = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; $c[$root].at = (Get-Date).AddMinutes(-2).ToString('o'); $c | ConvertTo-Json -Depth 4 | Set-Content $cf
-"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"; '{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":75}}}}' | Set-Content "$root/c.jsonl"; "spend:$((Get-KitSpend "$root/c.jsonl").spend)"; "ss:$(Format-KitSessionStart 'hi' @{ conversationId = 'c' })|$(Format-KitSessionStart '' @{ conversationId = 'c' })|$(ConvertTo-KitAskPayload @() | ConvertTo-Json -Compress)"
+"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"; '{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":75}}}}' | Set-Content "$root/c.jsonl"; "spend:$((Get-KitSpend "$root/c.jsonl").spend)"
+Set-Content "$root/d.jsonl" (@('{"message":{"model":"m1","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4}}}') + @(1..700 | ForEach-Object { '{"x":"' + ('y' * 1000) + '"}' })); "spend2:$((Get-KitSpend "$root/d.jsonl").spend)"; "ss:$(Format-KitSessionStart 'hi' @{ conversationId = 'c' })|$(Format-KitSessionStart '' @{ conversationId = 'c' })|$(ConvertTo-KitAskPayload @() | ConvertTo-Json -Compress)"
 '@ @((Lib))
 Expect "net: after a timeout the next call waits x1.5, then back ($(@($nr -match '^backoff:') -join ' '))" ($nr -contains 'backoff:40,60,60,40')
 Expect "net: a timeout is observed at the learned value, not the x1.5 back-off ($(@($nr -match '^tobs:') -join ' '))" ($nr -contains 'tobs:30,30|45,45')
 Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
-Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75')
+Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75' -and $nr -contains 'spend2:10')
 Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
 # cleanup: tracking.json.migrated goes (owner decision 3)
 '{}' | Set-Content "$(TkPath $k tracking -Create).migrated"
@@ -107,6 +112,24 @@ Expect 'cleanup: tracking.json.migrated goes' ($cd -match 'tracking\.json\.migra
 # heartbeat SETTINGS: shown until a heartbeat (-AutoFix) saw them; a manual run does not consume them
 $null = pwsh @np $O param pin idle.graceMinutes 8; $sv = foreach ($af in $false, $true, $true) { pwsh @np $O supervise -Json -AutoFix:$af 2>$null | Out-String }
 Expect 'supervise: SETTINGS lines until a heartbeat saw them; a manual run leaves them' ($sv[0] -match 'SETTINGS: idle\.graceMinutes' -and $sv[1] -match 'SETTINGS: idle\.graceMinutes' -and $sv[2] -notmatch 'SETTINGS: idle\.graceMinutes')
+# supervise collision words; -Ack from -Brief cells (wrap spaces, \|, one cell); refs (UNTRACKED MR) kept, a new MR flags
+$ac = Invoke-PsTest ack @'
+. $args[0]; "cx:$(Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from /tmp; halted the push')$(Test-KitCollision 'Halted: another agent is editing the same worktree')"
+$n = Get-Date; $a = @{}; foreach ($t in 'mvn- test\|j- c/ api failed 4 times', 'datay-R1 (datay) (R1)') { $a[(Get-KitFlagKey $t)] = @{ at = "$n" } }
+$fl = @{ level = 'W'; what = "builds 'mvn-test|j-c/api' failed 3 times"; kind = 'B'; problem = 'mvn-test|j-c/api failed 3 times' }, @{ level = 'A'; what = 'STUCK datay-R1 (datay) (R1): no progress' }, @{ level = 'W'; what = 'STUCK revy-7 (revy) (): no progress' }
+"cells:$(@(Select-KitFlags @($fl | ForEach-Object { [pscustomobject]$_ }) $a $n).what -join '|')"
+$f = Get-KitPath supervise-state -Create; @{ lastFlags = @(@{ what = 'x'; kind = 'UNTRACKED MR'; who = 'someone1'; refs = 'web!1', 'web!2' }) } | ConvertTo-Json -Depth 5 | Set-Content $f
+$o = "$(Invoke-Supervise -Ack 'UNTRACKED MR | someone1')"; $s = Get-Content $f -Raw | ConvertFrom-Json -AsHashtable
+$s.untrackedMrs = @{ at = "$n"; user = 'u'; mrs = @(1..3 | ForEach-Object { @{ repo = 'web'; iid = "$_"; author = 'u'; merged_at = $n.ToUniversalTime().ToString('o') } }) }
+"refs:$(@($s.known.Keys | Sort-Object) -join ',')|$($s.acks.Count)|$($o -match 'known from now on' -and $o -match 'hides 1')|$((Get-KitUntrackedMrFlag $s $n).problem)"
+'@ @($O)
+Expect "supervise: a fix report naming another agent: no collision; -Ack: a cell matches, UNTRACKED MR keeps its MRs ($($ac -join ' // '))" ($ac -contains 'cx:FalseTrue' -and $ac -contains 'cells:STUCK revy-7 (revy) (): no progress|2 acknowledged flag(s) hidden (supervise -Ack, 24 h)' -and $ac -contains 'refs:web!1,web!2|0|True|web!3 merged, no task')
+# supervise failedTesting: 3 tracker views a round, unseen first, then a 2-beat cache
+$qd = TkPath $k qa-runs -Create; $null = New-Item -ItemType Directory -Force "$qd/q1/A1"; & $J @{ subtasks = @(1..4 | ForEach-Object { @{ id = "ft$_"; failedTesting = $true } }) } "$qd/q1/A1/finalize.json"
+$tn = TkPath $k tracker-none -Create; $ts = { param($i, $s) & $J @{ id = "ft$i"; name = 'n'; status = $s } "$tn/ft$i.json" }; 1..4 | ForEach-Object { & $ts $_ 'failed testing' }
+$ftn = { "$(@((pwsh @np $O supervise -Json 2>$null | Out-String | ConvertFrom-Json).flags.what) -match 'failed testing, back' -replace ' .*')" }
+$f1 = & $ftn; $f2 = & $ftn; & $ts 4 'in progress'; $f3 = & $ftn
+Expect "supervise failedTesting: 3 views a round, unseen first, then cached ($f1 $f2 $f3)" ("$f1$f2$f3" -eq '344')
 # kitbag lint: PARAM-UNREG, PARAM-DEFAULT; tunable literals over the _literals baseline WARN; --ratchet records, then only lowers
 '$x = Get-KitParam ''supervise.stuckMinutes'' 25; $y = Get-KitParam ''no.key''; Start-Sleep 5' | Set-Content "$k/a.ps1"
 $pl = @'

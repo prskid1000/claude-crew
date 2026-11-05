@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L406 leases · L866 status · L1097 supervise sweep ·
-  L1149 supervise report · L1212 tracker · L1532 prior · L1647 git-host · L1805 kitlog · L1925 params · L2238 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L414 leases · L874 status · L1106 supervise sweep ·
+  L1165 supervise report · L1274 tracker · L1594 prior · L1709 git-host · L1868 kitlog · L1988 params · L2301 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -352,9 +352,17 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = [int]($tok * $h); handoffAt = $h; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $(if ($src) { $src } else { (& $row $n).source }) }
 }
 function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
+# the newest usage line from the file's last 512 KB (then 8 MB): Get-Content -Tail took 1.3 s per MB-sized transcript
 function Get-KitSpend([string]$File) {
   if (-not $File -or -not (Test-Path -LiteralPath $File)) { return $null }
-  $t = @(Get-Content -LiteralPath $File -Tail 300)
+  foreach ($cap in 512KB, 8MB) {
+    $fs = [IO.File]::Open($File, 'Open', 'Read', 'ReadWrite, Delete')
+    try { $n = [int][math]::Min($fs.Length, $cap); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $null = $fs.Read($b, 0, $n); $whole = $n -ge $fs.Length } finally { $fs.Dispose() }
+    $t = @([Text.Encoding]::UTF8.GetString($b) -split "`r?`n" | Select-Object -Skip $(if ($whole) { 0 } else { 1 }))   # a cut tail's first line is partial
+    $r = Read-KitSpendLines $t; if ($r -or $whole) { return $r }
+  }
+}
+function Read-KitSpendLines([string[]]$t) {
   for ($i = $t.Count - 1; $i -ge 0; $i--) {
     if ($t[$i] -match '"token_count"') {   # Codex rollout: the last request's context = its compaction measure
       $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.payload.info.last_token_usage; if ($u) { return [pscustomobject]@{ spend = [int]$u.total_tokens; model = '' } }
@@ -573,7 +581,7 @@ function Remove-KitGpu([int]$ProcessId = $PID, [string]$Holder) {
 }
 # named machine-wide locks (repos[].exclusiveTests: crafty.ps1 check -Step test): one holder process per lock, waiters in arrival
 # order; a holder or waiter whose process ended is dropped (logged). runtimes/locks.json { held: { <lock>: h }, waiting: [w] }
-function Get-KitLockFile { Join-Path (Get-KitPath runtimes -Create) 'locks.json' }
+function Get-KitLockFile { Get-KitPath locks -Create }
 # alive: its process, or a build its gate started (a killed check leaves its test process running)
 function Test-KitLockHolder($H) {
   if (Test-KitPid $H.pid $H.pidStart) { return $true }
@@ -910,6 +918,7 @@ Register-KitAdapter 'transcript' 'claude' @{
   'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_use"' { param($o, $s) $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' })[-1]
       if ($u) { $s.tool = "$($u.name)"; $s.what = "$($u.input.description)" }; [bool]$u }
     if (-not $s) { return }; if ($s.raw -match '"version":"([^"]+)"') { $s.version = "claude $($Matches[1])" }
+    $end = "$(@($s.raw -split "`r?`n" | Where-Object { $_.Trim() })[-1])"; $s.ended = $end -match '"role":"assistant"' -and $end -match '"stop_reason":"end_turn"'   # its last record is the final answer: the agent returned
     $outs = foreach ($m in [regex]::Matches($s.raw, 'tasks(?:\\\\|/)\w+\.output')) { $i = $s.raw.LastIndexOfAny([char[]]'"<> ', $m.Index) + 1; $s.raw.Substring($i, $m.Index + $m.Length - $i) -replace '\\\\', '\' }   # back to the path's start: a forward regex backtracks for seconds
     foreach ($o in @($outs | Select-Object -Unique)) { $f = Get-Item -LiteralPath $o -ErrorAction SilentlyContinue; if ($f -and $f.LastWriteTime -gt $s.at) { $s.at = $f.LastWriteTime } }
     $s }
@@ -1027,7 +1036,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
     if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats
     $tn = foreach ($i in "$($e.items)" -split '[,\s]+') { $o = if ($i -and $trk) { $trk[$i] }; if ($o -and -not $o.done) { "track $i`: $(@($o.mrs).Count) MR(s) until promoted$(if ($o.holdPromotion) { " (held: $($o.holdPromotion))" })"; break } }
-    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; run = $e.run; session = $e.session; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
           stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
           done = $(if ($on) { '' } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
           wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at); doing = & $doing $t; started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
@@ -1098,21 +1107,28 @@ function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
 # a section (Within) runs when its learned cost (EWMA of its seconds, supervise-state sweep.cost) fits the time left after the sections
 # starved last sweep (skipped: they go first) still ahead; a section's cost runs from its Within to the next one
 function New-KitSweep([datetime]$Deadline, $State) {
-  $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary]) { $sw.cost = @{} }
+  $sw = if ($State.sweep -is [Collections.IDictionary]) { $State.sweep } else { @{} }; if ($sw.cost -isnot [Collections.IDictionary] -or $sw.v -ne 2) { $sw.cost = @{} }   # v2: costs without the ungated work after a section (older ones learn again)
   [pscustomobject]@{ deadline = $Deadline; cost = $sw.cost; starved = @($sw.starved | Where-Object { $_ }); ran = @{}; cur = $null; t = $null; skipped = [Collections.Generic.List[string]]::new(); timedOut = [Collections.Generic.List[string]]::new() }
+}
+# an ungated phase (~<name>) starts: the section before it stops being charged; its seconds show in the sweep line, never gate
+function Start-KitSweepPhase($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
+  if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds }
+  $Sw.cur = "~$Name"; $Sw.t = $Now
 }
 function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
   $left = ($Sw.deadline - $Now).TotalSeconds
-  $go = $left -gt 0 -and $(if ($Name -in $Sw.starved) { $left -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -ge [double]$Sw.cost[$Name] + (@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum })
+  $hold = [math]::Min(0.5 * $left, [double](@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)   # starved ones keep at most half: an -AutoFix-only one never reached must not starve the rest
+  $go = $left -gt 0 -and $(if ($Name -in $Sw.starved) { $left -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -ge [double]$Sw.cost[$Name] + $hold })
   if ($go) { $Sw.cur = $Name; $Sw.t = $Now } elseif ($Name -notin $Sw.skipped) { $Sw.skipped.Add($Name) }
   $go
 }
 # the sweep's end: costs (EWMA 0.3) and the starved list into the state
 function Complete-KitSweep($Sw, $State, [datetime]$Now = (Get-Date)) {
   if ($Sw.cur) { $Sw.ran[$Sw.cur] = [double]$Sw.ran[$Sw.cur] + ($Now - $Sw.t).TotalSeconds; $Sw.cur = $null }
-  foreach ($n in @($Sw.ran.Keys)) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2) }
-  $State.sweep = @{ cost = $Sw.cost; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
+  foreach ($n in @($Sw.ran.Keys | Where-Object { -not "$_".StartsWith('~') })) { $c = $Sw.cost[$n]; $Sw.cost[$n] = [math]::Round($(if ($null -ne $c) { 0.7 * [double]$c + 0.3 * $Sw.ran[$n] } else { $Sw.ran[$n] }), 2) }
+  $State.sweep = @{ v = 2; cost = $Sw.cost; starved = @($Sw.skipped | Where-Object { -not $Sw.ran.ContainsKey($_) }) }
+  "slowest: $(@($Sw.ran.GetEnumerator() | Sort-Object { -$_.Value } | Select-Object -First 5 | ForEach-Object { '{0} {1:0.0} s' -f $_.Key, $_.Value }) -join ', ')"   # ~ = ungated phase
 }
 # a verb its sweep calls: inline (bounded by the time left); -Background and its learned cost over half the time left: in the background
 # (one run at a time, cache/background/<name>): its last finished result now, a fresh run for the next sweep
@@ -1196,6 +1212,52 @@ function Get-KitFlagCells($f) {
   $kind = $f.kind; $problem = $f.problem
   if (-not $kind -and "$($f.what)" -cmatch '^([A-Z]{3,}(?:[ -][A-Z]{3,})*):?\s+(.+)$') { $kind = $Matches[1]; if (-not $problem) { $problem = $Matches[2] } }
   [pscustomobject]@{ kind = $kind; who = $f.who; age = $f.age; problem = $(if ($problem) { $problem } else { $f.what }); action = $(if ($f.next) { $f.next } else { $f.action }) }
+}
+# a flag's identity across rounds: counts, times and sizes vary
+function Get-KitFlagKey([string]$What) { $k = (($What.ToLower() -replace '\b\d+\b', '#') -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
+# -Ack text as pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …; counts vary
+function ConvertTo-KitAckText([string]$Text) { ($Text.ToLower() -replace '\b\d+\b', '#') -replace '[\s\\|…''"`]', '' }
+# an ack hides a flag when its text is inside the flag's whole line or its table cells (kind, who, problem): a cell pasted alone matches
+function Test-KitAcked($Flag, [string[]]$Keys) {
+  $c = Get-KitFlagCells $Flag; $w = ConvertTo-KitAckText "$($Flag.what)"; $cells = ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)"
+  [bool]@($Keys | ForEach-Object { ConvertTo-KitAckText $_ } | Where-Object { $_.Length -ge 12 -and ($w.Contains($_) -or $cells.Contains($_)) }).Count
+}
+# one line per problem; an acknowledged one (supervise -Ack: answered / proven false) hides 24 h
+function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
+  $seen = @{}; $hid = 0; $live = @($Acks.Keys | Where-Object { ($Now - [datetime]$Acks[$_].at).TotalHours -lt 24 })
+  $keep = @(foreach ($f in @($Flags)) { $k = Get-KitFlagKey $f.what; if ($seen[$k]) { continue }; $seen[$k] = 1
+      if ($f.level -ne 'INFO' -and $live.Count -and (Test-KitAcked $f $live)) { $hid++; continue }; $f })
+  if ($hid) { $keep += [pscustomobject]@{ level = 'INFO'; what = "$hid acknowledged flag(s) hidden (supervise -Ack, 24 h)"; action = 'Nothing to do.' } }
+  $keep
+}
+# supervise -Ack: hide the flags its text matches 24 h; refs of the matched last-round flags (UNTRACKED MR, ERROR SPIKE) are kept as known
+function Add-KitFlagAck([string]$Ack, [string]$Reason) {
+  $sf0 = Get-KitPath supervise-state -Create; $k0 = Get-KitFlagKey $Ack; $script:ackOut = ''
+  Invoke-KitLocked $sf0 { $s0 = try { Get-Content $sf0 -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $s0) { $s0 = @{} }; if (-not $s0.acks) { $s0.acks = @{} }
+    # the last round's flags it hides; flags with refs (UNTRACKED MR) remember those refs instead, so a new MR flags again
+    $hit = @($s0.lastFlags | Where-Object { $_ -and (Test-KitAcked ([pscustomobject]$_) @($k0)) }); $refs = @($hit | ForEach-Object { @($_.refs) } | Where-Object { $_ })
+    if ($refs.Count) { if (-not $s0.known) { $s0.known = @{} }; foreach ($r in $refs) { $s0.known[$r] = (Get-Date).ToString('o') } }
+    if (-not $hit.Count -or @($hit | Where-Object { -not @($_.refs).Count }).Count) { $s0.acks[$k0] = @{ at = (Get-Date).ToString('o'); reason = $Reason } }
+    Write-KitAtomic $sf0 ($s0 | ConvertTo-Json -Depth 5)
+    $script:ackOut = "$(if ($refs.Count) { "known from now on (they no longer flag; a new one does): $(@($refs | Select-Object -First 5) -join ' · ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" })" } else { "acknowledged for 24 h: $k0" })$(if ($Reason) { " ($Reason)" })`n$(if ($hit.Count) { "hides $($hit.Count) flag(s) of the last round: $(@($hit | ForEach-Object { "$($_.what)".Substring(0, [math]::Min(90, "$($_.what)".Length)) }) -join ' · ')" } else { 'matches no flag of the last round: check the text (any later flag containing it hides)' })" }
+  $script:ackOut
+}
+# supervise anomalies: pure ($c this round, $p last round's state.anom) -> WATCH flags + next state
+function Get-KitAnomalies($c, $p) {
+  $f = [Collections.Generic.List[object]]::new(); $AddF = { param($w, $a) $f.Add([pscustomobject]@{ level = 'WATCH'; what = $w; action = $a }) }; if (-not $p) { $p = @{} }
+  if ($null -ne $p.outbox -and $c.outbox -gt [int]$p.outbox) { & $AddF "SILENT FAILURE: tracker outbox grew to $($c.outbox) write(s)" 'evidence .state/outbox.jsonl: tracker auth / network' }
+  if ($null -ne $p.toolErrors -and $c.toolErrors -gt [int]$p.toolErrors) { & $AddF "SILENT FAILURE: $($c.toolErrors - [int]$p.toolErrors) new agent result error(s)" "evidence $($c.errorRun) journal" }
+  [pscustomobject]@{ flags = @($f); state = @{ outbox = $c.outbox; toolErrors = $c.toolErrors } }
+}
+# a run silent 2+ days with unfinished agents died or stopped: one WATCH ($Quiet remembers it), then skipped
+function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {
+  if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
+  $flag = $null
+  if (-not $Quiet.ContainsKey($Name)) {
+    $Quiet[$Name] = $Now.ToString('o')
+    $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
+  }
+  [pscustomobject]@{ skip = $true; flag = $flag }
 }
 # supervise -Brief's report file (whole cells): title, result line, the heartbeat table ($Md), then one table per section
 function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$Next) {
@@ -1779,10 +1841,10 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
 }
 # supervise: ONE WATCH for the owner's MRs merged in 24 h that no task tracks (a raw merge past track add); one host list per
-# repo (trackerRepos, else repos[]) cached a beat in $State, the login a day; tracking re-read every round
+# repo (trackerRepos, else repos[]) cached 2 beats in $State, the login a day; tracking re-read every round
 function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
   $um = $State.untrackedMrs
-  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge (Get-KitBeatMinutes)) {
+  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge 2 * (Get-KitBeatMinutes)) {   # 2 beats: one host list per repo took 4.5 s a round
     $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
     $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
     $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
@@ -1793,13 +1855,14 @@ function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = {
   }
   $tr = Read-KitTracking; $cut = $Now.ToUniversalTime().AddHours(-24)
   $ig =@{ tasks = @{ ignored = @{ mrs = @((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) } } }   # track ignore: not the owner's work
-  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
+  $known = if ($State.known) { @($State.known.Keys) } else { @() }   # supervise -Ack on this flag: one decision per MR
+  $un = @($um.mrs | Where-Object { $_ -and $um.user -and $_.author -eq $um.user -and -not (Test-KitDeployMr $_.repo $_.branch $_.target) -and $_.merged_at -and ([datetimeoffset]$_.merged_at).UtcDateTime -ge $cut -and "$($_.repo)!$($_.iid)" -notin $known -and -not (Test-KitMrTracked $_.repo $_.iid $tr) -and -not (Test-KitMrTracked $_.repo $_.iid $ig) })
   if (-not $un.Count) { return }
   $tg = Get-KitTaskTagRx; $refs = @($un | ForEach-Object { "$($_.repo)!$($_.iid)" })
   $adds = @($un | ForEach-Object { $tid = if ($tg -and "$($_.branch) $($_.title)" -match $tg) { $Matches.id } else { '<task>' }; "& $($KitCmd.orch) track add -Task $tid -Mrs '$($_.repo)!$($_.iid)'" })
   # the table cell is cut at 90 chars: refs in problem, a short next; every full command in the report's "All flags"
   [pscustomobject]@{ level = 'WATCH'; what = "$($un.Count) MR(s) of $($um.user) merged in 24 h tracked by no task: $(@($un | ForEach-Object { "$($_.repo)!$($_.iid) ($("$($_.title)".Substring(0, [math]::Min(50, "$($_.title)".Length))))" }) -join '; ')"
-    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)' }
+    action = "Link each to its task: $($adds -join '; '); then track run (no task: supervise -Ack; not the owner's: track ignore -Mrs <MR> -Reason '<why>')."; kind = 'UNTRACKED MR'; who = $um.user; problem = "$(@($refs | Select-Object -First 5) -join ', ')$(if ($refs.Count -gt 5) { " +$($refs.Count - 5)" }) merged, no task"; next = 'track add -Task <id> -Mrs <MR> each (full: report)'; refs = $refs }
 }
 
 # ---- kitlog: every log line (kit.example.json _paths.log); one call line pair per verb (Invoke-KitVerb)
