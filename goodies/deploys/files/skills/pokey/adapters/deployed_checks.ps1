@@ -1,7 +1,7 @@
 #Requires -Version 7
 # deploys (goody): pokey.ps1 deployed and its deploy kinds ssh, awsStack, probe, tag, manual (dot-sourced from adapters/).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Api, OnRef, LocalAncestor.
-# Sections: L5 shell · L7 probe · L55 kinds · L87 deployed
+# Sections: L5 shell · L7 probe · L69 kinds · L101 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # ---- probe: version probe, memoised ssh state
@@ -15,10 +15,23 @@ function Probe($d, $r) {
 }
 # one memoised ssh call (script as base64); rc 0 match, 1 DIFF, 2 failed
 function Sq($v) { "'" + ([string]$v -replace "'", "'\''") + "'" }
+# ssh bounded by deploy.sshTimeoutSeconds (a hung host no longer eats the plan's deadline); a stub ssh function (tests) runs as is
+function Invoke-BoundedSsh([string[]]$A, [int]$Sec) {
+  $c = Get-Command ssh -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($c.CommandType -ne 'Application') { return @(ssh @A 2>$null) }
+  $si = [Diagnostics.ProcessStartInfo]::new($c.Source); foreach ($x in $A) { $si.ArgumentList.Add($x) }
+  $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
+  $pr = [Diagnostics.Process]::Start($si); $so = $pr.StandardOutput.ReadToEndAsync(); $null = $pr.StandardError.ReadToEndAsync()
+  if (-not $pr.WaitForExit($Sec * 1000)) { try { $pr.Kill($true) } catch {}; return @() }
+  @(if ($so.Wait(2000)) { $so.Result -split "`r?`n" | Where-Object { $_ } })
+}
 function SshState($s, $sha) {
   $sub = ([string]$s.subdir).Trim('/')
-  $k = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)|$sha"
+  $hk = "$($s.host)|$($s.repoDir)|$sub|$($s.appDir)"; $k = "$hk|$sha"
   if ($memo.ContainsKey($k)) { return $memo[$k] }
+  $h = $memo[$hk]   # one ssh per host: a later MR's ancestry comes from the local checkout when it has the host HEAD
+  if ($memo.ContainsKey($hk) -and -not $h.head) { $memo[$k] = $h; return $h }   # a host that failed once stays UNKNOWN this run
+  if ($h.head) { $on = LocalAncestor $r.checkout $sha (($h.head -split ' ')[0]); if ($null -ne $on) { $memo[$k] = $h.Clone(); $memo[$k].anc = $on; return $memo[$k] } }
   $xs = (@(@($s.exclude) + '*.log' + '*.log.*' | Where-Object { $_ }) | ForEach-Object { Sq $_ }) -join ' '   # a tracked rotated log (application.log.1) is runtime, not code
   $awk = 'NR == FNR { if (length($0) > 66) a[substr($0, 67)] = substr($0, 1, 64); next } length($0) > 66 { p = substr($0, 67); if (!(p in a)) print "not installed: " p; else if (a[p] != substr($0, 1, 64)) print "differs: " p }'
   $sh = @(
@@ -43,20 +56,21 @@ function SshState($s, $sha) {
   ) -join "`n"
   $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
   $key = [string]$s.key -replace '^~', $HOME
-  $lines = @(ssh -i $key -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $s.host "echo $b64 | base64 -d | bash" 2>$null)
-  $r = if (-not ($lines -match '^RC=')) { $null } else {
+  $sec = [int](Get-KitParam 'deploy.sshTimeoutSeconds')
+  $lines = Invoke-BoundedSsh @('-i', $key, '-o', 'BatchMode=yes', '-o', "ConnectTimeout=$([math]::Min(15, $sec))", '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash") $sec
+  $res = if (-not ($lines -match '^RC=')) { $null } else {
     @{ head = (($lines -match '^HEAD=') -replace '^HEAD=', '' | Select-Object -First 1).Trim()
       anc = [bool]($lines -match '^ANC=yes'); rc = [int](($lines -match '^RC=') -replace '^RC=', '' | Select-Object -First 1)
       diff = @($lines -match '^DIFF=' -replace '^DIFF=', ''); svc = (($lines -match '^SVC=') -replace '^SVC=', '' | Select-Object -First 1)
       files = [int](($lines -match '^FILES=') -replace '^FILES=', '' | Select-Object -First 1) }
   }
-  $memo[$k] = $r; $r
+  $memo[$k] = $res; if (-not $memo.ContainsKey($hk)) { $memo[$hk] = $res }; $res
 }
 # ---- kinds: ssh, awsStack, probe, tag, manual
 function Test-DeployedExtra($d) {
   if ($d.ssh) {   # host HEAD holds the merge AND files match
     $s = $d.ssh; $st = SshState $s $sha
-    if (-not $st) { return Row $d 'UNKNOWN' "no answer from $($s.host) over ssh (key $($s.key); the host needs bash, git, base64)" }
+    if (-not $st) { return Row $d 'UNKNOWN' "no answer from $($s.host) over ssh within $(Get-KitParam 'deploy.sshTimeoutSeconds') s (key $($s.key); the host needs bash, git, base64)" }
     $where = "host HEAD $($st.head)$(if ($st.svc) { ", service up since $($st.svc)" })"
     if ($st.rc -gt 1 -and -not $st.head) { return Row $d 'UNKNOWN' "host checkout unreadable: $(($st.diff | Select-Object -First 2) -join '; ')" }   # a wrong repoDir is not 'not deployed'
     if (-not $st.anc) { return Row $d 'NOT-DEPLOYED' "$s8 is not in the host checkout ($where)" }
@@ -123,10 +137,10 @@ function ViaDeployMr($p, $mr, $sha, $ref, $branch) {
 # NOT-DEPLOYED only if the host answers, else UNKNOWN
 function NotLiveRow($p, $ref, $d, [string]$detail) { if ($null -eq (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($d.branch))")) { Row $d 'UNKNOWN' "the git host did not answer for $($d.branch): try again" } else { Row $d 'NOT-DEPLOYED' $detail } }
 function OnRef($p, $mr, $sha, $ref, $branch = $ref) { (IsAncestor $p $sha $ref) -or (ViaDeployMr $p $mr $sha $ref $branch) -or (ContentOn $p $mr $sha $ref) }
-# $null if checkout or commit missing
+# $null if the checkout or either commit is missing
 function LocalAncestor($dir, $sha, $commit) {
   if (-not $dir -or -not (Test-Path $dir)) { return $null }
-  git -C $dir cat-file -e "$commit^{commit}" 2>$null; if ($LASTEXITCODE) { return $null }
+  foreach ($c in $commit, $sha) { git -C $dir cat-file -e "$c^{commit}" 2>$null; if ($LASTEXITCODE) { return $null } }
   git -C $dir merge-base --is-ancestor $sha $commit 2>$null
   $LASTEXITCODE -eq 0
 }

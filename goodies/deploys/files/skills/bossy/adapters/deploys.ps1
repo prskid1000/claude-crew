@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>]   promoted tasks whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L139 deploy · L256 supervise
+Sections: L13 helpers · L61 intest · L139 deploy · L261 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -141,6 +141,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [int]$History = 300,
     [switch]$Apply, [switch]$Quiet, [string[]]$Task = @(), [int]$TimeoutSec = 100)
+  if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <deploy branch> [-From <branch>] [-Push]" }
   if ($Action -eq 'merge') { $mergeFn = Assert-KitExtra Invoke-DeployMerge 'deploy merge' 'deploys'; & $mergeFn -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -History $History; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task; return }
   $Mrs = @(Split-KitList $Mrs)
@@ -198,12 +199,16 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
         foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', [math]::Max(1, [int](($until - (Get-Date)).TotalSeconds) - 2))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
         $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-        $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; so = $p.StandardOutput.ReadToEndAsync(); se = $p.StandardError.ReadToEndAsync() }
+        $p = [Diagnostics.Process]::Start($si); [pscustomobject]@{ t = $t; m = $tm; p = $p; out = [Collections.Generic.List[string]]::new(); rl = $p.StandardOutput.ReadLineAsync(); se = $p.StandardError.ReadToEndAsync() }
       })
     if (-not $Json) { [Console]::Error.WriteLine("deploy plan: $($anc.Count) MR x env in a green deploy job; probing the rest on $($runs.Count) test env(s) in parallel (max $lim s each) ...") }
+    # each MR's row is printed (stderr) as it comes: a run moved to the background still shows what finished
+    $take = { param($q, [int]$ms) while ($q.rl -and $q.rl.Wait($ms)) { $ln = $q.rl.Result; if ($null -eq $ln) { $q.rl = $null; break }; $q.out.Add($ln); $q.rl = $q.p.StandardOutput.ReadLineAsync()
+        if (-not $Json -and $ln -match '^\s*\{') { try { $x = $ln | ConvertFrom-Json; [Console]::Error.WriteLine("  $($x.mr) @ $($x.target): $($x.state) $($x.detail)") } catch {} } } }
+    while (@($runs | Where-Object rl).Count -and (Get-Date) -lt $until) { foreach ($q in $runs) { & $take $q 0 }; Start-Sleep -Milliseconds 200 }
     foreach ($q in $runs) {
       $fin = $q.p.WaitForExit([int][math]::Max(1000, ($until - (Get-Date)).TotalMilliseconds)); if (-not $fin) { try { $q.p.Kill($true) } catch {} }
-      $null = [Threading.Tasks.Task]::WaitAll(@($q.so, $q.se), 5000); $txt = "$(if ($q.so.IsCompleted) { $q.so.Result })"
+      & $take $q 2000; $null = $q.se.Wait(5000); $txt = $q.out -join "`n"
       $parsed = @($txt -split "`r?`n" | Where-Object { $_ -match '^\s*\{' } | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} } | Where-Object { $_.mr })   # -Lines: one row per line
       if (-not $fin -or ($parsed.Count -and $q.p.ExitCode -notin 0, 1)) {   # a timeout or crash keeps the rows already checked
         $failOf[$q.t] = "pokey.ps1 deployed $(if ($fin) { "exit $($q.p.ExitCode)" } else { "timed out after $lim s" }) on $($q.t)"
