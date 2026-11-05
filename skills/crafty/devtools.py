@@ -13,14 +13,15 @@
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   --run <cells.json> (pokey finalize, key <task>:testing-doc): fills the human doc's Result / Evidence + a dated "<env> run" section
+ python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L37 config · L71 run · L155 tracker · L325 git host · L408 MR · L523 merge · L767 docs · L900 publish · L1191 plugins ·
-  L1205 keepboth · L1224 selftest · L1566 CLI
+Sections: L38 config · L72 run · L156 tracker · L326 git host · L409 MR · L524 merge · L768 docs · L923 publish · L1239 plugins ·
+  L1253 keepboth · L1272 selftest · L1630 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -805,19 +806,39 @@ def col_widths(headers):
     return [round(x * 100 / sum(w), 1) for x in w]
 
 
+PAGE_PT = 468   # Google Doc text width (8.5 in page, 1 in margins): measured Evidence cells 76 / 85 / 90 pt = their % less padding
+
+
+def cell_img_px(pct):
+    """Widest image (px) that fits a cell of pct % of the page: the cell's width less its 4 pt padding each side, less a border px."""
+    return max(40, int((pct * PAGE_PT / 100 - 8) * 4 / 3) - 2)
+
+
+def full_link(src):
+    """The full-size view of an image src: a Drive file's /file/d/<id>/view, any other src itself."""
+    m = re.search(r'drive\.google\.com/(?:uc|open|thumbnail)\?(?:[^"\s]*&(?:amp;)?)?id=([\w-]+)|drive\.google\.com/file/d/([\w-]+)|googleusercontent\.com/d/([\w-]+)', src)
+    return f'https://drive.google.com/file/d/{m[1] or m[2] or m[3]}/view' if m else src
+
+
 def md_to_html(md, title=''):
     """Dependency-free Markdown -> HTML for `doc` (gws uploads Markdown as plain text): headings, tables (header bold and shaded,
-    widths by role, cells padded and top-aligned), lists, emphasis, monospace code spans and blocks, links, images, rules."""
+    widths by role, cells padded and top-aligned; an image in a cell fits it, with an "open full" link under it), lists,
+    emphasis, monospace code spans and blocks, links, images, rules."""
 
-    def inline(t):
+    def img(m, cap):
+        w = min(600, int(m[3] or m[4] or 600))   # default and cap 600 px (the page width)
+        if not cap:
+            return f'<p><img src="{m[2]}" width="{w}"><br><i>{m[1]}</i></p>'
+        return f'<p><img src="{m[2]}" width="{min(w, cap)}"><br><i>{m[1]}</i><br><a href="{full_link(m[2])}">open full</a></p>'
+
+    def inline(t, cap=None):
         t = html.escape(t, quote=False).replace('&lt;br&gt;', '<br>')   # a line break inside a table cell (evidence previews)
         code = []   # code spans set aside: emphasis and link rules never touch them
         t = re.sub(r'`([^`]+)`', lambda m: code.append(m[1]) or f'\0{len(code) - 1}\0', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
-        # images before links: ![alt](url "width px"), default and cap 600 px (the page width)
-        t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)',
-                   lambda m: f'<p><img src="{m[2]}" width="{min(600, int(m[3] or m[4] or 600))}"><br><i>{m[1]}</i></p>', t)
+        # images before links: ![alt](url "width px"); in a table cell: fit to the cell (cap px), stacked, each with its link
+        t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)', lambda m: img(m, cap), t)
         t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
         return re.sub(r'\0(\d+)\0', lambda m: f'<span style="{CODE_CSS}">{code[int(m[1])]}</span>', t)
 
@@ -836,10 +857,12 @@ def md_to_html(md, title=''):
             out.append(f'<pre style="{CODE_CSS}">' + html.escape('\n'.join(lines[i + 1:j])) + '</pre>'); i = j + 1; continue
         if l.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?\s*$', lines[i + 1]):
             close(); head = _cells(l); cw = col_widths(head) or [None] * len(head)
+            caps = [cell_img_px(w or 100 / len(head)) for w in cw]   # no known role: the renderer shares the width evenly
             rows = ['<tr>' + ''.join(f'<th style="{HEAD_CSS}{f";width:{w}%" if w else ""}"><b>{inline(c)}</b></th>' for c, w in zip(head, cw)) + '</tr>']
             i += 2
             while i < len(lines) and lines[i].startswith('|'):
-                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c)}</td>' for c in _cells(lines[i])) + '</tr>'); i += 1
+                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c, caps[j] if j < len(caps) else caps[-1])}</td>'
+                                             for j, c in enumerate(_cells(lines[i]))) + '</tr>'); i += 1
             out.append(f'<table border="1" style="border-collapse:collapse{";width:100%" if any(cw) else ""}">' + ''.join(rows) + '</table>'); continue
         m = re.match(r'^(#{1,6})\s+(.*)$', l)
         if m:
@@ -1154,16 +1177,41 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
             pass   # the same text again (finish after the last loop round): no second round
         else:
             rounds = (rounds if (mode or PUB_KINDS.get(kind, 'replace')) == 'append' else []) + [new]
-        text, ext = _compose(rec.get('title') or title, rounds, runs)
-        out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + ext)
-        with open(out, 'w', encoding='utf-8', newline='') as fh:
-            fh.write(text)
-        own = {'markdown': out, 'html': os.path.splitext(out)[0] + '.doc.html'}.get(REPORT_TYPE)   # kept types: one file per key, never per title
-        url = make_doc(rec.get('title') or title, out, parent, rec.get('url') or own)
-        if rec.get('url') and url != rec['url']:
-            print(f'[publish] {key}: reports.type {REPORT_TYPE} could not update {rec["url"]} in place: new link {url}', file=sys.stderr)
+        url = _render(key, rec, rec.get('title') or title, rounds, runs, parent)
         _pub_write(key, {**rec, 'key': key, 'title': rec.get('title') or title, 'url': url, 'type': REPORT_TYPE,
                          'updated': new['at'], 'rounds': rounds, 'runs': runs})
+    return url
+
+
+def _render(key, rec, title, rounds, runs, parent=None):
+    """Compose a key's rounds and runs and publish them over its earlier doc -> URL."""
+    text, ext = _compose(title, rounds, runs)
+    out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + ext)
+    with open(out, 'w', encoding='utf-8', newline='') as fh:
+        fh.write(text)
+    own = {'markdown': out, 'html': os.path.splitext(out)[0] + '.doc.html'}.get(REPORT_TYPE)   # kept types: one file per key, never per title
+    url = make_doc(title, out, parent, rec.get('url') or own)
+    if rec.get('url') and url != rec['url']:
+        print(f'[publish] {key}: reports.type {REPORT_TYPE} could not update {rec["url"]} in place: new link {url}', file=sys.stderr)
+    return url
+
+
+def relayout(ref):
+    """Republish a published doc (key <task or run>:<kind>, or its URL) from its record with the current layout: same rounds,
+    runs and link, no new round."""
+    key = ref
+    if re.match(r'https?://', ref):
+        did = (re.search(r'/d/([\w-]+)', ref) or [None, ref])[1]
+        recs = [r for r in (state_read(p) or {} for p in glob.glob(os.path.join(kit_path('published', create=True), '*.json'))) if r.get('key') and did in str(r.get('url') or '')]
+        if len(recs) != 1:
+            sys.exit(f'relayout {ref}: ' + (f'{len(recs)} published records hold this link: pass its key' if recs else 'no published record holds this link (.state/published)'))
+        key = recs[0]['key']
+    with locked(_pub_file(key)):
+        rec = _pub_read(key)
+        if not rec.get('rounds'):
+            sys.exit(f'relayout {key}: no published record (.state/published): publish it with devtools.py doc --key first')
+        url = _render(key, rec, rec['title'], rec['rounds'], rec.get('runs') or [])
+        _pub_write(key, {**rec, 'url': url, 'type': REPORT_TYPE, 'relaid':time.strftime('%Y-%m-%d %H:%M')})
     return url
 
 
@@ -1396,9 +1444,19 @@ def _publish_selftest(expect, refused):
                        + '```\n{"a": 1}\n```\n')
         th = re.findall(r'<th style="([^"]*)"><b>([^<]*)</b></th>', h)
         expect('md_to_html (the gdocs upload): tables stay HTML tables, header bold + shaded, widths by role (# 5, Steps 40, Expected 25,'
-               ' Result 10, Evidence 20), cells padded and top-aligned, images inline and capped at 600 px',
+               ' Result 10, Evidence 20), cells padded and top-aligned, images inline and fit to the cell (human Evidence 112 px)',
                [(n, re.search(r'width:([\d.]+)%', s)[1]) for s, n in th[3:8]] == [('#', '5.0'), ('Steps', '40.0'), ('Expected', '25.0'), ('Result', '10.0'), ('Evidence', '20.0')]
-               and all(HEAD_CSS in s for s, _ in th) and re.search(rf'<td style="{CELL_CSS}"><p><img src="https://img/1.png" width="600"', h) and '| T1 |' not in h)
+               and all(HEAD_CSS in s for s, _ in th) and re.search(rf'<td style="{CELL_CSS}"><p><img src="https://img/1.png" width="112"', h) and '| T1 |' not in h)
+        d1, d2 = 'https://drive.google.com/uc?export=view&id=1Ab-C', 'https://drive.google.com/uc?export=view&id=2De_F'
+        ha = md_to_html(ait.split('\n')[0] + '\n|---|---|---|---|---|---|\n' + f'| A1 | positive | GET /x | 200 | PASS | ![A1: list]({d1} "600")<br>![A1: zoom]({d2}) |\n')
+        hq = md_to_html(f'| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T1 | PASS | ok | ![T1: phone]({d1} "260") |\n')
+        imgs = re.findall(r'<img src="([^"]+)" width="(\d+)"><br><i>([^<]*)</i><br><a href="([^"]+)">open full</a>', ha)
+        expect('md_to_html: a cell image fits its column (AI Evidence 100 px, QA report 118 px, a smaller asked width kept, outside a table'
+               ' 600), images stack in one cell, each with an "open full" link to its Drive /file/d/<id>/view',
+               [(w, c, l) for _, w, c, l in imgs] == [('100', 'A1: list', 'https://drive.google.com/file/d/1Ab-C/view'), ('100', 'A1: zoom', 'https://drive.google.com/file/d/2De_F/view')]
+               and 'width="118"' in hq and 'width="40"' in md_to_html('| a | b |\n|---|---|\n| x | ![s](https://x/s.png "40") |\n')
+               and 'width="600"' in md_to_html(f'![s]({d1})') and 'open full' not in md_to_html(f'![s]({d1})')
+               and full_link('https://x/s.png') == 'https://x/s.png' and full_link('https://drive.google.com/file/d/9Z/view?usp=x') == 'https://drive.google.com/file/d/9Z/view')
         expect('md_to_html: backtick spans and fenced blocks are monospace on grey; text outside them stays plain; an unknown table'
                ' gets no widths, an AI table sums to 100',
                f'Run <span style="{CODE_CSS}">tool check -Step test -Tests ALongClassNameSmokeTest</span>' in h and f'<pre style="{CODE_CSS}">{{&quot;a&quot;: 1}}</pre>' in h
@@ -1468,6 +1526,12 @@ def _publish_selftest(expect, refused):
         ur2 = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'FAIL', 'evidence': 'x'}})
         hb2 = open(ur2, encoding='utf-8').read()
         expect('a retest run adds a second "<env> run" section; the first stays', ur2 == u1 and hb2.count('## stg run ') == 2 and '| T2 | 1. Open the list. | Newest first. | FAIL | x |' in hb2)
+        before = _pub_read('T9:testing-doc')
+        expect('relayout: the same doc and text again, no new round or run; an unpublished key is refused',
+               relayout('T9:testing-doc') == u1 and open(u1, encoding='utf-8').read() == hb2 and len(_pub_read('T9:testing-doc')['rounds']) == len(before['rounds'])
+               and len(_pub_read('T9:testing-doc')['runs']) == len(before['runs']))
+        refused('relayout: an unpublished key -> refused', lambda: relayout('T0:testing-doc'), 'no published record')
+        refused('relayout: a link no record holds -> refused', lambda: relayout('https://docs.google.com/document/d/NOPE/edit'), 'no published record holds this link')
         u3 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h3.md'), doc.replace('| T1 |', '| T3 |')), label='fix round')
         hb3 = open(u3, encoding='utf-8').read()
         expect('a fix round after a run: a fresh version on top with Result / Evidence empty; both runs and the earlier rounds stay',
@@ -1577,7 +1641,7 @@ def _cli():
         extra_missing('devtools.py findings (module audits)', 'module-audit')
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
-    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
+    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
@@ -1638,6 +1702,9 @@ def _cli():
         print(publish(opt['--key'], title, path, *(a[3:4] or [None]), mode=opt.get('--mode'), label=opt.get('--label') or '',
                       run=json.load(open(opt['--run'], encoding='utf-8-sig')) if opt.get('--run') else None) if opt.get('--key')
               else make_doc(title, path, *(a[3:4] or [])))
+    elif cmd == 'relayout':
+        for ref in a[1:]:
+            print(relayout(ref))
     elif cmd == 'evidence':
         ff = open(opt['--files-from'], encoding='utf-8-sig').read().splitlines() if opt.get('--files-from') else []   # one path per line: no command-line limit
         print(json.dumps(make_evidence(a[1], a[2:] + [x for x in ff if x.strip()], opt.get('--folder') or None, opt.get('--parent') or None, opt.get('--key'))))
