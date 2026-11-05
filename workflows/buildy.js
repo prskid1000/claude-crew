@@ -7,14 +7,14 @@ export const meta = {
   { title: 'Build', detail: 'one devy per area: worktree, code, testing goals, local test loop, MRs, testing doc' },
   { title: 'Decide', detail: 'items paused for an owner decision or a coordinator ENV-FIX wait for the answer, then resume' },
   { title: 'Review', detail: 'one revy per devy (+ datay on an area with migrations) + CI pipelines' },
-  { title: 'Fix', detail: 'one fix round (local tests again), then merge in order and register the tracker task' },
+  { title: 'Fix', detail: 'a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; should-fix / nit -> MR Follow-ups); merge in order, register the tracker task' },
   { title: 'Deploy', detail: 'the merged work joins the deploy batch silently (goody deploys); a person says deploy <env> (never asked, never deployed here)' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy turns them into lessons)' },
  ],
 }
 
 // Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L255 ship-prompt · L278 plan · L292 spike ·
-//   L305 local-loop · L369 stages · L495 ship · L566 deploy · L583 learn
+//   L305 local-loop · L369 stages · L508 ship · L609 deploy · L626 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -464,13 +464,26 @@ const results = await pipeline(
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: true, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(r, r2, 'Fix round'), 0, 'Fix')) }
    const lt2 = x.report.localTest || {}
    if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
-   if (findings.some(mustFix)) {
-    const rr = `\nRE-REVIEW after the fix round: check that these findings are resolved and that the fix added no new problem:\n${findings.filter(mustFix).map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`
+   // re-review: only blocking findings hold the merge (one more fix round, then a decision); should-fix / nit -> the MR's Follow-ups
+   let open = findings.filter(mustFix), soft = []
+   const held = async (y) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...(soft.length && { followUps: await followUps(a, x.report, soft) }) })
+   for (let round = 1; open.length; round++) {
+    const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`
     const [rv2, mv2] = await Promise.all([agent(reviewPrompt(a, x.report) + rr, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
      a.migrations ? agent(migrationPrompt(a, x.report) + rr, { label: `migration-review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'datay', ...pick('review') }) : {}])
-    const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []).filter(mustFix) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
-    if (again.length) { log(`${a.id}: re-review after the fix round: ${again.length} finding(s) - not merged`); return { ...x, fixed: false, findings: [...x.findings, ...again] } }
+    const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
+    soft.push(...again.filter((f) => f.severity !== 'blocking')); open = again.filter((f) => f.severity === 'blocking')
+    if (!open.length) break
+    if (round >= 2 || !rv2 || !mv2) { const d = await askBlocking(a, x.report, open); return held(d ? { decisionAsked: d } : {}) }   // no reviewer: nothing to fix
+    if (!(await gate('Fix'))) return held({ budgetStopped: true })
+    log(`${a.id}: re-review: ${open.length} blocking finding(s) -> one last fix round`)
+    const r4 = await agent(fixPrompt(a, x.report, open), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...modelOf(a) })
+    if (!r4) return held({ stopped: true })
+    x = { ...x, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(x.report, r4, 'Fix round 2'), 0, 'Fix')) }
+    const lt3 = x.report.localTest || {}
+    if (lt3.status === 'BLOCKED' || lt3.status === 'FAIL') return held({ blocked: `local test ${lt3.status} after fix round 2` })
    }
+   if (soft.length) x = { ...x, followUps: await followUps(a, x.report, soft) }
    const failures = await ciGate(a, x.report)
    if (failures.length) { log(`${a.id}: pipelines still failing after the fix round - left open`); return { ...x, fixed: false, findings: [...x.findings, ...failures] } }
   }
@@ -500,6 +513,35 @@ async function ciGate(a, r) {
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
   fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))
+}
+// re-review should-fix / nit findings -> each MR's "## Follow-ups" (devtools.py followups, deduplicated); one log line per MR
+async function followUps(a, r, soft) {
+ const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
+ const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))   // as devtools.py followups
+ if (!mrs.length) return []
+ for (const m of mrs) {
+  const mine = soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url)))
+  log(`${a.id}: ${m.url}: ${mine.length} re-review finding(s) -> Follow-ups${mine.length ? `: ${mine.map((f) => `${f.severity} ${f.file}${f.line ? ':' + f.line : ''}`).join(', ')}` : ''}`)
+ }
+ const st = await agent(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}
+1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers); read it back: it parses:
+<<<JSON
+${JSON.stringify(soft)}
+JSON>>>
+2. Run in PowerShell: python -X utf8 ${DT} followups ${file} ${mrs.map((m) => m.url).join(' ')}
+Return ok=true when it exits 0, output = its full output.`, { label: `followups:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'devy', model: 'haiku', effort: 'low' })
+ if (!st || !st.ok) { log(`${a.id}: WARNING Follow-ups not written (${st ? st.output : 'the step returned nothing'}): add them by hand`); return soft.map((f) => ({ ...f, written: false })) }
+ return soft
+}
+// still blocking after 2 fix rounds: an owner decision (bossy.ps1 decide ask), never a silent "not merged"
+async function askBlocking(a, r, open) {
+ const q = open.map((f) => `${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join(' / ').replace(/["'`$\r\n]+/g, ' ').slice(0, 400)
+ const s = await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} -Item '${r.mrs.map((m) => m.url).join(' ')}' -Question "Still blocking after 2 fix rounds: ${q}" -Options "A: merge by hand, the finding goes to Follow-ups","B: hold, fix it by hand" -Recommend B`,
+  `decide:${a.id}`, 'Fix', { ok: 'when it prints DECISION <id>' })
+ const id = ((s && s.output) || '').match(/DECISION (\S+)/)
+ log(`${a.id}: re-review still blocking after 2 fix rounds (${open.length}): ${id ? `decision ${id[1]} asked` : 'WARNING decide ask failed'} - not merged`)
+ if (id) decisions.push({ agent: a.id, item: r.mrs.map((m) => m.url).join(' '), decisionId: id[1], question: `still blocking: ${q}` })
+ return id ? id[1] : ''
 }
 async function ship(a, x) {
  const held = x.report.mrs.filter((m) => !m.merged && isHeld(m))
@@ -555,6 +597,7 @@ const outcome = {
  needsLiveCheck: out.flatMap((x) => (x.report ? x.report.needsLiveCheck : [])),
  seed: out.flatMap((x) => (x.report ? x.report.seed : [])),
  openFindings: out.flatMap((x) => [...(x.fixed ? [] : (x.findings || []).filter(mustFix)), ...(x.shipFindings || [])]),
+ followUps: out.flatMap((x) => (x.followUps || []).map((f) => ({ agent: x.id, ...f }))),   // re-review should-fix / nit: in the MR bodies, merged anyway
  testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, guide: x.report.testerGuide || 'MISSING' })),
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }

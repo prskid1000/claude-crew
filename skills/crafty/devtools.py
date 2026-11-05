@@ -7,6 +7,7 @@
  python -X utf8 devtools.py mr <worktree> "<title>" <body.md> [target] [--prose-ok "<why>"]   open a merge/pull request from the current branch
   comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
+ python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
  python -X utf8 devtools.py merge <worktree> <iid>   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
@@ -18,8 +19,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L36 config · L70 run · L154 tracker · L324 git host · L407 MR · L485 merge · L729 docs · L862 publish · L1153 plugins ·
-  L1167 keepboth · L1186 selftest · L1518 CLI
+Sections: L37 config · L71 run · L155 tracker · L325 git host · L408 MR · L523 merge · L767 docs · L900 publish · L1191 plugins ·
+  L1205 keepboth · L1224 selftest · L1566 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -480,6 +481,43 @@ def mr_create(worktree, title, body_md, tgt=None):
     if not url:
         raise SystemExit(f'MR not created: {str(m)[:500]}')
     return url
+
+
+def of_mr(items, url, urls):
+    """The findings for one MR: those naming it (/5 is not /55; as buildy.js followUps), and those naming none of urls."""
+    hit = lambda f, u: re.search(re.escape(u) + r'(?!\d)', str(f.get('mr') or ''))
+    return [f for f in items if hit(f, url) or not any(hit(f, u) for u in urls)]
+
+
+def followups(findings, url):
+    """Review findings that do not hold the merge -> the MR body's "## Follow-ups" (above the footer), one bullet each; a bullet
+    already there (same file + problem) is kept once. -> the bullets added"""
+    m = re.match(r'^\w+://([^/]+)/(.+?)/(?:-/merge_requests|pulls?|pull-requests|pullrequest)/(\d+)', str(url))
+    if not m:
+        raise SystemExit(f'followups: {url!r} is no MR / PR URL')
+    host, proj, iid = host_kind(m.group(1)), m.group(2).replace('/_git/', '/'), m.group(3)
+    mr = _host('mr.get', type=host, repo=proj, n=iid)
+    if not isinstance(mr, dict) or not mr.get('title'):
+        raise SystemExit(f'followups: {url} not readable: {str(mr)[:200]}')
+    body, key = str(mr.get('description') or mr.get('body') or '').replace('\r\n', '\n'), lambda s: re.sub(r'\W+', ' ', s.split(': ', 1)[-1]).strip().lower()
+    sec = re.search(r'(?ms)^## Follow-ups[ \t]*\n(.*?)(?=^## |^' + re.escape(FOOTER) + r'|\Z)', body)
+    seen, new = {key(b) for b in re.findall(r'(?m)^- (.+)$', sec.group(1) if sec else '')}, []
+    for f in findings:
+        b = f"{f.get('severity') or 'should-fix'}: `{f.get('file') or '-'}{':' + str(f['line']) if f.get('line') else ''}`: {' '.join(str(f.get('problem') or '').split())[:300]}"
+        if key(b) not in seen:
+            seen.add(key(b)); new.append(b)
+    if not new:
+        return []
+    add = ''.join(f'- {b}\n' for b in new)
+    if sec:
+        body = body[:sec.end(1)].rstrip('\n') + '\n' + add + '\n' + body[sec.end(1):].lstrip('\n')
+    else:
+        cut = body.rfind(FOOTER) if FOOTER in body else len(body)
+        body = body[:cut].rstrip() + '\n\n## Follow-ups\n' + add + ('\n' + body[cut:] if cut < len(body) else '')
+    up = _host('mr.update', type=host, repo=proj, n=iid, title=mr['title'], body=body)
+    if not (isinstance(up, dict) and up.get('web_url')):
+        raise SystemExit(f'followups: {url} not updated ({str(up)[:200]}): add these by hand under "## Follow-ups":\n{add}')
+    return new
 
 
 # ---- merge: merge now or arm merge-when-green; producers first
@@ -1469,6 +1507,16 @@ def _publish_selftest(expect, refused):
             [{'iid': 5, 'web_url': 'https://h/g/r/5'}] if v == 'mr.list' else {'web_url': 'https://h/g/r/5'}))
         u = mr_create('.', 'fix(x): y (T9)', '## Summary\n## Changes\n## How tested\n| Not run | nothing |\n## Risks\n## Links\n', 'main')
         expect('mr: an open MR from the branch is edited (mr.update), never a second one', u == 'https://h/g/r/5' and hc == ['mr.list', 'mr.update'])
+        mb = {'b': '## Summary\nx\n\n' + FOOTER + '\n'}
+        g['_host'] = lambda v, **a: {'title': 't', 'description': mb['b']} if v == 'mr.get' else (mb.update(b=a['body']) or {'web_url': 'https://h/g/r/5'})
+        fx = lambda p, s='nit': {'mr': 'https://h/g/r/5', 'file': 'a.ts', 'line': 3, 'severity': s, 'problem': p}
+        n1 = followups([fx('rename x'), fx('rename  x', 'should-fix'), fx('add a test')], 'https://h/g/r/-/merge_requests/5')
+        n2 = followups([fx('add a test'), fx('trim y')], 'https://h/g/r/-/merge_requests/5')
+        mb['b'] = mb['b'].replace('\n', '\r\n'); n3 = followups([fx('trim y'), fx('z')], 'https://h/g/r/-/merge_requests/5')
+        u5, u55 = 'https://h/g/r/-/merge_requests/5', 'https://h/g/r/-/merge_requests/55'
+        expect('followups: per MR, a finding naming /55 is not /5; one naming no MR goes to each', [len(of_mr([{'mr': u55}, {'mr': '-'}], u, [u5, u55])) for u in (u5, u55)] == [1, 2])
+        expect('followups: a "## Follow-ups" section above the footer, one bullet per finding, a repeat (same file + problem) kept once, CRLF body too',
+               len(n1) == 2 and len(n2) == 1 and n3 == ['nit: `a.ts:3`: z'] and mb['b'].count('## Follow-ups') == 1 and mb['b'].count('- ') == 4 and mb['b'].index('trim y') < mb['b'].index(FOOTER))
         g.update(remote=saved['remote'], _run=saved['_run'], _host=saved['_host'])
         seen = []
         ADAPTERS['report']['markdown']['evidence'] = lambda a: seen.append(a['folder']) or {'folderId': a['folder'] or 'F1', 'folderLink': 'https://f/F1', 'files': {}}
@@ -1529,7 +1577,7 @@ def _cli():
         extra_missing('devtools.py findings (module audits)', 'module-audit')
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
-    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
+    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
@@ -1562,6 +1610,11 @@ def _cli():
         print('done')
     elif cmd == 'mr':
         print(mr_create(a[1], a[2], _body(a[3]), *(a[4:5] or [])))
+    elif cmd == 'followups':   # each finding to its MR (an unnamed MR: every MR)
+        items, urls = json.load(open(a[1], encoding='utf-8')), a[2:]
+        for u in urls:
+            new = followups(of_mr(items, u, urls), u)
+            print(f'followups {u}: {len(new)} added' + ''.join(f'{chr(10)}  - {b}' for b in new))
     elif cmd == 'merge':          # merge now / arm merge-when-green; waits <= 90 s
         res = auto_merge(a[1], a[2])
         print(res)

@@ -37,14 +37,15 @@ const rep = (extra = {}) => _rep(lt, extra)
 let reviews = 0
 const { calls, agent } = _mock((prompt, o) => {
  if (/^build:/.test(o.label)) return rep({ deferred: [{ id: 'A2', reason: 'needs data' }] })
- if (/^review:/.test(o.label)) return { findings: reviews++ ? [] : [{ mr: '1', file: 'a.ts', line: 3, severity: 'blocking', problem: 'null check missing', fix: 'add it' }] }
+ if (/^review:/.test(o.label)) return { findings: [{ mr: '1', file: 'a.ts', line: 3, severity: reviews++ ? 'nit' : 'blocking', problem: reviews > 1 ? 'rename y' : 'null check missing', fix: 'add it' }] }
  if (/^fix:/.test(o.label)) return rep({ worktrees: ['c:\\WT\\x1\\'] })
  if (/^ship:/.test(o.label)) return rep(_merged(1))
 }, '[]')
 const args = { brief: 'C:/b/wave-x.md', agents: [{ id: 'X1', items: 'A1, A2', area: 'a' }], mandate: ['m'], ..._kl }
 run(args, agent, _n, _n, pipeline).then(() => {
  const rv = calls.filter((c) => c.label === 'review:X1'), ti = calls.findIndex((c) => c.label === 'track:X1'), si = calls.findIndex((c) => c.label === 'ship:X1')
- console.log(`re-review:${rv.length === 2 && /RE-REVIEW after the fix round/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
+ console.log(`re-review:${rv.length === 2 && /RE-REVIEW after fix round 1/.test(rv[1].prompt) && /null check missing/.test(rv[1].prompt) && si > calls.indexOf(rv[1])}`)
+ console.log(`follow-ups:${calls.some((c) => c.label === 'followups:X1' && /rename y/.test(c.prompt) && / followups \S+ https:\/\/h\/g\/api/.test(c.prompt))}`)
  console.log(`wt-dedup:${calls[si].prompt.includes('(worktrees: C:/wt/x1)')}`)
  console.log(`hold:${ti >= 0 && /-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)
@@ -53,7 +54,13 @@ run(args, agent, _n, _n, pipeline).then(() => {
 '@
 $res = Invoke-Js dw-review $jsr $wfd
 $want = & { . $O; Get-LaunchRunName ([pscustomobject]@{ brief = 'C:/b/wave-x.md' }) }
-Expect-Each $res 'buildy: #' 're-review', 'hold', 'wt-dedup' -Show 5
+Expect-Each $res 'buildy: #' 're-review', 'follow-ups', 'hold', 'wt-dedup' -Show 5
+# buildy: still blocking after fix round 2 -> a decide ask, no merge
+$jsb = $jsr -replace "severity: reviews\+\+ \? 'nit' : 'blocking'", "severity: 'blocking', n: reviews++" -replace "if \(/\^ship:/", "if (/^decide:/.test(o.label)) return { ok: true, output: 'DECISION d1 pending' }`n if (/^ship:/" -replace "(?s)run\(args, agent, _n, _n, pipeline\)\.then.*", @'
+run(args, agent, _n, _n, pipeline).then((o) => console.log(`ask:${calls.filter((c) => c.label === 'fix:X1').length === 2 && calls.filter((c) => c.label === 'review:X1').length === 3 && calls.some((c) => c.label === 'decide:X1' && /Still blocking after 2 fix rounds/.test(c.prompt)) && !calls.some((c) => c.label === 'ship:X1')
+  && o.decisions.some((d) => d.agent === 'X1' && d.decisionId === 'd1') && o.openFindings.length > 0}`)).catch(_err)
+'@
+Expect-Each (Invoke-Js dw-ask $jsb $wfd) 'buildy: #' 'ask' -Show 5
 Expect 'buildy: default run name = bossy.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
