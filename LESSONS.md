@@ -18,6 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Long kit verbs (bossy deploy request, waits) via Bash: start with run_in_background or a timeout over 120 s, then read the output file; a foreground call cut at 120 s loses the plan (1x).
 - After wt new, check the dependency links (node_modules, linkPaths) exist before editing; a worktree without them fails wt remove and can empty the folder: save the diff first, recreate with wt new. (1×)
 - devtools merge refuses an MR body without the Testing doc and Testing doc (AI) lines: after the local PASS run finish first, then mr with both doc links, then merge; a gws timeout may move the AI doc to a new link, so take the link finish printed. (3×)
 - An MR body claim "changed methods without a test: none" is checked against the diff: every changed wiring or entry method (not only the core logic) needs a test or is listed (1x, hard miss)
@@ -57,7 +58,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value; never overwrite a typed user draft. (7×)
 - Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
 - Mappers building an entity in steps: a flag read early misses parties resolved later; grep later setters, add a post-pass and a final-entity test. (3×)
-- Shared multi-env services: the env is part of every key (DB name, cache key); external calls after commit on a bounded executor; read-only views get a wall-clock bound; secret temp files in a 0700 folder swept by age. (2×)
 
 ## pokey
 - Before a QA run starts, check its targets and alsoTargets cover every env each task's checks call (e.g. a second product's staging); a missing one leaves the task untested for env-data (2×)
