@@ -1406,7 +1406,7 @@ function Set-TrackerStatus([string]$Id, [string]$Status) {
   }
   Invoke-TrackerWrite 'status' $Id $Status { __Set-TrackerStatus $Id $Status }
 }
-function Add-TrackerComment([string]$Id, [string]$Text) { $t = __TrText $Text; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
+function Add-TrackerComment([string]$Id, [string]$Text) { if (-not "$Id".Trim()) { throw 'tracker comment: no task id (a tracker CLI would guess it from the branch name)' }; $t = __TrText $Text; Invoke-TrackerWrite 'comment' $Id $t { __Add-TrackerComment $Id $t } }
 function __Set-TrackerStatus([string]$Id, [string]$Status) { Clear-TrackerMemo $Id; __TrA 'status' @{ id = $Id; status = (Resolve-TrackerStatus $Status); logical = $Status } }
 function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $Id; __TrA 'comment' @{ id = $Id; text = (__TrText $Text) } }
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }

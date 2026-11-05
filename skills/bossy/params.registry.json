@@ -10,6 +10,7 @@
   "logs.keepDays": "peak k=2 default=90 floor=30 ceil=365 unit=d",
   "deploy.planTimeoutSec": "config default=600 unit=s",
   "deploy.deployedTimeoutSec": "config default=100 unit=s",
+  "deploy.sshTimeoutSeconds": "config default=30 unit=s",
   "localEnv.startMinutes": "config default=10 unit=min",
   "localEnv.prepareTimeoutSec": "config default=300 unit=s",
   "localEnv.buildTimeoutSec": "config default=600 unit=s",

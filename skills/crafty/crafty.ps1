@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1553 dir · L1563 checkpoint ·
-  L1588 prior · L1622 tracker · L1675 host
+Sections: L21 init · L27 wt · L299 stack · L474 gate · L740 check · L925 pipes · L963 guard · L1559 dir · L1569 checkpoint ·
+  L1594 prior · L1628 tracker · L1681 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -255,6 +255,12 @@ switch ($Action) {
       $Dir = $hits[0].FullName
     }
     if (-not $Dir) { throw 'remove needs -Dir <worktree> or -Name <name from wt new>' }
+    if (-not (Test-Path -LiteralPath $Dir)) {   # removed by hand: only a worktree git still lists (a typo stays an error); its repo is pruned
+      $want = [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') -replace '\\', '/'
+      $own = @(@(if ($Repo) { $Repo } else { @(@(Get-KitValue 'repos' @()).checkout) + $KitConf.Kit }) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Where-Object { @(git -C $_ worktree list --porcelain 2>$null) -contains "worktree $want" })
+      if (-not $own.Count) { throw "no such folder: $Dir (and no repo lists it as a worktree)" }
+      foreach ($pr in $own) { git -C $pr worktree prune 2>$null }; "already gone: $Dir (git worktree prune ran in $($own -join ', '))"; exit 0
+    }
     $Dir = Resolve-Wt $Dir
     $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
     if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
