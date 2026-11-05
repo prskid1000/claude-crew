@@ -20,8 +20,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L156 tracker · L328 git host · L411 MR · L560 merge · L809 docs · L964 publish · L1280 plugins ·
-  L1294 keepboth · L1313 selftest · L1681 CLI
+Sections: L38 config · L72 run · L156 tracker · L331 git host · L414 MR · L575 merge · L824 docs · L979 publish · L1295 plugins ·
+  L1309 keepboth · L1328 selftest · L1702 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -314,8 +314,11 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     if t.get('id') and t.get('name') and new != md:
         _tracker('describe', tid, new)
     comment(tid, solution_md, 'comment-solution')
-    for ref in refresh_mr_docs(tid):
-        print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
+    try:   # after the tracker writes: a host error must not fail finish
+        for ref in refresh_mr_docs(tid):
+            print(f'[finish] {ref}: testing doc lines written', file=sys.stderr)
+    except Exception as e:
+        print(f'[finish] {tid}: MR testing doc lines not written ({e}): devtools.py merge writes them, or devtools.py mr', file=sys.stderr)
     cs = (CFG.get('tracker') or {}).get('statuses') or {}   # a name or a list of names (lib.ps1 tracker statuses)
     past = [str(n).lower() for k in ('promoted', 'inTest', 'closed') for n in ([cs[k]] if isinstance(cs.get(k), str) else cs.get(k) or
             {'promoted': ['promoted'], 'inTest': ['in test', 'for test'], 'closed': ['closed', 'complete', 'done']}[k])]
@@ -453,13 +456,25 @@ def with_doc_lines(body, tid):
     return '\n'.join(lines[:at] + add + lines[at:]) if add else body, [k for k, u in urls.items() if not u]
 
 
+def _ref_path(host, repo):
+    """A tracked ref's repo -> its host path: as is with a '/', gitlabGroup/<repo>, else the origin of repos[] <repo>'s checkout."""
+    if '/' in repo:
+        return repo
+    if host == 'gitlab' and CFG.get('gitlabGroup'):
+        return f"{CFG['gitlabGroup']}/{repo}"
+    co = next((r.get('checkout') for r in CFG.get('repos') or [] if isinstance(r, dict) and repo in [r.get('name')] + list(r.get('aliases') or [])), '')
+    return remote(co)[1] if co and os.path.isdir(co) else repo
+
+
 def refresh_mr_docs(tid, host=None):
     """The open MRs tracked for <tid> get both doc lines (finish publishes the docs after the MRs opened) -> the refs updated."""
     host, done = host or host_kind(GITLAB_HOST), []
     for ref in ((read_tracking().get('tasks') or {}).get(tid) or {}).get('mrs') or []:
         r = _norm_ref(ref)
-        path = r and (r[0] if '/' in r[0] or host != 'gitlab' or not CFG.get('gitlabGroup') else f"{CFG['gitlabGroup']}/{r[0]}")
+        path = r and _ref_path(host, r[0])
         m = _host('mr.get', type=host, repo=path, n=r[1]) if r else None
+        if not isinstance(m, dict) or not m.get('state'):
+            print(f'[mr] {ref}: not readable as {path} ({str(m)[:120]}): add its testing doc lines by hand', file=sys.stderr)
         if not isinstance(m, dict) or m.get('state') != 'opened':
             continue
         old = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
@@ -744,9 +759,6 @@ def _auto_merge(worktree, iid, max_wait):
         return f'!{iid}: no MR state from the git host for {proj} (auth status? network? path?); reply: {str(raw)[:300]}\nWAIT'
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
-    if NO_DOC.search(m.get('description') or m.get('body') or ''):   # merged 3x with no doc: testers had nothing to follow
-        return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
-                f'put its link in the MR body, merge again\nNOT_MERGED')
     body = str(m.get('description') or m.get('body') or '').replace('\r\n', '\n')
     if TASK_LINK.get(TRACKER_TYPE, '\0') in body and not (DOC_LINK.search(body) and AI_LINK.search(body)):   # a task's MR: both docs linked first
         tid = task_of_branch(m.get('source_branch')) or next((t for t, x in (read_tracking().get('tasks') or {}).items() if any(
@@ -755,7 +767,10 @@ def _auto_merge(worktree, iid, max_wait):
         if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # published docs: the body is fixed here, 4 runs lost merges to it
             return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
                     f' after the local loop PASS: devtools.py finish (it writes them), merge again\nNOT_MERGED')
-        _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs')
+        _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs'); body = new
+    if NO_DOC.search(body):   # merged 3x with no doc: testers had nothing to follow (after the rewrite: a published doc replaces "none")
+        return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
+                f'put its link in the MR body, merge again\nNOT_MERGED')
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
@@ -1393,10 +1408,16 @@ def selftest():
         tb = lambda body: (lambda f: lambda v, **a: dict(f(v, **a), source_branch='f/CU-T7-x') if v == 'mr.get' else f(v, **a))(nd(body))
         lb = 'https://app.clickup.com/t/T7\n## Links\n- Testing doc: pending\n\n' + FOOTER
         calls.clear(); g['_host'] = tb(lb); rf = merge_word(auto_merge('.', '7')); up = [a.get('body', '') for v, a in calls if v == 'mr.update']
+        g['_host'] = tb(lb.replace('pending', 'none')); rnone = merge_word(auto_merge('.', '7')); rt0, ups = g['read_tracking'], []
+        g['read_tracking'] = lambda *a: {'tasks': {'T7': {'mrs': ['o/web!5', 'web!6']}}}
+        g['_host'] = lambda v, **a: (ups.append(a) or {}) if v == 'mr.update' else ({'state': 'opened', 'title': 't', 'description': 'x'} if a.get('repo') == 'o/web' else {})
+        with _c.redirect_stderr(io.StringIO()):
+            rr = refresh_mr_docs('T7', 'github')
+        g['read_tracking'] = rt0; rfin = rr == ['o/web!5'] and 'Testing doc (AI): https://d/testing-ai' in ups[0]['body'] and rnone == 'MERGED'
         g['_nodoc'] = 'testing-ai'; calls.clear(); g['_host'] = tb(lb); rn = auto_merge('.', '7'); nm = not merged()
         wl, miss = with_doc_lines(lb, 'T7'); g.pop('_nodoc'); g['_pub_read'], g['TAG'], g['TRACKER_TYPE'] = pr0, tag0, tt0
-        expect(f'merge: a task MR without doc lines gets them from the published docs and merges; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
-               rf == 'MERGED' and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
+        expect(f'merge: a task MR without doc lines (or "none") gets them from the published docs and merges; finish writes them into tracked open MRs; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
+               rf == 'MERGED' and rfin and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
                and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl)
         calls.clear(); g['_host'] = fake(cfg=False)
         expect('no CI config: merged at once, not merge-when-green', merge_word(auto_merge('.', '7')) == 'MERGED' and merged() and not merged()[0]['auto'])
