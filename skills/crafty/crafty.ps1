@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 wt · L293 stack · L468 gate · L734 check · L919 pipes · L957 guard · L1553 dir · L1563 checkpoint ·
-  L1588 prior · L1622 tracker · L1674 host
+  L1588 prior · L1622 tracker · L1675 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1641,6 +1641,7 @@ function Invoke-Tracker {
     'status' { Set-TrackerStatus $__id $__x }
     'comment' {   # -Kind comment-solution | comment-status | comment-deploy: over its prose limits = refused, nothing posted
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
+      if ("$($__trOpt.Kind)" -like 'mrs-*' -or (ConvertTo-KitLetters $__ct).StartsWith((ConvertTo-KitLetters $script:KitMrsHeading))) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
       if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
       elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }

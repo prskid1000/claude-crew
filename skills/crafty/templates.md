@@ -129,9 +129,10 @@ What must hold before merge:
 ## Testing doc (AI)
 The dev flow's local test record, by devy from `goals.md` when the loop starts: one row per positive, negative, edge and
 regression case (invalid input, role denials, boundaries, empty data, concurrency where relevant, nearby features,
-impact-check edges). Each round (fix rounds too) fills Result and Evidence (images inline, request / response excerpt +
-link), appends its Rounds row, republishes: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"` (same link,
-earlier rounds kept; refused without a negative row or the Rounds table, or with a row dropped). It shows the local PASS.
+impact-check edges). Each round (fix rounds too) fills Result and Evidence (images inline, request / response + link),
+appends its Rounds row, republishes: `devtools.py doc --key <task>:testing-ai --label "loop round <n>"` (same link,
+earlier rounds kept; refused without a negative row or the Rounds table, a row dropped, a Result with no Evidence link or
+image). It shows the local PASS.
 ```markdown
 # Testing doc (AI): <task id> <title>
 Setup and cleanup: <data created via the API (prefixed), feature switches, logins by key; what is deleted after>.
@@ -215,7 +216,7 @@ The MR opens with `Testing doc: pending`; after the loop PASS, `devtools.py mr` 
 **MRs:** <ref (MERGED|SCHEDULED|OPEN)> · **Local proof:** <env r<n>, goals passed>
 **After deploy:** <settings/data to seed, or "nothing"> · **Deferred:** <item — reason, or "none">
 ```
-A task has three kit comments, each edited in place: MRs (merge order; a status line once all merged), solution, QA result.
+A task has three kit comments, edited in place: MRs (`bossy.ps1 track add` only), solution, QA result.
 The testing doc links (human + AI) live only on top of the task description (`devtools.py finish`), never in a comment.
 
 ## Decision request

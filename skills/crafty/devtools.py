@@ -18,8 +18,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L36 config · L70 run · L154 tracker · L319 git host · L402 MR · L480 merge · L724 docs · L857 publish · L1067 plugins ·
-  L1081 keepboth · L1100 selftest · L1401 CLI
+Sections: L36 config · L70 run · L154 tracker · L319 git host · L402 MR · L480 merge · L724 docs · L857 publish · L1084 plugins ·
+  L1098 keepboth · L1117 selftest · L1420 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -941,6 +941,15 @@ def _table_rows(md, cells=None):
     return rows, '\n'.join(out)
 
 
+NO_RUN = re.compile(r'(?i)\s*(|[—-]|n/?a|not[ _]tested|out[ _]of[ _]scope|skip(ped)?|pending|blocked)\s*')
+EVIDENCE_LINK = re.compile(r'(?i)https?://|!\[|<img\b')
+
+
+def bare_evidence(rows):
+    """Ids of rows with a Result but no evidence a reader can open (a link, an inline image): a test name or 'same' proves nothing."""
+    return [i for i, r, e in rows if not NO_RUN.fullmatch(r or '') and not EVIDENCE_LINK.search(e or '')]
+
+
 def _round_rows(md):
     """The first cells (round numbers) of the AI doc's Rounds table; None without one."""
     m = ROUNDS_TABLE.search(md or '')
@@ -983,6 +992,11 @@ def _check_doc(kind, scope, path, body):
     if kind == 'testing-ai':
         if not neg:
             raise SystemExit(f'{path} has no negative row: the AI doc covers every positive and negative case (templates.md "{tpl}"). Nothing was published.')
+        bare = bare_evidence(_table_rows(body)[0])
+        if bare:
+            raise SystemExit(f'{path}: row(s) {", ".join(bare)} have a Result but no Evidence link: upload the screenshot, request + response JSON'
+                             ' or test run output (devtools.py evidence) and put its link or inline image in the cell, never a bare file or test name.'
+                             ' Nothing was published.')
         return   # published every loop round: it is the loop's record
     ok, ev = local_pass(scope)
     if not ok:
@@ -1005,6 +1019,9 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
         key, kind, run = f'{scope}:qa-report', 'qa-report', None
     if kind in ('testing-doc', 'testing-ai') and run is None:
         _check_doc(kind, scope, path, body)
+    bare = bare_evidence([(i, (c or {}).get('result'), (c or {}).get('evidence')) for i, c in (run or {}).items()])
+    if bare:
+        print(f'[publish] {key}: run row(s) {", ".join(bare)} have a Result but no Evidence link or inline image', file=sys.stderr)
     if kind in ('testing-doc', 'testing-ai') and mode == 'replace':
         print(f'[publish] {key}: a testing doc keeps every round and run: --mode replace ignored', file=sys.stderr)
         mode = 'append'
@@ -1302,7 +1319,9 @@ def _publish_selftest(expect, refused):
         expect('publish by key: the task index points at the doc (docs.testing-doc, schemaVersion 1)', ix.get('docs', {}).get('testing-doc', {}).get('url') == u1 and ix.get('schemaVersion') == 1)
         refused('testing-ai: no Rounds table -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a1.md'), aidoc.split('Rounds:')[0])), 'no Rounds table')
         refused('testing-ai: a round that drops an earlier Rounds row -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a3.md'), aidoc.replace('| 1 | 2026-10-29', '| 2 | 2026-10-30'))), 'dropped Rounds row(s) 1')
-        a2 = aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS |') + '| 2 | 2026-10-30 | A1-A3 | 3 PASS | none | def456 | A3 PASS |\n'
+        a2 = aidoc.replace('| A1 | positive | GET /list | 200, newest first | |', '| A1 | positive | GET /list | 200, newest first | PASS | [json](https://d/a1)') + '| 2 | 2026-10-30 | A1-A3 | 3 PASS | none | def456 | A3 PASS |\n'
+        for ev in ('test_router.py "help patterns are narrow"', 'same'):
+            refused(f'testing-ai: a PASS row whose Evidence is {ev!r} (no link, no inline image) -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'ab.md'), a2.replace('[json](https://d/a1)', ev))), 'A1 have a Result but no Evidence link')
         a2p = w(os.path.join(tmp, 'a2.md'), a2); ua2 = publish('T9:testing-ai', 'X', a2p, label='loop round 2', mode='replace')
         ab = open(ua2, encoding='utf-8').read()
         expect('testing-ai: round 2 updates the same doc, round 1 kept whole below (its rows, its Rounds row); --mode replace ignored',

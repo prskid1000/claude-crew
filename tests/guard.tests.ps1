@@ -105,19 +105,34 @@ $rt = foreach ($n in 2, 3, 7) { $rd.resources = @(1..$n | ForEach-Object { @{ na
 Expect "report: tables only (no titles but RAM's, no loose lines), widths ($fw) <= 95, cells <= 80 whole words; RAM groups by rows, no filler ($rt)" ($r1.StartsWith($want1) -and "$rt" -eq '12000 13000 14000' -and $r1.EndsWith("`n") -and -not @($fw | Where-Object { $_ -gt 95 }).Count -and -not ($fr -split '\|' -match '.{83}') -and $r1 -cnotmatch 'full: report|\*\*Flags|\*\*Shells|NEXT|transcripts' -and $fr[1] -match ' p …? \| nx \|$' -and $fr[3] -match 'WATCH \| RESTART LOOP \| — \| — \| hm' -and ($r1 -replace ' ').Contains('J1(wave-brief-a8da)|34min|C:\d\\\|x|bossy.ps1decideanswer-Ide-20261029090127-J1-e69a|') -and $r2 -match 'below the floor 8 GB' -and $r2 -match 'nothing running')
 $bnv = (pwsh @np $D wt 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEXITCODE; $bdv = pwsh @np $O board 2>&1 | Out-String   # the raw line, not the wrapped error view
 Expect "a missing verb: exit 2 with the verb list ($bnc); board without one: show" ($bnc -eq 2 -and $bnv -match 'missing -Action\. Verbs: new, sync' -and $bdv -match '^board: ')
-$mc = Invoke-PsTest 'mrs-comment' @'
-$env:KIT_TRACKER_TYPE = 'none'
-. $args[0]
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/$($A.n)" } else { [pscustomobject]@{ state = 'opened'; title = "T$($A.n)" } } }
-function Invoke-HostApi([string]$Path, [string]$Method = 'GET', [hashtable]$Fields = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'opened'; title = 'CU-m1 x' } }
+$mm = @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $at = @{ '7' = '2026-01-02T10:00Z'; '12' = '2026-01-02T11:00Z' }
+function Invoke-HostVerb($Verb, $A) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/-/merge_requests/$($A.n)" } else { @{ state = ('opened', 'merged')[[bool]$at[$A.n]]; merged_at = $at[$A.n]; title = "T$($A.n) (CU-$(('m1', 'b9')[$A.n -eq '13'])) ($(($A.repo -split '/')[-1]))" } } }
+function Invoke-HostApi { @{ state = 'opened'; title = 'CU-m1 x' } }
 function Start-Process { }
-$null = Invoke-Track add -Task m1 -Mrs 'g/web!12'; $null = Invoke-Track add -Task m1 -Mrs 'g/api!7' -MergeAfter 'g/web!12>g/api!7'; $KitConf.TrackerTag = 'CU-'; $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
-$c = @(Get-TrackerComments m1 | Where-Object { $_.text -match '^MRs \(merge order\)' })
-"mrs:$($c.Count -eq 1 -and $c[0].text -match '(?s)g/api !7 — T7 — open — https://h/g/api/7\s+- g/web !12 — T12 — open')"
+'@
+$mc = Invoke-PsTest mrs-comment ($mm + @'
+$u = 'https://h/g/web/-/merge_requests/12'; foreach ($t in "MRs (merge order):`n- g/web !12 — T12 — merged — $u", 'Solution: x', "MRs (merge order):`n- g/api !7 - T7`n- g/web !13 - T13") { $null = Add-TrackerComment m1 $t }
+$first = @(Get-TrackerComments m1)[0].id; $KitConf.TrackerTag = 'CU-'
+1..2 | ForEach-Object { $null = Invoke-Track add -Task m1 -Mrs 'g/web!9' }   # this copy tracks !9 only
+$c = @(Get-TrackerComments m1); $h = 'https://h/g/'
+"mrs:$($c.Count -eq 2 -and $c[0].id -eq $first -and $c[1].text -eq 'Solution: x' -and $c[0].text -ceq "**MRs (merge order)**`n**g/api**`n1. [!7]($($h)api/-/merge_requests/7) T7 · merged`n**g/web**`n2. [!12]($u) T12 · merged`n3. [!9]($($h)web/-/merge_requests/9) T9 · open`nWaiting: g/web !9 (open)")"
+$tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
 "tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| open$')"
-'@ @($O)
-Expect 'track add: ONE MRs comment, edited per round, producers first then by number' ("$mc" -match 'mrs:True')
-Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task ($mc)" ("$mc" -match 'tb:True')
+"ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: the MRs comment has one writer' -and $LASTEXITCODE -eq 1)"
+'@) @($O, $D)
+Expect "track add: ONE MRs comment (the oldest edited, duplicates gone, solution kept) of every MR any copy listed, by repo, in merge order, footer; another task's MR dropped ($mc)" ("$mc" -match 'mrs:True')
+Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused ($mc)" ("$mc" -match 'tb:True.*ref:True')
+$racer = Join-Path (Kd) 'mrs-race.ps1'; $env:MRS_POSTS = Join-Path (Kd) 'mrs-posts'; $go = (Get-Date).AddSeconds(6).ToString('o')
+Set-Content $racer ($mm + @'
+function Get-TrackerComments($Id) { $r = @(__TrA comments @{ id = $Id } | Where-Object { $_ }); if (-not $r.Count) { Start-Sleep 3 }; $r }   # none yet: a slow read (the race window)
+function Add-TrackerComment($Id, $Text) { Add-Content $env:MRS_POSTS $Id; __Add-TrackerComment $Id $Text }   # tracker none keeps one of two racing writes
+while ((Get-Date) -lt [datetime]$args[1]) { Start-Sleep -Milliseconds 50 }
+$null = Invoke-Track add -Task c1 -Mrs "g/web!$($args[2])"
+'@)
+21, 22 | ForEach-Object { Start-Process pwsh (@($np) + $racer, $O, $go, $_) -PassThru -WindowStyle Hidden } | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
+$race = Invoke-PsTest mrs-count ($mm + '@(Get-TrackerComments c1).Count') @($O)
+Expect "two agents of one task write the MRs comment at once: one post, one comment ($race)" (@(Get-Content $env:MRS_POSTS).Count -eq 1 -and "$race" -eq '1')
 $bf = & { . $O; function Test-KitLive($l) { $l.agent -ne 'gone' }; $n = Get-Date; $f = { param($h, $ok) @{ ok = $ok; at = $n.AddMinutes(-$h).ToString('o') } }; $x = { param($h) (& $f ($h + 2) $false), (& $f ($h + 1) $false), (& $f $h $false) }
   $e = { param($p, $o, $c, $h) @{ event = 'end'; kind = 'm'; project = $p; owner = $o; code = $c; at = $n.AddMinutes(-$h).ToString('o') } }
   @(Get-KitBuildFailures @{ 'm|old' = & $x 70; 'm|new' = & $x 5; 'm|gone' = & $x 5; 'm|fixed' = & $x 5; 'm|mix' = @((& $f 3 $false), (& $f 2 $true), (& $f 1 $false)) } $n @((& $e new w 1 5), (& $e gone gone 1 5), (& $e fixed w2 1 5), (& $e fixed/sub w2 0 2)) | ForEach-Object { "$($_.key)@$($_.who)" }) -join ',' }
