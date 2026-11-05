@@ -6,12 +6,12 @@ import json, os, re, sys
 dt = None   # devtools.py, set by register
 
 
-def gws(*args, params=None, body=None, upload=None):
+def gws(*args, params=None, body=None, upload=None, sec=None):
     if not dt.GWS:
         raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
     cmd = [dt.GWS, *args] + (['--params', json.dumps(params)] if params is not None else []) + (['--json', json.dumps(body)] if body is not None else [])
     # gws uploads only cwd files
-    return dt._json(dt._run(cmd + ['--upload', os.path.basename(upload)] if upload else cmd, cwd=upload and os.path.dirname(os.path.abspath(upload))))
+    return dt._json(dt._run(cmd + ['--upload', os.path.basename(upload)] if upload else cmd, cwd=upload and os.path.dirname(os.path.abspath(upload)), **({'sec': sec} if sec else {})))
 
 
 def _share(fid, what, warn=False):
@@ -30,15 +30,19 @@ def _create(name, mime, parent, upload=None):
     return gws('drive', 'files', 'create', params={'supportsAllDrives': True, 'fields': 'id,webViewLink'}, body=b, upload=upload)
 
 
-def _update(fid, path):
+def _update(fid, path, sec=None):
     """Replace a Google Doc's content in place (Drive files.update + media; HTML tables and images convert as on create)."""
-    return gws('drive', 'files', 'update', params={'fileId': fid, 'supportsAllDrives': True, 'fields': 'id'}, upload=path)
+    return gws('drive', 'files', 'update', params={'fileId': fid, 'supportsAllDrives': True, 'fields': 'id'}, upload=path, sec=sec)
 
 
 def publish(a):
     m = re.search(r'docs\.google\.com/document/d/([\w-]+)', a.get('url') or '')
     if m:   # an earlier publish of this key: the same doc and link
-        r = _update(m.group(1), dt._html_of(a))
+        html = dt._html_of(a)
+        r = _update(m.group(1), html)
+        if 'timed out' in str(r) and hasattr(dt, 'net_sec'):   # a slow upload, not a lost doc: once more with double the time (same content)
+            print(f'warning: gws timed out updating {a["url"]}: retrying once with {2 * dt.net_sec()} s', file=sys.stderr)
+            r = _update(m.group(1), html, sec=2 * dt.net_sec())
         if isinstance(r, dict) and r.get('id') == m.group(1):
             return f'https://docs.google.com/document/d/{m.group(1)}/edit'
         print(f'warning: gws could not update {a["url"]} ({str(r)[:200]}): publishing a new doc', file=sys.stderr)
@@ -98,6 +102,11 @@ def selftest(expect, tmp, md):
         expect('gdocs: an earlier link is updated in place (files.update, same id and link, no create / share); tables upload as HTML tables',
                u2 == 'https://docs.google.com/document/d/1AbC/edit' and len(up) == 1 and len(calls) == 1 and calls[0][1]['params']['fileId'] == '1AbC'
                and '<b>Steps</b></th>' in html_up and '>T1</td>' in html_up)
+        use({}, lambda a: {'raw': 'error: timed out after 120 s'} if len(calls) == 1 else FILE)
+        u3 = dt.make_doc('T', tmd, url='https://docs.google.com/document/d/1AbC/edit')
+        expect('gdocs: an in-place update that timed out is retried once with double the timeout, same link, no new doc',
+               u3 == 'https://docs.google.com/document/d/1AbC/edit' and [a[2] for a, k in calls] == ['update', 'update']
+               and calls[1][1].get('sec') == 2 * dt.net_sec() and not calls[0][1].get('sec'))
         use({}); ev = dt.make_evidence('ev', [png])
         expect('gdocs evidence: a Drive folder, an image src per file', calls[0][1]['body']['mimeType'].endswith('folder') and ev['files']['g.png']['src'].endswith('id=1AbC'))
     finally:
