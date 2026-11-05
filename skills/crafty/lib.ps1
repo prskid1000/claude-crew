@@ -3,8 +3,8 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L406 leases · L864 status · L1095 supervise sweep ·
-  L1147 supervise report · L1210 tracker · L1470 prior · L1585 git-host · L1743 kitlog · L1863 params · L2176 entry-scripts
+Sections: L10 paths · L62 state · L132 config · L212 OS · L406 leases · L866 status · L1097 supervise sweep ·
+  L1149 supervise report · L1212 tracker · L1472 prior · L1587 git-host · L1745 kitlog · L1865 params · L2178 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -433,6 +433,8 @@ function Get-KitBeatMinutes {   # a NEXT older than 2 beats (the coordinator sto
   $s = try { Get-Content (Get-KitPath supervise-state) -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   if ($s.nextBeat -and $s.report.at -and ((Get-Date) - [datetime]$s.report.at).TotalMinutes -lt 2 * [double]$s.nextBeat) { [double]$s.nextBeat } else { [double](Get-KitParam 'supervise.heartbeatMinutes') }
 }
+# the heartbeat prompt (bossy E1) on supervise's stderr: the coordinator re-arms it word for word, never a paraphrase
+function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced, every table with its header row; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." }
 # the next heartbeat (min; the coordinator re-arms its timer to it): 5 with an open ACT or ENV-FIX; half the base (>= 5) with a
 # storage anomaly, 3+ failed builds in a row or many live agents; 30 when nothing runs, 22 when every agent is idle; else halfway
 # back to the base (learned supervise.heartbeatMinutes, 15: how often new ACTs appear)
