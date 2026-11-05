@@ -9,7 +9,7 @@ always-on rules and in AGENTS.override.md for Codex (local only: never in the ki
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L35 characters · L70 agents · L116 hooks · L165 workflows · L296 mechanics · L327 deploy · L501 command
+Sections: L35 characters · L70 agents · L116 hooks · L165 workflows · L296 mechanics · L328 deploy · L502 command
 """
 import base64, contextlib, io, json, os, re, shutil, tempfile
 from pathlib import Path
@@ -294,10 +294,11 @@ def port_workflows():
     print(f"ported {len(made)} workflow(s) -> .codex/workflows/*.md, .agents/kit-workflows/*.py")
 
 # ---- mechanics: what CLAUDE.md says for Claude Code, per CLI (GEMINI.md for agy; AGENTS.override.md head for Codex)
-E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an "
-  "ACT needs action (bossy E1)")
-PASTE = ("Paste the ENTIRE supervise output verbatim, never filtered or cut; resolve WATCH lines like ACT ones without asking; "
-  "ask the owner only for a real decision.")
+E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced, every "
+  "table with its header row; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; "
+  "re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1).")
+PASTE = ("The reply IS the ENTIRE supervise stdout, verbatim and unfenced, never summarised or cut; resolve WATCH lines like ACT "
+  "ones without asking; ask the owner only for a real decision.")
 
 def mechanics(tool):
     if tool == "Antigravity":

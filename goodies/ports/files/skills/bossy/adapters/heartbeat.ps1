@@ -20,7 +20,7 @@ if (-not $Thread) { 'usage: heartbeat -Thread <Codex session id> [-Minutes <n>] 
 if (-not $Minutes) { $Minutes = Get-KitBeatMinutes }
 $codex = (Get-Command codex -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (-not $codex) { 'heartbeat: UNKNOWN: codex is not on PATH, nothing armed'; exit 1 }
-$msg = "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief, paste its output verbatim, one own line only when an ACT needs action, then re-arm: bossy.ps1 heartbeat -Thread $Thread -Minutes <its stderr NEXT=n> (bossy E1)"
+$msg = "$(Get-KitBeatPrompt) Re-arm: bossy.ps1 heartbeat -Thread $Thread -Minutes <its stderr NEXT=n>"
 $cmd = "Start-Sleep -Seconds $([int]($Minutes * 60)); & '$codex' queue --thread '$Thread' --message '$($msg -replace "'", "''")'"
 $a = @('-NoProfile', '-NonInteractive', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)))   # no quoting through Start-Process
 $p = if ($KitIsWindows) { Start-Process pwsh -ArgumentList $a -WindowStyle Hidden -PassThru } else { Start-Process pwsh -ArgumentList $a -PassThru }
