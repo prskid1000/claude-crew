@@ -2,12 +2,12 @@
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, env leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of
-the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), seats and leases in board show and recover, the status resource rows, release (every lease of an agent).
+the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (supervise.output, publish), seats and leases in board show and recover, the status resource rows, release (every lease of an agent).
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L46 supervise · L184 shells · L298 release · L327 lines · L352 cleanup
+Sections: L13 builds · L46 supervise · L184 shells · L298 page · L343 release · L372 lines · L397 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -293,6 +293,51 @@ function Get-KitSuperviseGuardShells([switch]$AutoFix) {
   $script:KitShellRows = @(); if (-not (Within 'shells')) { return }
   try { $sh = Get-KitShellSweep $state $now -AutoFix:$AutoFix; $script:KitShellRows = $sh.rows; $sh.line; $sh.flags }
   catch { [pscustomobject]@{ level = 'WATCH'; what = "shell sweep failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Get-KitShellSweep.' } }
+}
+
+# ---- page: supervise's report page (every mode) and the -Brief stdout per supervise.output
+# supervise's live dashboard (every mode): one self-contained page + its .json, rewritten atomically, reloads every 60 s; returns its
+# path; a failure: a WATCH and '' (that round prints the tables)
+function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
+  $e ={ param($x) [Net.WebUtility]::HtmlEncode("$x") }; $rk = @{ ACT = 0; WATCH = 1; INFO = 2 }
+  $p = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); $pj = [IO.Path]::ChangeExtension($p, '.json')
+  $History = @(@([pscustomobject]@{ at = $d.at.ToString('o'); flags = @($d.flags | Where-Object level -ne 'INFO' | Select-Object level, what) }) + @($(try { Get-Content -LiteralPath $pj -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }).history | Where-Object { $_ }) | Select-Object -First ([int](Get-KitSetting 'supervise.historySweeps' 12)))
+  $tb = { param([string]$h, [string[]]$cols, $rows) "<h2>$h</h2>"; if (-not @($rows).Count) { return '<p class=m>none</p>' }
+    '<table><tr>' + (@($cols | ForEach-Object { "<th>$(& $e $_)</th>" }) -join '') + '</tr>'
+    foreach ($r in @($rows)) { '<tr>' + (@($r | ForEach-Object { if ("$_" -match '^(ACT|WATCH|INFO)$') { "<td class=$_>$_</td>" } else { "<td>$(& $e $_)</td>" } }) -join '') + '</tr>' }; '</table>' }
+  $fl = @(@($d.flags) + @($d.info | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ level = 'INFO'; what = $_; action = '' } }) | Sort-Object { $rk["$($_.level)"] })
+  $m = $d.mem; $set = Get-KitSetting 'supervise' $null
+  $body = @("<header><h1>Supervise</h1><span id=age data-at='$($d.at.ToString('o'))'></span> · last sweep $($d.at.ToString('yyyy-MM-dd HH:mm')) · $(& $e $Next)</header>") +
+    @(& $tb 'Flags' 'Level', 'Flag', 'Next step' @($fl | ForEach-Object { , @($_.level, $_.what, $_.action) })) +
+    @(& $tb 'Agents' 'Agent', 'Task', 'State', 'Doing', 'Next' @($d.rows | Sort-Object { $_.state -eq 'FINISHED' } | ForEach-Object { , @($_.name, $_.task, "$($_.state) $($_.wait)$($_.done)$($_.stopped)", $_.doing, $_.next) })) +
+    "<h2>RAM</h2><p>$([math]::Round($m.TotalGB - $m.AvailGB, 1)) / $([math]::Round([double]$m.TotalGB, 1)) GB used, $([math]::Round([double]$m.AvailGB, 1)) GB free (floor $($d.keepFree) GB)</p>" +
+    @(& $tb 'Resources' 'Resource', 'Holder', 'GB' @($d.resources | Sort-Object { -[double]$_.gb } | ForEach-Object { , @($_.name, $_.by, $_.gb) })) +
+    @(& $tb 'Shells' 'PID', 'Owner', 'Age min', 'State', 'Dir', 'Command', 'Next' @($d.shells | ForEach-Object { , @($_.pid, $_.owner, $_.age, $_.state, $_.dir, $_.cmd, $_.next) })) +
+    @(& $tb 'History' 'Sweep', 'Level', 'Flag' @(foreach ($h in @($History)) { foreach ($x in @($h.flags | Sort-Object { $rk["$($_.level)"] })) { , @($(try { ([datetime]$h.at).ToString('MM-dd HH:mm') } catch { "$($h.at)" }), $x.level, $x.what) } })) +
+    @(& $tb 'Settings' 'Key', 'Value' @(if ($set) { $set.PSObject.Properties | ForEach-Object { , @("supervise.$($_.Name)", $(if ($_.Name -eq 'publish') { '(set)' } else { $_.Value | ConvertTo-Json -Compress -Depth 4 })) } })) +
+    "<h2>Sweep</h2><pre>$(& $e ($Sweep -join "`n"))</pre>"
+  $css = ':root{--bg:#f6f5f1;--fg:#3b3f3a;--mute:#8a8d86;--line:#dcdad2;--act:#c98c82;--watch:#c9b27f;--info:#8fbf7f}@media(prefers-color-scheme:dark){:root{--bg:#22241f;--fg:#d6d4cc;--mute:#8a8d86;--line:#3a3d36;--act:#a8716a;--watch:#a8955f;--info:#6f9a62}}body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:1.5em}h1{display:inline;font-size:1.3em}h2{font-size:1.05em;margin:1.4em 0 .4em}header{color:var(--mute)}.stale{color:var(--act)}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:.3em .5em;text-align:left;word-break:break-word}th{color:var(--mute)}td.ACT{color:var(--act)}td.WATCH{color:var(--watch)}td.INFO{color:var(--info)}.m{color:var(--mute)}pre{white-space:pre-wrap;color:var(--mute)}'
+  $nm = if ($Next -match '(\d+(?:\.\d+)?)') { $Matches[1] } else { 15 }   # stale = older than 2 heartbeats
+  $js = "var a=document.getElementById('age'),t=new Date(a.dataset.at),n=$nm;function u(){var m=Math.round((Date.now()-t)/60000);a.textContent='updated '+m+' min ago';a.className=m>2*(n||15)?'stale':''}u();setInterval(u,30000)"
+  Write-KitAtomic $pj ([pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); sweep = @($Sweep) } | ConvertTo-Json -Depth 6)
+  Write-KitAtomic $p ("<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=60><title>Supervise $($d.at.ToString('HH:mm'))</title><style>$css</style></head><body>" + ($body -join "`n") + "<script>$js</script></body></html>")
+  $pub = [string](Get-KitSetting 'supervise.publish' '')   # the bytes never pass through the model
+  if ($pub.Trim()) {   # encoded: Windows strips the double quotes of a joined -Command line
+    $sp = @{ FilePath = 'pwsh'; ArgumentList = @('-NoProfile', '-NonInteractive', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($pub))); ErrorAction = 'Stop' }; if ($KitIsWindows) { $sp.WindowStyle = 'Hidden' }
+    $env:KIT_SUPERVISE_HTML = $p; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML -ErrorAction SilentlyContinue } }
+  $p
+  } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix lib.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }; '' }   # $flags: the supervise verb's list (-Json, plain)
+}
+# -Brief stdout (supervise.output): html = link, ACT / WATCH / fix lines, counts; chat = tables; both
+function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
+  $o = if ($Path) { ([string](Get-KitSetting 'supervise.output' 'html')).Trim().ToLower() } else { 'chat' }; if ($o -notin 'chat', 'both') { $o = 'html' }
+  if ($o -ne 'html') { Format-KitReport $Shown }; if ($o -eq 'chat') { return }
+  "report: $(([Uri]$Path).AbsoluteUri) (updated $($d.at.ToString('HH:mm'))) · detail: $(([Uri][IO.Path]::ChangeExtension($Path, '.json')).AbsoluteUri)"
+  foreach ($f in @($d.flags | Where-Object level -in 'ACT', 'WATCH' | Sort-Object { $_.level -ne 'ACT' })) {
+    $c = Get-KitFlagCells $f; "$($f.level) · $(@($c.kind, $c.who, $c.problem | Where-Object { "$_".Trim() } | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() }) -join ' · ')$(if ("$($c.action)".Trim()) { " -> $(("$($c.action)" -replace '\s+', ' ').Trim())" })"
+  }
+  foreach ($f in @($d.flags | Where-Object { $_.level -eq 'INFO' -and "$($_.what)" -like 'auto-fixed:*' })) { "FIXED · $("$($f.what)" -replace '^auto-fixed:\s*')" }
+  "$(@($d.rows | Where-Object state -ne 'FINISHED').Count) agent(s) active · $(@($d.flags | Where-Object level -eq 'ACT').Count) ACT · $(@($d.flags | Where-Object level -eq 'WATCH').Count) WATCH"
 }
 
 # ---- release: every lease of an agent (bossy.ps1 release, board leave, the workflows after each agent stage); idempotent

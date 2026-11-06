@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L227 budget · L255 launch · L527 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1076 supervise · L1379 report · L1458 audit · L1518 storage · L1729 bugbrief · L1831 cleanup · L1955 learn ·
-  L1985 decide · L2053 health · L2112 retro due · L2122 tidy · L2192 the kit origin's main and goodies · L2208 setup ·
-  L2275 guard-sendmessage
+  L763 track · L1076 supervise · L1380 report · L1459 audit · L1519 storage · L1730 bugbrief · L1832 cleanup · L1956 learn ·
+  L1986 decide · L2054 health · L2113 retro due · L2123 tidy · L2193 the kit origin's main and goodies · L2209 setup ·
+  L2276 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1361,14 +1361,15 @@ $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else 
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
+$page = Write-KitSuperviseHtml $report $lines $nextLine
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
-if ($Brief) {   # final markdown, pasted verbatim; long detail: a file read only on ACT
+if ($Brief) {   # pasted verbatim (supervise.output)
   $md = @(Format-KitReport $report)
   Write-KitSuperviseReport $report $md $lines $nextLine
   $shown = $report.PSObject.Copy(); $shown.rows = @(Select-KitBriefRows $report.rows $now)   # finished > finishedMinutes: report file only
-  Format-KitReport $shown; [Console]::Error.WriteLine("NEXT=$($next.min)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)"); $global:LASTEXITCODE = 0; exit 0   # tables only; NEXT + prompt for the re-arm, not the paste
+  Format-KitSuperviseOut $report $shown $page; [Console]::Error.WriteLine("NEXT=$($next.min)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)"); $global:LASTEXITCODE = 0; exit 0
 }
 "=== supervise $($now.ToString('HH:mm')) ==="; $lines; Format-KitStatusTable $rows $now $script:KitTxVersions
 if ($flags.Count) { '--- FLAGS'; $flags | Sort-Object { @{ ACT = 0; WATCH = 1; INFO = 2 }[$_.level] } | ForEach-Object { "[$($_.level)] $($_.what)`n        -> $($_.action)" } } else { '--- no flags: all good' }

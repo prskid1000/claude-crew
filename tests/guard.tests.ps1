@@ -85,7 +85,17 @@ $hd = "cd /d/x && export A=1; python - <<'`"'`"'EOF'`"'`"'`nimport a`nb`nEOF"; "
 $dd = @{ at = $t0; rows = @(); flags = @(); mem = @{ TotalGB = 8; AvailGB = 4 }; keepFree = 1; resources = @(@{ name = 'r'; gb = 1 }); shells = $rs[1].rows }
 $rp = (Format-KitReport $dd) -join "`n"; Write-KitSuperviseReport $dd @($rp) @() n; $f = Get-Content (Get-KitPath supervise-report) -Raw
 "order:$($rp.IndexOf('| Resource |') -lt $rp.IndexOf('| Shell |') -and $f.IndexOf('## Resources') -lt $f.IndexOf('## Shells'))"
+$dd.flags = @([pscustomobject]@{ level = 'WATCH'; what = 'w1'; action = 'a1' }, [pscustomobject]@{ level = 'ACT'; what = 'DECISION <b>x</b>'; who = 'devy'; action = 'answer it' }, [pscustomobject]@{ level = 'INFO'; what = 'auto-fixed: killed shell 7' }, [pscustomobject]@{ level = 'INFO'; what = 'plain info' })
+$pg = foreach ($i in 1, 2) { Write-KitSuperviseHtml $dd @('sweep line') 'NEXT 5 min (x)' }; $hx = Get-Content $pg[1] -Raw; $hj = Get-Content ([IO.Path]::ChangeExtension($pg[1], '.json')) -Raw | ConvertFrom-Json
+$o1 = @(Format-KitSuperviseOut $dd $dd $pg[1]); $o0 = @(Format-KitSuperviseOut $dd $dd '') -join "`n"
+"page:$($hx.Contains('DECISION &lt;b&gt;x&lt;/b&gt;') -and $hx.IndexOf('class=ACT') -lt $hx.IndexOf('class=WATCH') -and @($hj.history).Count -eq 2 -and @($hj.history[0].flags).Count -eq 2)"
+$pf = Join-Path $args[1] 'published.txt'; if (-not $__cfg) { $__cfg = [pscustomobject]@{} }; $__cfg | Add-Member -Force NoteProperty supervise ([pscustomobject]@{ publish = 'Set-Content -LiteralPath "' + $pf + '" -Value ($env:KIT_SUPERVISE_HTML + "  x")' })
+'not json{' | Set-Content ([IO.Path]::ChangeExtension($pg[1], '.json'))   # a corrupt .json: history restarts, the page still builds
+$pp = Write-KitSuperviseHtml $dd @() 'NEXT 5 min'; for ($w = 0; $w -lt 100 -and -not (Test-Path $pf); $w++) { Start-Sleep -Milliseconds 100 }; Start-Sleep -Milliseconds 300
+"pub:$((Get-Content $pf -ErrorAction SilentlyContinue) -eq "$pp  x" -and $pp -and -not $env:KIT_SUPERVISE_HTML -and @((Get-Content ([IO.Path]::ChangeExtension($pp, '.json')) -Raw | ConvertFrom-Json).history).Count -eq 1 -and (Get-Content $pp -Raw) -match '<td>supervise.publish</td><td>\(set\)')"
+"out:$($o1.Count -eq 5 -and $o1[1] -eq 'ACT · DECISION · devy · <b>x</b> -> answer it' -and $o1[2] -eq 'WATCH · w1 -> a1' -and $o1[3] -eq 'FIXED · killed shell 7' -and $o1[4] -eq '0 agent(s) active · 1 ACT · 1 WATCH' -and $o0 -match '\| Level \| Flag')"
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
+Expect "supervise page: escaped, ACT first, history of 2 sweeps in its .json; -Brief html stdout: link, ACT, WATCH, FIXED, counts; no page = the tables; supervise.publish runs with KIT_SUPERVISE_HTML, masked on the page ($($sh -match '^(page|out|pub):'))" ($sh -contains 'page:True' -and $sh -contains 'out:True' -and $sh -contains 'pub:True')
 Expect "shells: cell unquoted, heredoc collapsed, preambles skipped, 60 chars; the table after RAM in -Brief and the report ($($sh -match '^(short|order):'))" ($sh -contains 'short:python - <<EOF (heredoc, 2 lines)|60' -and $sh -contains 'order:True')
 $s0, $s1, $s9, $s2 = @($sh -match '^s\d:')
 Expect "shells: a finished owner's shell is killed in the first sweep (dir gone or not, never STUCK); coordinator's kept; young / non-agent unlisted ($s0)" (
