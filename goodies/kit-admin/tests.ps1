@@ -51,6 +51,12 @@ $capTo = { param($v) (Get-Content $bj -Raw) -replace '("totalTokens":\s*)\d+', "
 & $capTo 200000
 $b2 = & $bt; $c2 = (Get-Content $bj -Raw) -match '"totalTokens": 220000'
 Expect 'kit-admin: budget raise refused under the cap, x1.1 over it' ($c1 -eq 1 -and $b1 -match 'fits the cap' -and $b2 -match '200000 -> 220000' -and $c2)
+# budget raise -Tests: the same step for caps.testTokens; a hand edit of it = lint BUDGET-CAP
+$tcTo = { param($v) (Get-Content $bj -Raw) -replace '("testTokens":\s*)\d+', "`${1}$v" | Set-Content $bj -NoNewline; git -C $kc commit -qam tcap }
+& $tcTo 999000; $t1 = & $py -X utf8 $KT budget raise -Tests -Reason x 2>&1 | Out-String; $tc1 = $LASTEXITCODE
+& $tcTo 50000; $t2 = & $py -X utf8 $KT budget raise -Tests -Reason 'room for tests' 2>&1 | Out-String; $tc2 = (Get-Content $bj -Raw) -match '"testTokens": 55000\b'
+$tl = & { (Get-Content $bj -Raw) -replace '("testTokens":\s*)\d+', '${1}60000' | Set-Content $bj -NoNewline; & $py -X utf8 $KT lint $kc 2>&1 | Out-String }; git -C $kc checkout -q -- $bj
+Expect "kit-admin: budget raise -Tests: refused under the cap, x1.1 over it (testTokens only); a hand edit = BUDGET-CAP ($tc1)" ($tc1 -eq 1 -and $t1 -match 'tests \d+ fits the cap 999000' -and $t2 -match 'testTokens 50000 -> 55000 .*raise the test token cap to 55000 - room for tests' -and $tc2 -and $tl -match 'BUDGET-CAP.*testTokens 50000 -> 60000 is not one raise step')
 # kit-admin.md: every [CODE] it names is a lint code kitbag.py emits (no stale rule names)
 $doc = Get-Content (Join-Path $PSScriptRoot 'files/skills/bossy/kit-admin.md') -Raw
 $emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw), "(?:bad\('|\('(?=SECTION-))([A-Z-]+)'") | ForEach-Object { $_.Groups[1].Value }

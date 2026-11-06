@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L142 deploy · L267 supervise
+Sections: L13 helpers · L61 intest · L142 deploy · L274 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -158,8 +158,14 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     "requested a deploy for $($Mrs -join ', ') ($Run)"
   }
   if ($Action -eq 'record') {
-    if (-not $Env) { 'usage: deploy record -Env <target> [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
-    Write-KitLog deploy-log record ([ordered]@{ target = $Env; mrs = $Mrs; by = $By; note = $Note }); Add-KitParamTrigger deploy   # learned params re-evaluated
+    if (-not $Env) { 'usage: deploy record -Env <target>[,<target>..] [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
+    # one line per repos[].deploys target: a name the plan does not know (a host group) never clears its batch
+    $known = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | ForEach-Object target | Where-Object { $_ } | Select-Object -Unique)
+    $envs = @(Split-KitList @($Env) | Select-Object -Unique); $odd = @($envs | Where-Object { $_ -notin $known })
+    if (-not $envs.Count) { 'usage: deploy record -Env <target>[,<target>..] [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
+    if ($odd.Count) { "deploy record: unknown target(s) $($odd -join ', '): use the repos[].deploys names ($(if ($known) { $known -join ', ' } else { 'none configured' })); nothing recorded"; exit 2 }
+    foreach ($e in $envs) { Write-KitLog deploy-log record ([ordered]@{ target = $e; mrs = $Mrs; by = $By; note = $Note }) }; Add-KitParamTrigger deploy   # learned params re-evaluated
+    $Env = $envs -join ', '
     $bgPlan = Join-Path (Get-KitPath background) (ConvertTo-KitSlug 'bossy.ps1 deploy plan')   # supervise's last plan predates this deploy: no second ask, no stale "deploy ready"
     Remove-Item -LiteralPath (Join-Path (Get-KitPath deploys) 'plan-cache.json') -ErrorAction SilentlyContinue
     if (-not (Test-KitPid ($r = try { Get-Content -LiteralPath "$bgPlan.json" -Raw | ConvertFrom-Json } catch { $null }).pid $r.start)) { Remove-Item -LiteralPath "$bgPlan.json", "$bgPlan.out", "$bgPlan.err" -ErrorAction SilentlyContinue }   # a running one is left whole
@@ -230,8 +236,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $winOf = { param($t) if ($win -is [psobject] -and $win.PSObject.Properties.Name -contains $t) { [double]$win.$t } elseif ($win -is [psobject] -and $win.PSObject.Properties.Name -contains 'default') { [double]$win.default } elseif ($win -is [psobject]) { 4 } else { [double]$win } }
   $logged = if (Test-Path $log) { @(Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
   $hostErr = $null
+  $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
   $plan = foreach ($t in $targets) {
-    $batch = @(foreach ($m in $cand.Keys) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and $_.state -in 'NOT-DEPLOYED', 'MANUAL' })) { [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })
+    $batch = @(foreach ($m in $cand.Keys) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })
     $last = $null; $src = ''
     $l = @($logged | Where-Object { $_.target -eq $t } | Sort-Object { [datetime]$_.at }) | Select-Object -Last 1
     if ($l) { $last = [datetime]$l.at; $src = "kit log ($($l.by))" }

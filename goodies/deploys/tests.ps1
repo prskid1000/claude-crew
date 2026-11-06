@@ -21,6 +21,13 @@ $pcf = Join-Path (TkPath $k deploys -Create) 'plan-cache.json'; $bgp = Join-Path
 foreach ($f in $pcf, "$bgp.out", "$bgp.json") { '{"at":"2020-01-01","ask":["stage: 1 MR(s) (api!1)"],"pid":1}' | Set-Content $f }
 $null = & $dep record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
 Expect 'deploy record: WAIT in the window, the request cleared; the cached + background plan dropped (no second ask)' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count -and -not (Test-Path $pcf) -and -not (Test-Path "$bgp.out") -and -not (Test-Path "$bgp.json"))
+# a host-group name (no repos[].deploys target) is refused; a list records each target; a recorded MANUAL MR leaves the batch
+$fxm = Join-Path (Kd) 'deploy-fixture-m.json'; & $J @{ mrs = @{ 'api!7' = @{ rows = @(@{ target = 'preprod'; state = 'MANUAL'; detail = 'by hand' }) } } } $fxm
+$null = & $dep request -Mrs 'api!7' -Run w5 -Offline $fxm; $m0 = @(@(& $dep plan -Offline $fxm -Json | ConvertFrom-Json) | Where-Object target -eq preprod).mrs.Count
+$ru = & $dep record -Env 'stage-group' -Mrs 'api!7' | Out-String; $ruc = $LASTEXITCODE; $rl0 = @(Get-Content (TkPath $k deploy-log)).Count
+$null = & $dep record -Env 'stage,preprod' -Mrs 'api!7' -By tester; $rl = @(Get-Content (TkPath $k deploy-log) | ConvertFrom-Json | Select-Object -Last 2).target -join ','
+$m1 = @(@(& $dep plan -Offline $fxm -Json | ConvertFrom-Json) | Where-Object target -eq preprod).mrs.Count
+Expect "deploy record: an unknown target refused (exit 2, nothing logged), a list = one line per target, a recorded MANUAL MR leaves the batch ($ruc $rl $m0>$m1)" ($ruc -eq 2 -and $ru -match 'unknown target\(s\) stage-group' -and $rl0 -eq 1 -and $rl -eq 'stage,preprod' -and $m0 -eq 1 -and $m1 -eq 0)
 & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } $cfgF
 $fx2 = Join-Path (Kd) 'deploy-fixture2.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } $fx2
 $dr = & $dep request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String

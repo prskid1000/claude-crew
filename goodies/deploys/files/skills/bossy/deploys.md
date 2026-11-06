@@ -4,5 +4,5 @@ A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -
 question back:
 1. `bossy.ps1 deploy plan -Env <env>`: every session's merged-not-deployed MRs for that env.
 2. Deploy per the org's deploy rules (`deploy merge` for a deploy branch).
-3. `bossy.ps1 deploy record -Env <env> -Mrs <refs> -By <who>`.
+3. `bossy.ps1 deploy record -Env <target>[,<target>..] -Mrs <refs> -By <who>`: each a `repos[].deploys` target name (one per host deployed), never a host group.
 4. `bossy.ps1 deploy intest -Apply` once live (supervise -AutoFix also moves live tasks to inTest).

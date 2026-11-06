@@ -4,12 +4,12 @@ scan, token cost, releases and the budget raise.
   python -X utf8 skills/bossy/kitbag.py audit setup [--fix] | config [--fill] | recover [--fix] | scan [--kit <dir>] [--json <file>]
   python -X utf8 skills/bossy/kitbag.py cost [<kit>] [--steps] [--json]   # start tokens per agent type, workflow prompts
   python -X utf8 skills/bossy/kitbag.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
-  python -X utf8 skills/bossy/kitbag.py budget raise -Reason "<why>"     # the token cap x1.1, only while over it
+  python -X utf8 skills/bossy/kitbag.py budget raise [-Tests] -Reason "<why>"   # the token cap (-Tests: tests/) x1.1, only while over it
 
 Installed by `kitbag.py goody add kit-admin` (or `goody sync`); kitbag.py loads it and shares its own names (out, run, git,
 load_json, key_paths, manifest, cap_next, _sub_file).
-Sections: L18 helpers · L60 setup · L169 config · L328 recover · L473 release · L524 budget-raise · L546 cost · L662 registry ·
-  L666 scan
+Sections: L18 helpers · L60 setup · L169 config · L328 recover · L473 release · L524 budget-raise · L548 cost · L664 registry ·
+  L668 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, a refused raise, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -522,23 +522,25 @@ def cmd_release(a):
     return 0
 
 # ---- budget-raise: the token cap x1.1, only over it
-def budget_raise(kit, total, cap, flags):
-    """budget raise -Reason "<why trimming cannot make room>" (kitbag.py budget hands over): only while the total is over the
-    cap, multiplies the cap by 1.1, rounded to 1k, and prints the commit message carrying the reason (stored nowhere else)."""
+def budget_raise(kit, total, cap, flags, key='totalTokens'):
+    """budget raise [-Tests] -Reason "<why trimming cannot make room>" (kitbag.py budget hands over): only while the total
+    (key testTokens: tests/) is over the cap, multiplies the cap by 1.1, rounded to 1k, and prints the commit message carrying
+    the reason (stored nowhere else)."""
     why = next((str(v).strip() for f, v in flags.items() if f.lower().lstrip('-') == 'reason'), '')
-    if not why:
+    what = 'tests' if key == 'testTokens' else 'kit total'
+    if not why or why == 'True':
         print('budget raise: -Reason "<why trimming cannot make room>" is required', file=sys.stderr)
         return 2
     if total <= cap:
-        print(f'budget raise: refused - the kit total {total} fits the cap {cap}: nothing to raise', file=sys.stderr)
+        print(f'budget raise: refused - the {what} {total} fits the cap {cap}: nothing to raise', file=sys.stderr)
         return 1
     new = cap_next(cap)
-    bad = cap_problem(kit, new)
+    bad = cap_problem(kit, new, key)
     if bad:
         print(f'budget raise: refused - {bad}', file=sys.stderr)
         return 1
-    _sub_file(kit, PATHS_JSON, lambda t: re.sub(r'("totalTokens":\s*)\d+', lambda m: m.group(1) + str(new), t, count=1))
-    print(f'cap {cap} -> {new} (kit total {total}); commit message: chore(kit): raise the token cap to {new} - {why}')
+    _sub_file(kit, PATHS_JSON, lambda t: re.sub(rf'("{key}":\s*)\d+', lambda m: m.group(1) + str(new), t, count=1))
+    print(f'{key} {cap} -> {new} ({what} {total}); commit message: chore(kit): raise the {"test " if key == "testTokens" else ""}token cap to {new} - {why}')
     if total > new:
         print(f'still over: {total} > {new}: trim more (one raise per commit)')
     return 0
