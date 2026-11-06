@@ -21,7 +21,7 @@ Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register repor
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
 Sections: L38 config · L72 run · L160 tracker · L347 git host · L430 MR · L591 merge · L840 docs · L995 publish · L1339 plugins ·
-  L1353 keepboth · L1372 selftest · L1770 CLI
+  L1353 keepboth · L1372 selftest · L1772 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -857,7 +857,7 @@ def _cells(row):
     """A Markdown table row's cells; empty ones kept (a fresh human doc's Result / Evidence)."""
     r = row.strip()
     r = r[1:] if r.startswith('|') else r
-    return [c.strip() for c in (r[:-1] if r.endswith('|') and not r.endswith('\\|') else r).split('|')]
+    return [c.strip() for c in re.split(r'(?<!\\)\|', r[:-1] if r.endswith('|') and not r.endswith('\\|') else r)]   # \| stays inside its cell
 
 
 # Inline styles, not <code> / <col> / classes: Google Docs' HTML import keeps span and cell styles and the header cells' widths only
@@ -933,7 +933,7 @@ def md_to_html(md, title=''):
             rows = ['<tr>' + ''.join(f'<th style="{HEAD_CSS}{f";width:{w}%" if w else ""}"><b>{inline(c)}</b></th>' for c, w in zip(head, cw)) + '</tr>']
             i += 2
             while i < len(lines) and lines[i].startswith('|'):
-                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c, caps[j] if j < len(caps) else caps[-1])}</td>'
+                rows.append('<tr>' + ''.join(f'<td style="{CELL_CSS}">{inline(c.replace(chr(92) + "|", "|"), caps[j] if j < len(caps) else caps[-1])}</td>'
                                              for j, c in enumerate(_cells(lines[i]))) + '</tr>'); i += 1
             out.append(f'<table border="1" style="border-collapse:collapse{";width:100%" if any(cw) else ""}">' + ''.join(rows) + '</table>'); continue
         m = re.match(r'^(#{1,6})\s+(.*)$', l)
@@ -1653,6 +1653,8 @@ def _publish_selftest(expect, refused):
                ua2 == ua and ab.index('| 2 | 2026-10-30') < ab.index('## Round 1') < ab.rindex('| A1 | positive | GET /list | 200, newest first | | |') and ab.count('| 1 | 2026-10-29') == 2)
         rep = w(os.path.join(tmp, 'r.md'), '# QA\n## Results\n| Check | Result | Observed | Evidence |\n|---|---|---|---|\n| T2 | PASS | ok | |\n')
         expect('the human doc starts with Result / Evidence empty', _table_rows(open(u2, encoding='utf-8').read())[0][0] == ('T2', '', ''))
+        pt = _table_rows('| # | Steps | Result | Evidence |\n|---|---|---|---|\n| A1 | a \\| b | PASS | |', {'A1': {'result': 'PASS', 'evidence': 'x|y'}})
+        expect('a \\| in a cell: the row is still read, a filled x|y too, the HTML shows |', pt[0] == [('A1', 'PASS', '')] and _table_rows(pt[1])[0] == [('A1', 'PASS', 'x\\|y')] and 'a | b</td>' in md_to_html(pt[1]))
         ur = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'PASS', 'evidence': '![T2: list](https://img/s2.png)'}})
         hb = open(ur, encoding='utf-8').read()
         expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',

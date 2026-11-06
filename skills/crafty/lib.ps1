@@ -1057,7 +1057,7 @@ function Format-KitCell($Text, [int]$Max = 12, [switch]$Exact) {
   $t = $t -replace '(\\*)\|', '$1$1\|'   # escaped before the split (backslashes doubled: \\| ends the cell); never split inside \|
   $out = [Collections.Generic.List[string]]::new()
   foreach ($w in @($t -split '\s+' | Where-Object { $_ })) {
-    if ($w.Length -le $Max) { $out.Add($w); continue }
+    if ($w.Length -le $Max -or $w -match '^-[A-Za-z]+$') { $out.Add($w); continue }   # a split -Parameter is a broken command (-Hold Promotion)
     $cur = ''
     foreach ($p in [regex]::Split($w, '(?<=[-_.:,;/\\=])(?!\\*\|)(?=.)|(?<=[a-z])(?=[A-Z])')) {
       if ($cur -and ($cur + $p).Length -gt $Max) { $out.Add($cur); $cur = '' }

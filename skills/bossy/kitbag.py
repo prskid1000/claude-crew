@@ -1134,7 +1134,7 @@ def cmd_lint(a):
 # ---- audit: findings, shared helpers, stamp (scan: consistency and pitfall candidates, goody kit-admin)
 # user-named subtrees (or samples): never "missing"
 USER_MAPS = ('localEnv', 'repos', 'repoAliases', 'targets', 'linkFromByTarget', 'tracker.statuses', 'tracker._examples',
-  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets')
+  'gate.startHeapGB', 'lanes', 'app', 'localFiles', 'deploy.minIntervalHours', 'tests', 'qa.targets', 'runtimes')
 AUTOMATIC = {'input', 'args', 'matches', 'error', 'host', 'home', 'pid', 'pwd', 'profile', 'this', 'event', 'sender', 'ofs',
    'psitem', 'iswindows', 'islinux', 'ismacos', 'executioncontext', 'myinvocation', 'psboundparameters', 'lastexitcode'}
 AUDIT_VERBS = {'stamp': lambda kit, flags: cmd_stamp(kit)}   # goody kit-admin adds setup, config, recover, scan

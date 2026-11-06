@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L255 ship-prompt · L278 plan · L292 spike ·
-//   L305 local-loop · L369 stages · L508 ship · L623 deploy · L640 learn
+// Sections: L18 args · L137 record-args · L157 budget · L177 build-prompt · L256 ship-prompt · L279 plan · L293 spike ·
+//   L306 local-loop · L370 stages · L509 ship · L624 deploy · L641 learn
 // ---- args: the run's input, checked
 /* args = {
  brief: '<abs path>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"),
@@ -189,7 +189,8 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fix
 - ENV-FIX: & ${ORCH} decide ask -Kind envfix -Run ${RUN} -Agent <id> -Item <item> -Question "<the fix>" ; that item -> needsEnvFix.
 - DECISION: & ${ORCH} decide ask -Run ${RUN} -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." -Recommend <A|B> (-Fyi: nothing waits)
  -Contracts <brief>.contracts.md ; that item -> needsDecision. Both: continue the other items.
-- LOCAL LOOP until 0 open bugs and every goal PASS (bugs you or checky find come back to the code): each round appends its row to
+- LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, counted as passed;
+ its human check runs after deploy) (bugs you or checky find come back to the code): each round appends its row to
  the AI doc's Rounds table (round, date, cases, result, bugs, fix commit, retest) and republishes it (--label "loop round <n>").
 - Every goal PASS: crafty.ps1 checkpoint -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
  then the human doc (positive cases) + the AI doc (every case) and devtools.py finish <task> testing.md solution.md review --ai ai.md,
@@ -466,7 +467,7 @@ const results = await pipeline(
    if (lt2.status === 'BLOCKED' || lt2.status === 'FAIL') return { ...x, fixed: false, blocked: `local test ${lt2.status} after the fix round` }
    // re-review: only blocking findings hold the merge (one more fix round, then a decision); should-fix / nit -> the MR's Follow-ups
    let open = findings.filter(mustFix), soft = []
-   const held = async (y) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...(soft.length && { followUps: await followUps(a, x.report, soft) }) })
+   const held = async (y, more = []) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...((soft.length || more.length) && { followUps: await followUps(a, x.report, [...soft, ...more]) }) })
    for (let round = 1; open.length; round++) {
     const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${f.file}${f.line ? ':' + f.line : ''}: ${f.problem}`).join('\n')}`
     const [rv2, mv2] = await Promise.all([agent(reviewPrompt(a, x.report) + rr, { label: `review:${a.id}`, phase: 'Review', schema: REVIEW_SCHEMA, agentType: 'revy', ...pick('review') }),
@@ -474,7 +475,7 @@ const results = await pipeline(
     const again = [rv2, mv2].flatMap((v) => v ? (v.findings || []) : [BLOCK(x.report.mrs, 'The re-review agent returned nothing: the fix round is unreviewed and was not merged.', REREVIEW)])
     soft.push(...again.filter((f) => f.severity !== 'blocking')); open = again.filter((f) => f.severity === 'blocking')
     if (!open.length) break
-    if (round >= 2 || !rv2 || !mv2) { const d = await askBlocking(a, x.report, open); return held(d ? { decisionAsked: d } : {}) }   // no reviewer: nothing to fix
+    if (round >= 2 || !rv2 || !mv2) { const d = await askBlocking(a, x.report, open); return held(d ? { decisionAsked: d } : {}, d ? open : []) }   // no reviewer: nothing to fix; asked: option A's Follow-ups are written now
     if (!(await gate('Fix'))) return held({ budgetStopped: true })
     log(`${a.id}: re-review: ${open.length} blocking finding(s) -> one last fix round`)
     const r4 = await agent(fixPrompt(a, x.report, open), { label: `fix:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...modelOf(a) })

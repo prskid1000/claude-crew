@@ -175,5 +175,7 @@ $t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_reque
 '@
 $res = Invoke-PsTest 'pipes-test' $pt @($D)
 Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged'
+$ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }
+Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 Remove-TestKit $k
 Complete-Tests

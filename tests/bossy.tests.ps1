@@ -39,8 +39,6 @@ $saved = $env:CLAUDE_CODE_SESSION_ID; Remove-Item Env:CLAUDE_CODE_SESSION_ID -Er
 $ow = @(1, 2 | ForEach-Object { pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''" }); $ob = @(pwsh -NoProfile -Command ". '$O'; function Get-KitHolder { @{} }; Get-SuperviseOwner ''; Get-SuperviseOwner ''")
 $env:CLAUDE_CODE_SESSION_ID = 's1'; $os = pwsh -NoProfile -Command ". '$O'; Get-SuperviseOwner ''"; Remove-Item Env:CLAUDE_CODE_SESSION_ID; if ($saved) { $env:CLAUDE_CODE_SESSION_ID = $saved }
 Expect 'supervise: without -Session the lock owner is the session, stable per round (no step-aside from itself), detached too' ($ow[0] -and $ow[0] -eq $ow[1] -and $ow[0] -notmatch '^pid' -and $os -eq 's1' -and $ob[0] -match '^shell\d' -and $ob[0] -eq $ob[1])
-$ec = & { . $O; "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")" }
-Expect 'cut: emojis whole' ($ec -eq 'FalseTrue')
 $tb = pwsh -NoProfile -Command ". '$O'; `$KitConf.TrackerTag = 'CU-'; `$KitConf.TrackerRepos = @('web'); `$KitConf.GitlabGroup = 'g'; function Invoke-HostApi(`$p) { if (`$p -match 'search=') { @{ iid = 5; state = 'merged' } } elseif (`$p -match 'merge_requests/5$') { @{ target_branch = 'rel/x' } } }; Get-TaskMrBranches 'abc', '' | ForEach-Object { `"`$(`$_.ref) `$(`$_.repo)@`$(`$_.branch)`" }"
 Expect "bugbrief: the original task's MRs give repo@target" ($tb -eq 'web!5 web@rel/x')
 Remove-Item Env:KIT_TRACKER_TYPE
@@ -111,12 +109,12 @@ function Add-TrackerComment($id, $text) { $global:cmts += [pscustomobject]@{ id 
 function Get-TrackerComments($id) { @($global:cmts | Where-Object { $_.id -eq $id }) }
 function Set-TrackerKitComment($id, $kind, $text) { $global:cmts = @(@($global:cmts | Where-Object { -not ($_.id -eq $id -and $_.kind -eq $kind) }) + [pscustomobject]@{ id = $id; kind = $kind; text = "$(if ($text -is [scriptblock]) { & $text } else { $text })" }) }   # edited in place (crafty tests cover it)
 function Start-Process { }   # no background cleanup from a test
-$null = Invoke-Track add -Task t5 -Mrs 'g/web!9' -OnMerged 'review,promoted'
+$null = Invoke-Track add -Task t5 -Mrs 'g/web!9' -OnMerged 'review,promoted'; $d5 = (Read-KitTracking).tasks['t5'].done
 $null = Invoke-Track run -Detail
 Update-KitTracking { param($t) $t.tasks['t5'].done = $false }
 $null = Invoke-Track run -Detail
 "skip:$(-not @($global:sets | Where-Object { $_ -like 't5=*' }).Count)"
-"once:$(@($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match 'All merged: promoted' }).Count -eq 1 -and -not @($global:cmts | Where-Object { $_.text -match '^All MRs merged|\[kit:' }).Count)"
+"once:$($d5 -and @($global:cmts | Where-Object { $_.id -eq 't5' -and $_.text -match 'All merged: promoted' }).Count -eq 1 -and -not @($global:cmts | Where-Object { $_.text -match '^All MRs merged|\[kit:' }).Count)"
 $h = Invoke-Track add -Task t6 -Mrs 'g/web!8' -HoldPromotion 'deferred A2' | Out-String
 $r1 = Invoke-Track run -Detail | Out-String
 $c1 = @($global:cmts | Where-Object { $_.id -eq 't6' -and $_.text -match 'All merged: ' }).Count

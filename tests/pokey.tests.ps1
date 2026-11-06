@@ -118,7 +118,6 @@ $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 $fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { Fin $ur U1 -NoTracker }
 Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
-# 3 images: inline under their checks in the report, a JSON as one file line; the comment: no evidence, exactly one link
 $ir = New-Run 'I' @(@{ code = 'I1'; task = 'TI'; checks = @(@('C1', 'FAIL'), @('C2', 'PASS')) }); New-Item -ItemType Directory -Force "$ir/I1/shots" | Out-Null
 $evf = 'I1-C1_01_before.png', 'I1-C1_02_after.png', 'I1-C1_03_resp.json', 'I1-C2_01_list.png'; $evf | ForEach-Object { [IO.File]::WriteAllBytes("$ir/I1/shots/$_", [byte[]](1, 2)) }
 '{"rates":{"child":[567,567]},"original":567}' | Set-Content "$ir/I1/shots/I1-C1_03_resp.json"
