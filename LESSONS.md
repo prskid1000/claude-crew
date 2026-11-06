@@ -60,6 +60,9 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Mappers building an entity in steps: a flag read early misses parties resolved later; grep later setters, add a post-pass and a final-entity test. (3×)
 
 ## pokey
+- Before finalize, run finalize -Check -FixNames -ExpectChecks N: it renames the files and every reference in results.json (lists and text) (2x).
+- PASS_WITH_NOTE whose observed text describes a defect (clipped control, wrong data) is a FAIL: re-read every note before closing (1x, SP2).
+- Wrap every node QA script in try/finally s.done() (a crash or Ctrl+C runs it too); after a hard kill (timeout) run bossy.ps1 release -Agent <id>, else leased tabs (8 max) make session() hang silently (2x).
 - Before a QA run starts, check its targets and alsoTargets cover every env each task's checks call (e.g. a second product's staging); a missing one leaves the task untested for env-data (2×)
 - Setting-dependent checks: change the setting, wait for the cache, check, restore and verify the restore by GET; log each step in lead-notes.md (1×)
 - Write QA observed and verify text in sentences of <= 25 words and <= 40 words per observed text before evidence -Check, so the first -Check passes (2x)
@@ -101,7 +104,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
 - Never sed -i a CRLF kit file from Git Bash (it rewrites LF); use the Edit tool or pwsh ReadAllText/-replace/WriteAllText. (1x) (3×)
-- pwsh names are case-insensitive: a test variable never reuses a name of the area file (e.g. q vs Q); pick distinct names. (1x)
+- pwsh names are case-insensitive: a test variable never reuses a name of the area file or the harness (q vs Q, $sRc vs $src); pick distinct, descriptive names. (3×)
 - A helper adding agents/<x>.md must update the router row, reach mentions and manifest in the same commit; pre-commit lint (ROUTER-UNROUTED, REACH-MENTION, MANIFEST) blocks a lone file. (3x)
 - Kit token cap work: measure the whole pass's headroom first (one trim plan), then one file per agent; never trim or reformat a file another agent edits; prove each trim by token or AST equality before pushing. (4×)
 
@@ -118,4 +121,3 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 ## briefy
 - Launch args mode must be feature, bugfix or resume (buildy.js rejects anything else, e.g. build, at once); map a new-work ask to feature. (1x)
 ## opsy
-
