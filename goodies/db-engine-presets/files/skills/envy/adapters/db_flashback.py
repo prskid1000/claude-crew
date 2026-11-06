@@ -17,7 +17,7 @@
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L35 binlog · L268 row events · L400 flashback · L657 touched · L694 slices · L737 structure · L831 objects · L883 guard
+Sections: L36 binlog · L269 row events · L401 flashback · L658 touched · L695 slices · L756 structure · L850 objects · L902 guard
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 
@@ -30,6 +30,7 @@ ESC = {ord('n'): 10, ord('t'): 9, ord('r'): 13, ord('b'): 8, ord('f'): 12, ord('
 ROW = re.compile(rb'^### (INSERT INTO|UPDATE|DELETE FROM) `((?:[^`]|``)+)`\.`((?:[^`]|``)+)`')
 ACTS = ('CASCADE', 'SET NULL', 'SET DEFAULT')
 ROWS_END = '__kit_rows_end__'   # Db.rows: the last line of every answer
+DUMP_END = b'-- Dump completed'   # mysqldump's last line (comments on, --skip-dump-date)
 
 
 # ---- binlog: positions, values, the server's metadata, DDL statements, the scan
@@ -696,6 +697,29 @@ def pk_of(db, sch, t):
     return [r[0] for r in db.rows(f"SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = {inl([sch])} AND TABLE_NAME = {inl([t])} AND CONSTRAINT_NAME = 'PRIMARY' ORDER BY ORDINAL_POSITION")]
 
 
+def stream_gz(cmd, f, end, what):
+    """cmd's stdout -> gzip file f, its last line end dropped; under load a client can exit 0 with nothing written: without end
+    the read goes again, 3 times, then fails (an empty slice is never kept as good)"""
+    hold = len(end) + 3   # the end line, the line break before it and after it (CRLF) stay out of f until the stream ends
+    for _ in range(3):
+        p = None
+        try:
+            with gzip.open(f, 'wb') as gz, tempfile.TemporaryFile() as err:   # stderr to a file: a full stderr pipe would hang the stdout read
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err)
+                held = b''
+                for chunk in iter(lambda: p.stdout.read(1 << 20), b''):
+                    held += chunk; gz.write(held[:-hold]); held = held[-hold:]
+                if p.wait(): err.seek(0); raise RuntimeError(f'{what}: exit {p.returncode}: {err.read().decode(errors="replace").strip()[-200:]}')
+                held = held.rstrip(b'\r\n')
+                if held == end or held.endswith(b'\n' + end): gz.write(held[:-len(end)]); return
+        except BaseException:
+            if p and p.poll() is None: p.kill(); p.wait()
+            if os.path.exists(f): os.remove(f)   # a partial slice is never left behind
+            raise
+    os.remove(f)
+    raise RuntimeError(f'{what}: exit 0 without its end line 3 times: the slice was not read whole, none kept')
+
+
 def slice_cmd(a, db):
     spec = json.load(open(a.spec, encoding='utf-8'))
     os.makedirs(a.out, exist_ok=True)
@@ -708,11 +732,9 @@ def slice_cmd(a, db):
         base = hashlib.sha1(f'{sch}.{t}'.encode()).hexdigest()[:12]
         if kind == 'table':
             f = os.path.join(a.out, f'{base}.rows.sql.gz')
-            with gzip.open(f, 'wb') as gz:
-                p = subprocess.Popen([a.mysqldump, '-h', a.host, '-P', str(a.port), '-u', a.user, '--single-transaction', '--no-create-info', '--hex-blob', '--skip-triggers',
-                                      '--compact', '--skip-extended-insert', '--set-gtid-purged=OFF', '--default-character-set=utf8mb4', sch, t], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                for chunk in iter(lambda: p.stdout.read(1 << 20), b''): gz.write(chunk)
-                if p.wait(): raise RuntimeError(f'mysqldump {sch}.{t}: {p.stderr.read().decode(errors="replace")[-200:]}')
+            stream_gz([a.mysqldump, '-h', a.host, '-P', str(a.port), '-u', a.user, '--single-transaction', '--no-create-info', '--hex-blob', '--skip-triggers',   # --compact minus --skip-comments: the footer is the end line
+                       '--skip-add-locks', '--skip-disable-keys', '--skip-set-charset', '--skip-dump-date', '--skip-extended-insert', '--set-gtid-purged=OFF', '--default-character-set=utf8mb4', sch, t],
+                      f, DUMP_END, f'mysqldump {sch}.{t}')
             x['rows'] = os.path.basename(f); total += os.path.getsize(f)
         elif kind == 'column':
             x['pk'] = pk_of(db, sch, t)
@@ -721,10 +743,7 @@ def slice_cmd(a, db):
             for c in [] if x['noPk'] else [c for c in it.get('columns') or [] if c.lower() in have]:   # a column not there yet holds nothing
                 f = os.path.join(a.out, f'{base}.{hashlib.sha1(c.encode()).hexdigest()[:8]}.tsv.gz')
                 sel = ', '.join(f'HEX(CAST({q(k)} AS BINARY))' for k in x['pk']) + f', HEX(CAST({q(c)} AS BINARY)), {q(c)} IS NULL'
-                with gzip.open(f, 'wb') as gz:
-                    p = subprocess.Popen(db.base(a.mysql) + ['-N', '-B', '-e', f'SELECT {sel} FROM {q(sch)}.{q(t)}'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    for chunk in iter(lambda: p.stdout.read(1 << 20), b''): gz.write(chunk)
-                    if p.wait(): raise RuntimeError(f'slice {sch}.{t}.{c}: {p.stderr.read().decode(errors="replace")[-200:]}')
+                stream_gz(db.base(a.mysql) + ['-N', '-B', '-e', f"SELECT {sel} FROM {q(sch)}.{q(t)}; SELECT '{ROWS_END}'"], f, ROWS_END.encode(), f'slice {sch}.{t}.{c}')
                 x['columns'][c] = os.path.basename(f); total += os.path.getsize(f)
         items.append(x)
     objs = objects_of(db, [x for x in (a.objects or '').split(',') if x]) if a.objects else []
