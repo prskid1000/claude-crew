@@ -294,8 +294,8 @@ def port_workflows():
     print(f"ported {len(made)} workflow(s) -> .codex/workflows/*.md, .agents/kit-workflows/*.py")
 
 # ---- mechanics: what CLAUDE.md says for Claude Code, per CLI (GEMINI.md for agy; AGENTS.override.md head for Codex)
-E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced, every "
-  "table with its header row; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; "
+E1_PROMPT = ("Run & '<kit>/skills/bossy/bossy.ps1' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never "
+  "summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; "
   "re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1).")
 PASTE = ("The reply IS the ENTIRE supervise stdout, verbatim and unfenced, never summarised or cut; resolve WATCH lines like ACT "
   "ones without asking; ask the owner only for a real decision.")
