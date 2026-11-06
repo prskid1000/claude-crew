@@ -96,6 +96,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Profile a live supervise from a scratch copy: back up supervise-state, lock, report and .runtime/work/deploys/plan-cache.json first, restore after (1×)
 - Over a per-file test cap: move a self-contained block to an area file with room (e.g. report test -> guard.tests) instead of golfing assertions (1x)
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
 - Bash heredocs in this harness mangle backslashes: write files holding regex or Windows paths with the Write tool. (2x)
@@ -116,3 +117,5 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - 2026-10-16 Readability: context indentation halving and aliases to save tokens · decision normal indentation and full cmdlet names (owner).
 ## briefy
 - Launch args mode must be feature, bugfix or resume (buildy.js rejects anything else, e.g. build, at once); map a new-work ask to feature. (1x)
+## opsy
+
