@@ -117,7 +117,7 @@ Before merge (each human check; Q = a stated quality, measured):
 ## Test plan (automated)
 - Unit: <new/changed logic -> test names> · Regression: <each fixed bug -> test, red before / green after>
 - Integration/API: <endpoints touched -> tests> · UI/component: <screens touched -> specs, where the stack supports it>
-- Run: crafty.ps1 check -Step test -Tests <names> -Touched   (targeted + every test of the touched classes/modules)
+- Run: check -Step test -Tests <names> -Touched · e2e specs run: <list> because <reason> | e2e NOT_TESTED: <reason>
 ## Data needed
 <fixtures / seed records / settings / roles / switches ON, via the API, prefixed with your id; real sizes: longest names, busiest day>
 ## Reproduction (bugs)

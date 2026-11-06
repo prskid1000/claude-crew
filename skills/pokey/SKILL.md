@@ -3,11 +3,10 @@ name: pokey
 description: "Load when: testing deployed work on a test env (checky test / verify, or one change checked directly), checky lead setting up a test-only run, or a person testing by hand from a human testing doc. Not when: agents test a batch of deployed tasks -> /testy via bossy; before merge -> envy; static audit -> revy agent; phone lanes -> phoney."
 ---
 
-**Load when** (all must hold): the work is testing DEPLOYED changes on a test environment (never production): you are a
-`checky` (test / verify), the main session checking one change, `checky` lead preparing a test-only run, or a person testing by
-hand.
-**Not when:** several deployed tasks tested by agents -> `/testy` (load `bossy`); before merge -> `envy`
-(dev flow step 5); booting phones -> `phoney`; fixing what failed -> `crafty` (bugfix wave).
+**Load when:** testing DEPLOYED changes on a test env (never production): `checky` test / verify, the main session checking
+one change, `checky` lead preparing a test-only run, or a person testing by hand.
+**Not when:** several deployed tasks tested by agents -> `/testy` (load `bossy`); before merge -> `envy`; phones -> `phoney`;
+fixing what failed -> `crafty` (bugfix wave).
 **Hands off to:** `pokey.ps1 finalize` (report, tracker comment, result rule; run by /testy), the coordinator (failedTesting
 tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Files** (every file in this folder; read or run each only at its step):
@@ -16,7 +15,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (and H0, L0): `bossy.ps1 learn -Read -Skill pokey` |
 | `pokey.ps1` | steps 1-4, 6; L1, L3 (its header lists the verbs and their goodies) |
-| `<kit>/skills/crafty/crafty.ps1` | L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`, goody `local-env`) |
+| `<kit>/skills/crafty/crafty.ps1` | step 3 (`check -Step e2e`); L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`, goody `local-env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
 | `package.json` | L0: `npm install` in this folder (puppeteer-core) |
 
@@ -37,7 +36,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    on HTTP 0 / 4xx / 5xx; status and body still print);
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`; headless; visible only when the owner asks): UI checks
    at each `qa.matrix` variant (`matrix()`) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
-   app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command.
+   app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` with `$env:ANDROID_SERIAL` on every command;
+   e2e: `check -Step e2e` (the change's specs).
 4. **Evidence** (below): name each file when you save it; mark every FAIL screenshot (`ui shotmark`, `mark()`,
    `pokey.ps1 annotate`: goody `android-swarm`). Each verdict: `crafty.ps1 checkpoint -Agent <CODE> -Run <run> -Step <check id>
    -Next <next check id> -Evidence "<verdict> <file>"` (a restart starts at that check; a beat's PAUSE line says what to do).

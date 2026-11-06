@@ -69,7 +69,7 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   the end.
 - **Worktrees:** one per repo (`wt new`); deps-differ warning -> `-LinkFrom <checkout of the target branch>`; never install into
   a linked `node_modules`/`.venv`; `wt sync` before editing, before every push, before merging; `wt remove` when done.
-- **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never Maven/Gradle/dotnet/ng/jest/pytest/cargo
+- **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool
   directly; waiting is normal; a killed build is no bug. Tool timeout 600000 ms, or `run_in_background` bounded
   (timeout or loop cap, no stdin read; killed before `leave`). A gate still queued when you must stop: push, Draft MR with
   `Not run: <gate>`, report NOT_MERGED. No dev servers by hand (the local env runs them), at most one headless browser; phones
@@ -89,8 +89,9 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
     unit-test target: goody `node-spec`; `kit.local.json` `tests.<stack>.testFor` maps a source name to its test names for
     `-Touched`). node-spec cannot bundle code needing framework DI or a linker (forms, router, store, injectable services):
     move the logic into a pure helper the component calls, spec that helper (never a local copy), list the wiring as a live check.
-  - Run: `check -Step test -Tests <new tests> -Touched` before every push; the coordinator schedules a full suite
-    (`check -Step test -AllTests`) per repo on its own cadence. Each testing goal names its test or local manual check.
+  - Run: `check -Step test -Tests <new tests> -Touched` before every push (full suites, `-AllTests`: the coordinator's
+    cadence). Each testing goal names its test or local manual check. E2E: only `check -Step e2e` (the diff's
+    specs, each with its reason, for the goals doc; none = e2e NOT_TESTED; `-AllTests` only on the owner's word).
 - **Commits:** subject per `commitStyle` (default Conventional Commits) + any attribution trailer your harness or org
   asks for; `wt commit` only; never `--no-verify`, never type a hook's marker, never change shared git config or `git stash`.
 - **Checkpoint** (crash, pause): at each step boundary (worktree, commit sha, testing goals, loop round N + result, MR url,

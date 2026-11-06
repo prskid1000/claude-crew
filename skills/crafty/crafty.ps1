@@ -2,7 +2,7 @@
 crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/crafty.ps1 <verb> [args]
  wt new|sync|commit|remove|status|list ...  worktrees (deps linked, hooks run; commit [-ProseOk '<why>']: over prose limits = refused; sync [-Mrs <iid>]: repos[].regenerate)
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
- check -Dir <module> [-Step quick|test|build|migrations] [-Tests <names>] [-Touched]  gated checks
+ check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L299 stack · L474 gate · L740 check · L925 pipes · L964 guard · L1560 dir · L1570 checkpoint ·
-  L1595 prior · L1631 tracker · L1684 host
+Sections: L21 init · L27 wt · L299 stack · L479 gate · L747 check · L1007 pipes · L1046 guard · L1650 dir · L1660 checkpoint ·
+  L1685 prior · L1721 tracker · L1774 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -349,11 +349,14 @@ function Get-NodeTools($d) {
     JestCfg = $jestCfg
     Vitest = $deps -contains 'vitest'
     Eslint = ($deps -contains 'eslint') -or (Has $d 'eslint.config.*', '.eslintrc*')
+    # check -Step e2e fills {specs}: never a whole suite unless -AllTests
+    E2e = if (($deps -contains 'cypress') -or (Has $d 'cypress.config.*', 'cypress.json')) { 'npx cypress run --spec "{specs}"' }
+          elseif (($deps -contains '@playwright/test') -or (Has $d 'playwright.config.*')) { 'npx playwright test {specs}' } else { $null }
   }
 }
 
 function Get-Stack($d) {
-  $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; build = $null; format = $null; run = $null }
+  $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; e2e = $null; build = $null; format = $null; run = $null }
   $s = $null; $deps = @()
 
   if (Test-Path (Join-Path $d 'pom.xml')) {
@@ -397,6 +400,7 @@ function Get-Stack($d) {
     elseif ($ngTest) { $c.test = 'npx ng test --watch=false --include {tests}' }
     else { $c.test = NodeSpecCmd }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
+    $c.e2e = $n.E2e
     $c.run = 'npx ng serve --port {port}'
   }
   elseif (Test-Path (Join-Path $d 'package.json')) {
@@ -409,6 +413,7 @@ function Get-Stack($d) {
     elseif ($n.Scripts -contains 'test') { $c.test = NodeRun $pm 'test' '{tests}' }
     elseif ($n.Ts -and $s -ne 'react-native') { $c.test = NodeSpecCmd }
     if ($n.Eslint) { $c.lint = 'npx eslint {files}' }
+    $c.e2e = $n.E2e
     if ($s -ne 'react-native' -and $n.Scripts -contains 'build') { $c.build = NodeRun $pm 'build' '' }
     $agw = Wrapper (Join-Path $d 'android') 'gradlew' 'bat' $null
     if ($s -eq 'react-native' -and $agw) { $c.build = "cd android && $agw assembleRelease" }
@@ -530,6 +535,8 @@ function ConvertTo-CmdSeparators([string]$c) {
   }
   $sb.ToString()
 }
+# a whole e2e suite only from check -Step e2e -AllTests (KIT_E2E_ALL)
+if ($Cmd -match '\bcypress\s+run\b(?![^&|;]*--spec[=\s])' -and $env:KIT_E2E_ALL -ne '1') { Write-Host "[gate] refused: $Cmd runs the whole e2e suite: use crafty.ps1 check -Dir <module> -Step e2e (the diff's specs; whole suite: -AllTests on the owner's word)"; exit 2 }
 if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';': running $semi"; $Cmd = $semi } }
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
@@ -741,7 +748,7 @@ exit $code
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
-  [ValidateSet('quick', 'compile', 'typecheck', 'lint', 'test', 'build', 'format', 'migrations')][string]$Step = 'quick',
+  [ValidateSet('quick', 'compile', 'typecheck', 'lint', 'test', 'e2e', 'build', 'format', 'migrations')][string]$Step = 'quick',
   [string]$Tests = '',
   [string]$Files = '',
   [switch]$AllTests,
@@ -820,6 +827,81 @@ if ($Step -eq 'migrations') {
   if ($Show) { & $lb -Top $top -Masters $masters -Since $Since -Show; exit 0 }
   $rc = & $lb -Top $top -Masters $masters -Since $Since
   exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
+}
+
+# e2e: only the specs related to the branch diff (tests.e2e map, else changed specs, folder / file names, imports, visited routes);
+# none -> NOT_TESTED (exit 5); the whole suite only with -AllTests (the owner's word), logged to the builds stream
+function ConvertTo-GlobRx([string]$g) {
+  $x = [regex]::Escape($g.Replace('\', '/').TrimStart('/')) -replace '\\\*\\\*/', '(.*/)?' -replace '\\\*\\\*', '.*' -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]'
+  "(?i)^$([regex]::Replace($x, '\\\{([^}]*)}', { '(' + ($args[0].Groups[1].Value -replace ',', '|') + ')' }))$"
+}
+$script:GlobRx = @{}   # compiled once per glob: a map runs over every tracked file
+function Test-Glob([string]$p, $globs) { foreach ($g in @($globs | Where-Object { $_ })) { if (-not $script:GlobRx.ContainsKey($g)) { $script:GlobRx[$g] = [regex]::new((ConvertTo-GlobRx $g)) }; if ($script:GlobRx[$g].IsMatch($p)) { return $g } } }
+if ($Step -eq 'e2e') {
+  $cmd = $st.commands.e2e
+  if (-not $cmd) { Write-Host "[check] $($st.stack) has no 'e2e' step (no Cypress / Playwright here: set .claude-stack.json commands.e2e with {specs})"; exit 2 }
+  $cfg = Get-KitSetting 'tests.e2e' $null
+  $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
+  $mod = [IO.Path]::GetRelativePath($top, $st.dir).Replace('\', '/'); if ($mod -eq '.') { $mod = '' }
+  $rel = { param($f) [IO.Path]::GetRelativePath($st.dir, $f).Replace('\', '/') }
+  $all = @(@(git -C $st.dir ls-files 2>$null) + @(git -C $st.dir ls-files --others --exclude-standard 2>$null) | Where-Object { $_ } | Select-Object -Unique)
+  $sg = if ($cfg.specs) { @($cfg.specs) } else { @('**/*.cy.*', 'cypress/integration/**/*.{js,ts}', 'e2e/**/*.spec.*', '**/*.e2e.*') + @(if ($cmd -match 'playwright') { 'tests/**/*.spec.*' }) }
+  $specs = @($all | Where-Object { $_ -match '\.([cm]?[jt]sx?|feature)$' -and (Test-Glob $_ $sg) })
+  $map = @($cfg.map | Where-Object { $_ -and (-not $_.dir -or "$($_.dir)".Replace('\', '/').Trim('/') -eq $mod) })
+  $mapSpecs = @($map | ForEach-Object { $ms = $_.specs; , @($all | Where-Object { Test-Glob $_ $ms }) })
+  $chg = @(Get-ChangedFiles | ForEach-Object { & $rel $_ } | Where-Object { $_ -notmatch '^\.\./' })
+  $why = [ordered]@{}; $add = { param($s, $r) if (-not $why.Contains($s)) { $why[$s] = [Collections.Generic.List[string]]::new() }; if (-not $why[$s].Contains($r)) { $why[$s].Add($r) } }
+  $generic = 'src', 'app', 'apps', 'lib', 'libs', 'components', 'component', 'shared', 'common', 'core', 'pages', 'page', 'views', 'view', 'features', 'feature', 'modules', 'module', 'services', 'service', 'utils', 'util', 'helpers', 'models', 'assets', 'styles', 'public', 'static', 'environments', 'ui', 'web', 'client', 'index', 'main', 'private', 'cypress', 'e2e', 'e2e-tests', 'integration', 'tests', 'test', 'specs', 'spec', 'support', 'fixtures'
+  # indexes, built once (key -> specs): its words (folders + name, order prefixes cut, each cut at - _ .: 02-order-management ->
+  # order, order-management), the module files it imports (no extension), the route segments it visits
+  $byWord = @{}; $byImp = @{}; $byRoute = @{}; $isSpec = @{}
+  $put = { param($h, $key, $s, $r) if (-not $key) { return }; if (-not $h.Contains($key)) { $h[$key] = [ordered]@{} }; $h[$key][$s] = $r }
+  foreach ($s in $specs) {
+    $isSpec[$s] = 1; $p = @($s -split '/')
+    $ws = @(@($p | Select-Object -SkipLast 1) + (($p[-1] -replace '^(\d+[-._])+', '') -split '\.')[0]) | ForEach-Object { $_ -replace '^(\d+[-._])+', '' }
+    foreach ($w in $ws) {
+      $parts = $w -split '(?=[-_.])'; for ($i = 1; $i -le $parts.Count; $i++) { & $put $byWord ($parts[0..($i - 1)] -join '') $s 1 }
+    }
+    $body = "$(Get-Content -LiteralPath (Join-Path $st.dir $s) -Raw -ErrorAction SilentlyContinue)"; $sd = [IO.Path]::GetDirectoryName($s)
+    foreach ($m in [regex]::Matches($body, '(?:from\s+|require\(\s*|import\(\s*|import\s+)[''"](\.[^''"]+)[''"]')) {
+      & $put $byImp ([IO.Path]::GetRelativePath($st.dir, [IO.Path]::GetFullPath([IO.Path]::Combine($st.dir, $sd, $m.Groups[1].Value))).Replace('\', '/') -replace '\.[cm]?[jt]sx?$', '') $s 1 }
+    foreach ($m in [regex]::Matches($body, '(?:\bvisit|\bgoto)\(\s*[''"`]([^''"`]+)')) { foreach ($g in @($m.Groups[1].Value -split '[/?#]')) { & $put $byRoute $g $s $m.Groups[1].Value } }
+  }
+  foreach ($f in $chg) {
+    if ($isSpec[$f]) { & $add $f 'changed'; continue }
+    $hit = $false
+    for ($mi = 0; $mi -lt $map.Count; $mi++) { if ($g = Test-Glob $f $map[$mi].paths) { $hit = $true; foreach ($s in $mapSpecs[$mi]) { & $add $s "map $g" } } }
+    if ($hit) { continue }
+    $stem = ([IO.Path]::GetFileName($f) -split '\.')[0]; if ($stem -in $generic) { $stem = '' }
+    # its name, then its folders nearest first: the first that names or routes a spec wins (orders/components/row/row.ts -> orders)
+    $dirs = @(([IO.Path]::GetDirectoryName($f) -replace '\\', '/') -split '/' | Where-Object { $_ -and $_ -notin $generic }); [array]::Reverse($dirs)
+    $noExt = $f -replace '\.[^./]+$', ''
+    foreach ($n in @(@($stem) + $dirs | Where-Object { $_ } | Select-Object -Unique)) {
+      $tag = if ($n -eq $stem) { 'name' } else { 'folder' }; $got = $false
+      if ($byWord[$n]) { foreach ($s in $byWord[$n].Keys) { & $add $s "$tag $n"; $got = $true } }
+      if ($byRoute[$n]) { foreach ($s in $byRoute[$n].Keys) { & $add $s "visits $($byRoute[$n][$s])"; $got = $true } }
+      if ($got) { break }
+    }
+    foreach ($key in $f, $noExt, ($noExt -replace '/index$', '')) { if ($byImp[$key]) { foreach ($s in $byImp[$key].Keys) { & $add $s "imports $f" } } }
+  }
+  foreach ($t in @($Tests -split '[,\s]+' | Where-Object { $_ })) { & $add $t.Replace('\', '/') 'named (-Tests)' }
+  if ($AllTests) {
+    $cmd = $cmd -replace '\s*--spec[=\s]+"?\{specs\}"?', '' -replace '\s*\{specs\}', ''
+    Write-Host "[check] e2e: the WHOLE suite (-AllTests: only on the owner's word), logged to the builds stream"
+    if (-not $Show) { Write-KitLog builds e2e-all ([ordered]@{ dir = $st.dir; branch = "$(git -C $st.dir branch --show-current)"; cmd = $cmd }) }
+  } else {
+    if (-not $why.Count) {
+      Write-Host "[check] e2e NOT_TESTED: no spec relates to the $($chg.Count) changed file(s)$(if ($chg.Count) { ' (' + (($chg | Select-Object -First 5) -join ', ') + $(if ($chg.Count -gt 5) { ', ...' }) + ')' }) of $($specs.Count) spec(s): add a tests.e2e.map entry or a spec, or name specs with -Tests; never the whole suite"
+      exit 5
+    }
+    Write-Host "[check] e2e: $($why.Count) spec(s) for $($chg.Count) changed file(s) (of $($specs.Count)):"
+    foreach ($s in $why.Keys) { $r = $why[$s]; Write-Host "  $s <- $(($r | Select-Object -First 3) -join '; ')$(if ($r.Count -gt 3) { " (+$($r.Count - 3) more)" })" }
+    $cmd = $cmd.Replace('{specs}', $(if ($cmd -match '--spec[=\s]+"?\{specs\}') { $why.Keys -join ',' } else { $why.Keys -join ' ' }))
+  }
+  if ($Show) { "e2e : $cmd"; exit 0 }
+  $env:KIT_E2E_ALL = if ($AllTests) { '1' } else { '' }
+  & $KitCmd.dev gate -Dir $st.dir -Cmd $cmd; $rc = $LASTEXITCODE
+  Write-Host "[check] e2e $(if ($rc) { "FAILED (exit $rc)" } else { 'ok' })"; exit $rc
 }
 
 $steps = if ($Step -eq 'quick') { 'compile', 'typecheck', 'lint' } else { @($Step) }
@@ -1119,7 +1201,10 @@ if ($SelfTest) {
   @('B', 'python a.py x#y /d/z', $true, $gb),
   @('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
   @('B', "git commit -m `"fix: node got /d/x paths`"; cat <<'EOF' > /d/x/a.md`npython /d/x/a.py`nEOF", $false, $gb),
-  @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb)
+  @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb),
+  @('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
+  @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
+  @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through')
   )
   $gh = 'browser on Windows'   # git help pages (Git for Windows opens HTML); elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
@@ -1539,6 +1624,11 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
         $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)'
+# e2e only through check -Step e2e: it picks the diff's specs; a hand-run suite is the whole suite
+$e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)'
+if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_ -notmatch 'crafty\.ps1["'']?\s+check\b' }).Count) {
+  Deny "e2e runs go through & $($KitCmd.dev) check -Dir <module> -Step e2e: only the specs related to the change (the whole suite: -AllTests, on the owner's word)."
+}
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
