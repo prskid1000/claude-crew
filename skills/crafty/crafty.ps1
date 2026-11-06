@@ -1737,7 +1737,7 @@ function Invoke-Tracker {
   function __TrOut($o) { if ($null -ne $o) { ConvertTo-Json -InputObject $o -Depth 6 } }
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
-    'status' { Set-TrackerStatus $__id $__x }
+    'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
     'comment' {   # -Kind comment-solution | comment-status | comment-deploy: over its prose limits = refused, nothing posted
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
       if ("$($__trOpt.Kind)" -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }

@@ -176,8 +176,8 @@ Expect 'cleanup: a kit log over 5000 lines rotates, a local env service log neve
 Expect 'cleanup: an 8 h session sweep keeps tab registries (live browsers own them)' ($cd -match 'old-login\.json' -and $cd -notmatch 'tabs-t__u')
 Expect 'cleanup keep rules: newest N APKs kept, old background job files go, entries off the layout (runtime root, work/) go' ($cd -match '2 x\s+apks > 72 h' -and $cd -match '2 x\s+background > 72 h' -and $cd -match 'layout \(runtime root\)' -and $cd -match 'layout \(work/\)')
 $env:KIT_RUN = 'r-9'; $env:KIT_AGENT = 'K1'; $null = pwsh @np $O decide list; $null = pwsh @np $O learn -Skill kitty -Kind idea -Text 'Bearer abc123defghij token=abc1 a@b.co'
-$null = python -X utf8 "$k/skills/bossy/kitbag.py" budget; $env:KIT_RUN = $env:KIT_AGENT = $null; $au = (pwsh @np $O audit -Run r-9 2>&1) -join "`n"
-Expect 'kitlog: call lines (ps1 + py) masked; audit merges the streams in order' ($au -match '(?s)^audit run r-9: [3-9] events.*bossy\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kitbag\.py budget')
+$null = python -X utf8 "$k/skills/bossy/kitbag.py" budget; $env:KIT_RUN = $env:KIT_AGENT = $null; $au = (pwsh @np $O audit -Run r-9 -Since 7 2>&1) -join "`n"
+Expect 'kitlog: call lines (ps1 + py) masked; audit -Since 7 (days) merges the streams' ($au -match '(?s)^audit run r-9: [3-9] events.*bossy\.ps1 decide list -> rc 0.*learn kitty/idea -> Bearer \[redacted\] token=\[redacted\] \[email\].*kitbag\.py budget')
 $nt = @'
 . $args[0]
 $env:KIT_NET_TRIES = '1'   # a tracker whose CLI fails as $global:trFails says: network, then fine, then a real error

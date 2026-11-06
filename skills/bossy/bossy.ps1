@@ -1459,7 +1459,7 @@ if (-not $running -and ($due = Get-KitRetroDue -RunFinished)) { "ACT  retro due 
 function Invoke-Audit {
 param([string]$Run, [string]$Agent, [string]$Task, [string]$Since, [int]$Last = 0, [switch]$All, [switch]$Json)
 $now = Get-Date
-$from = if ($Since -match '^(\d+)([mhd])$') { $now.AddMinutes(-[int]$Matches[1] * @{ m = 1; h = 60; d = 1440 }[$Matches[2]]) } elseif ($Since) { [datetime]$Since } else { $null }
+$from = if ($Since -match '^(\d+)([mhd]?)$') { $now.AddMinutes(-[int]$Matches[1] * (@{ m = 1; h = 60 }[$Matches[2]] ?? 1440)) } elseif ($Since) { [datetime]$Since } else { $null }
 $names = @(); $agents = @(); $wf = $null
 if ($Run) {   # a kit run name (board, -Run) or a workflow run id: the same run
   $self = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.run -eq $Run -or ($_.wfDir -and (Split-Path $_.wfDir -Leaf) -eq $Run) })
@@ -1708,7 +1708,7 @@ function Get-KitStorageRound {
 function Invoke-Storage {
 param([string]$Drive, [string]$Since = '24h', [switch]$Folders, [switch]$Scan)
 if ($Scan) { foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object name })) { Invoke-KitStorageScan $d }; return }
-$from = if ($Since -match '^(\d+)([mhd])$') { (Get-Date).AddMinutes(-[int]$Matches[1] * @{ m = 1; h = 60; d = 1440 }[$Matches[2]]) } else { [datetime]$Since }; $t0 = [DateTimeOffset]::new($from).ToUnixTimeSeconds()
+$from = if ($Since -match '^(\d+)([mhd]?)$') { (Get-Date).AddMinutes(-[int]$Matches[1] * (@{ m = 1; h = 60 }[$Matches[2]] ?? 1440)) } else { [datetime]$Since }; $t0 = [DateTimeOffset]::new($from).ToUnixTimeSeconds()
 foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object name })) {
   if ($Folders) {
     $fo = try { Get-Content -LiteralPath (Get-KitStorageFile $d 'folders.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }; $sc = @($fo.scans | Where-Object { $_.t -ge $t0 })

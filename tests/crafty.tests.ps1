@@ -69,9 +69,9 @@ Expect-Each $res 'git host: #' 'mr-urls', 'command', 'extra-line', 'ci-object'
 Remove-TestKit $ka
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
-$null = pwsh @np $D tracker status $t.id failedTesting
+$null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
-Expect 'tracker none: create, status failedTesting, list' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id)
+Expect 'tracker none: create, status failedTesting, list; status without a word = usage, rc 2, unchanged' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id -and $stCode -eq 2 -and $sNo -match 'usage: tracker status')
 $d2 = (pwsh @np $D tracker create -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
 $d1 = pwsh @np $D tracker create -List L1 -Name 'Invoice export button broken' -Description 'd' 2>&1 | Out-String; $c1 = $LASTEXITCODE
 $d3 = (pwsh @np $D tracker create -List L1 -Name 'Invoice export copy' -Description 'd' -NewTask 'another screen' | ConvertFrom-Json).id; $null = pwsh @np $D tracker scope -Task $t.id -Add 'also X'
