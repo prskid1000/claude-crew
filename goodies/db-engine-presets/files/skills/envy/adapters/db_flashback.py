@@ -17,7 +17,7 @@
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L35 binlog · L254 row events · L386 flashback · L643 touched · L680 slices · L723 structure · L816 objects · L868 guard
+Sections: L35 binlog · L268 row events · L400 flashback · L657 touched · L694 slices · L737 structure · L831 objects · L883 guard
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 
@@ -79,19 +79,23 @@ class Db:
         bs = {'n': '\n', 't': '\t', '0': '\0', '\\': '\\'}   # -B escapes these in each field
         return [[re.sub(r'\\(.)', lambda x: bs.get(x.group(1), '\\' + x.group(1)), f) for f in l.split('\t')] for l in out[:-1]]
     def run_file(s, path):
+        """a SQL file (its last statement terminated, or a client line such as SOURCE); the end marker goes on it: an exit 0
+        without it as the last output raises, never retried (writes)"""
+        with open(path, 'a', encoding='utf-8', newline='\n') as fh: fh.write(f"\nDELIMITER ;\nSELECT '{ROWS_END}';\n")
         with open(path, 'rb') as fh:
-            return subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--comments'], stdin=fh, capture_output=True, timeout=7200)
+            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--comments'], stdin=fh, capture_output=True, timeout=7200)
+        if not r.returncode and not r.stdout.rstrip().endswith(ROWS_END.encode()):
+            raise RuntimeError('mysql: exit 0 without the end marker: the statements may not have run (a restore: earlier batches may be committed; plan again)')
+        return r
     def script(s, sql):
         """statements (DELIMITER lines allowed; the last one terminated) through a temp file; raises on failure"""
         fd, path = tempfile.mkstemp(suffix='.sql'); os.close(fd)
         try:
-            with open(path, 'w', encoding='utf-8', newline='\n') as fh: fh.write(f"{sql}\nDELIMITER ;\nSELECT '{ROWS_END}';\n")
+            with open(path, 'w', encoding='utf-8', newline='\n') as fh: fh.write(sql)
             r = s.run_file(path)
         finally: os.remove(path)
         if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
-        out = r.stdout.decode('utf-8', errors='replace')
-        if ROWS_END not in out: raise RuntimeError('mysql: exit 0 without the end marker: the statements may not have run')   # never retried: writes
-        return out.replace(ROWS_END, '').rstrip('\r\n')
+        return r.stdout.decode('utf-8', errors='replace').replace(ROWS_END, '').rstrip('\r\n')
     def create(s, sch, t):
         try: return s.rows(f'SHOW CREATE TABLE {q(sch)}.{q(t)}')[0][1]
         except (RuntimeError, IndexError): return None
@@ -165,14 +169,23 @@ def stmt_schemas(sql):
 
 
 def scan(a, schemas, skips, frm, to, spool, keep=frozenset()):
+    """scan_once, again (spool emptied) while mysqlbinlog exits 0 without its '# End of log file' line: output lost under load"""
+    for _ in range(3):
+        spool.seek(0); spool.truncate()
+        res = scan_once(a, schemas, skips, frm, to, spool, keep)
+        if res is not None: return res
+    raise RuntimeError('mysqlbinlog: no "# End of log file" line 3 times (exit 0): the binlog was not read whole')
+
+
+def scan_once(a, schemas, skips, frm, to, spool, keep=frozenset()):
     """the binlog from frm: row events of the schemas -> spool (JSON lines, with their transaction and statement group); DDL +
     bookkeeping rows -> res; the raw events of a statement group that touches a table in keep (it has triggers) or the journal ->
-    res['groups'], the format description event -> res['fde']"""
+    res['groups'], the format description event -> res['fde']; None without the end-of-log line"""
     res = {'tables': {}, 'ddl': [], 'toolRows': [], 'refused': [], 'warnings': [], 'names': {}, 'groups': {}, 'fde': None}
     cmd = [a.mysqlbinlog, '-R', '-h', a.host, '-P', str(a.port), '-u', a.user, '-v', '--print-table-metadata',
            '--to-last-log', f'--start-position={frm[1]}', a.start_file]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    st = {'file': a.start_file, 'at': 0, 'db': '', 'tx': 0, 'q': None, 'row': None, 'part': None, 'tm': None, 'g': 0, 'b64': None}
+    st = {'file': a.start_file, 'at': 0, 'db': '', 'tx': 0, 'q': None, 'row': None, 'part': None, 'tm': None, 'g': 0, 'b64': None, 'end': False}
     cols_of = {}
     def pos(): return key(f"{st['file']}:{st['at']}")
     def inside(): k = pos(); return k >= frm and (to is None or k < to) and not any(s <= k < e for s, e in skips)
@@ -200,6 +213,7 @@ def scan(a, schemas, skips, frm, to, spool, keep=frozenset()):
             else: st['b64'].append(line)
             continue
         if line == b"BINLOG '": flush(); st['b64'] = []; continue
+        if line == b'# End of log file': st['end'] = True; continue
         if line.startswith(b'# at '): flush(); st['at'] = int(line[5:]); continue
         m = re.search(rb'Rotate to (\S+)\s+pos: (\d+)', line)
         if m: flush(); st['file'] = m.group(1).decode(); continue
@@ -248,7 +262,7 @@ def scan(a, schemas, skips, frm, to, spool, keep=frozenset()):
     flush()
     err = p.stderr.read().decode(errors='replace').strip()
     if p.wait(): raise RuntimeError(f'mysqlbinlog exit {p.returncode}: {err[-400:]}')
-    return res
+    return res if st['end'] else None
 
 
 # ---- row events: a statement group inverted as BINLOG '<base64>' (no trigger fires; the cascade journal back into its child)
@@ -799,10 +813,11 @@ def structure_cmd(a, db):
     with open(path, 'w', encoding='utf-8', newline='\n') as fh: fh.write('\n'.join(sql + fk_last) + '\n')
     saved = triggers_off(db, {f"{x['schema']}.{x['table']}" for x in items if x['columns'] and db.create(x['schema'], x['table'])})   # refills fire no app trigger
     try: r = db.run_file(path)
-    finally: triggers_on(db, saved)
-    if not a.out: os.remove(path)
-    for x in items:
-        if x['rows'] and os.path.exists(os.path.join(d, x['rows'][:-3])): os.remove(os.path.join(d, x['rows'][:-3]))
+    finally:   # a run_file raise leaves no temp file or unpacked rows behind
+        triggers_on(db, saved)
+        if not a.out: os.remove(path)
+        for x in items:
+            if x['rows'] and os.path.exists(os.path.join(d, x['rows'][:-3])): os.remove(os.path.join(d, x['rows'][:-3]))
     if r.returncode: return {'refused': [], 'fallback': fbl, 'done': done, 'error': r.stderr.decode(errors='replace').strip()[-300:]}
     made = {(x['schema'], x['table']) for x in items if x['kind'] == 'table' and x['rows'] and f"{x['schema']}.{x['table']}" not in fb}
     have = {(r[0], r[1]) for r in db.rows('SELECT TRIGGER_SCHEMA, TRIGGER_NAME FROM information_schema.TRIGGERS')} if made else set()
