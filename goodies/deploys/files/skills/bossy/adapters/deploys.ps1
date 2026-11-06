@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L142 deploy · L274 supervise
+Sections: L13 helpers · L82 intest · L163 deploy · L296 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -18,6 +18,27 @@ function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1
   if ($rp) { "$($rp.name)!$($Matches.i)" } else { $m }
+}
+# the targets an MR feeds: its repo's deploys, less those whose from (branches) lacks its target branch or whose paths (globs)
+# it never touched; one repo, two products. A failed or cut lookup, or one past $Until, keeps the deploy (shown, never hidden)
+function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
+  $c = Get-CanonMr (ConvertTo-MrRef $Mr); $rn, $iid = $c -split '!', 2; $rn = ($rn -split '/')[-1]
+  $deps = @(@($Repos | Where-Object { $_.name -eq $rn } | Select-Object -First 1).deploys | Where-Object { $_.target })
+  if (-not @($deps | Where-Object { $_.from -or $_.paths }).Count -or ($Until -and (Get-Date) -gt $Until)) { return @($deps.target | Select-Object -Unique) }
+  $fm = if ($Fx) { $Fx.mrs.$Mr ?? $Fx.mrs.$c }
+  $tb = if ($Fx) { $fm.targetBranch } else { try { (Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid").target_branch } catch { $null } }
+  $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
+  $files = @(); $cut = $false
+  if (@($deps | Where-Object paths).Count) {
+    $ch = if ($Fx) { [pscustomobject]@{ changes = @($fm.paths | ForEach-Object { [pscustomobject]@{ new_path = $_ } }); overflow = $fm.overflow } } else { try { Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid/changes" } catch { } }
+    $files = @(@($ch.changes) | ForEach-Object { $_.new_path; $_.old_path } | Where-Object { $_ } | Select-Object -Unique)
+    $cut = [bool]$ch.overflow -or @($ch.changes).Count -ge 100   # gitlab overflow, github's first page: the list is partial
+  }
+  # glob: ** any depth, * and ? within one folder, the rest literal ([id] too)
+  $rxOf = { param($g) '^' + ([regex]::Escape($g) -replace '\\\*\\\*/', '(.*/)?' -replace '\\\*\\\*', '.*' -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]') + '$' }
+  @($deps | Where-Object {
+      $d = $_; -not $d.paths -or $cut -or -not $files.Count -or @($files | Where-Object { $f = $_; @($d.paths | Where-Object { $f -match (& $rxOf $_) }).Count }).Count
+    } | ForEach-Object target | Select-Object -Unique)
 }
 # MRs in a CI deploy's last green job (its commit holds the merge): mr|target -> detail; per repo one MR list and one git
 # rev-list per deploy instead of one pokey.ps1 deployed probe per MR (229 MRs ran past 600 s); past $Until the rest is probed
@@ -177,10 +198,11 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $repos = @(Get-KitValue 'repos' @())
   $targets = @($repos | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and -not $_.laneApk -and $_.target -notmatch (Get-NoTestRx) } | ForEach-Object target | Select-Object -Unique)
   if ($Env) { $targets = @($targets | Where-Object { $_ -eq $Env }) }
-  # an MR is checked only against the deploys of its own repo
+  # an MR is checked only against the deploys of its own repo (tOf: no lookup); tgtOf: the ones it feeds (deploys[].from / paths)
   $tOf = @{}; foreach ($x in $repos) { $tOf[[string]$x.name] = @($x.deploys | ForEach-Object target) }
   $repoOf = { param($m) ((ConvertTo-MrRef $m) -split '!')[0] -split '/' | Select-Object -Last 1 }
-  if ($Action -eq 'request') { $targets = @($targets | Where-Object { $t = $_; @($Mrs | Where-Object { $t -in $tOf[(& $repoOf $_)] }).Count }) }
+  $fedOf = @{}; $tgtOf = { param($m) if (-not $fedOf.ContainsKey($m)) { $fedOf[$m] = @(Get-MrDeployTargets $m $repos $fx $until) }; $fedOf[$m] }
+  if ($Action -eq 'request') { $targets = @($targets | Where-Object { $t = $_; @($Mrs | Where-Object { $t -in @(& $tgtOf $_) }).Count }) }
   $taskOf = @{}; $cand = [ordered]@{}
   $tr = Read-KitTracking
   foreach ($t in $tr.tasks.Values) {
@@ -206,7 +228,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     foreach ($kv in $anc.GetEnumerator()) { $km, $kt = $kv.Key -split '\|', 2; if (-not $rows.ContainsKey($km)) { $rows[$km] = @() }; $rows[$km] += [pscustomobject]@{ mr = $km; target = $kt; state = 'DEPLOYED'; detail = $kv.Value } }
     # one pokey.ps1 deployed per target, all at once, each with its own MRs and the same deadline: one slow env no longer blanks the rest
     $runs = @(foreach ($t in @(if ($Env) { $Env } else { $targets })) {
-        $tm = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) -and -not $anc.ContainsKey("$_|$t") }); if (-not $tm.Count) { continue }
+        $tm = @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) -and -not $anc.ContainsKey("$_|$t") }); if (-not $tm.Count) { continue }
         $si = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application | Select-Object -First 1).Source)
         foreach ($x in @('-NoProfile', '-NonInteractive', '-File', $KitCmd.qa, 'deployed', '-Mrs', ($tm -join ','), '-Target', $t, '-Lines', '-Exclude', (Get-NoTestRx), '-TimeoutSec', [math]::Max(1, [int](($until - (Get-Date)).TotalSeconds) - 2))) { $si.ArgumentList.Add([string]$x) }
         $si.RedirectStandardOutput = $si.RedirectStandardError = $si.CreateNoWindow = $true; $si.UseShellExecute = $false
@@ -238,7 +260,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $hostErr = $null
   $recOf = @{}; foreach ($x in $logged) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } }   # MANUAL (no check can see it): a recorded deploy is the proof
   $plan = foreach ($t in $targets) {
-    $batch = @(foreach ($m in $cand.Keys) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })
+    $batch = @(foreach ($m in @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) })) { foreach ($r in @($(if ($rows.ContainsKey($m)) { $rows[$m] } else { $rows[(Get-CanonMr $m)] }) | Where-Object { $_.target -eq $t -and ($_.state -eq 'NOT-DEPLOYED' -or ($_.state -eq 'MANUAL' -and -not $recOf["$(Get-CanonMr $m)|$t"])) })) { [pscustomobject]@{ mr = $m; task = $taskOf[$m]; state = $r.state; detail = $r.detail; why = $cand[$m] } } })
     $last = $null; $src = ''
     $l = @($logged | Where-Object { $_.target -eq $t } | Sort-Object { [datetime]$_.at }) | Select-Object -Last 1
     if ($l) { $last = [datetime]$l.at; $src = "kit log ($($l.by))" }
@@ -255,7 +277,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     }
     $h = & $winOf $t
     $next = if ($last) { $last.AddHours($h) } else { $null }
-    $mine = @($cand.Keys | Where-Object { $t -in @($tOf[(& $repoOf $_)]) })
+    $mine = @($cand.Keys | Where-Object { $t -in @(& $tgtOf $_) })
     $unk = @(foreach ($m in $mine) { @(& $rowsOf $m) | Where-Object { $_ -and $_.target -eq $t -and $_.state -eq 'UNKNOWN' } | ForEach-Object { "${m}: $($_.detail)" } })
     $why = if ($unk.Count) { $unk -join '; ' } elseif ($failOf[$t] -and $mine.Count -and -not @($mine | Where-Object { @(& $rowsOf $_) | Where-Object { $_ -and $_.target -eq $t } }).Count) { $failOf[$t] }
     $status = if ($why -and -not $batch.Count) { 'UNKNOWN' } elseif (-not $batch.Count) { 'NOTHING' } elseif ($running) { 'DEPLOYING' } elseif ($trigger -ne 'ask') { 'READY' } elseif ($next -and (Get-Date) -lt $next) { 'WAIT' } else { 'ASK' }

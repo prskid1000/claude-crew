@@ -43,6 +43,13 @@ $now = (Get-Date).ToString('s'); $nd = @{ rows = @(@{ target = 'stage'; state = 
 $fx3 = Join-Path (Kd) 'deploy-fixture3.json'; & $J @{ mrs = @{ 'api!7' = $nd; 'api!8' = $nd; 'api!9' = $nd } } $fx3
 $p = @(& $dep plan -Offline $fx3 -Json | ConvertFrom-Json)
 Expect 'deploy plan: skips a task live on every test env and a done task without doneAt' ((@($p | Where-Object target -eq 'stage' | ForEach-Object { $_.mrs.mr }) -join ',') -eq 'api!9')
+# one repo, two products: an MR counts only where deploys[].from has its target branch and deploys[].paths a file it touched
+& $J @{ repos = @(@{ name = 'web'; deploys = @(@{ target = 'a-st'; from = 'a-main' }, @{ target = 'b-st'; from = @('main'); paths = @('b/ui/**', 'b/[id]/*.ts') }, @{ target = 'c-st' }) }) } $cfgF
+& $J @{ tasks = @{ f = @{ task = 'f'; mrs = @('web!1', 'web!2', 'web!3', 'web!4', 'web!5', 'web!6'); done = $true; doneAt = $now } }; automerge = @{} } $tf
+$nd3 = { param($tb, $ps, $ov) @{ targetBranch = $tb; paths = $ps; overflow = $ov; rows = @('a-st', 'b-st', 'c-st' | ForEach-Object { @{ target = $_; state = 'NOT-DEPLOYED'; detail = 'x' } }) } }
+$fx4 = Join-Path (Kd) 'deploy-fixture4.json'; & $J @{ mrs = @{ 'web!1' = (& $nd3 'a-main' @('a/ui/x.ts')); 'web!2' = (& $nd3 'main' @('b/ui/y.ts')); 'web!3' = (& $nd3 'main' @('a/old/z.ts')); 'web!4' = (& $nd3 $null $null); 'web!5' = (& $nd3 'main' @('b/[id]/p.ts')); 'web!6' = (& $nd3 'main' @('a/x.ts') $true) } } $fx4
+$p = @(& $dep plan -Offline $fx4 -Json | ConvertFrom-Json); $by = { param($t) (@(@($p | Where-Object target -eq $t).mrs.mr) | Sort-Object) -join ',' }
+Expect "deploy plan: deploys[].from / paths pick the targets an MR feeds; an unknown branch, a missing or cut file list keeps it; [id] is literal ($(& $by a-st) | $(& $by b-st) | $(& $by c-st))" ((& $by a-st) -eq 'web!1,web!4' -and (& $by b-st) -eq 'web!2,web!4,web!5,web!6' -and (& $by c-st) -eq 'web!1,web!2,web!3,web!4,web!5,web!6')
 $sup = (Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw) -match "deploy\.trigger' 'owner'\)\)\.ToLower\(\) -eq 'ask'"
 Expect 'supervise: DEPLOY ASK only under trigger ask' $sup
 $dps = Get-Content (Join-Path $k 'skills/bossy/adapters/deploys.ps1') -Raw

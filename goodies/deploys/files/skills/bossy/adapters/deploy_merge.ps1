@@ -9,14 +9,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
 $rc = @(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rp) } | Select-Object -First 1
+# -To: a deploys[] target or branch; tag: tags origin/<From>; trunk (branch = From): no merge
+$dep = @($rc.deploys) | Where-Object { $_.target -eq $To -or $_.branch -eq $To } | Select-Object -First 1
 if (-not $From) {
-  $From = $rc.target
+  $From = @($dep.from)[0] ?? $rc.target   # deploys[].from: one repo, two products on different main lines
   if (-not $From) { $h = (git -C $Repo symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null); if ($h) { $From = ($h -replace '^origin/', '').Trim() } }
   if (-not $From) { $From = 'main' }
   "source branch: $From"
 }
-# -To: a deploys[] target or branch; tag: tags origin/<From>; trunk (branch = From): no merge
-$dep = @($rc.deploys) | Where-Object { $_.target -eq $To -or $_.branch -eq $To } | Select-Object -First 1
 if ($dep.tag) {
   $tag = ([string]$dep.tag).Replace('{date}', [datetime]::UtcNow.ToString('yyyyMMddHHmm')); git -C $Repo fetch -q origin $From
   if ($LASTEXITCODE) { "fetch origin $From FAILED (exit ${LASTEXITCODE}: offline or wrong -From): no tag"; exit 1 }   # a stale origin/<From> would ship old code
