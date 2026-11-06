@@ -215,5 +215,7 @@ $pov = pwsh -NoProfile -Command ". '$O'; Update-KitTaskIndex P7 { param(`$x) `$x
   Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr w'; reason = 'r'; matched = @(@{ kind = 'task'; ref = 'P13' }, @{ kind = 'task'; ref = 'P1' }) }; Write-KitLog calls prior-override @{ task = 'P7'; what = 'mr'; reason = 'r' }
   @(Read-KitLog calls (Get-Date).AddMinutes(-9) | Where-Object event -eq 'prior-override' | ForEach-Object { @(`$_.matched | Where-Object { `$_ }).Count }) -join ','; '|'; @(Get-KitSuperviseFlagsPrior | ForEach-Object what) -join ';'"
 Expect "prior override: the gate's hits are logged; WATCH only for another task's work or no hits known ($pov)" ("$pov" -match '^2,2,2,0 \|' -and "$pov" -match 'wt x P7 \(own\): matches task P12' -and "$pov" -match 'finish P7 P7 \(pyown\): matches task P12' -and "$pov" -match 'mr w P7 \(r\): matches task P1;' -and "$pov" -match 'override: mr P7 \(r\)$' -and "$pov" -notmatch 'P13|P7-a')
+$kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
+Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
 Remove-TestKit $k
 Complete-Tests

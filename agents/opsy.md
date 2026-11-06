@@ -43,9 +43,9 @@ Non-negotiables:
 - Board first (`bossy.ps1 board join -Type opsy -Agent <id> -Run <run> -Area deploy-<env>`; it lists every live agent on this
   machine), then `bossy.ps1 learn -Read -Skill opsy`; another deploy of the same env live -> stop and report; `board check`
   before each deploy step; `leave` at the end.
-- **Budget and checkpoints:** `crafty.ps1 checkpoint -Step <n>` after each step and `board beat` (spend / budget, PAUSE: do what
-  it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return `handoff` = that path and stop;
-  CHECKPOINT on join -> start at that step, never deploy twice.
+- **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,
+  PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return `handoff` = that
+  path and stop; CHECKPOINT on join -> start at that step, never deploy twice.
 - Never start, ask for or propose a deploy without step 1; never skip a pre-check or a verify; a failed or unknown check is
   never a pass.
 - Never edit code, MRs or the kit; never force-push, never merge into a `holdMerge` repo without the person's yes.

@@ -213,9 +213,9 @@ TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github'
 
 
 def prior_gate(task, repo, what):
-    """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate): prior ran within prior.validHours and found
-    nothing for this repo (or a duplicate task); work tagged with the task in another repo (finish / doc, no repo: any) = paired, INFO;
-    --override passes, logged with the hits it passed (supervise flags only other tasks' work)."""
+    """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate for wt new): prior ran within prior.validHours
+    and found nothing for this repo (or a duplicate task); work tagged with the task (its wave branches *<tag><task>*, their commits
+    and MRs) is its own: INFO, never a stop; --override passes, logged with the hits it passed."""
     if not task:
         return
     p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
@@ -230,16 +230,16 @@ def prior_gate(task, repo, what):
     for f in p.get('found') or []:
         if not isinstance(f, dict) or f.get('kind') in (None, '', 'doc', 'qa'):
             continue
-        if f.get('kind') == 'task' or not f.get('repo') or (leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))) if repo else not f.get('tagged')):
-            hit.append(f)
-        elif f.get('tagged'):   # the same task id in another repo: its paired MR / branch, never a stop
+        if f.get('kind') != 'task' and f.get('repo') and f.get('tagged'):   # carries the task id: a sibling wave branch's work
             paired.append(f)
+        elif f.get('kind') == 'task' or not f.get('repo') or (leaf(repo) in (leaf(f['repo']), leaf(f.get('proj'))) if repo else True):
+            hit.append(f)
     if OVERRIDE:   # matched: absent = no fresh prior (unknown hits)
         kitlog('calls', 'prior-override', {'task': task, 'what': what, 'reason': OVERRIDE,
                                            **({'matched': [{'kind': h.get('kind'), 'ref': h.get('ref'), 'tagged': bool(h.get('tagged'))} for h in hit]} if fresh else {})})
         return
     for f in paired:
-        print(f"INFO {what}: paired {f.get('kind')} {f.get('ref')} (task {task}, another repo)", file=sys.stderr)
+        print(f"INFO {what}: paired {f.get('kind')} {f.get('ref')} (task {task}: its own work)", file=sys.stderr)
     if hit:
         kitlog('calls', 'prior-refused', {'task': task, 'what': what, 'found': f"{hit[0].get('kind')} {hit[0].get('ref')}"})
         raise SystemExit(f"{what} refused: already exists: {'; '.join(f'{h.get("kind")} {h.get("ref")} {h.get("title")}' for h in hit)}: "

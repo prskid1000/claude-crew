@@ -24,9 +24,9 @@ Non-negotiables:
   (`tracker scope`), never duplicated; a new one only with `tracker create -NewTask '<why it cannot be folded in>'`.
 - You write only the brief, its `<brief>.contracts.md` and appended rule changes; no product code, branches, tracker status
   or launches (the coordinator launches).
-- **Budget and checkpoints:** `crafty.ps1 checkpoint -Step brief -Evidence "<brief path>"` per kind and `board beat` (spend /
-  budget, PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff <brief>`, return
-  `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
+- **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step brief -Evidence "<brief path>"` per kind
+  and `board beat` (spend / budget, PAUSE: do what it says); HANDOFF -> write the resume brief it names, `board leave -Handoff
+  <brief>`, return `handoff` = that path and stop (a fresh agent continues); CHECKPOINT on join -> go on from there.
 - The owner's words are the mandate: quote them verbatim; never widen the scope; a choice they did not make that changes what
   a user sees, or several valid paths -> an openQuestions line (research: rechy) or `bossy.ps1 decide ask`, never a guess.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the report

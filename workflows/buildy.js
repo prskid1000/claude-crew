@@ -192,9 +192,9 @@ ${MODE === 'bugfix' ? '- BUG FIX: reproduce each bug on the local env BEFORE fix
 - LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, counted as passed;
  its human check runs after deploy) (bugs you or checky find come back to the code): each round appends its row to
  the AI doc's Rounds table (round, date, cases, result, bugs, fix commit, retest) and republishes it (--label "loop round <n>").
-- Every goal PASS: crafty.ps1 checkpoint -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
+- Every goal PASS: crafty.ps1 checkpoint -Agent <id> -Run ${RUN} -Step loop -Item <task> -Evidence "round <n> PASS", push, MRs (templates.md "MR body"),
  then the human doc (positive cases) + the AI doc (every case) and devtools.py finish <task> testing.md solution.md review --ai ai.md,
- then devtools.py mr again with both links (edits the MR). A fix round (review, CI, failedTesting): a new AI doc round, then the same
+ then devtools.py mr again with both links (edits it). A fix round (review, CI, failedTesting): a new AI doc round, then the same
  commands update the same docs, comment and MR after its own PASS; never a new doc, never an earlier round removed. Do NOT merge (the workflow reviews, waits for CI, merges; merge refuses an MR without
  both doc links): merged=false, mergeState OPEN.`
 

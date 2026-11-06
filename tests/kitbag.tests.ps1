@@ -244,4 +244,6 @@ $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
 $pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $ia = $pg.IndexOf('goody add flow-map'); $il = $pg.IndexOf('kitbag.py lint')
 Expect 'pages.yml: lint runs the flow checks (flow-map added first, no --no-flow), so an issue the page would show fails CI' ($ia -ge 0 -and $il -gt $ia -and $pg -notmatch '--no-flow')
+$cpNoAgent = @(Get-ChildItem "$src/agents/*.md", "$src/skills/*/SKILL.md", "$src/workflows/*.js" | Select-String -Pattern '(crafty\.ps1|\$D) checkpoint (?!-Agent )' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })
+Expect "every documented checkpoint call names -Agent (crafty.ps1 exits 2 without it): $($cpNoAgent -join ', ')" (-not $cpNoAgent.Count)
 Complete-Tests
