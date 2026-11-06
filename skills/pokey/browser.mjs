@@ -8,7 +8,7 @@
 //   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
 //   const stop = await record(s, '<dir>/F2-T3_01_flow.mp4'); ...; await stop()   video + <file>.events.json (each action: at, target, box)
 //   await matrix(s, async ({ tag }) => [await layoutIssues(s.page), await shot(s.page, `<dir>/F2-T3_01_list-${tag}.jpeg`)])   each qa.matrix variant
-// Sections: L19 config · L43 login · L127 browsers · L170 tabs · L247 session · L286 actions · L385 ui checks · L407 evidence
+// Sections: L19 config · L43 login · L127 browsers · L170 tabs · L258 session · L298 actions · L397 ui checks · L419 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -243,6 +243,17 @@ export async function sweepAll(agent = '') {
   }
   return closed
 }
+// crash / signal: open sessions' done() once; a script's own handler wins
+const openDone = new Set()
+export function releaseOnExit(done) {
+  if (!openDone.hooked) {
+    openDone.hooked = true; let bye
+    const end = (sig, err) => bye ??= (async () => { if (!sig) console.error(err); await Promise.race([Promise.all([...openDone].map((d) => d().catch(() => {}))), sleep(5000)]); process.exit(sig ? 130 : 1) })()
+    for (const ev of ['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM', 'SIGBREAK']) process.once(ev, (e) => process.listenerCount(ev) || end(ev[0] === 'S', e))
+  }
+  openDone.add(done)
+  return () => openDone.delete(done)
+}
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
 // ---- session: your logged-in tab
 // your own logged-in tab
@@ -274,12 +285,13 @@ export async function session({ target, tenant, as = 'admin' } = {}) {
     page = await openTab(browser, key, { agent: agentId })
     if (bo.timezone) await page.emulateTimezone(bo.timezone).catch(() => {})
   }
+  const done = async () => { openDone.delete(done); if (port === null) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} }
+  releaseOnExit(done)
   page.__qa = { t, tenant, as, key, agent: agentId }
   page.setDefaultTimeout(20000); page.setDefaultNavigationTimeout(90000)
   const net = watch(page, t.apiPattern)
-  if (t.webLogin) { await nav(page, t.web + '/'); await ensureLogin(page, t, tenant, as, key) }
-  return { browser, page, net, target: t, tenant, as, key, port, engine: eng,
-    done: async () => { if (port === null) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} } }
+  if (t.webLogin) { try { await nav(page, t.web + '/'); await ensureLogin(page, t, tenant, as, key) } catch (e) { await done(); throw e } }
+  return { browser, page, net, target: t, tenant, as, key, port, engine: eng, done }
 }
 export const killSession = (port) => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }).then((b) => b.close()).catch(() => {})
 

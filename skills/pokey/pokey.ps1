@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L713 retest
+Sections: L23 report · L122 seat · L190 api · L313 finalize · L715 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -47,7 +47,8 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
   # an image: the host's embeddable src (gdocs) or its link; the quoted title = width in px (md_to_html)
   function MdImg($f) { $u = if ($Map.files[$f].src) { $Map.files[$f].src } else { $Map.files[$f].link }; "![$(if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+[a-z]?)_') { "$($Matches[1]): " })$(Caption $f)]($(([string]$u) -replace ' ', '%20') `"$(ImgWidth $f)`")" }
-  # JSON / log evidence previewed in its row: up to 8 "path: value" fields or the last 3 log lines, as code (the run folder copy)
+  # JSON / log evidence previewed in its row: up to 8 "path: value" fields or the last 3 log lines, as code (the run folder copy);
+  # a value's newlines are spaces: one split the table row and its text counted as prose
   function Peek($f) {
     $p = @("$D/shots/$f", "$D/evidence/$f") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $p -or $f -notmatch '\.(json|log|txt)$') { return '' }
@@ -57,7 +58,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
         if ($ln.Count -ge 8) { return }
         if ($v -is [Collections.IDictionary]) { foreach ($key in $v.Keys) { Walk $v[$key] "$at$(if ($at) { '.' })$key" } }
         elseif ($v -is [Collections.IList]) { $n = 0; foreach ($x in $v) { if ($n -ge 3) { break }; Walk $x "$at[$n]"; $n++ } }
-        else { $s = "$v"; $ln.Add("$at`: $($s.Substring(0, [math]::Min(60, $s.Length)))") }
+        else { $s = "$v" -replace '\s+', ' '; $ln.Add("$at`: $($s.Substring(0, [math]::Min(60, $s.Length)))") }
       }
       $jv = try { Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -AsHashtable } catch { $null }
       Walk $jv ''
@@ -424,8 +425,9 @@ if ($Check) {
   foreach ($b in $badNames) { $suggest[$b] = if ($emptyNames -contains $b) { $null } else { Get-StandardName $b } }
   if ($FixNames -and ($suggest.Count -or $remap.Count)) {
     $resFile = Join-Path $D $Results; $raw = [IO.File]::ReadAllText($resFile)
-    # references end in the file name; any case (Windows found the file under a reference in another case, the rename left it)
-    $retag = { param($old, $nn) [regex]::Replace($raw, '(?<=["/\\])' + [regex]::Escape($old) + '(?=")', $nn.Replace('$', '$$'), 'IgnoreCase') }
+    # every whole-name reference: evidence lists and names in the text (observed, verify); any case (Windows found the file under a
+    # reference in another case, the rename left it)
+    $retag = { param($old, $nn) [regex]::Replace($raw, '(?<![\w.-])' + [regex]::Escape($old) + '(?![\w-]|\.\w)', $nn.Replace('$', '$$'), 'IgnoreCase') }
     foreach ($o in @($remap.Keys)) { $raw = & $retag $o $remap[$o]; "  $Results`: $o -> $($remap[$o]) (renamed by an earlier -FixNames)" }
     foreach ($b in @($suggest.Keys)) {
       $new = $suggest[$b]; if (-not $new) { continue }

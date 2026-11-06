@@ -2,13 +2,16 @@
 <#
 params.tests.ps1: lib.ps1 params (registry, load tags, sketches, trigger queue, show, params-changes), the supervise sweep (learned
 section cost, cadence, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params
-lint, the tidy digest's QA gaps, track status lag.
+lint, the tidy digest's QA gaps, track status lag; (cap moves) program state, browser.mjs exit release / kitParam / ports, pipes default.
 Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps1 -Area params).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit params; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 & $J @{ logs = @{ keepDays = 30 } } "$k/skills/crafty/kit.local.json"
+# program state (moved from bossy.tests for its cap), before the param tests change the kit
+$null = Px $O program set -Program 'Big Plan' -Key phases -Value '{"p1":"wf_1"}'; $pg = Px $O program get -Program 'Big Plan' -Key phases | Out-String; $pm = Invoke-TestScript $O program get -Program 'Big Plan' -Key nope
+Expect 'program state in .state: set, get, a missing key exit 1' ($pg -match 'wf_1' -and $pm.code -eq 1)
 $pr = Invoke-PsTest params @'
 . $args[0]
 # owner decision 3: old lines roll into logs-summary.jsonl (one line per stream and month), retired lessons stay, a look back is an observation
@@ -177,5 +180,29 @@ $ago = (Get-Date).AddHours(-2).ToString('s'); Update-KitTracking { param($all) $
 Invoke-Track run -Detail; "t1:$($global:st.t1)"
 '@ @($O) | Out-String
 Expect 'track: an open MR moves an Open task to review; merged 60+ min = LAG, held = HOLD only' ($lg -match "DONE t1: status 'Open' -> review" -and $lg -match 't1:for review' -and $lg -match "LAG t3: all MRs merged at \d\d:\d\d, status still 'for review'" -and $lg -notmatch 'LAG t[24]' -and $lg -match 'HOLD t2' -and $lg -match 'HOLD t4')
+# ---- moved here for the per-file test caps: browser.mjs exit release, kitParam, ports (pokey), pipes default (crafty)
+if (Use-BrowserKit) {
+  $relf = Join-Path (Kd) 'released.txt'
+  $res = NodeT exitrel ("const fs = await import('node:fs'), f = process.argv[2]; m.releaseOnExit(async () => fs.appendFileSync(f, 'a')); const off = m.releaseOnExit(async () => fs.appendFileSync(f, 'b')); off()`n" +
+    "setTimeout(() => { throw new Error('boom') }, 10)") $relf; $relc = $LASTEXITCODE
+  Expect "browser.mjs: an uncaught error runs each open session's done() (not a finished one's), then exits 1 ($relc)" ($relc -eq 1 -and "$res" -match 'boom' -and (Get-Content $relf -Raw) -eq 'a')
+  & $J @{ pins = @{ 'net.timeoutSec|gh' = @{ value = 33 } }; byKey = @{ 'idle.graceMinutes' = @{ _ = @{ value = 4.6 } } } } (TkPath $k param-state -Create)
+  $ps = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitParam idle.graceMinutes 10; Get-KitParam net.timeoutSec 60 gh; Get-KitParam gate.waitMinutes 90"
+  $res = NodeT param "console.log([m.kitParam('idle.graceMinutes', 10), m.kitParam('net.timeoutSec', 60, 'gh'), m.kitParam('gate.waitMinutes', 90)].join(' '))"
+  Expect 'browser.mjs kitParam = Get-KitParam' ("$res" -eq ($ps -join ' ') -and "$res" -eq '4.6 33 90')
+  $res = NodeT ports @'
+import { rmSync, existsSync } from 'node:fs'
+const P = m.sessionPort, a = await P('s', 't', 'a'), seen = [], job = (n) => m.withLock('l', async () => { seen.push(n); await new Promise((r) => setTimeout(r, 150)); seen.push(n) })
+await Promise.all([job(1), job(2)]); const uniq = new Set([a, await P('s', 't', 'v'), await P('p', 't', 'a')]).size === 3
+rmSync(m.kitPath('browser-ports')); console.log(a === await P('s', 't', 'a') && uniq, /^(\d),\1,/.test(seen.join(',')), existsSync(m.kitPath('browser-ports')))
+'@
+  Expect 'browser.mjs: stable port per user key, locked logins' ("$res" -eq 'true true true')
+}
+$D = Join-Path $k 'skills/crafty/crafty.ps1'; $lf = Join-Path (Kd) 'mrs.ps1'; Set-Content $lf "'[]'"
+& $J @{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.list' = "pwsh -NoProfile -File `"$lf`"" } } } "$k/skills/crafty/kit.local.json"
+$pipeRepo = Join-Path (Kd) 'pp'; $pipeWt = Join-Path (Kd) 'pp-wt'; git init -q -b main $pipeRepo; git -C $pipeRepo commit -q --allow-empty -m i; git -C $pipeRepo remote add origin 'https://git.example/g/pp.git'; git -C $pipeRepo worktree add -q -b TK-11-x $pipeWt
+Set-Content (Join-Path "$(git -C $pipeWt rev-parse --absolute-git-dir)" 'claude-target') 'main'; Push-Location $pipeWt; $pipeNone = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; $pipeNoneCode = $LASTEXITCODE
+Set-Content $lf "'[{""iid"":6,""state"":""opened"",""source_branch"":""TK-11-x"",""target_branch"":""main"",""web_url"":""https://git.example/g/pp/-/merge_requests/6""}]'"; $pipeOut = pwsh @np $D pipes -MaxMinutes 0 2>&1 | Out-String; Pop-Location; Set-Content $lf "'[]'"
+Expect "pipes without -Mrs in a wt worktree: its branch's open MRs; none = exit 2 naming the branch ($pipeNoneCode)" ($pipeNoneCode -eq 2 -and $pipeNone -match 'no open MR for TK-11-x -> main' -and $pipeOut -match 'pipes: -Mrs https://git\.example/g/pp/-/merge_requests/6 \(open MRs of TK-11-x\)')
 Remove-TestKit $k
 Complete-Tests

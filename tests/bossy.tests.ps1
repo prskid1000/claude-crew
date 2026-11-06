@@ -93,6 +93,8 @@ $null = pwsh -NoProfile -Command "& '$O' board join -Agent IA -Items A1,B2"; $fl
 (Get-Content $rf -Raw) -replace '"beat": "2', '"beat": "1' | Set-Content $rf; $fz = pwsh @np $O board leave -Agent IA -Force; $ir = Get-Content $rf -Raw | ConvertFrom-Json
 Expect 'board leave: unknown session exits 1; -Force spares a live row, leaves a quiet one; -Items A1,B2 kept' ("$lvc $lv|$fl|$fz|$($ir.status) $($ir.items)" -match '(?s)^1 [^|]*unknown[^|]*\|[^|]*unknown[^|]*\|.*left \(IA-.*\|left A1,B2$')
 $null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'
+# the holder is the test runner's first non-shell ancestor (claude.exe under the PowerShell tool: alive = a live run, not listed)
+foreach ($wx in Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json') { $wr = Read-Json $wx.FullName; $wr.holderPid = $null; & $J $wr $wx.FullName }
 Expect 'launch -Self: 2 launches, one run name: 2 records' (@(Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json').Count -eq 2)
 '{"kitDir":"C:/k","runDir":"C:/r"}' | Set-Content (Join-Path $ld 'args-testy-r.json'); '{"script":"","at":"bad"}' | Set-Content (Join-Path $ld 'broken.json')
 $ll = pwsh @np $O launch -List 2>&1 | Out-String; $cl = pwsh @np $O cleanup -IfDue -Quiet 2>&1 | Out-String; $clc = $LASTEXITCODE
@@ -263,7 +265,5 @@ $pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Sessi
 $pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
 $pu = Px $O resume -Run pr | Out-String; $pl2 = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pl3 = Px $O launch -List -Brief | Out-String; Remove-Item $ad -Recurse -Force
 Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a waiting run releases it' ($pz -match 'PAUSED 1 of 2 .*not confirmed: P2' -and $pz -match 'NOT safe yet: P2' -and $pr.state -eq 'paused' -and @($pr.agents | Where-Object confirmed).agent -eq 'P1' -and $pr.runs[0].self -and $pb -match 'PAUSE \(power off\)' -and $pl -match '^PAUSED' -and $pll -match 'paused buildy\.js' -and $pu -match 'still running: P1' -and $pu -cnotmatch 'RELAUNCH' -and $pl2 -match 'RESUMED' -and $pl3 -notmatch 'paused buildy')
-$null = Px $O program set -Program 'Big Plan' -Key phases -Value '{"p1":"wf_1"}'; $pg = Px $O program get -Program 'Big Plan' -Key phases | Out-String; $pm = Invoke-TestScript $O program get -Program 'Big Plan' -Key nope
-Expect 'program state in .state: set, get, a missing key exit 1' ($pg -match 'wf_1' -and $pm.code -eq 1)
 Remove-TestKit $k
 Complete-Tests

@@ -1684,12 +1684,12 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
 # the gate before work on a task (wt new, devtools.py mr / finish / doc): prior ran within prior.validHours and found nothing for
 # this repo (or a duplicate task); work tagged with the task in another repo = paired, INFO (devtools.py finish / doc: in any repo);
 # -Override '<reason>' passes, logged (a supervise WATCH)
-function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override) {
+function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override, [string]$Reuse) {
   if (-not $Task) { return }
   if ($Override) { Write-KitLog calls prior-override @{ task = $Task; what = $What; reason = $Override }; return }
   $p = (Read-KitState (Get-KitTaskFile $Task)).prior
   if (-not $p.at -or ((Get-Date) - [datetime]$p.at).TotalHours -ge [double](Get-KitParam 'prior.validHours')) { throw "$What refused: run crafty.ps1 prior -Task $Task first (check before create)" }
-  $found = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' })
+  $found = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' -and -not ($Reuse -and (($_.kind -eq 'branch' -and ("$($_.ref)" -replace '^origin/') -eq $Reuse) -or @($_.branches) -contains $Reuse)) })   # -Reuse: the found branch, its MR and commits are that work, not a copy
   $hit = @($found | Where-Object { $_.kind -eq 'task' -or -not $_.repo -or -not $Repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })   # no -Repo (the guard: a hand-made branch, repo unknown): every hit stops
   foreach ($pf in @($found | Where-Object { $_.tagged -and $_ -notin $hit })) { [Console]::Error.WriteLine("INFO ${What}: paired $($pf.kind) $($pf.ref) (task $Task, another repo)") }   # the same task id in another repo: never a stop
   if ($hit.Count) { Write-KitLog calls prior-refused @{ task = $Task; what = $What; found = "$($hit[0].kind) $($hit[0].ref)" }

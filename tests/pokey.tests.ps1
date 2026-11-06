@@ -61,14 +61,18 @@ $null = Fin $bg 'G1'; $vm = Get-Content "$bg/G1/report.md" -Raw
 Expect 'finalize: verify status in the cell, a long text in a linked file' ((Get-Content "$bg/G1/evidence/G1-C1_verify_retest.txt" -Raw) -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed · 1 2 3 [^|]*…\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
-[IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); & $J $rj "$rn/R1/results.json"
+[IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); $rj.checks[0].what_was_done = 'Opened it, see ShotOne.PNG.'; & $J $rj "$rn/R1/results.json"
 $null = Fin $rn R1 -Check -FixNames; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
 & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
 $null = Fin $rn R1 -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw; $p1 = Test-Path "$rn/R1/finalize.json"
 [IO.File]::WriteAllBytes("$rn/R1/shots/two.png", [byte[]](1, 2)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence += 'two.png'; $o0 = $rj.checks[0].observed; $rj.checks[0].observed = "$(1..60)"; & $J $rj "$rn/R1/results.json"
 $o1 = Fin $rn R1 -Check | Out-String; $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].observed = $o0; & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check -FixNames; $o2c = $LASTEXITCODE
 Expect "finalize -Check: prose and off-standard names in one pass, ONE -FixNames run passes ($o2c)" ($o1 -match 'R1 prose check' -and $o1 -match 'two\.png -> R1-C1_' -and $o1 -match 'next: .*ONE run: .*-Check -FixNames' -and $o2c -eq 0)
-Expect "finalize -FixNames: any-case refs renamed; an old name after a rewrite resolves; alone it publishes ($new)" (-not $p0 -and $p1 -and $new -match '^R1-C1_' -and $f1 -match [regex]::Escape($new) -and $f1 -notmatch '(?i)"shotone\.png"' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new))
+Expect "finalize -FixNames: any-case refs renamed, in the text too; an old name after a rewrite resolves; alone it publishes ($new)" (-not $p0 -and $p1 -and $new -match '^R1-C1_' -and $f1 -match "see $([regex]::Escape($new))\." -and $f1 -notmatch '(?i)[" ]shotone\.png' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new) -and $f3 -notmatch '(?i)[" ]shotone\.png')
+$previewRun = New-Run 'PV' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') }); $previewJson = @{ out = @(1..3 | ForEach-Object { [ordered]@{ q = 'How do I give my customers access to the portal today'; ans = "first`nsecond part of the answer text"; ms = 1 } }) }
+$null = New-Item "$previewRun/P1/shots/P1-C1_01_answers.json" -Force -Value ($previewJson | ConvertTo-Json -Depth 4); $rj = Read-Json "$previewRun/P1/results.json"; $rj.checks[0].evidence = @('P1-C1_01_answers.json'); & $J $rj "$previewRun/P1/results.json"
+$previewOut = Fin $previewRun P1 -Check | Out-String; $previewCode = $LASTEXITCODE; $null = Fin $previewRun P1; $previewMd = Get-Content "$previewRun/P1/report.md" -Raw
+Expect "finalize: a JSON preview value with newlines stays in its table row, never prose ($previewCode)" ($previewCode -eq 0 -and $previewOut -notmatch 'prose check' -and $previewMd -match '(?m)^\| \*\*C1\*\* .*`out\[0\]\.ans: first second part of the answer text`.*\|\r?$')
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
@@ -226,17 +230,6 @@ if (Use-BrowserKit) {
   $res = NodeT matrix ("const vs = [], s = { page: { viewport: () => ({ width: 9, height: 9 }), setViewport: async (v) => vs.push(v.width) } }, o = (v, f) => ({ matrix: { viewports: v, fontScales: f } })`n" +
     "const r = await m.matrix(s, async (v) => v.tag, o(['1280x720', '1920x1080'], [2])); console.log(r.map((x) => x.result).join(), vs.join(), await m.matrix(s, 0, o(['1280'])).catch((e) => /<width>x<height>/.test(e.message)))")
   Expect 'browser.mjs matrix: each qa.matrix variant, viewport restored; a bad viewport names its fix' ("$res" -eq '1280x720_f2,1920x1080_f2 1280,1920,9 true')
-  & $J @{ pins = @{ 'net.timeoutSec|gh' = @{ value = 33 } }; byKey = @{ 'idle.graceMinutes' = @{ _ = @{ value = 4.6 } } } } (TkPath $k param-state -Create)
-  $ps = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitParam idle.graceMinutes 10; Get-KitParam net.timeoutSec 60 gh; Get-KitParam gate.waitMinutes 90"
-  $res = NodeT param "console.log([m.kitParam('idle.graceMinutes', 10), m.kitParam('net.timeoutSec', 60, 'gh'), m.kitParam('gate.waitMinutes', 90)].join(' '))"
-  Expect 'browser.mjs kitParam = Get-KitParam' ("$res" -eq ($ps -join ' ') -and "$res" -eq '4.6 33 90')
-  $res = NodeT ports @'
-import { rmSync, existsSync } from 'node:fs'
-const P = m.sessionPort, a = await P('s', 't', 'a'), seen = [], job = (n) => m.withLock('l', async () => { seen.push(n); await new Promise((r) => setTimeout(r, 150)); seen.push(n) })
-await Promise.all([job(1), job(2)]); const uniq = new Set([a, await P('s', 't', 'v'), await P('p', 't', 'a')]).size === 3
-rmSync(m.kitPath('browser-ports')); console.log(a === await P('s', 't', 'a') && uniq, /^(\d),\1,/.test(seen.join(',')), existsSync(m.kitPath('browser-ports')))
-'@
-  Expect 'browser.mjs: stable port per user key, locked logins' ("$res" -eq 'true true true')
   $env:KIT_BROWSER_PORT_BASE = 30000
   $res = NodeT base "const u = [], pg = (web) => ({ __qa: { t: { web } }, goto: async (x) => u.push(x), on() {}, off() {}, waitForNetworkIdle: async () => {} })`nawait m.go(pg('a'), '/x'); await m.go(pg('b'), '/y'); console.log(u + '' === 'a/x,b/y', (await m.sessionPort('pb', 't', 'a')) >= 30000)"
   Remove-Item Env:KIT_BROWSER_PORT_BASE

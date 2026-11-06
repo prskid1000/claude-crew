@@ -6,7 +6,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
- pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON); -UntilMerged: for the merges
+ pipes [-Mrs <url>,...] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs in a wt worktree: its branch's open MRs); -UntilMerged: for the merges
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L299 stack · L479 gate · L747 check · L1007 pipes · L1046 guard · L1650 dir · L1660 checkpoint ·
-  L1685 prior · L1721 tracker · L1778 host
+Sections: L21 init · L27 wt · L303 stack · L483 gate · L751 check · L1011 pipes · L1061 guard · L1665 dir · L1675 checkpoint ·
+  L1700 prior · L1736 tracker · L1793 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -140,7 +140,11 @@ switch ($Action) {
       throw "$path exists (branch $(git -C $path branch --show-current 2>$null), last commit $(git -C $path log -1 --format=%cr 2>$null), holder: $(if ($bh) { $bh -join ', ' } else { 'none on the board' })): resume there (wt status -Dir $path), pick another -Name, or with no holder: wt remove -Dir $path"
     }
     $tk = if ($Task) { $Task } elseif (($rx = Get-KitTaskTagRx) -and $Branch -match $rx) { $Matches.id }   # check before create (crafty.ps1 prior)
-    Assert-KitPrior $tk $Repo "wt new $Branch" $Override
+    try { Assert-KitPrior $tk $Repo "wt new $Branch" $Override $Branch } catch {   # the refusal carries the commands to run next
+      $priorWhy = "$($_.Exception.Message)"; $wtCmd = "crafty.ps1 wt new -Repo '$Repo' -Target $Target -Name $Name$(if ($Task) { " -Task $Task" })"
+      $reuseBr = @(if ($priorWhy -match 'already exists') { (Read-KitState (Get-KitTaskFile $tk)).prior.found | Where-Object { $_.kind -eq 'branch' -and ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] } | ForEach-Object { "$($_.ref)" -replace '^origin/' } | Select-Object -Unique })
+      throw (@($priorWhy) + @($reuseBr | ForEach-Object { "  reuse: $wtCmd -Branch $_" }) + @(if ($priorWhy -match 'already exists') { "  new work on purpose: $wtCmd -Branch $Branch -Override '<why>'" }) -join "`n")
+    }
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
     # a missing configured dep source is an error, no fallback
     $r = $null
@@ -1006,7 +1010,18 @@ exit 0
 
 # ---- pipes: wait for MR/PR pipelines (JSON); CI failures go back to the dev agent, not to a doomed merge
 function Invoke-Pipes {
-param([Parameter(Mandatory)][string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged)   # -UntilMerged: waits for the merge itself (a consumer behind its producers)
+param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged)   # -UntilMerged: waits for the merge itself (a consumer behind its producers)
+if (-not $Mrs) {   # in a wt new worktree: the open MRs of its branch into its recorded target
+  $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
+  $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
+  $script:KitRc = 2
+  if (-not $wtTarget) { [Console]::Error.WriteLine('pipes: missing -Mrs (not in a crafty.ps1 wt worktree). Usage: pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]'); exit 2 }
+  $wtBranch = "$(git -C $wtTop branch --show-current)".Trim()
+  if (-not $wtBranch) { [Console]::Error.WriteLine('pipes: the worktree has a detached HEAD: pass -Mrs <url>,...'); exit 2 }
+  $Mrs = @(Get-MergedMrs $wtTop $wtBranch $wtTarget 'opened' | Where-Object source_branch -eq $wtBranch | ForEach-Object web_url | Where-Object { $_ })
+  if (-not $Mrs.Count) { [Console]::Error.WriteLine("pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)"); exit 2 }
+  $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open MRs of $wtBranch)")
+}
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
 # repos[].ci.mrPipelines false: CI runs only on other branches (deploy), an MR never gets a pipeline
@@ -1688,7 +1703,7 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
   $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
   $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # the branches wt new made for this task: its own work
-  $add = { param($k, $r, $ref, $ti, [bool]$tg) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }) }) }   # tagged: carries the task id
+  $add = { param($k, $r, $ref, $ti, [bool]$tg, $br) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }); branches = @($br | Where-Object { $_ }) }) }   # tagged: carries the task id; branches: an MR's source, a commit's (wt new reusing one passes)
   $idRx = "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])"   # CU-12 is no hit for CU-123
   $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }
   foreach ($d in @(Find-KitSimilarTasks $words $tt.list $tt.parent @() @($Task))) { & $add task '' $d.id "$($d.name) (score $($d.score))" }
@@ -1696,13 +1711,13 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
     $n = ($r -split '[\\/]')[-1]
     foreach ($q in @($tag) + @($Query | Where-Object { $_ })) {
       foreach ($m in @(Invoke-HostVerb 'mr.list' @{ repo = (Get-HostProject $n -Raw); state = 'all'; search = $q; updated_after = $since.ToString('o') })) {
-        if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed -and ($q -ne $tag -or "$($m.title) $($m.source_branch)" -match $idRx)) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title ("$($m.title) $($m.source_branch)" -match $idRx) } } }
+        if ($m.iid -and $m.state -ne 'closed' -and "$($m.source_branch)" -notin $claimed -and ($q -ne $tag -or "$($m.title) $($m.source_branch)" -match $idRx)) { & $add mr $n "$n!$($m.iid) ($($m.state))" $m.title ("$($m.title) $($m.source_branch)" -match $idRx) $m.source_branch } } }
     $dir = @($r, (Get-RepoConf $n checkout $null), (Join-Path $KitConf.ReposRoot $n)) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ '.git')) } | Select-Object -First 1
     if (-not $dir) { continue }
     foreach ($b in @(git -C $dir for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>$null)) { if ($b -match $idRx -and ($b -replace '^origin/') -notin $claimed) { & $add branch $n $b '' $true } }
     foreach ($c in @(git -C $dir log --all -i "--grep=$tag" "--since=$($since.ToString('yyyy-MM-dd'))" --format='%h %s' -n 5 2>$null)) {   # a commit on a claimed branch is this task's own
       $on = @(git -C $dir branch -a --format='%(refname:short)' --contains ($c -split ' ')[0] 2>$null | ForEach-Object { $_ -replace '^origin/' })
-      if ($c -match $idRx -and -not @($on | Where-Object { $_ -in $claimed }).Count) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] $true } }
+      if ($c -match $idRx -and -not @($on | Where-Object { $_ -in $claimed }).Count) { & $add commit $n ($c -split ' ')[0] ($c -split ' ', 2)[1] $true $on } }
     if ($Symbol) { foreach ($g in @(git -C $dir grep -n -F $Symbol "origin/$(Get-RepoConf $n target 'main')" -- 2>$null | Select-Object -First 3)) { & $add code $n (($g -split ':', 4)[1..2] -join ':') '' } }
   }
   $st = Read-KitState (Get-KitTaskFile $Task)
