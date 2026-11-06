@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-pokey.tests.ps1: pokey.ps1 finalize (result rule), seats, api, retest; browser.mjs.
+pokey.tests.ps1: pokey.ps1 finalize (result rule), seats, api errors, retest; browser.mjs (api auth: guard.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/pokey.tests.ps1 (or tests/kit-tests.ps1 -Area pokey).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -76,9 +76,19 @@ $i = $bA[0].id; $tb = Task $i; $tb.name = '[Bug] mine'; & $J $tb "$store/$i.json
 Expect 'one [Bug] per ask: <ask, no [Feature]> — <defect> (+N more); a hand rename kept' ($bA.Count -eq 1 -and $bQ.Count -eq 1 -and $bA[0].name -eq '[Bug] Ask A — s (+1 more)' -and $bQ[0].name -eq '[Bug] Ask Q — s' -and (Task $i).name -eq '[Bug] mine')
 $bd = (Task $i).description; Expect '[Bug] text: bold label bullet, code, task link' ($bd -match '(?m)^- \*\*Results report:\*\* ' -and $bd -match 'testing \[[^\]]+\]\([^)]+\), package `M1`')
 Expect 'a task with only a new defect closes' ((Rec $m 'M1').closed -and (Rec $m 'M2').closed)
+New-Task 'PL' 'Ask L'; New-Task 'TL' 'Task L' 'PL'; New-Task 'BL' '[Bug] renamed by hand' 'PL' 'open' "QA run **Run L** on t found`n`n### X1 — s"; $lr = New-Run 'L' @(@{ code = 'L1'; task = 'TL'; checks = , @('X1', 'FAIL') })
+& $J @{ groups = @{ PL = @{ id = 'BL'; name = '[Bug] old'; entries = @(@{ code = 'L1'; task = 'TL'; md = "## old`n`n### X1 — s" }) } } } "$lr/bugs.json"; $null = Fin $lr 'L1'; $dl = (Task 'BL').description
+Expect 'a running QA run''s legacy [Bug] (renamed, no section marker): its old text replaced, not kept twice' (([regex]::Matches($dl, 'QA run \*\*Run L\*\*')).Count -eq 1 -and ([regex]::Matches($dl, '### X1 ')).Count -eq 1 -and (Task 'BL').name -eq '[Bug] renamed by hand')
 $n = New-Run 'N' @(@{ code = 'N1'; task = 'TA2'; checks = , @('X1', 'FAIL') })
 $null = Fin $n 'N1'
-Expect 'a later run files its own [Bug], the earlier one untouched' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 2 -and (Task $i).name -eq '[Bug] mine' -and (Task $bA[0].id).description -eq $bd)
+$na = (Task $i).description
+Expect 'a later run joins the open [Bug] of the ask as its own section, name and the earlier section kept' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 1 -and (Task $i).name -eq '[Bug] mine' -and $na.StartsWith($bd) -and $na -match '(?m)^Source: qa-N \[kit:bug:qa-N\]$')
+# another agent's open [Bug] (watchy, no section marker) under the ask: joined; a known signature (file:line) = a duplicate line
+New-Task 'PW' 'Ask W'; New-Task 'TW' 'Task W' 'PW'; New-Task 'BW' '[Bug] Ask W — help links' 'PW' 'open' 'watch: plain mode searches the whole index (vector.py:120)'
+$wr = New-Run 'W' @(@{ code = 'W1'; task = 'TW'; checks = @(@('X1', 'FAIL'), @('X2', 'FAIL')) }); $rw = Read-Json "$wr/W1/results.json"
+$rw.checks[0].observed = 'answer links HM pages; vector.py:120 plain mode'; $rw.checks[1].observed = 'GET https://h.example/api/help/42 gives 500'; & $J $rw "$wr/W1/results.json"
+$null = Fin $wr 'W1'; $null = Fin $wr 'W1'; $dw = (Task 'BW').description; $bw = @(Bugs | Where-Object { $_.parent -eq 'PW' })
+Expect "finalize: another agent's open [Bug] under the ask gets one section; the known defect is a duplicate line ($($bw.Count))" (-not $bw.Count -and $dw.StartsWith('watch: plain mode') -and ([regex]::Matches($dw, '\[kit:bug:qa-W\]')).Count -eq 1 -and $dw -match '### X2 ' -and $dw -notmatch '### X1 ' -and $dw -match 'Duplicates.*W1 X1 \(`vector\.py:120`\)' -and (Task 'BW').name -eq '[Bug] Ask W — help links' -and (Rec $wr 'W1').closed)
 $null = Fin $c 'C1'
 Expect 'a re-run posts no second results comment' (@((Task 'T4').comments | Where-Object { $_.text -match 'Test results' }).Count -eq 1)
 $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
@@ -200,26 +210,13 @@ $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'ne
 (Get-Content "$by/run.json" -Raw) -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
 (Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
 $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
-Expect 'bugPrefix: another open [Defect] untouched; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and -not (Task 'BY').description -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
+Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kept; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and (Task 'BY').description -match '(?m)^Source: qa-BY \[kit:bug:qa-BY\]' -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
 & $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
 $ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
-$api = Start-TestApi; $P = $api.port
-$T = { param($a, $sub) @{ api = "http://127.0.0.1:$P$sub"; auth = $a; users = @{ admin = 'u', 'K9' }; defaultTenant = 'acme' } }; $L = @{ path = '/login'; body = @{} }
-& $J @{ targets = @{ tl = & $T ($L + @{ type = 'login' }); tc = & $T ($L + @{ type = 'cookie'; csrfCookie = 'XSRF-TOKEN' }); tt = & $T @{ type = 'none' } '/t/{tenant}' } } (Join-Path $k 'skills/pokey/targets.local.json') 6
-$ok = foreach ($x in 'tl/l', 'tt/x') { $n, $ep = $x -split '/'; if ((Px $Q api -Target $n -Path "/$ep" -Save "A1-C1_01_$n" -OutDir (Kd) 2>&1) -match 'HTTP 200') { $n } }
-$xo = Px $Q api -Target tc -Path '/c' 2>&1 | Out-String; $xc = $LASTEXITCODE
-Expect "api auth login + none; other kinds name their goody ($ok)" (@($ok).Count -eq 2 -and (Get-Content "$(Kd)/A1-C1_01_tl.json" -Raw) -match '"authorization": "\[redacted\]"' -and $xc -eq 1 -and $xo -match 'is a goody: run kitbag\.py goody add api-auth')
-foreach ($e in 'pdf', 'txt', 'empty') { $null = Px $Q api -Target tt -Path "/$e" -Save "S-$e" -OutDir (Kd) 2>&1 }; $bo = @(Get-ChildItem (Kd) -Filter 'S-*.body*').Name -join ' '
-Expect "api -Save: octet-stream sniffed, empty body: no file ($bo)" ($bo -ceq 'S-pdf.body.pdf S-txt.body.txt')
-Expect 'api -ContentType is sent' ((Px $Q api -Target tt -Method POST -Path '/ct' -Body 'hi' -ContentType text/plain 2>&1) -match 'HTTP 200')
-$pp = Px $Q api /x -Target tt 2>&1 | Out-String; $pg = Px $Q api -Target tt -Path 'C:/Program Files/Git/x' 2>&1 | Out-String
-Expect 'api: a Git Bash path (C:/Program Files/Git/x) is sent as /x' ($pg -match 'HTTP 200'); $pu = Px $Q api -Target tt 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE
-Expect 'api: the first bare arg is -Path; none -> exit 2 with the usage line' ($pp -match 'HTTP 200' -and $puc -eq 2 -and $pu -match 'Usage: api -Target')
-$api.proc.Kill()
 # browser.mjs: mocks, then local fixture servers
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
@@ -286,10 +283,10 @@ process.exit(0)
 '@) "$qk/targets.local.json" $(if ($env:KIT_TESTS_SLOW) { '1' } else { '' })
   Expect-Each $res 'browser.mjs login: #' (@('goodies', 'pin') + @(if ($env:KIT_TESTS_SLOW) { 'webext', 'chrome' }))
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
-$fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TQ'; checks = , @('X1', 'FAIL', 'new') })
+New-Task 'PF' 'Ask F'; New-Task 'TF' 'Task F' 'PF'; $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TF'; checks = , @('X1', 'FAIL', 'new') })
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
-Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PQ' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
+Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PF' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k
 Complete-Tests

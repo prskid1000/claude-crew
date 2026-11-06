@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L121 seat · L189 api · L312 finalize · L709 retest
+Sections: L23 report · L121 seat · L189 api · L312 finalize · L713 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -542,11 +542,13 @@ $canCreate = [bool]$bugList -or $KitConf.TrackerType -in 'github', 'gitlab', 'no
 function Test-NewDefect($c) { if ("$($c.defect)" -in 'new', 'own') { return "$($c.defect)" -eq 'new' }; [string]$c.id -match '^X\d' }
 # bossy.ps1 bugbrief parses "### <id> — <screen>" + "**Saw:**"
 $script:NtHold = 'env-data', 'phone-only', 'tool-down', 'no-mail-sandbox'   # NOT_TESTED causes no developer can fix
+function Format-Check($c) {
+  $ev = (@($c.evidence) | Where-Object { $_ } | ForEach-Object { if ($map.files[$_]) { "[$_]($($map.files[$_].link))" } else { $_ } }) -join ', '
+  "### $($c.id) — $($c.screen)$(if ($c.flaky) { ' (flaky)' })`n**Steps:** $($c.what_was_done)`n`n**Saw:** $($c.observed)$(if ($c.cause) { " (cause: $($c.cause))" })`n`n**Independent re-test:** $(if ($c.verify) { $c.verify } else { 'not re-tested' })`n`n**Evidence:** $(if ($ev) { $ev } else { 'none' })`n"
+}
 function Format-Checks($list, [string]$heading) {
   if (-not @($list).Count) { return '' }
-  "## $heading`n`n" + ((@($list) | ForEach-Object {
-        $ev = (@($_.evidence) | Where-Object { $_ } | ForEach-Object { if ($map.files[$_]) { "[$_]($($map.files[$_].link))" } else { $_ } }) -join ', '
-        "### $($_.id) — $($_.screen)$(if ($_.flaky) { ' (flaky)' })`n**Steps:** $($_.what_was_done)`n`n**Saw:** $($_.observed)$(if ($_.cause) { " (cause: $($_.cause))" })`n`n**Independent re-test:** $(if ($_.verify) { $_.verify } else { 'not re-tested' })`n`n**Evidence:** $(if ($ev) { $ev } else { 'none' })`n" }) -join "`n") + "`n"
+  "## $heading`n`n" + ((@($list) | ForEach-Object { Format-Check $_ }) -join "`n") + "`n"
 }
 # last item on a shared task decides
 function SiblingHold($id) {
@@ -581,25 +583,27 @@ function Add-NewDefects($st, [object[]]$defects) {
     $groups = [ordered]@{}; if ($all.groups) { foreach ($p in $all.groups.PSObject.Properties) { $groups[$p.Name] = $p.Value } }
     $s = if ($groups.Contains($key)) { $groups[$key] } else { [pscustomobject]@{ id = $null; url = $null; entries = @() } }
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
-    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; md = (Format-Checks $defects "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``") }
-    $n = [int](($entries | ForEach-Object { ([regex]::Matches([string]$_.md, '(?m)^### ')).Count } | Measure-Object -Sum).Sum)
+    $grp = "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``"
+    $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; defects = @($defects | ForEach-Object { [pscustomobject]@{ label = "$Code $($_.id)"; sig = @(Get-KitDefectSigs $_); md = (Format-Check $_); group = $grp } }) }
+    # an entry of an older finalize (one md, no defects) stays one defect
+    $ds = @($entries | ForEach-Object { if ($_.defects) { @($_.defects) } elseif ($_.md) { [pscustomobject]@{ label = $_.code; sig = @(); md = $_.md; group = '' } } })
+    $mdAll = ($ds | ForEach-Object md) -join "`n"
+    $n = ([regex]::Matches($mdAll, '(?m)^### ')).Count
     # "<prefix> <the ask's product part, no [Feature] tag> — <first defect> (+N more)"
     $prod = (("$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', '') -split ' [—-] ', 2)[0].Trim()
-    $first = [regex]::Match((($entries | ForEach-Object md) -join "`n"), '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
-    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if (($entries | ForEach-Object md) -match '\(flaky\)') { ' [flaky]' })"
-    $body = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)`n$(if ($guideUrl) { "- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)`n" })`n" + (($entries | ForEach-Object md) -join "`n")
-    if ($s.id) {   # a name someone changed since the last finalize stays
-      Clear-TrackerMemo $s.id; $cur = try { [string](Get-TrackerTask $s.id).name } catch { '' }
-      if (-not $s.name -or -not $cur -or $cur -eq $s.name) { $null = Set-TrackerName $s.id $name } else { $name = $cur }
-      $null = Set-TrackerDescription $s.id $body
-    }
-    else {
-      $t = try { New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2' } catch {   # a related open task grows (owner rule), never a second one
-        if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $bugList -Name $name -Description $body -Parent $ask.id -Assignee $tr.owner -Priority '2' -NewTask 'finalize: duplicate check unavailable' }
-        elseif ("$_" -match 'possible duplicate of (\S+)') { $null = Add-TrackerScope $Matches[1] $body; [pscustomobject]@{ id = $Matches[1]; url = (TaskLink $Matches[1]) } } else { throw } }
-      if (-not $t.id) { return $null }
-      $s.id = $t.id; $s.url = $(if ($t.url) { $t.url } else { TaskLink $t.id })
-    }
+    $first = [regex]::Match($mdAll, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
+    $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
+    $head = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)$(if ($guideUrl) { "`n- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)" })"
+    $bt = if ($s.id) { Clear-TrackerMemo $s.id; try { Get-TrackerTask $s.id } catch { $null } }; $cur = [string]$bt.name
+    # an older finalize's own unmarked text (its name, or its "QA run **<title>**" opening) is replaced, never kept twice
+    $mine = [bool]($s.id -and -not $s.adopted -and (($s.name -and $cur -eq $s.name) -or "$($bt.description)".StartsWith("QA run **$title**")))
+    # the shared helper: an open [Bug] under the ask (watchy's, an earlier run's) gets this run's section, never a second task
+    $r = Add-KitAskBug -Ask $ask.id -Key "qa-$(Split-Path $RunDir -Leaf)" -Name $name -Head $head -Defects $ds -List $bugList -Assignee $tr.owner -Id $s.id -Mine:$mine
+    if (-not $r.id) { return $null }
+    if ($r.action -ne 'updated') { $s | Add-Member -Force NoteProperty adopted ($r.action -eq 'appended') }   # another source's task: never renamed
+    elseif (-not $s.adopted) {   # a name someone changed since the last finalize stays
+      if (-not $s.name -or -not $cur -or $cur -eq $s.name) { $null = Set-TrackerName $r.id $name } else { $name = $cur } }
+    $s.id = $r.id; $s.url = $(if ($r.url) { $r.url } else { TaskLink $r.id })
     $s.entries = $entries; $s | Add-Member -Force NoteProperty name $name; $groups[$key] = $s
     [pscustomobject]@{ groups = $groups } | ConvertTo-Json -Depth 8 | Out-File $f -Encoding utf8
     [pscustomobject]@{ id = $s.id; url = $s.url }

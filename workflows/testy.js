@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L211 local · L239 app · L262 test-prompt ·
-//   L316 verify · L360 run-item · L542 pool · L564 budget · L592 run · L630 learn
+// Sections: L16 args · L37 record-args · L58 prepare · L90 config · L125 prompts · L212 local · L240 app · L263 test-prompt ·
+//   L317 verify · L361 run-item · L543 pool · L565 budget · L593 run · L631 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default ['inTest']), lists?, tasks?, exclude?, mine? },
@@ -159,6 +159,7 @@ const CHECKS_SCHEMA = {
      screen: { type: 'string' },
      result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
      defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only (pokey tester step 5)' },
+     signature: { type: 'string', description: 'new defect: file:line, exact error text or URL pattern (the open [Bug] dedupes on it)' },
      cause: { type: 'string', enum: ['no-mail-sandbox', 'phone-only', 'undeployed', 'env-data', 'tool-down'], description: 'NOT_TESTED only: why' },
      env_fix: { type: 'string', description: 'local env, NOT_TESTED: the exact coordinator-only fix' },
      what_was_done: { type: 'string' },

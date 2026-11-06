@@ -3,8 +3,9 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L10 paths · L62 state · L132 config · L212 OS · L414 leases · L874 status · L1106 supervise sweep ·
-  L1181 supervise report · L1290 tracker · L1610 prior · L1728 git-host · L1887 kitlog · L2007 params · L2320 entry-scripts
+Sections: L11 paths · L63 state · L133 config · L213 OS · L415 leases · L875 status · L1107 supervise sweep ·
+  L1182 supervise report · L1291 tracker · L1611 prior · L1634 ask bugs · L1779 git-host · L1938 kitlog · L2058 params ·
+  L2371 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1629,6 +1630,56 @@ function Add-TrackerScope([string]$Id, [string]$Item) {
   $d = "$((Get-TrackerTask $Id).description)".TrimEnd(); if (-not (Get-TrackerTask $Id).name) { throw "tracker scope: task $Id not found (UNKNOWN)" }
   $null = Set-TrackerDescription $Id "$d`n`n**Scope (extended $(Get-Date -Format yyyy-MM-dd)):**`n$Item"; Write-KitLog calls task-scope @{ task = $Id; item = $Item }
   "scope of $Id extended: work and open MRs under it"
+}
+# ---- ask bugs: ONE open [Bug] per ask across agents (pokey.ps1 finalize, watchy via crafty.ps1 tracker bug). Each source owns
+# one section (its "[kit:bug:<key>]" line; a re-run replaces it); a defect whose signature an open section holds = a duplicate line
+function ConvertTo-KitBugNorm([string]$Text) { ((("$Text" -replace '\\(.)', '$1') -replace '/\d+(?=/|\b)', '/{id}') -replace '\s+', ' ').ToLower().Trim() }
+# a signature in a text, whole (vector.py:120 is not in vector.py:1205, /api/orders not in /api/orders/lines)
+function Test-KitBugSig([string]$Hay, [string]$Sig) { $q = ConvertTo-KitBugNorm $Sig; $q.Length -ge 6 -and $Hay -match "(?<![\w.:-])$([regex]::Escape($q))(?![\w/:-])" }
+# a check's signatures: its own .signature, else file:line (not host:port) and URLs with a path (hash routes kept) in observed / cause
+function Get-KitDefectSigs($Check) {
+  if ($Check.signature) { return @(@($Check.signature) | ForEach-Object { "$_".Trim() } | Where-Object { $_.Length -ge 6 }) }
+  $t = "$($Check.observed) $($Check.cause)"
+  $fl = [regex]::Matches($t, '(?<![\w./\\:-])[\w./\\-]+\.(?<x>[A-Za-z]\w{0,4}):\d+(?![\w/])') | Where-Object { $_.Groups['x'].Value -notmatch '^(com|org|net|io|dev|app|co|uk|eu|local|internal|cloud|ai)$' }
+  $url = [regex]::Matches($t, 'https?://[^/\s]+/[^\s)\]>"''`]+') | ForEach-Object { $_.Value -replace '\?[^#]*' -replace '#(?!/).*$' -replace '[.,;:]+$' } | Where-Object { $_ -notmatch '^https?://[^/]+/?$' }
+  @(@(@($fl | ForEach-Object Value) + @($url)) | Select-Object -Unique)
+}
+# $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
+function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
+  $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }   # a marker-safe key
+  if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Key))).Substring(0, 8) }
+  Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-bug-$("$(if ($Ask) { $Ask } else { $Key })" -replace '[^\w.-]', '_')") {
+    $open = { param($i) if (-not $i) { return }; Clear-TrackerMemo $i; $v = Get-TrackerTask $i; if ($v.name -and -not (Test-TrackerStatus "$($v.status)" 'closed')) { $v } }
+    $pre = [string](Get-KitSetting 'tracker.bugPrefix' '[Bug]')
+    $put = { param($bug)
+      $text = "$($bug.description)".TrimEnd()   # markers read back markdown-escaped too ("\[kit:bug:a\_b\]")
+      $ms = @([regex]::Matches($text, '(?m)^[^\r\n]*\\?\[kit:bug:(?<k>[^\]\r\n]+?)\\?\][ \t]*\r?$'))
+      $lead = if ($ms.Count) { $text.Substring(0, $ms[0].Index).TrimEnd() } elseif ($Mine -and $bug.id -eq $Id) { '' } else { $text }
+      $secs = [ordered]@{}; for ($j = 0; $j -lt $ms.Count; $j++) { $end = if ($j + 1 -lt $ms.Count) { $ms[$j + 1].Index } else { $text.Length }; $secs[($ms[$j].Groups['k'].Value -replace '\\')] = $text.Substring($ms[$j].Index, $end - $ms[$j].Index).TrimEnd() }
+      $hay = ConvertTo-KitBugNorm ((@($lead) + @($secs.Keys | Where-Object { $_ -ne $Key } | ForEach-Object { $secs[$_] })) -join "`n")
+      $new = @(); $dup = @()
+      foreach ($d in @($Defects | Where-Object { $_ })) {
+        $hit = @($d.sig | Where-Object { Test-KitBugSig $hay $_ }) | Select-Object -First 1
+        if ($hit) { $dup += "$($d.label) (``$hit``)" } else { $new += $d } }
+      $lines = @("Source: $Key [kit:bug:$Key]") + @($Head | Where-Object { $_ } | ForEach-Object { $_.TrimEnd() })
+      foreach ($g in @($new | ForEach-Object { "$($_.group)" } | Select-Object -Unique)) { if ($g) { $lines += "## $g" }; $lines += @($new | Where-Object { "$($_.group)" -eq $g } | ForEach-Object { "$($_.md)".TrimEnd() }) }
+      if ($dup.Count) { $lines += "**Duplicates** (already in this task, not added again): $($dup -join '; ')" }
+      $sec = $lines -join "`n`n"
+      if (-not $bug.id) { return [pscustomobject]@{ section = $sec; duplicates = $dup } }
+      $secs[$Key] = $sec; $null = Set-TrackerDescription $bug.id ((@($lead | Where-Object { $_ }) + @($secs.Values)) -join "`n`n")
+      [pscustomobject]@{ id = $bug.id; url = (Get-TrackerUrl $bug.id); action = $(if ($Id -and $bug.id -eq $Id) { 'updated' } else { 'appended' }); duplicates = $dup }
+    }
+    $bug = & $open $Id
+    if (-not $bug -and $Ask -and $Ask -ne '-') { Clear-TrackerMemo $Ask
+      $bug = & $open (@((Get-TrackerTask $Ask).subtasks | Where-Object { "$($_.name)".StartsWith($pre) -and -not (Test-TrackerStatus "$($_.status)" 'closed') }) | Select-Object -First 1).id }
+    if ($bug) { return & $put $bug }
+    $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })
+    $t = try { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority } catch {   # a related open task grows (owner rule), never a second one
+      if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
+      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid)) { return & $put $b2 }
+        New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed" } else { throw } }
+    if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
+  }
 }
 # the gate before work on a task (wt new, devtools.py mr / finish / doc): prior ran within prior.validHours and found nothing for
 # this repo (or a duplicate task); work tagged with the task in another repo = paired, INFO (devtools.py finish / doc: in any repo);

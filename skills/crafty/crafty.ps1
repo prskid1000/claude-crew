@@ -4,7 +4,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON); -UntilMerged: for the merges
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 wt · L299 stack · L479 gate · L747 check · L1007 pipes · L1046 guard · L1650 dir · L1660 checkpoint ·
-  L1685 prior · L1721 tracker · L1774 host
+  L1685 prior · L1721 tracker · L1778 host
 #>
 #Requires -Version 7
 # ---- init: verb arguments, the gate mutex, lib.ps1
@@ -1724,8 +1724,8 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Add)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Add|Signature)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Add -Signature -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   if ($__trOpt.File) { if (-not (Test-Path -LiteralPath $__trOpt.File -PathType Leaf)) { "tracker: no such file $($__trOpt.File)"; exit 2 }; $__trOpt.Text = Get-Content -LiteralPath $__trOpt.File -Raw -Encoding utf8; if (-not $__trOpt.Description) { $__trOpt.Description = $__trOpt.Text } }
@@ -1760,6 +1760,10 @@ function Invoke-Tracker {
       if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
+    'bug' {   # ONE open [Bug] per ask (lib.ps1 Add-KitAskBug): joins the open one as a section; a known signature = a duplicate line
+      if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <section key> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
+      __TrOut (Add-KitAskBug -Ask $__trOpt.Parent -Key $__trOpt.Key -Name $__trOpt.Name -List $__trOpt.List -Assignee $__trOpt.Assignee -Priority $(if ($__trOpt.Priority) { $__trOpt.Priority } else { '2' }) -Defects @([pscustomobject]@{ label = $__trOpt.Key; sig = @("$($__trOpt.Signature)" -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); md = $__trOpt.Text; group = '' }))
+    }
     'scope' { $__s = if ($__trOpt.Task) { $__trOpt.Task } else { $__id }; if (-not ($__s -and $__trOpt.Add)) { "usage: tracker scope -Task <id> -Add '<item>'"; exit 2 }; Add-TrackerScope $__s $__trOpt.Add }
     'url' { Get-TrackerUrl $__id }
     'owner' { Get-TrackerOwner }
@@ -1767,7 +1771,7 @@ function Invoke-Tracker {
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|status|comment|comments|create|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|status|comment|comments|create|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 
