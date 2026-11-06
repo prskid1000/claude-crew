@@ -5,7 +5,7 @@ own (never the env's DB): marks, a flashback round trip over 2 schemas (checksum
 restore over an undone range, FK order + orphan check (that table falls back), no-PK duplicates, a cascade without the guard (child
 seeded), the guard (3-level tree, SET NULL, ON UPDATE CASCADE, app triggers not fired), teardown, slices (dropped / retyped column,
 index, FK, dropped and new table, view / procedure, a trigger table changed by DDL), DDL with no slice (falls back), db.rollback only on opt-in, dry run, mark expiry,
-the temp watchdog + doctor rows; the goody check line.
+the temp watchdog + doctor rows; the goody check line; a client exit 0 without output (the end marker).
 Usage: kitbag.py goody test db-engine-presets, or pwsh -File goodies/db-engine-presets/tests.ps1 -Kit <kit> (needs the goody local-env).
 Exit codes: 0 pass · 1 fail.
 #>
@@ -33,6 +33,15 @@ Set-Content $clog '<databaseChangeLog><changeSet id="1"><sql>ALTER TABLE t1 ADD 
 $tch = @((& $py -X utf8 (Join-Path $PSScriptRoot 'files/skills/envy/adapters/db_flashback.py') touched --files $clog | ConvertFrom-Json).items | ForEach-Object { "$($_.table):$($_.kind):$($_.columns -join '+')" }) -join ','
 Expect "touched: an added column is a create; a <rollback> body names nothing ($tch)" ($tch -eq 't1:create:,t3:column:c4,t7:table:')
 Remove-TestKit $k2
+# an exit 0 with no output (the mysql client under CPU load lost FKs, tables, rows): a read retries then fails, a write fails at once
+if ($IsWindows) {
+  $k4 = New-PresetKit le4; $fakeBin = Join-Path (Split-Path $k4) 'fakemysql'; New-Item -ItemType Directory -Force $fakeBin | Out-Null; Set-Content (Join-Path $fakeBin 'mysql.cmd') '@exit /b 0'
+  & $J @{ localEnv = @{ envs = @{ s = @{ services = @(); db = @{ engine = 'mysql'; port = 1; user = 'u'; bin = $fakeBin } } } } } (Join-Path $k4 'skills/crafty/kit.local.json') 6
+  $em = & { . (Join-Path $k4 'skills/envy/envy.ps1'); foreach ($q0 in 'SELECT 1', 'DELETE FROM t', 'WITH x AS (SELECT 1) DELETE FROM t') { try { Invoke-DbSql s $q0; 'rows' } catch { "$_" -replace '^mysql: exit 0 without the end marker \((\w+).*', '$1' } } }
+  $ep = & $py -X utf8 -c "import sys, types; sys.path.insert(0, r'$(Join-Path $k4 'skills/envy/adapters')'); import db_flashback as f; d = f.Db(types.SimpleNamespace(host='h', port='1', user='u', mysql=r'$fakeBin\mysql.cmd'))`ntry: d.rows('SELECT 1'); print('rows')`nexcept RuntimeError as e: print('no output 3 times' in str(e))"
+  Expect "an exit 0 without output is no answer: a read retries then fails, a write fails at once, never 0 rows ($em | $ep)" ("$em" -eq '3 a a' -and "$ep" -eq 'True')
+  Remove-TestKit $k4
+}
 
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
@@ -45,7 +54,10 @@ $srv = Start-Process $mysqld.Source -ArgumentList "--no-defaults `"--datadir=$da
 try {
   for ($i = 0; $i -lt 60 -and -not (Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue); $i++) { Start-Sleep 1 }
   $env:MYSQL_PWD = ''
-  function Q([string]$sql) { $o = $sql | mysql -h 127.0.0.1 -P $port -u root --default-character-set=utf8mb4 -N -B 2>&1; if ($LASTEXITCODE) { throw "$o" }; $o }
+  function Q([string]$sql) {   # the end marker as in Invoke-DbSql: an exit 0 without output under load is retried, never 0 rows
+    foreach ($try in 1..3) { $o = @("$($sql.TrimEnd().TrimEnd(';'));`nSELECT '__kit_rows_end__';" | mysql -h 127.0.0.1 -P $port -u root --default-character-set=utf8mb4 -N -B 2>&1); if ($LASTEXITCODE) { throw "$o" }
+      if ($o.Count -and $o[-1] -eq '__kit_rows_end__') { return $o | Select-Object -SkipLast 1 } }
+    throw "mysql: no output 3 times: $sql" }
   Q @"
 CREATE DATABASE fa; CREATE DATABASE fb;
 CREATE TABLE fa.t (id int primary key auto_increment, s varchar(40), d decimal(8,2), f double, dt datetime(3), ts timestamp(2) null, dd date, tm time, j json, e enum('x','y'), st set('a','b','c'), b blob, u int unsigned, bt bit(4), g int as (char_length(s)) virtual, n text) charset utf8mb4;

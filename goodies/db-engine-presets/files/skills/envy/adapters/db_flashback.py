@@ -17,7 +17,7 @@
   touched --files <f,..>: tables / columns the SQL (a tool's dry-run output) or migration files change -> slice spec items
 Common: --host --port --user (password: MYSQL_PWD) [--mysql <exe>] [--mysqlbinlog <exe>] [--mysqldump <exe>]. Out: JSON.
 Exit codes: 0 ok · 1 refused or failed · 2 usage.
-Sections: L34 binlog · L246 row events · L378 flashback · L635 touched · L671 slices · L713 structure · L806 objects · L858 guard
+Sections: L35 binlog · L254 row events · L386 flashback · L643 touched · L680 slices · L723 structure · L816 objects · L868 guard
 """
 import argparse, base64, gzip, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 
@@ -29,6 +29,7 @@ TOOL = r'(?i)^(databasechangelog|flyway_schema_history|alembic_version|schema_mi
 ESC = {ord('n'): 10, ord('t'): 9, ord('r'): 13, ord('b'): 8, ord('f'): 12, ord('v'): 11, ord('a'): 7, ord('0'): 0, ord('\\'): 92, ord("'"): 39, ord('"'): 34}
 ROW = re.compile(rb'^### (INSERT INTO|UPDATE|DELETE FROM) `((?:[^`]|``)+)`\.`((?:[^`]|``)+)`')
 ACTS = ('CASCADE', 'SET NULL', 'SET DEFAULT')
+ROWS_END = '__kit_rows_end__'   # Db.rows: the last line of every answer
 
 
 # ---- binlog: positions, values, the server's metadata, DDL statements, the scan
@@ -68,22 +69,29 @@ class Db:
     def __init__(s, a): s.a = a
     def base(s, exe): return [exe, '-h', s.a.host, '-P', str(s.a.port), '-u', s.a.user]
     def rows(s, sql):
-        r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '-e', sql], capture_output=True, timeout=600)
-        if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
+        """read-only statements; under CPU load the client can exit 0 with no output at all: an end marker tells 0 rows from lost ones"""
+        for _ in range(3):
+            r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '-e', f"{sql.rstrip().rstrip(';')}; SELECT '{ROWS_END}'"], capture_output=True, timeout=600)
+            if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
+            out = [l for l in r.stdout.decode('utf-8', errors='replace').splitlines() if l]
+            if out and out[-1] == ROWS_END: break
+        else: raise RuntimeError(f'mysql: no output 3 times (exit 0, no end marker): {sql[:80]}')
         bs = {'n': '\n', 't': '\t', '0': '\0', '\\': '\\'}   # -B escapes these in each field
-        return [[re.sub(r'\\(.)', lambda x: bs.get(x.group(1), '\\' + x.group(1)), f) for f in l.split('\t')] for l in r.stdout.decode('utf-8', errors='replace').splitlines() if l]
+        return [[re.sub(r'\\(.)', lambda x: bs.get(x.group(1), '\\' + x.group(1)), f) for f in l.split('\t')] for l in out[:-1]]
     def run_file(s, path):
         with open(path, 'rb') as fh:
             return subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--comments'], stdin=fh, capture_output=True, timeout=7200)
     def script(s, sql):
-        """statements (DELIMITER lines allowed) through a temp file; raises on failure"""
+        """statements (DELIMITER lines allowed; the last one terminated) through a temp file; raises on failure"""
         fd, path = tempfile.mkstemp(suffix='.sql'); os.close(fd)
         try:
-            with open(path, 'w', encoding='utf-8', newline='\n') as fh: fh.write(sql)
+            with open(path, 'w', encoding='utf-8', newline='\n') as fh: fh.write(f"{sql}\nDELIMITER ;\nSELECT '{ROWS_END}';\n")
             r = s.run_file(path)
         finally: os.remove(path)
         if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')
-        return r.stdout.decode('utf-8', errors='replace')
+        out = r.stdout.decode('utf-8', errors='replace')
+        if ROWS_END not in out: raise RuntimeError('mysql: exit 0 without the end marker: the statements may not have run')   # never retried: writes
+        return out.replace(ROWS_END, '').rstrip('\r\n')
     def create(s, sch, t):
         try: return s.rows(f'SHOW CREATE TABLE {q(sch)}.{q(t)}')[0][1]
         except (RuntimeError, IndexError): return None

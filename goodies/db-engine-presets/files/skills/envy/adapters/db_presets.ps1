@@ -3,7 +3,7 @@
 # mysql / mariadb, gives marks (binlog positions), flashback restores and the cascade guard (db_flashback.py); other
 # engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri
-# Sections: L27 marks · L88 temp · L128 pool · L164 tenants
+# Sections: L27 marks · L94 temp · L134 pool · L170 tenants
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $script:DbPresets = @{
   postgres  = @{ port = 5432; query = "psql $q -d {N} -At -c `"{sql}`""; exec = "psql $q -d {N} -v ON_ERROR_STOP=1 -f `"{file}`""; jdbc = 'jdbc:postgresql://{H}:{P}/{N}?currentSchema={schema}'; passwordEnv = 'PGPASSWORD' }
@@ -32,11 +32,17 @@ function DbConn([string]$e) {
      mysql = $(if ($bin) { Join-Path $bin 'mysql' } else { 'mysql' }); mysqlbinlog = $(if ($bin) { Join-Path $bin 'mysqlbinlog' } else { 'mysqlbinlog' }); mysqldump = $(if ($bin) { Join-Path $bin 'mysqldump' } else { 'mysqldump' }) }
 }
 # one statement through the mysql client (password: MYSQL_PWD from the env file) -> rows of tab-separated fields; throws on failure
+# under CPU load the client can exit 0 with no output at all: an end marker tells 0 rows from lost ones (a read retries, a write throws)
 function Invoke-DbSql([string]$e, [string]$sql, [int]$Sec = 120) {
-  $c = DbConn $e
-  $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B', '-e', $sql) $Sec }
-  if ($r.code) { throw "mysql: $(if ($r.err) { $r.err } else { $r.out })" }
-  @("$($r.out)" -split "`r?`n" | Where-Object { $_ } | ForEach-Object { , @($_ -split "`t") })
+  $c = DbConn $e; $endMark = '__kit_rows_end__'; $read = $sql -match '^\s*(SELECT|SHOW|WITH)\b' -and $sql -notmatch '(?i)\b(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|TRUNCATE|CALL|KILL|SET|OUTFILE|DUMPFILE)\b|;\s*\S'
+  for ($try = 1; ; $try++) {
+    $r = With-Env (EnvVars $e ([pscustomobject]@{})) { Invoke-KitExe $c.mysql @('-h', $c.host, '-P', $c.port, '-u', $c.user, '-N', '-B', '-e', "$($sql.TrimEnd().TrimEnd(';')); SELECT '$endMark'") $Sec }
+    if ($r.code) { throw "mysql: $(if ($r.err) { $r.err } else { $r.out })" }
+    $lines = @("$($r.out)" -split "`r?`n" | Where-Object { $_ })
+    if ($lines.Count -and $lines[-1] -eq $endMark) { break }
+    if (-not $read -or $try -ge 3) { throw "mysql: exit 0 without the end marker ($(if ($read) { '3 tries' } else { 'a write: not retried, it may not have run' })): $($sql.Substring(0, [math]::Min(80, $sql.Length)))" }
+  }
+  @($lines | Select-Object -SkipLast 1 | ForEach-Object { , @($_ -split "`t") })
 }
 function Get-DbPos([string]$e) {
   $row = try { @(Invoke-DbSql $e 'SHOW MASTER STATUS')[0] } catch { @(Invoke-DbSql $e 'SHOW BINARY LOG STATUS')[0] }   # 8.4+ renamed it
