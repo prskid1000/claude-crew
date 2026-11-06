@@ -70,7 +70,7 @@ $wait = { param($wn = 'bgx') $r = Get-Content (Join-Path (Get-KitPath background
 & $wait; $b2 = @(Invoke-KitSweepCall $sw bgx $args[1] @('-X', "a'$([char]0x2019)b") -Background); & $wait
 $dq = foreach ($r in 1, 2) { @(Invoke-KitSweepCall $sw dq $args[1] @() -Detached).Count; & $wait dq }
 "bg:$($dq -join '')$($sw.cost.dq -gt 0)$($i1 -join ','):$($sw.cost.quick -gt 0):$($b1.Count):$($b2 -join ','):$($sw.cost.bgx -lt 50)"
-$s2 = New-KitSweep $n0.AddSeconds(2) @{ sweep = @{ v = 2; cost = @{ s = 10 }; starved = @('s') } }; "starved:$(Test-KitSweep $s2 s $n0)"
+$s2 = New-KitSweep $n0.AddSeconds(-6) @{ sweep = @{ v = 2; cost = @{ s = 10; q = 0.5 }; starved = @('s', 'q') } }; "starved:$(Test-KitSweep $s2 s $n0)$(Test-KitSweep $s2 q $n0)"
 $s3 = New-KitSweep $n0.AddSeconds(60) @{}; $null = Test-KitSweep $s3 a $n0; Start-KitSweepPhase $s3 hook $n0.AddSeconds(2); $null = Test-KitSweep $s3 b $n0.AddSeconds(7); $st3 = @{}
 $s4 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{ big = 30; x = 4 }; starved = @('big') } }; "hold:$(Test-KitSweep $s4 x $n0):$((New-KitSweep $n0 @{ sweep = @{ cost = @{ old = 99 } } }).cost.Count)"
 $s5 = New-KitSweep $n0.AddSeconds(20) @{ sweep = @{ v = 2; cost = @{}; last = @{ 'deploy checks' = "$($n0.AddMinutes(-5))"; cleanup = "$($n0.AddMinutes(-40))" } } }; $st5 = @{}
@@ -85,7 +85,7 @@ $cr = @(Invoke-KitBackground crash $ce @()); "hung:$($hu[0] -match '^WATCH backg
 '@ @((Lib), $bs)
 Expect "sweep: a section runs when its cost fits the time left after starved ones; starved first; costs EWMA; skipped = next starved ($(@($sr -match '^sweep') -join ' '))" ($sr -contains 'sweep:FalseTrueTrueFalse' -and $sr -contains 'sweep2:a,d:1.3:6.8')
 Expect "sweep: a verb runs inline (cost learned); over half the time left with -Background, or cheap with -Detached: the last result, a fresh detached run, args intact, smart quotes too ($(@($sr -match '^bg:') -join ' '))" ($sr -contains "bg:01Truebg-out:True:0:bg-out-X a'?b:True")
-Expect "sweep: a starved section still needs min(cost, 5) s; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:False' -and $sr -contains 'hung:TrueTrue:True')
+Expect "sweep: a starved section runs up to 10 s past the deadline if min(cost, 5) s fit; a hung background run is stopped; a crashed one (console stderr) is a WATCH line ($(@($sr -match '^(starved|hung):') -join ' '))" ($sr -contains 'starved:FalseTrue' -and $sr -contains 'hung:TrueTrue:True')
 Expect "sweep: an ungated phase is no section's cost, named in slowest; starved hold at most half; pre-v2 costs relearn ($(@($sr -match '^(phase|hold):') -join ' '))" ($sr -contains 'phase:2:1:False:slowest: ~hook 5.0 s, a 2.0 s, b 1.0 s' -and $sr -contains 'hold:True:0')
 Expect "sweep: inside its sectionMinutes not due (no skip); due: runs (twice in a round too), stamped ($(@($sr -match '^due:') -join ' '))" ($sr -contains 'due:FalseTrueTrue:0:True')
 # net: after a timeout the next call waits x1.5 (that call only); hang retries within 10% of calls (>= 1 a minute)
@@ -110,6 +110,11 @@ Expect "net: a timeout is observed at the learned value, not the x1.5 back-off (
 Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is cleared; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
 Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75' -and $nr -contains 'spend2:10')
 Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
+# health: the python checks (lint, port --check, goody check) run in the background; the next session shows their lines
+$hcw = { $r = Read-Json (Join-Path (TkPath $k background) 'health-checks.json'); for ($i = 0; $i -lt 300 -and (& { . (Lib); Test-KitPid $r.pid $r.start }); $i++) { Start-Sleep -Milliseconds 100 } }
+'# a' | Set-Content "$k/AGENTS.md"; $hh = Px $O health | Out-String; & $hcw   # a kit folder: lint has lines
+$hc = (Get-Content (Join-Path (TkPath $k background) 'health-checks.out') -Raw) -replace '\s+', ' '; $hh2 = Px $O health | Out-String; & $hcw; Remove-Item "$k/AGENTS.md"
+Expect "health: the python checks run in the background; the next session shows their lines ($hc)" ($hh -notmatch 'kitbag lint' -and "$hc" -match 'kitbag lint' -and $hh2 -match 'kitbag lint')
 # cleanup: tracking.json.migrated goes (owner decision 3)
 '{}' | Set-Content "$(TkPath $k tracking -Create).migrated"
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
@@ -117,6 +122,12 @@ Expect 'cleanup: tracking.json.migrated goes' ($cd -match 'tracking\.json\.migra
 # heartbeat SETTINGS: shown until a heartbeat (-AutoFix) saw them; a manual run does not consume them
 $null = pwsh @np $O param pin idle.graceMinutes 8; $sv = foreach ($af in $false, $true, $true) { pwsh @np $O supervise -Json -AutoFix:$af 2>$null | Out-String }
 Expect 'supervise: SETTINGS lines until a heartbeat saw them; a manual run leaves them' ($sv[0] -match 'SETTINGS: idle\.graceMinutes' -and $sv[1] -match 'SETTINGS: idle\.graceMinutes' -and $sv[2] -notmatch 'SETTINGS: idle\.graceMinutes')
+# the sweep-budget WATCH exists before the acks: in lastFlags (what -Ack matches), hidden once acked
+& $J @{ logs = @{ keepDays = 30 }; supervise = @{ briefSeconds = 0 } } "$k/skills/crafty/kit.local.json"; $null = pwsh @np $O supervise -Brief 2>$null
+$sbl = @((Read-Json (TkPath $k supervise-state)).lastFlags.what -match '^sweep hit its 0 s budget').Count; $null = pwsh @np $O supervise -Ack 'sweep hit its 0 s budget' -Reason 'test'
+$sbh = Invoke-PsTest sbh ". `$args[0]; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; (Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'sweep hit its 0 s budget: skipped storage' }) `$a (Get-Date)).what" @($O)
+& $J @{ logs = @{ keepDays = 30 } } "$k/skills/crafty/kit.local.json"
+Expect "supervise: the sweep-budget WATCH is in lastFlags and -Ack hides it ($sbl; $sbh)" ($sbl -eq 1 -and "$sbh" -match '^1 acknowledged flag')
 # supervise collision words; -Ack from -Brief cells (wrap spaces, \|, one cell); refs (UNTRACKED MR) kept, a new MR flags
 $ac = Invoke-PsTest ack @'
 . $args[0]; "cx:$(Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from /tmp; halted the push')$(Test-KitCollision 'Halted: another agent is editing the same worktree')"

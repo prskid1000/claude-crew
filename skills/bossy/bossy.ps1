@@ -23,8 +23,8 @@ Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L227 budget · L255 launch · L527 recover · L610 pause · L654 resume · L712 program · L757 param ·
   L763 track · L1076 supervise · L1379 report · L1458 audit · L1518 storage · L1729 bugbrief · L1831 cleanup · L1955 learn ·
-  L1985 decide · L2053 health · L2113 retro due · L2123 tidy · L2193 the kit origin's main and goodies · L2209 setup ·
-  L2276 guard-sendmessage
+  L1985 decide · L2053 health · L2112 retro due · L2122 tidy · L2192 the kit origin's main and goodies · L2208 setup ·
+  L2275 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -1347,6 +1347,8 @@ foreach ($sf in @(Get-ChildItem (Get-KitPath launches) -Filter 'self-*.json' -Er
 # 9. anomalies vs the last round: outbox, agent errors (env restarts, log errors: goody local-env)
 Phase 'anomalies'; $cur =@{ toolErrors = $toolErr; errorRun = $errRun; outbox = @(Get-Content (Get-KitPath outbox) -ErrorAction SilentlyContinue).Count }
 $an = Get-KitAnomalies $cur $state.anom; foreach ($x in $an.flags) { Flag $x.level $x.what $x.action }; $state.anom = $an.state
+$late = @($kitSweep.skipped | Where-Object { -not $kitSweep.ran.ContainsKey($_) -and (-not $kitSweep.every[$_] -or -not $kitSweep.last[$_] -or ($now - [datetime]$kitSweep.last[$_]).TotalMinutes -ge 2 * $kitSweep.every[$_]) })   # one round late: no news
+if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($late) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the acks (-Ack)
 $s1 = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; $state.acks = @{}; $a0 = $s1.acks   # re-read: an -Ack during this sweep
 $state.known = @{}; foreach ($r in @(if ($s1.known) { $s1.known.Keys })) { if (($now - [datetime]$s1.known[$r]).TotalDays -lt $(if ("$r".StartsWith('noise:')) { 30 } else { 2 })) { $state.known[$r] = $s1.known[$r] } }   # refs an -Ack stored: MRs past the 24 h merge window go, noise after 30 d
 foreach ($k in @(if ($a0) { $a0.Keys })) { if (($now - [datetime]$a0[$k].at).TotalHours -lt 24) { $state.acks[$k] = $a0[$k] } }
@@ -1358,8 +1360,6 @@ Add-KitActObs $state $acts $now
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
-$late = @($kitSweep.skipped | Where-Object { -not $kitSweep.every[$_] -or -not $kitSweep.last[$_] -or ($now - [datetime]$kitSweep.last[$_]).TotalMinutes -ge 2 * $kitSweep.every[$_] })   # a cadence section one round late is no news
-if ($late.Count + $kitSweep.timedOut.Count) { Flag 'WATCH' "sweep hit its $budgetSeconds s budget: skipped $(@($late) + @($kitSweep.timedOut | ForEach-Object { "$_ (timed out)" }) -join ', ')" 'Partial result: the skipped sections go first next round.' }   # before the report: -Brief showed it only in the detail file
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 L "sweep: $secs s"
@@ -2052,10 +2052,14 @@ function Invoke-Decide {
 
 # ---- health: SessionStart hook; no network
 function Invoke-Health {
-param([switch]$Flow, [switch]$Fetch)
+param([switch]$Flow, [switch]$Fetch, [switch]$Checks)
 $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
 $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
+if ($Checks) {   # 6-7 s, so in the background: health shows the last run
+  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --check', 'goody check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
+  exit 0
+}
 if ($Flow -or $Fetch) {
   if ($Fetch -and (Test-Path (Join-Path $kit '.git'))) {
     git -C $kit fetch --quiet 2>$null
@@ -2098,12 +2102,7 @@ if (-not $hook -or $hook.source -ne 'compact') {
   $stopped = @(& $KitCmd.orch launch -List -Brief -Hours 72 2>$null)
   if ($stopped.Count) { $msgs += "paused/crashed runs: $($stopped.Count) ($($stopped -join '; '))$(if ($crashed.Count) { "; $($crashed.Count) board agent(s) marked crashed" }). Do: & '$($KitCmd.orch)' resume -All (network first; a brief per agent from its checkpoint; bossy E3); finished ones: bossy.ps1 launch -Done -RunId <id>. No heartbeat runs in this session: arm one (bossy E1: a one-shot timer in $(Get-KitBeatMinutes) min, prompt: ""$(Get-KitBeatPrompt)"")" }
 }
-if ($py) {
-  $lint =& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null
-  if ($lint) { $msgs += ($lint -join ' ') }
-  & $py -X utf8 $KitCmd.kitbag port --check 2>$null | ForEach-Object { $msgs += $_ }   # silent without the ports goody
-  & $py -X utf8 $KitCmd.kitbag goody check 2>$null | ForEach-Object { $msgs += $_ }   # config that needs a goody not installed
-}
+if ($py) { $msgs += @(Invoke-KitBackground 'health checks' $KitCmd.orch @('health', '-Checks')) }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # goody kit-admin: the weekly kitty audit nudge
 Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook

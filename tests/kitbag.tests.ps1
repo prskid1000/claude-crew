@@ -203,7 +203,9 @@ Expect 'kitbag lint: AGENT-TYPE, LOG-DIRECT, PS-VERSION, HIDDEN-WINDOW, OLD-NAME
 ('# x' + "`n") * 3000 | Add-Content $demo; New-Item -ItemType Directory -Force "$xw/goodies/big/files/skills" | Out-Null; '# big' | Set-Content "$xw/goodies/big/GOODY.md"
 ('# x' + "`n") * 3000 | Set-Content "$xw/goodies/big/files/skills/big.ps1"; & $pushX 'feat: big'
 $l5 = (& $ex lint --no-flow).out; $null = & $ex goody list; $t5 = & $ex goody test big   # list fetches the branch
-Expect 'sections: lint flags an installed goody''s file (fix on the goodies branch); goody test flags the branch''s files; an unknown goody = exit 2' ($l5 -match 'SECTION-MAP\s+skills/bossy/kitbag_demo\.py: no section markers.*\(goody demo: fix it on the goodies branch\)' -and $t5.code -eq 1 -and $t5.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and (& $ex goody test nope).code -eq 2)
+$t6 = & $ex goody test big --ref refs/remotes/origin/goodies; $t7 = & $ex goody test big --ref no-such-branch
+Expect 'sections: lint flags an installed goody''s file (fix on the goodies branch); goody test (--ref: that branch) flags the branch''s files; an unknown goody or ref = exit 2' ($l5 -match 'SECTION-MAP\s+skills/bossy/kitbag_demo\.py: no section markers.*\(goody demo: fix it on the goodies branch\)' -and $t5.code -eq 1 -and $t5.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and (& $ex goody test nope).code -eq 2 -and
+  $t6.code -eq 1 -and $t6.out -match 'FAIL SECTION-MAP skills/big\.ps1' -and $t7.code -eq 2 -and $t7.out -match '--ref no-such-branch is no branch')
 # budget raise is in kit-admin (its tests); a manual cap edit is lint BUDGET-CAP
 $bj = Join-Path $kc 'skills/crafty/kit.example.json'; $b1 = & $py -X utf8 $KT2 budget raise -Reason x 2>&1 | Out-String; $c1 = $LASTEXITCODE
 (Get-Content $bj -Raw) -replace '"totalTokens": \d+', '"totalTokens": 999000' | Set-Content $bj -NoNewline; $l3 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String

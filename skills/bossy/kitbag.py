@@ -9,17 +9,17 @@
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (goody kit-admin)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
-  python -X utf8 kitbag.py budget [show] · budget raise -Reason "<why>"   # the kit total vs its cap; raise: goody kit-admin
+  python -X utf8 kitbag.py budget [show] · budget raise [-Tests] -Reason "<why>"   # the kit total (-Tests: tests/) vs its cap; raise: goody kit-admin
   python -X utf8 kitbag.py state lint [--since <min>] [--json]   # .state / .runtime files vs _paths.schema (skills/bossy/STATE.md)
-  python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] | prune [--days N] [--dry-run]
+  python -X utf8 kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N] [--dry-run]
 
 lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md (goody kit-admin) lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L614 lint · L992 README graph · L1098 lint command · L1134 audit ·
-  L1243 registry · L1579 prose · L1724 sections · L1854 budget · L1872 goodies · L2375 state lint · L2447 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L616 lint · L995 README graph · L1101 lint command · L1137 audit ·
+  L1246 registry · L1582 prose · L1727 sections · L1857 budget · L1881 goodies · L2389 state lint · L2461 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -248,20 +248,22 @@ TRIM_FIRST = 'trim first (dense prose, dedupe; never golf that hurts reading); i
 def cap_next(c):
     return int(round(c * 1.1 / 1000)) * 1000
 
-def cap_problem(kdir, cap):
-    """None, or why `cap` is not a budget-raise step (from CAP_BASE, at most one step above the last commit's cap)."""
+def cap_problem(kdir, cap, key='totalTokens'):
+    """None, or why `cap` is not a budget-raise step of caps.<key> (totalTokens: from CAP_BASE; both: at most one step above the
+    last commit's cap)."""
     c = CAP_BASE
-    while c < cap:
+    while key == 'totalTokens' and c < cap:
         c = cap_next(c)
-    if c != cap:
+    if key == 'totalTokens' and c != cap:
         return f'totalTokens {cap} is not a raise step ({CAP_BASE} x 1.1, rounded to 1k, per step): change it only with kitbag.py budget raise'
     rc, head, _ = git(kdir, 'show', f'HEAD:{PATHS_JSON}', timeout=30)
     try:
-        old = (json.loads(head).get('_manifest', {}).get('caps') or {}).get('totalTokens') if rc == 0 else None
+        old = (json.loads(head).get('_manifest', {}).get('caps') or {}).get(key) if rc == 0 else None
     except ValueError:
         old = None
     if isinstance(old, int) and cap > old and cap != cap_next(old):
-        return f'totalTokens {old} -> {cap} skips steps: one kitbag.py budget raise per commit ({old} -> {cap_next(old)})'
+        how = 'budget raise -Tests' if key == 'testTokens' else 'budget raise'
+        return f'{key} {old} -> {cap} is not one raise step: one kitbag.py {how} per commit ({old} -> {cap_next(old)})'
     return None
 
 def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count more)
@@ -786,9 +788,10 @@ def lint(k, g=None, org_terms=None):
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
          f'.github/*, settings.json): {", ".join(plumbing)}')
     # ---- token budgets: per file type, total
-    cap_bad = cap_problem(k.dir, caps['totalTokens'])
-    if cap_bad:
-        bad('BUDGET-CAP', PATHS_JSON, cap_bad)
+    for cap_key in ('totalTokens', 'testTokens'):
+        cap_bad = cap_problem(k.dir, caps[cap_key], cap_key)
+        if cap_bad:
+            bad('BUDGET-CAP', PATHS_JSON, cap_bad)
     def btype(f):
         b = osp.basename(f)
         if f in ('CLAUDE.md', 'AGENTS.md'):
@@ -1854,7 +1857,8 @@ def cmd_sections(a):
 # ---- budget: the kit total vs its cap
 def cmd_budget(a):
     """kitbag.py budget [show]: the kit total (agent-loaded files) vs _manifest.caps.totalTokens, tests/ vs caps.testTokens.
-    budget raise -Reason "<why trimming cannot make room>" (x1.1 per step, only while over the cap) is in the kit-admin goody."""
+    budget raise [-Tests] -Reason "<why trimming cannot make room>" (x1.1 per step, only while over the cap; -Tests: testTokens) is in
+    the kit-admin goody."""
     kit = KIT_DIR
     flags, rest = parse_opts(a, {'-Reason', '-reason', '--reason'})
     total, tests = split_total({f: size_tokens(kit, f) for f in counted_files(kit)})
@@ -1863,9 +1867,14 @@ def cmd_budget(a):
     if not rest or rest[0] == 'show':
         print(f'kit total {total} of cap {cap} ({total * 100 // cap}%) · tests {tests} of cap {cap_t}; next raise step {cap_next(cap)}')
         return 0
-    if rest[0] == 'raise':
-        raise_cap = PLUGINS.get('budget raise')
-        return (stamp_fn(raise_cap) or raise_cap(kit, total, cap, flags)) if raise_cap else need_extra('kitbag.py budget raise', 'kit-admin')
+    if rest[0] == 'raise':   # -Tests: caps.testTokens, the same x1.1 step
+        raise_cap, t_cap = PLUGINS.get('budget raise'), '-Tests' in flags or '--tests' in flags
+        if raise_cap and t_cap and 'key' not in raise_cap.__code__.co_varnames[:raise_cap.__code__.co_argcount]:
+            print('budget raise -Tests: goody kit-admin is older than this core: kitbag.py goody sync', file=sys.stderr)
+            return 2
+        if not raise_cap:
+            return need_extra('kitbag.py budget raise', 'kit-admin')
+        return stamp_fn(raise_cap) or (raise_cap(kit, tests, cap_t, flags, key='testTokens') if t_cap else raise_cap(kit, total, cap, flags))
     print(cmd_budget.__doc__, file=sys.stderr)
     return 2
 
@@ -1884,9 +1893,9 @@ MERGED_EXTRAS = {'annotate': 'android-swarm', 'emulator-windows': 'android-swarm
   'deploy-merge': 'deploys', 'container-tests': 'runtimes', 'qa-html-report': 'report-gdocs', 'board-disputes': 'duel', 'scaffold': 'kit-admin',
   'tracker-gitlab': 'gitlab', 'supervise-resources': None, 'posix': None, 'migration-classify': None}
 
-def known_extras(kit):
-    """Names of the goodies on the fetched goodies branch; None when it was never fetched."""
-    rc, o, _ = git(kit, 'ls-tree', '-d', '--name-only', EXTRAS_REF, 'goodies/')
+def known_extras(kit, ref=EXTRAS_REF):
+    """Names of the goodies on the fetched goodies branch (or `ref`); None when it was never fetched."""
+    rc, o, _ = git(kit, 'ls-tree', '-d', '--name-only', ref, 'goodies/')
     return {x.split('/')[-1] for x in o.split('\n') if x} if rc == 0 else None
 
 def need_extra(feature, name):
@@ -2240,7 +2249,7 @@ def goody_overlay(kit, files, to):
         fh.write(''.join(f'/{x}\n' for x in sorted(set(extra))))
     return to
 
-def extra_test(kit, names):
+def extra_test(kit, names, ref=EXTRAS_REF):
     """Run each installed goody's tests.ps1 (it stays on the goodies branch) against a git copy of this kit with the branch's
     goody files (goody_overlay), in parallel, and check its scripts' section maps (lint SECTION-*); harness output."""
     if not shutil.which('pwsh'):
@@ -2248,7 +2257,7 @@ def extra_test(kit, names):
         return 1
     runs = []
     for name in names:
-        zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', EXTRAS_REF, f'goodies/{name}'], capture_output=True, timeout=60).stdout
+        zipped = subprocess.run(['git', '-C', kit, 'archive', '--format=zip', ref, f'goodies/{name}'], capture_output=True, timeout=60).stdout
         tmp = tempfile.mkdtemp(prefix=f'extra-{name}-')
         with contextlib.suppress(zipfile.BadZipFile):   # no such goody: an empty archive
             zipfile.ZipFile(io.BytesIO(zipped)).extractall(tmp)
@@ -2307,11 +2316,16 @@ def extra_write(kit, verb, names, auto=False):
 
 
 def cmd_extra(a):
-    """kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] | prune [--days N] [--dry-run]
-    (--auto: installed on demand, unlisted; prune: unused > N days, default 30, and no Needed when matches)"""
+    """kitbag.py goody list | add <name> [--auto] | remove <name> | check | sync | test [<name>] [--ref <branch>] | prune [--days N]
+    [--dry-run] (--auto: installed on demand, unlisted; --ref: an unpushed goodies branch's files; prune: unused > N days, default 30,
+    and no Needed when matches)"""
     kit = KIT_DIR
-    flags, rest = parse_opts(a, {'--days'})
+    flags, rest = parse_opts(a, {'--days', '--ref'})
     verb, names = (rest[0] if rest else 'list'), rest[1:]
+    ref = flags.get('--ref') if verb == 'test' else None
+    if ref is True or (ref and git(kit, 'rev-parse', '-q', '--verify', f'{ref}^{{commit}}')[0]):
+        print(f'kitbag goody test: --ref {ref} is no branch or commit here', file=sys.stderr)
+        return 2
     want = {'add': 1, 'remove': 1, 'test': len(names[:1])}.get(verb, 0)
     if verb == 'prune' and not names:
         with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):
@@ -2327,10 +2341,10 @@ def cmd_extra(a):
         with locked(exclude_path(kit) or osp.join(kit, '.git', 'info', 'exclude'), stale=600):   # a sync may take minutes
             return extra_write(kit, verb, names, '--auto' in flags)
     if verb == 'test':
-        if names and names[0] not in (known_extras(kit) or set()):
-            print(f'kitbag goody test: no goody "{names[0]}" on origin/goodies (kitbag.py goody list)', file=sys.stderr)
+        if names and names[0] not in (known_extras(kit, ref or EXTRAS_REF) or set()):
+            print(f'kitbag goody test: no goody "{names[0]}" on {ref or "origin/goodies"} (kitbag.py goody list)', file=sys.stderr)
             return 2
-        return extra_test(kit, names or sorted(installed))
+        return extra_test(kit, names or sorted(installed), ref or EXTRAS_REF)
     if verb == 'check':
         need = extras_needed(kit)
         for name, feature in need:
@@ -2448,7 +2462,7 @@ def collections_counter(items):
 # per command: switches, value flags, positional kit dir allowed? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
-  'budget': (set(), {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days'}, False), 'sections': ({'--fix'}, set(), False),
+  'budget': ({'-Tests', '--tests'}, {'-Reason', '-reason', '--reason'}, False), 'goody': ({'--auto', '--dry-run'}, {'--days', '--ref'}, False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False)}
 NAMED_ARGS = ('prose', 'budget', 'goody', 'sections', 'new', 'rename', 'remove', 'state')   # positionals are files, verbs or names, not a kit dir
 COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'goody': cmd_extra, 'sections': cmd_sections, 'state': cmd_state}

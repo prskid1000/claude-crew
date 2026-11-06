@@ -4,7 +4,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
 Sections: L10 paths · L62 state · L132 config · L212 OS · L414 leases · L874 status · L1106 supervise sweep ·
-  L1180 supervise report · L1289 tracker · L1609 prior · L1727 git-host · L1886 kitlog · L2006 params · L2319 entry-scripts
+  L1181 supervise report · L1290 tracker · L1610 prior · L1728 git-host · L1887 kitlog · L2007 params · L2320 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1123,7 +1123,8 @@ function Test-KitSweep($Sw, [string]$Name, [datetime]$Now = (Get-Date)) {
   if (-not $Sw.ran.ContainsKey($Name) -and $Sw.last[$Name] -and ($Now - [datetime]$Sw.last[$Name]).TotalMinutes -lt [double]$Sw.every[$Name]) { return $false }   # not due
   $left = ($Sw.deadline - $Now).TotalSeconds
   $hold = [math]::Min(0.5 * $left, [double](@($Sw.starved | Where-Object { $_ -ne $Name -and -not $Sw.ran.ContainsKey($_) } | ForEach-Object { [double]$Sw.cost[$_] }) | Measure-Object -Sum).Sum)   # starved ones keep at most half: an -AutoFix-only one never reached must not starve the rest
-  $go = $left -gt 0 -and $(if ($Name -in $Sw.starved) { $left -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -ge [double]$Sw.cost[$Name] + $hold })
+  # starved: up to 10 s past the deadline (ungated phases ate it: 14 sections, the deploy plan too, skipped 13 h in a row)
+  $go = if ($Name -in $Sw.starved) { $left + 10 -ge [math]::Min([double]$Sw.cost[$Name], 5) } else { $left -gt 0 -and $left -ge [double]$Sw.cost[$Name] + $hold }
   if ($go) { $Sw.cur = $Name; $Sw.t = $Now } elseif ($Name -notin $Sw.skipped) { $Sw.skipped.Add($Name) }
   $go
 }
