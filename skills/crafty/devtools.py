@@ -20,8 +20,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L160 tracker · L347 git host · L430 MR · L591 merge · L840 docs · L995 publish · L1339 plugins ·
-  L1353 keepboth · L1372 selftest · L1772 CLI
+Sections: L38 config · L72 run · L160 tracker · L348 git host · L431 MR · L592 merge · L841 docs · L996 publish · L1340 plugins ·
+  L1354 keepboth · L1373 selftest · L1773 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -215,18 +215,15 @@ TAG = (CFG.get('tracker') or {}).get('branchTag') or {'clickup': 'CU-', 'github'
 def prior_gate(task, repo, what):
     """Check before create (crafty.ps1 prior; lib.ps1 Assert-KitPrior is the same gate): prior ran within prior.validHours and found
     nothing for this repo (or a duplicate task); work tagged with the task in another repo (finish / doc, no repo: any) = paired, INFO;
-    --override passes, logged."""
+    --override passes, logged with the hits it passed (supervise flags only other tasks' work)."""
     if not task:
-        return
-    if OVERRIDE:
-        kitlog('calls', 'prior-override', {'task': task, 'what': what, 'reason': OVERRIDE})
         return
     p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
     try:   # validUntil: crafty.ps1 prior stores it from prior.validHours (pins and learned values included)
         fresh = datetime.now().astimezone() < datetime.fromisoformat(p['validUntil'])
     except (KeyError, TypeError, ValueError):
         fresh = False
-    if not fresh:
+    if not fresh and not OVERRIDE:
         raise SystemExit(f'{what} refused: run crafty.ps1 prior -Task {task} first (check before create)')
     leaf = lambda r: re.split(r'[\\/]', r or '')[-1]
     hit, paired = [], []
@@ -237,6 +234,10 @@ def prior_gate(task, repo, what):
             hit.append(f)
         elif f.get('tagged'):   # the same task id in another repo: its paired MR / branch, never a stop
             paired.append(f)
+    if OVERRIDE:   # matched: absent = no fresh prior (unknown hits)
+        kitlog('calls', 'prior-override', {'task': task, 'what': what, 'reason': OVERRIDE,
+                                           **({'matched': [{'kind': h.get('kind'), 'ref': h.get('ref'), 'tagged': bool(h.get('tagged'))} for h in hit]} if fresh else {})})
+        return
     for f in paired:
         print(f"INFO {what}: paired {f.get('kind')} {f.get('ref')} (task {task}, another repo)", file=sys.stderr)
     if hit:

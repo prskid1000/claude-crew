@@ -1162,7 +1162,7 @@ foreach ($w in $wfDirs) {
     # build-stage merged=false is no proof
     $shipped = $r.result.mrs -and -not @($r.result.mrs | Where-Object { -not $_.merged }).Count
     if ($running.Count -and -not $shipped -and (Test-KitCollision $sum)) { Flag 'ACT' "$label in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (bossy.ps1 board check).' @{ kind = 'COLLISION'; who = "$label ($($w.Name))"; problem = 'reported a collision/halt' } }
-    if ($null -ne $r.result.mrs -and @($r.result.mrs).Count -eq 0 -and $sum -match '(?i)not done|no MRs') { Flag 'ACT' "$label finished without MRs" 'Resume it (buildy mode resume) unless it was deliberately stopped.' @{ kind = 'NO MRS'; who = "$label ($($w.Name))"; problem = 'finished without MRs' } }
+    if ($done -and (Test-KitNoMrs $started @($res.Values) $label $r.result $sum)) { Flag 'WATCH' "$label finished without MRs" 'Resume it (buildy mode resume) unless it was deliberately stopped.' @{ kind = 'NO MRS'; who = "$label ($($w.Name))"; problem = 'finished without MRs' } }
   }
 }
 

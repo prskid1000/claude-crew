@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L46 supervise · L184 shells · L298 page · L539 release · L568 lines · L593 cleanup
+Sections: L13 builds · L46 supervise · L216 shells · L330 page · L571 release · L600 lines · L625 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -142,10 +142,42 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
 
 # status rows (lib.ps1 status): agents queued at the build gate or waiting for a phone lane
 # an agent past the prior-work gate (-Override / -NewTask, lib.ps1 Assert-KitPrior): one WATCH per override since the last beat
+# whose gate hits hold another task's or an unrelated branch's work (no hits logged: unknown, flagged)
 function Get-KitSuperviseFlagsPrior([switch]$AutoFix) {
+  $briefs = $null
   foreach ($e in @(Read-KitLog calls (Get-Date).AddMinutes(-(Get-KitBeatMinutes)) | Where-Object event -eq 'prior-override')) {
-    [pscustomobject]@{ level = 'WATCH'; what = "prior override: $($e.what) $($e.task) ($($e.reason))"; action = 'Check it is no duplicate (crafty.ps1 prior -Task <id>); a duplicate: stop it, reuse the existing work' }
+    $hits = ''
+    if ($e.PSObject.Properties['matched']) {
+      if ($null -eq $briefs) { $briefs = @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { -not $_.completed -and $_.args.brief } | ForEach-Object { Get-Content -LiteralPath $_.args.brief -Raw -ErrorAction SilentlyContinue }) }
+      $other = @(Get-KitPriorForeign $e $briefs); if (-not $other.Count) { continue }
+      $hits = ": matches $(@($other | ForEach-Object { "$($_.kind) $($_.ref)" }) -join ', ')"
+    }
+    [pscustomobject]@{ level = 'WATCH'; what = "prior override: $($e.what) $($e.task) ($($e.reason))$hits"; action = 'Check it is no duplicate (crafty.ps1 prior -Task <id>); a duplicate: stop it, reuse the existing work' }
   }
+}
+# an override's gate hits that are not its own task's work (tagged) nor a task its live wave's brief names next to it
+function Get-KitPriorForeign($Entry, [string[]]$Briefs) {
+  $tag = "$($KitConf.TrackerTag)"; $has = { param($t, $id) "$t" -match "(?i)(?<![A-Za-z0-9])$([regex]::Escape("$id"))(?![A-Za-z0-9])" }   # whole ids: 7 is not in 17
+  foreach ($h in @($Entry.matched | Where-Object { $_ })) {
+    if ($h.tagged -or (& $has $h.ref "$tag$($Entry.task)")) { continue }
+    $tid = if ($h.kind -eq 'task') { "$($h.ref)" } elseif ($tag -and "$($h.ref)" -match "(?i)$([regex]::Escape($tag))([A-Za-z0-9]+)") { $Matches[1] }
+    if ($tid -and @($Briefs | Where-Object { $_ -and (& $has $_ $tid) -and (& $has $_ $Entry.task) }).Count) { continue }
+    $h
+  }
+}
+# supervise NO MRS (bossy.ps1, ended runs only: a live run's local / fix rounds still come): a result with mrs [] that says
+# not done; stale when another step of its item (local:, fix:, ship:) reported MRs, or a task it names (done / deferred) has
+# a tracked MR in its worktrees' repo (none known: any repo) and is still open in tracking; -Tracking: tests
+function Test-KitNoMrs($Started, $Results, [string]$Label, $Result, [string]$Summary, $Tracking) {
+  if ($null -eq $Result.mrs -or @($Result.mrs).Count -or $Summary -notmatch '(?i)not done|no MRs') { return $false }
+  $itemOf = { param($l) (([string]$l -split ':', 2)[-1] -split '@')[0] }; $item = & $itemOf $Label
+  if (@($Results | Where-Object { $rid = $_.agentId; @($_.result.mrs).Count -and (& $itemOf ($Started | Where-Object agentId -eq $rid | Select-Object -First 1).label) -eq $item }).Count) { return $false }
+  if (-not $Tracking) { if ($null -eq $script:KitTrackNoMrs) { $script:KitTrackNoMrs = Read-KitTracking }; $Tracking = $script:KitTrackNoMrs }
+  $repos = @($Result.worktrees | Where-Object { $_ } | ForEach-Object { ("$_" -split '[\\/]')[-1] })
+  foreach ($tid in @(@($Result.deferred) + @($Result.done) | ForEach-Object { if ($_.id) { $_.id } else { $_ } } | Where-Object { $_ } | Select-Object -Unique)) {
+    foreach ($m in @($Tracking.tasks["$tid"] | Where-Object { -not $_.done } | ForEach-Object { $_.mrs } | Where-Object { $_ })) { $rp = ("$m" -split '!')[0]; if (-not $repos.Count -or @($repos | Where-Object { $_ -eq $rp -or $_ -like "*-$rp" }).Count) { return $false } }
+  }
+  $true
 }
 function Get-KitStatusWaitResources {
   foreach ($t in @(Get-ChildItem (Join-Path (Join-Path (Get-KitTemp) 'claude-build-gate') 'queue') -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object { $_.owner -and (Test-KitPid $_.pid $_.start) })) {
