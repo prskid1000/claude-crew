@@ -27,6 +27,11 @@ Expect "marks: positions compare in binlog order, file number first ($pk)" ($pk 
 # the config line: db.engine in kit.local.json asks for this goody (kitbag.py goody check)
 $need = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$src/skills/bossy'); import kitbag as k; k.local_config = lambda kit, f: {'localEnv': {'defaults': {'db': {'engine': 'mysql'}}}} if f == 'kit.local.json' else {}; k.installed_extras = lambda kit: {}; print(','.join(n for n, _ in k.extras_needed(r'$src')))" 2>&1
 Expect "kitbag goody check: localEnv.defaults.db.engine mysql needs db-engine-presets ($need)" ("$need" -match '(^|,)db-engine-presets(,|$)')
+# touched: a changeSet's <rollback> never runs forward (its DROP COLUMN of an added column made the slice SELECT a missing column)
+$clog = Join-Path $k2 'add-col.xml'
+Set-Content $clog '<databaseChangeLog><changeSet id="1"><sql>ALTER TABLE t1 ADD COLUMN c2 TEXT NULL</sql><rollback><sql>ALTER TABLE t1 DROP COLUMN c2</sql></rollback></changeSet><changeSet id="2"><dropColumn tableName="t3" columnName="c4"/><rollback><dropColumn tableName="t5" columnName="c6"/></rollback></changeSet><changeSet id="3"><rollback changeSetId="2"/><dropTable tableName="t7"/></changeSet></databaseChangeLog>'
+$tch = @((& $py -X utf8 (Join-Path $PSScriptRoot 'files/skills/envy/adapters/db_flashback.py') touched --files $clog | ConvertFrom-Json).items | ForEach-Object { "$($_.table):$($_.kind):$($_.columns -join '+')" }) -join ','
+Expect "touched: an added column is a create; a <rollback> body names nothing ($tch)" ($tch -eq 't1:create:,t3:column:c4,t7:table:')
 Remove-TestKit $k2
 
 # ---- a scratch mysqld (own data dir and port, binlog ROW / FULL): never the env's server
@@ -111,11 +116,11 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
   # structure: a release mark keeps slices of what its migration destroys; restore = structure back, then rows
   Q "CREATE VIEW fa.v1 AS SELECT id, note FROM fa.o; CREATE PROCEDURE fa.pr() SELECT 1; CREATE TABLE fa.olog (n int auto_increment primary key, id int); CREATE TRIGGER fa.tr_o AFTER UPDATE ON fa.o FOR EACH ROW INSERT INTO fa.olog (id) VALUES (NEW.id)"
   $sum3 = { (Q 'CHECKSUM TABLE fa.o, fa.r, fa.olog') -join ' | ' }; $c3 = & $sum3; $cr3 = (Q 'SHOW CREATE TABLE fa.o') -join ''; $ob3 = { "$((Q 'SHOW CREATE VIEW fa.v1') -join '')|$((Q 'SHOW CREATE PROCEDURE fa.pr') -join '')" }; $o3 = & $ob3
-  $sv = & { . $L3; $n = New-Mark s 'release-7' 'release'; $sl = Save-Slices s $n @{ api = @{ items = @(@{ table = 'o'; kind = 'column'; columns = @('note', 'qty') }, @{ table = 'r'; kind = 'table'; columns = @() }); unknown = $false } }; "$n|$($sl.bytes)" }
+  $sv = & { . $L3; $n = New-Mark s 'release-7' 'release'; $sl = Save-Slices s $n @{ api = @{ items = @(@{ table = 'o'; kind = 'column'; columns = @('note', 'qty', 'added_later') }, @{ table = 'r'; kind = 'table'; columns = @() }); unknown = $false } }; "$n|$($sl.bytes)" }
   Q "ALTER TABLE fa.r DROP FOREIGN KEY fk_r_o; DROP VIEW fa.v1; ALTER TABLE fa.o DROP INDEX ix_note, DROP COLUMN note, MODIFY qty int, ADD COLUMN extra int DEFAULT 5; DROP TABLE fa.r; CREATE TABLE fa.neu (id int primary key); INSERT INTO fa.neu VALUES (1); UPDATE fa.o SET qty = 9 WHERE id = 2; INSERT INTO fa.o (id, qty) VALUES (4, 4); DROP PROCEDURE fa.pr; CREATE PROCEDURE fa.pr() SELECT 2; CREATE VIEW fa.v2 AS SELECT 1 AS x"
   $sd = Px $L3 restore -Env s -Release 7 -DryRun 2>&1 | Out-String
   $sr = & { . $L3; $m = Find-Mark (Read-State s) '' 7; $p = Get-RestorePlan s $m @('fa', 'fb') 'r7'; Invoke-RestoreDb s $m @('fa', 'fb') $p }
-  Expect "slices: dropped / retyped columns, an index, a referenced table and a new table back to the mark; rows after it undone ($sv; $sr)" (-not $sr -and [long]($sv -split '\|')[1] -gt 0 -and (& $sum3) -eq $c3 -and ((Q 'SHOW CREATE TABLE fa.o') -join '') -eq $cr3 -and
+  Expect "slices: dropped / retyped columns (one added later: no slice, no error), an index, a referenced table and a new table back to the mark; rows after it undone ($sv; $sr)" (-not $sr -and [long]($sv -split '\|')[1] -gt 0 -and (& $sum3) -eq $c3 -and ((Q 'SHOW CREATE TABLE fa.o') -join '') -eq $cr3 -and
     -not "$(Q "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'fa' AND TABLE_NAME = 'neu'")".Trim().Equals('1') -and $sd -match 'structure: fa\.o, fa\.r back to mark release-7' -and $sd -match 'fa\.neu dropped')
   Expect "objects: a dropped view and a replaced procedure back from the release mark, a view made after it dropped; a trigger table changed by DDL undone with its trigger suspended" ((& $ob3) -eq $o3 -and "$(Q "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA = 'fa' AND TABLE_NAME = 'v2'")" -eq '0' -and $sd -match 'objects: .*VIEW:fa\.v1.* back to mark release-7' -and "$(Q "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_NAME = 'tr_o'")" -eq '1')
   Q 'ALTER TABLE fb.k ADD COLUMN z int'

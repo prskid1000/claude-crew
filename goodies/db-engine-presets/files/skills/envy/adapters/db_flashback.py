@@ -649,6 +649,7 @@ def touched_cmd(a):
     for f in [x for x in (a.files or '').split(',') if x]:
         text = open(f, encoding='utf-8', errors='replace').read()
         if f.lower().endswith(('.xml', '.yaml', '.yml', '.json')):   # Liquibase-style changelogs: tags / keys naming tables
+            text = re.sub(r'(?s)<rollback\b[^>]*/>|<rollback\b[^>]*>.*?</rollback>', ' ', text)   # never runs forward: its DROP is no slice (YAML / JSON: slice skips absent columns)
             for m in re.finditer(r'<(\w+)\b([^>]*)>|-\s*(\w+):\s*\n((?:\s+\w+:.*\n)+)', text):
                 tag, attrs = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
                 at = dict(re.findall(r'(\w+)\s*[=:]\s*"?([\w.]+)"?', attrs or ''))
@@ -694,7 +695,8 @@ def slice_cmd(a, db):
         elif kind == 'column':
             x['pk'] = pk_of(db, sch, t)
             if not x['pk']: x['noPk'] = True
-            for c in [] if x['noPk'] else it.get('columns') or []:
+            have = {n.lower() for n in parts(x['create'])[0]}
+            for c in [] if x['noPk'] else [c for c in it.get('columns') or [] if c.lower() in have]:   # a column not there yet holds nothing
                 f = os.path.join(a.out, f'{base}.{hashlib.sha1(c.encode()).hexdigest()[:8]}.tsv.gz')
                 sel = ', '.join(f'HEX(CAST({q(k)} AS BINARY))' for k in x['pk']) + f', HEX(CAST({q(c)} AS BINARY)), {q(c)} IS NULL'
                 with gzip.open(f, 'wb') as gz:
