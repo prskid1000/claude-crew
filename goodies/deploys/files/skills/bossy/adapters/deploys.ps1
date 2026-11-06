@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L61 intest · L142 deploy · L264 supervise
+Sections: L13 helpers · L61 intest · L142 deploy · L267 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -160,6 +160,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   if ($Action -eq 'record') {
     if (-not $Env) { 'usage: deploy record -Env <target> [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
     Write-KitLog deploy-log record ([ordered]@{ target = $Env; mrs = $Mrs; by = $By; note = $Note }); Add-KitParamTrigger deploy   # learned params re-evaluated
+    $bgPlan = Join-Path (Get-KitPath background) (ConvertTo-KitSlug 'bossy.ps1 deploy plan')   # supervise's last plan predates this deploy: no second ask, no stale "deploy ready"
+    Remove-Item -LiteralPath (Join-Path (Get-KitPath deploys) 'plan-cache.json') -ErrorAction SilentlyContinue
+    if (-not (Test-KitPid ($r = try { Get-Content -LiteralPath "$bgPlan.json" -Raw | ConvertFrom-Json } catch { $null }).pid $r.start)) { Remove-Item -LiteralPath "$bgPlan.json", "$bgPlan.out", "$bgPlan.err" -ErrorAction SilentlyContinue }   # a running one is left whole
     $done = @($Mrs | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })
     if (Test-Path $pf) { & $pendEdit { param($p) foreach ($q in @($p.requests)) { $q.mrs = @(@($q.mrs) | Where-Object { -not $done.Count -or (Get-CanonMr (ConvertTo-MrRef $_)) -notin $done }) }; $p.requests = @(@($p.requests) | Where-Object { @($_.mrs).Count }) } }
     "recorded the deploy of $Env$(if ($Mrs.Count) { " ($($Mrs -join ', '))" }). Next: once pokey.ps1 deployed shows them live, bossy.ps1 deploy intest -Apply"

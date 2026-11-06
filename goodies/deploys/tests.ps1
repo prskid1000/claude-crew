@@ -17,8 +17,10 @@ $plan = { @(& $dep plan -Offline $fx -Json | ConvertFrom-Json) }; $p = & $plan
 Expect 'deploy plan: production by name / flag / false; one ASK batch for stage' (($p.target -join ',') -eq 'stage,preprod' -and $p[0].target -eq 'stage' -and $p[0].status -eq 'ASK' -and (@($p[0].mrs.mr) -join ',') -eq 'api!1')
 $null = & $dep request -Mrs 'https://git.example.com/g/api/-/merge_requests/3' -Run w2 -Offline $fx; $p = & $plan
 Expect 'deploy request: another session''s MR joins the same batch' ((@($p[0].mrs.mr | Sort-Object) -join ',') -eq 'api!1,api!3')
+$pcf = Join-Path (TkPath $k deploys -Create) 'plan-cache.json'; $bgp = Join-Path (TkPath $k background -Create) (& { . (Lib); ConvertTo-KitSlug 'bossy.ps1 deploy plan' })
+foreach ($f in $pcf, "$bgp.out", "$bgp.json") { '{"at":"2020-01-01","ask":["stage: 1 MR(s) (api!1)"],"pid":1}' | Set-Content $f }
 $null = & $dep record -Env stage -Mrs 'api!1','api!3' -By tester; $p = & $plan
-Expect 'deploy record: WAIT in the window, the request cleared' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count)
+Expect 'deploy record: WAIT in the window, the request cleared; the cached + background plan dropped (no second ask)' ($p[0].status -eq 'WAIT' -and -not @($p[0].pending).Count -and -not (Test-Path $pcf) -and -not (Test-Path "$bgp.out") -and -not (Test-Path "$bgp.json"))
 & $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }, @{ name = 'py'; deploys = @(@{ target = 'pystage' }) }) } $cfgF
 $fx2 = Join-Path (Kd) 'deploy-fixture2.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } $fx2
 $dr = & $dep request -Mrs 'api!5' -Run w4 -Offline $fx2 | Out-String
