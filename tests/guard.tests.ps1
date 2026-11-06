@@ -88,11 +88,11 @@ $rp = (Format-KitReport $dd) -join "`n"; Write-KitSuperviseReport $dd @($rp) @()
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), (Kd))
 Expect "shells: cell unquoted, heredoc collapsed, preambles skipped, 60 chars; the table after RAM in -Brief and the report ($($sh -match '^(short|order):'))" ($sh -contains 'short:python - <<EOF (heredoc, 2 lines)|60' -and $sh -contains 'order:True')
 $s0, $s1, $s9, $s2 = @($sh -match '^s\d:')
-Expect "shells: finished owner + dir gone = killed, + STUCK 2 sweeps = killed; coordinator's kept; young / non-agent unlisted ($s1)" (
-  $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'log:2' -and
-  $s0 -match '^s0:H2=ORPHAN,coordinator=running\|auto-fixed: killed shell \d+ of devy \(owner devy finished; dir gone: .+gone-wt\): until crafty' -and
-  $s1 -match '^s1:H2=ORPHAN, STUCK,coordinator=STUCK\|SHELL ORPHAN, STUCK pid \d+ of H2 \(cat > /dev/null; python - <<.+\|SHELL STUCK pid 999999 of coordinator' -and
-  $s2 -match '^s3:coordinator=STUCK\|auto-fixed: killed shell \d+ of H2' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 61 min \| STUCK \| yours: stop it')
+Expect "shells: a finished owner's shell is killed in the first sweep (dir gone or not, never STUCK); coordinator's kept; young / non-agent unlisted ($s0)" (
+  $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $s2 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'log:2' -and
+  $s0 -match '^s0:coordinator=running\|auto-fixed: killed shell \d+ of devy \(owner devy finished; dir gone: .+gone-wt\): until crafty.*\|auto-fixed: killed shell \d+ of H2 \(owner H2 finished\): cat > /dev/null' -and
+  $s1 -match '^s1:coordinator=STUCK\|SHELL STUCK pid 999999 of coordinator' -and $s1 -notmatch 'H2' -and
+  $s2 -match '^s3:coordinator=STUCK\|' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 61 min \| STUCK \| yours: stop it')
 $O = Join-Path $k 'skills/bossy/bossy.ps1'   # supervise -Brief report
 $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
   mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }

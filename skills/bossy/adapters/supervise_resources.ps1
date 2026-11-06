@@ -253,7 +253,7 @@ function Get-KitShellOwner([string]$Tx, $Board) {
 }
 # supervise: Shells rows + flags; State.shells (pid@start): transcript, CPU sample, flat and STUCK sweeps. ORPHAN = owner finished or
 # its dir gone; STUCK = no CPU growth since the last sweep and older than supervise.shellStuckMinutes (learned: lifetimes of shells
-# that ended on their own). -AutoFix kills only a finished owner's shell whose dir is gone or that was STUCK 2+ sweeps
+# that ended on their own). -AutoFix kills a finished owner's shell in the same sweep (a poll loop never goes flat)
 function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs)) {
   $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
   $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
@@ -272,14 +272,14 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge [double](Get-KitParam 'supervise.heartbeatMinutes')) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
     $why = @($(if ($o.finished) { "owner $($o.name) finished" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU growth, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
     $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim()
-    if ($o.finished -and ($gone -or $s.stuck -ge 2) -and $AutoFix -and (Test-KitPid $p.Id $made)) {
+    if ($o.finished -and $AutoFix -and (Test-KitPid $p.Id $made)) {
       if ($KitIsWindows) { taskkill /PID $p.Id /T /F 2>&1 | Out-Null } else { foreach ($t in @($tree.Keys)) { Stop-SysProcess $t } }
       $s.killed = $true; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = $o.name; why = $why; dir = $dir; what = "killed shell $($p.Id) ($why): $($one.Substring(0, [math]::Min(300, $one.Length)))" })
       $flags.Add([pscustomobject]@{ level = 'INFO'; what = "auto-fixed: killed shell $($p.Id) of $($o.name) ($why): $short"; action = 'Nothing to do.' }); continue
     }
     $shellState = @($(if ($o.finished -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
     $tk = "taskkill /PID $($p.Id) /T /F"
-    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($o.finished) { "supervise -AutoFix kills it once its dir is gone or STUCK 2 sweeps; now: $tk" } else { "$($o.name) ends it, else $tk" }
+    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($o.finished) { "supervise -AutoFix kills it; now: $tk" } else { "$($o.name) ends it, else $tk" }
     $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir })
     $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
     if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }
