@@ -152,6 +152,41 @@ $script:planOut = @(); $r = @(Get-KitSuperviseFlagsDeploys)
 "ask:$(@($r | Where-Object level -eq 'ACT').what -match '^DEPLOY ASK stage: .*window open .plan 9\d min old, refresh pending')"
 '@
 Expect-Each (Invoke-PsTest 'plan-cache' $pt @($O)) 'supervise deploy plan: a timed-out, pending or failed plan is never cached; the last good plan stays, marked stale (ready and ASK lines), and is retried next round; a real empty plan is cached, dated by the ask that started it; a deployed check without JSON asks again (#)' @('none', 'good', 'stale', 'watch', 'empty', 'live', 'ask')
+# a deploy MR (into deploys[].branch) feeds its own target only; from / paths pick an MR's targets in the intest gate too; old requests expire
+& $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da' }, @{ target = 'b-st'; branch = 'st/b'; job = 'db' }) }) } $cfgF
+& $J @{ tasks = @{ g = @{ task = 'g'; mrs = @('jc!1', 'jc!2'); done = $true; doneAt = $now } }; automerge = @{} } $tf
+$nd5 = { param($tb) @{ targetBranch = $tb; rows = @('a-st', 'b-st' | ForEach-Object { @{ target = $_; state = 'NOT-DEPLOYED'; detail = 'x' } }) } }
+$fx5 = Join-Path (Kd) 'deploy-fixture5.json'; & $J @{ mrs = @{ 'jc!1' = (& $nd5 'st/b'); 'jc!2' = (& $nd5 'main'); 'jc!3' = (& $nd5 'main'); 'jc!4' = (& $nd5 'main') } } $fx5
+$pdf = Join-Path (TkPath $k deploys -Create) 'pending.json'; & $J @{ requests = @(@{ at = (Get-Date).AddDays(-30).ToString('s'); run = 'old'; mrs = @('jc!3') }, @{ at = $now; run = 'new'; mrs = @('jc!4') }) } $pdf
+$p = @(& $dep plan -Offline $fx5 -Json | ConvertFrom-Json); $by = { param($t) (@(@($p | Where-Object target -eq $t).mrs.mr) | Sort-Object) -join ',' }
+Expect "deploy plan: a deploy MR counts for its own target only ($(& $by a-st) | $(& $by b-st))" ((& $by a-st) -eq 'jc!2,jc!4' -and (& $by b-st) -eq 'jc!1,jc!2,jc!4')
+Expect 'deploy plan: a request older than -Days expires, a new one stays' ((@((Get-Content $pdf -Raw | ConvertFrom-Json).requests.run) -join ',') -eq 'new')
+& $J @{ repos = @(@{ name = 'jc'; deploys = @(@{ target = 'a-st'; branch = 'st/a'; job = 'da'; paths = @('a/api/**', 'common/**') }, @{ target = 'b-st'; branch = 'st/b'; job = 'db'; paths = @('b/**', 'common/**') }) }); productTargets = @(@{ pathRegex = '^a/'; targetRegex = '^a-'; label = 'A env' }, @{ pathRegex = '^b/'; targetRegex = '^b-'; label = 'B env' }) } $cfgF
+$fq2 = Join-Path (Kd) 'fake-deployed-gate.ps1'
+Set-Content $fq2 @'
+$m = $args[[array]::IndexOf($args, '-Mrs') + 1]; $live = @{ 'jc!1' = 'b-st'; 'jc!4' = 'b-st'; 'jc!5' = 'b-st' }[$m]
+ConvertTo-Json -Compress @('a-st', 'b-st' | ForEach-Object { @{ mr = $m; target = $_; state = $(if ($_ -eq $live) { 'DEPLOYED' } else { 'NOT-DEPLOYED' }); detail = "not on $_ yet" } })
+'@ -Encoding utf8
+$ug = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$KitCmd.qa = $args[1]
+function Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = "n$id"; status = 'promoted' } }; function Test-TrackerStatus { $true }
+function Set-TrackerStatus { }; function Add-TrackerComment { }
+$tbs = @{ 1 = 'st/b'; 2 = 'st/b'; 3 = 'st/b'; 4 = 'main'; 5 = 'main' }; $fs = @{ 1 = 'a/x.java'; 4 = @('b/api/x.java', 'a/docs/r.md'); 5 = 'common/lib/x.java' }
+function Invoke-HostApi([string]$Path) { $i = [int]($Path -replace '^.*merge_requests/(\d+).*$', '$1'); if ($Path -match '/changes$') { [pscustomobject]@{ changes = @(@($fs[$i]) | ForEach-Object { [pscustomobject]@{ new_path = $_ } }) } } else { [pscustomobject]@{ target_branch = $tbs[$i] } } }
+Write-KitLog deploy-log record ([ordered]@{ target = 'b-st'; mrs = @('jc!2'); by = 'opsy' }); Write-KitLog deploy-log record ([ordered]@{ target = 'a-st'; mrs = @('jc!3'); by = 'opsy' })   # the wrong target proves nothing
+$o = @(foreach ($n in 1..5) { Invoke-MarkInTest -Task "t$n" -Quiet:$false | Where-Object { $_ -match '^(MARK|WAIT)' } | ForEach-Object { "$n=$_" } })
+function Has($n, $rx) { [bool]@($o | Where-Object { $_ -match "^$n=$rx" }).Count }
+"live:$(Has 1 'MARK .*jc!1 on b-st\b')"
+"record:$(Has 2 'MARK .*jc!2 on b-st\b')"
+"wait:$(Has 3 'WAIT .*jc!3 not live on: b-st \(NOT-DEPLOYED: not on b-st yet\)')"
+"paths:$(Has 4 'MARK .*jc!4 on b-st\b')"
+"shared:$(Has 5 'WAIT .*jc!5 not live on: a-st \(NOT-DEPLOYED: not on a-st yet\)')"
+'@
+& $J @{ tasks = @{ t1 = @{ task = 't1'; mrs = @('jc!1') }; t2 = @{ task = 't2'; mrs = @('jc!2') }; t3 = @{ task = 't3'; mrs = @('jc!3') }; t4 = @{ task = 't4'; mrs = @('jc!4') }; t5 = @{ task = 't5'; mrs = @('jc!5') } }; automerge = @{} } $tf
+$res = Invoke-PsTest 'intest-gate' $ug @($O, $fq2)
+Expect-Each $res 'deploy intest: a deploy MR is live on its own target (green job or recorded deploy); from / paths set the targets an MR must be live on, productTargets aside (#)' @('live', 'record', 'wait', 'paths', 'shared') 20
 Remove-TestKit $k
 foreach ($t in Get-ChildItem $PSScriptRoot -Filter 'tests-*.ps1') { & $pwshExe -NoProfile -File $t.FullName -Kit $src }   # the tests of the goodies merged into this one
 Complete-Tests

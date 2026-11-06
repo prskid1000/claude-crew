@@ -5,7 +5,7 @@ deploys.ps1 (goody deploys): the deploy batch of bossy E5, dot-sourced by bossy.
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists) whose MRs are live on a test env -> inTest
   bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest; the plan cached 1 h (DEPLOY ASK).
-Sections: L13 helpers · L82 intest · L163 deploy · L296 supervise
+Sections: L13 helpers · L94 intest · L187 deploy · L322 supervise
 Exit codes: 0 ok · 2 usage.
 #>
 #Requires -Version 7
@@ -19,14 +19,26 @@ function Get-CanonMr([string]$m) {
   $rp = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $Matches.r -or @($_.aliases) -contains $Matches.r } | Select-Object -First 1
   if ($rp) { "$($rp.name)!$($Matches.i)" } else { $m }
 }
+# an MR's target branch, one host call per MR and process; $null = unknown
+function Get-MrTargetBranch([string]$Mr, $Fx) {
+  $c = Get-CanonMr (ConvertTo-MrRef $Mr); if ($Fx) { return ($Fx.mrs.$Mr ?? $Fx.mrs.$c).targetBranch }
+  if (-not $script:KitMrTb) { $script:KitMrTb = @{} }
+  if ($script:KitMrTb.ContainsKey($c)) { return $script:KitMrTb[$c] }
+  $rn, $iid = $c -split '!', 2; $v = try { (Invoke-HostApi "projects/$(Get-HostProject (($rn -split '/')[-1]))/merge_requests/$iid").target_branch } catch { $null }
+  if ($v) { $script:KitMrTb[$c] = $v }; $v   # a failed lookup is retried next time
+}
 # the targets an MR feeds: its repo's deploys, less those whose from (branches) lacks its target branch or whose paths (globs)
-# it never touched; one repo, two products. A failed or cut lookup, or one past $Until, keeps the deploy (shown, never hidden)
+# it never touched; one repo, two products. A deploy MR (into deploys[].branch) feeds that target only. A failed or cut
+# lookup, or one past $Until, keeps the deploy (shown, never hidden)
 function Get-MrDeployTargets([string]$Mr, $Repos, $Fx, $Until) {
   $c = Get-CanonMr (ConvertTo-MrRef $Mr); $rn, $iid = $c -split '!', 2; $rn = ($rn -split '/')[-1]
   $deps = @(@($Repos | Where-Object { $_.name -eq $rn } | Select-Object -First 1).deploys | Where-Object { $_.target })
-  if (-not @($deps | Where-Object { $_.from -or $_.paths }).Count -or ($Until -and (Get-Date) -gt $Until)) { return @($deps.target | Select-Object -Unique) }
+  $filt = @($deps | Where-Object { $_.from -or $_.paths }).Count
+  if ((-not $filt -and @($deps | Where-Object branch).Count -lt 2) -or ($Until -and (Get-Date) -gt $Until)) { return @($deps.target | Select-Object -Unique) }
   $fm = if ($Fx) { $Fx.mrs.$Mr ?? $Fx.mrs.$c }
-  $tb = if ($Fx) { $fm.targetBranch } else { try { (Invoke-HostApi "projects/$(Get-HostProject $rn)/merge_requests/$iid").target_branch } catch { $null } }
+  $tb = Get-MrTargetBranch $Mr $Fx
+  $own = @($deps | Where-Object { $_.branch -and $_.branch -eq $tb }); if ($own.Count) { return @($own.target | Select-Object -Unique) }
+  if (-not $filt) { return @($deps.target | Select-Object -Unique) }
   $deps = @($deps | Where-Object { -not $_.from -or -not $tb -or $tb -in @($_.from) })
   $files = @(); $cut = $false
   if (@($deps | Where-Object paths).Count) {
@@ -106,7 +118,9 @@ elseif ($lists.Count) {
 # pwsh -File passes a,b as one string
 if ($Task.Count) { $keep = @($Task | ForEach-Object { "$_" -split '[,\s]+' } | Where-Object { $_ }); foreach ($k in @($cand.Keys)) { if ($k -notin $keep) { $cand.Remove($k) } }; foreach ($k in $keep) { if (-not $cand.Contains($k)) { $cand[$k] = @{ mrs = @(); name = '' } } } }
 
-$productTargets = @(Get-KitValue 'productTargets' @())
+$productTargets = @(Get-KitValue 'productTargets' @()); $repos = @(Get-KitValue 'repos' @())
+$recOf = @{}; $dlog = Get-KitPath deploy-log   # recorded deploys: mr|target
+if (Test-Path $dlog) { foreach ($x in @(Get-Content $dlog | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } })) { foreach ($m in @($x.mrs)) { $recOf["$(Get-CanonMr (ConvertTo-MrRef $m))|$($x.target)"] = 1 } } }
 $pathMemo = @{}
 function Get-MrPaths([string]$mr) {
   if ($pathMemo.ContainsKey($mr)) { return $pathMemo[$mr] }
@@ -139,9 +153,19 @@ foreach ($id in $cand.Keys) {
     $rows = @(& $KitCmd.qa deployed -Mrs $mr -Json -Exclude (Get-NoTestRx) 2>$null | Out-String | ConvertFrom-Json)
     # another product's deploy branch proves nothing
     $ok = @($rows | Where-Object { $_.state -eq 'DEPLOYED' -and $_.target -notmatch (Get-NoTestRx -Lanes) })
-    $paths = Get-MrPaths $mr
     $missing = @(); $matched = $false; $need = @()
-    foreach ($pt in $productTargets) {
+    # a deploy MR or a repo with deploys[].from / paths: every test target it feeds (the plan's set), a deploy MR's also by its record
+    $rn = (((Get-CanonMr (ConvertTo-MrRef $mr)) -split '!')[0] -split '/')[-1]; $deps = @(@($repos | Where-Object name -eq $rn | Select-Object -First 1).deploys | Where-Object { $_.target -and $_.target -notmatch (Get-NoTestRx -Lanes) })
+    $tb = if (@($deps | Where-Object branch).Count -ge 2 -or @($deps | Where-Object { $_.from -or $_.paths }).Count) { Get-MrTargetBranch $mr $null }; $dm = $tb -and @($deps | Where-Object branch -eq $tb).Count
+    $fed = if ($dm -or @($deps | Where-Object { $_.from -or $_.paths }).Count) { @(Get-MrDeployTargets $mr $repos $null $null | Where-Object { $_ -in $deps.target }) } else { @() }
+    if ($fed.Count) {
+      $missing = @($fed | Where-Object { $t1 = $_; -not @($ok | Where-Object target -eq $t1).Count -and -not ($dm -and $recOf["$(Get-CanonMr (ConvertTo-MrRef $mr))|$t1"]) })
+      $need = @($missing | ForEach-Object { "^$([regex]::Escape($_))$" })
+      if (-not $missing.Count) { $live += "$mr on $($fed -join '+')"; continue }
+      $matched = $true
+    }
+    $paths = if (-not $fed.Count) { Get-MrPaths $mr }
+    foreach ($pt in @($productTargets | Where-Object { -not $fed.Count })) {
       if ($paths | Where-Object { $_ -match $pt.pathRegex }) { $matched = $true; if (-not ($ok | Where-Object { $_.target -match $pt.targetRegex })) { $missing += $pt.label; $need += $pt.targetRegex } }
     }
     if (-not $matched -and -not $ok.Count) { $missing += 'any test env' }
@@ -214,7 +238,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
       $taskOf[$m] = $t.task; $cand[$m] = 'tracked'
     }
   }
-  $pend = if (Test-Path $pf) { @((Get-Content $pf -Raw | ConvertFrom-Json).requests) } else { @() }
+  $pend = @()   # a request older than -Days expires (the plan's window; deploys by CI never record it)
+  $stale = { param($q) $q.at -and $(try { ((Get-Date) - [datetime]$q.at).TotalDays -gt $Days } catch { $false }) }   # an unreadable date stays
+  if (Test-Path $pf) { $pend = @((Get-Content $pf -Raw | ConvertFrom-Json).requests); if (@($pend | Where-Object { & $stale $_ }).Count) { & $pendEdit { param($p) $p.requests = @(@($p.requests) | Where-Object { -not (& $stale $_) }) }; $pend = @($pend | Where-Object { -not (& $stale $_) }) } }
   foreach ($q in $pend) { foreach ($m in @($q.mrs)) { $cand[$m] = "requested by $($q.run)" } }
   foreach ($m in $Mrs) { $cand[$m] = "requested by $Run" }
   # no network = UNKNOWN, no hang
