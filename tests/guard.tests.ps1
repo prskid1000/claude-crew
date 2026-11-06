@@ -2,7 +2,7 @@
 <#
 guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
 (the guard's note, supervise's Shells sweep); the supervise -Brief report; bossy.ps1 track add / show (MRs comment, -Task wins); build-failure flags;
-bossy.ps1 bugbrief; crafty.ps1 pipes; check -Step e2e (spec choice, NOT_TESTED, -AllTests, the gate refusal); pokey.ps1 api; crafty.ps1 tracker bug (one [Bug] per ask).
+bossy.ps1 bugbrief; check -Step e2e (spec choice, NOT_TESTED, -AllTests, the gate refusal); pokey.ps1 api; crafty.ps1 tracker bug (one [Bug] per ask).
 Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -69,16 +69,24 @@ $sh = Invoke-PsTest 'shells' @'
 . $args[0]; $tr = Join-Path $args[1] 'tx-sh'; $env:KIT_TRANSCRIPTS = $tr; $env:KIT_PARAM_SUPERVISE_SHELLSTUCKMINUTES = '0'; $env:KIT_PARAM_SUPERVISE_HEARTBEATMINUTES = '1'; $t0 = Get-Date
 $gone = (Join-Path $args[1] 'gone-wt') -replace '\\', '/'; $c1 = "cd $gone; until crafty.ps1 pipes -Dir $gone; do sleep 30; done"; $c2 = "cat > /dev/null; python - <<'EOF' 2>&1 || true`nEOF"
 $tu = { param($f, $c, $at) New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Add-Content $f (@{ type = 'assistant'; timestamp = ([datetime]$at).ToUniversalTime().ToString('o'); message = @{ content = @(@{ type = 'tool_use'; name = 'Bash'; input = @{ command = $c; run_in_background = $true } }) } } | ConvertTo-Json -Compress -Depth 6) }
-$p1, $p2 = 1, 2 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -NoNewWindow }
+$p1, $p2, $p3, $p4, $p5 = 1..5 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 120' -PassThru -NoNewWindow }
 & $tu "$tr/s9/subagents/agent-k1.jsonl" $c1 $p1.StartTime; '{"agentType":"devy","finished":true}' | Set-Content "$tr/s9/subagents/agent-k1.meta.json"
 & $tu "$tr/s9/subagents/workflows/wf_1/agent-w2.jsonl" $c2 $p2.StartTime; '{"type":"started","agentId":"w2","label":"build:H2"}', '{"type":"result","agentId":"w2","result":{}}' | Set-Content "$tr/s9/subagents/workflows/wf_1/journal.jsonl"
+# 2026-11-06: opsy waited on pipelines (meta finished, board working) and lost the shell
+$c3 = 'until [ $(glab api projects/1/pipelines/3035902453 | jq -r .status) = success ]; do sleep 60; done'; $c4 = 'cat n.md; python tidy.py --report x'
+& $tu "$tr/s9/subagents/agent-k3.jsonl" $c3 $p3.StartTime; '{"agentType":"opsy","finished":true}' | Set-Content "$tr/s9/subagents/agent-k3.meta.json"; & $tu "$tr/s9/subagents/agent-k4.jsonl" $c4 $p4.StartTime
+$bd = Get-KitPath board -Create; $hs = (Get-Process -Id $PID).StartTime.ToString('o')
+@{ agent = 'opsy-1'; status = 'working'; joined = $t0.ToString('o'); beat = $t0.AddMinutes(-40).ToString('o'); transcript = "$tr/s9/subagents/agent-k3.jsonl"; holderPid = $PID; holderStart = $hs } | ConvertTo-Json | Set-Content "$bd/opsy-1.json"
+@{ agent = 'leaver'; status = 'left'; joined = $t0.ToString('o'); beat = $t0.AddMinutes(25).ToString('o'); transcript = "$tr/s9/subagents/agent-k4.jsonl" } | ConvertTo-Json | Set-Content "$bd/leaver.json"
+$c5 = 'cat n2.md; python tidy2.py'; & $tu "$tr/s9/subagents/agent-k5.jsonl" $c5 $p5.StartTime; '{"agentType":"revy","finished":true}' | Set-Content "$tr/s9/subagents/agent-k5.meta.json"
+Get-ChildItem "$tr/s9" -Recurse -Filter 'agent-*.jsonl' | ForEach-Object { $_.LastWriteTime = $t0.AddMinutes($(if ($_.Name -eq 'agent-k5.jsonl') { 12 } else { 0 })) }
 & $tu "$tr/s9.jsonl" 'sleep 900; echo coordinator' $t0.AddMinutes(-60)
 $cl = { param($c) "`"C:\Git\bin\bash.exe`" -c `"source s && eval '$($c -replace "'", "'\''" -replace '"', '\"')' < /dev/null && pwd -P >| /tmp/c`"" }
 $sp = { param($id, $par, $c, $at) [pscustomobject]@{ Id = $id; ParentId = $par; Name = 'bash.exe'; CommandLine = (& $cl $c); Created = $at; Cpu = 1 } }
-$procs = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe'; CommandLine = 'claude'; Cpu = 9 }, (& $sp $p1.Id 50 $c1 $p1.StartTime), (& $sp $p2.Id 50 $c2 $p2.StartTime),
-  (& $sp 999999 50 'sleep 900; echo coordinator' $t0.AddMinutes(-60)), (& $sp 999998 50 'npm run lint' $t0.AddMinutes(-2)), (& $sp 999997 7 'sleep 900; echo coordinator' $t0.AddMinutes(-60)))
-$st = @{}; $rs = foreach ($i in 0, 1, 1.2, 2) { $w = Get-KitShellSweep $st $t0.AddMinutes($i) -AutoFix -Procs $procs; Start-Sleep -Milliseconds 300; $w }
-"cmd:$((Get-KitShellCommand (& $cl $c2)) -eq $c2)"; "dir:$((Get-KitShellDir 'cd /tmp/x && npm run dev') -eq '')"; "k1:$($p1.HasExited)"; "k2:$($p2.HasExited)"
+$procs = @([pscustomobject]@{ Id = 50; ParentId = 1; Name = 'claude.exe'; CommandLine = 'claude'; Cpu = 9 }, (& $sp $p1.Id 50 $c1 $p1.StartTime), (& $sp $p2.Id 50 $c2 $p2.StartTime), (& $sp $p3.Id 50 $c3 $p3.StartTime), (& $sp $p4.Id 50 $c4 $p4.StartTime), (& $sp $p5.Id 50 $c5 $p5.StartTime),
+  (& $sp 999999 50 'sleep 900; echo coordinator' $t0.AddMinutes(-60)), (& $sp 999998 50 'npm run lint' $t0.AddMinutes(28)), (& $sp 999997 7 'sleep 900; echo coordinator' $t0.AddMinutes(-60)))
+$st = @{}; $rs = foreach ($i in 0, 1, 1.2, 2) { $w = Get-KitShellSweep $st $t0.AddMinutes(30 + $i) -AutoFix -Procs $procs; Start-Sleep -Milliseconds 300; $w }   # transcripts 30 min idle
+"cmd:$((Get-KitShellCommand (& $cl $c2)) -eq $c2)"; "dir:$((Get-KitShellDir 'cd /tmp/x && npm run dev') -eq '')"; "k1:$($p1.HasExited)"; "k2:$($p2.HasExited)"; "k34:$(-not $p3.HasExited -and -not $p4.HasExited -and $p5.HasExited)"; $p3, $p4 | Stop-Process -Force
 foreach ($i in 0..3) { "s${i}:$(@($rs[$i].rows | ForEach-Object { "$($_.owner)=$($_.state)" }) -join ',')|$(@($rs[$i].flags | ForEach-Object what) -join '|')" }
 "log:$(@(Read-KitLog calls $t0.AddMinutes(-1) | Where-Object event -eq 'shell-kill').Count)"; Format-KitShellTable $rs[1].rows
 $hd = "cd /d/x && export A=1; python - <<'`"'`"'EOF'`"'`"'`nimport a`nb`nEOF"; "short:$(Get-KitShellShort $hd)|$((Get-KitShellShort ('npm run x ' * 9)).Length)"
@@ -103,11 +111,11 @@ $pp = Write-KitSuperviseHtml $dd @() 'NEXT 5 min'; for ($w = 0; $w -lt 100 -and 
 Expect "supervise page: escaped, ACT first, history of 2 sweeps in its .json; -Brief html stdout: link, ACT, WATCH, FIXED, counts; no page = the tables; supervise.publish runs with KIT_SUPERVISE_HTML, masked on the page ($($sh -match '^(page|out|pub):'))" ($sh -contains 'page:True' -and $sh -contains 'out:True' -and $sh -contains 'pub:True' -and $sh -contains 'render:True' -and $sh -contains 'days:2/1/1/1/30/1')
 Expect "shells: cell unquoted, heredoc collapsed, preambles skipped, 60 chars; the table after RAM in -Brief and the report ($($sh -match '^(short|order):'))" ($sh -contains 'short:python - <<EOF (heredoc, 2 lines)|60' -and $sh -contains 'order:True')
 $s0, $s1, $s9, $s2 = @($sh -match '^s\d:')
-Expect "shells: a finished owner's shell is killed in the first sweep (dir gone or not, never STUCK); coordinator's kept; young / non-agent unlisted ($s0)" (
-  $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $s2 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'log:2' -and
-  $s0 -match '^s0:coordinator=running\|auto-fixed: killed shell \d+ of devy \(owner devy finished; dir gone: .+gone-wt\): until crafty.*\|auto-fixed: killed shell \d+ of H2 \(owner H2 finished\): cat > /dev/null' -and
-  $s1 -match '^s1:coordinator=STUCK\|SHELL STUCK pid 999999 of coordinator' -and $s1 -notmatch 'H2' -and
-  $s2 -match '^s3:coordinator=STUCK\|' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 61 min \| STUCK \| yours: stop it')
+Expect "shells: gone owner (finished, board not live, idle): killed in sweep 1, a poll loop or < 20 min idle in sweep 2; live board / fresh beat kept; coordinator's kept ($s0 $s1)" (
+  $sh -contains 'cmd:True' -and $sh -contains 'dir:True' -and $s9 -notmatch 'killed' -and $s2 -notmatch 'killed' -and $sh -contains 'k1:True' -and $sh -contains 'k2:True' -and $sh -contains 'k34:True' -and $sh -contains 'log:3' -and
+  $s0 -match '^s0:devy=ORPHAN,opsy-1=running,leaver=running,revy=ORPHAN,coordinator=running\|SHELL ORPHAN pid \d+ of devy .+\|auto-fixed: killed shell \d+ of H2 \(owner H2 finished, idle 30 min\): cat > /dev/null' -and $s0 -notmatch 'killed shell \d+ of (devy|opsy|leaver|revy)' -and
+  $s1 -match '^s1:opsy-1=STUCK,leaver=STUCK,coordinator=STUCK\|auto-fixed: killed shell \d+ of devy \(owner devy finished, idle 31 min; dir gone: .+gone-wt; no CPU growth.*\): until crafty.*\|SHELL STUCK pid 999999 of coordinator' -and $s1 -match 'killed shell \d+ of revy \(owner revy finished, idle 19 min' -and
+  $s2 -match '^s3:opsy-1=STUCK,leaver=STUCK,coordinator=STUCK\|' -and ($sh -join "`n") -match '\| Shell \| Owner \| Age \| State \| Next \|(.|\n)+\| coordinator \| 91 min \| STUCK \| yours: stop it')
 $O = Join-Path $k 'skills/bossy/bossy.ps1'   # supervise -Brief report
 $rd = @{ rows = @(@{ name = 'W1'; task = 'T1'; state = 'ACTIVE'; since = '2026-01-02T10:00'; last = '2026-01-02T10:05'; doing = 'StructuredOutput' }, @{ name = 'J1'; task = '2026-10-29-rm-staging-2xyz wf_e8c577f7-894'; state = 'WAITING'; wait = 'hm deploy 0abbaa36, train d09409 waits for leases (switch-over)'; since = '2026-01-02T10:00'; next = 'envy.ps1 wait -Id 0abbaa36' })
   mem = @{ TotalGB = 64; AvailGB = 16 }; keepFree = 8; info = @('ready'); resources = @(@{ name = 'rm · api'; by = 'W1'; gb = 3 }) + @(1..6 | ForEach-Object { @{ name = "browser a-b·c·d$_"; by = 'devy-3dy3'; gb = 1 } }) }
@@ -170,26 +178,6 @@ $o = Invoke-BugBrief -Task b1 3>$null | Out-String; "d:$($o -match '"id":"B-b1"'
 function Get-TaskMrBranches { }; "r:$(try { Invoke-BugBrief -Task b1 3>$null; 0 } catch { "$_" -match 'no -Repos' })"
 '@ @($BX); Remove-Item $kl
 Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else an error (#)' 'd', 'r'
-# pipes: busy only with a head pipeline
-$pt = @'
-. $args[0]
-function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
- if ($Verb -eq 'mr.get') { if ($A.n -in '3', '4') { [pscustomobject]@{ state = @{ '3' = 'opened'; '4' = 'closed' }[$A.n]; head_pipeline = @{ status = 'success' } } } elseif ($A.n -ne '9') { [pscustomobject]@{ state = 'opened'; head_pipeline = $null; target_branch = 'main' } } }
- elseif ($Verb -eq 'ci.config') { if ($A.repo -match 'nocirepo') { $false } else { $null } }   # no CI file / a failed call
-}
-$a = Invoke-Pipes -Mrs 'https://h.example/g/nocirepo/-/merge_requests/1' -MaxMinutes 0 | ConvertFrom-Json
-$b = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json
-$c = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/9' -MaxMinutes 0 | ConvertFrom-Json
-function Get-KitValue { @{ name = 'cirepo'; ci = @{ mrPipelines = $false } } }
-"mr-off:$((Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/2' -MaxMinutes 0 | ConvertFrom-Json).done)"
-"no-ci:$($a.done -and $a.mrs[0].status -eq 'no-ci')"
-"no-pipeline:$(-not $b.done -and $b.mrs[0].status -eq 'no-pipeline')"
-"unknown:$(-not $c.done -and $c.mrs[0].status -eq 'unknown')"
-$t0 = Get-Date; $u = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3','https://h.example/g/cirepo/-/merge_requests/4' -MaxMinutes 1 -UntilMerged | ConvertFrom-Json; $ut = ((Get-Date) - $t0).TotalSeconds; $g = Invoke-Pipes -Mrs 'https://h.example/g/cirepo/-/merge_requests/3' -MaxMinutes 0 | ConvertFrom-Json
-"until-merged:$(-not $u.done -and $u.mrs[0].status -eq 'success' -and $u.mrs[1].status -eq 'closed' -and $ut -lt 20 -and $g.done)"
-'@
-$res = Invoke-PsTest 'pipes-test' $pt @($D)
-Expect-Each $res 'pipes: #' 'no-ci', 'no-pipeline', 'unknown', 'mr-off', 'until-merged'
 $ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }
 Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 # e2e: the diff's specs only (map, folder, name, imports, visits), none = NOT_TESTED, the whole suite only with -AllTests (logged)

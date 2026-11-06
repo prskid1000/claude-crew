@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L46 supervise · L216 shells · L330 page · L571 release · L600 lines · L625 cleanup
+Sections: L13 builds · L46 supervise · L216 shells · L339 page · L580 release · L609 lines · L634 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -270,7 +270,8 @@ function Find-KitShellTranscript([string]$Cmd, [datetime]$Created) {
   $best
 }
 # its owner: a main session transcript = the coordinator (never finished); a workflow step: finished = a journal result; an
-# Agent-tool subagent: its .meta.json finished; a board entry on that transcript: finished once left
+# Agent-tool subagent: its .meta.json finished (also set while it idles on its own background shell); a board entry on that
+# transcript: finished once left, live while not left and its holder runs; last = its latest transcript write or board beat
 function Get-KitShellOwner([string]$Tx, $Board) {
   if (-not $Tx) { return [pscustomobject]@{ name = 'unknown'; finished = $false; coordinator = $false } }
   $full = { param($x) [IO.Path]::GetFullPath("$x").TrimEnd('\', '/') }
@@ -281,12 +282,16 @@ function Get-KitShellOwner([string]$Tx, $Board) {
   if (Test-Path -LiteralPath $j) {
     foreach ($l in @(Select-String -LiteralPath $j -SimpleMatch "`"$id`"" | ForEach-Object { try { $_.Line | ConvertFrom-Json } catch {} })) { if ($l.type -eq 'started' -and -not $name) { $name = (($l.label -split ':', 2)[-1] -split '@')[0] }; if ($l.type -eq 'result') { $fin = $true } }
   } else { $m = try { Get-Content -LiteralPath ($Tx -replace '\.jsonl$', '.meta.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }; if (-not $name) { $name = $m.agentType }; if ($m.finished) { $fin = $true } }
-  [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false }
+  $live = $e -and $e.status -ne 'left' -and (Test-KitHolder $e) -ne $false
+  $last = @(@((Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue).LastWriteTime) + @(if ($e.beat) { try { [datetime]$e.beat } catch {} }) | Where-Object { $_ } | Sort-Object)[-1]
+  [pscustomobject]@{ name = $(if ($name) { "$name" } else { "agent $id" }); finished = [bool]$fin; coordinator = $false; live = [bool]$live; last = $last }
 }
-# supervise: Shells rows + flags; State.shells (pid@start): transcript, CPU sample, flat and STUCK sweeps. ORPHAN = owner finished or
-# its dir gone; STUCK = no CPU growth since the last sweep and older than supervise.shellStuckMinutes (learned: lifetimes of shells
-# that ended on their own). -AutoFix kills a finished owner's shell in the same sweep (a poll loop never goes flat)
+# supervise: Shells rows + flags; State.shells (pid@start): transcript, CPU sample, flat, STUCK and gone sweeps. ORPHAN = owner gone
+# (finished, no live board entry, no progress for idle.graceMinutes) or its dir gone; STUCK = no CPU growth since the last sweep and
+# older than supervise.shellStuckMinutes (learned: lifetimes of shells that ended on their own). -AutoFix kills a gone owner's shell
+# on the 2nd gone sweep, or the 1st when it is no wait / poll loop and the owner's last progress is 20+ min old
 function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(Get-KitSweepProcs)) {
+  $graceMin = [double](Get-KitParam 'idle.graceMinutes'); $pollRx = '(^|[\s;&|(])(until|while|for)\s|\bsleep\s+[-\d]|\bglab api\b|\bgh run watch\b|--watch\b|\bpipes\b|\b(envy|pokey|bossy)\.ps1\s+(\w+\s+)*wait\b'
   $stuckMin = [double](Get-KitParam 'supervise.shellStuckMinutes'); $old = if ($State.shells -is [Collections.IDictionary]) { $State.shells } else { @{} }; $new = @{}
   $kids = @{}; foreach ($p in $Procs) { if (-not $kids.ContainsKey($p.ParentId)) { $kids[$p.ParentId] = [Collections.Generic.List[object]]::new() }; $kids[$p.ParentId].Add($p) }
   $board = @(Read-KitJsonFiles (Get-KitPath board)); $rows = [Collections.Generic.List[object]]::new(); $flags = [Collections.Generic.List[object]]::new(); $all = 0
@@ -301,17 +306,21 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
     if (-not $s.bg -and $age -lt 10) { continue }   # a foreground tool call ends within the Bash tool's 10 min cap
     $s.listed = $true; $o = Get-KitShellOwner $s.tx $board; $dir = Get-KitShellDir $cmd; $gone = $dir -and -not (Test-Path -LiteralPath $dir)
     $stuck = $flat -and $age -ge $stuckMin
-    if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge [double](Get-KitParam 'supervise.heartbeatMinutes')) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
-    $why = @($(if ($o.finished) { "owner $($o.name) finished" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU growth, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
+    $hbMin = [double](Get-KitParam 'supervise.heartbeatMinutes')
+    if (-not $stuck) { $s.stuck = 0; $s.stuckAt = $null } elseif (-not $s.stuckAt -or ($Now - [datetime]$s.stuckAt).TotalMinutes * 2 -ge $hbMin) { $s.stuck = [int]$s.stuck + 1; $s.stuckAt = $Now.ToString('o') }
+    $idle = if ($o.last) { ($Now - [datetime]$o.last).TotalMinutes } else { 1e9 }; $poll = $cmd -match $pollRx
+    $ownerGone = $o.finished -and -not $o.live -and $idle -ge $graceMin   # meta "finished" alone also marks an agent idling on this very shell
+    if (-not $ownerGone) { $s.gone = 0; $s.goneAt = $null } elseif (-not $s.goneAt -or ($Now - [datetime]$s.goneAt).TotalMinutes * 2 -ge $hbMin) { $s.gone = [int]$s.gone + 1; $s.goneAt = $Now.ToString('o') }
+    $why = @($(if ($ownerGone) { "owner $($o.name) finished, idle $([int]$idle) min" }), $(if ($gone) { "dir gone: $dir" }), $(if ($stuck) { "no CPU growth, $($s.stuck) sweep(s)" }) | Where-Object { $_ }) -join '; '
     $short = Get-KitShellShort $cmd; $one = ($cmd -replace '\s+', ' ').Trim()
-    if ($o.finished -and $AutoFix -and (Test-KitPid $p.Id $made)) {
+    if ($ownerGone -and ($s.gone -ge 2 -or (-not $poll -and $idle -ge 20)) -and $AutoFix -and (Test-KitPid $p.Id $made)) {
       if ($KitIsWindows) { taskkill /PID $p.Id /T /F 2>&1 | Out-Null } else { foreach ($t in @($tree.Keys)) { Stop-SysProcess $t } }
       $s.killed = $true; Write-KitLog calls shell-kill ([ordered]@{ pid = $p.Id; owner = $o.name; why = $why; dir = $dir; what = "killed shell $($p.Id) ($why): $($one.Substring(0, [math]::Min(300, $one.Length)))" })
       $flags.Add([pscustomobject]@{ level = 'INFO'; what = "auto-fixed: killed shell $($p.Id) of $($o.name) ($why): $short"; action = 'Nothing to do.' }); continue
     }
-    $shellState = @($(if ($o.finished -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
+    $shellState = @($(if ($ownerGone -or $gone) { 'ORPHAN' }), $(if ($stuck) { 'STUCK' }) | Where-Object { $_ }) -join ', '; if (-not $shellState) { $shellState = 'running' }
     $tk = "taskkill /PID $($p.Id) /T /F"
-    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($o.finished) { "supervise -AutoFix kills it; now: $tk" } else { "$($o.name) ends it, else $tk" }
+    $next = if ($shellState -eq 'running') { '' } elseif ($o.coordinator) { "yours: stop it (KillShell) or $tk" } elseif ($ownerGone) { "supervise -AutoFix kills it next sweep; now: $tk" } else { "$($o.name) ends it, else $tk" }
     $rows.Add([pscustomobject]@{ pid = $p.Id; short = $short; cmd = $cmd; owner = $o.name; age = [math]::Round($age); state = $shellState; next = $next; dir = $dir })
     $s60 = $short.Substring(0, [math]::Min(60, $short.Length))
     if ($shellState -ne 'running') { $flags.Add([pscustomobject]@{ level = 'WATCH'; kind = "SHELL $shellState"; who = $o.name; age = "$([int]$age) min"; problem = "pid $($p.Id) $s60`: $why"; what = "SHELL $shellState pid $($p.Id) of $($o.name) ($s60): $why"; action = $next }) }
