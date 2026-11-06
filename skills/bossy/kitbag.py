@@ -18,8 +18,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L616 lint · L995 README graph · L1101 lint command · L1137 audit ·
-  L1246 registry · L1582 prose · L1727 sections · L1857 budget · L1881 goodies · L2389 state lint · L2461 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L617 lint · L996 README graph · L1102 lint command · L1138 audit ·
+  L1247 registry · L1583 prose · L1728 sections · L1858 budget · L1882 goodies · L2390 state lint · L2462 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -236,9 +236,10 @@ def audited(script, argv, cli):
 
 # ---- load: kit files, the reach graph
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}
-# outside the graph: generated ports, git / legal files
-REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents', '.github')
+# outside the graph: generated ports, git / legal files, assets (logo, screenshots: README images, never loaded by agents)
+REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents', '.github', 'assets')
 GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
+ASSETS = ('assets/',)   # outside the token budget and the file caps
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
 CAP_BASE = 200000   # _manifest.caps.totalTokens moves only in `budget raise` steps from here: x1.1, rounded to 1k (lint BUDGET-CAP)
@@ -273,9 +274,9 @@ def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count 
     return len(t.encode('utf-8')) // 4
 
 def counted_files(kdir):
-    """Tracked files the budget counts: all but the generated ports (a deletion not staged yet is gone)."""
+    """Tracked files the budget counts: all but the generated ports and assets (a deletion not staged yet is gone)."""
     rc, o, _ = git(kdir, 'ls-files')
-    return [x for x in o.split('\n') if x and not x.startswith(GENERATED) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
+    return [x for x in o.split('\n') if x and not x.startswith(GENERATED + ASSETS) and osp.isfile(osp.join(kdir, x))] if rc == 0 else []
 
 def split_total(sizes):
     """(kit total, tests total) of {file: tokens}: the kit total is what agents load; tests/ never is (own cap testTokens)."""

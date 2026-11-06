@@ -147,7 +147,7 @@ $sr = Get-Content (TkPath $k supervise-report) -Raw
 Expect '-AutoFix: a gone session''s QA seat + claims freed in one line' (@([regex]::Matches($sr, 'QA seat/claim')).Count -eq 1 -and $sr -match "freed 3 QA seat/claim file\(s\) of gone session process $($dp.Id)" -and -not @(Get-ChildItem $qs -Recurse -Filter *.json).Count -and $sr -match 'gate: \d+ running')
 $hx = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
 Expect '-Brief html: link, WATCH line, counts, no tables / INFO; the page: refresh 60, theme, INFO zi' ($sb -match 'report: file:///\S+supervise-report\.html \(updated \d\d:\d\d\) · detail: \S+\.json' -and $sb -match '(?m)^WATCH · w w w' -and
-  $sb -match '\d+ agent\(s\) active · \d+ ACT · \d+ WATCH' -and $sb -notmatch '\| Level \||\| Resource \||zi' -and $hx -match 'http-equiv=refresh content=60>.*prefers-color-scheme:dark' -and $hx -match '<td>zi')
+  $sb -match '\d+ agent\(s\) active · \d+ ACT · \d+ WATCH' -and $sb -notmatch '\| Level \||\| Resource \||zi' -and $hx -match 'http-equiv=refresh content=60>.*prefers-color-scheme:dark' -and $hx -match '<li class=f>zi')
 $wc = ($sr -split '## Agents \(whole cells\)')[1]; Expect '-Brief: tables, stderr NEXT + HEARTBEAT_PROMPT; report: all, INFO' ($wc -match '## All flags' -and $wc -notmatch '\(full: report\)' -and $wc -match '\| INFO \| zi' -and $sb -match 'NEXT=\d+' -and $sb -match 'HEARTBEAT_PROMPT=Run &' -and $sb -cnotmatch 'whole:|report\)|NEXT \d')
 $sd = Join-Path $qs 'seats'; New-Item -ItemType Directory -Force $sd | Out-Null
 '{"agent":"test:Q1","kind":"web","need":2,"since":"2026-10-16T10:00:00"}' | Set-Content "$sd/q1.json"

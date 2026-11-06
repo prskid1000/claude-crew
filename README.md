@@ -1,3 +1,7 @@
+<p align="center"><img src="assets/claude-crew.svg" alt="claude-crew" width="330"></p>
+<p align="center"><b>A crew of AI agents that builds, tests, ships and watches your code, with one coordinator in charge.</b></p>
+<p align="center"><img src="assets/badges.svg" alt="license MIT · agents: Claude Code, Codex, Antigravity · scripts: PowerShell 7, Python 3 · telemetry: none"></p>
+
 # claude-crew
 
 **[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built on each push with the `flow-map` goody)
@@ -186,14 +190,27 @@ Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Code
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its stderr `NEXT=<n>`
-  sets the next one, 5-30 min by state) writes the owner's report page `<runtime>/logs/supervise-report.html` (reloads every 60 s;
-  full detail in its `.json`): one row per agent / run (ACTIVE, WAITING, FINISHED, STUCK, STOPPED; alone: `bossy.ps1 status
-  [-Watch]`), flags (ACT first; ❓ ASK), RAM, the resources' holders, agents' shells, the last `supervise.historySweeps` (12)
-  sweeps' flags, the `supervise` settings. Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
+  sets the next one, 5-30 min by state) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
+  [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
   WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
   after each write, `$env:KIT_SUPERVISE_HTML` = the page (e.g. upload it as a private page; its bytes never pass through the
   model). After a restart: `bossy.ps1 resume -All`.
   Every script prints its usage without arguments.
+
+## Live supervisor dashboard
+<p align="center"><img src="assets/dashboard-dark.png" alt="supervisor dashboard, dark theme, sample data" width="900"></p>
+
+Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
+- header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
+- tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, disk free and fill rate;
+- flags as cards with the next step (ACT first), INFO below; RAM, disk and agents-by-state gauges;
+- agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
+- statistics from the kit's logs (runs, agents spawned / finished / failed, average duration, tokens vs budget, auto-fixed %,
+  deploys, decisions, lessons): today vs yesterday, 7 days vs the 7 before; `—` = no source;
+- resources and leases, shells, `supervise` settings and learned changes, the sweep log; the last `supervise.historySweeps`
+  (12) sweeps as a stacked bar.
+
+One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped.
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and
