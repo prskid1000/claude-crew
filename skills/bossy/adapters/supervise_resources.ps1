@@ -2,12 +2,12 @@
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, env leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of
-the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, release (every lease of an agent).
+the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, STUCK, pause and silent-run flags, release (every lease of an agent).
 Its hooks run inside the bossy.ps1 verb that calls them and use that verb's variables: supervise ($now, $mem, $keepFree, Within,
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L46 supervise · L216 shells · L339 page · L580 release · L609 lines · L634 cleanup
+Sections: L13 builds · L46 supervise · L240 shells · L363 page · L604 release · L633 lines · L658 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -44,6 +44,30 @@ function Invoke-KitCacheFlush([int]$WaitMin, $Mem, [datetime]$Now, [int]$Timeout
 }
 
 # ---- supervise: resource flags and report rows
+# supervise flags of STUCK rows (agents and steps, not their run): WATCH, ACT from 3x the threshold
+function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
+  foreach ($r in @($Rows | Where-Object { $_.state -eq 'STUCK' -and -not $_.left })) {   # a run with running steps: its steps are the rows
+    $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
+    [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); kind = 'STUCK'; who = "$($r.name) ($($r.task))"; age = $(if ($m -lt [int]::MaxValue) { "$m min" }); problem = "no progress$(if ($m -eq [int]::MaxValue) { ' for its whole run' }), nothing it waits on"; what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
+  }
+}
+# a pause still active while its runs work (relaunched by hand): their agents stop next beat
+function Get-KitPauseFlags($Pauses, $Active, [int]$WfAgents) {
+  foreach ($p in @($Pauses | Where-Object { $_.state -eq 'paused' })) {
+    $hit = @($Active | Where-Object { -not $_.paused -and ($_.run -eq $p.run -or ($p.run -eq '*' -and $_.run -notin @($p.released))) } | ForEach-Object run | Select-Object -Unique)
+    if ($hit.Count -or ($p.run -eq '*' -and $WfAgents)) { [pscustomobject]@{ level = 'ACT'; what = "pause $(Split-Path "$($p.file)" -Leaf) ($($p.reason), since $(([datetime]$p.at).ToString('HH:mm'))) is active while run(s) work: $(if ($hit) { $hit -join ', ' } else { "$WfAgents workflow agent(s)" }); their agents stop at the next beat"; action = "Reason gone: & $($KitCmd.orch) resume -All (or -Run <run>); else pause those runs again." } }
+  }
+}
+# a run silent 2+ days with unfinished agents died or stopped: one WATCH ($Quiet remembers it), then skipped
+function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {
+  if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
+  $flag = $null
+  if (-not $Quiet.ContainsKey($Name)) {
+    $Quiet[$Name] = $Now.ToString('o')
+    $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
+  }
+  [pscustomobject]@{ skip = $true; flag = $flag }
+}
 # supervise: flags, sweep lines, report rows and the largest waiting build (bossy.ps1 supervise section 3: before the slow sections)
 function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   $flag = { param($level, $what, $action) [pscustomobject]@{ level = $level; what = $what; action = $action } }

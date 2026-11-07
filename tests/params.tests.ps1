@@ -2,7 +2,7 @@
 <#
 params.tests.ps1: lib.ps1 params (registry, load tags, sketches, trigger queue, show, params-changes), the supervise sweep (learned
 section cost, cadence, starved first, background calls), net hang retry budget + back-off, the transcript walk cache, log trim, kitbag params
-lint, the tidy digest's QA gaps, track status lag; (cap moves) program state, browser.mjs exit release / kitParam / ports, pipes default and statuses.
+lint, the tidy digest's QA gaps, track status lag; (cap moves) program state, browser.mjs exit release / kitParam / ports, pipes default and statuses, bugbrief args, cleanup log rotation.
 Usage: pwsh -NoProfile -File <kit>/tests/params.tests.ps1 (or tests/kit-tests.ps1 -Area params).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -237,5 +237,14 @@ $pov = pwsh -NoProfile -Command ". '$O'; Update-KitTaskIndex P7 { param(`$x) `$x
 Expect "prior override: the gate's hits are logged; WATCH only for another task's work or no hits known ($pov)" ("$pov" -match '^2,2,2,0 \|' -and "$pov" -match 'wt x P7 \(own\): matches task P12' -and "$pov" -match 'finish P7 P7 \(pyown\): matches task P12' -and "$pov" -match 'mr w P7 \(r\): matches task P1;' -and "$pov" -match 'override: mr P7 \(r\)$' -and "$pov" -notmatch 'P13|P7-a')
 $kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, [string[]]`$Lanes, [switch]`$Cold) ""`$Mode|`$(`$Lanes -join '+')|`$Cold"" }; `$a = @{ Lanes = 'L1'; Mode = 'None'; Cold = `$true }; & { Invoke-KitVerb T1 `$args } @a"
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
+# (cap moves from supervise.tests) bugbrief args and failed checks, cleanup log rotation
+$bw = pwsh -NoProfile -Command ". '$O'; foreach (`$c in `$false, `$true) { Get-BugWfArgs b r B1 'T1 C1, C2, C3' 's1; s2; s3' @() `$c 'C:\k' 3>`$null | ConvertTo-Json -Compress -Depth 4 }"
+Expect 'bugbrief args: sonnet for 3 checks unless -Complex, kitDir, a placeholder mandate (never a stored one)' ($bw[0] -notmatch 'complex' -and $bw[1] -match '"complex":true' -and $bw[0] -match '"kitDir":"C:/k"' -and $bw[0] -match "owner's words of this request" -and $bw[0] -notmatch 'review|roles')
+# bugbrief checks: every package (first text wins an id), no env-data untested check, no gallery row
+$fc = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Get-KitFailedChecks ""## Failed checks``n### T5 — a``n**Saw:** x (cause: env-data)"", ""## Untested checks``n### R1 — d``n**Saw:** none (cause: env-data)``n## Failed checks``n### R2 — o``n**Saw:** wrong | Independent re-test: same"", ""### R2 — o``n**Saw:** old``n## Screens``n### G1 — h (PASS)"").ForEach({ `"`$(`$_.id)=`$(`$_.saw)`" }) -join ','"
+Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: env-data),R2=wrong')
+$lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
+try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
+Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
 Remove-TestKit $k
 Complete-Tests

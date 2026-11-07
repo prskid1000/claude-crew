@@ -1,16 +1,11 @@
 #Requires -Version 7
 <#
-supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, bugbrief args, storage.
+supervise.tests.ps1: bossy.ps1 supervise autonomy (board, flags, acks, run records), pause / launch / recover learn, stopped runs, storage.
 Usage: pwsh -NoProfile -File <kit>/tests/supervise.tests.ps1 (or tests/kit-tests.ps1 -Area supervise).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit supervise; $O = Join-Path $k 'skills/bossy/bossy.ps1'
-$bw = pwsh -NoProfile -Command ". '$O'; foreach (`$c in `$false, `$true) { Get-BugWfArgs b r B1 'T1 C1, C2, C3' 's1; s2; s3' @() `$c 'C:\k' 3>`$null | ConvertTo-Json -Compress -Depth 4 }"
-Expect 'bugbrief args: sonnet for 3 checks unless -Complex, kitDir, a placeholder mandate (never a stored one)' ($bw[0] -notmatch 'complex' -and $bw[1] -match '"complex":true' -and $bw[0] -match '"kitDir":"C:/k"' -and $bw[0] -match "owner's words of this request" -and $bw[0] -notmatch 'review|roles')
-# bugbrief checks: every package (first text wins an id), no env-data untested check, no gallery row
-$fc = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Get-KitFailedChecks ""## Failed checks``n### T5 — a``n**Saw:** x (cause: env-data)"", ""## Untested checks``n### R1 — d``n**Saw:** none (cause: env-data)``n## Failed checks``n### R2 — o``n**Saw:** wrong | Independent re-test: same"", ""### R2 — o``n**Saw:** old``n## Screens``n### G1 — h (PASS)"").ForEach({ `"`$(`$_.id)=`$(`$_.saw)`" }) -join ','"
-Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: env-data),R2=wrong')
 $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O board join -Run w8 2>&1 | Out-String; $juc = $LASTEXITCODE
 Expect "board join: -Type only = the agent id; neither = usage, exit 2 ($juc)" ($jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Agent')
 $pzf = Join-Path (TkPath $k pauses -Create) 'pause-zz.json'; & $J @{ at = '2026-10-23T12:34:00'; reason = 'C: full'; run = '*'; state = 'paused' } $pzf
@@ -77,6 +72,14 @@ Expect 'supervise -Ack hides that flag (counts differ) 24 h; one line per proble
 foreach ($n in 'subagents/S10', 'S11') { & $se ($n -replace '.*/') @{ beat = (& $ago 30); run = 'sx'; transcript = (& $tx (Join-Path (Kd) "$n.jsonl") '{"message":{"role":"assistant","stop_reason":"end_turn"}}' 30) } }
 $w10 = (pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json).flags.what -match 'S1[01]'
 Expect "supervise -AutoFix: a returned subagent's seat leaves, a session's stays ($w10)" ((Read-Json "$bd/s-S10.json").status -eq 'left' -and "$w10" -eq 'auto-fixed: board entry S10 (sx) left: its agent returned' -and (Read-Json "$bd/s-S11.json").status -ne 'left')
+# runs stopped with steps running (TaskStop, a restart): its holder gone, no record and no older Claude, launch -Done without a record; today's ARP reuses the code
+& $J @{ script = 'C:/k/testy.js'; run = 'ry'; fnv = 'ab12'; at = (& $ago 60); holderPid = $PID; holderStart = '2000-01-01T00:00:00Z' } (Join-Path (TkPath $k launches) 'self-testy-ry-ab12.json'); & $se ARP @{ run = 'today'; type = 'checky'; joined = (& $ago 10) }
+$ys = Invoke-PsTest 'stopped' '. $args[0]; $env:KIT_TRANSCRIPTS = $args[1]; function Get-KitClaudeStarts { Get-Date }
+  foreach ($y in 1..4) { $d = "$($args[1])/s2/subagents/workflows/wf_y$y"; $null = New-Item -ItemType Directory -Force $d; Set-Content "$d/agent-c$y.jsonl" "{}"
+    @{ type = "result"; agentId = "r"; result = @{ output = $(if ($y -eq 1) { "RECORDED testy.js ry (fnv ab12)" }) } }, @{ type = "started"; agentId = "c$y"; label = "test:$(if ($y -lt 4) { "ARP" } else { "Z4" })" } | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 4 } | Set-Content "$d/journal.jsonl"
+    Get-ChildItem $d | Where-Object { $y -lt 4 } | ForEach-Object { $_.LastWriteTime = (Get-Date).AddMinutes(-70) }; (Get-Item $d).CreationTime = (Get-Date).AddMinutes(-90) }
+  pwsh -NoProfile -File $args[0] launch -Done -RunId wf_y3; $r = Get-KitStatusRows; Format-KitStatusTable $r; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object what' @($O, (Join-Path (Kd) 'tx2'))
+Expect "stopped runs: STOPPED / FINISHED rows, no STUCK or step row (a fresh write keeps one live); ARP stays today's ($($ys -join ' // '))" ((& { $st = $ys; (& $sv 'wf_y1 (workflow)' 'STOPPED \(session gone\)') -and (& $sv 'wf_y2 (workflow)' 'STOPPED \(session gone\)') -and (& $sv 'wf_y3 (workflow)' 'FINISHED') -and (& $sv 'wf_y4 (workflow)' 'ACTIVE') -and (& $sv 'ARP (checky)' 'ACTIVE') }) -and @($ys -match '^\| ARP \(checky\) \| today \|').Count -and "$ys" -match 'marked completed: wf_y3\.json' -and -not @($ys -match 'STUCK.*(ARP|wf_y)|(ARP|wf_y).*STUCK|ARP \(step\)').Count)
 # stopped runs learn once: launch -Done twice, pause twice
 New-Journal wf_r4 @(@{ type = 'started'; agentId = 'c1'; label = 'build:X1' }, @{ type = 'result'; agentId = 'c1'; result = @{ error = 'boom: local env down' } })
 $null = pwsh @np $O launch -RunId wf_r4 -Script buildy.js -ArgsJson '{"brief":"C:/b/r4.md","run":"r4"}' 2>&1
@@ -94,9 +97,6 @@ $mu = 'https://h.x/g/r/-/merge_requests/1'   # build and fix spell one MR two wa
 New-Journal wf_r9 @(foreach ($l in 'build', 'fix') { @{ type = 'started'; agentId = $l; label = "${l}:X1" }; @{ type = 'result'; agentId = $l; result = @{ mrs = @(@{ url = $mu; merged = $true }) } }; $mu = $mu.Replace('h.x', 'H.X') + '/' })
 $rm6 = @((pwsh -NoProfile -Command ". '$O'; function Invoke-HostVerb { @{ state = 'opened' } }; Invoke-Report -Run wf_r9 -Json" | Out-String | ConvertFrom-Json).agents.X1.mrs)
 Expect "report: an agent's merged: true loses to the host's state now ($($rm6.mergeState))" ($rm6.Count -eq 1 -and -not $rm6[0].merged -and $rm6[0].mergeState -eq 'OPEN')
-$lp = TkPath $k logs -Create; Set-Content "$lp/k4.log" (1..5000); Set-Content "$lp/k6.log" (1..5001); $hw = [IO.FileStream]::new("$lp/k6.log", 'Open', 'Write', 'ReadWrite')
-try { $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no') 2>&1 | Out-String } finally { $hw.Dispose() }
-Expect 'cleanup: a log over 5000 lines rotates while a writer holds it; 5000 lines stay' ($cd -match 'rotated.*k6\.log' -and $cd -notmatch 'k4')
 New-Item -ItemType Directory -Force "$k/workflows" | Out-Null; Copy-Item (Join-Path $src 'workflows/tidy.js') "$k/workflows/"
 New-Journal wf_r6 @(@{ type = 'started'; agentId = 'e1'; label = 'prep' }, @{ type = 'result'; agentId = 'e1'; result = @{ ok = $true } })
 $null = pwsh @np $O launch -RunId wf_r6 -Script tidy.js -ArgsJson '{"run":"r6"}' 2>&1; $d6 = pwsh @np $O launch -Done -RunId wf_r6 2>&1 | Out-String

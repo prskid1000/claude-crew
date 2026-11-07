@@ -3,9 +3,9 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): ev
  . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
 Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L11 paths · L63 state · L133 config · L213 OS · L415 leases · L875 status · L1107 supervise sweep ·
-  L1182 supervise report · L1291 tracker · L1611 prior · L1634 ask bugs · L1780 git-host · L1939 kitlog · L2059 params ·
-  L2372 entry-scripts
+Sections: L11 paths · L63 state · L133 config · L213 OS · L415 leases · L875 status · L1115 supervise sweep ·
+  L1190 supervise report · L1289 tracker · L1609 prior · L1632 ask bugs · L1778 git-host · L1937 kitlog · L2057 params ·
+  L2370 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -877,6 +877,20 @@ function Invoke-ExtrasPrune([double]$Days = 0, [switch]$DryRun) {
 function Get-KitWorkflowDirs([string]$Session) {
   Get-ChildItem $(if ($env:KIT_TRANSCRIPTS) { $env:KIT_TRANSCRIPTS } else { $KitConf.ClaudeProjectDir }) -Directory -ErrorAction SilentlyContinue | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
 }
+# a run folder's launch records: by run id or wfDir, plus the self record its record-args step printed (RECORDED <leaf> <run> (fnv <h>), within 30 min)
+function Get-KitWorkflowRecords($Dir, $Events, $Launches) {
+  @($Launches | Where-Object { $_.runId -eq $Dir.Name -or ($_.wfDir -and (Split-Path "$($_.wfDir)" -Leaf) -eq $Dir.Name) })
+  $m = @($Events | Where-Object type -eq 'result' | ForEach-Object { [regex]::Match("$($_.result.output)", 'RECORDED (\S+) (\S+) \(fnv (\w+)\)') } | Where-Object Success)[0]
+  if ($m) { $Launches | Where-Object { "$($_.fnv)" -eq $m.Groups[3].Value -and $_.run -eq $m.Groups[2].Value -and (Split-Path "$($_.script)" -Leaf) -eq $m.Groups[1].Value -and [math]::Abs(([datetime]$_.at - $Dir.CreationTime).TotalMinutes) -le 30 } | Select-Object -First 1 }
+}
+# a run with no end marker that ended (TaskStop, a restart): a record completed, its holder gone, or no record, every Claude process younger and no write for stuckMinutes
+function Get-KitWorkflowStop($Dir, $Records) {
+  if (@($Records | Where-Object completed).Count) { return 'completed' }
+  $h = @($Records | Where-Object holderPid)[0]; if ($h) { if ((Test-KitHolder $h) -eq $false) { 'session gone' }; return }
+  $cs = @(Get-KitClaudeStarts); $quiet = (Get-Date).AddMinutes(-[double](Get-KitParam 'supervise.stuckMinutes'))   # no Claude process found: unknown
+  if (-not @($Records).Count -and $cs.Count -and -not @($cs | Where-Object { $_ -le $Dir.CreationTime }).Count -and -not @(Get-ChildItem -LiteralPath $Dir.FullName -File | Where-Object LastWriteTime -gt $quiet).Count) { 'session gone' }
+}
+function Get-KitClaudeStarts { @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^claude' | ForEach-Object { try { $_.StartTime } catch {} }) }
 # every parsed *.json of a state folder, each with its path in .file; a broken file is skipped
 function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
   if (-not $Dir) { return }
@@ -1001,26 +1015,27 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   foreach ($w in @(Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | Sort-Object LastWriteTime)) {   # oldest first: a relaunch's steps win
     $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
     $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
-    $lr = @($launch | Where-Object { $_.runId -eq $w.Name -or ($_.wfDir -and (Split-Path "$($_.wfDir)" -Leaf) -eq $w.Name) })
+    $rec = @(Get-KitWorkflowRecords $w $ev $launch); $lr = @($rec | Where-Object { $_.runId -or $_.wfDir })
     $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x }
     $running = @(Get-JournalRunning $started @($res.Keys)); $seen = [Collections.Generic.List[object]]::new(); $seen.Add($jt)
     # the engine writes no end marker: a script only waits on its agents, so no running step for 2+ min = it ended (unless paused)
-    $paused = [bool]@($lr | Where-Object { $_.paused -and -not $_.completed }).Count
-    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($lr | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2))
-    if (($Now - $jt).TotalHours -ge $(if ($fin) { 2 } else { 48 })) { continue }
+    $paused = [bool]@($rec | Where-Object { $_.paused -and -not $_.completed }).Count
+    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2))
+    $gone = if (-not $fin) { Get-KitWorkflowStop $w $rec }; $live = -not $fin -and -not $gone   # ended runs have no running steps
+    if (($Now - $jt).TotalHours -ge $(if ($live) { 48 } else { 2 })) { continue }
     $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]
-    if (-not @($lr).Count) { $lr = @($launch | Where-Object { $_.run -eq $run -and $_.cap }) }   # its self record: script, tokens spent, cap
+    if (-not @($lr).Count) { $lr = @(@($rec) + @($launch | Where-Object { $_.run -eq $run -and $_.cap }) | Where-Object { $_ }) }   # its self record: script, tokens spent, cap
     foreach ($s in $started) {
       $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt }
-      if ($s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st) }
+      if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st) }
       foreach ($k in @(LabelNames $st.label | ForEach-Object { "$run/$_"; if ($run -like 'wf_*') { "?/$_" } })) { if (-not ($steps[$k].tx -and -not $st.tx)) { $steps[$k] = $st } }   # the latest step of a name wins, a running one first; ?/ = run name unknown
     }
-    $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]; $hold = @($lr | Where-Object holderPid)[0]
+    $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]
     $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
     $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw[0].why)$(if ($cw.Count -gt 1) { ", $($cw.Count) steps" })"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
-    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $running.Count
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $(if ($live) { $running.Count } else { 0 })
           task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
-          stopped = $(if (-not $fin -and $hold -and (Test-KitHolder $hold) -eq $false) { 'session gone' }); done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
+          stopped = $gone; done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
           wait = $wp.why; waitAt = $wp.at; waitNext = $wp.next; last = & $max $seen; started = $w.CreationTime; ended = $jt; next = '' }) $Now $stuck))
   }
   # board entries; a running step of the same name is that agent now (a resume or env-fix step after its entry left)
@@ -1032,7 +1047,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = $Now.ToString('o') }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
     if ($hit) { $hit.FullName } }
   foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 })) {   # a re-join replaces its older entry
-    $st = @($steps["$($e.run)/$($e.agent)"], $steps["?/$($e.agent)"] | Where-Object { $_ })[0]; if ($st) { $st.covered = $true }; $on = [bool]$st.tx
+    $sq = $steps["?/$($e.agent)"]; $st = @($steps["$($e.run)/$($e.agent)"], $(if ($sq.tx -or $sq.jt -ge [datetime]$e.joined) { $sq }) | Where-Object { $_ })[0]; if ($st) { $st.covered = $true }; $on = [bool]$st.tx   # an unnamed run's ended step: never a newer entry reusing its code
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
     $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
     if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats
@@ -1095,13 +1110,6 @@ function Format-KitStatusTable($Rows, $Now, $Versions, [int]$Cap = 0) {
   }
   if (-not @($Rows).Count) { '| — | nothing running | — | — | — | — |' }
   if ($Versions -and $Versions.Count) { "transcripts read: $(@($Versions.Values | Sort-Object) -join ', ')" }
-}
-# supervise flags of STUCK rows (agents and steps, not their run): WATCH, ACT from 3x the threshold
-function Get-KitStuckFlags($Rows, [datetime]$Now, [double]$StuckMin) {
-  foreach ($r in @($Rows | Where-Object { $_.state -eq 'STUCK' -and -not $_.left })) {   # a run with running steps: its steps are the rows
-    $m = if ($r.last) { [int]($Now - [datetime]$r.last).TotalMinutes } else { [int]::MaxValue }
-    [pscustomobject]@{ level = $(if ($m -ge 3 * $StuckMin) { 'ACT' } else { 'WATCH' }); kind = 'STUCK'; who = "$($r.name) ($($r.task))"; age = $(if ($m -lt [int]::MaxValue) { "$m min" }); problem = "no progress$(if ($m -eq [int]::MaxValue) { ' for its whole run' }), nothing it waits on"; what = "STUCK $($r.name) ($($r.task)): no progress for $(if ($m -lt [int]::MaxValue) { "$m min" } else { 'its whole run' }), nothing it waits on"; action = "Read its transcript tail; resume it with RESUME_BRIEF or $($r.next -replace '^.*; resume it or ')." }
-  }
 }
 
 # ---- supervise sweep: sections by learned cost, starved first; slow calls in the background
@@ -1265,16 +1273,6 @@ function Get-KitAnomalies($c, $p) {
   if ($null -ne $p.outbox -and $c.outbox -gt [int]$p.outbox) { & $AddF "SILENT FAILURE: tracker outbox grew to $($c.outbox) write(s)" 'evidence .state/outbox.jsonl: tracker auth / network' }
   if ($null -ne $p.toolErrors -and $c.toolErrors -gt [int]$p.toolErrors) { & $AddF "SILENT FAILURE: $($c.toolErrors - [int]$p.toolErrors) new agent result error(s)" "evidence $($c.errorRun) journal" }
   [pscustomobject]@{ flags = @($f); state = @{ outbox = $c.outbox; toolErrors = $c.toolErrors } }
-}
-# a run silent 2+ days with unfinished agents died or stopped: one WATCH ($Quiet remembers it), then skipped
-function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {
-  if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
-  $flag = $null
-  if (-not $Quiet.ContainsKey($Name)) {
-    $Quiet[$Name] = $Now.ToString('o')
-    $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
-  }
-  [pscustomobject]@{ skip = $true; flag = $flag }
 }
 # supervise -Brief's report file (whole cells): title, result line, the heartbeat table ($Md), then one table per section
 function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$Next) {

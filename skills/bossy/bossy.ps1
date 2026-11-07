@@ -21,10 +21,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L227 budget · L255 launch · L527 recover · L610 pause · L654 resume · L712 program · L757 param ·
-  L763 track · L1076 supervise · L1380 report · L1459 audit · L1519 storage · L1730 bugbrief · L1832 cleanup · L1956 learn ·
-  L1986 decide · L2054 health · L2113 retro due · L2123 tidy · L2193 the kit origin's main and goodies · L2209 setup ·
-  L2276 guard-sendmessage
+Sections: L30 init · L48 board · L227 budget · L255 launch · L528 recover · L611 pause · L655 resume · L713 program · L758 param ·
+  L764 track · L1077 supervise · L1375 report · L1454 audit · L1514 storage · L1725 bugbrief · L1827 cleanup · L1951 learn ·
+  L1981 decide · L2049 health · L2108 retro due · L2118 tidy · L2188 the kit origin's main and goodies · L2204 setup ·
+  L2271 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: verb arguments, lib.ps1, adapters, shared helpers
@@ -348,6 +348,7 @@ if ($Done) {
   foreach ($h in $hit) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object { -not $_.completed -and (($_.run -eq $h.run -and (Split-Path ([string]$_.script) -Leaf) -eq $h.leaf -and [datetime]$_.at -le $h.last) -or ($keys["$(Get-KitParentKey $_.args)"] -and (Test-KitHolder $_) -ne $true)) } | ForEach-Object file) }   # and the earlier launches it superseded
   if ($Run) { $files += @(Read-KitJsonFiles $dir 'self-*.json' | Where-Object run -eq $Run | ForEach-Object file) }
   $files = @($files | Select-Object -Unique)
+  if (-not $files.Count -and @($wfDirs | Where-Object Name -eq $RunId).Count) { $files = @(Join-Path $dir "$(& $safe $RunId).json"); Write-KitState $files[0] @{ runId = $RunId; at = (Get-Date).ToString('o') } }   # its folder, no record: a stopped one supervise skips
   if (-not $files.Count) { Write-Host "[launch] no record for $RunId$Run (nothing to mark)"; exit 0 }
   foreach ($h in $hit) { Invoke-KitStopLearn $h 'launch -Done' | ForEach-Object { Write-Host "[launch] $_" } }
   foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-Date).ToString('o'); Write-KitState $x $r } }
@@ -1078,13 +1079,6 @@ function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Wher
 function Test-KitCollision([string]$Text) {
   $Text -match '(?i)duplicate (agent|copy|writer|instance|session)|\b(agents?|cop(y|ies)|writers?|sessions?) collid|collid\w* with (an)?other (agent|writer|session)|two (agents|writers|sessions) (on|in|editing|writing) the same|another (agent|writer|session) (is|was) (also )?(editing|writing|running) (in |on )?(the same|this|my)|(halted|stopped editing)\b.{0,60}\b(another|other|duplicate|second) (agent|writer|session)'
 }
-# a pause still active while its runs work (relaunched by hand): their agents stop next beat
-function Get-KitPauseFlags($Pauses, $Active, [int]$WfAgents) {
-  foreach ($p in @($Pauses | Where-Object { $_.state -eq 'paused' })) {
-    $hit = @($Active | Where-Object { -not $_.paused -and ($_.run -eq $p.run -or ($p.run -eq '*' -and $_.run -notin @($p.released))) } | ForEach-Object run | Select-Object -Unique)
-    if ($hit.Count -or ($p.run -eq '*' -and $WfAgents)) { [pscustomobject]@{ level = 'ACT'; what = "pause $(Split-Path "$($p.file)" -Leaf) ($($p.reason), since $(([datetime]$p.at).ToString('HH:mm'))) is active while run(s) work: $(if ($hit) { $hit -join ', ' } else { "$WfAgents workflow agent(s)" }); their agents stop at the next beat"; action = "Reason gone: & $($KitCmd.orch) resume -All (or -Run <run>); else pause those runs again." } }
-  }
-}
 function Invoke-Supervise {
 param([string]$Session, [switch]$Json, [switch]$AutoFix, [switch]$Brief, [switch]$Takeover, [string]$Ack, [string]$Reason = '')
 $ErrorActionPreference = 'SilentlyContinue'
@@ -1123,7 +1117,7 @@ if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Dat
 
 # 1. workflows: running agents from each journal
 Phase 'workflows'; $wfDirs = Get-KitWorkflowDirs $Session | Sort-Object LastWriteTime -Descending | Select-Object -First 6
-$doneAt = @{}; $finishedRuns = Get-KitFinishedRuns; $pausedRuns = @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
+$doneAt = @{}; $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
 if (-not $Session) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # out of view: forget it (-Session sees only its own runs)
 foreach ($w in $wfDirs) {
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
@@ -1132,6 +1126,7 @@ foreach ($w in $wfDirs) {
   foreach ($r in $res.Values) { $dl = [string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label; [void]$doneLabels.Add($dl); foreach ($nm in LabelNames $dl) { if (-not $doneAt[$nm] -or $doneAt[$nm] -lt $w.LastWriteTime) { $doneAt[$nm] = $w.LastWriteTime } } }   # finished runs too: their board entries close
   if ($w.Name -in $finishedRuns) { continue }
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' })
+  if (-not $done -and (Get-KitWorkflowStop $w @(Get-KitWorkflowRecords $w $ev $lnch))) { continue }   # stopped (TaskStop, a restart): no running agents
   if ($done -and $AutoFix -and -not $state.closedRuns[$w.Name] -and (Within 'run records')) {   # a finished run whose record stayed open: closed (+ its learn step)
     $state.closedRuns[$w.Name] = $now.ToString('o'); $cl = @(Invoke-Bounded $KitCmd.orch @('launch', '-Done', '-RunId', $w.Name)) -join ' '
     if ($cl -match 'marked completed') { Flag 'INFO' "auto-fixed: run $($w.Name) finished: launch record closed" 'Nothing to do.' }
