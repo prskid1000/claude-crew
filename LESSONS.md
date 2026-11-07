@@ -18,12 +18,13 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- A contract claim that an old consumer ignores a new param is tested against the deployed consumer (one call on staging) before merge; kwargs-strict handlers reject unknown params. (2x)
 - Long kit verbs (bossy deploy request, waits) via Bash: start with run_in_background or a timeout over 120 s, then read the output file; a foreground call cut at 120 s loses the plan (1x).
 - After wt new, check the dependency links (node_modules, linkPaths) exist before editing; a worktree without them fails wt remove and can empty the folder: save the diff first, recreate with wt new. (1×)
 - devtools merge refuses an MR body without the Testing doc and Testing doc (AI) lines: after the local PASS run finish first, then mr with both doc links, then merge; a gws timeout may move the AI doc to a new link, so take the link finish printed. (3×)
 - An MR body claim "changed methods without a test: none" is checked against the diff: every changed wiring or entry method (not only the core logic) needs a test or is listed (1x, hard miss)
 - Code that reads cloud secrets or creds at import passes on a laptop with creds and fails on a clean CI container: lazy-load secrets and run unit tests once with creds unset before the MR. (1x)
-- Wave branches of one task: the prior-work gate refuses devtools finish and mr on each sibling branch; pass --override with the wave id as reason until the gate counts the batch as one task. (2x)
+- Wave branches of one task: the prior-work gate refuses devtools finish and mr on each sibling branch; pass --override with the wave id as reason until the gate counts the batch as one task. (2x) (2×)
 - Shared task doc (one testing-ai key per task, many wave agents): read the current doc first and keep every other area's section and Rounds rows when writing yours; write patches with the Edit tool or a file, not heredoc python (it collapses backslash-n). (4x)
 - Stacked MR after a fix round on its base: rebuild it on the new base plus a revert of the moved commit so the stacked diff stays clean. (1x)
 - envy deploy REFUSED by a foreign layer whose branch is not based on the published head: board msg its holder; holder off the board -> raise an ENV-FIX, never deploy over it. (2x)
@@ -57,7 +58,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Before tightening validation grep every client caller for its real encoding; list each old-accepted input: tested or stated as newly rejected. (6×)
 - Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value; never overwrite a typed user draft. (7×)
 - Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
-- Mappers building an entity in steps: a flag read early misses parties resolved later; grep later setters, add a post-pass and a final-entity test. (3×)
 
 ## pokey
 - Before finalize, run finalize -Check -FixNames -ExpectChecks N: it renames the files and every reference in results.json (lists and text) (2x).
@@ -99,6 +99,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- PowerShell: the comma binds tighter than +, so @('a', 'b' + 'c') has 3 items; wrap each concatenation in parentheses in scripted replace pairs. (1x)
 - Profile a live supervise from a scratch copy: back up supervise-state, lock, report and .runtime/work/deploys/plan-cache.json first, restore after (1×)
 - Over a per-file test cap: move a self-contained block to an area file with room (e.g. report test -> guard.tests) instead of golfing assertions (1x)
 - Before a scripted edit helper, check its name with Get-Command: an alias (Rd = Remove-Item) beats the function and deleted README.md and lib.ps1 in a worktree. Use full verb-noun names only. (1x)
