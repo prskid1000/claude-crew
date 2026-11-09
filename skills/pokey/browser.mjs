@@ -3,12 +3,9 @@
 // Logins shared via the session file (web storage + cookies), locked; never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Goodies (adapters/, kitbag.py goody
 // add): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
-//   import { session, go, clickText, shot, saveNet, relogin, ... } from 'file:///<kit>/skills/pokey/browser.mjs'
-//   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<run>/F2/shots/F2-T3_01_x.jpeg')
-//   s.net.failed (4xx/5xx, JS errors) -> saveNet(s, file); 401 -> relogin(s); s.done(). Waits cap at 20 s; real clicks.
-//   const stop = await record(s, '<dir>/F2-T3_01_flow.mp4'); ...; await stop()   video + <file>.events.json (each action: at, target, box)
-//   await matrix(s, async ({ tag }) => [await layoutIssues(s.page), await shot(s.page, `<dir>/F2-T3_01_list-${tag}.jpeg`)])   each qa.matrix variant
-// Sections: L19 config · L43 login · L127 browsers · L170 tabs · L258 session · L298 actions · L397 ui checks · L419 evidence
+//   import { session, go, shot, saveNet, relogin } from 'file:///<kit>/skills/pokey/browser.mjs'
+//   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<shot>'); s.done()
+// Sections: L16 config · L42 login · L126 browsers · L169 tabs · L257 session · L297 actions · L396 ui checks · L418 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -22,11 +19,13 @@ const CFG = existsSync(TF) ? JSON.parse(readFileSync(TF, 'utf8')) : { targets: {
 const __HERE = dirname(fileURLToPath(import.meta.url))
 export const KIT = resolve(__HERE, '..', '..')
 const MAP = JSON.parse(readFileSync(join(__HERE, '..', 'crafty', 'kit.example.json'), 'utf8'))._paths
-export const runtimeDir = () => process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir)
+export const runtimeDir = () => { const d = process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir); if (!d || d === '/' || d === '\\') throw new Error(`runtimeDir: bad '${d}'`); return resolve(d) }
 export function kitPath(name, { create = false } = {}) {
   const [rel, base] = name === 'runtime' ? ['/', runtimeDir()] : name in MAP.runtime ? [MAP.runtime[name], runtimeDir()] : name in MAP.durable ? [MAP.durable[name], join(KIT, MAP.stateDir)] : []
   if (!rel) throw new Error(`kitPath: unknown name '${name}' (kit.example.json _paths)`)
-  const p = rel === '/' ? base : join(base, rel.replace(/\/$/, ''))
+  if (!base || base === '/' || base === '\\') throw new Error(`kitPath: bad base '${base}'`)
+  const p = rel === '/' ? base : resolve(join(base, rel.replace(/\/$/, '')))
+  if (/^([\\/]|[A-Za-z]:[\\/]?)$/.test(p)) throw new Error(`kitPath: root '${p}'`)
   if (create) mkdirSync(rel.endsWith('/') ? p : dirname(p), { recursive: true })
   return p
 }

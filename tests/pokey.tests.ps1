@@ -160,21 +160,22 @@ $rj = Read-Json "$nr/N1/results.json"; $rj.checks[1] | Add-Member cause 'env-dat
 $null = Fin $nr N1; $rn = Rec $nr N1
 Expect 'NOT_TESTED env-data: status kept, keptOpen, a decision asked' (-not $rn.failedTesting -and (Task 'TN').status -eq 'open' -and $rn.keptOpen -match 'owner decides' -and "$($rn.decision)" -match 'DECISION')
 # ---- review batch 2: pokey.ps1, testy, browser.mjs
-$sd = TkPath $k qa-seats; New-Item -ItemType Directory -Force "$sd/claims" | Out-Null
+$sd = TkPath $k qa-seats
+New-Item -ItemType Directory -Force (Join-Path $sd 'claims') | Out-Null
 $crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
 $me = Get-Process -Id $PID
-& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s'); holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') } "$sd/claims/CL__C1.json"
-& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s') } "$sd/claims/CL__C2.json"
-& $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } "$sd/claims/CL__C4.json"
+& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s'); holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') } (Join-Path $sd 'claims/CL__C1.json')
+& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s') } (Join-Path $sd 'claims/CL__C2.json')
+& $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } (Join-Path $sd 'claims/CL__C4.json')
 $sq = { param($c, [double]$gb = 0.1) pwsh @np $Q seat acquire -Agent "test:$c" -Kind api -RunDir $crd -Code $c -Owner w1 -KeepFreeGB $gb -WaitMinutes 0 | Out-String; "rc=$LASTEXITCODE"; $null = pwsh @np $Q seat release -Agent "test:$c" }
 $o1, $o2, $o4, $o3 = ('C1', 'C2', 'C4' | ForEach-Object { "$(& $sq $_)" }) + "$(& $sq C3 100000)"
 Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; a dead holder''s is taken over; still waiting exits 4' ($o1 -match 'ALREADY' -and $o1 -match 'rc=3' -and $o2 -notmatch 'ALREADY' -and
-  $o4 -notmatch 'ALREADY' -and (Read-Json "$sd/claims/CL__C4.json").owner -eq 'w1' -and $o3 -match 'rc=4')
-New-Item -ItemType Directory -Force "$sd/seats" | Out-Null
-$sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) "$sd/seats/$n.json" }
+  $o4 -notmatch 'ALREADY' -and (Read-Json (Join-Path $sd 'claims/CL__C4.json')).owner -eq 'w1' -and $o3 -match 'rc=4')
+New-Item -ItemType Directory -Force (Join-Path $sd 'seats') | Out-Null
+$sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) (Join-Path $sd "seats/$n.json") }
 & $sw L1 @{ holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
 $null = pwsh @np $Q seat status
-Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path "$sd/seats/L1.json") -and -not (Test-Path "$sd/seats/L2.json") -and (Get-Content "$sd/seats/L3.json" | ConvertFrom-Json).seen); Remove-Item "$sd/seats/L*"
+Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path (Join-Path $sd 'seats/L1.json')) -and -not (Test-Path (Join-Path $sd 'seats/L2.json')) -and (Get-Content (Join-Path $sd 'seats/L3.json') | ConvertFrom-Json).seen); Remove-Item (Join-Path $sd 'seats/L*')
 $sr = New-Run 'SR' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') }, @{ code = 'S2'; task = 'TS'; checks = , @('C2', 'PASS') })
 $ps = @('S1', 'S2' | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', "`"$Q`"", 'finalize', '-RunDir', "`"$sr`"", '-Code', $_ -PassThru -WindowStyle Hidden })
 $ps | Wait-Process -Timeout 180

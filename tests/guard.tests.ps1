@@ -1,10 +1,7 @@
 #Requires -Version 7
 <#
-guard.tests.ps1: crafty.ps1 guard (PreToolUse hook): self-test cases, the live kit clone, MR task links, layout, temp-root writes; background shells
-(the guard's note, supervise's Shells sweep); the supervise -Brief report; bossy.ps1 track add / show (MRs comment, -Task wins); build-failure flags;
-bossy.ps1 bugbrief; check -Step e2e (spec choice, NOT_TESTED, -AllTests, the gate refusal); pokey.ps1 api; crafty.ps1 tracker bug (one [Bug] per ask).
-Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard).
-Exit codes: 0 pass · 1 a check failed.
+guard.tests.ps1: crafty.ps1 guard (PreToolUse hook), MR links, temp-root writes; supervise report; track add / show; bugbrief; tracker bug.
+Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1 -Area guard). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit guard; $D = Join-Path $k 'skills/crafty/crafty.ps1'
@@ -226,6 +223,8 @@ $sg = & { . (Lib); $h = ConvertTo-KitBugNorm 'see src/my\_mod.py:12 and vector.p
   (Get-KitDefectSigs ([pscustomobject]@{ observed = 'connect api.example.com:443 refused; https://app.example/#/orders/7?x=1 and https://app.example/#top'; cause = '' })) -join ' ' }
 $kb = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json; $kc = pwsh @np $D tracker bug -Parent $ak -Key 'watch-stg-err [x]' -Name '[Bug] k' -File "$bk/w3.md" -Signature 'zz.py:1' -List L1 | ConvertFrom-Json
 Expect "bug signatures: whole matches, escaped read-back, no host:port, hash routes kept; a key with ] stays one section ($($sg -join ' | '))" ($sg[0] -eq 'TrueFalseFalseFalseTrue' -and $sg[1] -eq 'https://app.example/#/orders/7' -and ([regex]::Matches((pwsh @np $D tracker view $kc.id | ConvertFrom-Json).description, 'kit:bug:watch-stg-err_x')).Count -eq 1 -and $kb.id -eq $kc.id)
+$ke = try { & { $k = $null; Kd } } catch { "$_" }; $re = try { & { . (Lib); $script:KitRoot = '/'; Get-KitRuntime } } catch { "$_" }
+Expect "path guards ($ke|$re)" ($ke -match 'Kd:' -and $re -match 'bad runtime')
 Remove-Item Env:KIT_TRACKER_TYPE
 Remove-TestKit $k
 Complete-Tests

@@ -239,9 +239,9 @@ $td = Join-Path (Kd) 'dup/tests'; New-Item -ItemType Directory -Force $td | Out-
 foreach ($a in 'bossy', 'crafty') { "$(if ($a -eq 'bossy') { 'Start-Sleep 2; ' })'PASS same  Case'; 'PASS own $a'; 'FAIL x'; ""py `$((Get-Command python).Source -notmatch '\.(bat|cmd)`$')""; '1 failure(s)'" | Set-Content "$td/$a.tests.ps1" }   # bossy ends last
 $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area bossy,crafty
 Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real python, no shim; FAILs recapped by area' ($tdr.code -eq 1 -and $tdr.out -match 'Failed checks:\s+\[bossy\] x\s+\[crafty\] x' -and $tdr.out -match 'TEST-DUP same case: bossy, crafty' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
-Remove-TestKit $k
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
+Remove-TestKit $k
 $pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $ia = $pg.IndexOf('goody add flow-map'); $il = $pg.IndexOf('kitbag.py lint')
 Expect 'pages.yml: lint runs the flow checks (flow-map added first, no --no-flow), so an issue the page would show fails CI' ($ia -ge 0 -and $il -gt $ia -and $pg -notmatch '--no-flow')
 $cpNoAgent = @(Get-ChildItem "$src/agents/*.md", "$src/skills/*/SKILL.md", "$src/workflows/*.js" | Select-String -Pattern '(crafty\.ps1|\$D) checkpoint (?!-Agent )' | ForEach-Object { "$($_.Filename):$($_.LineNumber)" })

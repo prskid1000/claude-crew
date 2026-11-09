@@ -1,24 +1,23 @@
 <#
-Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): every kit script dot-sources it once:
- . (Join-Path <kit> 'skills/crafty/lib.ps1')
-Functions only, silent. In: kit.local.json, kit.example.json (_paths), env KIT_* / CLAUDE_*. Exit codes: none.
-Out: $KitConf, $KitCmd (entry scripts), Get-KitPath, Get-KitSetting, tracker verbs, Invoke-HostVerb, OS helpers.
-Sections: L11 paths · L63 state · L133 config · L213 OS · L415 leases · L875 status · L1115 supervise sweep ·
-  L1190 supervise report · L1289 tracker · L1609 prior · L1632 ask bugs · L1778 git-host · L1937 kitlog · L2057 params ·
-  L2370 entry-scripts
+Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
+Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
+Sections: L9 paths · L60 state · L130 config · L210 OS · L412 leases · L872 status · L1112 supervise sweep ·
+  L1187 supervise report · L1286 tracker · L1606 prior · L1629 ask bugs · L1775 git-host · L1934 kitlog · L2054 params ·
+  L2367 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitEntry = $MyInvocation.PSCommandPath   # the script that dot-sourced this file (Resolve-KitExtra runs it again)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
-function Get-KitRuntime { if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } else { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir } }
+function Get-KitRuntime { $rt = if ($env:CLAUDE_RUNTIME) { $env:CLAUDE_RUNTIME } elseif ($script:KitRoot -and $script:KitRoot -notin '/', '\') { Join-Path $script:KitRoot $script:KitPathMap.runtimeDir }; if (-not $rt -or $rt -in '/', '\') { throw "Get-KitRuntime: bad runtime '$rt'" }; $rt }
 function Get-KitPath([Parameter(Mandatory)][string]$Name, [switch]$Create) {
   $m = $script:KitPathMap
   if ($Name -eq 'runtime') { $p = Get-KitRuntime; $dir = $true }
   elseif ($m.runtime.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.runtime.$Name; $p = Join-Path (Get-KitRuntime) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
-  elseif ($m.durable.PSObject.Properties.Name -contains $Name) { $rel = [string]$m.durable.$Name; $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
+  elseif ($m.durable.PSObject.Properties.Name -contains $Name) { if (-not $script:KitRoot -or $script:KitRoot -in '/', '\') { throw 'Get-KitPath: bad KitRoot' }; $rel = [string]$m.durable.$Name; $p = Join-Path (Join-Path $script:KitRoot $m.stateDir) $rel.TrimEnd('/'); $dir = $rel.EndsWith('/') }
   else { throw "Get-KitPath: unknown name '$Name' (see skills/crafty/kit.example.json _paths)" }
+  if (-not $p -or $p -in '/', '\' -or $p -match '^[A-Za-z]:[\\/]?$') { throw "Get-KitPath: root '$p'" }
   if ($Create) { New-Item -ItemType Directory -Force $(if ($dir) { $p } else { Split-Path $p }) | Out-Null }
   $p
 }
@@ -28,13 +27,11 @@ function Invoke-KitLocked([Parameter(Mandatory)][string]$File, [Parameter(Mandat
   for ($i = 0; $i -lt 1300 -and -not $fs; $i++) {
     try { $fs = [IO.File]::Open($lock, 'CreateNew', 'Write', 'None') }
     catch {
-      # .NET, not Remove-Item: a lock its holder deletes in between made Remove-Item throw despite SilentlyContinue
-      try { if ([IO.File]::Exists($lock) -and ($KitIsWindows -or ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2)) { [IO.File]::Delete($lock) } } catch {}   # a live holder keeps it open: the delete fails
+      try { if ([IO.File]::Exists($lock) -and ($KitIsWindows -or ((Get-Date) - [IO.File]::GetLastWriteTime($lock)).TotalMinutes -gt 2)) { [IO.File]::Delete($lock) } } catch {}
       Start-Sleep -Milliseconds 100
     }
   }
-  # warn + return too: SilentlyContinue ignores a throw
-  if (-not $fs) { $m = "Invoke-KitLocked: $lock still held after 130 s - not writing $File"; Write-Warning $m; throw $m; return }
+  if (-not $fs) { $m = "Invoke-KitLocked: $lock held after 130 s"; Write-Warning $m; throw $m; return }
   try { & $Body } finally { $fs.Dispose(); try { [IO.File]::Delete($lock) } catch {} }
 }
 # temp + rename in the same folder: a crash leaves the old file or the new one, never half of one; a reader holding it: retried

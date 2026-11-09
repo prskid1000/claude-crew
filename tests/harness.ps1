@@ -36,8 +36,16 @@ function pwsh {
   }
 }
 
-function Kd { Split-Path $k }
-function Lib { Join-Path $k 'skills/crafty/lib.ps1' }   # the test kit's lib.ps1
+function Kd {
+  if (-not $k) { throw 'Kd: $k is unset or empty' }
+  $p = Split-Path $k
+  if (-not $p) { throw "Kd: Split-Path for '$k' returned empty" }
+  $p
+}
+function Lib {
+  if (-not $k) { throw 'Lib: $k is unset or empty' }
+  Join-Path $k 'skills/crafty/lib.ps1'
+}   # the test kit's lib.ps1
 function Px { $input | pwsh -NoProfile -File @args }
 # KIT_TESTS_TIME=1: Complete-Tests lists the slowest checks (time since the previous check)
 $script:clock = [Diagnostics.Stopwatch]::StartNew(); $script:times = [Collections.Generic.List[object]]::new()
@@ -78,7 +86,10 @@ function New-TestKit([string]$name) {
   }
   $k
 }
-function TkPath($tkDir, $tkName, [switch]$Create) { & { . (Join-Path $tkDir 'skills/crafty/lib.ps1'); Get-KitPath $tkName -Create:$Create } }
+function TkPath($tkDir, $tkName, [switch]$Create) {
+  if (-not $tkDir) { throw 'TkPath: $tkDir is unset or empty' }
+  & { . (Join-Path $tkDir 'skills/crafty/lib.ps1'); Get-KitPath $tkName -Create:$Create }
+}
 function Remove-TestKit($k) {
   $nm = Get-Item "$k/skills/pokey/node_modules" -ErrorAction SilentlyContinue; if ($nm.LinkType) { [IO.Directory]::Delete($nm.FullName) }   # the link only, never the kit's packages
   Remove-Item (Kd) -Recurse -Force -ErrorAction SilentlyContinue
@@ -105,7 +116,7 @@ function New-LinkedKit([string]$Name, [hashtable]$Local, [string[]]$Files = @())
 }
 # a local JSON API for pokey.ps1 api: /login gives tokens + cookies; each other path answers 200 only with its auth; /v returns $Sha
 function Start-TestApi([string]$Sha = '') {
-  $sv = "$(Kd)/s.cjs"; $port = 18000 + $PID % 1000
+  $sv = Join-Path (Kd) 's.cjs'; $port = 18000 + $PID % 1000
   Set-Content $sv @'
 require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d); q.on('end', () => {
   const u = q.url, h = q.headers, j = (o, st = 200, hd = {}) => { s.writeHead(st, { 'content-type': 'application/json', ...hd }); s.end(JSON.stringify(o)) }
