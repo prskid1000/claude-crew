@@ -1,4 +1,4 @@
-<#
+﻿<#
 supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, env leases, QA seats and claims, test browsers and their profiles, idle Gradle / Kotlin daemons, the RAM rows of
@@ -544,12 +544,12 @@ function Format-KitSuperviseHtml($j) {
     "<footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json</footer></main>"
   "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script></body></html>"
 }
-# the page's stylesheet: muted palette around sage #8FBF7F, light / dark (prefers-color-scheme, data-theme overrides)
+# the page's stylesheet: muted palette around sage from green-theme.ps1, light / dark (prefers-color-scheme, data-theme overrides)
 function Get-KitSupervisePageCss {
-  $dark = '--bg:#1a1d1a;--sf:#222622;--sf2:#2b302b;--fg:#dddbd2;--mt:#8f9489;--ln:#333832;--sage2:#a9cf9b;--act:#c08a80;--watch:#bfa874;--slate:#8d989f;--plum:#a891ad;--sh:none'
-  ':root{--bg:#f3f2ed;--sf:#fbfaf6;--sf2:#eeece5;--fg:#2e332e;--mt:#73786f;--ln:#e0ded5;--sage:#8fbf7f;--sage2:#5f8a53;--act:#b9786d;--watch:#b49a5e;--slate:#87929a;--plum:#9a7f9f;--sh:0 1px 2px rgba(46,51,46,.05),0 1px 1px rgba(46,51,46,.03)}' +
+  $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--sh:0 4px 20px rgba(0,0,0,0.45)'
+  ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
   "[data-theme=dark]{$dark}@media(prefers-color-scheme:dark){:root:not([data-theme=light]){$dark}}" +
-  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}' +
+  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Inter",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}' +
   'b{font-weight:600}.m,.sm{color:var(--mt)}.sm{font-size:11.5px;margin-top:2px}h3{font-size:12px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}' +
   'header.top{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px 24px;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--ln)}' +
   '.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:15px;letter-spacing:-.01em}.brand svg{width:28px;height:28px;flex:none}.brand small{color:var(--mt);font-weight:500;font-size:13px;padding-left:10px;border-left:1px solid var(--ln)}' +
@@ -571,7 +571,7 @@ function Get-KitSupervisePageCss {
   '.flag .h{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mt)}.flag .w{margin:6px 0 4px;word-break:break-word}.flag .n{font-size:12.5px;color:var(--mt);word-break:break-word}.flag .n b{color:var(--sage2);margin-right:4px}.dot{opacity:.5}' +
   '.info{list-style:none;margin:12px 0 0;padding:0;font-size:12.5px;color:var(--mt)}.info li{padding:4px 0 4px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
   '.empty{margin:0;padding:18px;text-align:center;color:var(--mt);border:1px dashed var(--ln);border-radius:8px;font-size:12.5px}' +
-  '.gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.gauge{margin:0;text-align:center}.gauge svg{width:100%;max-width:140px}.gauge circle{fill:none;stroke-width:9;stroke-linecap:round}.gauge .trk{stroke:var(--sf2)}.gauge .val{stroke:currentColor}' +
+  '.gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.gauge{margin:0;text-align:center}.gauge svg{width:100%;max-width:140px}.gauge circle{fill:none;stroke-width:6.5;stroke-linecap:round}.gauge .trk{stroke:var(--sf2)}.gauge .val{stroke:currentColor}' +
   '.gauge circle.s-act{stroke:var(--sage)}.gauge circle.s-fin{stroke:var(--slate)}.gauge circle.s-stuck{stroke:var(--act)}.gauge circle.s-oth{stroke:var(--watch)}.gauge circle[stroke-dashoffset]{stroke-linecap:butt}' +
   '.gv{font-size:17px;font-weight:650;fill:var(--fg);text-anchor:middle;dominant-baseline:middle}.gl{font-size:8.5px;fill:var(--mt);text-anchor:middle;text-transform:uppercase;letter-spacing:.08em}figcaption{font-size:11.5px;color:var(--mt)}' +
   '.lg{font-style:normal;font-size:11px;white-space:nowrap;background:none}.lg::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;background:currentColor;margin-right:4px;vertical-align:0}' +

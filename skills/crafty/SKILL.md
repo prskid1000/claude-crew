@@ -3,12 +3,9 @@ name: crafty
 description: "Load when: you write, fix, test or ship code in a repo of this workspace: as devy from a brief, or directly for one small change. Not when: you coordinate several agents -> bossy; you test deployed work on a test env -> pokey; you audit code without changing it or review someone's MRs -> revy agent."
 ---
 
-**Load when** (all must hold): you change code in a repo of this workspace; you are `devy` from a brief, or the main
-session on a one-small-change router row.
-**Not when:** coordinating agents -> `bossy`; testing deployed work -> `pokey`; static audit or reviewing
-MRs -> `revy`; running the shared local env itself -> `envy` (you use it at step 5).
-**Hands off to:** `envy` (steps 2 and 5: reproduce, test), the coordinator (your final report; the workflow merges after
-review; a person's `deploy <env>` starts the deploy), testers through the human testing doc (step 6).
+**Load when:** changing code in a workspace repo: `devy` from a brief, or directly for one small change.
+**Not when:** coordinating -> `bossy`; testing deployed work -> `pokey`; reviews/audits -> `revy`; local env admin -> `envy`.
+**Hands off to:** `envy` (steps 2, 5: reproduce, test), coordinator (merge, deploy), testers via human testing doc (step 6).
 **Files** (every file in this folder; read or run each only at its step):
 
 | File | Read / run at |
