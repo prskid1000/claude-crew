@@ -18,8 +18,8 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings, a missing goody in `goody check`) · 2 usage
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
-Sections: L32 paths · L83 state · L138 kitlog · L237 load · L617 lint · L996 README graph · L1102 lint command · L1138 audit ·
-  L1247 registry · L1583 prose · L1728 sections · L1858 budget · L1882 goodies · L2390 state lint · L2462 main
+Sections: L32 paths · L83 state · L138 kitlog · L237 load · L617 lint · L996 README graph · L1098 lint command · L1134 audit ·
+  L1243 registry · L1579 prose · L1724 sections · L1854 budget · L1878 goodies · L2386 state lint · L2458 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1047,10 +1047,6 @@ def readme_sections(k, g):
     out['crew'] = ['flowchart LR', f'  OW([{mq("owner")}]) -->|{mq("asks, says deploy env")}| CO[{mq("coordinator: Router + Events")}]'] + [
      x for w, m in mw.items() for x in [f"  CO -->|{mq(m.get('router', ''))}| W_{w}[/{mq(w)}/]"] + [f'  W_{w} -->|{mq("spawns")}| A_{c}({mq(c)})' for c in m.get('crew', [])]] + [
      f"  CO -->|{mq(', '.join(u for u in m.get('usedIn', []) if u.startswith('R')))}| A_{a}({mq(a)})" for a, m in ma.items() if any(u.startswith('R') for u in m.get('usedIn', []))]
-    rr = [r for r in table_rows(k.texts.get('AGENTS.md', '')) if len(r) > 2 and re.match(r'R\d+$', r[0])]   # Router: first match wins
-    sh = lambda s, n: cut(re.sub(r'\s+([,.])', r'\1', re.sub(r'\s+', ' ', re.sub(r'[`"\[\]{}()<>|#;]', '', re.sub(r'\([^)]*\)', '', s)))).strip(), n)
-    out['router'] = ['flowchart TD', f'  Q([{mq("request")}]) --> R0'] + [
-     x for i, r in enumerate(rr) for x in [f'  {r[0]}{{{mq(r[0] + ": " + sh(r[1], 40))}}} -->|{mq("yes")}| T{i}[{mq(sh(r[2], 32))}]'] + ([f'  {r[0]} -->|{mq("no")}| {rr[i + 1][0]}'] if i + 1 < len(rr) else [])]
     for s in k.skills:
         sk = f'skills/{s}/SKILL.md'
         if not pub(sk):
