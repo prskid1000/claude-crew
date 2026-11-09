@@ -35,6 +35,13 @@ V = {'tool.py': "def cmd_lint(a):\n    pass\n\nCOMMANDS = {'lint': cmd_lint, 'au
      'doc.md': '# d\n- `tool.py lint`, `tool.py audit scan`, `tool.py port`, `a.ps1 board`, `a.ps1 deploy request`, `a.ps1 annotate`, `a.ps1 nope`, `tool.py json`\n'}
 k = types.SimpleNamespace(files=list(V), texts=V, dir=sys.argv[2], skills=[], agents={}, workflows={})
 print('verbs=' + ','.join(sorted(i['text'].split(':')[0] for i in flow.model(k, [])['issues'] if i['code'] == 'UNRESOLVED')))
+tool = "function Invoke-Go { Set-Content run.json '{}' }\nswitch ($__verb) {\n  'go' { Invoke-KitVerb Invoke-Go $r }\n  default { exit 2 }\n}\n"
+runread = "& pwsh tool.ps1 go\n$j = Get-Content run.json | ConvertFrom-Json\n"
+for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('driver', {'tool.ps1': tool, 'driver.ps1': runread}),
+                ('doc', {'tool.ps1': tool, 'doc.md': '# d\n## Steps\n1. Run `tool.ps1 go`, then read run.json.\n'}),
+                ('rmw', {'rmw.ps1': "$j = Get-Content run.json\n" + '#' * 100 + "\nSet-Content run.json $j\n"})]:   # a script is a loop; a test, a doc, a read-modify-write never
+    k = types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={})
+    print(f'scc-{name}=' + str(sum(1 for c in flow.model(k, [])['cycles'] if c['kind'] == 'scc')))
 '@
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/bossy') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py') 2>&1)"
@@ -43,6 +50,7 @@ $checks = [ordered]@{
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
+  'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
   'verbs from COMMANDS / EXTRA_OF tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
 }
 $fails = 0

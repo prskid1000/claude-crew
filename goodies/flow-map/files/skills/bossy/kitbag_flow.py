@@ -969,9 +969,10 @@ def pack(k, N, E, issues, named=()):
         if path:
             lab = f"{N[ids[e[0]]][1]} ↻{' ' + e[4] if e[4] else ''}"
             cycles.append({'label': short(lab, 50), 'nodes': path, 'bound': e[4], 'kind': N[ids[e[0]]][2]})
-    proc = defaultdict(list)   # process cycles, not helper calls
+    proc = defaultdict(list)   # process cycles: no helper calls, no references (drawn, never a loop)
+    wr = {(e[0], e[1]) for e in edges if e[2] == 'writes'}
     for n, e in enumerate(edges):
-        if e[2] in FLOW - {'calls', 'loads', 'has'}:
+        if e[2] in FLOW - {'calls', 'loads', 'has'} and not reference(N[ids[e[0]]], N[ids[e[1]]], e, (e[1], e[0]) in wr):
             proc[e[0]].append((e[1], n))
     for comp in tarjan(len(ids), proc):
         if len(comp) >= 2:
@@ -997,6 +998,15 @@ def pack(k, N, E, issues, named=()):
     dirty = bool(subprocess.run(['git', '-C', k.dir, 'status', '--porcelain'], capture_output=True, text=True).stdout.strip()) if osp.isdir(k.dir) else False
     return {'kit': k.dir, 'generated': time.strftime('%Y-%m-%d %H:%M:%S'), 'files': fk, 'nodes': nodes, 'edges': edges,
       'cycles': uniq[:80], 'issues': counted, 'deliberate': deliberate, 'dirty': dirty, 'counts': counts}
+
+TESTF = re.compile(r'(?:^|/)tests?/|\.tests?\.\w+$')
+
+def reference(a, b, e, rmw):
+    """A mention, not a flow: a test file's edge, a name or doc-file token, a doc naming a state file, a read of what the
+    same node writes (read-modify-write), a doc branch that names another skill (= load it)."""
+    return bool(TESTF.search(a[3]) or TESTF.search(b[3]) or e[2] in ('reads', 'runs') and re.match(r'[\w.-]+:\d+ names ', e[3])
+                or e[2] == 'reads' and (b[3].endswith('.md') or rmw)
+                or e[2] == 'branch' and b[0].endswith('/SKILL.md') and a[3] != b[3])
 
 def shortest(out, a, b, cap=4000):
     prev, q = {a: None}, deque([a])
