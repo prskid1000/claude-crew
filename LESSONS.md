@@ -65,7 +65,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Wrap every node QA script in try/finally s.done() (a crash or Ctrl+C runs it too); after a hard kill (timeout) run bossy.ps1 release -Agent <id>, else leased tabs (8 max) make session() hang silently (2x).
 - Before a QA run starts, check its targets and alsoTargets cover every env each task's checks call (e.g. a second product's staging); a missing one leaves the task untested for env-data (2×)
 - Setting-dependent checks: change the setting, wait for the cache, check, restore and verify the restore by GET; log each step in lead-notes.md (1×)
-- Write QA observed and verify text in sentences of <= 25 words and <= 40 words per observed text before evidence -Check, so the first -Check passes (2x)
+- Write QA observed and verify text in sentences of <= 25 words and <= 40 words per observed text before evidence -Check, so the first -Check passes (2x) (2×)
 - API checks replay the body the real client sends (capture it from the web UI network log or the client source), never a hand-built body: a richer hand body passed while the UI request wrote wrong data (1x, defect missed)
 - A PowerShell helper param never reuses a script variable name in any case ( is ): use distinct names such as  / , or the helper runs the wrong value (1x, hard failure)
 - A NOT_TESTED undeployed check whose MR sits in a running deploy job: wait on that job (glab api jobs/<id>), then test, instead of failing the task. (1x)
@@ -99,6 +99,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- Test strings with regexes: put the regex in a here-string or a variable, never an unbalanced paren in a single-quoted string inside a subexpression of a double-quoted string (does not parse) (2x)
 - Kit tests remove only the fake files they wrote, never a whole folder (Remove-Item adapters -Recurse broke the bossy area for 2 days when a core function moved into adapters/). (1×)
 - PowerShell: the comma binds tighter than +, so @('a', 'b' + 'c') has 3 items; wrap each concatenation in parentheses in scripted replace pairs. (1x)
 - Profile a live supervise from a scratch copy: back up supervise-state, lock, report and .runtime/work/deploys/plan-cache.json first, restore after (1×)
@@ -124,4 +125,3 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Launch args mode must be feature, bugfix or resume (buildy.js rejects anything else, e.g. build, at once); map a new-work ask to feature. (1x)
 ## opsy
 ## watchy
-
