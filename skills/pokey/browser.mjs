@@ -3,9 +3,10 @@
 // Logins shared via the session file (web storage + cookies), locked; never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web). Goodies (adapters/, kitbag.py goody
 // add): web-login-types (sso-steps, script, storageState, totp), browser-engines (browser.engine chromium | firefox | webkit).
-//   import { session, go, shot, saveNet, relogin } from 'file:///<kit>/skills/pokey/browser.mjs'
-//   const s = await session({ target, tenant, as }); await go(s.page, '/x'); await shot(s.page, '<shot>'); s.done()
-// Sections: L16 config · L42 login · L126 browsers · L169 tabs · L257 session · L297 actions · L396 ui checks · L418 evidence
+//   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
+//   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
+//   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
+// Sections: L17 config · L43 login · L127 browsers · L170 tabs · L258 session · L298 actions · L397 ui checks · L419 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'

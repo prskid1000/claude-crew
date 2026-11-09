@@ -27,9 +27,11 @@ $null = python -X utf8 $KT prose --kind mr-body $pf; Expect 'prose: a template-s
 $tj = Get-Content (Join-Path $src 'workflows/tidy.js') -Raw
 Expect 'retro + lead notes: tidy prompt and checky name the headings and the kit-report check; a lead-notes sample passes' ($tj -match '## Changed.*## Awaiting approval.*## Rejected' -and $tj -match '--kind kit-report' -and
   (Get-Content (Join-Path $src 'agents/checky.md') -Raw) -match '# Lead notes: .*## Prerequisites' -and (Test-Prose kit-report $pf))
-"Hi, I hope this is basically fine`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
+"Hi, I hope this is basically fine, merged successfully`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
-Expect 'prose: filler, missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match 'missing sections' -and $out -match '4 bullets')
+Expect 'prose: filler (the whole banned list), missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match '"I hope"' -and $out -match '"successfully"' -and $out -match 'missing sections' -and $out -match '4 bullets')
+$rd = Get-Content (Join-Path $src 'README.md') -Raw; $sec = { param($h) ($rd -split '(?m)^## ' | Where-Object { $_.StartsWith($h) }) -join '' }
+Expect 'README keeps what other files cite it for: Install (not ported, Org router rows), Goodies (fast-forward), Using it (supervise.output)' ((& $sec 'Install') -match 'Not ported' -and (& $sec 'Install') -match 'Org router rows' -and (& $sec 'Goodies') -match 'fast-forward' -and (& $sec 'Using it') -match 'supervise\.output')
 $out = KtPy "sys.exit(k.audited('x.py', ['v'], lambda: int('zz')))" 2>&1 | Out-String
 Expect "audited: an uncaught error prints one line (script verb: type: why (at file:line)), exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $out -match 'x\.py v: ValueError: .*zz.*\(at <string>:1\)' -and $out -notmatch 'Traceback')
 $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'], lambda: (print('usage: x\nx: error: no verb', file=sys.stderr), sys.exit(2))); print(g[-1])" 2>&1 | Out-String

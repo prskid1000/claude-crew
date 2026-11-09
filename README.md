@@ -57,11 +57,12 @@ flowchart LR
 Board and disagreements: AGENTS.md "Crew".
 
 ## Flows
-- **`/buildy`:** Dev agents write code and test on local environment in a loop, reviewers verify, and work is merged. Deploys occur on human approval (`deploy <env>`).
-- **`/testy`:** QA agents execute test cases against deployed targets and update tracker tickets (close, fail to dev, or file bugs).
-- **`/tidy`:** 2–5 minute automated kit upkeep to distill learned lessons and update guidelines.
-- **Tracking:** Tasks progress through logical statuses mapped to your tracker board.
-- **Persistence:** Local environments layer branch changes, and WIP checkpoints prevent work loss.
+- `/buildy`: devy codes and tests on the local env in a loop, revy reviews, the workflow merges; only a person's `deploy <env>`
+  ships it (`deploy.trigger`).
+- `/testy`: checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
+- Tasks move through logical tracker statuses (`tracker.statuses` maps them to your board's names). The local env: one shared
+  instance per env, branches as layers. WIP commits after every dev-flow step: a fresh agent loses nothing after a crash. The kit
+  learns from every run (`/tidy`) and fixes itself in a kit worktree.
 <!-- kit-graph:start table-workflows -->
 | Workflow | Covers | Crew | Router row |
 |---|---|---|---|
@@ -85,79 +86,117 @@ win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, lear
 <!-- kit-graph:end -->
 
 ## Leases
-Resource leases (`lib.ps1` `Update-KitLease`) coordinate services, browser tabs, phone emulators, builds, and runtimes:
-- **Holder tracking:** Managed via `.state/leases.jsonl` with session PID and process start time.
-- **GPU exclusivity:** `gpu.exclusive.<kind>` ensures only one kind access the GPU at a time; others queue automatically.
-- **Test locks:** `repos[].exclusiveTests` locks test suites matching specific patterns to avoid parallel test collisions.
-- **Release:** Automatically released on agent finish (`bossy.ps1 release -Agent <id>`), `board leave`, or stage completion.
-- **Auto-reclaim:** `supervise -AutoFix` reclaims orphaned resources after the idle grace period expires.
+One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes (goody `runtimes`);
+only owner holds (`envy.ps1 up -Owner`, phone `manual`; goody `local-env`, goody `android-swarm`) keep minutes, with a reminder.
+The local STT server (`local-stt`; goody `media-evidence`): one job at a time, bound to the job's process, its RAM through the memory gate.
+The GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators); another kind waits, supervise
+shows `waiting for GPU: held by <holder>`. `processes` (regex): running processes that hold it; `idleExcept` (regex of the kind's own backend):
+it also waits while nvidia-smi shows any other GPU process, or `idleMaxMB` (512) used with its backend down; `minFreeMB` (default: the
+caller's, lanes 2048; 0 off): waits while nvidia-smi `memory.free` is lower, then refuses naming the GPU processes; no nvidia-smi: one warning, no check.
+Test locks (`repos[].exclusiveTests` `[{dir, match, lock}]`, `lib.ps1` `Use-KitLock`): `check -Step test` under `dir` whose test names or
+sources match the regex `match` (no names: all) holds lock `lock`;
+others queue (`waiting for lock <name> held by <holder> since <t>`), cap = learned `gate.waitMinutes` (context `lock:<name>`), then exit 3; an ended holder is dropped; supervise RAM rows show `lock <name>`.
+- **End:** an agent ends with `bossy.ps1 release -Agent <id>` (every lease of that id: lane + its emulator, env and its layers, GPU, build, tabs);
+  `board leave` and /buildy, /testy after each agent stage repeat it. A holder on the board with no live entry is dead (its holder
+  pid is the shared session process); `supervise -AutoFix` reclaims every kind after the grace (lanes stop with `emu kill`).
+- **Log:** `.state/leases.jsonl` (`lib.ps1` `Write-KitLeaseLog`): one line per acquire / release / reclaim / down (kind, name, agent,
+  session, run, since, reason); the newest half kept past 1 MB. Last used: `bossy.ps1 status`, the lane and env status (goody `android-swarm`, goody `local-env`).
 
 ## Pause and resume
-- **Checkpoints:** Each agent checkpoints state at step boundaries (`work/agents/<id>/resume.json` + `resume.md`).
-- **Pause:** `bossy.ps1 pause -All | -Run <run>` notifies agents to save uncommitted WIP, release leases, and exit cleanly.
-- **Crash detection:** Session start health checks flag crashed runs and prompt for recovery (`bossy.ps1 resume`).
-- **Resume:** `bossy.ps1 resume -All | -Run <run>` generates a resume brief directly at the next incomplete step.
-- **Persistence:** Commits, diffs, MRs, tracker statuses, decisions, and launch records persist across restarts.
+- **Checkpoints** (both paths): each agent runs `crafty.ps1 checkpoint` at every step boundary (worktree, commit, testing goals,
+  loop round, MR, review, CI, testing doc, tracker, merge; QA: each check): `work/agents/<id>/resume.json` + `resume.md`. Kit
+  state is written atomically (temp + rename) or appended; leases, gate slots and board entries keep their process id with its
+  start time (a pid reused after a cold boot holds nothing); a lock whose holder died is taken at once (Windows).
+- **Pause** (power off, a day offline): `bossy.ps1 pause -All | -Run <run> [-Reason] [-Wait 10]`. Agents read PAUSE on their
+  next `board beat` (and inbox), checkpoint, commit WIP locally, release leases and leave the board `paused`; env services no
+  live holder needs stop (goody `local-env`); `.state/pauses/` records runs, launch records, agents, checkpoints and worktree
+  heads; it prints "safe to power off". Nothing after it needs the network.
+- **Crash** (power loss, kill): SessionStart `health` marks dead board entries and launch records crashed and prints
+  `paused/crashed runs: N -> bossy.ps1 resume`.
+- **Resume**: `bossy.ps1 resume -All | -Run <run> [-Wait <min>]`. Offline -> says so, stops. Per agent a brief
+  (`work/agents/<id>/resume-brief.md`) starting AT its next step: done steps verified (commit present, MR state), never
+  redone; the uncommitted diff kept for the interrupted step; journal results kept (`resumeFromRunId`); a run whose MRs all
+  merged skipped; then the exact Workflow call. `board join` shows each relaunched agent its CHECKPOINT.
+- Kept: commits, diffs, MRs, tracker state, decisions, checkpoints, launch records, coordinator program state (`bossy.ps1
+  program set|get`). Lost: agent conversations (a fresh agent from its brief), running builds and tests (rerun), env service
+  processes (started on the next lease), browser logins.
 
 ## Install
 ```powershell
 git clone https://github.com/prskid1000/claude-crew <workspace>/.claude
-pwsh -File <workspace>/.claude/skills/bossy/bossy.ps1 setup -WriteLocal
+pwsh -File <workspace>/.claude/skills/bossy/bossy.ps1 setup -WriteLocal   # git hooks, excludes, .runtime/.state, local config stubs
 ```
-**Prerequisites**:
-- PowerShell 7, Python 3.8+, Git, Node 18+, and `glab` or `gh` CLI.
-- Optional: Tracker CLI (`clickup`, `jira`), Google Workspace CLI (`gws`), Android SDK.
-
-**Configuration**:
-- Set credentials in `skills/crafty/kit.local.json` and test passwords in `skills/pokey/targets.local.json`.
-- Configure phone lanes in `swarm.config.json` (goody `android-swarm`).
-- Run `npm install` in `skills/pokey`.
-- Update with `git pull` when no runs are active.
-
-**Tool Ports** (`Codex` / `Antigravity` via `kitbag.py port`):
-- Start sessions in workspace root with `.agents/` or `.codex/` rules.
-- Antigravity executes workflows via `.agents/kit-workflows/<name>.py`.
-- Codex references manual workflow checklists in `.codex/workflows/*.md`.
+Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker CLI, `gws`, the Android SDK. Fill
+`skills/crafty/kit.local.json`, `skills/pokey/targets.local.json` (the only place for passwords), phones: `swarm.config.json` (goody `android-swarm`);
+`npm install` in `skills/pokey`. Update: `git pull` once nothing runs.
+Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs and **Org router rows** (the
+Router's columns) in `rules/*.local.md`; products, repos, test envs (names only), deploy rules and tracker statuses there too; org-only
+skills listed in `localOnly`.
+Codex / Antigravity (goody `ports`, `kitbag.py port`): start them in the workspace root (Codex: a trusted project in
+`~/.codex/config.toml`, kit hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>`
+links, the org rules (`.agents/rules/` always-on, `AGENTS.override.md` for Codex; local only) and each CLI's mechanics
+(GEMINI.md, AGENTS.override.md). Antigravity runs the workflows (`run_workflow` on `.agents/kit-workflows/<name>.py`); Codex
+follows `.codex/workflows/*.md` by hand. Not ported: the SendMessage guard, the guard on file edits outside shell commands,
+Claude's per-agent tool lists (all tools load; the guard covers both), Artifacts, the CronList check (the heartbeat:
+Antigravity `schedule`, Codex `bossy.ps1 heartbeat`), blocking questions in Codex outside Plan mode.
 
 ## Using it
-- **Main Coordinator:** Send requests to the main session; the coordinator routes work and launches workflows.
-- **Supervisor Heartbeat:** Runs `bossy.ps1 supervise -AutoFix -Brief` on a dynamic 5–30 min interval to supervise runs and update the live dashboard.
-- **Ops Dashboard:** Writes `<runtime>/logs/supervise-report.html` for local monitoring, with optional publishing via `supervise.publish`.
-- **Command Help:** Run any kit script without arguments to see full usage syntax.
+- Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`; its stderr `NEXT=<n>`
+  sets the next one, 5-30 min by state) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
+  [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
+  WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
+  after each write, `$env:KIT_SUPERVISE_HTML` = the page (e.g. upload it as a private page; its bytes never pass through the
+  model). After a restart: `bossy.ps1 resume -All`.
+  Every script prints its usage without arguments.
 
 ## Live supervisor dashboard
 <p align="center"><img src="assets/dashboard-dark.png" alt="supervisor dashboard, dark theme, sample data" width="900"></p>
 
-Each sweep generates a self-contained report (`<runtime>/logs/supervise-report.html` and `.json`) with:
-- **Header:** Last sweep timestamp, staleness indicators, auto-refresh (60s), search filter (`/`), and light/dark theme toggle.
-- **KPI Metrics:** Active agents, pending ACT items, WATCH alerts, auto-fixed counts, RAM usage, and available disk space.
-- **Action Cards:** Actionable items prioritized (ACT first) with resolution steps and INFO cards below.
-- **Agent Timeline:** Active agents grouped by run with stage chips, elapsed time, and step progress.
-- **Historical Trends:** Daily and weekly comparisons of agent counts, run durations, token budgets, and auto-fix rates.
-- **System Telemetry:** Leases, shell processes, configuration changes, and stacked historical sweep bars.
+Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-report.html` and its `.json` (the full data):
+- header: last sweep, staleness (amber past 2x NEXT, red past 4x), auto-refresh 60 s, filter (`/`), light / dark toggle;
+- tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, disk free and fill rate;
+- flags as cards with the next step (ACT first), INFO below; RAM, disk and agents-by-state gauges;
+- agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
+- statistics from the kit's logs (runs, agents spawned / finished / failed, average duration, tokens vs budget, auto-fixed %,
+  deploys, decisions, lessons): today vs yesterday, 7 days vs the 7 before; `—` = no source;
+- resources and leases, shells, `supervise` settings and learned changes, the sweep log; the last `supervise.historySweeps`
+  (12) sweeps as a stacked bar.
+
+One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped.
 
 ## Goodies
-Optional components (trackers, git hosts, CI/report adapters, stack presets, local environments, phone lanes, deploy tools) live on the `origin/goodies` branch. Each goody is an isolated folder so core stays lightweight.
+Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and
+scaffolding, the duel mode, evidence videos to a text index) live on the origin's `goodies` branch, one folder each; the core stays small.
 
-**Commands** (`python -X utf8 skills/bossy/kitbag.py goody <verb>`):
-- `list`: Show available goodies on `origin/goodies` (`*` = installed).
-- `check`: Detect configuration keys that need an uninstalled goody.
-- `add <name>` / `remove <name>`: Install or delete goody files, updating `goodies` list in `kit.local.json`.
-- `sync`: Auto-install goodies matching project config and update existing ones.
-- `test [<name>]`: Run tests for installed goodies.
-- `prune [--days N] [--dry-run]`: Remove goodies unused for `N` days (default 30).
+**Use** (`python -X utf8 skills/bossy/kitbag.py goody <verb>`):
+- `list`: the goodies on `origin/goodies` (`*` = installed) · `check`: config that needs a missing goody · `add <name>` /
+  `remove <name>`: install / delete its files and list / unlist it in kit.local.json `goodies` (always installed) · `sync`:
+  installs every goody whose "Needed when" matches, updates changed ones only while the kit is not behind origin/main (then a
+  goody merged into another or into the core, kitbag `MERGED_EXTRAS`, is swapped: old files out, a listed old name relisted) ·
+  `test [<name>]`: installed goodies' tests · `prune [--days N] [--dry-run]`: drops goodies unused > N days (default 30;
+  /tidy prep passes the learned value) that no "Needed when" asks for and `goodies` does not list.
+- Files install at their kit path, local-only (`.git/info/exclude`: never pushed, outside the budget). `sync` runs in
+  SessionStart `health`, `setup` and the post-merge hook (a pull is followed by a sync: an old goody may need the new core).
+- On demand: a config-named adapter (tracker, git host, ci) missing at lib.ps1 load, or a verb that needs a missing goody, runs
+  `goody add <name> --auto` (unlisted) and runs the verb again once; a failed try waits 1 h; `KIT_EXTRA_AUTO=0` turns it off
+  (tests). Offline or refused: the stop line `<feature> is a goody: run kitbag.py goody add <name>`.
+- Use: the code that runs a goody's adapter, verb, hook or command touches `<state>/extras-used/<file>` once a day.
 
-**Key rules**:
-- **Local-only install:** Files install directly into kit paths and are added to `.git/info/exclude` (never pushed to core).
-- **Auto-sync:** Runs during session start, kit setup, and git post-merge hooks.
-- **On-demand install:** Missing adapters or commands trigger automatic install unless disabled via `KIT_EXTRA_AUTO=0`.
-- **Usage tracking:** Executing a goody's command or hook logs to `.state/extras-used/`.
-
-**Authoring a goody** (`kitty`):
-- **Structure:** `goodies/<name>/files/<kit path>`, `goodies/<name>/GOODY.md`, and `goodies/<name>/tests.ps1`.
-- **Conditions (`Needed when:`):** Key matching (e.g. `repos.*.ci`), file existence, OS type, or git origin URL.
-- **Seams:** Core code calls goodies when present or prints `<feature> is a goody: run kitbag.py goody add <name>`.
-- **Publishing:** Push new goodies to `origin/goodies` branch via fast-forward.
+**Write one** (`kitty`):
+- Shape: `goodies/<name>/files/<kit path>` (each file where it installs), `goodies/<name>/GOODY.md` (What; `Needed when:`;
+  Wiring), `goodies/<name>/tests.ps1` (`tests/harness.ps1` helpers; runs the `tests-*.ps1` of goodies merged into it).
+- `Needed when:` forms, `,` = any: `` `key` = `v` | `w` `` (`` = `*` ``: set; `*` in a key walks keys and list items:
+  `repos.*.ci`), `` `key` ~ `v` `` (contains), `` `<path>` exists ``, `` `<glob>` in a repo `` (a `repos[].checkout` tracks one),
+  `` `<os>` OS `` (windows, linux, macos), `` origin ~ `v` `` (the kit's or a repo's origin URL); `Needed when (<file>.json):` reads that
+  file. Listed in `goodies`: always installed.
+- Seam: core calls the goody when it is loaded, else prints the stop line; never a broken reference (lint and tests pass without
+  it).
+- Move a core part out: `git grep` its callers, a seam at each, its files + tests to `goodies/<name>/`, README / Files rows /
+  manifest updated; lint + tests on main, `goody test <name>` with it.
+- Publish: `git -C <kit> worktree add -b kit/goodies-<date> <dir> origin/goodies`, commit, `git push origin HEAD:goodies`.
+- `main` and `goodies` are protected: fast-forward pushes only (on a reject: fetch, rebase), never force or delete. The guard
+  denies force, delete and move from the kit clone and its worktrees; `bossy.ps1 setup` sets it on the kit origin (host verb `branch.protect`;
+  hosts without it: the by-hand line), `health` reports it missing.
 
 ## Configuration
 `skills/crafty/kit.local.json`, every key optional; the table is generated from `kit.example.json` (`_readme` / `_doc`).
@@ -170,17 +209,16 @@ Optional components (trackers, git hosts, CI/report adapters, stack presets, loc
 | `devices` | {"type": "android"} | type: android (default) / none (verbs refuse, app checks NOT_TESTED); ios: goody ios-simulator |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; tracker containers for deploy intest; which env a path needs |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): devtools.py merge: NOT_MERGED held for approval |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer/consumer; migrations.check; exclusiveTests: README Leases; regenerate: wt sync conflicts; ci.mrPipelines; deploys[] per env: CI branch + job, laneApk; ssh, awsStack, probe, tag, manual: goody deploys |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | role producer / consumer; migrations.check = its own check (else Liquibase: goody liquibase; another tool: UNRUN); exclusiveTests: README Leases; regenerate: wt sync conflicts in them -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = no MR pipelines (CI on deploy branches): pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: true = never tested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths: goody deploys |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs and reports (reports.type gdocs) |
-| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB, ramNames, briefSeconds; heartbeatMinutes (15); stuckMinutes (20) / shellStuckMinutes (30); finishedMinutes (30); output, historySweeps, publish: README Using it; sectionMinutes |
+| `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2,… | heartbeat: ramActPct, minDiskFreeGB, askOwnerGB (big, idle or growing app: one ASK), ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): base of NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent (no named wait) / flat-CPU shell = STUCK; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: each section's cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
-| `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): clean worktree whose remote branch is gone removed after idle time |
+| `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): a clean worktree whose remote branch is gone goes after that idle time (branch kept; dirty: reported) |
 | `localOnly`, `orgTerms`, `goodies` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words the pre-push gate blocks; goodies: goody sync always installs them (add lists, remove unlists) |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on before merge; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape + example: goody local-env SKILL.md) |
 | `runtimes` |  | machine runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match (shape: goody runtimes GOODY.md) |
 | `media` |  | evidence videos -&gt; text index (goody media-evidence GOODY.md) |
-| `theme` | {"name": "green-theme", "light": {"bg": "#f4f7f4", "sf": "#ffffff",… | system green-theme palette for UI maps, dashboards and reports |
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
 | `gitHostApi` | {"commands": {}} |  |
 | `ci` | {"type": "host"} |  |

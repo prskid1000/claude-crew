@@ -151,7 +151,7 @@ $sr = Get-Content (TkPath $k supervise-report) -Raw; Stop-Process -Id (Read-Json
 Expect "supervise: a 20 s background child never holds the caller; sweep <= 25 s, each section <= 12.5 s (wall $([int]$ws) s)" ($ws -lt 20 -and $sr -match 'sweep: (\d+) s' -and [int]$Matches[1] -le 25 -and -not @((Read-Json (TkPath $k supervise-state)).sweep.cost.PSObject.Properties.Value -gt 12.5).Count)
 Expect 'supervise -AutoFix -Takeover: a gone session''s board entry is marked left (no "not recognized")' ((Read-Json $gb).status -eq 'left' -and $sv -notmatch 'not recognized'); Remove-Item $gb
 Expect 'supervise: a goody hook adds a sweep line, flag, report row, owner line, RAM need; kit-report shape; ACT: blocking -> tool, FYI -> list' ($sr -match 'fake line True True' -and $sr -match 'RAM: .* largest waiting build 9999 GB.*Free the biggest: .*fake row 1 GB' -and $sr -match '\| fake flag \| x \|' -and $sr -match '\| fake row \| me \| 1 \|' -and $sr -match '\| fake info' -and
-  $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item $ad -Recurse -Force
+  $sr -match '^# Supervise report .*\n\*\*Result:\*\* \d+ ACT · \d+ WATCH' -and $sr -match "\| ACT \| DECISION $i1 \(blocking.*AskUserQuestion.*-Ask -Json" -and $sr -match "DECISION 1 FYI: $i2 \|" -and (Test-Prose kit-report (TkPath $k supervise-report))); Remove-Item "$ad/fake.ps1", "$ad/slow.ps1"   # the core adapter stays
 $lt = Join-Path (Kd) 'lk.json'; $old = { '' | Set-Content "$lt.lock"; (Get-Item "$lt.lock").LastWriteTime = (Get-Date).AddMinutes(-5) }   # a 5-min-old lock
 & $old; $fs = [IO.File]::Open("$lt.lock", 'Open', 'Write', 'None')
 $lj = Start-ThreadJob { Start-Sleep -Milliseconds 1500; ($using:fs).Dispose(); Remove-Item "$using:lt.lock" }
@@ -205,7 +205,7 @@ Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'X7\s+devy' -and $ib 
 $dx = Invoke-TestScript $O board dispute -Agent X7 -With R7
 $ad = Join-Path $k 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad | Out-Null
 'function Invoke-TrackRebuild { "fake rebuild $Force" }' | Set-Content (Join-Path $ad 'fake.ps1'); 'this is { not powershell' | Set-Content (Join-Path $ad 'broken.ps1')
-$ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item $ad -Recurse -Force
+$ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item "$ad/fake.ps1", "$ad/broken.ps1"
 Expect 'goodies: a missing one = its one line, exit 1; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 1 -and $dx.out.Trim() -eq 'board dispute is a goody: run kitbag.py goody add duel' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
 $bj = { param([string[]]$a) Px $O budget @a -Json | ConvertFrom-Json }
 $cx = Join-Path (Kd) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
