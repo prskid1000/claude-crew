@@ -43,7 +43,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
 5. **Generic & agnostic:** `kitbag.py lint --org-terms <kit>/skills/crafty/kit.local.json` = 0 ORG-TERM; org values -> config
    keys with defaults (`kit-admin.md` "kitty steps 5-6").
 6. **Consistency:** indexes, README tables, manifest, ports, reach, budgets (`kitbag.py budget`: the total counts what agents
-   load; `tests/` has its own cap), script headers, prose (`kit-admin.md` "kitty steps 5-6").
+   load; `tests/` has its own total and per-file caps: a file over its cap moves a self-contained block to an area file with
+   room), script headers, prose (`kit-admin.md` "kitty steps 5-6").
 7. **Improve:** `& $O learn -Stats`, `-Show -Last 300`, `-History`, the newest `<runtime>/logs/retros/*.md`,
    `bossy.ps1 audit -Since 7d` (guard blocks, crashes, gate waits); a retired lesson ("(fixed in kit)") seen again = a
    regression finding. Each pattern -> the smallest durable change.
