@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L859 status · L1088 supervise sweep ·
-  L1159 supervise report · L1255 tracker · L1571 prior · L1593 ask bugs · L1734 git-host · L1891 kitlog · L2009 params ·
-  L2309 entry-scripts
+  L1159 supervise report · L1255 tracker · L1571 prior · L1593 ask bugs · L1736 git-host · L1893 kitlog · L2011 params ·
+  L2311 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1590,7 +1590,7 @@ function Add-TrackerScope([string]$Id, [string]$Item) {
   $null = Set-TrackerDescription $Id "$d`n`n**Scope (extended $(Get-Date -Format yyyy-MM-dd)):**`n$Item"; Write-KitLog calls task-scope @{ task = $Id; item = $Item }
   "scope of $Id extended: work and open MRs under it"
 }
-# ---- ask bugs: ONE open [Bug] per ask across agents; each source owns a "[kit:bug:<key>]" section; known signatures = duplicates
+# ---- ask bugs: ONE open QA collector [Bug] per ask across agents; each source owns a "[kit:bug:<key>]" section; known signatures = duplicates
 function ConvertTo-KitBugNorm([string]$Text) { ((("$Text" -replace '\\(.)', '$1') -replace '/\d+(?=/|\b)', '/{id}') -replace '\s+', ' ').ToLower().Trim() }
 # a whole signature in a text (vector.py:120 is not in vector.py:1205)
 function Test-KitBugSig([string]$Hay, [string]$Sig) { $q = ConvertTo-KitBugNorm $Sig; $q.Length -ge 6 -and $Hay -match "(?<![\w.:-])$([regex]::Escape($q))(?![\w/:-])" }
@@ -1602,6 +1602,8 @@ function Get-KitDefectSigs($Check) {
   $url = [regex]::Matches($t, 'https?://[^/\s]+/[^\s)\]>"''`]+') | ForEach-Object { $_.Value -replace '\?[^#]*' -replace '#(?!/).*$' -replace '[.,;:]+$' } | Where-Object { $_ -notmatch '^https?://[^/]+/?$' }
   @(@(@($fl | ForEach-Object Value) + @($url)) | Select-Object -Unique)
 }
+# a QA collector [Bug]: its text opens with a kit:bug marker or its title says "— new defects (n)"; a hand-made [Bug] never takes sections
+function Test-KitBugCollector($Task) { "$($Task.name)" -match '[—-]\s*new defects(\s*\(\d+\))?(:|\s*$)' -or "$($Task.description)".TrimStart() -match '^[^\r\n]*\\?\[kit:bug:[^\]\r\n]+?\\?\][ \t]*(\r?\n|$)' }
 # $Defects: [{ label; sig = @(); md; group }]; -Id: the [Bug] this source wrote before; -Mine: its whole unmarked text is this source's
 function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head, [object[]]$Defects, [string]$List, [string]$Assignee, [string]$Priority = '2', [string]$Id, [switch]$Mine) {
   $Key = ("$Key" -replace '[^\w.-]+', '_').Trim('_'); if (-not $Key) { throw 'Add-KitAskBug: -Key (the section key) is required' }
@@ -1627,15 +1629,15 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
       $secs[$Key] = $sec; $null = Set-TrackerDescription $bug.id ((@($lead | Where-Object { $_ }) + @($secs.Values)) -join "`n`n")
       [pscustomobject]@{ id = $bug.id; url = (Get-TrackerUrl $bug.id); action = $(if ($Id -and $bug.id -eq $Id) { 'updated' } else { 'appended' }); duplicates = $dup }
     }
-    $bug = & $open $Id
+    $bug = & $open $Id; if ($bug -and -not ($Mine -or (Test-KitBugCollector $bug))) { $bug = $null }   # a hand-made [Bug] adopted before
     if (-not $bug -and $Ask -and $Ask -ne '-') { Clear-TrackerMemo $Ask
-      $bug = & $open (@((Get-TrackerTask $Ask).subtasks | Where-Object { "$($_.name)".StartsWith($pre) -and -not (Test-TrackerStatus "$($_.status)" 'closed') }) | Select-Object -First 1).id }
+      $bug = @(foreach ($sb in @((Get-TrackerTask $Ask).subtasks | Where-Object { "$($_.name)".StartsWith($pre) -and -not (Test-TrackerStatus "$($_.status)" 'closed') })) { if (($v = & $open $sb.id) -and (Test-KitBugCollector $v)) { $v; break } }) | Select-Object -First 1 }
     if ($bug) { return & $put $bug }
     $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })
     $t = try { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority } catch {   # owner rule: grow a related open task
       if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
-      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid)) { return & $put $b2 }
-        New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed" } else { throw } }
+      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2)) { return & $put $b2 }
+        New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed or not a QA collector" } else { throw } }
     if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
 }

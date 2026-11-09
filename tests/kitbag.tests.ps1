@@ -243,6 +243,14 @@ $tdr = Invoke-TestScript "$td/kit-tests.ps1" -Area bossy,crafty
 Expect 'kit-tests: a case in two areas = TEST-DUP (area order, exit 1); real python, no shim; FAILs recapped by area' ($tdr.code -eq 1 -and $tdr.out -match 'Failed checks:\s+\[bossy\] x\s+\[crafty\] x' -and $tdr.out -match 'TEST-DUP same case: bossy, crafty' -and $tdr.out -notmatch 'TEST-DUP own' -and $tdr.out -match 'py True' -and $tdr.out -notmatch 'py False')
 $null = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') lint --org-terms (Join-Path (Kd) 'no-such.json') 2>&1
 Expect 'lint --org-terms: a missing .json is a usage error (2), never a term' ($LASTEXITCODE -eq 2)
+# lib.ps1 Add-KitAskBug (here for the guard area's cap): only a QA collector [Bug] takes sections
+$env:KIT_TRACKER_TYPE = 'none'; $cbD = Join-Path $k 'skills/crafty/crafty.ps1'; $cbDir = Kd; 'defect one' | Set-Content "$cbDir/c1.md"; 'defect two' | Set-Content "$cbDir/c2.md"
+$cbAsk = (pwsh @np $cbD tracker create -List L1 -Name 'Ask panel' -Description 'a' -NewTask fixture | ConvertFrom-Json).id
+$cbHand = (pwsh @np $cbD tracker create -List L1 -Parent $cbAsk -Name '[Bug] Ask help icon does nothing' -Description 'hand scope' -NewTask fixture | ConvertFrom-Json).id
+$cbFirst = pwsh @np $cbD tracker bug -Parent $cbAsk -Key qa-r1 -Name '[Bug] Ask help icon — new defects (1)' -File "$cbDir/c1.md" -List L1 | ConvertFrom-Json; $cbSecond = pwsh @np $cbD tracker bug -Parent $cbAsk -Key qa-r2 -Name '[Bug] Ask x' -File "$cbDir/c2.md" -List L1 | ConvertFrom-Json
+$cbUnit = & { . (Lib); "$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a'; description = "hand`n`nSource: k [kit:bug:k]" }))$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a - new defects (2): x'; description = '' }))$(Test-KitBugCollector ([pscustomobject]@{ name = '[Bug] a'; description = "Source: a \[kit:bug:a\_b\]`r`n`r`nx" }))" }
+Expect "tracker bug: a hand-made [Bug] under the ask never takes a section; a new collector does ($($cbFirst.action) $($cbSecond.action) $cbUnit)" ($cbFirst.action -eq 'created' -and $cbFirst.id -ne $cbHand -and $cbSecond.id -eq $cbFirst.id -and $cbSecond.action -eq 'appended' -and (pwsh @np $cbD tracker view $cbHand | ConvertFrom-Json).description -eq 'hand scope' -and $cbUnit -eq 'FalseTrueTrue')
+Remove-Item Env:KIT_TRACKER_TYPE
 Remove-TestKit $k
 $pg = [IO.File]::ReadAllText((Join-Path $src '.github/workflows/pages.yml')); $ia = $pg.IndexOf('goody add flow-map'); $il = $pg.IndexOf('kitbag.py lint')
 Expect 'pages.yml: lint runs the flow checks (flow-map added first, no --no-flow), so an issue the page would show fails CI' ($ia -ge 0 -and $il -gt $ia -and $pg -notmatch '--no-flow')

@@ -31,8 +31,8 @@ Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<windo
 5. **Act** (`crafty.ps1 tracker create` / `comment`): `new` / `rising` with a suspect MR (the deploy's MRs touch its frame or
    endpoint) -> an entry in the ONE `[Bug] <ask> — new defects (n)` under that MR's task's original ask: `crafty.ps1 tracker
    bug -Parent <ask> -Key watch-<env>-<signature> -Name '<that title>' -File <entry.md> -Signature '<file:line>|<error
-   text>|<URL>'` (an open [Bug] under the ask, any agent's, gets the entry; a known signature = a duplicate line, never a
-   second task); no suspect MR -> one `[Bug] <env> — <signature>`
+   text>|<URL>'` (the open collector under the ask, any agent's, gets the entry, never a hand-made [Bug]; a known
+   signature = a duplicate line, never a second task); no suspect MR -> one `[Bug] <env> — <signature>`
    (`tracker create -Key <env>-<signature>` reuses an open one); `known` -> a comment with the new counts on its task.
    Evidence per entry: the query, counts now vs baseline, the sample, the time range, the suspect MR. Comments with
    `-Kind watch-<env>` (the next window edits it); a report doc with `devtools.py doc --key <env>:watch-<kind>`. Never closes,

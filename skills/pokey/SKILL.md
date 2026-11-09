@@ -76,7 +76,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 **Result rule** (finalize applies it per task; the same for agents and people):
 all checks pass -> **closed** · an own check FAILED or checks not tested completely (shared test env) -> **failedTesting**
 (fallback `inProgress` + comment), the one QA comment (no doc link) lists failed / untested checks and why, NO new task ·
-a new defect -> ONE `[Bug] <ask> — new defects (n)` under the task's original ask (any agent's open one
+a new defect -> ONE `[Bug] <ask> — new defects (n)` under the task's original ask (its open collector
 grows; a known `signature`: a duplicate line) · PENDING -> open.
 
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected

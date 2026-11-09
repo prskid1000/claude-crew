@@ -87,12 +87,12 @@ $n = New-Run 'N' @(@{ code = 'N1'; task = 'TA2'; checks = , @('X1', 'FAIL') })
 $null = Fin $n 'N1'
 $na = (Task $i).description
 Expect 'a later run joins the open [Bug] of the ask as its own section, name and the earlier section kept' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 1 -and (Task $i).name -eq '[Bug] mine' -and $na.StartsWith($bd) -and $na -match '(?m)^Source: qa-N \[kit:bug:qa-N\]$')
-# another agent's open [Bug] (watchy, no section marker) under the ask: joined; a known signature (file:line) = a duplicate line
-New-Task 'PW' 'Ask W'; New-Task 'TW' 'Task W' 'PW'; New-Task 'BW' '[Bug] Ask W — help links' 'PW' 'open' 'watch: plain mode searches the whole index (vector.py:120)'
+# another agent's open collector [Bug] (watchy's section) under the ask: joined; a known signature (file:line) = a duplicate line
+New-Task 'PW' 'Ask W'; New-Task 'TW' 'Task W' 'PW'; New-Task 'BW' '[Bug] Ask W — help links' 'PW' 'open' "Source: watch-s [kit:bug:watch-s]`n`nwatch: plain mode searches the whole index (vector.py:120)"
 $wr = New-Run 'W' @(@{ code = 'W1'; task = 'TW'; checks = @(@('X1', 'FAIL'), @('X2', 'FAIL')) }); $rw = Read-Json "$wr/W1/results.json"
 $rw.checks[0].observed = 'answer links HM pages; vector.py:120 plain mode'; $rw.checks[1].observed = 'GET https://h.example/api/help/42 gives 500'; & $J $rw "$wr/W1/results.json"
 $null = Fin $wr 'W1'; $null = Fin $wr 'W1'; $dw = (Task 'BW').description; $bw = @(Bugs | Where-Object { $_.parent -eq 'PW' })
-Expect "finalize: another agent's open [Bug] under the ask gets one section; the known defect is a duplicate line ($($bw.Count))" (-not $bw.Count -and $dw.StartsWith('watch: plain mode') -and ([regex]::Matches($dw, '\[kit:bug:qa-W\]')).Count -eq 1 -and $dw -match '### X2 ' -and $dw -notmatch '### X1 ' -and $dw -match 'Duplicates.*W1 X1 \(`vector\.py:120`\)' -and (Task 'BW').name -eq '[Bug] Ask W — help links' -and (Rec $wr 'W1').closed)
+Expect "finalize: another agent's open [Bug] under the ask gets one section; the known defect is a duplicate line ($($bw.Count))" (-not $bw.Count -and $dw.StartsWith('Source: watch-s') -and ([regex]::Matches($dw, '\[kit:bug:qa-W\]')).Count -eq 1 -and $dw -match '### X2 ' -and $dw -notmatch '### X1 ' -and $dw -match 'Duplicates.*W1 X1 \(`vector\.py:120`\)' -and (Task 'BW').name -eq '[Bug] Ask W — help links' -and (Rec $wr 'W1').closed)
 $null = Fin $c 'C1'
 Expect 'a re-run posts no second results comment' (@((Task 'T4').comments | Where-Object { $_.text -match 'Test results' }).Count -eq 1)
 $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })

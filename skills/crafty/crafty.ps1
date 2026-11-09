@@ -1770,7 +1770,7 @@ function Invoke-Tracker {
       if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
-    'bug' {   # ONE open [Bug] per ask (lib.ps1 Add-KitAskBug)
+    'bug' {   # ONE open QA collector [Bug] per ask (lib.ps1 Add-KitAskBug)
       if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <section key> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
       __TrOut (Add-KitAskBug -Ask $__trOpt.Parent -Key $__trOpt.Key -Name $__trOpt.Name -List $__trOpt.List -Assignee $__trOpt.Assignee -Priority $(if ($__trOpt.Priority) { $__trOpt.Priority } else { '2' }) -Defects @([pscustomobject]@{ label = $__trOpt.Key; sig = @("$($__trOpt.Signature)" -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); md = $__trOpt.Text; group = '' }))
     }

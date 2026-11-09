@@ -592,7 +592,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $bt = if ($s.id) { Clear-TrackerMemo $s.id; try { Get-TrackerTask $s.id } catch { $null } }; $cur = [string]$bt.name
     # replace an older finalize's own text
     $mine = [bool]($s.id -and -not $s.adopted -and (($s.name -and $cur -eq $s.name) -or "$($bt.description)".StartsWith("QA run **$title**")))
-    # an open [Bug] under the ask gets a section, not a twin
+    # the open QA collector [Bug] under the ask gets a section, not a twin; a hand-made [Bug] never
     $r = Add-KitAskBug -Ask $ask.id -Key "qa-$(Split-Path $RunDir -Leaf)" -Name $name -Head $head -Defects $ds -List $bugList -Assignee $tr.owner -Id $s.id -Mine:$mine
     if (-not $r.id) { return $null }
     if ($r.action -ne 'updated') { $s | Add-Member -Force NoteProperty adopted ($r.action -eq 'appended') }   # another source's task: never renamed
