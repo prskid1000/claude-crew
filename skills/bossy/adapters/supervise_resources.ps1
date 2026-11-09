@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L45 supervise · L236 shells · L356 page · L592 release · L621 lines · L646 cleanup
+Sections: L13 builds · L45 supervise · L236 shells · L356 page · L600 release · L629 lines · L654 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -407,7 +407,10 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   if ($set) { foreach ($sp0 in $set.PSObject.Properties) { $settings["supervise.$($sp0.Name)"] = if ($sp0.Name -eq 'publish') { '(set)' } else { $sp0.Value | ConvertTo-Json -Compress -Depth 4 } } }
   $series = try { Get-KitSuperviseSeries (@($Sweep) + @($fl | ForEach-Object what)) $prior.stats } catch { [ordered]@{ ram = @(); disks = @() } }
   $stats = [ordered]@{ keepFree = $d.keepFree; days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at } catch { }); ram = $series.ram; disks = $series.disks; settings = [pscustomobject]$settings
-    changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } }) }
+    changes = @(Get-Content -LiteralPath (Get-KitPath params-changes) -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop | Select-Object at, key, ctx, from, to, why } catch { } })
+    params = @(try { $apv = (Read-KitParams).approved; @(Invoke-KitParamVerb show -Json | ConvertFrom-Json) | ForEach-Object { [pscustomobject]@{ key = $_.key; ctx = $_.ctx; value = $_.effective
+            source = "$(if ($apv."$($_.key)|$(if ($_.ctx -ne '_') { $_.ctx })" -or $apv."$($_.key)|") { 'approved' } else { $_.state })$(if ($_.source -notmatch '^(default|learned|pin$)') { " · $($_.source)" })"
+            learned = $(if ($null -ne $_.learned -and $_.learned -ne $_.effective) { $_.learned } else { '' }); changed = $_.changed; why = $_.why } } } catch { }) }
   $j = [pscustomobject]@{ at = $d.at.ToString('o'); next = $Next; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); sweep = @($Sweep); stats = $stats }
   Write-KitAtomic $pj ($j | ConvertTo-Json -Depth 6)
   Write-KitAtomic $p (Format-KitSuperviseHtml $j)
@@ -511,8 +514,10 @@ function Format-KitSuperviseHtml($j) {
   $resHtml = if (-not @($j.resources | Where-Object { $_ }).Count) { '<p class=empty>No resource held.</p>' } else { '<div class=tw><table><tr><th>Resource</th><th>Holder</th><th>GB</th></tr>' + (@($j.resources | Where-Object { $_ } | Sort-Object { -[double]$_.gb } | ForEach-Object { "<tr class=f><td title='$(& $e $_.name)'>$(& $e $_.name)</td><td title='$(& $e $_.by)'>$(& $e $_.by)</td><td class=num>$(& $bar ([double]$_.gb) $resMax (& $n1 $_.gb) 'slate')</td></tr>" }) -join '') + '</table></div>' }
   $shellHtml = & $table 'PID', 'Owner', 'Age min', 'State', 'Dir', 'Command', 'Next' @($j.shells | Where-Object { $_ } | ForEach-Object { , @($_.pid, $_.owner, $_.age, $_.state, $_.dir, $_.cmd, $_.next) })
   $setRows = @(if ($st.settings) { $st.settings.PSObject.Properties | ForEach-Object { , @($_.Name, $_.Value) } })
-  $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg)
-  $setHtml = (& $table 'Key', 'Value' $setRows) + '<h3>Recent learned changes</h3>' + (& $table 'When', 'Key', 'Context', 'From', 'To', 'Why' @($chg | ForEach-Object { , @($(try { ([datetime]$_.at).ToString('MM-dd HH:mm') } catch { $_.at }), $_.key, $_.ctx, $_.from, $_.to, $_.why) }))
+  $chg = @($st.changes | Where-Object { $_ }); [array]::Reverse($chg); $prm = @($st.params | Where-Object { $_ }); $hm = { param($x) if ($x) { try { ([datetime]$x).ToString('MM-dd HH:mm') } catch { "$x" } } else { '' } }   # '' keeps the cell: an empty result drops it from the row
+  $setHtml = $(if ($chg.Count) { '<h3>Recent changes</h3>' + ((& $table 'When', 'Key', 'Context', 'From', 'To', 'Why' @($chg | ForEach-Object { , @((& $hm $_.at), $_.key, $_.ctx, $_.from, $_.to, $_.why) })) -replace '<tr class=f>', '<tr class="f hl">') }) +
+    '<h3>Parameters</h3>' + (& $table 'Key', 'Context', 'Value', 'Source', 'Learned', 'Changed', 'Why' @($prm | ForEach-Object { , @($_.key, $_.ctx, $_.value, $_.source, $_.learned, (& $hm $_.changed), $_.why) })) +
+    $(if ($setRows.Count) { '<h3>Config (supervise.*)</h3>' + (& $table 'Key', 'Value' $setRows) })
   $css = Get-KitSupervisePageCss
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15;function u(){var m=Math.round((Date.now()-t)/6e4);a.textContent='updated '+(m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+' h ago':Math.round(m/1440)+' d ago');a.className='chip '+(m>4*n?'bad':m>2*n?'warn':'ok')}u();setInterval(u,3e4);" +
@@ -524,7 +529,7 @@ function Format-KitSuperviseHtml($j) {
     "<input id=q type=search placeholder='Filter flags and agents  ( / )' aria-label='Filter flags and agents'><button id=ar type=button aria-pressed=true>Auto-refresh 60 s</button><button id=tt type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></header>"
   $main = "<main class=wrap>$kpi<div class=cols><div>$(& $section 'flags' 'Flags' ($nAct + $nWatch) $flagHtml)</div><div>$(& $section 'health' 'Machine' $null $gauges)$(& $section 'history' "Last $($hist.Count) sweeps" $null $histHtml)$(& $section 'resources' 'Resources and leases' @($j.resources | Where-Object { $_ }).Count $resHtml)$(& $section 'shells' 'Shells' @($j.shells | Where-Object { $_ }).Count $shellHtml)</div></div>" +
     (& $section 'agents' 'Agents' $agents.Count $agentHtml) + (& $section 'timeline' 'Today' $lanes.Count $ganttHtml) + (& $section 'stats' 'Statistics' $null $statsHtml) +
-    (& $section 'settings' 'Settings' $setRows.Count $setHtml -Closed) + (& $section 'sweep' 'Sweep log' @($j.sweep).Count "<pre>$(& $e (@($j.sweep) -join "`n"))</pre>" -Closed) +
+    (& $section 'settings' 'Settings' ($prm.Count + $setRows.Count) $setHtml -Closed) + (& $section 'sweep' 'Sweep log' @($j.sweep).Count "<pre>$(& $e (@($j.sweep) -join "`n"))</pre>" -Closed) +
     "<footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json</footer></main>"
   "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script></body></html>"
 }
@@ -533,7 +538,9 @@ function Get-KitSupervisePageCss {
   $dark = '--bg:#0c0c0c;--sf:#161b16;--sf2:#212a21;--fg:#d8dee9;--mt:#8a948a;--ln:#2e3a2e;--sage:#79a86a;--sage2:#9fd48c;--act:#dc9089;--watch:#e0ce8a;--slate:#8fbbd4;--plum:#c495d4;--sh:0 4px 20px rgba(0,0,0,0.45)'
   ':root{--bg:#f4f7f4;--sf:#ffffff;--sf2:#eaefea;--fg:#1a221a;--mt:#5e6c5e;--ln:#d5dfd5;--sage:#647c64;--sage2:#79a86a;--act:#ce8f8a;--watch:#c4b06a;--slate:#5f93a8;--plum:#a074b0;--sh:0 1px 3px rgba(26,34,26,.06),0 1px 2px rgba(26,34,26,.04)}' +
   "[data-theme=dark]{$dark}@media(prefers-color-scheme:dark){:root:not([data-theme=light]){$dark}}" +
-  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Inter",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}' +
+  '*{box-sizing:border-box}@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--mt) 40%,transparent) transparent}body :hover{scrollbar-color:var(--sage) transparent}}' +   # Chromium drops ::-webkit-scrollbar once scrollbar-color is set
+  '::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--mt) 40%,transparent);border-radius:8px}::-webkit-scrollbar-thumb:hover{background:var(--sage)}' +
+  'body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Inter",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}' +
   'b{font-weight:600}.m,.sm{color:var(--mt)}.sm{font-size:11.5px;margin-top:2px}h3{font-size:12px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}' +
   'header.top{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px 24px;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--ln)}' +
   '.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:15px;letter-spacing:-.01em}.brand svg{width:28px;height:28px;flex:none}.brand small{color:var(--mt);font-weight:500;font-size:13px;padding-left:10px;border-left:1px solid var(--ln)}' +
@@ -551,6 +558,7 @@ function Get-KitSupervisePageCss {
   # fixed heights (owner 2026-11-09): flags fill the right column (44px = one-line summary); bodies scroll; one-line rows, full text in title
   '.cols>div:first-child{position:relative;min-height:420px}#sec-flags{position:absolute;inset:0;top:16px;margin:0}#sec-flags:not([open]){bottom:auto}#sec-flags .bd{position:absolute;inset:44px 0 0;overflow-y:auto}' +
   '#sec-resources .bd,#sec-shells .bd{max-height:clamp(150px,30vh,320px);overflow-y:auto;overscroll-behavior:contain}.tw>table:not(.ag) td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}' +
+  '#sec-resources table,#sec-shells table,#sec-settings table{table-layout:fixed;min-width:0}#sec-settings th:last-child:nth-child(n+6){width:30%}tr.hl td{background:color-mix(in srgb,var(--sage) 12%,transparent)}#sec-resources th:last-child{width:150px}#sec-shells th:is(:nth-child(1),:nth-child(3)){width:64px}#sec-shells th:nth-child(4){width:76px}' +   # fixed layout + ellipsis: no horizontal scroll at 1366 px
   '@media(max-width:1100px){.cols>div:first-child{min-height:0}#sec-flags,#sec-flags .bd{position:static;margin-top:16px}#sec-flags .bd{margin:0;max-height:clamp(240px,60vh,640px)}}' +
   'details.sec{margin-top:16px}summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;user-select:none}summary::-webkit-details-marker{display:none}' +
   'summary h2{margin:0;font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.07em}summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.5px solid var(--mt);border-bottom:1.5px solid var(--mt);transform:rotate(45deg);transition:transform .15s}details:not([open])>summary::after{transform:rotate(-45deg)}' +
