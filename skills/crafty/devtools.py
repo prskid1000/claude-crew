@@ -12,6 +12,7 @@
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
+  (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
   --run <cells.json> (pokey finalize, key <task>:testing-doc): fills the human doc's Result / Evidence + a dated "<env> run" section
  python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
@@ -20,8 +21,8 @@
 Plugins: skills/crafty/adapters/*.py (kitbag.py goody add <name>) register report adapters and verbs (lbcheck: goody liquibase;
  findings: goody module-audit).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 the feature is a goody that is not installed.
-Sections: L38 config · L72 run · L160 tracker · L348 git host · L431 MR · L592 merge · L841 docs · L996 publish · L1340 plugins ·
-  L1354 keepboth · L1373 selftest · L1773 CLI
+Sections: L39 config · L73 run · L161 tracker · L349 git host · L432 MR · L593 merge · L842 docs · L997 publish · L1351 plugins ·
+  L1365 keepboth · L1384 selftest · L1787 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1181,22 +1182,32 @@ def _round_rows(md):
     return None if not m else [_cells(l)[0] for l in m.group(1).splitlines() if l.strip()]
 
 
-def _compose(title, rounds, runs=()):
+def _after(a, b):
+    """Record a (round or run) is newer than b: by seq, else by minute."""
+    return a['seq'] > b['seq'] if 'seq' in a and 'seq' in b else a['at'] >= b['at']
+
+
+def _compose(title, rounds, runs=(), kind=''):
     """The newest version on top (Result / Evidence filled by the newest env run when it is newer than that version: a fix round
     after a run starts empty), then env runs and earlier rounds newest first under dated headings ('## <env> run <date>',
-    '## Round <n> — <date>'), each kept whole; one round, no run = unchanged. -> (text, ext)"""
+    '## Round <n> — <date>'), each kept whole; the human doc (testing-doc) keeps only earlier rounds an env run tested, the
+    rest become one 'Replaced drafts (not tested): <dates>' line; one round, no run = unchanged. -> (text, ext)"""
     top = rounds[-1]
-    if runs and top['ext'] == '.md' and ((runs[-1]['seq'] > top['seq']) if 'seq' in runs[-1] and 'seq' in top else runs[-1]['at'] >= top['at']):
+    if runs and top['ext'] == '.md' and _after(runs[-1], top):
         top = dict(top, body=_table_rows(top['body'], runs[-1].get('cells') or {})[1])
+    ran = {max(i for i, r in enumerate(rounds) if i == 0 or _after(u, r)) for u in runs}   # each run tested the newest round before it
+    shown = [i for i in range(len(rounds) - 1) if kind != 'testing-doc' or i in ran]
+    days = sorted({rounds[i]['at'][:10] for i in range(len(rounds) - 1) if i not in shown})
+    note = f'Replaced drafts (not tested): {", ".join(days)}' if days else ''
     secs = [(f'{r["label"] or "env"} run {r["at"]}', r) for r in reversed(runs)]
-    secs += [(f'Round {i + 1} — {r["at"]}{" " + r["label"] if r["label"] else ""}', r) for i, r in reversed(list(enumerate(rounds[:-1])))]
-    if not secs:
+    secs += [(f'Round {i + 1} — {rounds[i]["at"]}{" " + rounds[i]["label"] if rounds[i]["label"] else ""}', rounds[i]) for i in reversed(shown)]
+    if not secs and not note:
         return top['body'], top['ext']
     if any(r['ext'] == '.html' for r in [top] + [r for _, r in secs]):
         h = lambda r: _body_of(r['body'] if r['ext'] == '.html' else md_to_html(r['body']))
-        body = h(top) + ''.join(f'<h2>{html.escape(n)}</h2>{h(r)}' for n, r in secs)
+        body = h(top) + (f'<p>{html.escape(note)}</p>' if note else '') + ''.join(f'<h2>{html.escape(n)}</h2>{h(r)}' for n, r in secs)
         return f'<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head><body>{body}</body></html>', '.html'
-    return top['body'].rstrip() + '\n\n' + '\n\n'.join(f'## {n}\n\n{_demote(r["body"]).strip()}' for n, r in secs) + '\n', '.md'
+    return top['body'].rstrip() + ''.join(f'\n\n{x}' for x in ([note] if note else []) + [f'## {n}\n\n{_demote(r["body"]).strip()}' for n, r in secs]) + '\n', '.md'
 
 
 def _check_doc(kind, scope, path, body, prior=()):
@@ -1271,7 +1282,7 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
             if have is None:
                 print(f'[publish] {key}: no Rounds table (a doc from before it): add one from templates.md "Testing doc (AI)"', file=sys.stderr)
         new = {'at': time.strftime('%Y-%m-%d %H:%M'), 'seq': time.time(), 'label': label, 'ext': os.path.splitext(path)[1].lower(), 'body': body}
-        stale = bool(rounds and runs) and ((runs[-1]['seq'] > rounds[-1]['seq']) if 'seq' in runs[-1] and 'seq' in rounds[-1] else runs[-1]['at'] >= rounds[-1]['at'])
+        stale = bool(rounds and runs) and _after(runs[-1], rounds[-1])
         if run is not None:
             runs.append(dict(new, cells=run))
         elif kind in ('testing-doc', 'testing-ai') and rounds and rounds[-1]['body'] == body and not stale:
@@ -1286,7 +1297,7 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
 
 def _render(key, rec, title, rounds, runs, parent=None):
     """Compose a key's rounds and runs and publish them over its earlier doc -> URL."""
-    text, ext = _compose(title, rounds, runs)
+    text, ext = _compose(title, rounds, runs, key.rpartition(':')[2])
     out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + ext)
     with open(out, 'w', encoding='utf-8', newline='') as fh:
         fh.write(text)
@@ -1638,9 +1649,11 @@ def _publish_selftest(expect, refused):
         refused('goals.md is never published (human or AI key)', lambda: publish('T9:testing-ai', 'X', goals), 'never published')
         u1 = publish('T9:testing-doc', 'X', human)
         u2 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h2.md'), doc.replace('| T1 |', '| T2 |')))
+        publish('T9:testing-doc', 'X', os.path.join(tmp, 'h2.md'))
         body = open(u2, encoding='utf-8').read()
-        expect('publish by key: round 2 updates the same doc, newest version on top, earlier rounds dated below', u1 == u2 and
-               body.index('| T2 |') < body.index('## Round 1') < body.index('| T1 |') and _pub_read('T9:testing-doc')['url'] == u1)
+        expect('human doc round 2: same doc, newest on top, the untested round 1 only a "Replaced drafts (not tested)" date; an identical republish adds no round',
+               u1 == u2 and body.index('| T2 |') < body.index(f'Replaced drafts (not tested): {time.strftime("%Y-%m-%d")}') and '| T1 |' not in body
+               and '## Round' not in body and len(_pub_read('T9:testing-doc')['rounds']) == 2 and _pub_read('T9:testing-doc')['url'] == u1)
         ix = state_read(os.path.join(kp('tasks'), 'T9.json')) or {}
         expect('publish by key: the task index points at the doc (docs.testing-doc, schemaVersion 1)', ix.get('docs', {}).get('testing-doc', {}).get('url') == u1 and ix.get('schemaVersion') == 1)
         refused('testing-ai: no Rounds table -> refused', lambda: publish('T9:testing-ai', 'X', w(os.path.join(tmp, 'a1.md'), aidoc.split('Rounds:')[0])), 'no Rounds table')
@@ -1660,7 +1673,7 @@ def _publish_selftest(expect, refused):
         hb = open(ur, encoding='utf-8').read()
         expect('env run: the human doc (same link) gets Result / Evidence from the deployed run and a dated "<env> run" section; no report doc',
                ur == u1 and '| T2 | 1. Open the list. | Newest first. | PASS | ![T2: list](https://img/s2.png) |' in hb
-               and hb.index('| T2 |') < hb.index('## stg run ') < hb.index('## Round 1') and not _pub_read('T9:qa-report'))
+               and hb.index('| T2 |') < hb.index('Replaced drafts') < hb.index('## stg run ') and '## Round' not in hb and not _pub_read('T9:qa-report'))
         ur2 = publish('T9:testing-doc', 'X', rep, label='stg', run={'T2': {'result': 'FAIL', 'evidence': 'x'}})
         hb2 = open(ur2, encoding='utf-8').read()
         expect('a retest run adds a second "<env> run" section; the first stays', ur2 == u1 and hb2.count('## stg run ') == 2 and '| T2 | 1. Open the list. | Newest first. | FAIL | x |' in hb2)
@@ -1672,8 +1685,9 @@ def _publish_selftest(expect, refused):
         refused('relayout: a link no record holds -> refused', lambda: relayout('https://docs.google.com/document/d/NOPE/edit'), 'no published record holds this link')
         u3 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h3.md'), doc.replace('| T1 |', '| T3 |')), label='fix round')
         hb3 = open(u3, encoding='utf-8').read()
-        expect('a fix round after a run: a fresh version on top with Result / Evidence empty; both runs and the earlier rounds stay',
-               u3 == u1 and '| T3 | 1. Open the list. | Newest first. | | |' in hb3 and hb3.count('## stg run ') == 2 and hb3.index('| T3 |') < hb3.index('## stg run '))
+        expect('a fix round after a run: a fresh version on top, both runs, the tested round 2 whole; the untested round 1 stays a date',
+               u3 == u1 and '| T3 | 1. Open the list. | Newest first. | | |' in hb3 and hb3.count('## stg run ') == 2 and hb3.index('| T3 |') < hb3.index('## stg run ')
+               < hb3.index('## Round 2') and '## Round 1' not in hb3 and hb3.count('Replaced drafts (not tested)') == 1)
         nr = publish('T7:testing-doc', 'X', rep, run={})
         expect('a run without a human doc: the report is published by <task>:qa-report', _pub_read('T7:qa-report').get('url') == nr)
         legacy = ''.join(f'Testing doc: [https://d/{i}](https://d/{i})\n\n' for i in range(7)) + 'Testing goals (AI): x\nThe ask.\n'
