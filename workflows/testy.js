@@ -263,7 +263,7 @@ function laneBlock(it, L) {
 // ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
-const CHECK_FAILS = 'Exit 1 = evidence named in it is missing, a name it could not fix, or duplicate check ids'
+const CHECK_FAILS = 'Its last line EXIT=1 (no EXIT line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, or duplicate check ids'
 
 function testPrompt(it, L) {
  return `You are checky (role test, kind ${it.retest ? 'regression' : 'task'}). Test ONE tester guide on the test environment and return a verdict per check.

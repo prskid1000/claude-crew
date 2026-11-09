@@ -7,11 +7,13 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $store = Join-Path $k '.state/tracker-none'
 $env:KIT_TRACKER_TYPE = 'none'; $env:KIT_REPORT_TYPE = 'markdown'
+function Read-Text($textPath) { Get-Content $textPath -Raw }
+function New-TestDir($dirPaths) { New-Item -ItemType Directory -Force $dirPaths | Out-Null }
 function New-Run($name, $items) {
-  $d = Join-Path (Kd) "runs/$name"; New-Item -ItemType Directory -Force $d | Out-Null
+  $d = Join-Path (Kd) "runs/$name"; New-TestDir $d
   & $J @{ title = "Run $name"; target = 't'; tracker = @{ list = 'L1'; parent = 'P1' }; items = @($items | ForEach-Object { @{ code = $_.code; title = $_.code; subtasks = @(@{ id = $_.task; name = "Task $($_.task)" }) } }) } "$d/run.json"
   foreach ($it in $items) {
-    New-Item -ItemType Directory -Force "$d/$($it.code)" | Out-Null
+    New-TestDir "$d/$($it.code)"
     & $J @{ code = $it.code; checks = @($it.checks | ForEach-Object { $c = @{ id = $_[0]; subtask_id = $it.task; screen = 's'; result = $_[1]; what_was_done = 'w'; observed = "o $($_[0])"; evidence = @() }; if ($_.Count -gt 2) { $c.defect = $_[2] }; $c }); findings = @(); setup_changes = @(); data_created = @() } "$d/$($it.code)/results.json"
   }
   $d
@@ -19,10 +21,10 @@ function New-Run($name, $items) {
 function Fin($d, $c) { Px $Q finalize -RunDir $d -Code $c @args 2>&1 | Out-String }   # $LASTEXITCODE = its exit
 function Rec($d, $c) { (Read-Json "$d/$c/finalize.json").subtasks[0] }
 function Task($id) { Read-Json (Join-Path $store "$id.json") }
-function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.name -like '`[Bug`]*' }) }
+function Bugs { @(Get-ChildItem $store -Filter 'LOCAL-*.json' -ErrorAction SilentlyContinue | ForEach-Object { Read-Text $_.FullName | ConvertFrom-Json } | Where-Object { $_.name -like '`[Bug`]*' }) }
 # a task in the tracker-none store
 function New-Task($id, $name, $parent = $null, $status = 'open', $desc = '') { & $J @{ id = $id; name = $name; status = $status; parent = $parent; list = 'L1'; assignees = @(); description = $desc; comments = @() } (Join-Path $store "$id.json") }
-New-Item -ItemType Directory -Force $store | Out-Null
+New-TestDir $store
 foreach ($x in @(@('PA', 'Ask A'), @('PQ', '[Feature] Ask Q — q1'), @('TA', 'Task A', 'PA'), @('TQ', 'Task Q', 'PQ'), @('TA2', 'Task A2', 'PA'))) { New-Task @x }
 $a = New-Run 'A' @(@{ code = 'A1'; task = 'T1'; checks = @(@('C1', 'PASS'), @('C2', 'NOT_TESTED')) })
 $out = Fin $a 'A1'
@@ -39,8 +41,8 @@ Expect 'own FAIL -> failedTesting, no [Bug]' ((Rec $b 'B1').failedTesting -and (
 Expect 'the one-line comment names the failed check' (@((Task 'T2').comments | Where-Object { $_.text -match 'checks failed \(C2\)' -and $_.text -notmatch '\*\*Saw' }).Count -eq 1)
 $c = New-Run 'C' @(@{ code = 'C1'; task = 'T4'; checks = @(@('C1', 'PASS'), @('C2', 'OUT_OF_SCOPE')) })
 $null = Fin $c 'C1'
-Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 'C1').outOfScope -eq 1 -and (Get-Content "$c/C1/report.md" -Raw) -match 'OUT OF SCOPE 1')
-$rb = Get-Content "$b/B1/report.md" -Raw; $rc1 = Get-Content "$c/C1/report.md" -Raw
+Expect 'all pass (+ OUT_OF_SCOPE) -> closed' ((Rec $c 'C1').closed -and (Rec $c 'C1').outOfScope -eq 1 -and (Read-Text "$c/C1/report.md") -match 'OUT OF SCOPE 1')
+$rb = Read-Text "$b/B1/report.md"; $rc1 = Get-Content "$c/C1/report.md" -Raw
 Expect 'report: a FAIL row links its detail, steps / saw once; a note''s observed only in the table' ($rb -match '\| \[details\]\(#c2--s\) \|' -and ([regex]::Matches($rb, 'o C2')).Count -eq 1 -and
   $rc1 -notmatch '## Notes' -and ([regex]::Matches($rc1, 'o C2')).Count -eq 1)
 Copy-Item (Join-Path $src 'skills/crafty/templates.md') (Join-Path $k 'skills/crafty/')   # the prose limits
@@ -56,23 +58,23 @@ Expect "report Tasks row: a 15-word name with 13 MRs -> [id](link) · 13 MRs, pr
 $s12 = "$(1..12) ."; $note = "$s12 $s12 $s12"; $bg = New-Run 'BG' @(@{ code = 'G1'; task = 'TG'; checks = @(1..44 | % { , @("C$_", 'PASS') }) }); $sm = New-Run 'SM' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') })
 $rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; foreach ($i in 0, 1) { $rj.checks[$i].result = 'FAIL'; $rj.checks[$i] | Add-Member verify "confirmed | $(1..(300 - 270 * $i))" }; $rj.checks[0].evidence = @(10..39 | % { $e = "G1-C1_$($_)_e.json"; $null = New-Item "$bg/G1/shots/$e" -Force -Value 1; $e }); & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
 $go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check
-Expect "finalize -Check: 44 checks, 36-word notes, 300- and 30-word verify, 30 links pass prose:900w ($gc); a small one padded over 900 words fails" ($gc -eq 0 -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
+Expect "finalize -Check: 44 checks, 36-word notes, 300- and 30-word verify, 30 links pass prose:900w ($gc); a small one padded over 900 words fails" ($gc -eq 0 -and $go -match 'EXIT=0' -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
 $null = Fin $bg 'G1'; $vm = Get-Content "$bg/G1/report.md" -Raw
-Expect 'finalize: verify status in the cell, a long text in a linked file' ((Get-Content "$bg/G1/evidence/G1-C1_verify_retest.txt" -Raw) -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed · 1 2 3 [^|]*…\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
+Expect 'finalize: verify status in the cell, a long text in a linked file' ((Read-Text "$bg/G1/evidence/G1-C1_verify_retest.txt") -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed · 1 2 3 [^|]*…\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
 # -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
-$rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$rn/R1/shots" | Out-Null
+$rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-TestDir "$rn/R1/shots"
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); $rj.checks[0].what_was_done = 'Opened it, see ShotOne.PNG.'; & $J $rj "$rn/R1/results.json"
-$null = Fin $rn R1 -Check -FixNames; $f1 = Get-Content "$rn/R1/results.json" -Raw; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
+$null = Fin $rn R1 -Check -FixNames; $f1 = Read-Text "$rn/R1/results.json"; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
 & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check; $f2c = $LASTEXITCODE
-$null = Fin $rn R1 -FixNames; $f3 = Get-Content "$rn/R1/results.json" -Raw; $p1 = Test-Path "$rn/R1/finalize.json"
+$null = Fin $rn R1 -FixNames; $f3 = Read-Text "$rn/R1/results.json"; $p1 = Test-Path "$rn/R1/finalize.json"
 [IO.File]::WriteAllBytes("$rn/R1/shots/two.png", [byte[]](1, 2)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence += 'two.png'; $o0 = $rj.checks[0].observed; $rj.checks[0].observed = "$(1..60)"; & $J $rj "$rn/R1/results.json"
 $o1 = Fin $rn R1 -Check | Out-String; $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].observed = $o0; & $J $rj "$rn/R1/results.json"; $null = Fin $rn R1 -Check -FixNames; $o2c = $LASTEXITCODE
-Expect "finalize -Check: prose and off-standard names in one pass, ONE -FixNames run passes ($o2c)" ($o1 -match 'R1 prose check' -and $o1 -match 'two\.png -> R1-C1_' -and $o1 -match 'next: .*ONE run: .*-Check -FixNames' -and $o2c -eq 0)
+Expect "finalize -Check: prose and off-standard names in one pass, ONE -FixNames run passes ($o2c)" ($o1 -match 'R1 prose check' -and $o1 -match 'two\.png -> R1-C1_' -and $o1 -match '(?m)^  rename them all with: & .*pokey\.ps1. finalize .* -Code R1 -Check -FixNames\r?$' -and $o1 -match 'next: .*ONE run: .*-Check -FixNames' -and $o1 -match 'EXIT=1' -and $o2c -eq 0)
 Expect "finalize -FixNames: any-case refs renamed, in the text too; an old name after a rewrite resolves; alone it publishes ($new)" (-not $p0 -and $p1 -and $new -match '^R1-C1_' -and $f1 -match "see $([regex]::Escape($new))\." -and $f1 -notmatch '(?i)[" ]shotone\.png' -and $f2c -eq 0 -and $f3 -match [regex]::Escape($new) -and $f3 -notmatch '(?i)[" ]shotone\.png')
-$previewRun = New-Run 'PV' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') }); $previewJson = @{ out = @(1..3 | ForEach-Object { [ordered]@{ q = 'How do I give my customers access to the portal today'; ans = "first`nsecond part of the answer text"; ms = 1 } }) }
-$null = New-Item "$previewRun/P1/shots/P1-C1_01_answers.json" -Force -Value ($previewJson | ConvertTo-Json -Depth 4); $rj = Read-Json "$previewRun/P1/results.json"; $rj.checks[0].evidence = @('P1-C1_01_answers.json'); & $J $rj "$previewRun/P1/results.json"
-$previewOut = Fin $previewRun P1 -Check | Out-String; $previewCode = $LASTEXITCODE; $null = Fin $previewRun P1; $previewMd = Get-Content "$previewRun/P1/report.md" -Raw
-Expect "finalize: a JSON preview value with newlines stays in its table row, never prose ($previewCode)" ($previewCode -eq 0 -and $previewOut -notmatch 'prose check' -and $previewMd -match '(?m)^\| \*\*C1\*\* .*`out\[0\]\.ans: first second part of the answer text`.*\|\r?$')
+$pvRun = New-Run 'PV' @(@{ code = 'P1'; task = 'TP'; checks = , @('C1', 'PASS') }); $pvJson = @{ out = @(1..3 | ForEach-Object { [ordered]@{ q = 'How do I give my customers access to the portal today'; ans = "first`nsecond part of the answer text"; ms = 1 } }) }
+$null = New-Item "$pvRun/P1/shots/P1-C1_01_answers.json" -Force -Value ($pvJson | ConvertTo-Json -Depth 4); $rj = Read-Json "$pvRun/P1/results.json"; $rj.checks[0].evidence = @('P1-C1_01_answers.json'); & $J $rj "$pvRun/P1/results.json"
+$pvOut = Fin $pvRun P1 -Check | Out-String; $pvCode = $LASTEXITCODE; $null = Fin $pvRun P1; $pvMd = Get-Content "$pvRun/P1/report.md" -Raw
+Expect "finalize: a JSON preview value with newlines stays in its table row, never prose ($pvCode)" ($pvCode -eq 0 -and $pvOut -notmatch 'prose check' -and $pvMd -match '(?m)^\| \*\*C1\*\* .*`out\[0\]\.ans: first second part of the answer text`.*\|\r?$')
 $m = New-Run 'M' @(@{ code = 'M1'; task = 'TA'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'M2'; task = 'TA2'; checks = , @('C1', 'FAIL', 'new') }, @{ code = 'M3'; task = 'TQ'; checks = , @('X1', 'FAIL') })
 $null = Fin $m 'M1'; $null = Fin $m 'M2'; $null = Fin $m 'M3'
 $bA = @(Bugs | Where-Object { $_.parent -eq 'PA' }); $bQ = @(Bugs | Where-Object { $_.parent -eq 'PQ' })
@@ -98,8 +100,6 @@ Expect 'a re-run posts no second results comment' (@((Task 'T4').comments | Wher
 $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @{ code = 'H2'; task = 'T10'; checks = , @('C2', 'FAIL') })
 $null = Fin $h 'H1'; $w = Rec $h 'H1'; $null = Fin $h 'H2'
 Expect 'shared task waits for its sibling, then failedTesting' ($w.waitingFor -contains 'H2' -and (Rec $h 'H2').failedTesting)
-$cap = Invoke-PsTest 'caption-test' ". `$args[0]; Caption 'TA1R-T1_01_new-instructions.png'; Caption 'TA1R-T1_verify_02_after-save.png'" @($Q)
-Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -join '|') -ceq 'New instructions|After save (independent re-test)')
 # run with & after -Check's exit 0: a crashing publish must still exit 1
 $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
 Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
@@ -111,7 +111,7 @@ function Use-FakeUploader([string]$Evidence, [scriptblock]$Run, [string]$Verbs =
   try { & $Run } finally { Remove-Item "$dt/devtools.py"; Move-Item "$dt/devtools_real.py" "$dt/devtools.py" }
 }
 # 300 long evidence paths: the uploader records the command-line length and the files it got
-$lr = New-Run 'L' @(@{ code = 'L1'; task = 'T20'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$lr/L1/shots" | Out-Null
+$lr = New-Run 'L' @(@{ code = 'L1'; task = 'T20'; checks = , @('C1', 'PASS') }); New-TestDir "$lr/L1/shots"
 foreach ($i in 1..300) { [IO.File]::WriteAllBytes("$lr/L1/shots/L1-C1_01_$('long-evidence-name-' * 7)$i.png", [byte[]](1, 2, 3)) }
 $lrc = Use-FakeUploader @'
     ff = a[a.index('--files-from') + 1] if '--files-from' in a else None
@@ -124,7 +124,7 @@ $lrc = Use-FakeUploader @'
 $rec = @(Get-Content "$dt/ev-rec.txt" -ErrorAction SilentlyContinue)
 Expect "300 long evidence paths: one upload, command line < 8191, all 300 files (rc $lrc; $rec)" ($lrc -eq 0 -and $rec.Count -eq 1 -and [int]($rec[0] -split ' ')[0] -lt 8191 -and ($rec[0] -split ' ')[1] -eq '300')
 # an uploader that hosts a folder but drops a cited file: nothing is published
-$ur = New-Run 'U' @(@{ code = 'U1'; task = 'TU'; checks = , @('C1', 'PASS') }); New-Item -ItemType Directory -Force "$ur/U1/shots" | Out-Null
+$ur = New-Run 'U' @(@{ code = 'U1'; task = 'TU'; checks = , @('C1', 'PASS') }); New-TestDir "$ur/U1/shots"
 [IO.File]::WriteAllBytes("$ur/U1/shots/U1-C1_01_screen.png", [byte[]](1, 2, 3))
 $rj = Read-Json "$ur/U1/results.json"; $rj.checks[0].evidence = @('U1-C1_01_screen.png'); & $J $rj "$ur/U1/results.json"
 $uo = Use-FakeUploader "    print('{`"folderId`": `"F`", `"folderLink`": `"x`", `"files`": {}}')" { Fin $ur U1 -NoTracker; "rc=$LASTEXITCODE" }
@@ -132,7 +132,7 @@ $urc = if ("$uo" -match 'rc=(\d+)\s*$') { [int]$Matches[1] }
 Expect "finalize: cited evidence not uploaded throws, nothing published (rc $urc)" ($urc -ne 0 -and $uo -match '1 evidence file\(s\) cited but not uploaded' -and -not (Test-Path "$ur/U1/report.md"))
 $fo = Use-FakeUploader "    sys.stderr.write('gws: 403 quota\n'); sys.exit(3)" { Fin $ur U1 -NoTracker }
 Expect "finalize: a failed upload names the uploader's exit code and stderr" ($fo -match 'failed \(exit 3\): gws: 403 quota')
-$ir = New-Run 'I' @(@{ code = 'I1'; task = 'TI'; checks = @(@('C1', 'FAIL'), @('C2', 'PASS')) }); New-Item -ItemType Directory -Force "$ir/I1/shots" | Out-Null
+$ir = New-Run 'I' @(@{ code = 'I1'; task = 'TI'; checks = @(@('C1', 'FAIL'), @('C2', 'PASS')) }); New-TestDir "$ir/I1/shots"
 $evf = 'I1-C1_01_before.png', 'I1-C1_02_after.png', 'I1-C1_03_resp.json', 'I1-C2_01_list.png'; $evf | ForEach-Object { [IO.File]::WriteAllBytes("$ir/I1/shots/$_", [byte[]](1, 2)) }
 '{"rates":{"child":[567,567]},"original":567}' | Set-Content "$ir/I1/shots/I1-C1_03_resp.json"
 $rj = Read-Json "$ir/I1/results.json"; $rj.checks[0].evidence = $evf[0..2]; $rj.checks[1].evidence = @($evf[3]); & $J $rj "$ir/I1/results.json"
@@ -141,15 +141,15 @@ $null = Use-FakeUploader @'
     ff = [os.path.basename(x) for x in open(a[a.index('--files-from') + 1], encoding='utf-8-sig').read().splitlines() if x.strip()]
     print(json.dumps({'folderId': 'F', 'folderLink': 'https://f/F', 'files': {n: {'id': n, 'link': 'https://f/' + n, 'src': 'https://img/' + n} for n in ff}}))
 '@ { Fin $ir I1 } "'evidence', 'doc'"
-$irp = Get-Content "$ir/I1/report.md" -Raw; $ic = @((Task 'TI').comments | Where-Object { $_.text -match 'Test results' })
+$irp = Read-Text "$ir/I1/report.md"; $ic = @((Task 'TI').comments | Where-Object { $_.text -match 'Test results' })
 Expect 'report: 3 images inline under their checks (caption = id), JSON as a file line; one comment, one link, no evidence list' (([regex]::Matches($irp, '!\[')).Count -eq 3 -and
   $irp -match '(?m)^\| \*\*C1\*\* s \| \*\*FAIL\*\* \|[^\n]*!\[C1: Before\][^\n]*`rates\.child\[1\]: 567`<br>[^\n]*\[full file\]\(https://f/I1-C1_03_resp\.json\)' -and $irp -match '\| Task TI \| 1 \| 1 \| 0 \| failed \|' -and $ic.Count -eq 1 -and ([regex]::Matches($ic[0].text, 'https?://')).Count -eq 1 -and $ic[0].text -notmatch '\*\*Evidence|\]\(')
 # a task with a human testing doc (Result / Evidence empty): finalize on the env fills them (same doc) + a dated "<env> run" section
-$ad = "$(Kd)/TAI-h.md"; New-Item -ItemType Directory -Force (Split-Path $ad), "$k/.state/published" | Out-Null; Set-Content $ad 'v1'
+$ad = "$(Kd)/TAI-h.md"; New-TestDir (Split-Path $ad), "$k/.state/published"; Set-Content $ad 'v1'
 & $J @{ key = 'TAI:testing-doc'; url = $ad; rounds = @(@{ at = '2026-10-29 10:00'; label = ''; ext = '.md'; body = "# Testing: X`n| # | Steps | Expected | Result | Evidence |`n|---|---|---|---|---|`n| C1 | open a | a shown | | |`n| C2 | open b | b shown | | |" }) } "$k/.state/published/TAI_testing-doc.json"
-$ai = New-Run 'AI' @(@{ code = 'Q1'; task = 'TAI'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) }); New-Item -ItemType Directory -Force "$ai/Q1/shots" | Out-Null
+$ai = New-Run 'AI' @(@{ code = 'Q1'; task = 'TAI'; checks = @(@('C1', 'PASS'), @('C2', 'FAIL')) }); New-TestDir "$ai/Q1/shots"
 [IO.File]::WriteAllBytes("$ai/Q1/shots/Q1-C1_01_a.png", [byte[]](1, 2)); $rj = Read-Json "$ai/Q1/results.json"; $rj.checks[0].evidence = @('Q1-C1_01_a.png'); & $J $rj "$ai/Q1/results.json"
-$null = Fin $ai Q1; $at = Get-Content $ad -Raw; $ti = Read-Json (Join-Path (TkPath $k tasks) 'TAI.json')
+$null = Fin $ai Q1; $at = Read-Text $ad; $ti = Read-Json (Join-Path (TkPath $k tasks) 'TAI.json')
 Expect 'finalize: run index (items.Q1) and task index (envRuns, docs.testing-doc) written' ((Read-Json "$ai/index.json").items.Q1.tasks -contains 'TAI' -and
   $ti.envRuns[0].code -eq 'Q1' -and $ti.envRuns[0].fail -eq 1 -and $ti.docs.'testing-doc'.url -eq $ad)
 Expect 'finalize: the human doc (same file) gets the env Result / Evidence per row and a dated "<env> run" section; no report doc' ((Read-Json "$ai/Q1/finalize.json").doc -eq $ad -and
@@ -161,19 +161,19 @@ $null = Fin $nr N1; $rn = Rec $nr N1
 Expect 'NOT_TESTED env-data: status kept, keptOpen, a decision asked' (-not $rn.failedTesting -and (Task 'TN').status -eq 'open' -and $rn.keptOpen -match 'owner decides' -and "$($rn.decision)" -match 'DECISION')
 # ---- review batch 2: pokey.ps1, testy, browser.mjs
 $sd = TkPath $k qa-seats
-New-Item -ItemType Directory -Force (Join-Path $sd 'claims') | Out-Null
-$crd = Join-Path (Kd) 'runs/CL'; New-Item -ItemType Directory -Force $crd | Out-Null
-$me = Get-Process -Id $PID
-& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s'); holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') } (Join-Path $sd 'claims/CL__C1.json')
-& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = (Get-Date).AddHours(-7).ToString('s') } (Join-Path $sd 'claims/CL__C2.json')
+New-TestDir (Join-Path $sd 'claims')
+$crd = Join-Path (Kd) 'runs/CL'; New-TestDir $crd
+$myStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $ago7h = (Get-Date).AddHours(-7).ToString('s')
+& $J @{ run = 'CL'; code = 'C1'; owner = 'w9'; since = $ago7h; holderPid = $PID; holderStart = $myStart } (Join-Path $sd 'claims/CL__C1.json')
+& $J @{ run = 'CL'; code = 'C2'; owner = 'w9'; since = $ago7h } (Join-Path $sd 'claims/CL__C2.json')
 & $J @{ run = 'CL'; code = 'C4'; owner = 'w9'; since = (Get-Date).ToString('s'); holderPid = 999999; seen = '2000-01-01' } (Join-Path $sd 'claims/CL__C4.json')
 $sq = { param($c, [double]$gb = 0.1) pwsh @np $Q seat acquire -Agent "test:$c" -Kind api -RunDir $crd -Code $c -Owner w1 -KeepFreeGB $gb -WaitMinutes 0 | Out-String; "rc=$LASTEXITCODE"; $null = pwsh @np $Q seat release -Agent "test:$c" }
 $o1, $o2, $o4, $o3 = ('C1', 'C2', 'C4' | ForEach-Object { "$(& $sq $_)" }) + "$(& $sq C3 100000)"
 Expect 'seat: a live holder keeps its claim past 6 h; an unknown holder''s old claim is free; a dead holder''s is taken over; still waiting exits 4' ($o1 -match 'ALREADY' -and $o1 -match 'rc=3' -and $o2 -notmatch 'ALREADY' -and
   $o4 -notmatch 'ALREADY' -and (Read-Json (Join-Path $sd 'claims/CL__C4.json')).owner -eq 'w1' -and $o3 -match 'rc=4')
-New-Item -ItemType Directory -Force (Join-Path $sd 'seats') | Out-Null
+New-TestDir (Join-Path $sd 'seats')
 $sw = { param($n, $o) & $J ($o + @{ agent = $n; lease = $n; need = 0; since = (Get-Date).AddHours(-4).ToString('s') }) (Join-Path $sd "seats/$n.json") }
-& $sw L1 @{ holderPid = $PID; holderStart = $me.StartTime.ToUniversalTime().ToString('o') }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
+& $sw L1 @{ holderPid = $PID; holderStart = $myStart }; & $sw L2 @{ holderPid = 999999; seen = '2000-01-01' }; & $sw L3 @{ holderPid = 999999 }
 $null = pwsh @np $Q seat status
 Expect 'seat: a live holder''s 4 h seat stays; a dead one''s goes after the grace' ((Test-Path (Join-Path $sd 'seats/L1.json')) -and -not (Test-Path (Join-Path $sd 'seats/L2.json')) -and (Get-Content (Join-Path $sd 'seats/L3.json') | ConvertFrom-Json).seen); Remove-Item (Join-Path $sd 'seats/L*')
 $sr = New-Run 'SR' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') }, @{ code = 'S2'; task = 'TS'; checks = , @('C2', 'PASS') })
@@ -186,11 +186,11 @@ $null = Fin $ex E1 -Check -ExpectChecks 5; $ec = $LASTEXITCODE
 $null = Fin $ex E1 -Check -ExpectChecks 2; $eok = $LASTEXITCODE
 $er = Fin $ex E1 -Results results-retry.json
 Expect 'finalize: -ExpectChecks refuses a truncated copy; -Results needs -Check' ($eo -match 'truncated copy' -and -not (Test-Path "$ex/E1/finalize.json") -and $ec -eq 1 -and $eok -eq 0 -and $er -match 'only with -Check')
-New-Item -ItemType Directory -Force "$ex/E1/shots" | Out-Null; 'x' | Set-Content "$ex/E1/shots/retryshot.png"; 'y' | Set-Content "$ex/E1/shots/othershot.png"
+New-TestDir "$ex/E1/shots"; 'x' | Set-Content "$ex/E1/shots/retryshot.png"; 'y' | Set-Content "$ex/E1/shots/othershot.png"
 & $J @{ code = 'E1'; checks = @(@{ id = 'C2'; subtask_id = 'TE'; screen = 's'; result = 'PASS'; what_was_done = 'w'; observed = 'o'; evidence = @('retryshot.png') }); findings = @(); setup_changes = @(); data_created = @() } "$ex/E1/results-retry.json" 6
 $before = Get-Content "$ex/E1/results.json" -Raw
 $null = Fin $ex E1 -Check -FixNames -Results results-retry.json
-Expect 'finalize -Results: a scoped retry renames only its own files' (-not (Test-Path "$ex/E1/shots/retryshot.png") -and (Test-Path "$ex/E1/shots/othershot.png") -and (Get-Content "$ex/E1/results-retry.json" -Raw) -match 'E1-C2_' -and (Get-Content "$ex/E1/results.json" -Raw) -eq $before)
+Expect 'finalize -Results: a scoped retry renames only its own files' (-not (Test-Path "$ex/E1/shots/retryshot.png") -and (Test-Path "$ex/E1/shots/othershot.png") -and (Read-Text "$ex/E1/results-retry.json") -match 'E1-C2_' -and (Read-Text "$ex/E1/results.json") -eq $before)
 Remove-Item "$ex/E1/shots" -Recurse -Force; Remove-Item "$ex/E1/results-retry.json" -Force
 $cf = New-Run 'CF' @(@{ code = 'F1'; task = 'TF'; checks = , @('C1', 'PASS') })
 New-Task TF 'Task F' $null 'in test'
@@ -212,16 +212,17 @@ Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and
 $kl = "$k/skills/crafty/kit.local.json"; '{"tracker":{"bugPrefix":"[Defect]"}}' | Set-Content $kl
 foreach ($x in @('PY', 'Ask Y'), @('TY', 'T', 'PY'), @('BY', '[Defect] Ask Y — new defects (1)', 'PY')) { New-Task @x }
 $by = New-Run 'BY' @(@{ code = 'Y1'; task = 'TY'; checks = , @('X1', 'FAIL', 'new') })
-(Get-Content "$by/run.json" -Raw) -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
-(Get-Content "$by/Y1/results.json" -Raw) -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
+(Read-Text "$by/run.json") -replace '"code":', '"guideId": "G4", "code":' | Set-Content "$by/run.json"
+(Read-Text "$by/Y1/results.json") -replace '"evidence":', '"x":' | Set-Content "$by/Y1/results.json"
 $null = Fin $by 'Y1'; $null = pwsh @np $Q retest -RunDir $by -Task BY -Code Y2
-Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kept; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and (Task 'BY').description -match '(?m)^Source: qa-BY \[kit:bug:qa-BY\]' -and (Get-Content "$by/run.json" -Raw) -match 'RETEST Ask Y — new' -and (Get-Content "$by/Y1/report.md" -Raw) -notmatch 'docs\.google'); Remove-Item $kl
-& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
-$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 2>&1 | Out-String; $ac = $LASTEXITCODE
+Expect 'bugPrefix: an open [Defect] under the ask gets the section, its name kept; retest strips it; no evidence key; guideId' ((Task 'BY').name -eq '[Defect] Ask Y — new defects (1)' -and (Task 'BY').description -match '(?m)^Source: qa-BY \[kit:bug:qa-BY\]' -and (Read-Text "$by/run.json") -match 'RETEST Ask Y — new' -and (Read-Text "$by/Y1/report.md") -notmatch 'docs\.google'); Remove-Item $kl
+& $J @{ targets = @{ tq = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tw = @{ web = 'http://127.0.0.1:9'; auth = @{ type = 'none' } }; tx = @{ api = 'http://127.0.0.1:9'; auth = @{ type = 'key' }; users = @{ admin = 1 } } } } (Join-Path $k 'skills/pokey/targets.local.json') 5
+$ao = Px $Q api -Target tq -Path '/x' -TimeoutSec 5 -Save "$(Kd)/q.json" 2>&1 | Out-String; $ac = $LASTEXITCODE; $bs = Px $Q api -Target tq -Path '/x' -Save "Q-T1_01`b_poll" 2>&1 | Out-String; $gx = Invoke-PsTest gx ". `$args[0]; function Invoke-ApiExtra { param(`$Path, `$Target, `$Save, `$OutDir) `"`$OutDir|`$Save`" }; Invoke-Api /x -Target tx -Save D:/z/q.json" @($Q)
 $uo = Px $Q ui dump 2>&1 | Out-String; $uc = $LASTEXITCODE   # phone lanes are the goody android-swarm
 $xo = foreach ($v in 'deployed', 'annotate') { $o = Px $Q $v 2>&1 | Out-String; "$LASTEXITCODE $o".Trim() }
 $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
+Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 # browser.mjs: mocks, then local fixture servers
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
@@ -261,7 +262,7 @@ writeFileSync(`${S}/tabs-u____v__t__a.json`, JSON.stringify({ _key: 'u__v|t|a' }
 await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs-u____v__t__a.json`) && !existsSync(`${S}/tabs-gone.json`)))
 '@
   Expect-Each $res 'browser.mjs tabs: #' 'waits', 'ninth', 'fails', 'orphans', 'sweep'
-  Expect 'browser.mjs: never logs out' ((Get-Content "$qk/browser.mjs" -Raw) -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
+  Expect 'browser.mjs: never logs out' ((Read-Text "$qk/browser.mjs") -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
   # fixture app: form login, relogin (Chrome); sso-steps / other engines name their goody
   $res = NodeT auth ($LoginApp + @'
 const [TF, SLOW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '123456' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]

@@ -341,5 +341,7 @@ $l1 = & $runs; $dn = Px $O launch -Done -RunId wf_b2 | Out-String; $null = Px $O
 Expect 'recover: a relaunch''s lineage: the first launch, its ancestors'' run names and ids' ($ln -eq '10:00|wf-a1.resume-2633|wf_b2,wf_a1')   # a typed launch's run name only from its transcript (none here)
 Expect 'recover: a relaunch replaces its original, same agent + items once (phases stay); launch -Done closes the lineage, never a live relaunch; a closed relaunch hides its parent' (
   "$l1|$l2|$l3" -eq 'fix-r2 ph5 ph6 wf-a1.resume-2633 wf-c3.resume-1|fix-r2 ph5 ph6 wf-c3.resume-1|ph5 ph6 wf-c3.resume-1' -and -not @('wf_a1', 'wf_b2', 'p6-1', 'resume-2633' | Where-Object { $dn -notmatch $_ }).Count)
+$cap = Invoke-PsTest 'caption-test' ". `$args[0]; Caption 'TA1R-T1_01_new-instructions.png'; Caption 'TA1R-T1_verify_02_after-save.png'" @(Join-Path $k 'skills/pokey/pokey.ps1')
+Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -join '|') -ceq 'New instructions|After save (independent re-test)')
 Remove-TestKit $k
 Complete-Tests
