@@ -64,7 +64,8 @@ $hp = Px (Join-Path $k 'skills/bossy/bossy.ps1') setup --help 2>&1 | Out-String;
 Expect 'decide: unique ids, -Ask payload, -Fyi list; board check w/o -Worktree exit 2; setup --help exit 0' ($i1 -ne $i2 -and "$($ak.ids)" -eq $i1 -and $ak.questions[0].header -eq 'A1' -and $ak.questions[0].options[0].label -eq 'B: b (Recommended)' -and $fy -match "^1\. qA2 \(``$i2``\): B b \(recommended\) · A a" -and $bc -eq 2 -and $hc -eq 0 -and $hp -match 'coordinator \+ kit commands' -and $hp -notmatch 'setup:')
 $dx2 = Px $O deploy plan 2>&1 | Out-String; $dxc = $LASTEXITCODE
 $pp = Px $O precommit 2>&1 | Out-String; $ppc = $LASTEXITCODE
-Expect 'deploy / precommit without their goody (deploys, kit-admin): its one line, exit 1' ($ppc -eq 1 -and $pp.Trim() -eq 'bossy.ps1 precommit is a goody: run kitbag.py goody add kit-admin' -and $dxc -eq 1 -and $dx2.Trim() -eq 'bossy.ps1 deploy is a goody: run kitbag.py goody add deploys')
+$tr = Px $O track rollup 2>&1 | Out-String; $trc = $LASTEXITCODE
+Expect 'no goody: its line, exit 1' ("$ppc$dxc$trc" -eq '111' -and "$pp$dx2$tr" -replace '\s+', ' ' -match '^(\S+ \S+ is a goody: run kitbag.py goody add \S+ ){3}$' -and "$pp$dx2$tr" -match '(?s)kit-admin.+deploys.+task-rollup')
 $ld = TkPath $k launches -Create
 # launch -Self <script> <run> <json> [fnv] [args]
 $self = { param($s, $run, $json, $fnv) $f = Join-Path (Kd) "args-$(Get-Random).json"; [IO.File]::WriteAllText($f, $json); pwsh @np $O launch -Self -Script $s -Run $run -ArgsFile $f -Fnv ($fnv ?? (& { . $O; Get-KitFnv $json })) @args | Out-String }
@@ -255,7 +256,7 @@ Expect 'resume offline: says so, exit 1, nothing relaunched' ($off.code -eq 1 -a
 Expect 'resume after a crash: brief at the next step, done verified, diff kept; join: CHECKPOINT' ($b1 -match 'Start AT step: goals' -and $b1 -match 'commit \S+ present' -and $b1 -match '\| b\.txt \|' -and (Test-Prose kit-report "$ag/c1/resume-brief.md") -and $rj -match "CHECKPOINT: start at step 'goals'" -and $rs -match 'RELAUNCH .*buildy\.js')
 $rl = @($rs -split "`n" | Where-Object { $_ -match 'RELAUNCH .*finished steps skipped' } | ForEach-Object { ($_ -replace '^.*args: (\{.*\}) \}\)\s*$', '$1') | ConvertFrom-Json -AsHashtable })
 Expect 'resume after MR opened: starts at review, MR verified; an all-merged run still relaunches' ($b2 -match 'Start AT step: review' -and $b2 -match 'merge_requests/5 \| MR opened' -and $rs -match '(?s)run cm.*all 1 MR\(s\) merged: the relaunch')
-Expect 'recover: host + tracker area state -> RELAUNCH skip list (open: build; merged + promoted: all), item table in the brief' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and
+Expect 'recover: host + tracker state -> RELAUNCH skip list (open: build; merged + promoted: all), brief item table' ($rl.Count -eq 2 -and $rl[0].mode -eq 'resume' -and
   "$($rl.resume.C2.skip)" -eq 'build' -and "$($rl.resume.C1.state)" -eq 'start' -and "$($rl.resume.C3.skip)" -eq 'build review ci merge testing-doc tracker' -and
   (Get-Content (Join-Path (TkPath $k launches) 'cm.resume.md') -Raw) -match '\| tsk123 g/api!6 \| done \| build, .*, tracker \|  \| g/api!6 merged \| promoted')
 $ps = if ((Px $O board join -Agent P1 -Run pr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O board join -Agent P2 -Run pr; $null = & $self buildy.js pr '{"brief":"C:/b/pr.md"}'

@@ -32,7 +32,6 @@ line per step, kit call, build, guard block, signal, decision, deploy; supervise
 files). Tunables (lease grace, timeouts, gate memory, heartbeat base, budget estimates) learn from live data:
 `bossy.ps1 param show` (value, default, last change, next risky step; supervise -AutoFix learns: INFO per change). Launch by path:
 `Workflow({ scriptPath: "<kit>/workflows/<wf>.js", args })`, always with `kitDir` (absolute) and `mandate` (the owner's words).
-Invoking the coordinator is the only action needed: all steps run autonomously to completion without asking confirmation.
 
 **Dev flow** (/buildy = `devy` -> `revy` -> CI -> merge -> `devy` (doc, tracker), or one `devy`, or you on a small change;
 steps: AGENTS.md "The two flows"): merged work waits silently (`deploy request`) until a person says `deploy <env>` -> E5.
@@ -57,6 +56,7 @@ unpublished items -> `pokey.ps1 finalize` (`bossy.ps1 recover`).
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
 2. **Brief:** spawn `briefy` (kind brief, bugs: bugfix; the owner's words verbatim): brief, `<brief>.contracts.md`, impact check,
    openQuestions, launch args; then one `revy` (kind plan) on it; openQuestions -> `/buildy` args `openQuestions` (phase Spike).
+   Subtasks of a parent: `bossy.ps1 track rollup -Task <parent> -From <brief dir>` (goody task-rollup).
 3. **Status:** before the first agent of ANY task (spikes, analysis, docs too): `crafty.ps1 tracker status <task> inProgress`.
    **Launch** `/buildy` with `{ brief, agents:[{id, items, area, dependsOn?, migrations?}], mode, kitDir, mandate, holdMerge?,
    openQuestions? }`; then

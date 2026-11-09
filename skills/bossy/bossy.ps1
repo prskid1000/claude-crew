@@ -9,6 +9,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Json]   agent budget, run cap + spend
   track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged (add: at once)
+    | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists (goody task-rollup)
   supervise [-AutoFix] [-Brief] [-Json] [-Takeover] [-Session] | -Ack '<flag start>' [-Reason]   heartbeat
   status [-Watch [-Seconds 30]] [-Json] [-Session]   one row per agent / run: ACTIVE WAITING FINISHED STUCK STOPPED, then
     one row per resource: holder, since, last seen, last used (files only)
@@ -21,10 +22,10 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
-Sections: L30 init · L48 board · L223 budget · L251 launch · L517 recover · L600 pause · L644 resume · L702 program · L746 param ·
-  L752 track · L1064 supervise · L1363 report · L1442 audit · L1502 storage · L1712 bugbrief · L1814 cleanup · L1936 learn ·
-  L1966 decide · L2034 health · L2093 retro due · L2103 tidy · L2172 the kit origin's main and goodies · L2188 setup ·
-  L2255 guard-sendmessage
+Sections: L31 init · L49 board · L224 budget · L252 launch · L518 recover · L601 pause · L645 resume · L703 program · L747 param ·
+  L753 track · L1067 supervise · L1366 report · L1445 audit · L1505 storage · L1715 bugbrief · L1817 cleanup · L1939 learn ·
+  L1969 decide · L2037 health · L2096 retro due · L2106 tidy · L2175 the kit origin's main and goodies · L2191 setup ·
+  L2258 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -752,9 +753,9 @@ $o = @(Invoke-KitParamVerb $Action $Key $Value $Context -Json:$Json); $o; if ("$
 # ---- track: task <-> MRs; promoted once all merge
 function ProjPath($repo) { if ($repo -match '/') { $repo } elseif ($KitConf.GitlabGroup) { "$($KitConf.GitlabGroup)/$repo" } else { $null } }
 # search ignores in=source_branch
-function Find-TaskMrs($task) {
+function Find-TaskMrs($task, $repos = $KitConf.TrackerRepos) {
   $tagged = "$($KitConf.TrackerTag)$task"
-  @(foreach ($r in @($KitConf.TrackerRepos)) {
+  @(foreach ($r in @($repos)) {
       $pp = ProjPath $r; if (-not $pp) { continue }
       $enc = $pp -replace '/', '%2F'
       @(@(Invoke-HostApi "projects/$enc/merge_requests?search=$([uri]::EscapeDataString($tagged))&in=title&state=all&per_page=50") +
@@ -773,7 +774,7 @@ function Get-TaskMrBranches([string[]]$Tasks) {
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() } }
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore')][string]$Action = 'show', [string]$Reason, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'rollup')][string]$Action = 'show', [string]$Reason, [string]$From, [switch]$Rebuild, [switch]$Force, [string]$Task, [string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
@@ -1045,7 +1046,9 @@ switch ($Action) {
     if ($script:merged) {
       Start-Detached (Resolve-Tool pwsh) @('-NoProfile', '-NonInteractive', '-File', $(if ($KitIsWindows) { "`"$($KitCmd.orch)`"" } else { $KitCmd.orch }), 'cleanup', '-WorktreesOnly', '-WorktreeIdleHours', '0', '-Quiet')   # Windows: quoted (spaces)
     }
+    try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # goody task-rollup: parents' delivery sections
   }
+  'rollup' { $rollFn = Assert-KitExtra Invoke-TaskRollup 'track rollup' 'task-rollup'; & $rollFn -Task $Task -From $From -Quiet:$Quiet }
 }
 }
 
