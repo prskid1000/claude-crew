@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L46 supervise · L240 shells · L363 page · L604 release · L633 lines · L658 cleanup
+Sections: L13 builds · L46 supervise · L240 shells · L363 page · L603 release · L632 lines · L657 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -537,9 +537,8 @@ function Format-KitSuperviseHtml($j) {
     "var q=d.getElementById('q');function fl(){var v=q.value.toLowerCase();S.setItem('kc-q',q.value);d.querySelectorAll('.f').forEach(function(x){x.hidden=!!v&&x.textContent.toLowerCase().indexOf(v)<0});d.querySelectorAll('tbody.grp').forEach(function(g){g.hidden=!g.querySelector('tr.f:not([hidden])')})}q.oninput=fl;q.value=S.getItem('kc-q')||'';if(q.value)fl();d.addEventListener('keydown',function(x){if(x.key=='/'&&d.activeElement!=q){x.preventDefault();q.focus()}})})()"
   $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span>Last sweep <b>$($at.ToString('yyyy-MM-dd HH:mm'))</b></span><span id=age class=chip data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span>$(& $e $j.next)</span></div><div class=sp></div>" +
     "<input id=q type=search placeholder='Filter flags and agents  ( / )' aria-label='Filter flags and agents'><button id=ar type=button aria-pressed=true>Auto-refresh 60 s</button><button id=tt type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></header>"
-  $main = "<main class=wrap>$kpi<div class=cols><div>$(& $section 'flags' 'Flags' ($nAct + $nWatch) $flagHtml)</div><div>$(& $section 'health' 'Machine' $null $gauges)$(& $section 'history' "Last $($hist.Count) sweeps" $null $histHtml)</div></div>" +
+  $main = "<main class=wrap>$kpi<div class=cols><div>$(& $section 'flags' 'Flags' ($nAct + $nWatch) $flagHtml)</div><div>$(& $section 'health' 'Machine' $null $gauges)$(& $section 'history' "Last $($hist.Count) sweeps" $null $histHtml)$(& $section 'resources' 'Resources and leases' @($j.resources | Where-Object { $_ }).Count $resHtml)$(& $section 'shells' 'Shells' @($j.shells | Where-Object { $_ }).Count $shellHtml)</div></div>" +
     (& $section 'agents' 'Agents' $agents.Count $agentHtml) + (& $section 'timeline' 'Today' $lanes.Count $ganttHtml) + (& $section 'stats' 'Statistics' $null $statsHtml) +
-    "<div class=cols2>$(& $section 'resources' 'Resources and leases' @($j.resources | Where-Object { $_ }).Count $resHtml)$(& $section 'shells' 'Shells' @($j.shells | Where-Object { $_ }).Count $shellHtml)</div>" +
     (& $section 'settings' 'Settings' $setRows.Count $setHtml -Closed) + (& $section 'sweep' 'Sweep log' @($j.sweep).Count "<pre>$(& $e (@($j.sweep) -join "`n"))</pre>" -Closed) +
     "<footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json</footer></main>"
   "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$head$main<script>$js</script></body></html>"
@@ -569,7 +568,7 @@ function Get-KitSupervisePageCss {
   '.cnt{font-size:11px;color:var(--mt);background:var(--sf2);border-radius:999px;padding:0 7px}.bd{padding:0 16px 16px}' +
   '.flag{border:1px solid var(--ln);border-left:3px solid var(--watch);border-radius:8px;padding:10px 12px;margin-bottom:8px}.flag.ACT{border-left-color:var(--act);background:color-mix(in srgb,var(--act) 5%,var(--sf))}' +
   '.flag .h{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mt)}.flag .w{margin:6px 0 4px;word-break:break-word}.flag .n{font-size:12.5px;color:var(--mt);word-break:break-word}.flag .n b{color:var(--sage2);margin-right:4px}.dot{opacity:.5}' +
-  '.info{list-style:none;margin:12px 0 0;padding:0;font-size:12.5px;color:var(--mt)}.info li{padding:4px 0 4px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
+  '.info{list-style:none;margin:12px 0 0;padding:0;font-size:12.5px;color:var(--mt);max-height:360px;overflow-y:auto;overscroll-behavior:contain}.info li{padding:4px 0 4px 14px;position:relative;word-break:break-word}.info li::before{content:"";position:absolute;left:2px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--sage)}' +
   '.empty{margin:0;padding:18px;text-align:center;color:var(--mt);border:1px dashed var(--ln);border-radius:8px;font-size:12.5px}' +
   '.gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.gauge{margin:0;text-align:center}.gauge svg{width:100%;max-width:140px}.gauge circle{fill:none;stroke-width:6.5;stroke-linecap:round}.gauge .trk{stroke:var(--sf2)}.gauge .val{stroke:currentColor}' +
   '.gauge circle.s-act{stroke:var(--sage)}.gauge circle.s-fin{stroke:var(--slate)}.gauge circle.s-stuck{stroke:var(--act)}.gauge circle.s-oth{stroke:var(--watch)}.gauge circle[stroke-dashoffset]{stroke-linecap:butt}' +
