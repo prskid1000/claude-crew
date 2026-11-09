@@ -14,6 +14,8 @@ Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; 
   Fewer words, same facts: dense and specific. Code comment: 1 line saying why.
 - Cut greetings, preamble, recaps, hedges, praise, filler, closing summaries. A longer-than-needed text is a defect.
 - Chat to owner: dense text only (`<thing> <state/action> <reason>` -> next step); no Mermaid, SVG gauges or box art in chat turns. Visuals live in dashboard (supervise-report.html) and report artifacts.
+- **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
+  sibling the same way (all adapters, goodies, templates, ports, docs that produce or describe it), a test each; list what changed.
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,

@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L862 status · L1091 supervise sweep ·
-  L1162 supervise report · L1258 tracker · L1574 prior · L1596 ask bugs · L1739 git-host · L1896 kitlog · L2014 params ·
-  L2314 entry-scripts
+  L1162 supervise report · L1258 tracker · L1574 prior · L1596 ask bugs · L1767 git-host · L1924 kitlog · L2042 params ·
+  L2342 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1677,6 +1677,34 @@ function Format-KitMdLink([string]$Url, [string]$Text = 'open') { if ($Url -matc
 function ConvertTo-KitPlainText([string]$Text) {
   $t = [regex]::Replace($Text, '\[([^\]\n]+)\]\((https?://[^)\s]+)\)', { if ($args[0].Groups[1].Value -eq $args[0].Groups[2].Value) { $args[0].Groups[2].Value } else { "$($args[0].Groups[1].Value) ($($args[0].Groups[2].Value))" } })
   [regex]::Replace(($t -replace '\*\*([^*\n]+)\*\*', '$1'), '`([^`\n]+)`', '$1')
+}
+# Markdown -> blocks for trackers storing rich text (ADF, wiki, HTML): table (only with a |---| rule), item, para
+function ConvertFrom-KitMarkdown([string]$Text) {
+  $mdLines = @(("$Text" -replace "`r", '') -split "`n")
+  for ($i = 0; $i -lt $mdLines.Count; $i++) {
+    $t = $mdLines[$i].Trim(); if (-not $t) { continue }
+    if ($t -match '^\|.*\|$' -and $i + 1 -lt $mdLines.Count -and $mdLines[$i + 1].Trim() -match '^\|(\s*:?-+:?\s*\|)+$') {
+      $tblRows = [Collections.Generic.List[object]]::new()
+      for ($j = $i; $j -lt $mdLines.Count -and $mdLines[$j].Trim() -match '^\|.*\|$'; $j++) {
+        if ($j -eq $i + 1) { continue }; $r = $mdLines[$j].Trim()
+        $tblRows.Add(@($r.Substring(1, $r.Length - 2) -split '(?<!\\)\|' | ForEach-Object { ($_ -replace '\\\|', '|').Trim() }))
+      }
+      [pscustomobject]@{ type = 'table'; rows = $tblRows.ToArray() }; $i = $j - 1; continue
+    }
+    if ($t -match '^[-*+]\s+(?<s>.*)$') { [pscustomobject]@{ type = 'item'; text = $Matches.s }; continue }
+    [pscustomobject]@{ type = 'para'; text = $t }
+  }
+}
+# inline Markdown -> runs (mark: '' / bold / code / link with url / br), adjacent plain text joined
+function ConvertFrom-KitMdInline([string]$Text) {
+  $runs = [Collections.Generic.List[object]]::new()
+  foreach ($m in [regex]::Matches("$Text", '\*\*(?<b>[^*\n]+)\*\*|`(?<c>[^`\n]+)`|\[(?<lt>[^\]\n]+)\]\((?<lu>https?://[^)\s]+)\)|(?<br><br\s*/?>)|(?<t>[^*`\[<]+|.)')) {
+    $g = $m.Groups
+    $run = if ($g['b'].Success) { @{ text = $g['b'].Value; mark = 'bold' } } elseif ($g['c'].Success) { @{ text = $g['c'].Value; mark = 'code' } }
+    elseif ($g['lt'].Success) { @{ text = $g['lt'].Value; mark = 'link'; url = $g['lu'].Value } } elseif ($g['br'].Success) { @{ text = ''; mark = 'br' } } else { @{ text = $m.Value; mark = '' } }
+    if (-not $run.mark -and $runs.Count -and -not $runs[-1].mark) { $runs[-1].text += $run.text } else { $runs.Add($run) }
+  }
+  $runs.ToArray()
 }
 # rows: , @(cells)
 function Format-KitMdTable([string[]]$Head, $Rows) {

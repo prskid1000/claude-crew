@@ -345,5 +345,7 @@ $cap = Invoke-PsTest 'caption-test' ". `$args[0]; Caption 'TA1R-T1_01_new-instru
 Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -join '|') -ceq 'New instructions|After save (independent re-test)')
 $ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }   # moved from guard.tests (its cap)
 Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
+$mdOut = & { . (Lib); $b = @(ConvertFrom-KitMarkdown "x`n| A |`n|---|`n| [x](https://u) a \| b<br>c |`n- i`n|no|"); $c = $b[1].rows[1][0]; "$($b.type)|$c|$((ConvertFrom-KitMdInline $c).mark)" -replace '\s+', ' ' }
+Expect "markdown: a table needs its rule row; items, paras; inline link, br ($mdOut)" ($mdOut.Trim() -eq 'para table item para|[x](https://u) a | b<br>c|link br')
 Remove-TestKit $k
 Complete-Tests
