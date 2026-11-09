@@ -14,14 +14,14 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1012 pipes · L1062 guard · L1666 dir · L1676 checkpoint ·
-  L1701 prior · L1737 tracker · L1794 host
+Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1661 dir · L1671 checkpoint ·
+  L1695 prior · L1731 tracker · L1788 host
 #>
 #Requires -Version 7
-# ---- init: verb arguments, the gate mutex, lib.ps1
+# ---- init: args, gate mutex, lib.ps1
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
-# the gate mutex; an abandoned one is ours
+# an abandoned gate mutex is ours
 function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
 # ---- wt: a worktree per agent; deps linked, never installed
@@ -40,7 +40,7 @@ function Resolve-Wt($d) {
   $d = (Resolve-Path -LiteralPath $d).Path.TrimEnd('\', '/')
   $pre = git -C $d rev-parse --show-prefix 2>$null   # '' only at a worktree top
   if ($LASTEXITCODE -or "$pre".Trim()) {
-    # a worktrees root: its nearest git top is the superproject, never the agent's worktree
+    # a worktrees root resolves to the superproject
     $kids = @(Get-ChildItem -LiteralPath $d -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.git') -PathType Leaf } | Select-Object -First 5 -ExpandProperty FullName)
     if ($kids.Count) { throw "$d holds worktrees, it is not one: pass -Dir <worktree>, e.g. $($kids -join ', ')" }
     throw "$d is not the top of a git worktree (top: $(git -C $d rev-parse --show-toplevel 2>$null)); pass the worktree folder as -Dir"
@@ -48,8 +48,8 @@ function Resolve-Wt($d) {
   $d
 }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
-# repos[].regenerate: a rebase conflict only in generated files -> the target's copy, rebase finished, the run commands, last commit
-# amended, pushed; returns 'regenerated ...' or the refusal reason (a failing command: back to the plain conflict)
+# repos[].regenerate: generated-only rebase conflict -> target's copy + run commands, rebase done, last commit amended + pushed;
+# returns 'regenerated ...' or the refusal reason (a failing command: back to the plain conflict)
 function Sync-Generated($d, $t, $head0) {
   $gen = @(Get-RepoConf ("$(git -C $d remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1] 'regenerate' @())
   if (-not $gen.Count) { return '' }
@@ -61,13 +61,13 @@ function Sync-Generated($d, $t, $head0) {
     if ($sig -eq $last) { $other = $u }
     if (-not $u.Count -or $other.Count) { return "not only generated files conflict ($($other -join ', '))$(if ($taken) { "; took the target's $($taken -join ', '): after the rebase run repos[].regenerate run" })" }
     $last = $sig
-    foreach ($f in $u) {   # in a rebase, ours = the target side; none = the target deleted it
+    foreach ($f in $u) {   # rebase: ours = target; none = target deleted it
       git -C $d checkout -q --ours -- $f 2>$null
       if ($LASTEXITCODE) { git -C $d rm -q -- $f 2>$null } else { git -C $d add -- $f }
     }
     $taken = @($taken + $u | Select-Object -Unique)
     git -C $d diff --cached --quiet
-    $step = if ($LASTEXITCODE) { 'continue' } else { 'skip' }   # a commit that only changed the generated file
+    $step = if ($LASTEXITCODE) { 'continue' } else { 'skip' }   # only generated changes
     $null = git -C $d -c core.editor=true rebase "--$step" 2>&1
   }
   if (-not $taken.Count) { return 'the rebase stopped without a conflict' }
@@ -127,7 +127,7 @@ function Exclude-Links($path, $links) {
 switch ($Action) {
   'new' {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch -Target -Name' }
-    if (-not (Test-Path -LiteralPath $Repo)) {   # a repo name or alias: kit.local.json repos[].checkout, else <reposRoot>/<name>
+    if (-not (Test-Path -LiteralPath $Repo)) {   # name or alias: repos[].checkout, else <reposRoot>/<name>
       $hit = @((Get-RepoConf $Repo checkout $null), (Join-Path $KitConf.ReposRoot $Repo)) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
       if (-not $hit) { throw "no repo $Repo (not a folder, no kit.local.json repos[] checkout, not under $($KitConf.ReposRoot)): pass the checkout path" }
       $Repo = $hit
@@ -135,18 +135,18 @@ switch ($Action) {
     $Repo = (Resolve-Path $Repo).Path
     if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
-    if (Test-Path $path) {   # name the blocker: its branch, last commit, board holder
+    if (Test-Path $path) {   # name the blocker
       $bh = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and "$($_.worktrees)" -match [regex]::Escape($path) } | ForEach-Object agent)
       throw "$path exists (branch $(git -C $path branch --show-current 2>$null), last commit $(git -C $path log -1 --format=%cr 2>$null), holder: $(if ($bh) { $bh -join ', ' } else { 'none on the board' })): resume there (wt status -Dir $path), pick another -Name, or with no holder: wt remove -Dir $path"
     }
     $tk = if ($Task) { $Task } elseif (($rx = Get-KitTaskTagRx) -and $Branch -match $rx) { $Matches.id }   # check before create (crafty.ps1 prior)
-    try { Assert-KitPrior $tk $Repo "wt new $Branch" $Override $Branch } catch {   # the refusal carries the commands to run next
+    try { Assert-KitPrior $tk $Repo "wt new $Branch" $Override $Branch } catch {
       $priorWhy = "$($_.Exception.Message)"; $wtCmd = "crafty.ps1 wt new -Repo '$Repo' -Target $Target -Name $Name$(if ($Task) { " -Task $Task" })"
       $reuseBr = @(if ($priorWhy -match 'already exists') { (Read-KitState (Get-KitTaskFile $tk)).prior.found | Where-Object { $_.kind -eq 'branch' -and ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] } | ForEach-Object { "$($_.ref)" -replace '^origin/' } | Select-Object -Unique })
       throw (@($priorWhy) + @($reuseBr | ForEach-Object { "  reuse: $wtCmd -Branch $_" }) + @(if ($priorWhy -match 'already exists') { "  new work on purpose: $wtCmd -Branch $Branch -Override '<why>'" }) -join "`n")
     }
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
-    # a missing configured dep source is an error, no fallback
+    # a missing configured dep source: error
     $r = $null
     $kc = $KitConf.ConfigFile
     if ($kc -and (Test-Path $kc)) {
@@ -161,7 +161,7 @@ switch ($Action) {
       }
     }
     New-Item -ItemType Directory -Force $Root | Out-Null
-    # else the root shows as untracked in an outer repo
+    # else untracked in an outer repo
     $outer = git -C $Root rev-parse --show-toplevel 2>$null
     if ($LASTEXITCODE -eq 0 -and $outer) {
       $outer = (Resolve-Path $outer.Trim()).Path; $rootFull = (Resolve-Path $Root).Path
@@ -173,16 +173,16 @@ switch ($Action) {
       }
     }
     G -C $Repo fetch -q origin $Target | Out-Null
-    $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name: suffix match
+    $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name would suffix-match
     git -C $Repo show-ref --verify --quiet "refs/heads/$Branch"
-    # reuse the local branch: -B would lose unpushed commits
+    # -B would lose unpushed commits
     if ($LASTEXITCODE -eq 0) { G -C $Repo worktree add $path $Branch | Out-Null; "local branch $Branch exists: checked out as is$(if ($remoteBranch) { " (also on origin: compare before pushing)" })" }
     elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch on origin: checked out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
     $src = if ($LinkFrom) { (Resolve-Path $LinkFrom).Path } else { $Repo }
     $links = @(Add-DepLinks $path $src $Target)
-    # linkPaths: git-ignored files every worktree needs
+    # linkPaths: git-ignored files
     foreach ($lp in @($r.linkPaths) | Where-Object { $_ }) {
       $from = @((Join-Path $src $lp), (Join-Path $Repo $lp)) | Where-Object { Test-Path $_ } | Select-Object -First 1
       $to = Join-Path $path $lp
@@ -214,7 +214,7 @@ switch ($Action) {
     $Dir = Resolve-Wt $Dir
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
-    # a worktree not made by new lacks .husky/_ and hook deps
+    # a hand-made worktree lacks .husky/_ and hook deps
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
     $cw = git --git-dir="$common" config core.worktree
     $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
@@ -236,7 +236,7 @@ switch ($Action) {
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
-    $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # the subject style is the repo's commitlint's; WIP commits (pause, stash guard) pass
+    $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is commitlint's; WIP commits pass
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { "commit refused: $($pf.Count) prose finding(s) above: rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
     git -C $Dir @c commit -m $Message
     exit $LASTEXITCODE
@@ -251,7 +251,7 @@ switch ($Action) {
     $l = Meta $Dir 'links'; if ($l) { "linked: $($l -join ', ')" }
   }
   'remove' {
-    # never the current folder: it may be a main tree or the live kit
+    # never cwd: may be a main tree or the live kit
     if ($Name -and -not $Dir) {
       $roots = if ($Root) { @($Root) } else { $KitConf.WorktreeRoots }
       $hits = @(foreach ($rt in $roots) { Get-ChildItem -LiteralPath $rt -Directory -ErrorAction SilentlyContinue | Where-Object { $(if ($Repo) { $_.Name -eq "$Name-$(Split-Path $Repo -Leaf)" } else { $_.Name -eq $Name -or $_.Name.StartsWith("$Name-", [StringComparison]::OrdinalIgnoreCase) }) } })
@@ -260,7 +260,7 @@ switch ($Action) {
     }
     if (-not $Dir) { throw 'remove needs -Dir <worktree> or -Name <name from wt new>' }
     if ($Dir -match '\$\{?\w') { throw "wt remove -Dir '$Dir' holds an unexpanded variable ($($Matches[0])): expand it in the caller (double-quoted path, no single quotes or escaped `$)" }
-    if (-not (Test-Path -LiteralPath $Dir)) {   # removed by hand: only a worktree git still lists (a typo stays an error); its repo is pruned
+    if (-not (Test-Path -LiteralPath $Dir)) {   # removed by hand: prune it if git still lists it, else error (typo)
       $want = [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') -replace '\\', '/'
       $own = @(@(if ($Repo) { $Repo } else { @(@(Get-KitValue 'repos' @()).checkout) + $KitConf.Kit }) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Where-Object { @(git -C $_ worktree list --porcelain 2>$null) -contains "worktree $want" })
       if (-not $own.Count) { throw "no such folder: $Dir (and no repo lists it as a worktree)" }
@@ -270,7 +270,7 @@ switch ($Action) {
     $gd = (git -C $Dir rev-parse --path-format=absolute --git-dir).Trim()
     if ($gd -eq (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim() -or $Dir -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path.TrimEnd('\', '/')) { throw "$Dir is a main working tree or the running kit: wt remove only removes linked worktrees" }
     $links = @(@(@(Meta $Dir 'links') | Where-Object { $_ -and (Test-Path $_) }) + @(Get-DirLinks $Dir 4 | ForEach-Object { $_.FullName }) | Sort-Object -Unique)
-    # a corrupt index (bad signature 0x00000000) fails status and remove: rebuild it from HEAD (files untouched), so the dirty test sees the truth
+    # corrupt index (bad signature 0x00000000) fails status and remove
     if ("$(git -C $Dir status --porcelain 2>&1)" -match 'index file corrupt') {
       $ix = Join-Path $gd 'index'; Move-Item -LiteralPath $ix "$ix.corrupt" -Force; git -C $Dir reset -q 2>&1 | Out-Null
       if ($LASTEXITCODE) { Move-Item -LiteralPath "$ix.corrupt" $ix -Force; throw "wt remove: $Dir has a corrupt index and git reset could not rebuild it: fix it by hand" }
@@ -354,7 +354,7 @@ function Get-NodeTools($d) {
     JestCfg = $jestCfg
     Vitest = $deps -contains 'vitest'
     Eslint = ($deps -contains 'eslint') -or (Has $d 'eslint.config.*', '.eslintrc*')
-    # check -Step e2e fills {specs}: never a whole suite unless -AllTests
+    # check -Step e2e fills {specs}
     E2e = if (($deps -contains 'cypress') -or (Has $d 'cypress.config.*', 'cypress.json')) { 'npx cypress run --spec "{specs}"' }
           elseif (($deps -contains '@playwright/test') -or (Has $d 'playwright.config.*')) { 'npx playwright test {specs}' } else { $null }
   }
@@ -376,7 +376,7 @@ function Get-Stack($d) {
   }
   elseif (Has $d 'build.gradle', 'build.gradle.kts', 'settings.gradle*') {
     $gw = Wrapper $d 'gradlew' 'bat' 'gradle'
-    # an Android module (AndroidManifest.xml): goody stack-presets
+    # Android: goody stack-presets
     $android = [bool](Get-ChildItem -LiteralPath $d -Recurse -Depth 3 -Filter AndroidManifest.xml -File -ErrorAction SilentlyContinue | Select-Object -First 1)
     if (-not $android) {
       $s = 'gradle'
@@ -449,11 +449,11 @@ function Get-Stack($d) {
     if (Test-Path (Join-Path $d 'manage.py')) { $c.run = "$py manage.py runserver {port}" }
     if ((Has $d 'mypy.ini') -or (Select-String -LiteralPath (Join-Path $d 'pyproject.toml') -Pattern '\[tool\.mypy\]' -Quiet -ErrorAction SilentlyContinue)) { $c.typecheck = "$py -m mypy {files}" }
   }
-  # installed goodies (stack-presets): Android Gradle, .NET, Go, Rust, CMake, Make
+  # goody stack-presets
   foreach ($plugin in @($KitAdapters.stack.Values | Where-Object { $_ })) { if (-not $s) { $s = & $plugin.detect @{ dir = $d; commands = $c } } }
   $ovr = ReadJson (Join-Path $d '.claude-stack.json')
   if (-not $s -and -not $ovr.stack -and ($android -or (Has $d '*.sln', '*.csproj', '*.fsproj', 'go.mod', 'Cargo.toml', 'CMakeLists.txt', 'Makefile'))) { throw (Get-KitExtraLine 'stack' 'presets') }
-  if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone is a stack (the "add a .claude-stack.json" advice)
+  if (-not $s -and -not $ovr.stack) { return $null }   # an override's stack alone counts
 
   if ($ovr) {
     if ($ovr.stack) { $s = $ovr.stack }
@@ -481,8 +481,8 @@ else {
 }
 }
 
-# ---- gate: machine-wide memory gate; exit = the command's code, 3 = not started in time
-# build kinds: command regex -> default GB until 2 runs are learned
+# ---- gate: machine-wide memory gate; exit = command's code, 3 = no start in time
+# kind: command regex -> default GB until 2 runs are learned
 $script:GateKinds = [ordered]@{
   'emulator' = @('^exit 0 #emulator', 4.5)
   'android-build' = @('gradlew.*\b(assemble|bundle)', 7)
@@ -505,7 +505,7 @@ $script:GateKinds = [ordered]@{
   'go' = @('go (build|test|vet)', 2)
 }
 function Get-GateKind([string]$c) { foreach ($k in $script:GateKinds.Keys) { if ($c -match $script:GateKinds[$k][0]) { return $k } }; 'other' }
-# history: the command relative to its build dir (worktree paths differ per agent), 120 chars
+# relative: worktree paths differ per agent
 function Get-GateHistCmd([string]$Cmd, [string]$Dir) {
   $c = $Cmd; foreach ($d in @([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')) | ForEach-Object { $_; $_.Replace('\', '/') } | Select-Object -Unique) { $c = [regex]::Replace($c, [regex]::Escape($d) + '(?=[\\/\s"'']|$)', '.', 'IgnoreCase') }
   if ($c.Length -gt 120) { $c.Substring(0, 120) } else { $c }
@@ -520,7 +520,7 @@ param(
   [int]$MaxParallel = 0
 )
 $waitLearned = $WaitMinutes -lt 0; if ($waitLearned) { $WaitMinutes = Get-KitParam 'gate.waitMinutes' }
-$keepFromConfig = $KeepFreeGB -lt 0   # re-read every round: a config change reaches queued builds
+$keepFromConfig = $KeepFreeGB -lt 0   # re-read each round for queued builds
 if ($keepFromConfig) { $KeepFreeGB = Get-KitKeepFreeGB }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
@@ -540,13 +540,13 @@ function ConvertTo-CmdSeparators([string]$c) {
   }
   $sb.ToString()
 }
-# a whole e2e suite only from check -Step e2e -AllTests (KIT_E2E_ALL)
+# whole e2e suite only with -AllTests (KIT_E2E_ALL)
 if ($Cmd -match '\bcypress\s+run\b(?![^&|;]*--spec[=\s])' -and $env:KIT_E2E_ALL -ne '1') { Write-Host "[gate] refused: $Cmd runs the whole e2e suite: use crafty.ps1 check -Dir <module> -Step e2e (the diff's specs; whole suite: -AllTests on the owner's word)"; exit 2 }
 if ($KitIsWindows) { $semi = ConvertTo-CmdSeparators $Cmd; if ($semi -ne $Cmd) { Write-Host "[gate] cmd.exe has no ';': running $semi"; $Cmd = $semi } }
 
 # NoDefaultCurrentDirectoryInExePath hides bare names in cwd
 $Cmd = [regex]::Replace($Cmd, '(^|&&\s*|&\s*|\|\|\s*)(?<!\.[\\/])(gradlew(\.bat)?|mvnw(\.cmd)?)(?=\s|$)', $(if ($KitIsWindows) { '$1.\$2' } else { '$1./$2' }))
-# a Maven daemon on PATH keeps a warm JVM between builds (checks and local env builds)
+# mvnd on PATH keeps a warm JVM between builds
 if ($Cmd -match '^(\.[\\/]mvnw(\.cmd)?|mvn)\s' -and (Get-Command mvnd -ErrorAction SilentlyContinue)) { $Cmd = $Cmd -replace '^(\.[\\/]mvnw(\.cmd)?|mvn)\s', 'mvnd ' }
 # runners fork a worker per core
 if ($Cmd -match '\bjest\b' -and $Cmd -notmatch 'maxWorkers|runInBand|\s-i(\s|$)') { $Cmd = "$Cmd --maxWorkers=2" }
@@ -584,10 +584,10 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
   $recentMax = (@($Peaks) | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
   [math]::Round([math]::Min($TotalGB * 0.6, [math]::Max(0.75, $recentMax * 1.15)), 1)
 }
-$estimate = Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB   # the default of the learned gate.needGB per kind|project
+$estimate = Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB   # default of learned gate.needGB per kind|project
 $need = if ($NeedGB -gt 0) { $NeedGB } else { [math]::Min((Get-SysMem).TotalGB * 0.6, [double](Get-KitParam 'gate.needGB' $estimate $histKey)) }
 
-# heap caps (goody build-heap): a JVM / Node build gets a cap from its learned peak; under memory pressure the cap shrinks to its floor
+# goody build-heap: heap cap from learned peak, floor under pressure
 $heap = 0; $heapFloor = 0; $heapTool = $null
 if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & $hp $kind $peaks $NeedGB $need)) { $heap = $h.heap; $heapFloor = $h.floor; $need = $h.need; $heapTool = $h.tool }
 
@@ -606,7 +606,7 @@ function Write-Ticket { Write-KitAtomic $myTicket (@{ pid = $PID; start = $mySta
 function Get-Queue {
   $q = foreach ($f in Get-ChildItem $queueDir -Filter '*.json' -ErrorAction SilentlyContinue) {
     try { $t = Get-Content $f.FullName -Raw | ConvertFrom-Json } catch { continue }
-    if (-not (Test-KitPid $t.pid $t.start)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }   # its process gone (or a reused pid after a reboot)
+    if (-not (Test-KitPid $t.pid $t.start)) { Remove-Item $f.FullName -ErrorAction SilentlyContinue; continue }   # gone, or a pid reused after a reboot
     $t
   }
   $cut = (Get-Date).AddMinutes(-30); $recent = @{}
@@ -690,7 +690,7 @@ while ((Get-Date) -lt $deadline) {
     $dh = Get-KitDiskHold
     if (-not $dh -and (Test-GateStart $left $KeepFreeGB ((Get-Date) - [datetime]$since).TotalMinutes $s.Total) -and (($MaxParallel -le 0) -or ($s.Running -lt $MaxParallel))) {
       if ($heap -gt 0) { $Cmd = & (Get-Command Set-GateHeap) $heapTool $heap $Cmd }
-      $reserved = $need   # what this build got: an OOM is a failure near it
+      $reserved = $need   # an OOM near this = failure
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" })"
       # /s + outer quotes: a leading quoted path survives
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$Cmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
@@ -726,12 +726,12 @@ try {
   $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
-if ($kind -ne 'emulator') { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # the wait cap learns how long a holder builds, not how long a waiter waited
+if ($kind -ne 'emulator') { Add-KitParamObs 'gate.waitMinutes' $sw.Elapsed.TotalMinutes -Default 90 }   # learns build time, not wait time
 Write-KitLog builds end ([ordered]@{ owner = $owner; kind = $kind; project = $project; code = $code; sec = [int]$sw.Elapsed.TotalSeconds; peakGB = [math]::Round($peak, 2); waitSec = $waitSec })
 if ($peak -gt 0.2 -and $kind -ne 'emulator') {
-  # out of memory (a failure signal): killed / aborted (137, 134) near the reservation it started with
+  # oom: exit 137 / 134 near its reservation
   if ($NeedGB -le 0) { Add-KitParamObs 'gate.needGB' $peak $histKey $(if ($code -eq 0) { 'ok' } elseif ($code -in 134, 137 -and $peak -ge 0.9 * $reserved) { 'oom' } else { 'fail' }) $estimate }
-  # builds finish together; an unreadable file is never reset
+  # concurrent ends; never reset an unreadable file
   $got = $false
   try {
     $got = Lock-Gate $gate
@@ -749,7 +749,7 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator') {
 exit $code
 }
 
-# ---- check: gated steps of the stack; exit = the first failing step's code (3 gate or a repos[].exclusiveTests lock, 4 no container engine, 5 UNRUN)
+# ---- check: gated stack steps; exit = failing step's code (3 gate / test lock, 4 no container engine, 5 UNRUN)
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -780,12 +780,11 @@ function Get-ChangedFiles {
   @($list | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $top $_)) } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique)
 }
 
-# the target wt new recorded
 function Get-WtTarget {
   $gd = git -C $st.dir rev-parse --git-dir 2>$null; if ($gd -and -not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $st.dir $gd }
   if ($gd -and (Test-Path (Join-Path $gd 'claude-target'))) { (Get-Content (Join-Path $gd 'claude-target') -TotalCount 1).Trim() }
 }
-# the repos[] entry of this checkout: its main checkout for a worktree, core.worktree for a submodule's
+# repos[] entry via main checkout / submodule core.worktree
 function Get-CheckRepo {
   $top = "$(git -C $st.dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top) { return }
   $common = "$(git -C $top rev-parse --path-format=absolute --git-common-dir)".Trim(); $cw = git --git-dir="$common" config core.worktree
@@ -794,8 +793,7 @@ function Get-CheckRepo {
   $roots = @((& $full $main), (& $full $top) | Where-Object { $_ })
   [pscustomobject]@{ top = $top; conf = (@(Get-KitValue 'repos' @()) | Where-Object { $_.checkout -and ($c = & $full $_.checkout) -and $c -in $roots } | Select-Object -First 1) }
 }
-# repos[].exclusiveTests [{ dir, match, lock }]: a test run under <dir> whose test names or test sources match <match> (regex; no
-# names = all tests) holds lock <lock> machine-wide (tests that rebuild one shared fixture)
+# repos[].exclusiveTests: matching tests hold their lock machine-wide
 function Get-TestLock([string[]]$Names) {
   $r = Get-CheckRepo; if (-not $r.conf.exclusiveTests) { return }
   $rel = [IO.Path]::GetRelativePath($r.top, $st.dir).Replace('\', '/'); $files = $null
@@ -815,15 +813,15 @@ function Get-TestLock([string[]]$Names) {
     }
   }
 }
-# repos[].migrations.check runs (in the worktree); else Liquibase XML -> lbcheck (goody liquibase); any other tool or changelog format = UNRUN (exit 5)
+# repos[].migrations.check, else goody liquibase; other tools = UNRUN (exit 5)
 if ($Step -eq 'migrations') {
   $top = (git -C $st.dir rev-parse --show-toplevel).Trim()
   $chk = (Get-CheckRepo).conf.migrations.check
   if ($chk) { if ($Show) { "migrations : $chk"; exit 0 }; Write-Host "[check] migrations: $chk"; & $KitCmd.dev gate -Dir $top -Cmd $chk; exit $LASTEXITCODE }
-  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue   # goody liquibase: its XML masters (+ the rest UNRUN)
+  $lb = Get-Command Invoke-LiquibaseCheck -ErrorAction SilentlyContinue   # goody liquibase
   $lbm = Get-Command Get-LiquibaseMasters -ErrorAction SilentlyContinue
   $masters = @(if ($lbm) { & $lbm $top } else { git -C $top ls-files '*master.xml' '*master.yaml' '*master.yml' '*master.json' '*master.sql' | Where-Object { $_ -match '(?i)liquibase|changelog' } })
-  # migrations of another tool (Flyway, Alembic, Prisma, ...): no kit check
+  # other tools (Flyway, Alembic, Prisma): no kit check
   $tool = @(git -C $top ls-files | Where-Object { $_ -match '(?i)(^|/)(migrations?|migrate|flyway|alembic|prisma)/(.+/)?[^/]+\.(sql|py|[cm]?[jt]s|rb|php|exs?|cs|go|java|kt)$' -and $_ -notmatch '(?i)liquibase|changelog|__init__\.py$|\.Designer\.cs$|ModelSnapshot\.cs$' })
   $other = @(if ($lbm) { & $lbm $top -Other }) + @(if ($tool.Count) { "$($tool.Count) migration file(s) of another tool ($(($tool | Select-Object -First 3) -join ', ')$(if ($tool.Count -gt 3) { ', ...' }))" })
   if ($other.Count) { Write-Host "[check] migrations UNRUN: $($other -join ', ') has no kit check: set kit.local.json repos[].migrations.check (its validate / dry run); say 'migrations unrun' in the MR." }
@@ -834,13 +832,12 @@ if ($Step -eq 'migrations') {
   exit $(if (-not $rc -and $other.Count) { 5 } else { $rc })
 }
 
-# e2e: only the specs related to the branch diff (tests.e2e map, else changed specs, folder / file names, imports, visited routes);
-# none -> NOT_TESTED (exit 5); the whole suite only with -AllTests (the owner's word), logged to the builds stream
+# e2e: diff's specs only; none: NOT_TESTED (exit 5)
 function ConvertTo-GlobRx([string]$g) {
   $x = [regex]::Escape($g.Replace('\', '/').TrimStart('/')) -replace '\\\*\\\*/', '(.*/)?' -replace '\\\*\\\*', '.*' -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]'
   "(?i)^$([regex]::Replace($x, '\\\{([^}]*)}', { '(' + ($args[0].Groups[1].Value -replace ',', '|') + ')' }))$"
 }
-$script:GlobRx = @{}   # compiled once per glob: a map runs over every tracked file
+$script:GlobRx = @{}   # compiled once: a map scans every tracked file
 function Test-Glob([string]$p, $globs) { foreach ($g in @($globs | Where-Object { $_ })) { if (-not $script:GlobRx.ContainsKey($g)) { $script:GlobRx[$g] = [regex]::new((ConvertTo-GlobRx $g)) }; if ($script:GlobRx[$g].IsMatch($p)) { return $g } } }
 if ($Step -eq 'e2e') {
   $cmd = $st.commands.e2e
@@ -857,8 +854,7 @@ if ($Step -eq 'e2e') {
   $chg = @(Get-ChangedFiles | ForEach-Object { & $rel $_ } | Where-Object { $_ -notmatch '^\.\./' })
   $why = [ordered]@{}; $add = { param($s, $r) if (-not $why.Contains($s)) { $why[$s] = [Collections.Generic.List[string]]::new() }; if (-not $why[$s].Contains($r)) { $why[$s].Add($r) } }
   $generic = 'src', 'app', 'apps', 'lib', 'libs', 'components', 'component', 'shared', 'common', 'core', 'pages', 'page', 'views', 'view', 'features', 'feature', 'modules', 'module', 'services', 'service', 'utils', 'util', 'helpers', 'models', 'assets', 'styles', 'public', 'static', 'environments', 'ui', 'web', 'client', 'index', 'main', 'private', 'cypress', 'e2e', 'e2e-tests', 'integration', 'tests', 'test', 'specs', 'spec', 'support', 'fixtures'
-  # indexes, built once (key -> specs): its words (folders + name, order prefixes cut, each cut at - _ .: 02-order-management ->
-  # order, order-management), the module files it imports (no extension), the route segments it visits
+  # key -> specs: words (02-order-management -> order, order-management), imports, routes
   $byWord = @{}; $byImp = @{}; $byRoute = @{}; $isSpec = @{}
   $put = { param($h, $key, $s, $r) if (-not $key) { return }; if (-not $h.Contains($key)) { $h[$key] = [ordered]@{} }; $h[$key][$s] = $r }
   foreach ($s in $specs) {
@@ -878,7 +874,7 @@ if ($Step -eq 'e2e') {
     for ($mi = 0; $mi -lt $map.Count; $mi++) { if ($g = Test-Glob $f $map[$mi].paths) { $hit = $true; foreach ($s in $mapSpecs[$mi]) { & $add $s "map $g" } } }
     if ($hit) { continue }
     $stem = ([IO.Path]::GetFileName($f) -split '\.')[0]; if ($stem -in $generic) { $stem = '' }
-    # its name, then its folders nearest first: the first that names or routes a spec wins (orders/components/row/row.ts -> orders)
+    # name, then nearest folders; first hit wins
     $dirs = @(([IO.Path]::GetDirectoryName($f) -replace '\\', '/') -split '/' | Where-Object { $_ -and $_ -notin $generic }); [array]::Reverse($dirs)
     $noExt = $f -replace '\.[^./]+$', ''
     foreach ($n in @(@($stem) + $dirs | Where-Object { $_ } | Select-Object -Unique)) {
@@ -916,7 +912,7 @@ foreach ($s in $steps) {
   if (-not $cmd -and $s -eq 'test' -and (Test-Path -LiteralPath (Join-Path $st.dir 'package.json'))) { $cmd = "node `"$($KitCmd.spec)`" {tests}" }
   if (-not $cmd) { if ($Step -ne 'quick') { Write-Host "[check] $($st.stack) has no '$s' step"; exit 2 }; continue }
   if ($s -eq 'test' -and $cmd -match 'spec\.mjs' -and -not $Show) {
-    # no unit-test target: the node spec runner (pure-logic specs) is the goody node-spec
+    # no unit-test target: goody node-spec
     if (-not (Test-Path -LiteralPath $KitCmd.spec)) { Write-Host '[check] test UNRUN: the node spec runner is a goody: run kitbag.py goody add node-spec'; exit 5 }
     if ($RealAngular) { $cmd += ' --real-angular' }
   }
@@ -990,7 +986,7 @@ foreach ($s in $steps) {
   }
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
-  $unrun = $false   # 'unrun' (not a pass, exit 5): goody ts-typecheck's verdict on a huge tsc baseline
+  $unrun = $false   # goody ts-typecheck: a huge tsc baseline = unrun (exit 5)
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }   # goody ts-typecheck
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else {
@@ -1009,10 +1005,10 @@ if ($script:anyUnrun) { Write-Host '[check] exit 5: typecheck UNRUN (not a pass)
 exit 0
 }
 
-# ---- pipes: wait for MR/PR pipelines (JSON); CI failures go back to the dev agent, not to a doomed merge
+# ---- pipes: wait for MR/PR pipelines (JSON)
 function Invoke-Pipes {
-param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged)   # -UntilMerged: waits for the merge itself (a consumer behind its producers)
-if (-not $Mrs) {   # in a wt new worktree: the open MRs of its branch into its recorded target
+param([string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged)   # -UntilMerged: a consumer waits for producers
+if (-not $Mrs) {   # in a wt worktree: its branch's open MRs
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
   $script:KitRc = 2
@@ -1025,9 +1021,9 @@ if (-not $Mrs) {   # in a wt new worktree: the open MRs of its branch into its r
 }
 $ErrorActionPreference = 'SilentlyContinue'
 $list = @($Mrs -split '\s*,\s*' | Where-Object { $_ })
-# repos[].ci.mrPipelines false: CI runs only on other branches (deploy), an MR never gets a pipeline
+# repos[].ci.mrPipelines false: no MR pipelines
 $noMrCi = @(Get-KitValue 'repos' @() | Where-Object { $_.ci.mrPipelines -eq $false } | ForEach-Object { @($_.name) + @($_.aliases) } | Where-Object { $_ } | ForEach-Object { "$_".ToLower() })
-# any host (lib.ps1 git-host): no head pipeline -> no-ci (the repo's CI adapter finds no CI config) or no-pipeline (one may start)
+# no head pipeline: no-ci (no CI config) or no-pipeline (may start)
 function State($url) {
   $u = ConvertFrom-MrUrl $url; if (-not $u) { return [ordered]@{ mr = $url; status = 'bad-url' } }
   if ($u.type -eq 'gitlab' -and $url -match '^https?://([^/]+)/') { $env:GITLAB_HOST = $Matches[1] }   # else glab asks gitlab.com
@@ -1059,9 +1055,9 @@ do {
 [ordered]@{ done = (-not $busy); mrs = $states } | ConvertTo-Json -Depth 4 -Compress
 }
 
-# ---- guard: PreToolUse hook for the hard rules; prints a deny or nothing
+# ---- guard: PreToolUse hook: a deny or nothing
 function Invoke-Guard {
-param([switch]$SelfTest, [string]$Json)   # -Json: the hook input without stdin (self-test runs in-process)
+param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
   $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'
@@ -1222,9 +1218,9 @@ if ($SelfTest) {
   @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
   @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through')
   )
-  $gh = 'browser on Windows'   # git help pages (Git for Windows opens HTML); elsewhere a man page
+  $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
-  $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # a kit repo: tracked CRLF, tracked LF, untracked CRLF
+  $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
   foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
@@ -1233,7 +1229,7 @@ if ($SelfTest) {
   foreach ($c in $cases) {
     $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch' }[$c[0]]
     $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live)
-    # cwd = an agent folder (crafty.ps1 dir: a kit place, so guard.layout block passes a relative write): results never depend on where the self-test runs
+    # cwd-independent results
     $json = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
     $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
@@ -1286,7 +1282,7 @@ function GitCommon([string]$d) {
     if ((Test-Path -LiteralPath $g -PathType Leaf) -and (Get-Content -LiteralPath $g -Raw) -match 'gitdir:\s*(.+?)\s*$') { return [IO.Path]::GetFullPath(($Matches[1] -replace '[\\/]worktrees[\\/][^\\/]+[\\/]?$', '')) }
   }
 }
-# the live kit clone (main worktree) runs every agent: its tracked or new non-ignored files change only through a kit worktree
+# the live kit clone runs every agent: edit via a kit worktree
 $live = if (($lg = GitCommon (Split-Path (Split-Path $K)))) { Split-Path $lg }
 $here = if ($in.cwd) { [string]$in.cwd } else { (Get-Location).Path }
 $liveOk = $env:KIT_LIVE_EDIT -eq '1' -or $cmd -match '(^|[\s;])(\$env:)?KIT_LIVE_EDIT\s*=\s*[''"]?1'
@@ -1297,7 +1293,7 @@ function InLive([string]$p, [string]$base) {
   $rel = [IO.Path]::GetRelativePath($live, [IO.Path]::GetFullPath($p))
   if ($rel -notmatch '^\.\.([\\/]|$)|^\.git([\\/]|$)' -and -not [IO.Path]::IsPathRooted($rel)) { $rel }
 }
-# a git-ignored folder that is its own worktree (a harness worktree under .claude/worktrees); .runtime has none: git there hits the live clone
+# git-ignored own worktree; git in .runtime hits the live clone
 function LiveIgnored([string]$rel) {
   $abs = Join-Path $live $rel; if (-not (Test-Path -LiteralPath $abs -PathType Container)) { return $false }
   $top = "$(git -C $abs rev-parse --show-toplevel 2>$null)".Trim()
@@ -1308,7 +1304,7 @@ function LiveFile([string]$p, [string]$base) {
   $own = '^(' + [regex]::Escape((Split-Path (Get-KitRuntime) -Leaf)) + '|' + [regex]::Escape($script:KitPathMap.stateDir.Trim('/\')) + ')([\\/]|$)'
   if (($rel = InLive $p $base) -and $rel -ne '.' -and $rel -notmatch $own) { git -C $live check-ignore -q -- $rel 2>$null; $LASTEXITCODE -eq 1 }
 }
-# a CRLF file tracked in a kit clone or kit worktree (sed -i from Git Bash writes it back LF): its path, else nothing (best effort: xargs / -exec / bash -c pass)
+# Git Bash sed -i rewrites tracked CRLF kit files LF
 function CrlfKitFile([string]$p, [string]$base) {
   if (-not $p -or $p -match '[$*?<>|`]') { return }
   if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return }; $p = Join-Path $base $p }
@@ -1322,12 +1318,12 @@ function CrlfKitFile([string]$p, [string]$base) {
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
 $edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
-# a body / desc file in the shared temp root: another agent's file of the same name is overwritten or read (MR bodies swapped)
+# shared temp body / desc files got swapped between agents
 $tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
 $tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
 if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): write it under & $($KitCmd.dev) dir -Agent <id> -Name $($tmpHit[0])" }
-# an agent's own write into the runtime / state must land under a _paths name (crafty.ps1 dir); guard.layout warn | block
+# runtime / state writes need a _paths name (guard.layout)
 $layout = @(@((Get-KitRuntime), 'runtime'), @((Split-Path (Get-KitPath tracking)), 'durable'))
 function OffLayout([string]$p, [string]$base) {
   if (-not $p -or $p -match '[$*?<>|`]') { return }
@@ -1338,7 +1334,7 @@ function OffLayout([string]$p, [string]$base) {
     if (-not @($script:KitPathMap.($r[1]).PSObject.Properties.Value | ForEach-Object { ([string]$_).TrimEnd('/') } | Where-Object { $rel -eq $_ -or ($_ -notin 'work', 'cache', 'logs' -and $rel.StartsWith("$_/")) }).Count) { "$($r[1])/$rel" }
   }
 }
-# the note (warn) or the deny (block); Deny runs here, outside any captured output
+# Deny here, outside captured output
 function LayoutCheck {
   if (-not $off) { return }
   $lw = "kit layout: $(@($off | Select-Object -Unique) -join ', ') is no kit place: agent files go under & $($KitCmd.dev) dir -Agent <id> [-Item <task>] (work/agents/<id>/) or dir -Kind evidence -Item <task> (work/evidence/<task>/)"
@@ -1352,7 +1348,7 @@ if (-not $cmd) {
   exit 0
 }
 
-# quoted text, heredocs and here-strings are data
+# quoted text and heredocs are data
 $raw = $cmd
 function StripDocs([string]$t) {
   $t = [regex]::Replace($t, '(?ms)^([^\n]*?)<<-?\s*([''"]?)(\w+)\2[^\n]*\n.*?^\s*\3\s*$', {
@@ -1438,15 +1434,15 @@ if ($env:KIT_ALLOW_RUNTIME_DELETE -ne '1') {
 }
 $tn = if ($in.tool_name -eq 'Bash') { 'Bash' } else { 'PowerShell' }
 if (Test-GitStash $raw $tn) { Deny 'git stash is shared across worktrees (another agent can pop it): make a WIP commit (crafty.ps1 wt commit -Message "wip: ...")' }
-# a task branch made by hand skips wt new's prior-work gate: the same gate here (crafty.ps1 prior first)
+# hand-made task branches skip wt new's prior-work gate
 if (($trx = Get-KitTaskTagRx) -and $raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(checkout\s+(-\S+\s+)*-[bB]|switch\s+(-\S+\s+)*-[cC]|worktree\s+add\s+(\S+\s+)*?-[bB]|branch(\s+-[fct]\S*)*)\s+(?<br>[^\s;|&]+)') {
   $br = $Matches.br; if ($br -match $trx) { try { Assert-KitPrior $Matches.id '' "git branch $br" '' } catch { Deny "kit guard: $($_.Exception.Message -replace '-Override', 'crafty.ps1 wt new -Override')" } }
 }
-# a Git Bash drive path (/d/x) given to a Windows program lands in \d\x on the current drive: MSYS never converts strings, JSON, env or code
+# Git Bash /d/x reaches Windows programs as \d\x; MSYS skips strings, JSON, env, code
 function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
   if ($depth -gt 3) { return }
   $drive = '(?<![\w.:/~\\})\]])/(?<d>[a-zA-Z])/(?<r>[\w.$-][^\s''"`;|&<>(){}\[\],]*)'
-  # a heredoc body is the text of the command on its opener line
+  # a heredoc body is its opener's data
   if ($tool -eq 'Bash') { $text = [regex]::Replace($text, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$', { param($hd) "<<doc '" + ($hd.Groups[4].Value -replace "['\r\n]", ' ') + "'" + $hd.Groups[3].Value }) }
   $segs = [System.Collections.Generic.List[string]]::new(); $sb = [Text.StringBuilder]::new(); $quote = ''
   for ($i = 0; $i -lt $text.Length; $i++) {
@@ -1470,28 +1466,28 @@ function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
       continue
     }
     $chk = "$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' '
-    # curl: data bodies and URLs hold API routes; only its file options and @file read a path
+    # curl: only file options and @file are paths
     if ($leaf -match '^curl(\.exe)?$') { $chk = ' ' + (@([regex]::Matches($chk, '(?:(?<=\s)(?:-[a-zA-Z]*[oTK]|--output|--upload-file|--config)(?:\s+|=)?|@)[''"]?(?<f>/[^\s''"]+)') | ForEach-Object { $_.Groups['f'].Value }) -join ' ') }
     if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and $chk -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
   }
 }
 if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
-# Git for Windows shows help pages as HTML in the owner's browser
+# Git for Windows opens help in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
 $hl = "GUI windows on the owner's screen are not allowed (headless rule)."
 if ($cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?(gh|glab)(\.exe)?\s+(browse\b(?![^|;&\r\n]*\s(-n|--no-browser)\b)|(?!(run|workflow)\s)[^|;&\r\n]*\s(--web|-w)(?=[\s=;|&)]|$))') { Deny "gh / glab --web, -w and gh browse open the owner's browser: read it in the terminal (gh pr view <n>, glab mr view <n>, --json). $hl" }
-# a raw MR create / merge skips the task: no tracker id, no track add -> the owner never sees the MR on the task (KIT_NO_TASK=<reason>: none)
+# raw MR create / merge skips track add (KIT_NO_TASK=<reason>)
 $mrRx = '(?m)(?:^|[;&|({\n]|\$\()\s*(?:&\s*)?(?:\w+=(?:"[^"]*"|''[^'']*''|\S*)\s+)*(?:\S*[\\/])?(?<tool>glab|gh)(?:\.exe)?\s+(?:mr|pr)\s+(?<verb>create|new|merge)\b'
 if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
-  # same-length copies: $mrJ joins \ / ` line continuations; $mrM also blanks quoted text, heredoc and here-string bodies (data)
+  # same-length copies: $mrJ joins continuations, $mrM blanks data
   $blank = { param($m) [regex]::Replace($m.Value, '[^\r\n]', ' ') }
   $mrJ = [regex]::Replace($raw, '[\\`](?=\r?\n)\r?\n', { param($m) ' ' * $m.Length })
   $mrM = [regex]::Replace([regex]::Replace([regex]::Replace($mrJ, '(?ms)<<-?\s*([''"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$', $blank), '(?s)@''\r?\n.*?\r?\n''@|@"\r?\n.*?\r?\n"@', $blank), '"(?:[^"\\]|\\.)*"|''[^'']*''', { param($m) $m.Value[0] + (' ' * ($m.Length - 2)) + $m.Value[0] })
   $noTask = if ($env:KIT_NO_TASK) { $env:KIT_NO_TASK } elseif (($em = [regex]::Match($mrM, '(?:^|[\s;(])(?:\$env:)?KIT_NO_TASK\s*=\s*')).Success -and $mrJ.Substring($em.Index + $em.Length) -match '^(?:"([^"]+)"|''([^'']+)''|([^\s;''"]+))') { $Matches[1] + $Matches[2] + $Matches[3] }
   if ($noTask) { Write-KitLog guard no-task @{ session = "$($in.session_id)"; reason = $noTask; cmd = $raw.Substring(0, [math]::Min(300, $raw.Length)) } }
   else {
-    # one command's words from $i: quotes unwrapped, up to an unquoted ; | & ) or line end
+    # words from $i to an unquoted ; | & ) or line end
     function CliWords([string]$t, [int]$i) {
       $ws = [Collections.Generic.List[string]]::new(); $sb = [Text.StringBuilder]::new(); $q = ''; $has = $false
       for (; $i -lt $t.Length; $i++) {
@@ -1509,7 +1505,7 @@ if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
     $tagRx = Get-KitTaskTagRx; $tag = $KitConf.TrackerTag; $esc = 'no task at all: KIT_NO_TASK=<reason> <command> (logged)'
     foreach ($mm in [regex]::Matches($mrM, $mrRx)) {
       $ws = CliWords $mrJ ($mm.Index + $mm.Length); $tool = $mm.Groups['tool'].Value
-      # the repo's checkout: the last cd before it, else the hook's cwd
+      # last cd before it, else the hook's cwd
       $gd = $here; foreach ($cm in [regex]::Matches($raw.Substring(0, $mm.Index), '\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location)\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))')) {
         $cx = ($cm.Groups[1].Value + $cm.Groups[2].Value + $cm.Groups[3].Value) -replace '^/([A-Za-z])(?=/|$)', '$1:'; $gd = if ([IO.Path]::IsPathRooted($cx)) { $cx } elseif ($gd) { Join-Path $gd $cx } }
       if ($mm.Groups['verb'].Value -ne 'merge') {
@@ -1535,7 +1531,7 @@ if ($KitConf.TrackerType -ne 'none' -and $cmd -match $mrRx) {
     }
   }
 }
-# a script or doc run or opened directly pops up its Windows file association (an editor, a viewer, the browser); 'script' | 'doc' | $null
+# a script / doc run directly opens its associated app
 function Test-OpenDoc([string]$text, [string]$tool) {
   $de = 'md|txt|jsonl?|html?|log|csv|xml|ya?ml|png|jpe?g|gif|svg|pdf|docx?|xlsx?|pptx?'; $se = 'pyw?|[cm]?js|ts'
   $doc = "\.($de)$"; $scr = "\.($se)$"
@@ -1558,7 +1554,7 @@ function Test-OpenDoc([string]$text, [string]$tool) {
         if ($leaf -match '^(pwsh|powershell)(\.exe)?$' -and $rest -match '(?is)(^|\s)-(c|Command)\s+(.+)$' -and ($inner = Test-OpenDoc $Matches[3] 'PowerShell')) { return $inner }
         if ($leaf -match '^cmd(\.exe)?$' -and $rest -match "(?i)[/-][ck]\s+(start\s+(""""\s+)?)?\S+\.($se)(\s|$)") { return 'script' }
         if ($leaf -match '^cmd(\.exe)?$' -and $rest -match '(?i)[/-][ck]\s+start\b') { return 'doc' }
-        # only the opened target counts (first argument or -FilePath / -Path): Start-Process pwsh -RedirectStandardOutput o.txt reads nothing
+        # only the opened target counts
         $fp = [array]::FindIndex([object[]]$el, [Predicate[object]] { param($x) $x -is [System.Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -match '^(FilePath|Path|LiteralPath)$' })
         $tg = if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } else { $el | Select-Object -Skip 1 | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] } | Select-Object -First 1 }
         if ($w0 -match '^(Start-Process|start|saps)$' -and $tg) {
@@ -1573,7 +1569,7 @@ function Test-OpenDoc([string]$text, [string]$tool) {
   foreach ($nm in [regex]::Matches($text, '\b(?:(?:ba|z|da)?sh|pwsh|powershell)(?:\.exe)?\s+(?:-\S+\s+)*?-(?:c|Command)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) {
     if (($inner = Test-OpenDoc ($nm.Groups[1].Value + $nm.Groups[2].Value) $(if ($nm.Value -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }))) { return $inner }
   }
-  # command position only: ${v} is no brace group, a=(...) no subshell, X=path / > path / arguments are data
+  # command position only; ${v}, a=(...), X=path, > path are data
   $t = [regex]::Replace(((StripData $text) -replace '\$\{[^}\s]*\}', '$$v'), '(?m)\bcode(-insiders)?(\.exe)?(?=\s+(--version|-v|--list-extensions|--help|-h|--status)(\s|$))', 'codeinfo')
   $sep = '(?m)(^|[;|{\r\n]|(?<!=)\(|&&)\s*((do|then|else|elif)\s+)?(\w+=(?:\$\([^)]*\)|\([^)]*\)|[^\s(])*\s+)*'; $fe = '(\s|;|\||\)|$)'
   if ($t -match "$sep((&|\.)\s+)?[^\s;|&<>=]+\.($se)$fe" -or $t -match "$sep(start|Start-Process|saps|cmd(\.exe)?\s+[/-]+[ck](\s+start(\s+"""")?)?)\s+[^\s;|&<>]+\.($se)$fe") { return 'script' }
@@ -1595,7 +1591,7 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after crafty.ps1 wt sync.'
   }
 }
-# shell writes (file verbs, redirects; the cd / -C target, else cwd): into the live clone (git verbs too) or off the layout
+# shell writes into the live clone or off the layout
 if ($cmd) {
   $cur = $here
   foreach ($seg in (StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&>]*)"|''([^''\s;|&>]*)''', '$1$2'))) -split '\r?\n|;|&&|\|\||\|') {
@@ -1619,7 +1615,7 @@ if ($cmd) {
     if ($w -match '(^|[\\/])sed(\.exe)?$' -and @($tk | Where-Object { $_ -match '^(-[a-zA-Z]*i\S*|--in-place\S*)$' }).Count) { foreach ($h in $pa) { if (($cf = CrlfKitFile $h $cur)) { Deny "sed -i rewrites $cf (a tracked CRLF kit file) to LF: use the Edit tool" } } }
   }
 }
-# the kit's clone and its worktrees (git -C / cd target, else the hook's cwd): main and goodies never forced, deleted or moved
+# kit main and goodies: never forced, deleted or moved
 if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitCommon (Split-Path (Split-Path $K)))) {
   $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
   if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
@@ -1640,7 +1636,7 @@ $heavy = $cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*
         $cmd -match 'gradlew(\.bat)?(\s[^|;&]*)?\s(assemble\w*|build|test\w*|bundle\w*|lint\w*)\b' -or
         $cmd -match '(^|[\s;&|(''"])msbuild(\.exe)?(\s|$)' -or
         $cmd -match '\b(ng\s+(build|test)|dotnet\s+(build|test|publish)|cargo\s+(build|test)|npx\s+(jest|vitest|tsc)\b|npm\s+(run\s+)?(build|test)\b|yarn\s+(build|test)\b|(pnpm|bun)\s+(run\s+)?(build|test)\b)'
-# e2e only through check -Step e2e: it picks the diff's specs; a hand-run suite is the whole suite
+# e2e only via check -Step e2e (else the whole suite)
 $e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)'
 if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_ -notmatch 'crafty\.ps1["'']?\s+check\b' }).Count) {
   Deny "e2e runs go through & $($KitCmd.dev) check -Dir <module> -Step e2e: only the specs related to the change (the whole suite: -AllTests, on the owner's word)."
@@ -1648,14 +1644,13 @@ if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>'."
 }
-# a background shell must end on its own: an unbounded wait loop or a stdin read hangs for hours after its agent finished
+# background shells: endless waits / stdin reads hang for hours
 $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
   $bgWhy = @($(if ($raw -match '(?s)\b(until|while)\b[^;{\n]*(;\s*do\b(?:(?!\bdone\b).)*?\bsleep\b|\{[^}]*?\bStart-Sleep\b)' -and $Matches[0] -notmatch '\$SECONDS|\s-(lt|le|gt|ge)\s|\(\(.*[<>].*\)\)' -and $raw -notmatch '\btimeout\s+\d+\s+(ba|z)?sh\s+-c') { 'a sleep loop with no max count or timeout' }),
     $(if ($raw -match '(?m)(^\s*|[;&(]\s*)cat\s*(>\s*\S+\s*)?($|[;&|)])') { 'cat with no file reads stdin' }),
     $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
   if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
-# installed goodies add rules: Register-KitAdapter 'guard' <name> @{ check = { param($a) <deny reason, @{ note = '<line for the agent>' } or nothing> } }
-# ($a: cmd without quoted data, raw, config, hook input); last, so a note's side effect only follows a command that runs
+# goody rules (Register-KitAdapter 'guard') last: notes only follow commands that run
 $notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
@@ -1663,7 +1658,7 @@ elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; addit
 exit 0
 }
 
-# ---- dir: the only places agents write under the runtime: agents/<agent>/[<item>/], evidence/<item>/; names lowercase-kebab
+# ---- dir: agents' runtime write places: agents/<agent>/[<item>/], evidence/<item>/
 function Invoke-Dir {
 param([string]$Agent, [string]$Item, [ValidateSet('scratch', 'evidence')][string]$Kind = 'scratch', [string]$Name)
 $slug = { param($s) ConvertTo-KitSlug $s }
@@ -1673,13 +1668,12 @@ New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
-# ---- checkpoint: an agent's resume point at each step boundary (crash, pause): resume.json + resume.md in its dir, atomic
+# ---- checkpoint: resume point per step: resume.json + resume.md, atomic
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read)
 if (-not $Agent -or -not ($Step -or $Read)) { "usage: crafty.ps1 checkpoint -Agent <id> [-Run <run>] -Step <$($script:KitSteps -join '|')|<check id>> [-Evidence <sha|iid|url|result>] [-Item <task>] [-Next <step>] [-Dir <wt>] [-Leases <a,b>] | -Agent <id> -Read"; exit 2 }
-if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }   # an agent outside a run still gets a resume point
-$jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Agent -Name 'resume.md'
+if (-not $Run -and -not $Read) { $Run = "adhoc-$(ConvertTo-KitSlug $Agent)" }$jf = Invoke-Dir -Agent $Agent -Name 'resume.json'; $mf = Invoke-Dir -Agent $Agent -Name 'resume.md'
 if ($Read) { if (Test-Path -LiteralPath $mf) { Get-Content -LiteralPath $mf } else { "no checkpoint for $Agent" }; return }
 $c = try { Get-Content -LiteralPath $jf -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable } catch { $null }
 if (-not $c -or ($Run -and "$($c.run)" -ne $Run)) { $c = @{ agent = $Agent; run = $Run; steps = @(); worktrees = @(); leases = @() } }   # another run's: start over
@@ -1698,13 +1692,13 @@ Write-KitAtomic $mf (($md -join "`n") + "`n")
 "checkpoint $Agent`: $Step done -> next $($c.next) ($mf)"
 }
 
-# ---- prior: what already exists for a task (last 30 days), stored in its state for the gate (lib.ps1 Assert-KitPrior)
+# ---- prior: a task's work of the last 30 days (lib.ps1 Assert-KitPrior)
 function Invoke-Prior {
 param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
   $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
-  $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # the branches wt new made for this task: its own work
-  $add = { param($k, $r, $ref, $ti, [bool]$tg, $br) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }); branches = @($br | Where-Object { $_ }) }) }   # tagged: carries the task id; branches: an MR's source, a commit's (wt new reusing one passes)
+  $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # branches wt new made for this task
+  $add = { param($k, $r, $ref, $ti, [bool]$tg, $br) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }); branches = @($br | Where-Object { $_ }) }) }   # branches: MR source / commit's (wt new reusing one passes)
   $idRx = "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])"   # CU-12 is no hit for CU-123
   $tt = Get-TrackerTask $Task; $words = if ($Query) { $Query } else { $tt.name }
   foreach ($d in @(Find-KitSimilarTasks $words $tt.list $tt.parent @() @($Task))) { & $add task '' $d.id "$($d.name) (score $($d.score))" }
@@ -1725,16 +1719,16 @@ param([string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Js
   foreach ($k in @(if ($st.docs) { $st.docs.Keys })) { & $add doc '' $k $st.docs[$k].url }
   foreach ($e in @($st.envRuns | Where-Object { $_ })) { & $add qa '' "$($e.env) $($e.at)" $e.result }
   $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
-  $own = { param($h) $h.kind -in 'doc', 'qa' -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # wt new made a branch for it (the gate passed once): its other tagged branches are the same wave's
-  $gate = @($priorHits | Where-Object { -not (& $own $_) })   # its own docs, QA runs and tagged work: shown, never a stop
+  $own = { param($h) $h.kind -in 'doc', 'qa' -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # gate passed once: tagged branches are the same wave's
+  $gate = @($priorHits | Where-Object { -not (& $own $_) })   # own docs, QA runs, tagged work: shown, never a stop
   Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-Date).ToString('o'); validUntil = (Get-Date).AddHours([double](Get-KitParam 'prior.validHours')).ToString('o'); found = $gate; claimed = $claimed } }
-  $paired = { param($h) -not $Repo -and $h.tagged -and $h.repo -and $h.kind -ne 'task' }   # no -Repo: the task's own work across repos (a gate with a repo still stops one there)
+  $paired = { param($h) -not $Repo -and $h.tagged -and $h.repo -and $h.kind -ne 'task' }   # no -Repo: the task's own work across repos
   $stop = @($gate | Where-Object { -not (& $paired $_) })
   if ($Json) { [pscustomobject]@{ task = $Task; found = $priorHits } | ConvertTo-Json -Depth 5 } else { if ($priorHits.Count) { $priorHits | ForEach-Object { "$(if ((& $own $_) -or (& $paired $_)) { 'INFO' } else { 'FOUND' }) $($_.kind) $(if ($_.repo) { "$($_.repo) " })$($_.ref) $($_.title)" } }; if (-not $stop.Count) { "NONE: no prior work for $Task (valid $(Get-KitParam 'prior.validHours') h)" } }
   exit $(if ($stop.Count) { 1 } else { 0 })
 }
 
-# ---- tracker: lib.ps1 tracker adapters
+# ---- tracker: lib.ps1 adapters
 function Invoke-Tracker {
   $__trA = @($args); $__trPos = New-Object System.Collections.ArrayList; $__trOpt = @{}
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
@@ -1754,17 +1748,17 @@ function Invoke-Tracker {
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
-    'comment' {   # -Kind comment-solution | comment-status | comment-deploy: over its prose limits = refused, nothing posted
+    'comment' {   # -Kind comment-*: over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
       if ("$($__trOpt.Kind)" -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
       if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
       elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
-      # one-per-task kinds edit the last kit comment of that kind; status, deploy and decision notes keep their history
+      # one-per-task kinds edit in place, others append
       if (Test-KitKeyedComment $__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # a failure throws
     }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
-    'create' {   # -Key <signature>: an open task made for the same key is updated (name, description), never a second one
+    'create' {   # -Key: updates that key's open task, never a second one
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }
@@ -1776,7 +1770,7 @@ function Invoke-Tracker {
       if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
       __TrOut $nt
     }
-    'bug' {   # ONE open [Bug] per ask (lib.ps1 Add-KitAskBug): joins the open one as a section; a known signature = a duplicate line
+    'bug' {   # ONE open [Bug] per ask (lib.ps1 Add-KitAskBug)
       if (-not ($__trOpt.Key -and $__trOpt.Name -and $__trOpt.Text)) { "usage: tracker bug -Parent <ask> -Key <section key> -Name '<[Bug] title>' -File <md> [-Signature 'a|b'] [-List] [-Assignee] [-Priority]"; exit 2 }
       __TrOut (Add-KitAskBug -Ask $__trOpt.Parent -Key $__trOpt.Key -Name $__trOpt.Name -List $__trOpt.List -Assignee $__trOpt.Assignee -Priority $(if ($__trOpt.Priority) { $__trOpt.Priority } else { '2' }) -Defects @([pscustomobject]@{ label = $__trOpt.Key; sig = @("$($__trOpt.Signature)" -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); md = $__trOpt.Text; group = '' }))
     }
@@ -1791,10 +1785,10 @@ function Invoke-Tracker {
   }
 }
 
-# ---- host: the git-host / ci adapters (lib.ps1 git-host) for devtools.py: host <verb> '<args JSON>' | @<json file> -> JSON
+# ---- host: git-host / ci adapters for devtools.py
 function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}') {
   $a = $(if ($ArgJson -like '@*') { Get-Content -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable
-  $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # one JSON line; a failed call = null (unknown)
+  $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # a failed call = null (unknown)
   if (-not $r.Count -and $global:KitHostFailed) { 'null' } elseif ($Verb -in 'mr.list', 'ci.runs', 'ci.jobs') { ConvertTo-Json -InputObject $r -Depth 8 -Compress }
   elseif ($r.Count -eq 1 -and $r[0] -is [string]) { $r[0] } else { ConvertTo-Json -InputObject $(if ($r.Count) { $r[0] } else { $null }) -Depth 8 -Compress }
 }

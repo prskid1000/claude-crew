@@ -13,17 +13,17 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L190 api · L313 finalize · L715 retest
+Sections: L23 report · L119 seat · L186 api · L309 finalize · L707 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
 $__rest = @($args | Select-Object -Skip 1)
 . (Join-Path (Split-Path $PSScriptRoot) 'crafty/lib.ps1')
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue) { . $__adapter.FullName }
-# ---- report: Markdown (tracker comments, the report file; reports.type gdocs converts it to a Google Doc)
+# ---- report: Markdown (tracker comments, report file)
 function TaskLink($id) { if (Get-Command Get-TrackerUrl -ErrorAction SilentlyContinue) { Get-TrackerUrl $id } else { "$id" } }
 
-# evidence names (SKILL.md "Evidence"); browser.mjs EVIDENCE_NAME is the same literal, -FixNames writes them
+# SKILL.md "Evidence"; same literal as browser.mjs EVIDENCE_NAME
 $script:EvidenceName = '^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$'
 $script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|xlsx?)$'   # types finalize publishes
 
@@ -31,24 +31,22 @@ $script:EvidenceExt = '^\.(jpe?g|png|json|jsonl|ndjson|log|csv|txt|pdf|mp4|html|
 function Caption($file) {
   if ($file -match '^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify)?(_\d{2}m?)?_(.+)\.\w+$') {
     $c = ($Matches[3] -replace '[-_]', ' ').Trim(); $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }
-    if (-not $c) { return $file }   # one odd name never crashes the publish
-    return $c.Substring(0, 1).ToUpper() + $c.Substring(1) + $v   # $c is non-empty here
-  }
+    if (-not $c) { return $file }   # an odd name never crashes
+    return $c.Substring(0, 1).ToUpper() + $c.Substring(1) + $v  }
   return $file
 }
 # phone shots render narrow
 function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|phone|mobile|emulator)([_.-])|-L\d+_') { 260 } else { 600 } }
-# verify = '<status> | <re-test text> | <note audit text>' (testy.js vJoin): the Results cell shows the status only
+# verify = '<status> | <re-test> | <note audit>' (testy.js vJoin)
 function VerifyStatus($v) { $s = ([string]$v -split ' \| ', 2)[0].Trim(); if ($s -match '^Note audit' -or @($s -split '\s+').Count -gt 6) { '' } else { $s } }
-# a verify over 20 words (the report's sentence cap is 25) is published as its own evidence file, linked from the report
+# verify > 20 words (sentence cap 25): own evidence file
 function VerifyFile($Code, $c) { if (@(([string]$c.verify) -split '\s+' | Where-Object { $_ }).Count -gt 20) { "$Code-$(([string]$c.id) -replace '[^A-Za-z0-9-]', '')_verify_retest.txt" } }
 
 function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl, [hashtable]$Cells) {
   function MdEsc($t) { ([string]$t -replace '\|', '\|' -replace "`r?`n", ' ').Trim() }
-  # an image: the host's embeddable src (gdocs) or its link; the quoted title = width in px (md_to_html)
+  # gdocs src or link; title = width px (md_to_html)
   function MdImg($f) { $u = if ($Map.files[$f].src) { $Map.files[$f].src } else { $Map.files[$f].link }; "![$(if ($f -match '^[A-Za-z0-9]+-([A-Za-z]*\d+[a-z]?)_') { "$($Matches[1]): " })$(Caption $f)]($(([string]$u) -replace ' ', '%20') `"$(ImgWidth $f)`")" }
-  # JSON / log evidence previewed in its row: up to 8 "path: value" fields or the last 3 log lines, as code (the run folder copy);
-  # a value's newlines are spaces: one split the table row and its text counted as prose
+  # preview 8 JSON fields / 3 log lines; newlines split the row
   function Peek($f) {
     $p = @("$D/shots/$f", "$D/evidence/$f") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $p -or $f -notmatch '\.(json|log|txt)$') { return '' }
@@ -77,7 +75,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o.Add("PASS $($n.PASS + $n.PASS_WITH_NOTE) (with note $($n.PASS_WITH_NOTE)) · FAIL $($n.FAIL) · NOT TESTED $($n.NOT_TESTED) · PENDING $($n.PENDING) · OUT OF SCOPE $($n.OUT_OF_SCOPE) · total $($checks.Count)"); $o.Add('')
   $o.Add('| | |'); $o.Add('|---|---|')
   $o.Add("| Scope | $(if ($GuideUrl) { "[$(MdEsc $Item.title)]($GuideUrl) (tester guide)" } else { MdEsc $Item.title }) |")
-  # id + MR count, not name + MR list: a long name with many MRs made one sentence over the prose limit
+  # name + MR list broke the prose limit
   if (@($Item.subtasks).Count) { $o.Add("| Tasks | $((@($Item.subtasks) | ForEach-Object { $mrN = @(@($_.mrs) | ForEach-Object { "$_" -split ',' } | Where-Object { $_.Trim() }).Count; "[$(MdEsc $_.id)]($(TaskLink $_.id))$(if ($mrN) { " · $mrN MR$(if ($mrN -ne 1) { 's' })" })" }) -join '<br>') |") }
   if (@($Run.envLines).Count) { $o.Add("| Environment | $((@($Run.envLines) | ForEach-Object { MdEsc $_ }) -join '<br>') |") }
   $o.Add("| Tested by | $(MdEsc $Tester) with Claude Code · $Date |")
@@ -88,8 +86,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
     $o.Add("| $(MdEsc $st.name) | $($tn.PASS + $tn.PASS_WITH_NOTE) | $($tn.FAIL) | $($tn.NOT_TESTED) | $(if ($tn.FAIL) { 'failed' } elseif ($tn.NOT_TESTED) { 'partly tested' } elseif ($tn.PENDING) { 'pending' } else { 'passed' }) |")
   }
   $o.Add(''); $o.Add('## Results'); $o.Add(''); $o.Add('Each check, its evidence inline:'); $o.Add(''); $o.Add('| Check | Result | Observed | Evidence |'); $o.Add('|---|---|---|---|')
-  foreach ($c in $checks) {   # a FAIL's steps and saw live once, in "Failures in detail"
-    $saw = if ($c.result -eq 'FAIL') { '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')' } else { MdEsc $c.observed }
+  foreach ($c in $checks) {    $saw = if ($c.result -eq 'FAIL') { '[details](#' + ("$($c.id) — $($c.screen)".ToLower() -replace '[^\w\- ]', '' -replace ' ', '-') + ')' } else { MdEsc $c.observed }
     $evc = (@($c.evidence | Where-Object { $_ }) | ForEach-Object { if ($_ -match '\.(png|jpe?g)$' -and $Map.files[$_]) { MdImg $_ } elseif ($pk = Peek $_) { "$pk<br>[full file]($(([string]$Map.files[$_].link) -replace ' ', '%20'))" } else { "file: $(Lnk $_)" } }) -join '<br>'
     $vt = @(([string]$c.verify -replace ' \| ', ' · ') -split '\s+' | Where-Object { $_ }); $rt = if ($vt.Count) { " (re-test: $(MdEsc (($vt | Select-Object -First 20) -join ' '))$(if ($vt.Count -gt 20) { ' …' }))" }
     $o.Add("| **$(MdEsc $c.id)** $(MdEsc $c.screen) | $($label[[string]$c.result])$rt | $saw | $evc |")
@@ -103,7 +100,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
     }
   }
   $vNotes = @($checks | Where-Object { $_.result -ne 'FAIL' -and $_.verify -and [string]$_.verify -ne (VerifyStatus $_.verify) })   # a FAIL's verify is in its detail
-  if (@($Res.findings).Count -or $vNotes.Count) {   # a note's observed is in the Results table already
+  if (@($Res.findings).Count -or $vNotes.Count) {   # observed is in Results already
     $o.Add(''); $o.Add('## Notes'); $o.Add('')
     foreach ($c in $vNotes) { $o.Add("- **$(MdEsc $c.id)** re-test / note audit: $(VerifyMd $c)") }
     foreach ($f in @($Res.findings)) { $o.Add("- $(MdEsc $f)") }
@@ -119,7 +116,7 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
   $o -join "`n"
 }
 
-# ---- seat: item claim (first claimer owns <run>/<code>) + a memory turn in the gate's queue; the seat file names its holder
+# ---- seat: item claim (first claimer owns <run>/<code>) + a gate memory turn
 function Invoke-Seat {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
@@ -138,7 +135,7 @@ function Locked([scriptblock]$b) {
   try { & $b } finally { if ($got) { $mutex.ReleaseMutex() } }
 }
 function Safe($s) { $s -replace '[^\w.-]', '_' }
-# README "Leases": dead = no live holder for idle.graceMinutes from first seen; a record without holder fields: 6 h
+# README "Leases"; no holder fields: 6 h
 function LeaseLive($o, [string]$file) {
   if ($null -eq $o.PSObject.Properties['holderPid']) { return ((Get-Date) - [datetime]$o.since).TotalHours -lt 6 }
   $v = [pscustomobject]@{ agent = "$($o.lease)"; holderPid = $o.holderPid; holderStart = $o.holderStart; seen = $o.seen }
@@ -176,8 +173,7 @@ switch ($Action) {
     }
     $sf = Join-Path $seats "$(Safe $Agent).json"
     if (Test-Path $sf) { "seat already held: $Agent"; exit 0 }
-    # the gate's fair memory queue (builds, phones, seats); a 0-second command = just the turn, so seats < 3 min old
-    # (their browser still starting) are added to what this one needs
+    # seats < 3 min old (browser starting) count too
     $fresh = [double](@(Locked { Seats }) | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 } | Measure-Object need -Sum).Sum
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
     $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" })
@@ -187,7 +183,7 @@ switch ($Action) {
   }
 }
 }
-# ---- api: call a target's API as a test user (targets.local.json); -Save = redacted request/response evidence
+# ---- api: a target's API as a test user
 function Invoke-Api {
 param(
   [string]$Method = 'GET',
@@ -203,9 +199,9 @@ param(
   [int]$TimeoutSec = 180
 )
 $ErrorActionPreference = 'Stop'
-# absolute only: a bound hashtable became a relative folder
+# a bound hashtable became a relative folder
 if ($OutDir -and -not [IO.Path]::IsPathRooted($OutDir)) { throw "-OutDir must be an absolute folder path, got '$OutDir' (a variable holding an object? PowerShell names are case-insensitive: `$o is `$O)" }
-# Git Bash rewrites '/api/x' into a Git path: undo
+# undo Git Bash's '/api/x' -> Git path rewrite
 if ($Path -match '^[A-Za-z]:[\\/].*?[\\/]Git[\\/](?<rest>.*)$') { $p0 = $Path; $Path = '/' + ($Matches.rest -replace '\\', '/'); Write-KitLog calls msys-path @{ from = $p0; to = $Path } }   # the calls log has the raw arg
 $here = $PSScriptRoot
 $cfgFile = Join-Path $here 'targets.local.json'
@@ -244,7 +240,7 @@ function Login {
   $tok | Set-Content $cache -NoNewline
   $tok
 }
-# login: the header template (default a bearer token); none: no auth header
+# login: header template (default bearer)
 function AuthHeaders($tok) {
   if ($a.type -ne 'login') { return @{} }
   $n, $v = "$(if ($a.header) { $a.header } else { 'Authorization: Bearer {token}' })".Split(':', 2)
@@ -278,7 +274,7 @@ if ($content -is [byte[]]) {
     $bdir = if ($OutDir) { $OutDir } else { Get-KitPath evidence }; New-Item -ItemType Directory -Force $bdir | Out-Null
     $ext = if ([string]$rhead['content-disposition'] -match 'filename\*?=(?:UTF-8'''')?"?([^";]+)') { [IO.Path]::GetExtension($Matches[1]) } else { '' }
     if (-not $ext) { $ext = switch -Regex ([string]$ctype) { 'png' { '.png' } 'jpe?g' { '.jpg' } 'pdf' { '.pdf' } 'zip' { '.zip' } 'csv' { '.csv' } 'sheet|excel' { '.xlsx' } default { '' } } }
-    if (-not $ext) {   # octet-stream: the magic bytes, then strict UTF-8 text
+    if (-not $ext) {   # octet-stream: magic bytes, then strict UTF-8
       $hex = -join @($bytes | Select-Object -First 4 | ForEach-Object { $_.ToString('X2') })
       $ext = switch -Regex ($hex) { '^25504446' { '.pdf' } '^89504E47' { '.png' } '^FFD8FF' { '.jpg' } '^504B0304' { '.zip' } default { try { if ($ctype -and $ctype -notmatch 'octet-stream') { throw }; $null = [Text.UTF8Encoding]::new($false, $true).GetString($bytes); '.txt' } catch { '.bin' } } }
     }
@@ -289,7 +285,7 @@ if ($content -is [byte[]]) {
 if ($Save) {
   if (-not $OutDir) { $OutDir = Get-KitPath evidence }
   New-Item -ItemType Directory -Force $OutDir | Out-Null
-  # secrets redacted at any depth (keys: kit.example.json _paths.log.secretKey)
+  # redact secrets at any depth (_paths.log.secretKey)
   function Redact($o) {
     if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
     if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in $o.PSObject.Properties) { $p.Value = if ($p.Name -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
@@ -310,7 +306,7 @@ $content
 if (-not $status -or [int]$status -ge 400) { exit 1 }   # else a 500 looked like success
 }
 
-# ---- finalize: publish one tested package (report, tracker comments, result rule); re-run safe
+# ---- finalize: publish one package; re-run safe
 function Invoke-Finalize {
 param(
   [Parameter(Mandatory)][string]$RunDir,
@@ -326,9 +322,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Results -ne 'results.json' -and -not $Check) { throw '-Results works only with -Check (publishing reads results.json)' }
-$publishAfter = $FixNames -and -not $Check   # -FixNames alone: rename, then publish on a clean check
-if ($FixNames) { $Check = [switch]$true }   # renaming needs the check pass
-$rtype = if ($Report) { $Report } else { $KitConf.ReportType }
+$publishAfter = $FixNames -and -not $Check   # -FixNames alone: publish after a clean rename
+if ($FixNames) { $Check = [switch]$true }$rtype = if ($Report) { $Report } else { $KitConf.ReportType }
 $RunDir = (Resolve-Path $RunDir).Path
 $run = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $item = @($run.items) | Where-Object { $_.code -eq $Code } | Select-Object -First 1
@@ -339,16 +334,16 @@ if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   $m = "$Code`: $Results has $(@($res.checks).Count) check(s), the workflow sent $ExpectChecks - a truncated copy; nothing published. Write the JSON again, complete."
   if ($Check) { $m; exit 1 } else { throw $m }
 }
-# copy evidence outside shots/evidence into evidence to upload
+# copy outside evidence in for upload
 if (-not $Check) { New-Item -ItemType Directory -Force "$D/evidence" | Out-Null }
-# a long verify (re-test + note audit text) -> its own evidence file; -Check only counts it as present
+# long verify -> own evidence file (-Check: counted only)
 $vText = [ordered]@{}
 foreach ($c in @($res.checks)) { $vf = VerifyFile $Code $c; if ($vf) { $vText[$vf] = "$($c.id) — $($c.screen): independent re-test and note audit`n`n" + (([string]$c.verify -split ' \| ') -join "`n`n") + "`n" } }
-$vChanged = @(if (-not $Check) { foreach ($vf in $vText.Keys) {   # changed text: uploaded again on a re-run (step 1)
+$vChanged = @(if (-not $Check) { foreach ($vf in $vText.Keys) {   # re-uploaded in step 1
   if ((Test-Path "$D/evidence/$vf") -and [IO.File]::ReadAllText("$D/evidence/$vf") -ne $vText[$vf]) { $vf }
   [IO.File]::WriteAllText("$D/evidence/$vf", $vText[$vf]) } })
 $lost = [Collections.Generic.List[object]]::new()   # listed but found nowhere
-# -FixNames renames (old -> new): a results file written again from the checks of before the rename still names the old files
+# -FixNames log: rewritten results may name old files
 $renLog = "$D/evidence-renames.json"; $renamed = @{}; $remap = [ordered]@{}
 if (Test-Path -LiteralPath $renLog) { (Get-Content -LiteralPath $renLog -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $renamed[$_.Name] = [string]$_.Value } }
 foreach ($c in @($res.checks)) {
@@ -373,7 +368,7 @@ if ($badNames.Count -and -not $Check) { Write-Warning "evidence names not follow
 $badTypes = @(@(foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and [IO.Path]::GetExtension([string]$e) -notmatch $script:EvidenceExt) { "$($c.id): $e" } } }) | Select-Object -Unique)
 if ($badTypes.Count -and -not $Check) { Write-Warning "evidence listed but of an unsupported type (not published): $($badTypes -join '; ')" }
 $lostList = @($lost | ForEach-Object { "$($_.check.id): $($_.name)" })
-# the prose limits: -Check exits 1, a publish refuses (one rule), before anything is published
+# prose limits: -Check exits 1, publish refuses
 $prose = {
   $lm = @{ folderLink = $D; files = @{} }; foreach ($x in @(@($files.Name) + @($vText.Keys) | Where-Object { $_ })) { $lm.files[$x] = @{ link = $x } }
   $md = Build-QaReportMd -Title $(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) -Code $Code -Item $item -Res $res -Map $lm -Run $run -Tester '-' -Date $Date
@@ -381,7 +376,7 @@ $prose = {
 }
 $prWhy = "$Code prose check: shorten observed / what_was_done in $Results (crafty/templates.md ""Writing standards"")"
 if ($Check) {
-  # standard name, else setup form; nn from the name, else a free one
+  # standard name, else setup form
   $ids = @(@($res.checks) | ForEach-Object { [string]$_.id } | Where-Object { $_ } | Select-Object -Unique | Sort-Object Length -Descending)
   $refBy = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e -and -not $refBy.ContainsKey([string]$e)) { $refBy[[string]$e] = [string]$c.id } } }
   $taken = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -416,17 +411,16 @@ if ($Check) {
     if ($cand -notmatch $script:EvidenceName -or $taken.Contains($cand)) { return $null }
     $null = $taken.Add($cand); $cand
   }
-  # 0-byte file = failed capture: reported, never renamed
+  # 0 bytes = failed capture: report, never rename
   $cited = @{}; foreach ($c in @($res.checks)) { foreach ($e in @($c.evidence)) { if ($e) { $cited[[string]$e] = [string]$c.id } } }
   $emptyFiles = @($files | Where-Object { $_.Length -eq 0 -and $cited.ContainsKey($_.Name) })
   $emptyNames = @($emptyFiles | ForEach-Object Name)
-  if ($Results -ne 'results.json') { $badNames = @($badNames | Where-Object { $cited.ContainsKey($_) }) }   # a retry renames only its own
+  if ($Results -ne 'results.json') { $badNames = @($badNames | Where-Object { $cited.ContainsKey($_) }) }
   $suggest = [ordered]@{}
   foreach ($b in $badNames) { $suggest[$b] = if ($emptyNames -contains $b) { $null } else { Get-StandardName $b } }
   if ($FixNames -and ($suggest.Count -or $remap.Count)) {
     $resFile = Join-Path $D $Results; $raw = [IO.File]::ReadAllText($resFile)
-    # every whole-name reference: evidence lists and names in the text (observed, verify); any case (Windows found the file under a
-    # reference in another case, the rename left it)
+    # whole-name refs, any case (a Windows rename left other-case refs)
     $retag = { param($old, $nn) [regex]::Replace($raw, '(?<![\w.-])' + [regex]::Escape($old) + '(?![\w-]|\.\w)', $nn.Replace('$', '$$'), 'IgnoreCase') }
     foreach ($o in @($remap.Keys)) { $raw = & $retag $o $remap[$o]; "  $Results`: $o -> $($remap[$o]) (renamed by an earlier -FixNames)" }
     foreach ($b in @($suggest.Keys)) {
@@ -453,10 +447,10 @@ if ($Check) {
     $emptyFiles | ForEach-Object { "  $($cited[$_.Name]): $($_.Directory.Name)/$($_.Name)" }
   }
   if ($dups.Count) { $fail = $true; "$Code evidence check: duplicate check id(s) in results.json (merge or renumber them): $($dups -join ', ')" }
-  # a note without its class hides defects; a re-test's own note (verify) is exempt, a note audit's is not
+  # a classless note hides defects (re-tests exempt)
   $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not ($_.verify -and "$($_.verify)" -notmatch '^Note audit') -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
   if ($noClass.Count) { $fail = $true; "$Code note check: PASS_WITH_NOTE without its class (observed starts with '(a|b|c|d) <why>', pokey SKILL.md step 5; else FAIL): $($noClass -join ', ')" }
-  # devtools.py PRE_EXISTING: a doc check is the task's own, never waived
+  # devtools.py PRE_EXISTING: doc checks are never waived
   $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$($_.observed)" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
   if ($preEx.Count) { $fail = $true; "$Code pre-existing check: a check of the doc is the task's own: a defect in it is FAIL (defect own; outside the change: new), never waived as pre-existing: $($preEx -join ', ')" }
   if ($badTypes.Count) {
@@ -465,7 +459,6 @@ if ($Check) {
   }
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
-  # one rerun fixes all: the names (-FixNames) and the re-checked text together
   if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: pokey.ps1 finalize -RunDir $RunDir -Code $Code -Check$(if (@($suggest.Values | Where-Object { $_ }).Count) { ' -FixNames' })$(if ($Results -ne 'results.json') { " -Results $Results" })"; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose)"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }
@@ -485,15 +478,15 @@ Push-Location $RunDir; $script:qaFinPushed = $true   # tracker CLIs run inside t
 trap { if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }; break }
 function TrySay([scriptblock]$b, [string]$what) { try { & $b } catch { Write-Warning "tracker ($($KitConf.TrackerType)): $what failed: $_"; $null } }
 
-# 1. Evidence: hosted by the report type (devtools evidence; gdocs: a Drive folder, a re-run adds new files) or the run folder
+# 1. Evidence: report type host (gdocs: Drive) or the run folder
 $map = [ordered]@{ folderId = $prev.folderId; folderLink = $prev.folderLink; files = [ordered]@{}; local = $false; label = $null }
 if ($prev.folderId) { foreach ($pf in $prev.files.PSObject.Properties) { if ($pf.Name -notin $vChanged) { $map.files[$pf.Name] = $pf.Value } } }
-# one report, one evidence folder per task across runs (devtools.py publish by key); several tasks: per run item
+# one report + evidence folder per task (else per run item)
 $pubKey = if (@($item.subtasks).Count -eq 1) { [string]@($item.subtasks)[0].id } else { "$(Split-Path $RunDir -Leaf)-$Code" }
 $ea = @('evidence', "$title $Code - test evidence ($Date)", '--type', $rtype, '--key', "${pubKey}:evidence")
 if ($run.driveParent) { $ea += '--parent', [string]$run.driveParent }   # run.json wins, else kit.local.json
 if ($prev.folderId) { $ea += '--folder', [string]$prev.folderId }
-$lf = [IO.Path]::GetTempFileName()   # a list file: 80+ long paths broke the command-line limit
+$lf = [IO.Path]::GetTempFileName()   # 80+ long paths broke the command-line limit
 [IO.File]::WriteAllLines($lf, [string[]]@($files | Where-Object { -not $map.files[$_.Name] } | ForEach-Object FullName))
 $evAll = @(& (Get-Python) -X utf8 $KitCmd.devtools @ea --files-from $lf 2>&1); $evRc = $LASTEXITCODE; Remove-Item -LiteralPath $lf -ErrorAction SilentlyContinue
 $ev = @($evAll | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] }); $evErr = @($evAll | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
@@ -514,17 +507,17 @@ function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] -and [IO.Path]::GetExtension([string]$_) -match $script:EvidenceExt } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited but not uploaded - nothing was published: $($missing -join '; '). Check the upload output above, then re-run." }
-$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # goody report-gdocs: the styled HTML goes to gdocs
+$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # goody report-gdocs
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
 $cells = @{}
 $md = Build-QaReportMd -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl -Cells $cells
 $md | Out-File "$D/report.md" -Encoding utf8
 $kept = $prev.doc -match '^https?://' -and $prev.doc -notmatch '/d//' -and "$($prev.report)" -in '', $rtype
-# the task's human testing doc takes the run: Result / Evidence per row + a dated "<env> run" section (same doc); none: a report by key
+# human testing doc: per-row results + "<env> run"; else report by key
 $hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
 if ($kept) { $docUrl = $prev.doc }   # a re-run keeps the posted report
-else {   # devtools doc (reports.type); kept-file types keep it in $D
+else {   # devtools doc; kept-file types stay in $D
   $pa = if ($hDoc) { [IO.File]::WriteAllText("$D/cells.json", (ConvertTo-Json $cells -Depth 4), [Text.UTF8Encoding]::new($false)); @("$D/report.md", '--key', "${pubKey}:testing-doc", '--run', "$D/cells.json") }
     else { @("$D/report.$(if ($html -and $rtype -eq 'gdocs') { 'html' } else { 'md' })", '--key', "${pubKey}:qa-report") }
   $o = & (Get-Python) -X utf8 $KitCmd.devtools doc "$title $Code - Test Results ($Date)" $pa[0] $(if ($map.folderId) { $map.folderId } else { $D }) --type $rtype @($pa | Select-Object -Skip 1) --label "$(if ($item.target) { $item.target } else { $run.target })" 2>&1 | ForEach-Object { "$_" }
@@ -562,7 +555,7 @@ function SiblingHold($id) {
   }
   [pscustomobject]@{ fail = $own; notTested = $nt; notTestedHold = $ntH; bugError = $err; pending = $pend }
 }
-# original ask = tracker parent, else run.json, else top level
+# ask = tracker parent, else run.json, else top level
 $script:askCache = @{}
 function Get-Ask($st) {
   if ($script:askCache.ContainsKey($st.id)) { return $script:askCache[$st.id] }
@@ -572,7 +565,7 @@ function Get-Ask($st) {
   $script:askCache[$st.id] = [pscustomobject]@{ id = $pid_; name = $pname }
   $script:askCache[$st.id]
 }
-# one [Bug] per ask and QA run (bugs.json, mutex): only a [Bug] this run created is edited; another open one under the ask is never touched
+# one [Bug] per ask and run (bugs.json, mutex); edits only its own
 function Add-NewDefects($st, [object[]]$defects) {
   $ask = Get-Ask $st; $key = if ($ask.id) { $ask.id } else { '-' }
   $h = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
@@ -587,23 +580,23 @@ function Add-NewDefects($st, [object[]]$defects) {
     $entries = @(@($s.entries) | Where-Object { $_ -and -not ($_.code -eq $Code -and $_.task -eq $st.id) })
     $grp = "New defects while testing $(if (($tl = TaskLink $st.id)) { "[$($st.name)]($tl)" } else { "$($st.name) ($($st.id))" }), package ``$Code``"
     $entries += [pscustomobject]@{ code = $Code; task = $st.id; taskName = $st.name; defects = @($defects | ForEach-Object { [pscustomobject]@{ label = "$Code $($_.id)"; sig = @(Get-KitDefectSigs $_); md = (Format-Check $_); group = $grp } }) }
-    # an entry of an older finalize (one md, no defects) stays one defect
+    # an old-format entry (one md) stays one defect
     $ds = @($entries | ForEach-Object { if ($_.defects) { @($_.defects) } elseif ($_.md) { [pscustomobject]@{ label = $_.code; sig = @(); md = $_.md; group = '' } } })
     $mdAll = ($ds | ForEach-Object md) -join "`n"
     $n = ([regex]::Matches($mdAll, '(?m)^### ')).Count
-    # "<prefix> <the ask's product part, no [Feature] tag> — <first defect> (+N more)"
+    # "<prefix> <ask product> — <first defect> (+N more)"
     $prod = (("$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', '') -split ' [—-] ', 2)[0].Trim()
     $first = [regex]::Match($mdAll, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
     $name = "$(Get-KitSetting 'tracker.bugPrefix' '[Bug]') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
     $head = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)$(if ($guideUrl) { "`n- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)" })"
     $bt = if ($s.id) { Clear-TrackerMemo $s.id; try { Get-TrackerTask $s.id } catch { $null } }; $cur = [string]$bt.name
-    # an older finalize's own unmarked text (its name, or its "QA run **<title>**" opening) is replaced, never kept twice
+    # replace an older finalize's own text
     $mine = [bool]($s.id -and -not $s.adopted -and (($s.name -and $cur -eq $s.name) -or "$($bt.description)".StartsWith("QA run **$title**")))
-    # the shared helper: an open [Bug] under the ask (watchy's, an earlier run's) gets this run's section, never a second task
+    # an open [Bug] under the ask gets a section, not a twin
     $r = Add-KitAskBug -Ask $ask.id -Key "qa-$(Split-Path $RunDir -Leaf)" -Name $name -Head $head -Defects $ds -List $bugList -Assignee $tr.owner -Id $s.id -Mine:$mine
     if (-not $r.id) { return $null }
     if ($r.action -ne 'updated') { $s | Add-Member -Force NoteProperty adopted ($r.action -eq 'appended') }   # another source's task: never renamed
-    elseif (-not $s.adopted) {   # a name someone changed since the last finalize stays
+    elseif (-not $s.adopted) {   # a hand-changed name stays
       if (-not $s.name -or -not $cur -or $cur -eq $s.name) { $null = Set-TrackerName $r.id $name } else { $name = $cur } }
     $s.id = $r.id; $s.url = $(if ($r.url) { $r.url } else { TaskLink $r.id })
     $s.entries = $entries; $s | Add-Member -Force NoteProperty name $name; $groups[$key] = $s
@@ -629,7 +622,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($sib.pending) { $rec.keptOpen = "$($sib.pending) check(s) of a sibling item pending in another lane"; return }
   # local env: untested = ENV-FIX
   if ($isLocal -and -not ($rec.fail + $sib.fail) -and ($rec.notTested + $sib.notTested)) { $rec.keptOpen = "local env ${isLocal}: $($rec.notTested + $sib.notTested) check(s) not tested: ENV-FIX + pokey.ps1 retest"; return }
-  $hold = [int]$rec.notTestedHold + [int]$sib.notTestedHold   # causes a developer cannot fix: the owner decides (close / retest)
+  $hold = [int]$rec.notTestedHold + [int]$sib.notTestedHold   # owner decides (close / retest)
   if ($rec.fail + $sib.fail + $rec.notTested + $sib.notTested - $hold) { Set-FailedTesting $rec $st; return }
   if ($hold) {
     $rec.keptOpen = "$hold check(s) not tested for a cause no developer can fix ($($script:NtHold -join ', ')): status kept, the owner decides"
@@ -639,7 +632,7 @@ function Resolve-Outcome($rec, $st, [int]$pend) {
   if ($rec.bugError -or $sib.bugError) { $rec.keptOpen = "new defects have no [Bug] task ($(if ($rec.bugError) { $rec.bugError } else { $sib.bugError }))"; return }   # never close while a defect is untracked
   if ($null -ne (TrySay { Set-TrackerStatus $st.id $closeStatus; $true } "close $($st.id)")) { $rec.closed = $true } else { $rec.keptOpen = 'the tracker refused the close (see warning)' }
 }
-# one tracker step per run at a time (siblings deadlocked)
+# one tracker step per run (siblings deadlocked)
 $fh = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RunDir.ToLower()))).Substring(0, 16)
 $fmx = [Threading.Mutex]::new($false, "Global\kit-finalize-$fh")
 $fOwn = $true; try { $fOwn = $fmx.WaitOne(1000 * [int](Get-KitParam 'qa.finalizeLockSec')) } catch [Threading.AbandonedMutexException] { $fOwn = $true }
@@ -659,13 +652,13 @@ foreach ($st in @($item.subtasks)) {
     notTestedHold = @($ntChecks | Where-Object { "$($_.cause)" -in $script:NtHold }).Count }
   $prevRec = if ($prev) { @($prev.subtasks | Where-Object { $_.id -eq $st.id }) | Select-Object -First 1 }
   if ($NoTracker) {
-    # a dry run never overwrites a posted record (else the real run re-posts)
+    # a dry run never overwrites a posted record
     if ($prevRec -and -not $prevRec.noTracker) { $out.subtasks += $prevRec; continue }
     $rec.noTracker = $true
   } else {
-    if ($prevRec.noTracker -or $prevRec.commentFailed) { $prevRec = $null }   # a failed results comment is posted again
+    if ($prevRec.noTracker -or $prevRec.commentFailed) { $prevRec = $null }   # failed comment: post again
     if ($prevRec.closed -or $prevRec.failedTesting) { $out.subtasks += $prevRec; continue }   # keep the first run's record
-    # re-run on a sibling: re-resolve only
+    # sibling re-run: re-resolve only
     if ($prevRec) {
       $rec.bug = $prevRec.bug
       $rec.bugError = if ($prevRec.bugError) { $prevRec.bugError } elseif ($newDefects.Count -and -not $rec.bug) { 'new defects have no [Bug] task' }
@@ -679,24 +672,23 @@ foreach ($st in @($item.subtasks)) {
     if ($pend) { $msg += ". $pend check(s) are tested next in another lane" }
     if ($newDefects.Count -and $canCreate) {
       $b = TrySay { Add-NewDefects $st $newDefects } 'record the new defects in the [Bug] task'
-      if ($b.id) { $rec.bug = $b.id; $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) moved to [Bug] task $($b.id)" }   # the comment carries one link: the report
+      if ($b.id) { $rec.bug = $b.id; $msg += ". New defects ($(($newDefects | ForEach-Object id) -join ', ')) moved to [Bug] task $($b.id)" }   # one link: the report
       else { $rec.bugError = '[Bug] task could not be created'; Write-Warning "$($st.id): could not create the [Bug] task for $(($newDefects | ForEach-Object id) -join ', ')" }
     }
     elseif ($newDefects.Count) { $rec.bugError = 'no bug list configured'; Write-Warning "$($st.id): no tracker list for bug tasks (tracker.list) - task kept open" }
     $msg += if ($hDoc -and (Test-KitTaskDocLink $st.id) -eq $true) { '. Screenshots and evidence: the human testing doc in the description' } else { ". Screenshots and evidence: $docUrl" }   # testing doc links live only in the description
-    # own failures + untested: failedTesting
-    $text = $msg   # one line: counts, failed / untested ids, where the evidence is; the details live in the doc
+    $text = $msg   # one line; details live in the doc
     $posted = if ($reportFile) { TrySay { $null = Add-TrackerAttachment $st.id $reportFile $text; $true } "post the report on $($st.id)" }
-    else { TrySay { $null = Set-TrackerKitComment $st.id 'qa-result' $text; $true } "comment on $($st.id)" }   # a new run edits the last result comment
+    else { TrySay { $null = Set-TrackerKitComment $st.id 'qa-result' $text; $true } "comment on $($st.id)" }   # edits the last result comment
     $out.subtasks += $rec
-    # no results comment: leave the task, post next run
+    # comment failed: post next run
     if (-not $posted) { $rec.commentFailed = $true; $rec.keptOpen = 'the results comment was not posted (see warning): re-run finalize'; Save-Fin; continue }
     Save-Fin; Resolve-Outcome $rec $st $pend; Save-Fin; continue
   }
   $out.subtasks += $rec
 }
 Save-Fin
-# the indexes (STATE.md): the task's env runs; the run's items -> result + report, so nobody re-reads the tracker or the run folder
+# indexes (STATE.md) spare re-reading tracker / run folder
 $envName = [string]$(if ($item.target) { $item.target } else { $run.target }); $runName = Split-Path $RunDir -Leaf
 foreach ($s in @($out.subtasks | Where-Object { $_.id })) {
   $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; doc = $docUrl; at = (Get-Date).ToString('o') }
@@ -712,14 +704,14 @@ if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
 $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
 }
 
-# ---- retest: add a RETEST item for a fixed task whose fix went live (same -Code replaces it)
+# ---- retest: RETEST item for a live fix (same -Code replaces it)
 function Invoke-Retest {
 param(
   [Parameter(Mandatory)][string]$RunDir, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Code,
   [string]$Title, [string]$Mrs = '', [string[]]$Only, [ValidateSet('web', 'api', 'app')][string]$Lane = 'web'
 )
 $ErrorActionPreference = 'Stop'
-# Split-KitList: -Only arrives as one string
+# -Only arrives as one string
 $Only = @(Split-KitList $Only)
 $t = Get-TrackerTask $Task
 if (-not $t.name) { throw "cannot read task $Task (tracker $($KitConf.TrackerType): CLI auth / config?)" }
@@ -757,13 +749,13 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
     'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1: Invoke-KitVerb
-    { $_ -in 'deployed', 'annotate', 'evidence' } {   # goodies deploys, android-swarm, media-evidence (adapters/)
+    { $_ -in 'deployed', 'annotate', 'evidence' } {   # goodies (adapters/)
       $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate'; evidence = 'Invoke-Evidence' }[$__verb]
       if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }
       else { $xn = @{ deployed = 'deploys'; annotate = 'android-swarm'; evidence = 'media-evidence' }[$__verb]; Resolve-KitExtra $xn; [Console]::Error.WriteLine("pokey.ps1 $__verb is a goody: run kitbag.py goody add $xn"); exit 2 }
     }
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
-    'ui' {   # phone lanes: goody android-swarm (adapters/ui_android.ps1)
+    'ui' {   # goody android-swarm
       if (Get-Command Invoke-Ui -ErrorAction SilentlyContinue) { Invoke-KitVerb Invoke-Ui $__rest }
       elseif ((Get-KitSetting 'devices.type' 'android') -eq 'none') { 'no devices (devices.type none): app checks are NOT_TESTED'; exit 1 }
       else { [Console]::Error.WriteLine('pokey.ps1 ui (phone lanes) is a goody: run kitbag.py goody add android-swarm'); exit 2 }

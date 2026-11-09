@@ -32,7 +32,7 @@ from datetime import datetime
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking, kitlog   # one path map, lock, call log and goodies' usage stamps for every kit script
+from kitbag import kit_path, locked, audited, stamp_fn, state_read, state_write, task_index, read_tracking, kitlog   # one path map, lock, call log, goody usage stamps for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -114,7 +114,7 @@ def _run(cmd, cwd=None, check=False, write=None, sec=None):
         raise SystemExit(f'CLI not found on PATH for: {cmd[1:3]}')
     write = _is_write(cmd) if write is None else write   # on the CLI's own words, before the shim swap shifts them
     cmd = _argv(cmd)
-    sec = sec or net_sec()   # the whole deadline; sec: a caller's own (an idempotent retry with more time)
+    sec = sec or net_sec()   # whole deadline; sec: the caller's (an idempotent retry with more time)
     tries, delay, hangs = 1 if write else max(1, int(os.environ.get('KIT_NET_TRIES') or 3)), 2, 0
     end = min(time.time() + sec, STOP_AT[0] or float('inf'))
     for i in range(1, tries + 1):
@@ -132,7 +132,7 @@ def _run(cmd, cwd=None, check=False, write=None, sec=None):
         raise SystemExit(f'timed out after {sec} s: {" ".join(str(c) for c in cmd[-4:])[:120]}')
     if check and rc:
         raise SystemExit(f'failed (exit {rc}): {" ".join(str(c) for c in cmd[-4:])[:120]}\n{out[-600:]}')
-    if rc:   # never a silent failure: the caller's own error then has the cause above it
+    if rc:   # never silent: the caller's own error then has the cause above it
         print(f'[cli] {os.path.basename(str(cmd[0]))} {" ".join(str(c) for c in cmd[1:3])[:60]}: exit {rc}: {out[-400:]}', file=sys.stderr)
     return out
 
@@ -158,7 +158,7 @@ def _body(arg):
 
 
 # ---- tracker: crafty.ps1 tracker
-DEV = os.path.join(KIT, 'crafty.ps1')   # tracker adapter
+DEV = os.path.join(KIT, 'crafty.ps1')
 PWSH = shutil.which('pwsh') or shutil.which('powershell')
 TRACKER_TYPE = (os.environ.get('KIT_TRACKER_TYPE') or (CFG.get('tracker') or {}).get('type') or 'none').lower()
 
@@ -298,7 +298,7 @@ def _doc_url(tid, kind, doc):
     if not re.match(r'https?://', doc):
         raise SystemExit(f'{kind} {doc!r}: neither a file nor a URL')
     rec = _pub_read(f'{tid}:{kind}')
-    if rec.get('url') and rec['url'] != doc:   # a second link would take the next publish (and its history) to another doc
+    if rec.get('url') and rec['url'] != doc:   # a second link would move the next publish (and its history) to another doc
         raise SystemExit(f'finish {tid}: {kind} already is {rec["url"]}; pass the file (it updates that doc, rounds kept), not {doc}. Nothing was written.')
     _pub_update(f'{tid}:{kind}', url=doc)
     return doc
@@ -309,7 +309,7 @@ def finish(tid, guide, solution_md, status='review', ai=None):
     ai = ai or _pub_read(f'{tid}:testing-ai').get('url')
     if not ai:
         raise SystemExit(f'finish {tid}: no AI testing doc (--ai <ai.md|url>, templates.md "Testing doc (AI)"); both docs are linked on every task. Nothing was written.')
-    solution_md = no_doc_links(solution_md)   # the doc links live only in the description
+    solution_md = no_doc_links(solution_md)   # doc links live only in the description
     prose_gate('comment-solution', solution_md)   # before doc, describe, status
     if not os.path.isfile(guide):   # a URL: the local-loop gate still holds
         ok, ev = local_pass(tid)
@@ -520,7 +520,7 @@ def mr_create(worktree, title, body_md, tgt=None):
     host, proj = remote(worktree)
     src = _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
     prior_gate(task_of_branch(src), proj, f'devtools.py mr {src}')
-    if task_of_branch(src):   # the doc lines devtools.py merge needs, from the published records; a missing doc is said now, not at merge
+    if task_of_branch(src):   # doc lines merge needs, from published records; a missing doc fails here, not at merge
         body_md, nodoc = with_doc_lines(body_md, task_of_branch(src))
         for k in nodoc:
             print(f'[mr] WARNING: task {task_of_branch(src)} has no published {k} doc: devtools.py merge refuses this MR until it has one;'
@@ -620,7 +620,7 @@ def _progress(msg):
     print(f'[merge] {msg}', flush=True)
 
 
-# no stuck_or_timeout_failure: a hanging test produces it too, a retry would hide it
+# no stuck_or_timeout_failure: hanging tests cause it too; a retry would hide them
 INFRA = ('ci_quota_exceeded', 'runner_system_failure', 'scheduler_failure', 'api_failure',
          'runner_unsupported', 'no_matching_runner')
 
@@ -781,11 +781,11 @@ def _auto_merge(worktree, iid, max_wait):
         tid = task_of_branch(m.get('source_branch')) or next((t for t, x in (read_tracking().get('tasks') or {}).items() if any(
             (lambda r: r and r[1] == iid and _same_repo(r[0], proj))(_norm_ref(y)) for y in (x or {}).get('mrs') or [])), '')
         new, nodoc = with_doc_lines(body, tid) if tid else (body, list(DOC_LABEL))
-        if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # published docs: the body is fixed here, 4 runs lost merges to it
+        if nodoc or not isinstance(H('mr.update', title=m.get('title') or '', body=new), dict):   # body fixed here: 4 runs lost merges to it
             return (f'!{iid}: a task MR without "Testing doc: <url>" and "Testing doc (AI): <url>" lines (task {tid or "unknown"}: no published {" / ".join(nodoc) or "doc write"});'
                     f' after the local loop PASS: devtools.py finish (it writes them), merge again\nNOT_MERGED')
         _progress(f'!{iid}: testing doc lines written from task {tid}\'s published docs'); body = new
-    if NO_DOC.search(body):   # merged 3x with no doc: testers had nothing to follow (after the rewrite: a published doc replaces "none")
+    if NO_DOC.search(body):   # merged 3x with no doc: testers had nothing to follow (a published doc replaced "none" above)
         return (f'!{iid}: the MR body says "Testing doc: none"; every change gets a human testing doc: write it, devtools.py doc, '
                 f'put its link in the MR body, merge again\nNOT_MERGED')
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
@@ -861,7 +861,7 @@ def _cells(row):
     return [c.strip() for c in re.split(r'(?<!\\)\|', r[:-1] if r.endswith('|') and not r.endswith('\\|') else r)]   # \| stays inside its cell
 
 
-# Inline styles, not <code> / <col> / classes: Google Docs' HTML import keeps span and cell styles and the header cells' widths only
+# inline styles only (no <code> / <col> / classes): Google Docs' HTML import keeps just span / cell styles and header widths
 CODE_CSS = "font-family:'Roboto Mono';font-size:9pt;background-color:#f1f3f4"
 CELL_CSS = 'vertical-align:top;padding:4pt'
 HEAD_CSS = CELL_CSS + ';background-color:#e8eaed'
@@ -910,7 +910,7 @@ def md_to_html(md, title=''):
         t = re.sub(r'`([^`]+)`', lambda m: code.append(m[1]) or f'\0{len(code) - 1}\0', t)
         t = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', t)
         t = re.sub(r'(?<![\w*])\*([^*\n]+)\*(?![\w*])', r'<i>\1</i>', t)
-        # images before links: ![alt](url "width px"); in a table cell: fit to the cell (cap px), stacked, each with its link
+        # images before links: ![alt](url "width px"); in a table cell: cell-fit (cap px), stacked, each linked
         t = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;(\d+)&quot;|\s+"(\d+)")?\)', lambda m: img(m, cap), t)
         t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2">\1</a>', t)
         return re.sub(r'\0(\d+)\0', lambda m: f'<span style="{CODE_CSS}">{code[int(m[1])]}</span>', t)
@@ -993,7 +993,7 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
     return out
 
 
-# ---- publish: one artefact per key (<task or run>:<kind>), the same id and link on every round; .state/published/
+# ---- publish: one artefact per key (<task or run>:<kind>), same id and link every round; .state/published/
 PUB_KINDS = {'testing-doc': 'append', 'testing-ai': 'append', 'qa-report': 'append'}   # other kinds: replace
 GOALS_MARK = re.compile(r'(?m)^#{1,2} (Testing goals\b|Goals \(what must be true\))')   # templates.md "Testing goals"
 CHECKS_TABLE = re.compile(r'(?im)^\|\s*#\s*\|\s*Steps\s*\|\s*Expected\s*\|\s*Result\s*\|\s*Evidence\s*\|')   # "Human testing doc" (positive cases)
@@ -1087,7 +1087,7 @@ PRE_EXISTING = re.compile(r'(?i)\b(known|ignored?|waived?|accepted|not (our|my|t
                           r'failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b')
 RAN = re.compile(r'(?i)^[\W_]*(pass|not[ _]tested[ _]local)')   # a Result that ran (markup allowed)
 THRESHOLD = re.compile(r'(?i)(>=|<=|[<>≥≤=]|\b(at least|at most|max|min)\b)\s*\d')   # a measured Expected
-# a stated quality to measure: a word after a requirement cue, or a bound with a unit; qa.qualityWords overrides ('' = off)
+# a quality to measure: a word after a requirement cue, or a bound with a unit; qa.qualityWords overrides ('' = off)
 QUALITY = (r'(?i)\b(must|should|needs? to|has to|to be|so that|make[sd]?)\W+(\w+\W+){0,3}?(?P<w>fast(er)?|instant(ly)?|prominent|eye-catching|shiny|noticeable|'
            r'readable|legible)\b|(?:<|<=|≤|under|within|below|less than|at most)\s*(?P<n>\d+(?:\.\d+)?)\s*(?:ms|s|sec\w*|min\w*|px|%)(?!\w)')
 
@@ -1275,7 +1275,7 @@ def publish(key, title, path, parent=None, mode=None, label='', run=None):
         if run is not None:
             runs.append(dict(new, cells=run))
         elif kind in ('testing-doc', 'testing-ai') and rounds and rounds[-1]['body'] == body and not stale:
-            pass   # the same text again (finish after the last loop round): no second round
+            pass   # same text again (finish after the last loop round): no new round
         else:
             rounds = (rounds if (mode or PUB_KINDS.get(kind, 'replace')) == 'append' else []) + [new]
         url = _render(key, rec, rec.get('title') or title, rounds, runs, parent)
@@ -1435,7 +1435,7 @@ def selftest():
         res = auto_merge('.', '7', max_wait=0)
         expect('no MR state: mr.get retried once, WAIT names the project and the reply', merge_word(res) == 'WAIT' and 'g/r' in res
                and "'raw': 'null'" in res and [v for v, _ in calls] == ['mr.get', 'mr.get'])
-        def nd(body):   # one fake per case: its merged state carries from mr.merge to the re-read
+        def nd(body):   # a fake per case: merged state carries from mr.merge to the re-read
             f = fake(cfg=False)
             return lambda v, **a: dict(f(v, **a), description=body) if v == 'mr.get' else f(v, **a)
         ok = [merge_word(auto_merge('.', '7')) for g['_host'] in (nd('Testing doc:\n\nNone of the old steps'), nd('- Testing doc: none yet, link below'))]
@@ -1789,7 +1789,7 @@ def _cli():
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--override') if cmd in ('doc', 'evidence') else ('--prose-ok', '--ai', '--override') if cmd in ('comment', 'finish', 'mr') else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
-        elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, never "unknown option"
+        elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
             print(f'devtools.py {cmd}: {f} needs a value (an empty variable?)\n' + '\n'.join(ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)), file=sys.stderr)
             sys.exit(2)
     REPORT_TYPE = (opt.get('--type') or REPORT_TYPE).lower()
