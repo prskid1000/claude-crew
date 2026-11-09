@@ -51,7 +51,10 @@ description: "Load when: you reproduce, debug or test a change on the local env 
   summary; refused only when the binlog lacks the rows (statement-format DML).
   `db.rollback` (a tool's rollback command; `liquibase`: tag `release-<n>` before each release's migrations, rollback to it)
   runs only with `db.restoreVia: tool-then-kit` or `-UseToolRollback`; `restore.after` [ { name, cmd } ] ({mark}) runs after
-  it: reindex, cache clears, leftover lists. Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60); doctor
+  it and before a release with migrations switches over (`onMigrations: false`: after restores only): marker resets (a "latest
+  changeSet" marker skips a layer's changeSet included above the target's newest), reindex, cache clears. That release first nulls
+  `MD5SUM` of applied Liquibase changeSets a rebuilt layer edited and its target lacks (unmerged; goody db-engine-presets; the edited
+  DDL is not re-applied), each named in the notes and `<env>-migrations.log`. Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60); doctor
   checks binlog ROW / FULL images / FULL metadata / retention. `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON
   `items` [ { name, check: { sql, expect } | { cmd }, create: { cmd }, how, needs, tables } ], default
   `<state>/localenv/<env>.seed.json`): each check gates its create. `db.timeoutSec`: seconds per hook (a number or `{ "<hook>":

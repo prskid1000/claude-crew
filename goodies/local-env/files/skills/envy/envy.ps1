@@ -15,8 +15,8 @@ Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not u
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
 Goodies: db.engine presets, marks, slices, restore, the cascade guard, tenant = db-engine-presets (adapters/); db.rollback = any tool
   command or "liquibase" (goody liquibase; only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L27 config · L195 state · L242 layer drops · L314 leases · L415 code · L447 migrations · L693 hooks · L765 marks ·
-  L903 seed · L949 processes · L1264 daemon · L1721 cleanup · L1793 doctor · L1843 verbs
+Sections: L27 config · L195 state · L242 layer drops · L314 leases · L415 code · L447 migrations · L737 hooks · L809 marks ·
+  L947 seed · L993 processes · L1308 daemon · L1768 cleanup · L1840 doctor · L1890 verbs
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -492,6 +492,50 @@ function Invoke-EnvLiquibase([string]$e, [string]$dir, [string[]]$schemas, [stri
 }
 # the dir of the first service whose folder holds a Liquibase master (tags and rollbacks run there)
 function LiquibaseDir([string]$e) { @(EnvServices $e | Where-Object { $_.repo } | ForEach-Object { try { SvcDir $e $_ } catch { } } | Where-Object { $_ -and (Get-LiquibaseMaster $_) })[0] }
+# Liquibase changeSets of one file text: "<author>:<id>" -> body, whitespace collapsed (XML and formatted SQL)
+function Get-ChangeSetBlocks([string]$Text) {
+  $sets = @{}
+  foreach ($m in [regex]::Matches("$Text", '(?s)<changeSet\b(?<a>[^>]*?)(?:/>|>(?<b>.*?)</changeSet>)')) {
+    $a = $m.Groups['a'].Value; $id = if ($a -match '\bid\s*=\s*"(?<v>[^"]*)"') { $Matches.v }; $au = if ($a -match '\bauthor\s*=\s*"(?<v>[^"]*)"') { $Matches.v }
+    if ($id) { $sets["${au}:$id"] = ($m.Value -replace '>\s+<', '><' -replace '\s+', ' ').Trim() }
+  }
+  $parts = [regex]::Split("$Text", '(?im)^(?=--\s*changeset\s)')
+  foreach ($p in $parts) { if ($p -match '(?i)^--\s*changeset\s+(?<au>[^:\s]+):(?<id>\S+)') { $sets["$($Matches.au):$($Matches.id)"] = ($p -replace '\s+', ' ').Trim() } }
+  $sets
+}
+# changeSets whose text differs between two builds of a layer and that the target does not hold yet (unmerged)
+function Get-EditedChangeSets([string]$Old, [string]$New, [string]$Merged) {
+  $o = Get-ChangeSetBlocks $Old; $n = Get-ChangeSetBlocks $New; $t = Get-ChangeSetBlocks $Merged
+  @($n.Keys | Where-Object { $o.ContainsKey($_) -and $o[$_] -ne $n[$_] -and -not $t.ContainsKey($_) } | Sort-Object | ForEach-Object { $k = $_ -split ':', 2; [pscustomobject]@{ author = $k[0]; id = $k[1] } })
+}
+# a rebuilt layer edited an applied changeSet: Liquibase would stop on the checksum; MD5SUM NULL (recomputed on the next run) -> notes
+function Reset-EditedChecksums([string]$e, $envRepos, $cur, $newLayers) {
+  foreach ($rn in @($newLayers.Keys)) {
+    $wt = $envRepos[$rn].wt; $tgt = "origin/$($envRepos[$rn].target)"
+    foreach ($l in @($newLayers[$rn] | Where-Object { $_.migrations })) {
+      $prev = @($cur[$rn] | Where-Object { $_.branch -eq $l.branch -and $_.sha -and $_.sha -ne $l.sha })[0]; if (-not $prev) { continue }
+      foreach ($f in @(git -C $wt diff --name-only $prev.sha $l.sha 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '\.sql$' })) {
+        $ids = @(Get-EditedChangeSets "$(git -C $wt show "$($prev.sha):$f" 2>$null)" "$(git -C $wt show "$($l.sha):$f" 2>$null)" "$(git -C $wt show "${tgt}:$f" 2>$null)")
+        if (-not $ids.Count) { continue }
+        if (-not (Get-Command Invoke-DbSql -ErrorAction SilentlyContinue)) { "checksums of edited changeSets in $f ($($l.branch)) not reset: needs goody db-engine-presets"; continue }
+        $leaf = Split-Path $f -Leaf; $like = '%/' + ($leaf -replace '([\\%_])', '\$1'); $bad = @()
+        foreach ($sc in @(LiquibaseSchemas $e)) {
+          try { foreach ($c in $ids) { $null = Invoke-DbSql $e "UPDATE $(SqlId $sc).DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = $(SqlQ $c.id) AND AUTHOR = $(SqlQ $c.author) AND (FILENAME = $(SqlQ $leaf) OR FILENAME LIKE $(SqlQ $like))" } }
+          catch { $bad += "$sc ($("$_".Split("`n")[0]))" }
+        }
+        "$rn $($l.branch): changeSet(s) $(@($ids | ForEach-Object { "$($_.author):$($_.id)" }) -join ', ') of $leaf changed since the last build (unmerged): MD5SUM reset; the edited DDL is NOT re-applied (restore -Release, or a new changeSet, when its effect changed)$(if ($bad.Count) { "; FAILED on $($bad -join ', ')" })"
+      }
+    }
+  }
+}
+# restore.after: derived state outside the DB (marker resets, reindex, cache clears); after a restore, and before a release with
+# migrations starts unless the hook says "onMigrations": false
+function Invoke-RestoreAfter([string]$e, [string]$mark, [switch]$Migrations) {
+  foreach ($h in @((Get-EnvCfg $e).restore.after | Where-Object { $_.cmd -and -not ($Migrations -and $_.onMigrations -eq $false) })) {
+    $code = Invoke-Shell (Expand-Placeholders ([string]$h.cmd).Replace('{mark}', $mark) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'restore') (EnvVars $e ([pscustomobject]@{})) 1800
+    "restore.after $($h.name): $(if ($code) { "FAILED ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } else { "ok$(if (@($script:ShellOut).Count) { ": $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" })" })"
+  }
+}
 # before a release's migrations run: the slices of every touched table in every env schema -> the mark's slices
 function Save-Slices([string]$e, [string]$mark, [hashtable]$byRepo) {
   $items = @($byRepo.Values | ForEach-Object { @($_.items) } | Where-Object { $_ }); $unknown = @($byRepo.Keys | Where-Object { $byRepo[$_].unknown })
@@ -1441,6 +1485,12 @@ function Run-Train {
       } catch { $notes.Add("slices for $relMark failed: a restore past this release's DDL is refused ($("$_".Split("`n")[0]))") }
     }
   }
+  $migLive = @($ok | Where-Object { $_ -in $migRepos })
+  if ($migLive.Count) {   # a layer's changeSet included above the target's newest one: a "latest changeSet" marker would skip it
+    Phase "migration checks before the switch-over ($($migLive -join ', '))" $block @($affected)
+    $mn = @($newLayers.Keys | Where-Object { $_ -in $migLive }); $sub = @{}; foreach ($rn in $mn) { $sub[$rn] = $newLayers[$rn] }
+    foreach ($n in @(try { Reset-EditedChecksums $e $envRepos $cur $sub } catch { "checksum reset failed: $("$_".Split("`n")[0])" }) + @(Invoke-RestoreAfter $e "release-$newN" -Migrations)) { $notes.Add($n); Add-Content (LogFile $e 'migrations') "== $(Now) $n" }
+  }
   Phase 'switching over' $block @($affected)
   foreach ($s in $switch) {
     $rn = RepoOf $e $s
@@ -1511,10 +1561,7 @@ function Run-Restore($st, $req) {
   $sf = if ($stop.Count -and (Get-EnvCfg $e).smoke) { Test-Smoke $e }
   if ($sf) { $notes.Add("smoke check failed after the restore: $sf") }
   $fbn = if (-not $err) { Invoke-RestoreFallback $e }; if ($fbn) { $notes.Add($fbn) }
-  foreach ($h in @((Get-EnvCfg $e).restore.after | Where-Object { $_.cmd })) {   # derived state outside the DB: reindex, cache clears, leftovers lists
-    $code = Invoke-Shell (Expand-Placeholders ([string]$h.cmd).Replace('{mark}', $m.name) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'restore') (EnvVars $e ([pscustomobject]@{})) 1800
-    $notes.Add("restore.after $($h.name): $(if ($code) { "FAILED ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } else { "ok$(if (@($script:ShellOut).Count) { ": $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" })" })")
-  }
+  foreach ($n in @(Invoke-RestoreAfter $e $m.name)) { $notes.Add($n) }
   $results[$req.id] = if ($err) { @{ outcome = 'failed'; message = $err } } else { @{ outcome = 'live'; message = "DB and code at mark $($m.name) (release $($m.release)): $($plan.statements) row change(s) undone, $(@($plan.steps).Count) structure step(s), $(@($plan.objects).Count + @($plan.objectDrops).Count) object step(s)$(if ($fbn) { "; $fbn" })$(if (@($plan.warnings).Count) { "; WARN $(@($plan.warnings) -join '; ')" })$(if ($sf) { "; smoke FAILED: $sf" })" } }
   Record-Train
 }

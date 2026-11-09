@@ -444,5 +444,20 @@ foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('P', 'gi
 }
 Remove-Item Env:KIT_GUARD_SELFTEST_ACTIVE
 Expect "guard: localenv/ pushes and hand-started dev servers denied, the rest allowed ($($bad -join ' | '))" (-not $bad.Count)
+# a rebuilt layer edited an applied, unmerged changeSet: its MD5SUM is nulled (merged and unchanged ones untouched); restore.after runs with the release mark
+$ck = New-LocalEnvKit lecs; $ckL = Join-Path $ck 'skills/envy/envy.ps1'; $ckr = Join-Path $ck 'repo'; git init -q -b main $ckr
+$ckx = { param($body) Set-Content (Join-Path $ckr 'changelog/c1.xml') "<databaseChangeLog>$body</databaseChangeLog>"; git -C $ckr add .; git -C $ckr -c user.name=t -c user.email=t@t commit -qm x; "$(git -C $ckr rev-parse HEAD)".Trim() }
+New-Item -ItemType Directory -Force (Join-Path $ckr 'changelog') | Out-Null
+$null = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet>'; git -C $ckr update-ref refs/remotes/origin/main HEAD
+$ckp = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet><changeSet author="a" id="l1"><sql>select 2</sql></changeSet><changeSet id="l2" author="a"><sql>x</sql></changeSet>'
+$ckn = & $ckx '<changeSet id="m1" author="a"><sql>select 1</sql></changeSet><changeSet author="a" id="l1"><sql>select 3</sql></changeSet><changeSet id="l2" author="a">  <sql>x</sql></changeSet>'
+Set-JsonFile (Join-Path $ck 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ t = @{ services = @(); restore = @{ after = @(@{ name = 'marker'; cmd = 'echo reset {mark}' }, @{ name = 'slow'; cmd = 'echo reindex'; onMigrations = $false }) } } } } } 8
+$cks = & { . $ckL; $global:ckSql = @(); function Invoke-DbSql { $global:ckSql += $args[1] }; function LiquibaseSchemas { 's1' }; function SqlId($n) { "``$n``" }; function SqlQ($v) { "'$v'" }
+  $pure = @(Get-EditedChangeSets '<changeSet id="x" author="b">1</changeSet>' '<changeSet id="x" author="b">2</changeSet>' '<changeSet id="x" author="b">1</changeSet>').Count
+  $sqlNotes = @(Reset-EditedChecksums t @{ r = @{ wt = $ckr; target = 'main' } } @{ r = @(@{ branch = 'b'; sha = $ckp; migrations = $true }) } @{ r = @(@{ branch = 'b'; sha = $ckn; migrations = $true }) })
+  $after = @(Invoke-RestoreAfter t 'release-7' -Migrations); $all = @(Invoke-RestoreAfter t 'm1').Count
+  "$pure|$($global:ckSql -join ';')|$($sqlNotes -join ';')|$($after -join ';')|$all" }
+Expect "localenv: an edited unmerged changeSet gets MD5SUM NULL (merged / whitespace-only untouched); restore.after gets {mark}, onMigrations false skips releases ($cks)" ($cks -match '^0\|UPDATE `s1`\.DATABASECHANGELOG SET MD5SUM = NULL WHERE ID = ''l1'' AND AUTHOR = ''a'' AND \(FILENAME = ''c1\.xml'' OR FILENAME LIKE ''%/c1\.xml''\)\|r b: changeSet\(s\) a:l1 of c1\.xml .*NOT re-applied' -and $cks -match '\|restore\.after marker: ok: reset release-7\|2$')
+Remove-TestKit $ck
 Remove-TestKit $k
 Complete-Tests
