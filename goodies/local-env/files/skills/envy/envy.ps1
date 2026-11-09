@@ -3,7 +3,7 @@ envy.ps1: ONE shared local instance per env (kit.local.json localEnv.envs) that 
 on; a service = a start command in a folder (default crafty.ps1 stack `run`). Model: envy SKILL.md "Local testing".
   & <kit>/skills/envy/envy.ps1 <verb> [args]
 Verbs: envs · status · doctor · deploy · wait · use · release · promote · task · logs [-Grep <re>] [-Since <min>] · events ·
-       migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] ·
+       migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] (marks = list) ·
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
@@ -1843,7 +1843,7 @@ function Get-Doctor([string]$e) {
 # ---- verbs: owner / brief asks; calls return within -Wait min (8)
 function Invoke-LocalEnv {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'restore', 'seed', 'teardown', 'tenant', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'tenant', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', '_exec')][string]$Action,
   [Parameter(Position = 1)][ValidateSet('', 'list', 'drop')][string]$Op = '',
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
@@ -1852,6 +1852,7 @@ param(
   [switch]$DryRun, [switch]$Stale, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
+if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make one: mark -Name $Name" }; $Action = 'mark' }   # the list form agents guess
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }

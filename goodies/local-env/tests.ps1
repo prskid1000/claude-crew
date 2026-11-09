@@ -15,6 +15,8 @@ $xo = Px $L2 deploy -Env mig -Branch b 2>&1 | Out-String; $xc = $LASTEXITCODE
 Expect "localenv: db.engine without its presets stops with the goody line, exit 1 ($xc)" ($xc -eq 1 -and ($xo -replace '\s*\|?\s+', ' ') -match 'db\.engine presets are a goody: run kitbag\.py goody add db-engine-presets')
 $hv = Px $L2 help 2>&1 | Out-String; $hc = $LASTEXITCODE
 Expect "localenv: help prints the verbs, exit 0 ($hc)" ($hc -eq 0 -and $hv -match 'Verbs: envs' -and $hv -notmatch 'No local environments')
+$mv = Px $L2 marks -Env shop 2>&1 | Out-String; $mn = Px $L2 marks -Env shop -Name m1 2>&1 | Out-String
+Expect 'localenv: marks = mark (list), not a usage error; marks -Name points to mark' ($mv -match '\[shop\] marks need db\.engine' -and $mv -notmatch 'Cannot validate' -and $mn -match 'to make one: mark -Name m1')
 $null = Px $L2 bogus 2>&1; $c1 = $LASTEXITCODE
 $null = Px $L2 status -Env nope 2>&1; $c2 = $LASTEXITCODE
 $null = Px $L2 drop -Env shop 2>&1; $c3 = $LASTEXITCODE
