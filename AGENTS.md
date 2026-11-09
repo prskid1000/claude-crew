@@ -1,22 +1,19 @@
 # Workspace instructions (template — edit for your org)
 
-A multi-agent dev + QA kit for ANY project type: any stack (JVM, .NET, Node / web frameworks, Python, Go, Rust, mobile, native,
-monorepo or many repos), any migration tool, any local env shape, test env, deploy mechanism and tracker, all through config
-(`skills/crafty/kit.local.json`). Nothing product-shaped (tenants, a web + API + app trio, a database) is assumed; org
-specifics live only in `*.local.*` files and `rules/*.local.md`. **Never put passwords, tokens or API keys here**: test logins
-live only in `skills/pokey/targets.local.json` (git-ignored).
+A multi-agent dev + QA kit for any stack, repo shape, migration tool, local/test env, deploy mechanism and tracker, all
+configured in `skills/crafty/kit.local.json`. Org specifics live only in `*.local.*` files and `rules/*.local.md`. **Never put
+passwords, tokens or API keys here**: test logins live only in `skills/pokey/targets.local.json` (git-ignored).
 
-Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md` (which adds the Claude Code-only mechanics); edit
-only here.
+Codex and Antigravity read this file directly, Claude Code through `CLAUDE.md`; edit only here.
 
 ## Writing (hard rule, every agent and session)
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
 - Lists and fragments, one fact per line, each fact once; link (MR, task, doc, run) instead of repeating it.
 - Exact over descriptive (ids, paths, numbers, commands, error text); active voice; short common words; no invented abbreviations.
-- Format and limits per artefact (briefs, docs, MR, commit, tracker texts, reports, owner messages, kit files): the table
-  `skills/crafty/templates.md` "Writing standards", read when you write one; `kitbag.py prose --kind <kind> <file>` measures
-  it. Fewer words, same facts: dense and specific, never vaguer. Code comment: 1 line saying why.
+- Limits per artefact: table `skills/crafty/templates.md` "Writing standards", checked by `kitbag.py prose --kind <kind> <file>`.
+  Fewer words, same facts: dense and specific. Code comment: 1 line saying why.
 - Cut greetings, preamble, recaps, hedges, praise, filler, closing summaries. A longer-than-needed text is a defect.
+- Chat to owner: dense text only (`<thing> <state/action> <reason>` -> next step); no Mermaid, SVG gauges or box art in chat turns. Visuals live in dashboard (supervise-report.html) and report artifacts.
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,
@@ -25,11 +22,8 @@ only here.
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
   or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
-- **Budget** (both flows, README "Configuration" `budget`): an agent hands off at 80% of its tool's compaction point (resume
-  brief, fresh agent); a run over its cap is refused with the split, at 80% of it nothing new starts (the rest returns as `next`).
-- **Decision pauses**: a change to existing behaviour a user sees (output, screens, data, rules applied) that the task did
-  not ask for, or several valid paths -> the agent asks; internal logic changes with the same user-visible behaviour need no
-  ask. It asks (`bossy.ps1 decide ask`), that item waits for the owner's answer, the rest continue.
+- **Budget** (README "Configuration"): agent hands off at 80% of tool compaction point (resume brief, fresh agent); run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
+- **Decision pauses**: user-visible behaviour change not asked for, or multiple valid paths -> ask (`bossy.ps1 decide ask`), item waits, rest continue; internal logic with identical output needs no ask.
 
 ## Router
 Classify every request before acting: the first row whose conditions all hold wins; load the **Load first** skill, then go to

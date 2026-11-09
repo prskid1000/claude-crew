@@ -11,9 +11,7 @@ Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
 `options` A/B lines · `recommended` · `verdict` PASS / FAIL / BLOCKED · `conv` subject per `commitStyle` (default Conventional Commits).
-Banned everywhere: greetings and thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
-"in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
-"happy to" · "great job" · "as an AI" · task recap · restating the template's own words.
+Banned everywhere: greetings, thanks · "please note" · "in summary" · "basically" · "simply" · "actually" · "as an AI" · filler · task recap · restating template words · Mermaid diagrams or ASCII/box art in chat turns (dashboard/artifacts only).
 Markdown: commands, paths, class names, config keys and ids in `backticks` (monospace; nothing else is guessed); labels
 `**Label:**`; links `[text](url)`; a blank line between blocks; a tracker showing plain text: its adapter drops the markup.
 
@@ -45,7 +43,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
 | final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
-| owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
+| owner-message | coordinator -> owner: dense text only, no Mermaid diagrams or box art | result first, then next step | 150w 25sw 8b | — |
 ## Wave brief
 ```markdown
 # Wave brief: <wave name>, <date>
