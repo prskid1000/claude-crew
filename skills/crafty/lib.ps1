@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L859 status · L1088 supervise sweep ·
-  L1159 supervise report · L1255 tracker · L1571 prior · L1593 ask bugs · L1736 git-host · L1893 kitlog · L2011 params ·
-  L2311 entry-scripts
+Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L862 status · L1091 supervise sweep ·
+  L1162 supervise report · L1258 tracker · L1574 prior · L1596 ask bugs · L1739 git-host · L1896 kitlog · L2014 params ·
+  L2314 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -441,16 +441,19 @@ function Get-KitBeatMinutes {
 # heartbeat prompt (bossy E1), re-armed word for word from supervise's stderr
 function Get-KitBeatPrompt { "Run & '$($KitCmd.orch -replace '\\', '/')' supervise -AutoFix -Brief. Reply = its entire stdout, verbatim, unfenced; never summarise, paraphrase or cut it. Own line only when an ACT needs the owner. Act on its flags; re-arm this one-shot with this same prompt (stderr HEARTBEAT_PROMPT) to stderr NEXT=<n> min (bossy E1)." }
 # base = learned heartbeatMinutes (15: how often new ACTs appear); drifts back halfway per beat
+# Act / EnvFix = NEW since the last sweep: an ACT left open (owner's call, being fixed) keeps the normal pace
 function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, [bool]$Storage, [int]$BuildFails, [int]$Agents, [int]$Live, [int]$Running) {
   $many = [int](Get-KitParam 'supervise.manyAgents')
-  $r = if ($Act -or $EnvFix) { @(5, $(if ($EnvFix) { "$EnvFix ENV-FIX open" } else { "$Act ACT open" })) }
-    elseif ($Storage -or $BuildFails -ge 3 -or $Agents -ge $many) { @([math]::Round($Base / 2), $(if ($Storage) { 'storage anomaly' } elseif ($BuildFails -ge 3) { "$BuildFails failed builds in a row" } else { "$Agents live agents" })) }
-    elseif (-not $Running -and -not $Agents) { @(30, 'nothing runs') }
-    elseif (-not $Live) { @([math]::Round(($Base + 30) / 2), 'every agent idle') }
-    elseif ([math]::Abs($Prev - $Base) -le 2) { @($Base, 'normal') }
-    else { @([math]::Round(($Prev + $Base) / 2), "back toward $Base") }
+  $r = if ($Act -or $EnvFix) { @(5, $(if ($EnvFix) { "fast pace: $EnvFix new ENV-FIX" } else { "fast pace: $Act new ACT" })) }
+    elseif ($Storage -or $BuildFails -ge 3 -or $Agents -ge $many) { @([math]::Round($Base / 2), "quick pace: $(if ($Storage) { 'storage anomaly' } elseif ($BuildFails -ge 3) { "$BuildFails failed builds in a row" } else { "$Agents live agents" })") }
+    elseif (-not $Running -and -not $Agents) { @(30, 'slow pace: nothing runs') }
+    elseif (-not $Live) { @([math]::Round(($Base + 30) / 2), 'slow pace: every agent idle') }
+    elseif ([math]::Abs($Prev - $Base) -le 2) { @($Base, 'normal pace') }
+    else { @([math]::Round(($Prev + $Base) / 2), "easing back to $Base min") }
   [pscustomobject]@{ min = [int][math]::Min(30, [math]::Max(5, $r[0])); why = $r[1] }
 }
+# track's LAG / missing-doc ATTENTION of a task held on purpose: dropped (the background run may predate the hold)
+function Test-KitHeldLine([string]$Line, [string[]]$Held) { $Line -match '^(LAG|ATTENTION) (?<tid>[^\s:]+):' -and $Matches.tid -in $Held -and ($Line -match '^LAG' -or $Line -match 'no (solution/testing comment|testing-doc link)') }
 function Update-KitLease($l) {
   $now = Get-Date
   if (Test-KitLive $l) {   # seen at most once a minute: re-confirming a live holder writes nothing
@@ -2231,14 +2234,14 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
 }
 # setup -WriteLocal leaves learned keys out of kit.local.json (a value there pins)
 function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
-function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {
-  $new = @($Acts | Where-Object { $_ -notin @($State.acts) }).Count   # 2+ new ACTs in one sweep: the beat was too long (short)
+function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {   # returns the ACT keys new since the last sweep
+  $fresh = @($Acts | Where-Object { $_ -notin @($State.acts) }); $new = $fresh.Count   # 2+ new ACTs in one sweep: the beat was too long (short)
   # censored: a gap over 2 beats (sleep, stopped coordinator) or a reboot since the last ACT
   $boot = Get-KitBootTime
   $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5, [double]$State.nextBeat)
   if ($gap -or ($State.lastAct -and $boot -gt [datetime]$State.lastAct)) { $State.lastAct = $null }
   if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
-  $State.acts = $Acts
+  $State.acts = $Acts; $fresh
 }
 function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @(Get-KitParamKeys -Learned)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
 # bossy.ps1 param verbs (audited in history and params-changes.jsonl)

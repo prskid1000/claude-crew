@@ -180,6 +180,8 @@ $ago = (Get-Date).AddHours(-2).ToString('s'); Update-KitTracking { param($all) $
 Invoke-Track run -Detail; "t1:$($global:st.t1)"
 '@ @($O) | Out-String
 Expect 'track: an open MR moves an Open task to review; merged 60+ min = LAG, held = HOLD only' ($lg -match "DONE t1: status 'Open' -> review" -and $lg -match 't1:for review' -and $lg -match "LAG t3: all MRs merged at \d\d:\d\d, status still 'for review'" -and $lg -notmatch 'LAG t[24]' -and $lg -match 'HOLD t2' -and $lg -match 'HOLD t4')
+$hl = pwsh -NoProfile -Command ". '$O'; `$s = @{ acts = @('a') }; Add-KitActObs `$s @('a', 'b') (Get-Date); foreach (`$l in 'LAG h: x', 'ATTENTION h: no testing-doc link', 'ATTENTION h: w!1 closed', 'LAG g: x') { Test-KitHeldLine `$l h }"
+Expect "supervise: only a NEW ACT (b) paces fast; a held task's LAG / no-doc line dropped, others kept ($hl)" ("$hl" -eq 'b True True False False')
 # ---- moved here for the per-file test caps: browser.mjs exit release, kitParam, ports (pokey), pipes default (crafty)
 if (Use-BrowserKit) {
   $relf = Join-Path (Kd) 'released.txt'

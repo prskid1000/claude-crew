@@ -22,9 +22,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L30 init · L48 board · L223 budget · L251 launch · L517 recover · L600 pause · L644 resume · L702 program · L746 param ·
-  L752 track · L1064 supervise · L1361 report · L1440 audit · L1500 storage · L1710 bugbrief · L1812 cleanup · L1934 learn ·
-  L1964 decide · L2032 health · L2091 retro due · L2101 tidy · L2170 the kit origin's main and goodies · L2186 setup ·
-  L2253 guard-sendmessage
+  L752 track · L1064 supervise · L1363 report · L1442 audit · L1502 storage · L1712 bugbrief · L1814 cleanup · L1936 learn ·
+  L1966 decide · L2034 health · L2093 retro due · L2103 tidy · L2172 the kit origin's main and goodies · L2188 setup ·
+  L2255 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1232,7 +1232,9 @@ if ($AutoFix -and (Within 'tracker checks')) {
     }
     $null
   }
+  $heldIds = @((Read-KitTracking).tasks.Values | Where-Object { $_.holdPromotion -and -not $_.done } | ForEach-Object task)
   foreach ($l in @(Invoke-Bounded $KitCmd.orch @('track', 'run', '-Detail'))) {   # the last background result
+    if (Test-KitHeldLine $l $heldIds) { continue }
     if ($l -match '^(DONE|COMMENTED)') { Flag 'INFO' "auto-fixed: $l" 'Tracker moved the task; nothing to do.' }
     elseif ($l -match '^CONFIG') { Flag 'INFO' $l 'A kit.local.json key is missing for this task; add it or register its MRs by hand.' }
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
@@ -1337,8 +1339,8 @@ $state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })
-Add-KitActObs $state $acts $now
-$next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base @($flags | Where-Object level -eq 'ACT').Count @($flags | Where-Object { $_.level -eq 'ACT' -and $_.what -like 'ENV-FIX*' }).Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
+$freshActs = @(Add-KitActObs $state $acts $now); $freshFlags = @($flags | Where-Object { $_.level -eq 'ACT' -and (Get-KitFlagKey $_.what) -in $freshActs })
+$next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base $freshFlags.Count @($freshFlags | Where-Object what -like 'ENV-FIX*').Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }

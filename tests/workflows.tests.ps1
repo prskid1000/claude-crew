@@ -343,5 +343,7 @@ Expect 'recover: a relaunch replaces its original, same agent + items once (phas
   "$l1|$l2|$l3" -eq 'fix-r2 ph5 ph6 wf-a1.resume-2633 wf-c3.resume-1|fix-r2 ph5 ph6 wf-c3.resume-1|ph5 ph6 wf-c3.resume-1' -and -not @('wf_a1', 'wf_b2', 'p6-1', 'resume-2633' | Where-Object { $dn -notmatch $_ }).Count)
 $cap = Invoke-PsTest 'caption-test' ". `$args[0]; Caption 'TA1R-T1_01_new-instructions.png'; Caption 'TA1R-T1_verify_02_after-save.png'" @(Join-Path $k 'skills/pokey/pokey.ps1')
 Expect "Caption renders standard evidence names ($($cap -join ' | '))" (($cap -join '|') -ceq 'New instructions|After save (independent re-test)')
+$ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\uDBFF](?!\p{Cs})')$((Format-KitCell ('a' * 11 + '😀')) -eq "$('a' * 11) 😀")$((Format-KitCell "add -HoldPromotion ''" -Exact) -eq "add -HoldPromotion ''")" }   # moved from guard.tests (its cap)
+Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 Remove-TestKit $k
 Complete-Tests

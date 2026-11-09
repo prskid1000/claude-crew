@@ -7,7 +7,7 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $tmp, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L13 builds · L45 supervise · L236 shells · L356 page · L613 release · L642 lines · L667 cleanup
+Sections: L13 builds · L45 supervise · L236 shells · L356 page · L614 release · L643 lines · L668 cleanup
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -446,6 +446,7 @@ function Format-KitSuperviseHtml($j) {
   $hist = @($j.history | Where-Object { $_ }); [array]::Reverse($hist)   # oldest first
   $hCount = { param($h, [string]$lv) @($h.flags | Where-Object level -eq $lv).Count }
   $nextMin = if ("$($j.next)" -match '(\d+(?:\.\d+)?)') { $Matches[1] } else { 15 }   # stale: older than 2 heartbeats (amber), 4 (red)
+  $nxTail = if ("$($j.next)" -match '\((.+)\)\s*$') { " · $($Matches[1])" } else { '' }   # the pace reason, plain words
   $mem = $j.mem; $tot = [double]$mem.TotalGB; $avail = [double]$mem.AvailGB; $used = $tot - $avail; $st = $j.stats
   $disk = @($st.disks | Where-Object { $_ } | Sort-Object { [double]$_.free }) | Select-Object -First 1
   $markFile = Join-Path $script:KitRoot 'assets/claude-crew-mark.svg'; $mark = if (Test-Path -LiteralPath $markFile) { (Get-Content -LiteralPath $markFile -Raw) -replace '<\?xml[^>]*>\s*', '' -replace '\s+', ' ' } else { '' }
@@ -523,7 +524,7 @@ function Format-KitSuperviseHtml($j) {
   $fav = if ($mark) { "<link rel=icon href='data:image/svg+xml,$([Uri]::EscapeDataString($mark))'>" }
   $js = "(function(){var d=document,L=localStorage,S=sessionStorage,r=d.documentElement,a=d.getElementById('age'),t=new Date(a.dataset.at),n=+a.dataset.next||15,nx=d.getElementById('nx'),same=S.getItem('kc-at')==a.dataset.at;S.setItem('kc-at',a.dataset.at);" +   # same: a reload brought no new sweep
     "function ag(m){return m<1?'now':m<60?m+' min':m<1440?Math.floor(m/60)+' h '+m%60+' min':Math.floor(m/1440)+' d'}function u(){var w=Date.now(),m=Math.round((w-t)/6e4),o=Math.round((t-w)/6e4+n);a.textContent='updated '+(m<1?'just now':m<60?m+' min ago':m<2880?Math.round(m/60)+' h ago':Math.round(m/1440)+' d ago');a.className='chip '+(m>4*n?'bad':m>2*n?'warn':'ok');" +
-    "nx.textContent=(o>0?'next sweep in '+ag(o):(same?'waiting for next sweep':'due now')+(o<0?' · overdue '+ag(-o):''))+nx.dataset.tail;d.querySelectorAll('.ago').forEach(function(e){e.textContent=ag(Math.max(0,Math.round((w-new Date(e.dataset.t))/6e4)))})}u();setInterval(u,1e4);" +
+    "nx.textContent='Next sweep '+nx.dataset.due+' ('+(o>0?'in '+ag(o):(same?'waiting for it':'due now')+(o<0?', overdue '+ag(-o):''))+')'+nx.dataset.tail;d.querySelectorAll('.ago').forEach(function(e){e.textContent=ag(Math.max(0,Math.round((w-new Date(e.dataset.t))/6e4)))})}u();setInterval(u,1e4);" +
     "d.getElementById('tt').onclick=function(){var k=r.dataset.theme?r.dataset.theme=='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=k?'light':'dark';L.setItem('kc-theme',r.dataset.theme)};" +
     "var ar=d.getElementById('ar'),on=L.getItem('kc-ar')!=='0',tm;function sa(){ar.setAttribute('aria-pressed',on);ar.textContent=on?'Auto-refresh 60 s':'Auto-refresh off';clearTimeout(tm);if(on)tm=setTimeout(function(){var p={};d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){if(e.scrollTop||e.scrollLeft)p[s.id+i]=[e.scrollTop,e.scrollLeft]})});S.setItem('kc-sp',JSON.stringify(p));S.setItem('kc-y',scrollY);location.reload()},6e4)}ar.onclick=function(){on=!on;L.setItem('kc-ar',on?'1':'0');sa()};sa();" +
     "var cl=JSON.parse(L.getItem('kc-closed')||'[]');d.querySelectorAll('details.sec').forEach(function(s){if(cl.indexOf(s.id)>=0)s.open=false;s.addEventListener('toggle',function(){var c=JSON.parse(L.getItem('kc-closed')||'[]').filter(function(x){return x!=s.id});if(!s.open)c.push(s.id);L.setItem('kc-closed',JSON.stringify(c))})});" +
@@ -536,7 +537,7 @@ function Format-KitSuperviseHtml($j) {
     "d.addEventListener('click',function(x){var c=x.target.closest('td');if(c&&(c.classList.contains('x')||c.scrollWidth>c.clientWidth+1)){c.classList.toggle('x');tp.hidden=true;ca();return}sh(x.target.closest('button')?null:x.target.closest('[title],.hit,circle.val'))});" +
     "d.addEventListener('focusin',function(x){sh(x.target.closest('button')?null:x.target.closest('[title]'))});" +
     "var sp=JSON.parse(S.getItem('kc-sp')||'{}'),y=S.getItem('kc-y');S.removeItem('kc-sp');S.removeItem('kc-y');d.querySelectorAll('details.sec').forEach(function(s){s.querySelectorAll(SC).forEach(function(e,i){var v=sp[s.id+i];if(v){e.scrollTop=v[0];e.scrollLeft=v[1]}})});ca();if(y)scrollTo(0,+y)})()"   # after collapse + filter: the layout is final
-  $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span>Last sweep <b>$($at.ToString('yyyy-MM-dd HH:mm'))</b></span><span id=age class=chip data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-tail='$(& $e $(if ("$($j.next)" -match '^\s*NEXT\s*[\d.]+\s*min(.*)$') { $Matches[1] }))'>$(& $e $j.next)</span></div><div class=sp></div>" +
+  $head = "<header class=top><div class=brand>$mark<span>claude-crew</span><small>Supervisor</small></div><div class=meta><span>Last sweep <b>$($at.ToString('yyyy-MM-dd HH:mm'))</b></span><span id=age class=chip data-at='$($at.ToString('o'))' data-next='$(& $e $nextMin)'></span><span id=nx title='$(& $e $j.next)' data-due='$($at.AddMinutes([double]$nextMin).ToString('HH:mm'))' data-tail='$(& $e $nxTail)'>Next sweep $($at.AddMinutes([double]$nextMin).ToString('HH:mm'))$(& $e $nxTail)</span></div><div class=sp></div>" +
     "<div class=tb><input id=q type=search placeholder='Filter flags and agents  ( / )' aria-label='Filter flags and agents'><button id=ar type=button aria-pressed=true>Auto-refresh 60 s</button><button id=tt type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   $main = "<main class=wrap>$kpi<div class=cols><div>$(& $section 'flags' 'Flags' ($nAct + $nWatch) $flagHtml)</div><div>$(& $section 'health' 'Machine' $null $gauges)$(& $section 'history' "Last $($hist.Count) sweeps" $null $histHtml)$(& $section 'resources' 'Resources and leases' @($j.resources | Where-Object { $_ }).Count $resHtml)$(& $section 'shells' 'Shells' @($j.shells | Where-Object { $_ }).Count $shellHtml)</div></div>" +
     (& $section 'agents' 'Agents' $agents.Count $agentHtml) + (& $section 'timeline' 'Today' $lanes.Count $ganttHtml) + (& $section 'stats' 'Statistics' $null $statsHtml) +
