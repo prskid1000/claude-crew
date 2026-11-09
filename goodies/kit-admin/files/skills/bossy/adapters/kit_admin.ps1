@@ -72,8 +72,8 @@ function Invoke-LearnAdmin {
       $hit = @(& $idx | Where-Object { $L[$_].Contains($Bump) })
       if ($hit.Count -ne 1) { "-Bump must match exactly one lesson line of ## $Skill (matched $($hit.Count))"; $script:learnRc = 1; return }
       $s = $L[$hit[0]]
-      if ($Append) { $c = $Append.Trim().TrimEnd('.'); $s = if ($s -match '^(.*?)\.?(\s*\(\d+×\))$') { "$($Matches[1]). $c.$($Matches[2])" } else { "$($s.TrimEnd('.')). $c." } }
-      $m = [regex]::Match($s, '\((\d+)×\)')
+      if ($Append) { $c = $Append.Trim().TrimEnd('.'); $s = if ($s -match '^(.*?)\.?(\s*\(\d+[x×]\))$') { "$($Matches[1]). $c.$($Matches[2])" } else { "$($s.TrimEnd('.')). $c." } }
+      $m = [regex]::Match($s, '\((\d+)[x×]\)')   # lessons are written with an ASCII x too: "(1x)" became "(1x) (2×)"
       $L[$hit[0]] = if ($m.Success) { $s.Remove($m.Index, $m.Length).Insert($m.Index, "($([int]$m.Groups[1].Value + 1)×)") } else { "$s (2×)" }
       "lesson bumped in ## $Skill"
     }
