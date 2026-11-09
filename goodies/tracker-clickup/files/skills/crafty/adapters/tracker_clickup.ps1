@@ -54,4 +54,16 @@ Register-KitAdapter 'tracker' 'clickup' @{
     }
   }
   'owner' = { param($a) if ($a.name) { __TrClickupMemberId $a.name } }
+  # one checklist by name: items keyed by their text up to the first ' · ' (added, renamed, resolved; others' items untouched; the CLI cannot unresolve)
+  'checklist' = { param($a)
+    $get = { @(__TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--jq', '.checklists'))) | Where-Object { $_ -and $_.name -eq $a.name } | Select-Object -First 1 }
+    $key = { param($t) ("$t" -split ' · ', 2)[0].Trim() }
+    $cl = & $get; if (-not $cl -and -not $__trDry) { $null = __TrCli 'clickup' @('task', 'checklist', 'add', $a.id, $a.name); $cl = & $get }
+    if (-not $cl) { if ($__trDry) { return }; throw "tracker (clickup): checklist '$($a.name)' not created on $($a.id)" }
+    $have = @{}; foreach ($i in @($cl.items)) { $have[(& $key $i.name)] = $i }; $n = 0
+    foreach ($w in @($a.items)) { $i = $have[(& $key $w.text)]; if (-not $i) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'add', $cl.id, $w.text); $n++ } elseif ($i.name -cne $w.text) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'edit', $cl.id, $i.id, '--name', $w.text); $n++ } }
+    if (@($a.items | Where-Object done).Count) { $have = @{}; foreach ($i in @((& $get).items)) { $have[(& $key $i.name)] = $i } }
+    foreach ($w in @($a.items | Where-Object done)) { $i = $have[(& $key $w.text)]; if ($i -and -not $i.resolved) { $null = __TrCli 'clickup' @('task', 'checklist', 'item', 'resolve', $cl.id, $i.id); $n++ } }
+    "checklist $($a.name) on $($a.id): $n change(s)"
+  }
 }

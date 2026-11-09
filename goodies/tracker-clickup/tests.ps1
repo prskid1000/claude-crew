@@ -36,5 +36,13 @@ $pass = $out -match 'comment add 12 "body text'; if (-not $pass) { $failed++ }
 $out = Add-TrackerComment 12 '**Solution:** fixed `a.b` · [MR !7](https://h/7) · https://h/8 · [https://h/9](https://h/9)' 6>&1 | Out-String
 $pass = $out -match [regex]::Escape('Solution: fixed a.b · MR !7 (https://h/7) · https://h/8 · https://h/9') -and $out -notmatch '\*\*|`|\]\('; if (-not $pass) { $failed++ }
 "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: a comment goes as plain text (bold and code marks dropped, [text](url) -> text (url)) ($($out.Trim()))"
+Initialize-KitTracker -Type clickup; $global:log.Clear()
+$global:fx.Insert(0, 'task view C1 --jq .checklists','[{"id":"K1","name":"Items","items":[{"id":"i1","name":"A1 · High · old","resolved":false},{"id":"i9","name":"a person''s","resolved":false}]}]')
+$global:fx['task checklist item (add|edit|resolve) K1'] = 'ok'
+$ck = try { __TrA 'checklist' @{ id = 'C1'; name = 'Items'; items = @(@{ text = 'A1 · High · new'; done = $true }, @{ text = 'A2 · Low · two'; done = $false }) } } catch { "$_" }
+$cl = $global:log -join "`n"
+$pass = $ck -match '3 change' -and $cl -match '(?m)^task checklist item edit K1 i1 --name A1 · High · new$' -and $cl -match '(?m)^task checklist item add K1 A2 · Low · two$' -and $cl -match '(?m)^task checklist item resolve K1 i1$' -and $cl -notmatch 'i9|checklist add C1'
+if (-not $pass) { $failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup: checklist renames, adds and resolves the kit's items by id, a person's item untouched ($ck)"
 "$failed failure(s)"   # the per-extra count: kitbag.py goody test prints only the total
 exit [int]($failed -gt 0)

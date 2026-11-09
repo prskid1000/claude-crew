@@ -1,6 +1,6 @@
 # tracker-clickup
 - What: ClickUp as the kit tracker through the `clickup` CLI (view, status, comment, comments, create with assignee lookup,
-  describe, rename, attach, list, owner).
+  describe, rename, attach, list, owner, checklist: one named checklist, items added / renamed / resolved).
 - Config: `tracker.type: "clickup"`, `tracker.list` = the list id of new tasks, `tracker.statuses` = the list's status names,
   `tracker.branchTag` (default `CU-`); e.g. `"statuses": { "review": "for review", "failedTesting": "failed testing", "closed": "complete" }`.
 Needed when: `tracker.type` = `clickup`
