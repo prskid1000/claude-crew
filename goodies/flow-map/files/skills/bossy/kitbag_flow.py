@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 Installed by `kitbag.py goody add flow-map`; kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1056 page · L1386 command
+Sections: L17 rules · L72 parts · L157 control · L330 parse · L624 link · L853 cycles · L929 pack · L1066 page · L1396 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
