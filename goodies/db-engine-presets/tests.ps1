@@ -140,7 +140,10 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
   $td = Px $L3 teardown -Env s 2>&1 | Out-String
   Expect "teardown: the guard's triggers and its journal schema removed ($($td.Trim()))" ($td -match 'removed: 4 trigger' -and "$(Q "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_NAME LIKE 'kit\_cg\_%'")" -eq '0' -and "$(Q "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'kit_journal'")" -eq '0')
   # structure: a release mark keeps slices of what its migration destroys; restore = structure back, then rows
-  Q "CREATE VIEW fa.v1 AS SELECT id, note FROM fa.o; CREATE PROCEDURE fa.pr() SELECT 1; CREATE TABLE fa.olog (n int auto_increment primary key, id int); CREATE TRIGGER fa.tr_o AFTER UPDATE ON fa.o FOR EACH ROW INSERT INTO fa.olog (id) VALUES (NEW.id)"
+  # idempotent: Q re-runs the whole batch when the end marker is lost ("Table 'v1' already exists")
+  $obj = "CREATE OR REPLACE VIEW fa.v1 AS SELECT id, note FROM fa.o; DROP PROCEDURE IF EXISTS fa.pr; CREATE PROCEDURE fa.pr() SELECT 1; CREATE TABLE IF NOT EXISTS fa.olog (n int auto_increment primary key, id int); DROP TRIGGER IF EXISTS fa.tr_o; CREATE TRIGGER fa.tr_o AFTER UPDATE ON fa.o FOR EACH ROW INSERT INTO fa.olog (id) VALUES (NEW.id)"
+  Q $obj; $rr = try { Q $obj; 'ok' } catch { "$_" }
+  Expect "objects setup: a retried batch runs again without error ($rr)" ($rr -eq 'ok')
   $sum3 = { (Q 'CHECKSUM TABLE fa.o, fa.r, fa.olog') -join ' | ' }; $c3 = & $sum3; $cr3 = (Q 'SHOW CREATE TABLE fa.o') -join ''; $ob3 = { "$((Q 'SHOW CREATE VIEW fa.v1') -join '')|$((Q 'SHOW CREATE PROCEDURE fa.pr') -join '')" }; $o3 = & $ob3
   $sv = & { . $L3; $n = New-Mark s 'release-7' 'release'; $sl = Save-Slices s $n @{ api = @{ items = @(@{ table = 'o'; kind = 'column'; columns = @('note', 'qty', 'added_later') }, @{ table = 'r'; kind = 'table'; columns = @() }); unknown = $false } }; "$n|$($sl.bytes)" }
   Q "ALTER TABLE fa.r DROP FOREIGN KEY fk_r_o; DROP VIEW fa.v1; ALTER TABLE fa.o DROP INDEX ix_note, DROP COLUMN note, MODIFY qty int, ADD COLUMN extra int DEFAULT 5; DROP TABLE fa.r; CREATE TABLE fa.neu (id int primary key); INSERT INTO fa.neu VALUES (1); UPDATE fa.o SET qty = 9 WHERE id = 2; INSERT INTO fa.o (id, qty) VALUES (4, 4); DROP PROCEDURE fa.pr; CREATE PROCEDURE fa.pr() SELECT 2; CREATE VIEW fa.v2 AS SELECT 1 AS x"
@@ -194,7 +197,7 @@ INSERT INTO fb.ts VALUES (100, 1), (200, 2);
   $cf = (Q 'CHECKSUM TABLE fb.fl') -join ''; $null = Px $L3 mark -Env s -Name fl 2>&1; Q 'UPDATE fb.fl SET f = 1, d = 2; DELETE FROM fb.fl WHERE id = 2'
   $fl = & { . $L3; $m = Find-Mark (Read-State s) 'fl' 0; Invoke-RestoreDb s $m @('fb') (Get-RestorePlan s $m @('fb') 'fl') }
   Expect "FLOAT: undone as row events, the exact bytes back (the binlog text has 6 digits) ($fl)" (-not $fl -and ((Q 'CHECKSUM TABLE fb.fl') -join '') -eq $cf)
-  Q 'CREATE VIEW fa.va AS SELECT id FROM fa.o; CREATE VIEW fa.vb AS SELECT id FROM fa.va'
+  Q 'CREATE OR REPLACE VIEW fa.va AS SELECT id FROM fa.o; CREATE OR REPLACE VIEW fa.vb AS SELECT id FROM fa.va'
   $vv = { "$((Q 'SHOW CREATE VIEW fa.va') -join '')|$((Q 'SHOW CREATE VIEW fa.vb') -join '')" }; $v0 = & $vv
   $null = & { . $L3; $n = New-Mark s 'release-9' 'release'; $null = Save-Slices s $n @{} }
   Q 'DROP VIEW fa.vb; DROP VIEW fa.va'
