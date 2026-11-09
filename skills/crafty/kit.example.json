@@ -62,7 +62,7 @@
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit when the last is older (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven runs with -o when ~/.m2/repository exists (default true).", "mavenOffline": true },
  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: goody build-heap; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min)." },
- "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 25, "heartbeatMinutes": 15, "finishedMinutes": 30 },
+ "supervise": { "ramActPct": 90, "minDiskFreeGB": 30, "askOwnerGB": 2, "briefSeconds": 40, "heartbeatMinutes": 15, "finishedMinutes": 30 },
  "storage": { "_readme": "bossy.ps1 storage: free space per fixed drive every sampleSeconds, .state/storage (keepDays). ACT + rescue: a 10 min fill, full within actHours or factor x the learned normal (>= minRateGBh) below watchFreeGB; floors (watchFreeGB, supervise.minDiskFreeGB) on kit drives only. Rescue: kill the db query holding temp, hold builds holdMinutes. Scans (background): a drop >= scanDropGB (scanCooldownMin), scanHours, ACT; defaults + watch[] + learned children (drillGB, flatDays). db.use: <id> <temp GB> <seconds> <query> each; db.kill: {id}; past db.maxGB (5): killed. TODO-PARAM.",
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
   "db": { "use": "", "kill": "", "maxGB": 5 } },

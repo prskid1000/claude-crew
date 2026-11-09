@@ -23,9 +23,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L224 budget · L252 launch · L518 recover · L601 pause · L645 resume · L703 program · L747 param ·
-  L753 track · L1067 supervise · L1366 report · L1445 audit · L1505 storage · L1715 bugbrief · L1817 cleanup · L1939 learn ·
-  L1969 decide · L2037 health · L2096 retro due · L2106 tidy · L2175 the kit origin's main and goodies · L2191 setup ·
-  L2258 guard-sendmessage
+  L753 track · L1067 supervise · L1367 report · L1446 audit · L1506 storage · L1716 bugbrief · L1818 cleanup · L1940 learn ·
+  L1970 decide · L2038 health · L2097 retro due · L2107 tidy · L2176 the kit origin's main and goodies · L2192 setup ·
+  L2259 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1081,7 +1081,8 @@ $wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $toolErr = 0
 $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList
 $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 # $what stays whole for dedupe and -Ack
-function Flag($lvl, $what, $action, $cols) { [void]$flags.Add([pscustomobject](@{ level = $lvl; what = $what; action = $action } + $(if ($cols) { $cols } else { @{} }))) }
+$actSec = @{}; $lastWithin = @{ n = $null }; function Set-ActSection($lvl, $what) { $sn = if ($kitSweep.cur) { $kitSweep.cur } else { $lastWithin.n }; if ($lvl -eq 'ACT' -and $sn) { $actSec[(Get-KitFlagKey $what)] = $sn } }   # a skipped section keeps its ACTs (Add-KitActObs)
+function Flag($lvl, $what, $action, $cols) { Set-ActSection $lvl $what; [void]$flags.Add([pscustomobject](@{ level = $lvl; what = $what; action = $action } + $(if ($cols) { $cols } else { @{} }))) }
 function L($s) { [void]$lines.Add($s) }
 $lk = Join-Path (Get-KitPath cache -Create) 'supervise.lock'
 $me = Get-SuperviseOwner $Session
@@ -1092,13 +1093,13 @@ Invoke-KitLocked $lk {
   Write-KitAtomic $lk (@{ session = $me; at = (Get-Date).ToString('o'); pid = $PID } | ConvertTo-Json)
 }
 if ($script:aside) { $script:aside; if ($Brief) { [Console]::Error.WriteLine("NEXT=$(Get-KitBeatMinutes)"); [Console]::Error.WriteLine("HEARTBEAT_PROMPT=$(Get-KitBeatPrompt)") } else { "NEXT $(Get-KitBeatMinutes) min (another session supervises)" }; return }
-$budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 25) } else { 240 }
+$budgetSeconds = if ($Brief) { [int](Get-KitSetting 'supervise.briefSeconds' 40) } else { 240 }
 $deadline = (Get-Date).AddSeconds($budgetSeconds)
 $env:KIT_NET_TIMEOUT_SEC = [string][math]::Min(20, (Get-KitNetTimeout)); $env:KIT_NET_TRIES = '2'
 function Left { [math]::Max(5, [int]($deadline - (Get-Date)).TotalSeconds) }
 $stateFile = Get-KitPath supervise-state -Create
 $state = try { Get-Content $stateFile -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $state) { $state = @{} }
-$kitSweep = New-KitSweep $deadline $state; function Within($name) { Test-KitSweep $kitSweep $name }   # learned cost, starved first
+$kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.n = $name; Test-KitSweep $kitSweep $name }   # learned cost, starved first; a cut-short section still names its ACT
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
 function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:("$($A[0..1])" -in 'track run', 'budget -Run') -Detached:("$($A[0..1])" -in 'deploy plan', 'deployed -Mrs') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed timed out inline each round
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
@@ -1207,7 +1208,7 @@ $state.load = @{ at = $now.ToString('o'); availGB = $mem.AvailGB; cpu = (Get-Sys
 $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
 # goody hooks see $now, $mem, $keepFree, Within, Left; return {level,what,action} flag, {name,by,gb} row, {info} owner line, {ramNeed} GB, a sweep line
 $res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.settingsSeen) { [datetime]$state.settingsSeen } else { $now.AddHours(-1) })); if ($AutoFix) { $state.settingsSeen = $now.ToString('o') }; $script:ramNeed = 0   # SETTINGS changed since last beat
-function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
+function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Set-ActSection $x.level $x.what; [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
 # machine guards first (build gate, cache flush, phones, QA seats)
 foreach ($x in @(Invoke-KitHooks Get-KitSuperviseGuard @{ AutoFix = $AutoFix })) { Add-KitResult $x }
 $ramAct = [int](Get-KitSetting 'supervise.ramActPct' 90)
@@ -1290,7 +1291,7 @@ if (Within 'failedTesting tasks') {
       if (-not (Within 'failedTesting tasks')) { break }
       $o = $trk[$id]; if ($o -and -not $o.done) { continue }
       $c = $state.ftStatus[$id]; if (-not $c -and $views -ge 3) { continue }
-      $st = if ($c -and ($views -ge 3 -or ($now - [datetime]$c.at).TotalMinutes -lt 2 * (Get-KitBeatMinutes))) { [string]$c.st } else { $views++; $v = try { [string](Get-TrackerTask $id).status } catch { $null }; if ($null -ne $v) { $state.ftStatus[$id] = @{ at = $now.ToString('o'); st = $v } }; "$v" }
+      $st = if ($c -and ($views -ge 3 -or ($now - [datetime]$c.at).TotalMinutes -lt [math]::Max(15, 2 * (Get-KitBeatMinutes)))) { [string]$c.st } else { $views++; $v = try { [string](Get-TrackerTask $id).status } catch { $null }; if ($null -ne $v) { $state.ftStatus[$id] = @{ at = $now.ToString('o'); st = $v } }; "$v" }
       if ((Test-TrackerStatus $st 'failedTesting') -or ($o.done -and (Test-TrackerStatus $st 'inProgress'))) { "$id ($($ft[$id]))" } })
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow: $($back -join '; ')" "ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." }
 }
@@ -1342,7 +1343,7 @@ $state.lastFlags = @($flags | Where-Object level -ne 'INFO' | ForEach-Object { @
 $kept = @(Select-KitFlags $flags $state.acks $now); $flags.Clear(); foreach ($x in $kept) { [void]$flags.Add($x) }
 $fails = 0; foreach ($b in @(@(Read-KitLog builds $now.AddHours(-2) | Where-Object event -eq 'end') | Sort-Object { [datetime]$_.at } -Descending)) { if ([int]$b.code) { $fails++ } else { break } }
 $base = [double](Get-KitParam 'supervise.heartbeatMinutes'); $acts = @($flags | Where-Object level -eq 'ACT' | ForEach-Object { Get-KitFlagKey $_.what })
-$freshActs = @(Add-KitActObs $state $acts $now); $freshFlags = @($flags | Where-Object { $_.level -eq 'ACT' -and (Get-KitFlagKey $_.what) -in $freshActs })
+$freshActs = @(Add-KitActObs $state $acts $now $actSec @(@($kitSweep.ran.Keys) + $kitSweep.cur | Where-Object { $_ -and $_ -notin $kitSweep.skipped })); $freshFlags = @($flags | Where-Object { $_.level -eq 'ACT' -and (Get-KitFlagKey $_.what) -in $freshActs })
 $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else { $base }) $base $freshFlags.Count @($freshFlags | Where-Object what -like 'ENV-FIX*').Count ([bool]@($flags | Where-Object { $_.level -ne 'INFO' -and $_.what -like 'disk *' }).Count) $fails ($nAct + $wfAgents.Count) ($liveLabels.Count + $nAct) $runTotal
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)

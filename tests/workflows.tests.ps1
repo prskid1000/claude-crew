@@ -347,5 +347,7 @@ $ec = & { . (Lib); "$((Limit-KitCell ('x' * 75 + '😀' * 9)) -match '[\uD800-\u
 Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 $mdOut = & { . (Lib); $b = @(ConvertFrom-KitMarkdown "x`n| A |`n|---|`n| [x](https://u) a \| b<br>c |`n- i`n|no|"); $c = $b[1].rows[1][0]; "$($b.type)|$c|$((ConvertFrom-KitMdInline $c).mark)" -replace '\s+', ' ' }
 Expect "markdown: a table needs its rule row; items, paras; inline link, br ($mdOut)" ($mdOut.Trim() -eq 'para table item para|[x](https://u) a | b<br>c|link br')
+$ao = pwsh -NoProfile -Command ". '$O'; `$s = @{ acts = @('ft x'); actSec = @{ 'ft x' = 'ft' } }; `$n = Get-Date; foreach (`$c in @(@(), @{}, @('st')), @(@('ft x'), @{ 'ft x' = 'ft' }, @('ft')), @(@('b'), @{ b = 'st' }, @('st', 'ft')), @(@('b', 'c'), @{ b = 'st'; c = 'ft' }, @('st')), @(@('b', 'c'), @{ b = 'st'; c = 'ft' }, @('st', 'ft'))) { `"`$(@(Add-KitActObs `$s `$c[0] `$n `$c[1] `$c[2]) -join '+')/`$(`$s.acts -join '+')`" }"
+Expect "supervise: a skipped section keeps its ACTs; a cut-short one's new ACT waits ($($ao -join ' | '))" (($ao -join '|') -eq '/ft x|/ft x|b/b|/b|c/b+c')
 Remove-TestKit $k
 Complete-Tests

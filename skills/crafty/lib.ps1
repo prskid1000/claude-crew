@@ -3,7 +3,7 @@ Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): do
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L862 status · L1091 supervise sweep ·
   L1162 supervise report · L1258 tracker · L1574 prior · L1596 ask bugs · L1767 git-host · L1924 kitlog · L2042 params ·
-  L2342 entry-scripts
+  L2348 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1900,7 +1900,7 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
 # ONE WATCH for the owner's MRs merged in 24 h that no task tracks; host lists cached 2 beats, the login a day
 function Get-KitUntrackedMrFlag($State, [datetime]$Now, [scriptblock]$Within = { $true }) {
   $um = $State.untrackedMrs
-  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge 2 * (Get-KitBeatMinutes)) {   # per-round lists took 4.5 s
+  if (-not $um -or ($Now - [datetime]$um.at).TotalMinutes -ge [math]::Max(30, 2 * (Get-KitBeatMinutes))) {   # per-round lists took 4.5-6 s; a 5 min pace refreshed every other sweep
     $hu = if ($State.hostUser.v -and ($Now - [datetime]$State.hostUser.at).TotalHours -lt 24) { $State.hostUser.v } else { $x = try { Get-KitHostUser } catch { '' }; if ($x) { $State.hostUser = @{ at = $Now.ToString('o'); v = $x } }; $x }
     $since = $Now.ToUniversalTime().AddHours(-24).ToString('o')
     $um = @{ at = $Now.ToString('o'); user = $hu; mrs = @(if ($hu) { foreach ($rp in @(if ($KitConf.TrackerRepos.Count) { $KitConf.TrackerRepos } else { @(Get-KitValue 'repos' @()).name }) | Where-Object { $_ }) {
@@ -2262,14 +2262,20 @@ function Invoke-ParamLearn([switch]$Due, [datetime]$Deadline = [datetime]::MaxVa
 }
 # setup -WriteLocal leaves learned keys out of kit.local.json (a value there pins)
 function Add-KitSpendObs($E, [string]$R = 'ok') { $d = $script:KitExample.budget.estimate.([string]$E.type); if ($E.type -and [double]$E.spend -gt 0 -and $null -ne $d) { Add-KitParamObs 'budget.estimate' $E.spend $E.type $R $d } }   # R short: a handoff (the estimate was too low)
-function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now) {   # returns the ACT keys new since the last sweep
-  $fresh = @($Acts | Where-Object { $_ -notin @($State.acts) }); $new = $fresh.Count   # 2+ new ACTs in one sweep: the beat was too long (short)
+function Add-KitActObs($State, [string[]]$Acts, [datetime]$Now, [hashtable]$Sec = @{}, [string[]]$Done = $null) {   # returns the ACT keys new since the last sweep
+  # Sec: ACT key -> its sweep section; Done: sections that finished. An unfinished one (skipped, cut short, off-round) keeps its last ACTs and adds none as new
+  $was = @($State.acts | Where-Object { $_ }); $ps = if ($State.actSec -is [Collections.IDictionary]) { $State.actSec } else { @{} }
+  $open = { param($k, $m) $null -ne $Done -and $m[$k] -and $m[$k] -notin $Done }
+  $carry = @($was | Where-Object { $_ -notin $Acts -and (& $open $_ $ps) })
+  $held = @($Acts | Where-Object { $_ -notin $was -and (& $open $_ $Sec) })   # new from an unfinished section: unseen until it finishes
+  $fresh = @($Acts | Where-Object { $_ -notin $was -and $_ -notin $held }); $new = $fresh.Count   # 2+ new ACTs in one sweep: the beat was too long (short)
   # censored: a gap over 2 beats (sleep, stopped coordinator) or a reboot since the last ACT
   $boot = Get-KitBootTime
   $gap = $State.report.at -and ($Now - [datetime]$State.report.at).TotalMinutes -gt 2 * [math]::Max(5, [double]$State.nextBeat)
   if ($gap -or ($State.lastAct -and $boot -gt [datetime]$State.lastAct)) { $State.lastAct = $null }
   if ($new) { if ($State.lastAct) { Add-KitParamObs 'supervise.heartbeatMinutes' ($Now - [datetime]$State.lastAct).TotalMinutes '' $(if ($new -ge 2) { 'short' } else { 'ok' }) 15 }; $State.lastAct = $Now.ToString('o') }
-  $State.acts = $Acts; $fresh
+  $State.acts = @($Acts | Where-Object { $_ -notin $held }) + $carry; $State.actSec = @{}
+  foreach ($k in $State.acts) { $s = if ($Sec[$k]) { $Sec[$k] } else { $ps[$k] }; if ($s) { $State.actSec[$k] = $s } }; $fresh
 }
 function Remove-KitLearnedKeys($Cfg) { foreach ($pk in @(Get-KitParamKeys -Learned)) { $o = $Cfg; $pp = $pk -split '\.'; foreach ($x in $pp[0..($pp.Count - 2)]) { $o = $o.$x }; if ($o) { $o.PSObject.Properties.Remove($pp[-1]) } } }
 # bossy.ps1 param verbs (audited in history and params-changes.jsonl)
