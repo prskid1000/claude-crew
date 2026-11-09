@@ -59,7 +59,7 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   if ($n.NOT_TESTED) { $glance += ". $($n.NOT_TESTED) not tested (reasons below)" }
   if ($n.PENDING) { $glance += ". $($n.PENDING) app/other-lane checks are tested separately" }
   if ($n.OUT_OF_SCOPE) { $glance += ". $($n.OUT_OF_SCOPE) out of scope (channels never tested by agent QA)" }
-  A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:14px'>At a glance</h2><p>$(Esc $glance).</p>"
+  A "<h2 style='font-size:13pt;border-bottom:2px solid #647c64;padding-bottom:3px;margin-top:14px'>At a glance</h2><p>$(Esc $glance).</p>"
   if ($DocNote) { A "<p style='background:#f3f4f6;padding:6px 8px'>$DocNote</p>" }
 
   # Facts table
@@ -73,9 +73,9 @@ function Build-QaReport($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, 
   A "</table>"
 
   # Results table
-  A "<h2 style='font-size:13pt;border-bottom:2px solid #1f3a68;padding-bottom:3px;margin-top:16px'>Results</h2>"
+  A "<h2 style='font-size:13pt;border-bottom:2px solid #647c64;padding-bottom:3px;margin-top:16px'>Results</h2>"
   A "<table style='border-collapse:collapse;width:100%'><tr>"
-  foreach ($c in @(@('Check', '14%'), @('Result', '12%'), @('Observed', '34%'), @('Evidence', '40%'))) { A "<th style='$script:Cell;background:#1f3a68;color:#ffffff;text-align:left;width:$($c[1])'><b>$($c[0])</b></th>" }   # th: Docs repeats the header row on each page
+  foreach ($c in @(@('Check', '14%'), @('Result', '12%'), @('Observed', '34%'), @('Evidence', '40%'))) { A "<th style='$script:Cell;background:#324332;color:#ffffff;text-align:left;width:$($c[1])'><b>$($c[0])</b></th>" }   # th: Docs repeats the header row on each page
   A "</tr>"
   $i = 0
   foreach ($c in $checks) {   # evidence inline in its row: images, then one line per data file

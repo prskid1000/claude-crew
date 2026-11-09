@@ -1067,14 +1067,14 @@ def write(out, data, texts):
         fh.write(html(data, osp.basename(side)))
 
 PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content"><title>Kit flow</title>
-<style>:root{--bg:#f8fafc;--fg:#0f172a;--mut:#64748b;--ln:#e2e8f0;--pn:#ffffff;--pn2:#f1f5f9;--hi:#d97706;--bad:#dc2626;--sel:#2563eb22;
---kw:#7c3aed;--st:#047857;--cm:#94a3b8;--nu:#c2410c;--va:#0369a1;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0b1120;--fg:#e2e8f0;--mut:#94a3b8;--ln:#1e293b;--pn:#0f172a;--pn2:#111c33;--hi:#fbbf24;--bad:#f87171;--sel:#60a5fa22;
---kw:#c4b5fd;--st:#6ee7b7;--cm:#64748b;--nu:#fdba74;--va:#7dd3fc}}
-*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px system-ui,sans-serif}
+<style>:root{--bg:#f4f7f4;--fg:#1a221a;--mut:#5e6c5e;--ln:#d5dfd5;--pn:#ffffff;--pn2:#eaefea;--hi:#c4b06a;--bad:#ce8f8a;--sel:#556b5522;
+--kw:#4fa68f;--st:#79a86a;--cm:#8a948a;--nu:#c4b06a;--va:#5f93a8;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0c0c0c;--fg:#d8dee9;--mut:#8a948a;--ln:#212a21;--pn:#161b16;--pn2:#212a21;--hi:#e0ce8a;--bad:#dc9089;--sel:#79a86a25;
+--kw:#7fc9bc;--st:#9fd48c;--cm:#6d6d6d;--nu:#ebc88d;--va:#8fbbd4}}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Inter",sans-serif}
 #app{display:flex;height:100%}#main{position:relative;flex:1;min-width:0}#c{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 #top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}#top>*{pointer-events:auto}
-.b{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:4px 9px;cursor:pointer;user-select:none;white-space:nowrap;color:var(--fg);font:inherit}
+.b{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:4px 9px;cursor:pointer;user-select:none;white-space:nowrap;color:var(--fg);font:inherit;transition:all .15s ease}.b:hover{border-color:var(--st);background:var(--pn2)}
 .b.on{background:var(--fg);color:var(--bg)}.seg{display:inline-flex}.seg .b{border-radius:0;margin-left:-1px}.seg .b:first-child{border-radius:8px 0 0 8px}.seg .b:last-child{border-radius:0 8px 8px 0}
 input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;position:absolute;top:30px;left:0;background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:6px;min-width:220px;z-index:5;box-shadow:0 8px 24px #0003}
 .dd.open>.menu{display:block}.menu label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}.menu label:hover{background:var(--pn2)}.menu small{margin-left:auto;color:var(--mut)}
@@ -1125,15 +1125,15 @@ const IC = {bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', person: 'M12 4a4 4 0 1 0 0 8a4 4
  gear: 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2', code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
  route: 'M6 19a2 2 0 1 0 0-4a2 2 0 1 0 0 4M18 9a2 2 0 1 0 0-4a2 2 0 1 0 0 4M6 15V9a4 4 0 0 1 4-4h6M18 9v6a4 4 0 0 1-4 4H8', key: 'M8 15a4 4 0 1 0 0-8a4 4 0 1 0 0 8M12 11h9M18 11v3M15 11v2'};
 const P2 = Object.fromEntries(Object.entries(IC).map(([k, d]) => [k, new Path2D(d)]));
-const FAM = {trig: ['Triggers', '#8b5cf6'], crew: ['Crew', '#0d9488'], code: ['Commands & code', '#3b82f6'], docs: ['Docs', '#16a34a'], ctrl: ['Control flow', '#d97706'], data: ['Data', '#ea580c']};
+const FAM = {trig: ['Triggers', '#a074b0'], crew: ['Crew', '#79a86a'], code: ['Commands & code', '#5f93a8'], docs: ['Docs', '#4fa68f'], ctrl: ['Control flow', '#c4b06a'], data: ['Data', '#ce8f8a']};
 const KD = {event: ['trig', 'bolt', 'event / hook'], human: ['trig', 'person', 'human'], timer: ['trig', 'clock', 'timer / schedule'], row: ['trig', 'table', 'table row'],
  slash: ['crew', 'slash', 'slash command'], 'file-skill': ['crew', 'puzzle', 'skill'], 'file-agent': ['crew', 'robot', 'agent'], 'file-workflow': ['crew', 'flow', 'workflow'],
  call: ['crew', 'robot', 'agent() call'], phase: ['crew', 'flow', 'phase'], cmd: ['code', 'term', 'command'], 'file-script': ['code', 'term', 'script'], fn: ['code', 'fn', 'function'],
  ext: ['code', 'globe', 'external CLI'], 'file-doc': ['docs', 'doc', 'doc file'], section: ['docs', 'doc', 'section'], step: ['docs', 'list', 'step'],
  decision: ['ctrl', 'diamond', 'decision'], wait: ['ctrl', 'hour', 'wait / gate'], retry: ['ctrl', 'loop', 'loop / retry'], parallel: ['ctrl', 'par', 'parallel'], lock: ['ctrl', 'lock', 'lock'],
  error: ['ctrl', 'warn', 'error path'], exit: ['ctrl', 'door', 'exit'], outcome: ['ctrl', 'flag', 'outcome'], state: ['data', 'db', 'state'], config: ['data', 'gear', 'config key'], 'file-pseudo': ['data', 'db', 'group']};
-const EK = {calls: ['#94a3b8', 'solid'], runs: ['#3b82f6', 'solid'], impl: ['#0ea5e9', 'solid'], next: ['#16a34a', 'solid'], spawns: ['#0d9488', 'solid'], loads: ['#a3a3a3', 'dot'],
- routes: ['#8b5cf6', 'solid'], branch: ['#d97706', 'solid'], loop: ['#db2777', 'dash'], writes: ['#ea580c', 'solid'], reads: ['#ea580c', 'dot'], triggers: ['#8b5cf6', 'dash'], has: ['#94a3b8', 'dot']};
+const EK = {calls: ['#8a948a', 'solid'], runs: ['#5f93a8', 'solid'], impl: ['#4fa68f', 'solid'], next: ['#79a86a', 'solid'], spawns: ['#79a86a', 'solid'], loads: ['#8a948a', 'dot'],
+ routes: ['#a074b0', 'solid'], branch: ['#c4b06a', 'solid'], loop: ['#ce8f8a', 'dash'], writes: ['#ce8f8a', 'solid'], reads: ['#ce8f8a', 'dot'], triggers: ['#a074b0', 'dash'], has: ['#8a948a', 'dot']};
 const N = D.nodes.map((a, i) => ({i, l: a[0], k: a[1], g: a[2], ln: a[3], d: a[4], id: a[5], end: a[6] || 0, out: [], in: [], x: 0, y: 0, vx: 0, vy: 0, fx: null}));
 const E = D.edges.map((a, i) => ({i, s: a[0], t: a[1], k: a[2], l: a[3], b: a[4], back: a[5]}));
 E.forEach(e => { N[e.s].out.push(e); N[e.t].in.push(e) });
