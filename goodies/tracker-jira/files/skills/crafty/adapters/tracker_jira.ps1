@@ -15,19 +15,58 @@ function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$
   Invoke-RestMethod @p
 }
 function __TrPrioName([string]$p, [string]$Names) { if ($p -match '^[1-4]$') { ($Names -split ' ')[[int]$p - 1] } else { $p } }
-function __TrAdf([string]$Text) {
-  $paras = @(("$Text" -replace "`r", '') -split "`n" | Where-Object { $_ -ne '' } | ForEach-Object { @{ type = 'paragraph'; content = @(@{ type = 'text'; text = $_ }) } })
-  if (-not $paras.Count) { $paras = @(@{ type = 'paragraph'; content = @() }) }
-  @{ type = 'doc'; version = 1; content = $paras }
+# Markdown (lib.ps1 ConvertFrom-KitMarkdown) -> ADF: tables, bullet lists, strong / code / link marks, line breaks
+function __TrAdfPara([string]$s) {
+  $runs = @(foreach ($r in ConvertFrom-KitMdInline $s) {
+      switch ($r.mark) {
+        'br' { @{ type = 'hardBreak' } }
+        'bold' { @{ type = 'text'; text = $r.text; marks = @(@{ type = 'strong' }) } }
+        'code' { @{ type = 'text'; text = $r.text; marks = @(@{ type = 'code' }) } }
+        'link' { @{ type = 'text'; text = $r.text; marks = @(@{ type = 'link'; attrs = @{ href = $r.url } }) } }
+        default { if ($r.text) { @{ type = 'text'; text = $r.text } } } } })
+  @{ type = 'paragraph'; content = $runs }
 }
+function __TrAdf([string]$Text) {
+  $out = [Collections.Generic.List[object]]::new()
+  foreach ($b in @(ConvertFrom-KitMarkdown $Text)) {
+    if ($b.type -eq 'table') { $out.Add(@{ type = 'table'; content = @(for ($ri = 0; $ri -lt $b.rows.Count; $ri++) { @{ type = 'tableRow'; content = @($b.rows[$ri] | ForEach-Object { @{ type = $(if ($ri) { 'tableCell' } else { 'tableHeader' }); content = @(__TrAdfPara $_) } }) } }) }) }
+    elseif ($b.type -eq 'item') { $li = @{ type = 'listItem'; content = @(__TrAdfPara $b.text) }; if ($out.Count -and $out[-1].type -eq 'bulletList') { $out[-1].content += $li } else { $out.Add(@{ type = 'bulletList'; content = @($li) }) } }
+    else { $out.Add((__TrAdfPara $b.text)) }
+  }
+  if (-not $out.Count) { $out.Add(@{ type = 'paragraph'; content = @() }) }
+  @{ type = 'doc'; version = 1; content = $out.ToArray() }
+}
+# ADF -> the Markdown it came from (tables, lists, marks), so a description splice keeps the rest as it was
 function __TrAdfText($n) {
   if ($null -eq $n) { return '' }
   if ($n -is [string]) { return $n }
-  if ($n.type -eq 'text') { return [string]$n.text }
+  if ($n.type -eq 'text') {
+    $t = [string]$n.text
+    foreach ($mk in @($n.marks)) { if ($mk.type -eq 'strong') { $t = "**$t**" } elseif ($mk.type -eq 'code') { $t = '`' + $t + '`' } elseif ($mk.type -eq 'link') { $t = "[$t]($($mk.attrs.href))" } }
+    return $t
+  }
+  if ($n.type -eq 'hardBreak') { return "`n" }
+  if ($n.type -eq 'table') {
+    $tr = @(@($n.content) | ForEach-Object { '| ' + (@(@($_.content) | ForEach-Object { ((@($_.content) | ForEach-Object { __TrAdfText $_ }) -join "`n").Trim() -replace '\|', '\|' -replace '\n+', '<br>' }) -join ' | ') + ' |' })
+    if (-not $tr.Count) { return '' }
+    return ((@($tr[0], "|$('---|' * @($n.content[0].content).Count)") + @($tr | Select-Object -Skip 1)) -join "`n") + "`n"
+  }
   $inner = (@($n.content) | ForEach-Object { __TrAdfText $_ }) -join ''
-  if ($n.type -in 'paragraph', 'heading', 'listItem', 'codeBlock') { "$inner`n" } else { $inner }
+  if ($n.type -eq 'listItem') { "- $($inner.Trim())`n" } elseif ($n.type -in 'paragraph', 'heading', 'codeBlock') { "$inner`n" } else { $inner }
 }
-function __TrJDoc([string]$t) { $t = ConvertTo-KitPlainText $t; if ($__trType -eq 'jira') { __TrAdf $t } else { $t } }   # ADF / wiki text: Markdown marks would show as typed
+# Markdown -> Jira wiki (server): ||head|| / |cell| tables, * items, *bold*, {{code}}, [text|url], \\ breaks; a stray | in a cell -> /
+function __TrWikiRuns([string]$s) {
+  -join @(foreach ($r in ConvertFrom-KitMdInline $s) { switch ($r.mark) { 'br' { ' \\ ' } 'bold' { "*$($r.text)*" } 'code' { "{{$($r.text)}}" } 'link' { "[$($r.text -replace '[\[\]|]', ' ')|$($r.url)]" } default { $r.text } } })
+}
+function __TrWiki([string]$Text) {
+  @(foreach ($b in @(ConvertFrom-KitMarkdown $Text)) {
+      if ($b.type -eq 'table') {
+        for ($ri = 0; $ri -lt $b.rows.Count; $ri++) { $sep = if ($ri) { '|' } else { '||' }; $sep + (@($b.rows[$ri] | ForEach-Object { $c = (__TrWikiRuns $_) -replace '\|(?![^\[]*\])', '/'; if ($c.Trim()) { $c } else { ' ' } }) -join $sep) + $sep }
+      }
+      elseif ($b.type -eq 'item') { "* $(__TrWikiRuns $b.text)" } else { __TrWikiRuns $b.text }
+    }) -join "`n"
+}
+function __TrJDoc([string]$t) { if ($__trType -eq 'jira') { __TrAdf $t } else { __TrWiki $t } }   # Markdown marks would show as typed
 function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
   $h = if ($__trType -ne 'jira' -and $env:JIRA_TOKEN) { Get-KitAuth JIRA_TOKEN } elseif ($env:JIRA_EMAIL -and $env:JIRA_API_TOKEN) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($env:JIRA_EMAIL):$($env:JIRA_API_TOKEN)")) } } else { @{} }
   if (-not $__trDry -and -not ($env:JIRA_BASE_URL -and $h.Authorization)) { throw "tracker ($__trType): set JIRA_BASE_URL and JIRA_EMAIL + JIRA_API_TOKEN$(if ($__trType -ne 'jira') { ' (or JIRA_TOKEN)' })" }

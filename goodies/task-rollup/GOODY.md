@@ -3,16 +3,16 @@
   `bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>]`; `track run` refreshes every parent with a
   not-done tracked subtask or a stored triage. Parent description, between `<!-- kit:delivery -->` / `<!-- kit:triage -->`
   markers under the testing-doc links (the owner's text untouched): a summary line (merged, deployed per env, in test, closed,
-  next step), one table per repo (per repo and batch when the run had several batches; merge order inside: subtask, status,
-  MRs with state and env, testing docs, items done/total, last update); triage counts (severity x fix / defer / duplicate /
-  already fixed), each subtask's item ids by severity, the items not in this wave with reason and decision. Each subtask with
+  next step), one table per repo headed `<shortest alias> (<repo>)` (merge order inside: subtask, status, MRs with state and
+  env, items done/total, severity `11C/1H` of its fix items, item ids); triage counts (severity x fix / defer / duplicate /
+  already fixed), a "Not in this wave" table (id, severity, verdict, reason). Trackers storing rich text get real tables
+  (lib.ps1 `ConvertFrom-KitMarkdown`: Jira ADF / wiki, Azure HTML). Each subtask with
   triage items gets an "Items" checklist (`<id> · <severity> · <title>`; ticked when a merged MR names the id or all its MRs
   merged; deferred / duplicate unticked with the reason): tracker verb `checklist`, else an `<!-- kit:items -->` section.
   One parent comment per milestone: all merged, deployed to `<env>`, all closed.
-- Sources: task state (`track`, `docs` testing-doc / testing-ai), the git host (`mr.get` / `mr.url`; merged MRs cached), the
+- Sources: task state (`track`), the git host (`mr.get` / `mr.url`; merged MRs cached), the
   deploy log, the tracker (one parent view per read), the stored triage (`-From`: the first `.md` table with ID and Area
-  columns; agents from a `.json` with `agents` [{ id, task or "task <id>" in note, repo or a `repos[]` name in area / note }]
-  and `batch` = agents per batch).
+  columns; agents from a `.json` with `agents` [{ id, task or "task <id>" in note, repo or a `repos[]` name in area / note }]).
 - Writes only on a diff (section hashes, checklist signature); no read while local state is unchanged and
   `track.rollupMinutes` (default 30) has not passed.
 Needed when: `tracker.type` = `*`

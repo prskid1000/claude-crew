@@ -24,7 +24,7 @@ Set-Content (Join-Path $bd 'triage.md') @'
 |---|---|
 | Critical | 1 |
 '@
-Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name = 'api-repo' }, @{ name = 'web-repo' }) }
+Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ repos = @(@{ name = 'api-repo'; aliases = @('backend', 'api') }, @{ name = 'web-repo'; aliases = @('webui', 'web') }) }
 $res = & {
   . (Lib); . $ad
   $p = (__TrA 'create' @{ name = 'Parent'; description = "**Testing doc (human):** [open](https://h)`n`nThe owner's words." }).id
@@ -50,15 +50,19 @@ $res = & {
   $o2 = Invoke-TaskRollup -Task $p; $w2 = $global:writes - $w1; $h2 = $global:hostCalls - $h1
   $r0 = $global:reads; $o3 = Update-KitParentRollup $p; $r3 = $global:reads - $r0
   $global:m3 = $true; $o4 = Invoke-TaskRollup -Task $p; $c4 = @(__TrA 'comments' @{ id = $p }).text; $o5 = Invoke-TaskRollup -Task $p
-  [pscustomobject]@{ o1 = "$o1"; d1 = $d1; i1 = $i1; c1 = "$c1"; w2 = $w2; h2 = $h2; o2 = "$o2"; o3 = "$o3"; r3 = $r3; o4 = "$o4"; c4 = @($c4); o5 = "$o5"
+  [pscustomobject]@{ u1 = (__TrA 'view' @{ id = $s1 }).url; sevs = (Format-KitSevCounts @(@{ sev = 'Cosmetic' }, @{ sev = 'Critical' }, @{ sev = '' }, @{ sev = 'critical' })); o1 = "$o1"; d1 = $d1; i1 = $i1; c1 = "$c1"; w2 = $w2; h2 = $h2; o2 = "$o2"; o3 = "$o3"; r3 = $r3; o4 = "$o4"; c4 = @($c4); o5 = "$o5"
     splice = (Set-KitDescSection "x`n<!-- kit:delivery -->`nold`n<!-- /kit:delivery -->`ny" 'delivery' 'new' '')
     after = (Set-KitDescSection "<!-- kit:delivery -->`nd`n<!-- /kit:delivery -->`n`nowner" 'triage' 'T' 'delivery') }
 }
 $d = $res.d1
 Expect "rollup: delivery under the testing-doc links, triage after it, the owner's text kept ($($res.o1))" ($d -match '(?s)^\*\*Testing doc \(human\):\*\* \[open\]\(https://h\)\n\n<!-- kit:delivery -->.*<!-- /kit:delivery -->\n\n<!-- kit:triage -->.*<!-- /kit:triage -->\n\nThe owner''s words\.$')
-Expect 'rollup delivery: summary, one group per repo, merge order, deploy env, docs, items done/total; a subtask without kit state = a plain row' ($d -match '\*\*Delivery status\*\*: 1 of 3 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 2 subtask\(s\) not merged' -and $d -match '\*\*other, batch 0 · 1\*\*' -and
-  $d -match '\*\*api-repo, batch 1 · 1\*\*: 1 merged · 1 deployed · 0 closed' -and $d -match '\[!8\]\(https://git/g/api-repo/8\) api-repo merged · stage<br>\[!7\]' -and $d -match '\[human\]\(https://doc/h1\)' -and $d -match '\| 2/2 \|' -and $d -match '\| 0/1 \|' -and $d -match '\*\*web-repo, batch 2 · 1\*\*')
-Expect 'rollup triage: severity x decision counts, per-subtask ids by severity, deferred and duplicate with reason' ($d -match '5 = 3 fix · 1 defer · 1 duplicate' -and $d -match '\| Critical \| 1 \| 0 \| 0 \| 0 \| 1 \|' -and $d -match '- \[API1\]\([^)]+\) → A-1, A-2 \(2: 1 Critical · 1 Low\)' -and $d -match '- A-3 · deferred · owner: later · decision d-2' -and $d -match '- W-2 · duplicate of W-1 · Same root cause')
+$apiRow = '| [API1 · API fixes](' + $res.u1 + ') | in test | [!8](https://git/g/api-repo/8) merged · stage<br>[!7](https://git/g/api-repo/7) merged · stage | 2/2 | 1C/1L | A-1, A-2 |'
+Expect 'rollup delivery: summary, one table per repo (alias label) in merge order: subtask, status, MRs, items, severity, item ids; a subtask without kit state = a plain row' ($d -match '\*\*Delivery status\*\*: 1 of 3 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 2 subtask\(s\) not merged' -and
+  $d.Contains("**API (api-repo)**`n`n| Subtask | Status | MRs | Items | Severity | Item ids |`n|---|---|---|---|---|---|`n$apiRow") -and $d -match '\*\*Web \(web-repo\)\*\*' -and $d -match '\[!3\]\([^)]+\) open \| 0/1 \| 1M \| W-1 \|' -and
+  $d -match '\*\*Other\*\*\n\n\|[^\n]+\n\|[^\n]+\n\| \[A person''s subtask[^\n]+\| — \| — \| — \| — \|' -and $d.IndexOf('**API') -lt $d.IndexOf('**Web') -and $d -notmatch '(?m)^- ')
+Expect "rollup severity cell: C H M L initials, another severity in full, none = ? ($($res.sevs))" ($res.sevs -eq '2C/1 Cosmetic/1 ?')
+Expect 'rollup triage: severity x decision counts; not in this wave = a table (id, severity, verdict, reason)' ($d -match '5 = 3 fix · 1 defer · 1 duplicate' -and $d -match '\| Critical \| 1 \| 0 \| 0 \| 0 \| 1 \|' -and
+  $d.Contains("**Not in this wave**`n`n| Id | Severity | Verdict | Reason |`n|---|---|---|---|`n| A-3 | High | deferred | owner: later (decision d-2) |`n| W-2 | Low | duplicate of W-1 | Same root cause |"))
 Expect 'rollup items (no checklist verb): ticked when merged, deferred unticked with its reason, severity first' ($res.i1 -match '(?s)\*\*Items\*\*\n- \[x\] A-1 · Critical · Guard the / admin path\n- \[ \] A-3 · High · deferred: owner: later\n- \[x\] A-2 · Low · Trim names')
 Expect "rollup milestones: none yet (not all merged) ($($res.c1))" (-not $res.c1)
 Expect "rollup: an unchanged second run writes nothing and fetches merged MRs never again ($($res.w2) writes, $($res.h2) host calls)" ($res.w2 -eq 0 -and $res.o2 -match 'no change' -and $res.h2 -le 2)

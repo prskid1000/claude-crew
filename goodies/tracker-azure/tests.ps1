@@ -22,4 +22,9 @@ $v = { param($r, $s, $n) $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' 
 Run azure ([ordered]@{ 'GET .*/acme/Shop/_apis/wit/workitems/42\?\$expand' = '{"id":42,"fields":{"System.Title":"Bug","System.State":"In Progress","System.Description":"<div>a<br>b</div>"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Forward","url":"https://dev.azure.com/acme/_apis/wit/workItems/43"}]}'
  'ids=43&' = '{"value":[{"id":43,"fields":{"System.Title":"Sub"}}]}'; 'PATCH .*workitems/42.*json-patch\+json Basic .*System.State' = '{"id":42}'; 'comments\?api-version=7.1-preview.4 .*two words' = '{"id":1}'
  'POST .*workitems/\$Task.*Hierarchy-Reverse' = '{"id":50}'; 'wiql.*in test' = '{"workItems":[{"id":44}]}'; 'ids=44&' = '{"value":[{"id":44,"fields":{"System.Title":"A","System.AssignedTo":{"uniqueName":"ann@x","displayName":"Ann"}}}]}' }) 42 '' { param($r, $l) (& $v $r ann@x 50) -and $l -match '"value":"in test"' -and $r.v.description -eq "a`nb" }
+$md = "<!-- kit:delivery -->`n**Sum**: 1 of 2 · x`n`n| Subtask | MRs |`n|---|---|`n| [S-1](https://a.test/S-1?a=1&b=2) | !8 merged<br>!7 a \| b |`n- one`n- two`n<!-- /kit:delivery -->"
+$html = __TrHtml $md; $back = __TrUnHtml $html
+$okHtml = $html -match '<table><tr><th>Subtask</th><th>MRs</th></tr><tr><td><a href="https://a.test/S-1\?a=1&amp;b=2">S-1</a></td><td>!8 merged<br>!7 a \| b</td></tr></table>' -and $html -match '<ul><li>one</li><li>two</li></ul>' -and $html -match '<div><b>Sum</b>' -and $html -match '<div>&lt;!-- kit:delivery --&gt;</div>' -and $back -eq $md.Replace("`n`n", "`n")
+if (-not $okHtml) { $global:failed++; "  html: $html`n  back: $back" }
+"$(if ($okHtml) { 'PASS' } else { 'FAIL' }) tracker azure: Markdown tables, links, breaks, lists -> HTML; read back to the same Markdown (markers kept)"
 exit [int]($global:failed -gt 0)

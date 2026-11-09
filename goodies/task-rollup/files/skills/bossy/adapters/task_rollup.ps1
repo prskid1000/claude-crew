@@ -4,12 +4,12 @@ dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>]   -From stores the run's triage (item table + launch
     args) in the parent's task state; then rebuilds and writes what changed
   track run calls Invoke-KitTrackRollupHook: every parent with a not-done tracked subtask or a stored triage
-Reads: task state (.state/tasks: track, docs), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
+Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
 description between <!-- kit:delivery --> / <!-- kit:triage --> markers, each subtask's "Items" checklist (adapter verb
 checklist, else an <!-- kit:items --> description section), one comment per milestone (all merged, deployed to <env>, all closed).
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L17 triage · L61 render · L126 rollup
+Sections: L17 triage · L61 render · L131 rollup
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -43,12 +43,12 @@ function Read-KitTriage([string]$From) {
   }
   $la = @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_.agents })[0]
   $names = @{}; foreach ($rp in @(Get-KitValue 'repos' @())) { foreach ($n in @($rp.name) + @($rp.aliases)) { if ($n) { $names["$n"] = "$($rp.name)" } } }
-  $all = @($la.agents); $per = [int]"$($la.batch)"
+  $all = @($la.agents)
   $agents = @(for ($i = 0; $i -lt $all.Count; $i++) {
       $a = $all[$i]; $txt = "$($a.area) $($a.note)"
       $tid = if ($a.task) { "$($a.task)" } elseif ($txt -match '(?i)\btask\s+(?<t>(?=[\w-]*\d)[\w-]+)') { $Matches.t } else { '' }
       $repo = if ($a.repo) { "$($a.repo)" } else { @($names.Keys | Sort-Object Length -Descending | Where-Object { $txt -match "(?<![\w-])$([regex]::Escape($_))(?![\w-])" } | ForEach-Object { $names[$_] })[0] }
-      [pscustomobject]@{ area = "$($a.id)"; task = $tid; repo = "$repo"; batch = $(if ($per -gt 0 -and $all.Count -gt $per) { [int][math]::Floor($i / $per) + 1 } else { 0 }); order = $i }
+      [pscustomobject]@{ area = "$($a.id)"; task = $tid; repo = "$repo"; order = $i }
     })
   [pscustomobject]@{ source = $source; rows = $rows; agents = $agents }
 }
@@ -71,9 +71,10 @@ function Get-KitSubItems($Tri, [string]$Area, [string[]]$DoneIds, [bool]$AllDone
   @($Tri.rows | Where-Object { $_.area -eq $Area } | Sort-Object -Stable { Get-KitSevRank $_.sev } | ForEach-Object {
       $k = Get-KitItemKind $_.decision; $t = Get-KitCut $_.title 90
       $text = "$($_.id) · $($_.sev) · $(if ($k -eq 'fix') { $t } elseif ($k -eq 'defer') { "deferred: $t" } else { "$(Get-KitCut $_.decision 30): $t" })"
-      [pscustomobject]@{ id = $_.id; text = $text; fix = ($k -eq 'fix'); done = ($k -eq 'fix' -and ($AllDone -or $DoneIds -contains $_.id)) } })
+      [pscustomobject]@{ id = $_.id; sev = "$($_.sev)"; text = $text; fix = ($k -eq 'fix'); done = ($k -eq 'fix' -and ($AllDone -or $DoneIds -contains $_.id)) } })
 }
-function Format-KitTriage($Tri, [hashtable]$Urls) {
+# counts of severity x decision, then the items not in this wave (per-subtask ids live in the delivery tables)
+function Format-KitTriage($Tri) {
   $rows = @($Tri.rows); $kinds = @('fix', 'defer', 'duplicate', 'already fixed')
   $cnt = { param($s, $k) @($rows | Where-Object { ($null -eq $s -or $_.sev -eq $s) -and ($null -eq $k -or (Get-KitItemKind $_.decision) -eq $k) }).Count }
   $sevs = @($rows | ForEach-Object sev | Select-Object -Unique | Sort-Object { Get-KitSevRank $_ })
@@ -81,32 +82,36 @@ function Format-KitTriage($Tri, [hashtable]$Urls) {
     "| Severity | $($kinds -join ' | ') | Total |", "|---$('|---' * ($kinds.Count + 1))|")
   foreach ($s in $sevs) { $l += "| $s | $(@($kinds | ForEach-Object { & $cnt $s $_ }) -join ' | ') | $(& $cnt $s $null) |" }
   $l += "| **Total** | $(@($kinds | ForEach-Object { & $cnt $null $_ }) -join ' | ') | **$($rows.Count)** |"
-  $l += @('', '**Per subtask**')
-  foreach ($a in @($Tri.agents)) {
-    $mine = @($rows | Where-Object { $_.area -eq $a.area -and (Get-KitItemKind $_.decision) -eq 'fix' } | Sort-Object -Stable { Get-KitSevRank $_.sev }); if (-not $mine.Count) { continue }
-    $by = @($mine | Group-Object sev | Sort-Object { Get-KitSevRank $_.Name } | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ' · '
-    $l += "- $(if ($Urls[$a.task]) { "[$($a.area)]($($Urls[$a.task]))" } else { $a.area }) → $(@($mine.id) -join ', ') ($($mine.Count): $by)"
-  }
   $out = @($rows | Where-Object { (Get-KitItemKind $_.decision) -in 'defer', 'duplicate' })
-  if ($out.Count) { $l += @('', '**Not in this wave**'); foreach ($r in $out) { $l += "- $($r.id) · $(if ((Get-KitItemKind $r.decision) -eq 'defer') { 'deferred' } else { $r.decision }) · $(Get-KitCut $r.title 140)$(if ($r.decisionId) { " · decision $($r.decisionId)" })" } }
+  if ($out.Count) {
+    $l += @('', '**Not in this wave**', '', '| Id | Severity | Verdict | Reason |', '|---|---|---|---|')
+    foreach ($r in $out) { $l += "| $(Get-KitCut $r.id 40) | $(Get-KitCut $r.sev 20) | $(if ((Get-KitItemKind $r.decision) -eq 'defer') { 'deferred' } else { Get-KitCut $r.decision 40 }) | $(Get-KitCut $r.title 140)$(if ($r.decisionId) { " (decision $($r.decisionId))" }) |" }
+  }
   $l -join "`n"
 }
-# $Rows: one per subtask (Update-KitParentRollup); groups by repo (+ batch when the run had several), merge order inside
+# a repo's table heading: its shortest alias (API, UI ... in capitals) + the name, e.g. "API (backend)"
+$script:KitAcronyms = @('api', 'ui', 'db', 'cli', 'sdk', 'ios', 'cs', 'ai', 'ml', 'etl')
+function Get-KitRepoLabel([string]$Repo) {
+  $al = @(@(@(Get-KitValue 'repos' @()) | Where-Object { "$($_.name)" -eq $Repo } | ForEach-Object { @($_.aliases) }) | Where-Object { $_ } | Sort-Object -Stable Length)[0]
+  if (-not $al) { return $(if ($Repo -eq 'other') { 'Other' } else { $Repo }) }
+  "$(if ($script:KitAcronyms -contains "$al".ToLower()) { "$al".ToUpper() } else { "$al".Substring(0, 1).ToUpper() + "$al".Substring(1) }) ($Repo)"
+}
+# fix items per severity: 11C/1H (C H M L initials, another severity in full, zero counts left out)
+function Format-KitSevCounts($Items) { @(@($Items) | Group-Object sev | Sort-Object { Get-KitSevRank $_.Name } | ForEach-Object { $sn = "$($_.Name)".Trim(); "$($_.Count)$(if ((Get-KitSevRank $sn) -lt 9) { $sn.Substring(0, 1).ToUpper() } elseif ($sn) { " $(Get-KitCut $sn 20)" } else { ' ?' })" }) -join '/' }
+# $Rows: one per subtask (Update-KitParentRollup): the summary line, then one table per repo, merge order inside
 function Format-KitDelivery($Rows) {
   $n = $Rows.Count; $m = @($Rows | Where-Object merged).Count; $t = @($Rows | Where-Object inTest).Count; $c = @($Rows | Where-Object closed).Count
   $envs = @($Rows | ForEach-Object { @($_.envs) } | Group-Object | ForEach-Object { "$($_.Name) ($($_.Count))" })
   $notMerged = $n - $m; $undeployed = @($Rows | Where-Object { $_.merged -and -not @($_.envs).Count }).Count; $toTest = @($Rows | Where-Object { @($_.envs).Count -and -not $_.inTest -and -not $_.closed }).Count
   $next = if ($notMerged) { "merge: $notMerged subtask(s) not merged" } elseif ($undeployed) { "$undeployed merged, not deployed" } elseif ($toTest) { "move to in test: $toTest" } elseif ($t) { "QA: $t in test" } else { 'done' }
   $l = @("**Delivery status**: $m of $n merged · deployed: $(if ($envs.Count) { $envs -join ', ' } else { 'none' }) · $t in test · $c closed · next: $next")
-  $multi = @($Rows | ForEach-Object batch | Select-Object -Unique).Count -gt 1
-  foreach ($g in @($Rows | Group-Object { "$($_.repo)$(if ($multi) { ", batch $($_.batch)" })" } | Sort-Object { @($_.Group | ForEach-Object order | Measure-Object -Minimum).Minimum })) {
+  foreach ($g in @($Rows | Group-Object repo | Sort-Object { @($_.Group | ForEach-Object order | Measure-Object -Minimum).Minimum })) {
     $gr = @($g.Group | Sort-Object -Stable @{ Expression = { -not $_.merged } }, @{ Expression = { if ($_.merged) { @($_.mrs | ForEach-Object { ConvertTo-KitWhen $_.mergedAt } | Sort-Object)[-1] } else { [datetimeoffset]::MinValue } } }, order)
-    $l += @('', "**$($g.Name) · $($gr.Count)**: $(@($gr | Where-Object merged).Count) merged · $(@($gr | Where-Object { @($_.envs).Count }).Count) deployed · $(@($gr | Where-Object closed).Count) closed", '',
-      '| Subtask | Status | MRs (merge order) | Testing docs | Items | Updated |', '|---|---|---|---|---|---|')
+    $l += @('', "**$(Get-KitRepoLabel $g.Name)**", '', '| Subtask | Status | MRs | Items | Severity | Item ids |', '|---|---|---|---|---|---|')
     foreach ($r in $gr) {
-      $mr = @($r.mrs | ForEach-Object { "$(if ($_.url) { "[!$($_.iid)]($($_.url))" } else { "!$($_.iid)" }) $($_.repo) $($_.state)$(if (@($_.envs).Count) { ' · ' + (@($_.envs) -join ', ') })" }) -join '<br>'
-      $docs = @($(if ($r.human) { "[human]($($r.human))" }), $(if ($r.ai) { "[AI]($($r.ai))" }) | Where-Object { $_ }) -join ' · '
-      $l += "| [$(Get-KitCut "$(if ($r.area) { "$($r.area) · " })$($r.name)" 80)]($($r.url)) | $($r.status) | $(if ($mr) { $mr } else { '—' }) | $(if ($docs) { $docs } else { '—' }) | $(if ($r.total) { "$($r.done)/$($r.total)" } else { '—' }) | $(if ($r.updated) { $r.updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { '—' }) |"
+      $mr = @($r.mrs | ForEach-Object { "$(if ($_.url) { "[!$($_.iid)]($($_.url))" } else { "!$($_.iid)" })$(if ($_.repo -ne $g.Name) { " $($_.repo)" }) $($_.state)$(if (@($_.envs).Count) { ' · ' + (@($_.envs) -join ', ') })" }) -join '<br>'
+      $fx = @($r.items | Where-Object fix); $sv = Format-KitSevCounts $fx
+      $l += "| [$(Get-KitCut "$(if ($r.area) { "$($r.area) · " })$($r.name)" 80)]($($r.url)) | $(Get-KitCut $r.status 40) | $(if ($mr) { $mr } else { '—' }) | $(if ($fx.Count) { "$(@($fx | Where-Object done).Count)/$($fx.Count)" } else { '—' }) | $(if ($sv) { $sv } else { '—' }) | $(if ($fx.Count) { Get-KitCut (@($fx.id) -join ', ') 4000 } else { '—' }) |"
     }
   }
   $l -join "`n"
@@ -135,7 +140,7 @@ function Get-KitDeployIndex {
 # what the local state says about a parent's subtasks: equal + fresh -> no read
 function Get-KitRollupLocalSig($Ro, [string[]]$Subs, $Tracking) {
   $lf = Get-Item -LiteralPath (Get-KitPath deploy-log) -ErrorAction SilentlyContinue
-  Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; $dx = (Read-KitState (Get-KitTaskFile $_)).docs; "$_=$(@($tr.mrs) -join ',')/$($tr.done)/$(@($dx.Values | ForEach-Object { $_.url }) -join ',')" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
+  Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
 }
 function Set-KitItemsChecklist([string]$Task, $Items) {
   $ad = $KitAdapters['tracker'][$__trType]
@@ -181,16 +186,12 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
       $isig = Get-KitRollupHash (@($items | ForEach-Object { "$($_.text)|$($_.done)" }) -join "`n")
       if ($isig -ne "$($sx.itemsSig)") { try { $null = Set-KitItemsChecklist $sb.id $items; Update-KitTaskIndex $sb.id { param($x) $x.itemsSig = $isig }; $did.Add("items $($sb.id)") } catch { $did.Add("items $($sb.id) FAILED: $("$_".Split("`n")[0])") } }
     }
-    $fx = @($items | Where-Object fix)
-    $when = @(@($mrs | ForEach-Object { $_.mergedAt; @($_.deployedAt) }) + @($sx.docs.Values | ForEach-Object { $_.updated }) | ForEach-Object { ConvertTo-KitWhen $_ } | Where-Object { $_ } | Sort-Object)
     [pscustomobject]@{ id = $sb.id; name = $sb.name; url = $sb.url; status = $sb.status; area = "$($ag.area)"; order = $(if ($ag) { [int]$ag.order } else { 999 })
-      repo = $(if ($ag.repo) { $ag.repo } elseif ($mrs.Count) { $mrs[0].repo } else { 'other' }); batch = $(if ($ag) { [int]$ag.batch } else { 0 })
-      mrs = $mrs; merged = $merged; envs = $envs; human = "$($sx.docs.'testing-doc'.url)"; ai = "$($sx.docs.'testing-ai'.url)"
-      done = @($fx | Where-Object done).Count; total = $fx.Count; inTest = (Test-TrackerStatus $sb.status 'inTest'); closed = (Test-TrackerStatus $sb.status 'closed'); updated = @($when)[-1] }
+      repo = $(if ($ag.repo) { $ag.repo } elseif ($mrs.Count) { $mrs[0].repo } else { 'other' }); mrs = $mrs; merged = $merged; envs = $envs; items = $items
+      inTest = (Test-TrackerStatus $sb.status 'inTest'); closed = (Test-TrackerStatus $sb.status 'closed') }
   }
   $rows = @($rows)
-  $urls = @{}; foreach ($sb in $subs) { $urls[$sb.id] = $sb.url }
-  $want = [ordered]@{ delivery = (Format-KitDelivery $rows) }; if ($tri -and $tri.rows.Count) { $want.triage = Format-KitTriage $tri $urls }
+  $want = [ordered]@{ delivery = (Format-KitDelivery $rows) }; if ($tri -and $tri.rows.Count) { $want.triage = Format-KitTriage $tri }
   $sec = @{}; if ($ro.sections -is [Collections.IDictionary]) { foreach ($k in $ro.sections.Keys) { $sec[$k] = $ro.sections[$k] } }
   $desc = "$($pt.description)"; $nd = $desc -replace "`r`n", "`n"; $changed = @()
   foreach ($k in $want.Keys) { $h = Get-KitRollupHash $want[$k]; if ($sec[$k] -ne $h -or $nd.IndexOf("<!-- kit:$k -->") -lt 0) { $nd = Set-KitDescSection $nd $k $want[$k] $(if ($k -eq 'triage') { 'delivery' }); $sec[$k] = $h; $changed += $k } }

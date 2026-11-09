@@ -24,4 +24,11 @@ $jf = { param($ver, $doc, $who, $srch) [ordered]@{ "GET https://j.test/rest/api/
  "POST .*/issue .*$who" = '{"key":"P-7"}'; "$srch\?jql=project" = '{"issues":[{"key":"P-3","fields":{"summary":"A","assignee":{"accountId":"u1","name":"u1","displayName":"Ann"}}}]}' } }
 Run jira (& $jf 3 '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Steps"}]}]}' '"accountId":"Ann Lee"' 'search/jql') P-1 P { param($r, $l) (& $v $r u1 P-7) -and $r.v.description -eq 'Steps' -and $l -match 'Basic .*"Subtask"' }
 Run jira-server (& $jf 2 '"Steps"' '"name":"Ann Lee"' 'api/2/search') P-1 P { param($r, $l) (& $v $r u1 P-7) -and $r.v.description -eq 'Steps' -and $l -match 'Bearer pat' -and $l -notmatch 'api/3' }
+$md = "<!-- kit:delivery -->`n**Sum**: 1 of 2`n`n| Subtask | MRs |`n|---|---|`n| [S-1](https://j.test/S-1) | !8 merged<br>!7 a \| b |`n- one`n<!-- /kit:delivery -->"
+$adf = __TrAdf $md; $aj = $adf | ConvertTo-Json -Depth 20 -Compress; $back = (__TrAdfText ($aj | ConvertFrom-Json)).Trim()
+$okAdf = $aj -match '"type":"table"' -and $aj -match '"type":"tableHeader"' -and $aj -match '"href":"https://j.test/S-1"' -and $aj -match '"type":"hardBreak"' -and $aj -match '"type":"strong"' -and $aj -match '"type":"bulletList"' -and $back -eq $md.Replace("`n`n", "`n")
+$wk = __TrWiki $md
+$okWiki = $wk -eq "<!-- kit:delivery -->`n*Sum*: 1 of 2`n||Subtask||MRs||`n|[S-1|https://j.test/S-1]|!8 merged \\ !7 a / b|`n* one`n<!-- /kit:delivery -->" -and (__TrWiki $wk) -eq $wk
+if (-not ($okAdf -and $okWiki)) { $global:failed++; "  adf: $back`n  wiki: $wk" }
+"$(if ($okAdf -and $okWiki) { 'PASS' } else { 'FAIL' }) tracker jira / jira-server: Markdown tables, links, breaks, lists -> ADF (round trip to the same Markdown) / wiki (stable when re-sent)"
 exit [int]($global:failed -gt 0)

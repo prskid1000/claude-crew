@@ -1,5 +1,5 @@
 """Goody report-notion: reports.type notion = a child page of reports.parent via REST (env NOTION_TOKEN): heading, paragraph,
-bulleted and code blocks, 100 per call. Readers = the parent page's sharing."""
+bulleted, table and code blocks, 100 per call. Readers = the parent page's sharing."""
 import html, json, os, re
 
 dt = None
@@ -17,10 +17,28 @@ def _rich(s):
     return [{'type': 'text', 'text': {'content': s[i:i + 2000]}} for i in range(0, len(s), 2000)]
 
 
+_RULE = re.compile(r'^\s*\|(\s*:?-+:?\s*\|)+\s*$')
+
+
+def _cells(line):
+    return [c.strip().replace('\\|', '|').replace('<br>', '\n') for c in re.split(r'(?<!\\)\|', line.strip()[1:-1])]
+
+
 def _blocks(text):
-    blocks, code = [], None
-    for line in text.splitlines() + ['```']:   # the goody fence closes an open code block
-        if line.strip().startswith('```'):
+    blocks, code, lines, i = [], None, text.splitlines() + ['```'], -1   # the goody fence closes an open code block
+    while i + 1 < len(lines):
+        i += 1
+        line = lines[i]
+        if code is None and re.match(r'^\s*\|.*\|\s*$', line) and i + 1 < len(lines) and _RULE.match(lines[i + 1]):   # a table block
+            rows = [_cells(line)]
+            i += 1
+            while i + 1 < len(lines) and re.match(r'^\s*\|.*\|\s*$', lines[i + 1]):
+                i += 1
+                rows.append(_cells(lines[i]))
+            w = len(rows[0])
+            blocks.append({'type': 'table', 'table': {'table_width': w, 'has_column_header': True, 'has_row_header': False, 'children': [
+                {'type': 'table_row', 'table_row': {'cells': [_rich(c) for c in (r + [''] * w)[:w]]}} for r in rows]}})
+        elif line.strip().startswith('```'):
             if code:
                 blocks.append({'type': 'code', 'code': {'language': 'plain text', 'rich_text': _rich('\n'.join(code))}})
             code = [] if code is None else None
@@ -62,6 +80,9 @@ def selftest(expect, tmp, md):
         u = publish({'title': 'T', 'path': md, 'parent': 'p1', 'keep': None})
         first, second = (c[2]['children'] for c in calls)
         expect('notion: blocks 100 per call', u == page['url'] and (len(first), len(second), first[0]['type'], second[-1]['type']) == (100, 53, 'heading_1', 'code'))
+        tb = _blocks('| A | B |\n|---|---|\n| x \\| y | 1<br>2 |\n| z |\nafter')
+        expect('notion: a Markdown table = one table block (header row, cells padded, <br> -> line break)', [b['type'] for b in tb] == ['table', 'paragraph']
+               and tb[0]['table']['table_width'] == 2 and [[c[0]['text']['content'] if c else '' for c in r['table_row']['cells']] for r in tb[0]['table']['children']] == [['A', 'B'], ['x | y', '1\n2'], ['z', '']])
     finally:
         _http = saved
         os.environ.clear(); os.environ.update(env0)

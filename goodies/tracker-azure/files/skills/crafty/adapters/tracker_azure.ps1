@@ -20,8 +20,31 @@ function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$
   __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
 }
 function __TrAzSet($Id, $F) { __TrAz 'PATCH' "wit/workitems/$Id" @(foreach ($k in @($F.Keys)) { @{ op = 'add'; path = "/fields/$k"; value = $F[$k] } }) 'application/json-patch+json' }
-function __TrHtml([string]$t) { [Net.WebUtility]::HtmlEncode((ConvertTo-KitPlainText $t)) -replace "`r?`n", '<br>' }   # Markdown marks would show as typed
-function __TrUnHtml([string]$t) { [Net.WebUtility]::HtmlDecode(($t -replace '<br\s*/?>|</(p|div|li)>', "`n" -replace '<[^>]+>')).Trim() }
+# Markdown (lib.ps1 ConvertFrom-KitMarkdown) -> HTML: tables, lists, b / code / a, br (Markdown marks would show as typed)
+function __TrHtmlRuns([string]$s) {
+  -join @(foreach ($r in ConvertFrom-KitMdInline $s) { $e = [Net.WebUtility]::HtmlEncode($r.text); switch ($r.mark) { 'br' { '<br>' } 'bold' { "<b>$e</b>" } 'code' { "<code>$e</code>" } 'link' { "<a href=`"$([Net.WebUtility]::HtmlEncode($r.url))`">$e</a>" } default { $e } } })
+}
+function __TrHtml([string]$t) {
+  $h = [Collections.Generic.List[string]]::new()
+  foreach ($b in @(ConvertFrom-KitMarkdown $t)) {
+    if ($b.type -eq 'table') { $h.Add('<table>' + (-join @(for ($ri = 0; $ri -lt $b.rows.Count; $ri++) { $c = if ($ri) { 'td' } else { 'th' }; '<tr>' + (-join @($b.rows[$ri] | ForEach-Object { "<$c>$(__TrHtmlRuns $_)</$c>" })) + '</tr>' })) + '</table>') }
+    elseif ($b.type -eq 'item') { $li = "<li>$(__TrHtmlRuns $b.text)</li></ul>"; if ($h.Count -and $h[-1].EndsWith('</ul>')) { $h[-1] = $h[-1].Substring(0, $h[-1].Length - 5) + $li } else { $h.Add("<ul>$li") } }
+    else { $h.Add("<div>$(__TrHtmlRuns $b.text)</div>") }
+  }
+  -join $h
+}
+# HTML -> Markdown (tables, lists, marks), so a description splice keeps the rest as it was
+function __TrUnHtmlRuns([string]$s) {
+  $s = $s -replace '(?is)<a\s[^>]*href="([^"]*)"[^>]*>(.*?)</a>', '[$2]($1)' -replace '(?i)</?(b|strong)>', '**' -replace '(?i)</?code>', '`'
+  [Net.WebUtility]::HtmlDecode(($s -replace '(?i)<br\s*/?>|</(p|div|li|h\d)>', "`n" -replace '(?i)<li[^>]*>', '- ' -replace '<[^>]+>'))
+}
+function __TrUnHtml([string]$t) {
+  (-join @([regex]::Split("$t", '(?is)(<table\b.*?</table>)') | ForEach-Object {
+        if ($_ -notmatch '(?is)^<table\b') { return (__TrUnHtmlRuns $_) }
+        $rs = @([regex]::Matches($_, '(?is)<tr[^>]*>(.*?)</tr>') | ForEach-Object { '| ' + (@([regex]::Matches($_.Groups[1].Value, '(?is)<t([dh])[^>]*>(.*?)</t\1>') | ForEach-Object { (__TrUnHtmlRuns $_.Groups[2].Value).Trim() -replace '\|', '\|' -replace '\n+', '<br>' }) -join ' | ') + ' |' })
+        if ($rs.Count) { "`n" + ((@($rs[0], "|$('---|' * ([regex]::Matches($rs[0], '(?<!\\)\|').Count - 1))") + @($rs | Select-Object -Skip 1)) -join "`n") + "`n" }
+      }) -replace '\n\n+(?=\| )', "`n").Trim()
+}
 Register-KitAdapter 'tracker' 'azure' @{
   'url' = { param($a) "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '<tracker.org>')/$(Get-KitSetting 'tracker.project' '<tracker.project>')/_workitems/edit/$($a.id)" }
   'view' = { param($a)
