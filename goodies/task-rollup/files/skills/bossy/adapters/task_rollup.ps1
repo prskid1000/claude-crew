@@ -185,7 +185,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
     $when = @(@($mrs | ForEach-Object { $_.mergedAt; @($_.deployedAt) }) + @($sx.docs.Values | ForEach-Object { $_.updated }) | ForEach-Object { ConvertTo-KitWhen $_ } | Where-Object { $_ } | Sort-Object)
     [pscustomobject]@{ id = $sb.id; name = $sb.name; url = $sb.url; status = $sb.status; area = "$($ag.area)"; order = $(if ($ag) { [int]$ag.order } else { 999 })
       repo = $(if ($ag.repo) { $ag.repo } elseif ($mrs.Count) { $mrs[0].repo } else { 'other' }); batch = $(if ($ag) { [int]$ag.batch } else { 0 })
-      mrs = $mrs; merged = $merged; envs = $envs; human = "$($sx.docs['testing-doc'].url)"; ai = "$($sx.docs['testing-ai'].url)"
+      mrs = $mrs; merged = $merged; envs = $envs; human = "$($sx.docs.'testing-doc'.url)"; ai = "$($sx.docs.'testing-ai'.url)"
       done = @($fx | Where-Object done).Count; total = $fx.Count; inTest = (Test-TrackerStatus $sb.status 'inTest'); closed = (Test-TrackerStatus $sb.status 'closed'); updated = @($when)[-1] }
   }
   $rows = @($rows)

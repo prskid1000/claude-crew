@@ -29,6 +29,7 @@ $res = & {
   . (Lib); . $ad
   $p = (__TrA 'create' @{ name = 'Parent'; description = "**Testing doc (human):** [open](https://h)`n`nThe owner's words." }).id
   $s1 = (__TrA 'create' @{ name = 'API fixes'; parent = $p }).id; $s2 = (__TrA 'create' @{ name = 'Web fixes'; parent = $p }).id
+  $null = __TrA 'create' @{ name = 'A person''s subtask (no kit state)'; parent = $p }
   $null = __TrNone $s1 'st' { param($o) $o.status = 'in test' }
   Set-JsonFile (Join-Path $bd 'launch-args.json') @{ batch = 1; agents = @(@{ id = 'API1'; items = 'A-1, A-2'; area = 'core (api-repo)'; note = "tracker task $s1" }, @{ id = 'WEB1'; items = 'W-1'; area = 'grid (web-repo)'; note = "tracker task $s2" }) }
   Update-KitTaskIndex $s1 { param($x) $x.track = @{ task = $s1; mrs = @('api-repo!7', 'api-repo!8'); done = $true }; $x.docs['testing-doc'] = @{ url = 'https://doc/h1'; updated = '2026-11-09T10:00:00Z' } }
@@ -55,7 +56,7 @@ $res = & {
 }
 $d = $res.d1
 Expect "rollup: delivery under the testing-doc links, triage after it, the owner's text kept ($($res.o1))" ($d -match '(?s)^\*\*Testing doc \(human\):\*\* \[open\]\(https://h\)\n\n<!-- kit:delivery -->.*<!-- /kit:delivery -->\n\n<!-- kit:triage -->.*<!-- /kit:triage -->\n\nThe owner''s words\.$')
-Expect 'rollup delivery: summary, one group per repo, merge order, deploy env, docs, items done/total' ($d -match '\*\*Delivery status\*\*: 1 of 2 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 1 subtask\(s\) not merged' -and
+Expect 'rollup delivery: summary, one group per repo, merge order, deploy env, docs, items done/total; a subtask without kit state = a plain row' ($d -match '\*\*Delivery status\*\*: 1 of 3 merged · deployed: stage \(1\) · 1 in test · 0 closed · next: merge: 2 subtask\(s\) not merged' -and $d -match '\*\*other, batch 0 · 1\*\*' -and
   $d -match '\*\*api-repo, batch 1 · 1\*\*: 1 merged · 1 deployed · 0 closed' -and $d -match '\[!8\]\(https://git/g/api-repo/8\) api-repo merged · stage<br>\[!7\]' -and $d -match '\[human\]\(https://doc/h1\)' -and $d -match '\| 2/2 \|' -and $d -match '\| 0/1 \|' -and $d -match '\*\*web-repo, batch 2 · 1\*\*')
 Expect 'rollup triage: severity x decision counts, per-subtask ids by severity, deferred and duplicate with reason' ($d -match '5 = 3 fix · 1 defer · 1 duplicate' -and $d -match '\| Critical \| 1 \| 0 \| 0 \| 0 \| 1 \|' -and $d -match '- \[API1\]\([^)]+\) → A-1, A-2 \(2: 1 Critical · 1 Low\)' -and $d -match '- A-3 · deferred · owner: later · decision d-2' -and $d -match '- W-2 · duplicate of W-1 · Same root cause')
 Expect 'rollup items (no checklist verb): ticked when merged, deferred unticked with its reason, severity first' ($res.i1 -match '(?s)\*\*Items\*\*\n- \[x\] A-1 · Critical · Guard the / admin path\n- \[ \] A-3 · High · deferred: owner: later\n- \[x\] A-2 · Low · Trim names')
