@@ -6,6 +6,16 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit dev; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
+$dkl = "$k/skills/crafty/kit.local.json"
+$onDeploy = Join-Path (Kd) 'ondeploy'; git init -q -b stage/app $onDeploy
+'{"repos":[{"name":"app","target":"main","deploys":[{"target":"st","branch":"stage/app"},{"target":"trunk","branch":"main"}]}]}' | Set-Content $dkl
+$dg = Invoke-PsTest 'guard-deploy-branch' @'
+$d, $od = $args
+foreach ($c in 'git push origin HEAD:stage/app', 'git -C x push -u origin HEAD:refs/heads/stage/app', "git -C `"$od`" push origin HEAD", "git -C `"$od`" push", 'git push origin HEAD:deploy/st-202611101200', 'git push origin HEAD:main', "git -C `"$od/push/x`" status", 'git commit -m "never git push origin HEAD:stage/app"') {
+  $j = @{ tool_name = 'Bash'; cwd = $od; tool_input = @{ command = $c } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'is a deploy branch')" }
+'@ @($D, $onDeploy)
+Remove-Item $dkl
+Expect "guard: a push to a deploy branch (refspec, HEAD or no refspec on it) denied; deploy/*, the trunk, a push path part and quoted text pass ($($dg -join ' '))" (($dg -join ' ') -eq 'True True True True False False False False')
 $r = Join-Path (Kd) 'git'; New-Item -ItemType Directory -Force "$r/outer/inner" | Out-Null
 $env:CLAUDE_WT_ROOT = "$r/wt"
 try {

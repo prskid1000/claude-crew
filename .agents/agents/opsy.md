@@ -33,8 +33,9 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    only, never print a value); the host reachable; a service restart cuts no live work there (the busy check of the org's deploy
    rules: busy -> wait, re-check, bounded). A check that fails or cannot run -> `bossy.ps1 decide ask` with the evidence;
    never deploy past it.
-4. **Deploy** per the org's deploy rules, in the order of step 3 (`bossy.ps1 deploy merge` for a deploy branch);
-   wait for each pipeline (`crafty.ps1 pipes`); a failed job -> stop, step 6.
+4. **Deploy** per the org's deploy rules, in the order of step 3; a deploy branch only through a deploy MR, never a push to it
+   (the guard denies it): `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>` (squash off,
+   merged on green); wait for each deploy pipeline (`crafty.ps1 pipes`); a failed job -> stop, step 6.
 5. **Verify** (every deploy): test env: `pokey.ps1 deployed -Mrs <refs> -Detail` = DEPLOYED or N/A (MANUAL resolved); production:
    the version check of the org's deploy rules; services active; each `probe` / health URL answers 200; no new error lines in
    the service logs since the deploy; the monitoring error rate vs the hour before (the org's monitoring skill or rule). All

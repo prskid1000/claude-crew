@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1963 dir ·
-  L1973 checkpoint · L1997 prior · L2035 tracker · L2092 host
+Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1977 dir ·
+  L1987 checkpoint · L2011 prior · L2049 tracker · L2106 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1891,6 +1891,20 @@ foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
   $p = $push.Value
   if ($p -match '(--force(?![-\w])|\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|\s\+[^\s+])' -or ($p -match '--force' -and $p -match ('\b(origin\s+)?(' + ($protected -join '|') + ')\b(?!-)'))) {
     Deny 'Never force-push a shared branch; on yours: --force-with-lease after crafty.ps1 wt sync.'
+  }
+}
+# a deploy branch (repos[].deploys[].branch, not the repo target) changes only through a deploy MR
+$deployBr = @(@($kc.repos) | ForEach-Object { $repoTarget = $_.target; @($_.deploys).branch | Where-Object { $_ -and $_ -ne $repoTarget } } | Sort-Object -Unique)
+if ($deployBr.Count) {
+  $pushText = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs or dirs; other quoted text is data
+  foreach ($push in [regex]::Matches($pushText, '\bgit\b[^|;&\r\n]*?\spush(?=\s|$)[^|;&\r\n]*')) {   # push as a word, not a path part
+    $pushTk = @(-split (($push.Value -replace '^.*?\spush(?=\s|$)', '') -replace '\s(-o|--push-option|--repo)\s+\S+', ' ') | Where-Object { $_ -notmatch '^-' } | ForEach-Object { $_ -replace '[''"]' })
+    $dst = @($pushTk | Select-Object -Skip 1 | ForEach-Object { ($_ -split ':')[-1] -replace '^\+' -replace '^refs/heads/' })
+    if (-not $dst.Count -or $dst -contains 'HEAD') {   # no refspec or HEAD: the checked-out branch
+      $pushDir = if ($push.Value -match '\s-C\s+("[^"]+"|''[^'']+''|\S+)') { $Matches[1].Trim('"', "'") } else { $here }
+      $dst += "$(git -C $pushDir branch --show-current 2>$null)".Trim()
+    }
+    if (($deployHit = @($dst | Where-Object { $_ -in $deployBr })[0])) { Deny "$deployHit is a deploy branch (kit.local.json repos[].deploys): it changes only through a deploy MR, never a push: bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr (pushes deploy/<env>-<date>, opens the MR with squash off, merges on a green pipeline)." }
   }
 }
 # shell writes into the live clone or off the layout
