@@ -4,7 +4,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched]  gated checks (e2e: the diff's specs only; -AllTests = whole suite)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, status, comment [-Kind] [-ProseOk], create [-NewTask '<why>'] [-Related <ids>], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, status, comment -Kind [-ProseOk], uncomment <id> <comment id>, create [-NewTask '<why>'] [-Related <ids>], bug -Parent -Key -Name -File [-Signature], scope -Task -Add, list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt new, devtools.py mr / finish / doc
  pipes [-Mrs <url>,...] [-MaxMinutes 8] [-UntilMerged]  wait for MR pipelines (JSON; no -Mrs in a wt worktree: its branch's open MRs); -UntilMerged: for the merges
  host <verb> '<args JSON>'  git-host / ci adapter verb (README "Adapters")
@@ -15,7 +15,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L21 init · L27 sweep · L171 wt · L466 stack · L646 gate · L914 check · L1170 pipes · L1220 guard · L1977 dir ·
-  L1987 checkpoint · L2011 prior · L2049 tracker · L2106 host
+  L1987 checkpoint · L2011 prior · L2049 tracker · L2115 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2066,16 +2066,25 @@ function Invoke-Tracker {
   switch ($__v) {
     'view' { __TrOut (Get-TrackerTask $__id) }
     'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> (read it: tracker view <id>)'; exit 2 }; Set-TrackerStatus $__id $__x }   # an empty status set Open
-    'comment' {   # -Kind comment-*: over prose limits = refused
-      $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = if ($__trOpt.Kind) { $__trOpt.Kind } else { 'comment-solution' }
-      if ("$($__trOpt.Kind)" -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
+    'comment' {   # -Kind required (keyed kinds edit in place); over prose limits = refused
+      $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
+      if ($__k -like 'mrs-*' -or (Test-KitHeadText $__ct $script:KitMrsHeading)) { "tracker comment refused: the MRs comment has one writer, built from every MR of the task: bossy.ps1 track add -Task $__id -Mrs <repo>!<n>[,...] [-MergeAfter <consumer>><producer>]"; exit 1 }
+      if ($__k -eq 'comment-decisions' -or (Test-KitDecisionText $__ct)) { "tracker comment refused: decisions have one writer, rendered from the decision records and edited in place: bossy.ps1 decide record|answer (it republishes), or decide publish -Task $__id [-Link <plan url>]"; exit 1 }
+      if (-not $__k) { "tracker comment refused: -Kind required (templates.md ""Writing standards""): comment-solution | qa-result | comment-intest | watch-<env> edit their one comment in place; comment-status and the rest append"; exit 2 }
       $__pf = @(if (-not $__trOpt.ProseOk) { Test-KitProse -Kind $__k -Text $__ct })
-      if ($__pf.Count -and -not $__trOpt.Kind) { Write-Warning "[prose] checked as $__k (warnings only): pass -Kind <comment-*> to gate it" }
-      elseif ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
+      if ($__pf.Count) { "tracker comment refused: $($__pf.Count) prose finding(s) above ($__k): rewrite it (same facts), or -ProseOk '<why>' for a format the brief fixes"; exit 1 }
       # one-per-task kinds edit in place, others append
       if (Test-KitKeyedComment $__trOpt.Kind) { Set-TrackerKitComment $__id $__trOpt.Kind $__ct } else { Add-TrackerComment $__id $__ct }; exit 0   # a failure throws
     }
     'comments' { __TrOut @(Get-TrackerComments $__id) }
+    'uncomment' {   # one comment by id (tracker comments <id> lists them): a stale hand-written kit comment
+      if (-not ($__id -and $__x)) { 'usage: tracker uncomment <task> <comment id> (ids: tracker comments <task>)'; exit 2 }
+      $__c = @(Get-TrackerComments $__id | Where-Object { "$($_.id)" -eq $__x })
+      if (-not $__c.Count) { "tracker uncomment: no comment $__x on $__id (tracker comments $__id lists the ids)"; exit 1 }
+      if ($__trOpt.DryRun) { "DRYRUN: would delete comment $__x on $__id`: $((("$($__c[0].text)" -split "`r?`n")[0]))"; return }
+      $null = Remove-TrackerComment $__id $__x; Write-KitLog calls comment-deleted @{ task = $__id; comment = $__x; head = (("$($__c[0].text)" -split "`r?`n")[0]) }
+      "deleted comment $__x on $__id`: $((("$($__c[0].text)" -split "`r?`n")[0]))"
+    }
     'create' {   # -Key: updates that key's open task, never a second one
       $kf = if ($__trOpt.Key) { Join-Path (Get-KitPath published -Create) "$($__trOpt.Key -replace '[^\w.-]+', '_')_task.json" }
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
@@ -2099,7 +2108,7 @@ function Invoke-Tracker {
     'rename' { Set-TrackerName $__id $(if ($__x) { $__x } else { $__trOpt.Name }) }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|status|comment|comments|create|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|status|comment|comments|uncomment|create|bug|scope|owner|url|describe|rename|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 

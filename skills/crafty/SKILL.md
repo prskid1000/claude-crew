@@ -120,7 +120,8 @@ python <kit>/skills/crafty/devtools.py merge <wt> <iid>                       # 
   the solution comment are posted -> `promoted` by `track` when all merge -> `inTest` after the deploy (coordinator)). Never set
   `inTest` or `closed` yourself; `promoted` needs both doc links, only atop the description, never in a comment.
 - **Publish once per key:** docs and evidence via `devtools.py doc|evidence --key <task|run>:<kind>` (same link, a dated
-  section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one); `devtools.py mr` edits the open MR.
+  section per round); comments via `tracker comment -Kind <kind>` (edits the last kit one; decisions: `bossy.ps1 decide` only);
+  `devtools.py mr` edits the open MR.
 - **Evidence:** UI -> screenshots, backend -> `pokey.ps1 api -Save` JSON (names: pokey SKILL.md "Evidence"); never production;
   a 404/405 on an endpoint that exists on the target branch = stale deploy, not a code bug.
 

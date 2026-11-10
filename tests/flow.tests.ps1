@@ -2,7 +2,7 @@
 <#
 flow.tests.ps1: dev-flow plumbing: bossy.ps1 track add / run (task ids, promotion), board join / leave, health's overdue beat;
 devtools.py finish / prior gate; pokey.ps1 api, goody verbs and seats (from pokey.tests: its cap); buildy.js MR dedupe (moved
-from bossy.tests: its cap).
+from bossy.tests: its cap); decide publish (the task's ONE Decisions comment).
 Usage: pwsh -NoProfile -File <kit>/tests/flow.tests.ps1 (or tests/kit-tests.ps1 -Area flow).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -135,5 +135,16 @@ Expect 'prior gate: a tagged MR of the task is its own (finish, mr in its repo: 
 $gc = { git -C $gr -c user.name=t -c user.email=t@t @args }; & $gc checkout -q -b TK-11-a; & $gc commit -q --allow-empty -m 'TK-11 wip'; & $gc checkout -q main; & $gc commit -q --allow-empty -m 'TK-11 fix'
 Set-Content $lf "'[{""state"":""merged"",""target_branch"":""main"",""source_branch"":""TK-11-a""},{""iid"":7,""state"":""merged"",""target_branch"":""stg"",""source_branch"":""TK-11-b""}]'"; $p11 = pwsh @np $D prior -Task 11 -Repo $gr | Out-String; Set-Content $lf "'[]'"
 Expect 'prior gate: merged into target = fix round' ($p11 -match 'FOUND mr pr pr!7' -and $p11 -notmatch 'pr!6|TK-11-a|commit')
+$env:KIT_TRACKER_TYPE = 'none'; $crPath = Join-Path $k 'skills/crafty/crafty.ps1'; $dt = (Px $crPath tracker create -List L1 -Name 'Decide me' -Description 'd' | ConvertFrom-Json).id
+$null = pwsh -NoProfile -Command ". '$(Lib)'; Add-TrackerComment '$dt' ""Decisions``nship it"""   # a person's comment under the same heading
+$dAsk = { param($dq, $di) ((Px $O decide ask -Run w2 -Agent X5 -Item $di -Question $dq -Options 'A: s3','B: db' | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1').Trim() }
+$da = & $dAsk 'Where? Long tail' $dt; $dn = Px $O decide answer -Id $da -Answer 'A: s3 (owner, 2026-11-10)' | Out-String; $d1 = Px $O decide publish -Task $dt | Out-String
+$db = & $dAsk 'Where? Long tail' $dt; $null = Px $O decide answer -Id $db -Answer 'B: db'; $null = & $dAsk 'Pending?' $dt
+$di = & $dAsk 'Item code?' 'A2'; $dx = Px $O decide answer -Id $di -Answer 'A' | Out-String
+$rc = (Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Caps?' -Answer '40 turns' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
+$null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Limits?' -Answer '50 starts' -Source chat -Supersedes $rc.Trim()
+$null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Ignored?' -Answer 'x' -Source chat -NoPublish
+$all = @(Px $crPath tracker comments $dt | ConvertFrom-Json); $cm = @($all | Where-Object { $_.text -match '^\*\*Decisions\*\*' }); $ct = "$($cm.text)"
+Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; then answer / record edit ONE Decisions comment (same question or -Supersedes -> Superseded, pending -> Open); a person's 'Decisions' comment untouched" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and $cm.Count -eq 1 -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '1\. \d{4}-\d\d-\d\d . Where\? -> B: db \(owner\)' -and $ct -match '2\. .*Limits\? -> 50 starts' -and $ct -match '(?s)\*\*Open\*\*.*Pending\? \(waiting\)' -and $ct -match '(?s)\*\*Superseded\*\*.*Where\? -> A: s3 \(by #1\).*40 turns \(by #2\)' -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
 Remove-TestKit $k
 Complete-Tests

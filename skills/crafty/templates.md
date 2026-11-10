@@ -41,7 +41,8 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | task-description | tracker task description | Problem, Goal, Acceptance (bullets), Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | the "Task solution comment" template | 8l 120w | — |
 | comment-status | a status change note | `<status> — <why> · <link>` | 2l 40w | link |
-| comment-deploy | a deploy record (+ the batched ask, only under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
+| comment-deploy | a deploy record (+ the batched ask under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
+| comment-decisions | a task's decisions | `decide publish`: `<n>. <date> · <question> -> <answer> (<by>)`, Open, Superseded, Plan | 80l 600ch | — |
 | decision-request | a decision the owner makes | the "Decision request" template | 120w 4b | options recommended |
 | kit-report | supervise report, retro, lead notes, resume brief | `# <title>`, a `**Result:**` line, `##` sections, tables for like items | prose:400w 130ch | — |
 | final-report | an agent's last reply | the "Final reports" shape of its role | 200w 25sw | link |
@@ -73,9 +74,9 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ```
 
 ## Bug-fix brief
-`bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos). A bug brief adds to the wave brief:
+`bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos), added to the wave brief:
 ```markdown
-1. Read the bug: crafty.ps1 tracker view <id> + comments (a failedTesting task's QA comment lists its failed and untested checks).
+1. Read the bug: crafty.ps1 tracker view <id> + comments (the QA comment lists failed and untested checks).
 2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps on the local env, logs, DB state, debugger.
    Steps + evidence -> the testing-goals doc. Not reproducible locally -> say why, reproduce on the test env.
 3. Classify each check: real bug (root cause + regression test red before, green after) · stale deploy (name the missing commit)
@@ -85,7 +86,7 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ```
 
 ## Resume brief
-`bossy.ps1 recover` writes it (crash), an agent at a budget handoff. The next agent joins with the same id + `-Resume`
+`bossy.ps1 recover` (crash) or a budget handoff writes it. The next agent joins with the same id + `-Resume`
 (TAKEOVER), runs `crafty.ps1 wt status -Dir <wt>` per worktree, reads the task and its MRs; files changing under it: stop, report.
 ```markdown
 # Resume brief: <agent> (run `<run>`)
@@ -99,11 +100,11 @@ Rule changes during the wave are appended below and to the contracts file: re-re
 ## Open
 **Leases to take again:** <ids> · **Decisions:** <ids>
 ```
-`<run>.resume.md`: a table per area: done (skipped) and missing (run) steps, MRs, tracker, doc.
+`<run>.resume.md`: per area, done (skipped) / missing (run) steps, MRs, tracker, doc.
 
 ## Testing goals
-devy writes it FIRST (crafty step 4): a local `goals.md`, never published; the AI doc grows from it.
-Docs: checks and facts as tables, an intro line above each; cells keep the prose limits.
+devy writes it FIRST (crafty step 4): local `goals.md`, never published, the AI doc's seed.
+Docs: tables for checks and facts, an intro line above each; cells keep prose limits.
 ```markdown
 # Testing goals: <task id> <title>
 Change: <one line, user terms>. Repos/MRs: <refs>. Local env: <env> r<n> (envy.ps1 status), services <the leased ones>.
@@ -155,8 +156,8 @@ A person's steps: POSITIVE cases only, drafted at crafty step 4 from the request
 measured), not the code; the loop runs each. Result / Evidence stay EMPTY (deployed-env evidence). `devtools.py
 finish` publishes it as `<task>:testing-doc` after the loop PASS (refused: no case table, a negative row, an image, a filled
 cell, a check no AI row ran); a fix round updates it after its PASS. Testers and /testy follow it (pokey H1-H3, L1); each
-env run (`pokey.ps1 finalize` or a person) fills Result / Evidence in place, adds a dated "<env> run <date>"
-section; earlier runs stay.
+env run (`pokey.ps1 finalize` or a person) fills Result / Evidence in a dated "<env> run <date>"
+section (earlier runs kept).
 ```markdown
 # Testing: <feature / change>
 | | |
@@ -209,8 +210,8 @@ and why. A defect outside this change -> one [Bug] task under the original ask.
 - **Testing doc:** [open](<url>)
 - **Sibling MRs:** <refs> (merge order: producers first)
 ```
-The MR opens with `Testing doc: pending`; after the loop PASS, `devtools.py mr` adds the link (same body); merge refuses a
-task-linked MR without a `Testing doc: <url>` line.
+An MR opens with `Testing doc: pending`; `devtools.py mr` adds the link after the loop PASS; merge refuses a task-linked MR
+without it.
 
 ## Task solution comment
 ```markdown
@@ -218,8 +219,7 @@ task-linked MR without a `Testing doc: <url>` line.
 **MRs:** <ref (MERGED|SCHEDULED|OPEN)> · **Local proof:** <env r<n>, goals passed>
 **After deploy:** <settings/data to seed, or "nothing"> · **Deferred:** <item — reason, or "none">
 ```
-A task has three kit comments, edited in place: MRs (`bossy.ps1 track add` only), solution, QA result; doc links: crafty
-"Tracker".
+Kit comments, one per kind, edited: MRs (`track add`), decisions, solution, QA result; doc links: crafty "Tracker".
 
 ## Decision request
 `bossy.ps1 decide ask` writes it to the contracts file; structured options feed the question tools (bossy E4).

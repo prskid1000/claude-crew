@@ -91,10 +91,14 @@ Expect 'check before create: a near-duplicate is refused (extend it: tracker sco
 & $J @{ tracker = @{ type = 'fake'; statuses = @{ inTest = @('in test', 'for test') } } } "$k/skills/crafty/kit.local.json"
 $tl = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = `$null; . '$(Lib)'; Register-KitAdapter 'tracker' 'fake' @{ list = { param(`$a) if (`$a.status -ne 'in test') { __TrRow 'T1' n `$a.status @() } } }; (Get-TrackerTasks L1 inTest).id -join ','" 2>$null; Remove-Item "$k/skills/crafty/kit.local.json"
 Expect "tracker list: the configured adapter, a logical status under each configured name, once ($tl)" ("$tl".Trim() -eq 'T1')
-'body text' | Set-Content "$r/c.md"; $null = pwsh @np $D tracker comment $t.id -File "$r/c.md"
+'body text' | Set-Content "$r/c.md"; $null = pwsh @np $D tracker comment $t.id -File "$r/c.md" -Kind comment-status -ProseOk x
 $bad = pwsh @np $D tracker comment 12 -Bogus x -DryRun 2>&1 | Out-String; $badCode = $LASTEXITCODE
 $said = (pwsh @np $D tracker comments $t.id | ConvertFrom-Json).text
 Expect 'tracker comment -File sends it; unknown option = usage error' (@($said) -match '^body text' -and $badCode -eq 2 -and $bad -match 'unknown option -Bogus')
+$nk = pwsh @np $D tracker comment $t.id x 2>&1 | Out-String; $nkc = $LASTEXITCODE; $dq = pwsh @np $D tracker comment $t.id "Decisions (owner): a; b" -Kind comment-status -ProseOk x 2>&1 | Out-String; $dqc = $LASTEXITCODE
+$null = pwsh @np $D tracker comment $t.id 'gone soon' -Kind comment-status -ProseOk x; $gid = (@(pwsh @np $D tracker comments $t.id | ConvertFrom-Json) | Where-Object text -eq 'gone soon').id
+$un = pwsh @np $D tracker uncomment $t.id $gid | Out-String; $u2 = pwsh @np $D tracker uncomment $t.id $gid 2>&1 | Out-String; $u2c = $LASTEXITCODE; $left = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).text
+Expect "tracker comment: no -Kind rc 2, a Decision(s) text refused -> decide publish; uncomment deletes by id, unknown id rc 1 ($nkc $dqc $u2c)" ($nkc -eq 2 -and $nk -match '-Kind required' -and $dqc -eq 1 -and $dq -match 'decide publish' -and $gid -and $un -match 'deleted comment.*gone soon' -and $u2c -eq 1 -and $left -notcontains 'gone soon' -and @($left -match '^body text').Count -eq 1)
 $wl = (1..130 | ForEach-Object { "w$_" }) -join ' '; $n0 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $pr = pwsh @np $D tracker comment $t.id $wl -Kind comment-status 2>&1 | Out-String; $prc = $LASTEXITCODE; $n1 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $null = pwsh @np $D tracker comment $t.id $wl -Kind comment-status -ProseOk 'brief format' 2>&1; $pkc = $LASTEXITCODE; $n2 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
@@ -105,7 +109,7 @@ $null = pwsh @np $D tracker comment $t.id 'round two' -Kind comment-solution -Pr
 $cx = (Read-Json (Join-Path (TkPath $k tasks) "$($t.id).json")).comments.'comment-solution'
 Expect "kit comment -Kind: its id kept in the task index ($cx)" ($cx -and $cx -in @($cs.id))
 Expect 'kit comment -Kind comment-solution: the next round edits it, no visible marker; status notes and a person''s comment untouched' ($cs.Count -eq $n3 -and @($cs.text -match '^round two$').Count -eq 1 -and -not @($cs.text -match '\[kit:').Count -and @($cs.text -match '^body text').Count -eq 1 -and @($cs.text -match '^w1 ').Count -eq 1)
-$null = pwsh @np $D tracker comment $t.id "old qa`n`n[kit:qa-result]" -ProseOk x; $n4 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
+$null = pwsh @np $D tracker comment $t.id "old qa`n`n[kit:qa-result]" -Kind comment-status -ProseOk x; $n4 = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json).Count
 $null = pwsh @np $D tracker comment $t.id 'new qa' -Kind qa-result -ProseOk x; $cq = @(pwsh @np $D tracker comments $t.id | ConvertFrom-Json)
 Expect "kit comment: an old marked comment (no stored id) is edited, its marker gone ($n4 $($cq.Count))" ($cq.Count -eq $n4 -and @($cq.text -match '^new qa$').Count -eq 1 -and -not @($cq.text -match '\[kit:qa-result').Count)
 $env:KIT_DOC_GATE = '1'; $g1 = pwsh @np $D tracker status $t.id promoted 2>&1 | Out-String; $null = pwsh @np $D tracker describe $t.id "Testing doc (human): https://d/h"

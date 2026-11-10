@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1113 supervise sweep ·
-  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1949 kitlog · L2069 params ·
-  L2375 entry-scripts
+  L1184 supervise report · L1280 tracker · L1605 prior · L1627 ask bugs · L1834 git-host · L1994 kitlog · L2114 params ·
+  L2420 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -1480,12 +1480,21 @@ function __Add-TrackerComment([string]$Id, [string]$Text) { Clear-TrackerMemo $I
 function Get-TrackerComments([string]$Id) { @(__TrA 'comments' @{ id = $Id } | Where-Object { $_ } | Sort-Object date) }
 # ONE kit comment per kind: adapter verb comment-edit, else posted + old removed via comment-delete, else only posted; found by id, last text or legacy '[kit:<kind>]'
 # marker. People's comments are never touched
-function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
+function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result', 'comment-intest' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
 function Get-KitCommentSig([string]$Text) { $n = ConvertTo-KitLetters ("$Text" -replace '\\?\[kit:[^\]\\]*\\?\]', ''); $n.Substring(0, [math]::Min(60, $n.Length)) }   # trackers re-render markdown: letters and digits only
 $script:KitMrsHeading = 'MRs (merge order)'   # bossy.ps1 Set-KitMrsComment is its one writer
+$script:KitDecisionsHeading = 'Decisions'   # bossy.ps1 decide publish is its one writer
 function ConvertTo-KitLetters([string]$Text) { ("$Text" -replace '[^\p{L}\p{N}]', '').ToLower() }
 function Test-KitHeadText([string]$Text, [string]$Heading) { (ConvertTo-KitLetters (("$Text".Trim() -split "`r?`n")[0])) -eq (ConvertTo-KitLetters $Heading) }
-function Get-TrackerHeadComments([string]$Id, [string]$Heading) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) }) }
+# a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
+function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
+# ours: the heading, then only rendered lines (a person's "Decisions: ship it" is never edited or deleted)
+function Test-KitDecisionsComment($Comment) { (Test-KitHeadText $Comment.text $script:KitDecisionsHeading) -and -not @(@("$($Comment.text)".Trim() -split "`r?`n" | Select-Object -Skip 1 | Where-Object { $_.Trim() }) | Where-Object { $_ -notmatch '^\s*(\d+\. |- )\S|^\W*(Open|Superseded)\W*$|^\W*Plan\W*:' }).Count }
+function Remove-TrackerComment([string]$Id, [string]$Comment) {
+  $ad = $KitAdapters['tracker'][$__trType]; if (-not ($ad -and $ad.ContainsKey('comment-delete'))) { throw "tracker ($__trType): the adapter has no comment-delete verb: remove comment $Comment by hand" }
+  Clear-TrackerMemo $Id; __TrA 'comment-delete' @{ id = $Id; comment = $Comment }
+}
+function Get-TrackerHeadComments([string]$Id, [string]$Heading, [scriptblock]$Match) { @(Get-TrackerComments $Id | Where-Object { $_.id -and (Test-KitHeadText $_.text $Heading) -and (-not $Match -or (& $Match $_)) }) }
 # MR refs in the task's MRs comments, any writer's format
 function Get-KitMrsListed([string]$Task) {
   foreach ($c in @(try { Get-TrackerHeadComments $Task $script:KitMrsHeading } catch { @() })) {
@@ -1522,8 +1531,8 @@ function Format-KitMrsComment([string]$Task, $Rows, [string]$Status) {
   $lines -join "`n"
 }
 # -Heading: found by heading, not this kit copy's index (agents run from several copies), under a machine-wide lock
-function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading) {
-  if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading } }
+function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
+  if ($Heading) { return Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-comment-$("$Id-$Kind" -replace '[^\w.-]', '_')") { Set-TrackerHeadComment $Id $Kind $Text $Heading $Match } }
   $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; $edit = $ad -and $ad.ContainsKey('comment-edit'); $sig = Get-KitCommentSig $body
   $keep = { param($cid) try { Update-KitTaskIndex $Id { param($x) if ($cid) { $x.comments[$Kind] = "$cid"; $x.comments.Remove("$Kind#text") } else { $x.comments["$Kind#text"] = $sig } } } catch { } }
   $ix = (Read-KitState (Get-KitTaskFile $Id)).comments; if ($ix -isnot [Collections.IDictionary]) { $ix = @{} }; $known = "$($ix.$Kind)"; $last = "$($ix["$Kind#text"])"
@@ -1537,16 +1546,16 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Headi
   $r
 }
 # $Text may be a scriptblock run under the lock, so a writer never drops another's MRs
-function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Heading) {
+function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {
   if ($Text -is [scriptblock]) { $Text = & $Text }; if (-not "$Text".Trim()) { return }
   $body = (__TrText "$Text").TrimEnd(); $ad = $KitAdapters['tracker'][$__trType]; if (-not $ad) { throw "tracker: no adapter for type '$__trType'" }
-  $all = @(Get-TrackerHeadComments $Id $Heading)   # a failed read throws: a duplicate is worse than a late one
+  $all = @(Get-TrackerHeadComments $Id $Heading $Match)   # a failed read throws: a duplicate is worse than a late one
   $first = $all | Select-Object -First 1; $extra = @($all | Select-Object -Skip 1)
   if ($first -and $ad.ContainsKey('comment-edit')) { Clear-TrackerMemo $Id; $r = __TrA 'comment-edit' @{ id = $Id; comment = $first.id; text = $body }; $cid = $first.id }
   elseif ($all.Count -and -not $ad.ContainsKey('comment-delete') -and (ConvertTo-KitLetters $all[-1].text) -eq (ConvertTo-KitLetters (ConvertTo-KitPlainText $body))) { return }   # no edit, no delete: post only on a change
   else {
     $r = Add-TrackerComment $Id $body; if ("$r" -match '^QUEUED') { return $r }
-    $cid = (@(Get-TrackerHeadComments $Id $Heading) | Where-Object { @($all.id) -notcontains $_.id } | Select-Object -Last 1).id; $extra = $all
+    $cid = (@(Get-TrackerHeadComments $Id $Heading $Match) | Where-Object { @($all.id) -notcontains $_.id } | Select-Object -Last 1).id; $extra = $all
   }
   if ($extra.Count -and -not $ad.ContainsKey('comment-delete')) { Write-Warning "tracker ($__trType): earlier '$Heading' comment(s) $($extra.id -join ', ') on $Id (the adapter cannot delete): remove by hand" }
   elseif ($extra.Count) { foreach ($x in $extra) { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $x.id } } catch { Write-Warning "tracker ($__trType): duplicate '$Heading' comment $($x.id) on $Id not deleted: $_" } } }
@@ -1757,6 +1766,42 @@ function Format-KitDecision($d) {
 # numbered so the owner answers "1 A, 2 B"
 function Format-KitFyiList($Decisions) {
   $n = 0; foreach ($d in @($Decisions)) { $n++; "$n. $($d.question) (``$($d.id)``): $(@(Get-KitDecisionOrder $d | ForEach-Object { "$($_.key) $($_.label)$(if ($_.recommended) { ' (recommended)' })" }) -join ' · ')" }
+}
+# one task's decisions: the last publish (kept after the log trim), the log, live records (newest state wins)
+function Get-KitTaskDecisionRows([string]$Task) {
+  $rows = [ordered]@{}; $files = @(Read-KitJsonFiles (Get-KitPath decisions))
+  foreach ($r in @((Read-KitState (Get-KitTaskFile $Task)).decisions.rows)) { if ($r.id) { $rows["$($r.id)"] = $r } }
+  foreach ($d in @(Read-KitLog decisions-log ([datetime]'2000-01-01')) + $files) {
+    if (-not ($d.id -and $d.question) -or $d.kind -eq 'envfix' -or ("$($d.task)" -ne $Task -and "$($d.item)" -ne $Task)) { continue }
+    $at = if ($d.answeredAt) { $d.answeredAt } else { $d.at }; if ($at -is [datetime]) { $at = $at.ToString('o') }   # JSON gives a DateTime: "$x" drops the fraction and offset
+    $rows["$($d.id)"] = [ordered]@{ id = "$($d.id)"; at = "$at"; question = "$($d.question)"; answer = "$($d.answer)"
+      by = "$($d.by)"; status = "$($d.status)"; supersedes = @($d.supersedes | Where-Object { $_ }) }
+  }
+  $live = @($files.id)   # a pending row whose record expired unanswered is no open question
+  @($rows.Values | Where-Object { $_.status -ne 'pending' -or "$($_.id)" -in $live } | Sort-Object { Get-KitUtcTicks $_.at })
+}
+function Get-KitUtcTicks($At) { try { ([datetimeoffset]"$At").UtcTicks } catch { 0 } }
+# templates.md comment-decisions: an OLDER answer moves under Superseded when a newer one answers the same question, names it in
+# -Supersedes or says "supersedes d-<id>"; only older -> newer, so chains end
+function Format-KitDecisionsComment($Rows, [string]$Link, [string]$Task) {
+  $ans = @($Rows | Where-Object { $_.status -eq 'answered' -and $_.answer }); $sup = @{}; $tk = @{}; foreach ($r in $ans) { $tk["$($r.id)"] = Get-KitUtcTicks $r.at }
+  foreach ($r in $ans) {
+    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+(d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
+  }
+  $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('yyyy-MM-dd') } catch { "$($r.at)".Substring(0, [math]::Min(10, "$($r.at)".Length)) } }
+  $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; if ($t.Length -gt 120) { $t = ($t.Substring(0, 119) -replace '\s+\S*$', '') + '…' }; $t }
+  $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the line says both
+  $who = { param($r) if ($r.by) { $r.by } else { 'owner' } }
+  $out = @("**$script:KitDecisionsHeading**"); $num = @{}; $n = 0
+  foreach ($r in @($ans | Where-Object { -not $sup.ContainsKey("$($_.id)") })) { $num["$($r.id)"] = ++$n; $out += "$n. $(& $day $r) · $(& $q $r) -> $(& $a $r) ($(& $who $r))" }
+  $open = @($Rows | Where-Object status -eq 'pending'); if ($open.Count) { $out += '**Open**'; foreach ($r in $open) { $out += "- $(& $day $r) · $(& $q $r) (waiting)" } }
+  if ($sup.Count) {
+    $out += '**Superseded**'
+    foreach ($r in @($ans | Where-Object { $sup.ContainsKey("$($_.id)") })) { $f = $sup["$($r.id)"]; $hop = 0; while ($sup.ContainsKey("$f") -and $hop++ -lt 20) { $f = $sup["$f"] }; $out += "- $(& $day $r) · $(& $q $r) -> $(& $a $r) (by #$($num["$f"]))" }
+  }
+  if ($Link) { $out += "**Plan:** $Link" }
+  $out
 }
 # blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
 function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {

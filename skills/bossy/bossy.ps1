@@ -18,14 +18,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check ...   deploy batch; decision pauses; a person's gate word
+  deploy plan|request|record|intest ... (goody deploys) · decide ask|list|answer|wait|record|check|publish ...   deploy batch; decision pauses; a person's gate word; a task's Decisions comment
   heartbeat (goody ports) · health · setup [-Exclude] [-WriteLocal] · guard-sendmessage · prepush · precommit (goody kit-admin)   hooks and install
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L228 budget · L256 launch · L522 recover · L605 pause · L649 resume · L707 program · L752 param ·
   L758 track · L1078 supervise · L1379 report · L1458 audit · L1518 storage · L1728 bugbrief · L1830 cleanup · L1914 learn ·
-  L1944 decide · L2056 health · L2117 retro due · L2127 tidy · L2196 the kit origin's main and goodies · L2212 setup ·
-  L2279 guard-sendmessage
+  L1944 decide · L2077 health · L2138 retro due · L2148 tidy · L2217 the kit origin's main and goodies · L2233 setup ·
+  L2300 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1256,7 +1256,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
     elseif ($l -match '^LAG') { Flag 'ACT' $l "Promote it (& $($KitCmd.dev) tracker status <id> <status>) or hold it on purpose (bossy.ps1 track add -Task <id> -HoldPromotion '<why>')." }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "MRs merged, the tracker refused the status (track retries each round): check auth and tracker.statuses (& $($KitCmd.dev) tracker view <id>), or set it by hand." }
-    elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> <file.md>)." }
+    elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> -File <solution.md> -Kind comment-solution: the template, edited in place)." }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w./-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'
     }
@@ -1942,14 +1942,26 @@ function Invoke-Learn {
 }
 
 # ---- decide: decision pauses; only that item waits
+# the task's ONE Decisions comment (lib.ps1 Format-KitDecisionsComment), edited in place
+function Publish-KitDecisions([string]$Task, [string]$Link) {
+  $rows = @(Get-KitTaskDecisionRows $Task); if (-not $rows.Count) { return "NONE $Task`: no decision records for it (decide ask / record -Task)" }
+  $tt = try { Get-TrackerTask $Task } catch { $null }; if (-not $tt.name) { return "SKIP $Task`: no readable tracker task (an item code?): nothing published" }   # -Item A2 resolves to task A2
+  if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
+  $body = (Format-KitDecisionsComment $rows $Link $Task) -join "`n"
+  $null = Test-KitProse -Kind comment-decisions -Text $body   # warnings only: the records are the facts
+  $r = Set-TrackerKitComment $Task 'comment-decisions' $body -Heading $script:KitDecisionsHeading -Match { param($c) Test-KitDecisionsComment $c }
+  Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-Date).ToString('o') } }
+  "PUBLISHED decisions of $Task ($(@($body -split "`n" | Where-Object { $_ -match '^\d+\. ' }).Count) in force, $(@($rows | Where-Object status -eq 'pending').Count) open): $(if ("$r") { "$r" } else { 'comment edited' })"
+}
 function Invoke-Decide {
-  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check')][string]$Action = 'list',
+  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [ValidateSet('', 'deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'other')][string]$Gate = '',
-    [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use)
+    [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
+    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish)
   $dir = Get-KitPath decisions -Create
   # a gate word comes from a person: an agent name (or the coordinator) as -By is no word
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
@@ -1963,6 +1975,8 @@ function Invoke-Decide {
     Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at, schemaVersion, updated, holder)   # at = this line's time
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
+  $pub = { param($t, [bool]$Named) if ($t -and -not $NoPublish -and ($Named -or (Test-Path (Get-KitTaskFile $t)))) { try { Publish-KitDecisions $t $Link } catch { Write-Warning "decisions comment of $t not updated (decide publish -Task $t retries): $_" } } }
+  $supIds = @(Split-KitList $Supersedes)
   switch ($Action) {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Question "<q>" -Options "A: <label> — <why>","B: .." [-Recommend A] [-Fyi] [-Contracts <file>]'; exit 2 }
@@ -1995,12 +2009,18 @@ function Invoke-Decide {
     }
     'answer' {
       $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
-      if (-not $Answer) { 'usage: decide answer -Id <id> -Answer "<words>"'; exit 2 }
+      if (-not $Answer) { 'usage: decide answer -Id <id> -Answer "<words>" [-Supersedes <ids>] [-Link <plan url>] [-NoPublish]'; exit 2 }
       $o.status = 'answered'; $o | Add-Member -Force answer $Answer; $o | Add-Member -Force by $By; $o | Add-Member -Force answeredAt (Get-Date).ToString('o')
       if ($Rationale) { $o | Add-Member -Force rationale $Rationale }
+      if ($supIds.Count) { $o | Add-Member -Force supersedes $supIds }
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
+      if ($o.kind -ne 'envfix') { & $pub "$($o.task)" $false }   # a known task only: -Item A2 / staging / 3 is no tracker task
+    }
+    'publish' {
+      $pt = NormTask $Task; if (-not $pt) { 'usage: decide publish -Task <id> [-Link <plan / brief url>]   (the ONE Decisions comment, edited in place)'; exit 2 }
+      $pr = Publish-KitDecisions $pt $Link; $pr; if ($pr -match '^(SKIP|NONE) ') { exit 1 }
     }
     'wait' {
       $until = (Get-Date).AddMinutes($MaxMinutes)
@@ -2012,18 +2032,19 @@ function Invoke-Decide {
       }
     }
     'record' {
-      if (-not ($Gate -and $Item -and $Question -and $Answer -and $Source)) { 'usage: decide record -Gate deploy|merge|premerge|close|rollback|secret|other -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task]'; exit 2 }
+      if (-not ($Gate -and $Item -and $Question -and $Answer -and $Source)) { 'usage: decide record -Gate deploy|merge|premerge|close|rollback|secret|other -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task] [-Supersedes <ids>] [-NoPublish]'; exit 2 }
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: coordinator only; -By names the person, never an agent ($By)"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-Date).ToString('o')
       $o = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
         kind = 'decision'; run = $Run; agent = 'coordinator'; item = $Item; gate = $Gate; question = $Question
         options = @(); blocking = $false; contracts = $Contracts; status = 'answered'; at = $now; task = $resolvedTask
-        mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now }
+        mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now; supersedes = $supIds }
       & $save $o
       if ($resolvedTask) { Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } } }
       & $note $Contracts "DECISION $($o.id) RECORDED ($Gate $Item) by $($By) via $($Source): $Answer"
       "RECORDED $($o.id) ($Gate $Item): `"$Answer`" by $By via $Source at $now. Pass the id to the agent (decide check -Id)"
+      & $pub $resolvedTask ([bool]$Task)
     }
     'check' {
       if (-not ($Gate -and ($Id -or $Item -or $Mrs))) { 'usage: decide check -Gate <gate> (-Id <id> | -Item <env|task> | -Mrs <refs>) [-MaxHours 12] [-Use -Agent <id>]'; exit 2 }

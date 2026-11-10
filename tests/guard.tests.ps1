@@ -149,7 +149,7 @@ Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show 
 git -C $shop worktree add -q -b gone "$(Kd)/gone" 2>$null; Remove-Item -Recurse -Force "$(Kd)/gone"; $wg = "$(pwsh @np $D wt remove -Dir "$(Kd)/gone" -Repo $shop 2>&1) rc=$LASTEXITCODE"
 $wt = "$(pwsh @np $D wt remove -Dir "$(Kd)/typo" -Repo $shop 2>&1) rc=$LASTEXITCODE"
 Expect "wt remove, folder gone: said, exit 0, record pruned; a path git never listed: error ($wg | $wt)" ($wg -match 'already gone.*rc=0$' -and "$(git -C $shop worktree list)" -notmatch 'gone' -and $wt -match 'no such folder.*rc=1$')
-$env:KIT_TRACKER_TYPE = 'none'; $ni =pwsh @np $D tracker comment '' x -ProseOk t 2>&1 | Out-String; $env:KIT_TRACKER_TYPE = $null
+$env:KIT_TRACKER_TYPE = 'none'; $ni =pwsh @np $D tracker comment '' x -Kind comment-status -ProseOk t 2>&1 | Out-String; $env:KIT_TRACKER_TYPE = $null
 Expect "tracker comment without a task id: refused, never a branch guess" ($ni -match 'no task id')
 $racer = Join-Path (Kd) 'mrs-race.ps1'; $env:MRS_POSTS = Join-Path (Kd) 'mrs-posts'; $go = (Get-Date).AddSeconds(6).ToString('o')
 Set-Content $racer ($mm + @'
