@@ -49,14 +49,23 @@ function Canned($deployMrs) {
   $p
 }
 $mr = [pscustomobject]@{ iid = 5; merged_at = '2026-01-02T07:00:00Z'; target_branch = 'main' }
+function Invoke-HostApi { $null }   # only the canned answers
 $p = Canned @([pscustomobject]@{ iid = 9; sha = 'S'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "squash:$(OnRef $p $mr 'F' 'stg')"
 $p = Canned @([pscustomobject]@{ iid = 8; sha = 'S0'; squash_commit_sha = 'L'; merge_commit_sha = $null }); "other:$(-not (OnRef $p $mr 'F' 'stg'))"
-function Invoke-HostApi { $null }
 $script:memo = @{}; $d = [pscustomobject]@{ target = 'stg'; branch = 'staging' }
 "down:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state -eq 'UNKNOWN')"
 $memo['projects/g%2Fweb/repository/commits/staging'] = [pscustomobject]@{ id = 'abc' }
 "up:$((NotLiveRow 'g%2Fweb' 'web!5' $d 'not on staging yet').state -eq 'NOT-DEPLOYED')"
+# the local checkout answers ancestry and same content without host calls; a capped host compare proves nothing
+$lr = Join-Path $env:TEMP "dc-local-$PID"; git init -q $lr; Set-Content "$lr/a.ts" 1; git -C $lr add a.ts; git -C $lr commit -qm a; $ca = git -C $lr rev-parse HEAD
+Set-Content "$lr/b.ts" 1; git -C $lr add b.ts; git -C $lr commit -qm b; $cb = git -C $lr rev-parse HEAD; Set-Content "$lr/a.ts" 2; git -C $lr commit -qam c; $cc = git -C $lr rev-parse HEAD
+$script:calls = @(); function Invoke-HostApi($path) { $script:calls += $path; $null }
+$r = @{ checkout = $lr }; $script:memo = @{ 'projects/g%2Fweb/repository/commits/stg' = [pscustomobject]@{ id = $cb } }
+"local:$((IsAncestor 'g%2Fweb' $ca 'stg') -and -not (IsAncestor 'g%2Fweb' $cc 'stg') -and -not @($calls -match 'merge_base').Count)"
+"same:$((LocalSame $lr $ca $cb @('a.ts')) -and -not (LocalSame $lr $ca $cc @('a.ts')) -and $null -eq (LocalSame $lr $ca ('0' * 40) @('a.ts')))"
+$r = @{}; $p = Canned @(); $memo["projects/$p/repository/compare?from=stg&to=main&straight=true"] = [pscustomobject]@{ diffs = @(); compare_timeout = $true }
+"capped:$(-not (ContentOn $p $mr 'F' 'stg'))"
 '@
-Expect-Each (Invoke-PsTest 'deployed-refs' $t @($Q)) 'deployed: # (squash deploy MR, other deploy MR, git host down, host up)' 'squash', 'other', 'down', 'up'
+Expect-Each (Invoke-PsTest 'deployed-refs' $t @($Q)) 'deployed: # (squash deploy MR, other deploy MR, git host down, host up, local checkout ancestry, local same content, capped compare)' 'squash', 'other', 'down', 'up', 'local', 'same', 'capped'
 Remove-TestKit $k
 Complete-Tests

@@ -111,17 +111,27 @@ function Repo($name) { $repos | Where-Object { $_.name -eq $name -or @($_.aliase
 # memoised: supervise asks per round
 $memo = @{}
 function Api($path) { if (-not $memo.ContainsKey($path)) { $memo[$path] = Invoke-HostApi $path }; $memo[$path] }
-function IsAncestor($p, $sha, $ref) { if ($sha -eq $ref) { return $true }; (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha }
+# a ref -> its commit sha (one memoised host call per branch); a full sha as is
+function RefSha($p, $ref) { if ($ref -match '^[0-9a-f]{40}$') { $ref } else { (Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))").id } }
+# the local checkout answers when it holds both commits (ms, not a host call each); else the host
+function IsAncestor($p, $sha, $ref) {
+  if ($sha -eq $ref) { return $true }
+  if (($at = RefSha $p $ref) -and $null -ne ($on = LocalAncestor $r.checkout $sha $at)) { return $on }
+  (Api "projects/$p/repository/merge_base?refs[]=$sha&refs[]=$([uri]::EscapeDataString($ref))").id -eq $sha
+}
 # squash / cherry-pick: live if no file differs from $ref
 function ContentOn($p, $mr, $sha, $ref) {
-  # cheap guard: a ref older than the merge
-  $head = Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))"
+  # cheap guard: a ref older than the merge (a pipeline sha: its date from the checkout when it has it)
+  $cd = if ($ref -match '^[0-9a-f]{40}$' -and $r.checkout -and (Test-Path $r.checkout)) { "$(git -C $r.checkout show -s --format=%cI "$ref^{commit}" 2>$null)".Trim() }
+  $head = if ($cd) { @{ id = $ref; committed_date = $cd } } else { Api "projects/$p/repository/commits/$([uri]::EscapeDataString($ref))" }
   if (-not $head -or ($mr.merged_at -and [datetimeoffset]$head.committed_date -lt [datetimeoffset]$mr.merged_at)) { return $false }
   if (-not (IsAncestor $p $sha $mr.target_branch)) { return $false }
   $files = @((Api "projects/$p/merge_requests/$($mr.iid)/changes?access_raw_diffs=true").changes | ForEach-Object { $_.new_path; $_.old_path } | Sort-Object -Unique)
   if (-not $files.Count) { return $false }
+  $tip = RefSha $p $mr.target_branch
+  if ($head.id -and $tip -and $null -ne ($same = LocalSame $r.checkout $head.id $tip $files)) { return $same }
   $cmp = Api "projects/$p/repository/compare?from=$([uri]::EscapeDataString($ref))&to=$([uri]::EscapeDataString($mr.target_branch))&straight=true"
-  if (-not $cmp) { return $false }
+  if (-not $cmp -or $cmp.compare_timeout -or $cmp.overflow) { return $false }   # a capped diff list (3000 of 6552 files) proves nothing
   -not @($cmp.diffs | Where-Object { $files -contains $_.new_path -or $files -contains $_.old_path }).Count
 }
 # squash-merged deploy MR: live if one merged into $branch after a source head held the commit
@@ -143,6 +153,15 @@ function LocalAncestor($dir, $sha, $commit) {
   foreach ($c in $commit, $sha) { git -C $dir cat-file -e "$c^{commit}" 2>$null; if ($LASTEXITCODE) { return $null } }
   git -C $dir merge-base --is-ancestor $sha $commit 2>$null
   $LASTEXITCODE -eq 0
+}
+# $files equal in commits $a and $b; $null if the checkout or either commit is missing
+function LocalSame($dir, $a, $b, $files) {
+  if (-not $dir -or -not (Test-Path $dir)) { return $null }
+  foreach ($c in $a, $b) { git -C $dir cat-file -e "$c^{commit}" 2>$null; if ($LASTEXITCODE) { return $null } }
+  $global:LASTEXITCODE = $null   # git not started must not read as "same"
+  $changed = @(git -C $dir -c core.quotePath=off diff --no-renames --name-only $a $b 2>$null)   # no pathspecs: no command-line limit on a large MR
+  if ($LASTEXITCODE -ne 0) { return $null }
+  -not @($changed | Where-Object { $files -contains $_ }).Count
 }
 # pwsh -File keeps the quotes: strip, split
 $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds($TimeoutSec); $nth = 0
@@ -172,8 +191,9 @@ $out = [Collections.Generic.List[object]]::new(); $until = (Get-Date).AddSeconds
     $hit = $null
     # a pipeline older than the merge cannot hold it
     foreach ($pl in @(Api "projects/$p/pipelines?ref=$([uri]::EscapeDataString($d.branch))&per_page=10") | Where-Object { -not $mr.merged_at -or [datetimeoffset]$_.created_at -ge [datetimeoffset]$mr.merged_at }) {
+      if ($pl.sha -ne $sha -and -not (OnRef $p $mr $sha $pl.sha $d.branch)) { continue }   # the checkout answers first; jobs only for a pipeline that holds it
       $job = @(Api "projects/$p/pipelines/$($pl.id)/jobs?per_page=100") | Where-Object { $_.name -like $d.job } | Select-Object -First 1   # matrix names
-      if ($job.status -eq 'success' -and ($pl.sha -eq $sha -or (OnRef $p $mr $sha $pl.sha $d.branch))) { $hit = $job; break }
+      if ($job.status -eq 'success') { $hit = $job; break }
     }
     if ($hit) { Row $d 'DEPLOYED' "$($d.job) finished $($hit.finished_at)" }
     else { NotLiveRow $p $ref $d "on $($d.branch), but no successful $($d.job) includes it yet" }
