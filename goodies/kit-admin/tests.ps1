@@ -35,6 +35,17 @@ $base = git -C $kc rev-parse HEAD; 'l' | Set-Content (Join-Path $kc 'notes/l.txt
 $pp = "refs/heads/main $(git -C $kc rev-parse HEAD) refs/heads/main $base" | pwsh -NoProfile -File (Join-Path $kc 'skills/bossy/bossy.ps1') prepush 2>&1 | Out-String
 Expect "kit-admin: prepush flags a live goody's file, not a folded goody's block ($(($pp -split "`n" | Where-Object { $_ -match 'LOCAL FILE' }) -join ' '))" ($pp -match 'LOCAL FILE\s+notes/l\.txt' -and $pp -notmatch 'notes/g\.txt')
 git -C $kc reset -q --hard $base
+# pre-push: a goodies checkout (no .githooks of the core) forwards to the kit's gate, so its org terms are blocked too
+$gw = Join-Path $root 'goodies-wt'; git -C $kc config core.hooksPath .githooks; git -C $kc worktree add -q -b kit/goodies-x $gw 2>&1 | Out-Null
+git -C $gw rm -rq .; New-Item -ItemType Directory -Force "$gw/.githooks", "$gw/goodies/x" | Out-Null
+foreach ($gf in '.githooks/pre-push', '.gitattributes') { [IO.File]::WriteAllText("$gw/$gf", ((git -C $src show "refs/remotes/origin/goodies:$gf") -join "`n") + "`n") }   # the branch under test (goody test --ref)
+'clean' | Set-Content "$gw/goodies/x/GOODY.md"; git -C $gw add -A; git -C $gw update-index --chmod=+x .githooks/pre-push; git -C $gw commit -qm 'feat: x'
+$env:KIT_ORG_TERMS = 'Zorgcorp'
+$gp1 = git -C $gw push origin HEAD:refs/heads/goodies 2>&1 | Out-String; $gc1 = $LASTEXITCODE
+'made for Zorgcorp' | Set-Content "$gw/goodies/x/GOODY.md"; git -C $gw commit -qam 'feat: x term'
+$gp2 = git -C $gw push origin HEAD:refs/heads/goodies 2>&1 | Out-String; $gc2 = $LASTEXITCODE
+Remove-Item Env:KIT_ORG_TERMS; git -C $kc worktree remove --force $gw 2>&1 | Out-Null; git -C $kc config --unset core.hooksPath   # later commits here skip the kit hooks
+Expect "kit-admin: a goodies push runs the kit's pre-push: clean passes, an org term is blocked ($gc1 $gc2 $(($gp1 + $gp2) -split "`n" -match 'ORG TERM|BLOCKED|pre-push' -join ' '))" ($gc1 -eq 0 -and $gc2 -ne 0 -and $gp2 -match 'ORG TERM\s+commit \w+ adds "Zorgcorp"')
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String
 Expect 'kit-admin: release prints the next SemVer and its notes' ($rel -match '^# v\d+\.\d+\.\d+')

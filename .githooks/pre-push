@@ -1,0 +1,6 @@
+#!/bin/sh
+# Goodies checkout pre-push (core.hooksPath .githooks is relative, so git looks here): runs the kit's own gate (org terms,
+# local files) from the main checkout this worktree belongs to. Exit 1 = blocked.
+kit="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+if [ ! -f "$kit/.githooks/pre-push" ]; then echo "pre-push: no kit gate at $kit/.githooks/pre-push: push goodies from a worktree of the kit clone" >&2; exit 1; fi
+exec sh "$kit/.githooks/pre-push" "$@"
