@@ -46,7 +46,9 @@ for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('d
 $f = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-fixture-$PID.py"; Set-Content $f $fx -Encoding utf8
 $res = "$(& $py -X utf8 $f (Join-Path $Kit 'skills/bossy') ([IO.Path]::GetTempPath()) (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py') 2>&1)"
 Remove-Item $f -Force
+$pg = Get-Content -Raw (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py')
 $checks = [ordered]@{
+  'legend lists use the kit''s one compact grid (.cg auto-fill via cgrid()), no fixed column counts' = $pg -match '\.cg\{display:grid;[^}]*repeat\(auto-fill,minmax\(min\(100%' -and $pg -notmatch 'repeat\([23],minmax\(0,1fr\)\)' -and ([regex]::Matches($pg, "\+ cgrid\(")).Count -eq 3
   "no false loop issues ($res)" = $res -match 'fp\.ps1=0 fp\.py=0 fp\.mjs=0'
   'real unbounded loops flagged once each' = $res -match 'real\.ps1=1 real\.mjs=1'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'

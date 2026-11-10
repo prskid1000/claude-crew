@@ -1089,8 +1089,8 @@ PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport
 input.b{cursor:text;width:180px}.dd{position:relative}.dd>.menu{display:none;position:absolute;top:30px;left:0;background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:6px;min-width:220px;z-index:5;box-shadow:0 8px 24px #0003}
 .dd.open>.menu{display:block}.menu label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}.menu label:hover{background:var(--pn2)}.menu small{margin-left:auto;color:var(--mut)}
 #legb{position:absolute;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;display:grid;place-items:center}
-#leg{display:none;position:absolute;left:10px;bottom:52px;background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;box-shadow:0 8px 24px #0003;max-width:min(640px,calc(100% - 20px))}
-#leg.open{display:block}#leg .g{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 14px}#leg .it{display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
+#leg{display:none;position:absolute;left:10px;bottom:52px;background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;box-shadow:0 8px 24px #0003;width:min(640px,calc(100% - 20px))}
+#leg.open{display:block}.cg{display:grid;gap:4px 14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,max(var(--cmin,200px),calc((100% - (var(--cmax,99) - 1) * 14px) / var(--cmax,99)))),1fr))}#leg .it{display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
 #leg h4{margin:8px 0 4px;font-size:11px;color:var(--mut);font-weight:600}
 #side{width:0;transition:width .18s ease;background:var(--pn);border-left:1px solid var(--ln);display:flex;flex-direction:column;position:relative;overflow:hidden}
 #side.drag{transition:none}#grip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}#grip:hover{background:var(--sel)}
@@ -1114,7 +1114,7 @@ select.b{max-width:100%}#sx,#howto{display:none}
 @media (max-width:640px){input#q{flex:1 1 120px;width:auto;min-width:0}.dd>.menu{position:fixed;top:auto;left:8px;right:60px;max-height:60dvh;overflow:auto}
 #side{position:fixed;left:0;right:52px;bottom:0;height:62vh;height:62dvh;width:auto!important;display:none;border:1px solid var(--ln);border-radius:14px 14px 0 0;z-index:8;box-shadow:0 -8px 24px #0003}
 #side.open{display:flex}#grip{display:none}#sh{padding-right:56px}#sx{display:inline-flex;position:absolute;right:6px;top:4px;z-index:3}#howto{display:block;margin-bottom:8px;line-height:1.5}
-#leg .g{grid-template-columns:repeat(2,minmax(0,1fr))}#leg{max-height:70dvh;overflow:auto}}</style></head><body>
+#leg{max-height:70dvh;overflow:auto}}</style></head><body>
 <div id="app"><div id="main"><canvas id="c"></canvas>
 <div id="top"><b class="b" id="ttl" title="How to read: icons = kinds (key, bottom-left); zoom in for more detail; click a node = its neighbours + its code; click a highlighted neighbour to extend; dashed arc = loop / back edge; double-click = collapse a file; drag = pin">kit flow</b>
 <input class="b" id="q" placeholder="search…"><span class="seg" id="lv"></span><span class="dd" id="ddS"><span class="b">Show ▾</span><div class="menu"></div></span><span class="dd" id="ddE"><span class="b">Edges ▾</span><div class="menu"></div></span><span class="b" id="fit">fit</span></div>
@@ -1354,9 +1354,10 @@ menu('#ddS', Object.keys(FAM).map(f => [f, `${svgI(Object.values(KD).find(k => k
 menu('#ddE', Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => [k, `<svg width="26" height="8"><line x1="1" y1="4" x2="25" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="6 4"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg> ${k}`, E.filter(e => e.k === k).length]), ekOn);
 const leg = $('#leg'), cnt = k => N.filter(n => n.kk === k).length;
 $('#sx').onclick = closeSide;
-leg.innerHTML = `<div id="howto">${esc($('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in'))}</div>` + '<h4 style="margin-top:0">Nodes</h4><div class="g">' + Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join('') +
- '</div><h4>Edges</h4><div class="g">' + Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join('') +
- '</div><h4>Families</h4><div class="g">' + Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join('') + '</div>';
+const cgrid = (h, min) => `<div class="g cg" style="--cmin:${min}">${h}</div>`   // every list of short items: the kit's one auto-fill grid (README dashboard)
+leg.innerHTML = `<div id="howto">${esc($('#ttl').title.replace('; double-click = collapse a file', '').replace(/click/g, 'tap').replace('zoom in', 'pinch to zoom in'))}</div>` + '<h4 style="margin-top:0">Nodes</h4>' + cgrid(Object.keys(KD).filter(cnt).map(k => `<span class="it">${svgI(KD[k][1], FAM[KD[k][0]][1])}${esc(KD[k][2])} <small style="color:var(--mut)">${cnt(k)}</small></span>`).join(''), '150px') +
+ '<h4>Edges</h4>' + cgrid(Object.keys(EK).filter(k => E.some(e => e.k === k)).map(k => `<span class="it"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${EK[k][0]}" stroke-width="2" ${EK[k][1] === 'dash' ? 'stroke-dasharray="5 3"' : EK[k][1] === 'dot' ? 'stroke-dasharray="1.5 3"' : ''}/></svg>${k}</span>`).join(''), '130px') +
+ '<h4>Families</h4>' + cgrid(Object.values(FAM).map(f => `<span class="it"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="${f[1]}"/></svg>${f[0]}</span>`).join(''), '130px');
 $('#legb').innerHTML = svgI('key', null, 18); $('#legb').onclick = e => { e.stopPropagation(); leg.classList.toggle('open') }; $('#legb').onmouseenter = () => { if (matchMedia('(hover:hover)').matches) leg.classList.add('open') }; leg.onclick = e => e.stopPropagation();
 $('#ttl').onclick = e => { if (narrow()) { e.stopPropagation(); leg.classList.toggle('open') } };   // no hover on phones: the how-to sits in the key
 addEventListener('click', () => { leg.classList.remove('open'); document.querySelectorAll('.dd').forEach(x => x.classList.remove('open')) });
