@@ -11,7 +11,7 @@ $env:CLAUDE_WT_ROOT = "$r/wt"
 try {
   git -C "$r/outer" init -q; git -C "$r/outer" commit -q --allow-empty -m init
   'x' | Set-Content "$r/outer/stray.txt"; 'y' | Set-Content "$r/outer/inner/a.txt"
-  $out = pwsh @np $D wt commit -Dir "$r/outer/inner" -Message m 2>&1 | Out-String
+  $out = (pwsh @np $D wt commit -Dir "$r/outer/inner" -Message m 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '   # the error view wraps
   Expect 'wt commit refuses a plain subfolder' ($LASTEXITCODE -ne 0 -and $out -match 'not the top of a git worktree' -and -not (git -C "$r/outer" diff --cached --name-only))
   'feat: from file' | Set-Content "$r/msg.txt"
   Push-Location "$r/outer"; $null = pwsh @np $D wt commit -MessageFile "$r/msg.txt" 2>&1; $code = $LASTEXITCODE; Pop-Location
@@ -48,10 +48,10 @@ try {
   $wm = pwsh @np $D wt commit -Dir "$r/outer" 2>&1 | ForEach-Object { "$_" } | Out-String
   & $J @{ repos = @(@{ name = 'shop'; checkout = "$r/outer" }) } $kl
   $wn = foreach ($rn in 'nosuch', 'shop') { pwsh @np $D wt new -Repo $rn -Branch b9 -Target main -Name n9 2>&1 | ForEach-Object { "$_" } | Out-String }; Remove-Item $kl
-  Push-Location (Kd); $pu = pwsh @np $D pipes 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE; Pop-Location
+  Push-Location (Kd); $pu = pwsh @np $D pipes 2>&1 | ForEach-Object { "$_" } | Out-String; $puc = $LASTEXITCODE; Pop-Location; $pue = & { . "$k/skills/crafty/lib.ps1"; @(Read-KitLog calls ([datetime]0) | Where-Object verb -eq pipes)[-1].error }
   $null = pwsh @np $D checkpoint -Agent c9 -Step build 2>&1; $cr = Read-Json (Join-Path (TkPath $k agents) 'c9/resume.json')
-  Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage; checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
-    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume.md')))
+  Expect "wt commit names -MessageFile; wt new -Repo <name> via repos[].checkout; pipes: exit 2 + usage (calls log too); checkpoint run adhoc-<agent> ($($cr.run))" ($wm -match '-MessageFile <file>' -and
+    $wn[0] -match 'no repo nosuch' -and $wn[1] -notmatch 'no repo' -and $puc -eq 2 -and $pu -match 'Usage: pipes -Mrs' -and $pue -match 'Usage: pipes' -and $cr.run -eq 'adhoc-c9' -and (Test-Prose kit-report (Join-Path (TkPath $k agents) 'c9/resume.md')))
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 # git-host adapters
 $gh = @'

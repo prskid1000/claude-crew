@@ -108,7 +108,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
   $act = { param($b, $why, $path) [void]$actions.Add([pscustomobject]@{ bytes = [long]$b; why = $why; path = $path }) }; $keep = { param($what, $why) [void]$kept.Add("$what`: $why") }
   $size = { param($p) [long](Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
   $cat = { param($w) $w -replace '^(upstream) \S+ (gone).*', '$1 $2, tip on the host' -replace ' \(.*$' -replace '^merged into \S+', 'merged' }   # one action group per reason
-  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt 24 } | ForEach-Object { $_.worktrees } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
+  $claimed = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and $_.beat -and ($now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') } | ForEach-Object { $_.worktrees } | Where-Object { "$_" -match '^([A-Za-z]:)?[\\/]' } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/').ToLower() })
   $cmdLines = @(Get-SysProcs | Where-Object { $_.Id -ne $PID -and $_.CommandLine } | ForEach-Object { $_.CommandLine.Replace('/', '\').ToLower() })   # an editor, build or shell in the folder
   $heldBy = { param($p) $l = $p.ToLower(); if ($l -in $claimed) { 'a board agent' } elseif (@($cmdLines | Where-Object { $_.Contains($l) }).Count) { 'a running process' } }
   $ctx = [ordered]@{}; $reg = @{}
@@ -1174,11 +1174,11 @@ if (-not $Mrs) {   # in a wt worktree: its branch's open MRs
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
   $script:KitRc = 2
-  if (-not $wtTarget) { [Console]::Error.WriteLine('pipes: missing -Mrs (not in a crafty.ps1 wt worktree). Usage: pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]'); exit 2 }
+  if (-not $wtTarget) { Stop-KitVerb 'pipes: missing -Mrs (not in a crafty.ps1 wt worktree). Usage: pipes -Mrs <url>,... [-MaxMinutes 8] [-UntilMerged]' }
   $wtBranch = "$(git -C $wtTop branch --show-current)".Trim()
-  if (-not $wtBranch) { [Console]::Error.WriteLine('pipes: the worktree has a detached HEAD: pass -Mrs <url>,...'); exit 2 }
+  if (-not $wtBranch) { Stop-KitVerb 'pipes: the worktree has a detached HEAD: pass -Mrs <url>,...' }
   $Mrs = @(Get-MergedMrs $wtTop $wtBranch $wtTarget 'opened' | Where-Object source_branch -eq $wtBranch | ForEach-Object web_url | Where-Object { $_ })
-  if (-not $Mrs.Count) { [Console]::Error.WriteLine("pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)"); exit 2 }
+  if (-not $Mrs.Count) { Stop-KitVerb "pipes: no open MR for $wtBranch -> $wtTarget (open it, or pass -Mrs <url>,...)" }
   $script:KitRc = 'exit'; [Console]::Error.WriteLine("pipes: -Mrs $($Mrs -join ',') (open MRs of $wtBranch)")
 }
 $ErrorActionPreference = 'SilentlyContinue'

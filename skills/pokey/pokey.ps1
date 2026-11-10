@@ -3,7 +3,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   seat acquire|release|status ...                  memory seat + item claim
   deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env? (goody deploys)
   api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
-  finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; -Check ends EXIT=<n>
+  finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; ends EXIT=<n> (a crash too)
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   (goody android-swarm)
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index (goody media-evidence)
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
@@ -13,7 +13,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   or a missing goody · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Goodies (kitbag.py goody add <name>, loaded from adapters/): android-swarm (ui, annotate, deploys[] laneApk), deploys (deployed),
   api-auth, report-gdocs (the styled HTML report), ios-simulator, media-evidence (evidence).
-Sections: L23 report · L122 seat · L189 api · L331 finalize · L756 retest
+Sections: L23 report · L122 seat · L189 api · L338 finalize · L764 retest
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -130,7 +130,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $claims = Join-Path $dir 'claims'
 New-Item -ItemType Directory -Force $seats, $claims | Out-Null
-$need = [double](Get-KitSetting "qa.seatGB.$Kind" @{ web = 1.5; api = 0.4; app = 0.4 }[$Kind])
+$need = [double](Get-KitSetting "qa.seatGB.$Kind" @{ web = (Get-KitParam 'qa.seatGB' -Context web); api = 0.4; app = 0.4 }[$Kind])
 $mutex = New-Object System.Threading.Mutex($false, 'Global\claude-qa-seats')
 function Locked([scriptblock]$b) {
   $got = $false
@@ -250,15 +250,22 @@ function Get-Field($o, $path) { foreach ($k in $path.Split('.')) { $o = $o.$k };
 
 $tokDir = Get-KitPath tokens -Create
 $cache = Join-Path $tokDir ("$Target-$Tenant-$As.txt" -replace '[^\w.\-]', '_')
+$failMark = "$cache.refused"   # a refused login holds its user until targets.local.json changes: no lockout storm (6x Bad credentials)
+$who = "LOGIN-FAIL target=$Target tenant='$Tenant' user=$As"
 function Login {
+  $fm = Get-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
+  if ($fm -and $fm.LastWriteTime -gt (Get-Item -LiteralPath $cfgFile).LastWriteTime -and ((Get-Date) - $fm.LastWriteTime).TotalMinutes -lt [double](Get-KitParam 'api.loginHoldMinutes')) {
+    throw "$who`: not retried, refused at $($fm.LastWriteTime.ToString('HH:mm')) ($(Get-Content -LiteralPath $failMark -Raw)); fix targets.local.json targets.$Target.users.$As, then retry (api.loginHoldMinutes)" }
   $b = [ordered]@{}; foreach ($p in $a.body.PSObject.Properties) { $b[$p.Name] = if ($p.Value -is [string]) { Fill $p.Value } else { $p.Value } }
   $lu = Fill $(if ($a.path -match '^https?://') { $a.path } else { $base + $a.path })
   $form = $a.contentType -eq 'form'
   $r = try { Invoke-WebRequest -Method Post $lu -ContentType $(if ($form) { 'application/x-www-form-urlencoded' } else { 'application/json' }) -Body $(if ($form) { $b } else { $b | ConvertTo-Json -Depth 5 }) -ConnectionTimeoutSeconds 60 } catch {
     $lc = [int]$_.Exception.Response.StatusCode; if ($lc -notin 401, 403) { throw }   # a bad login names where to look (23x a bare 401 body)
-    throw "login refused (HTTP $lc) on target $Target, tenant '$Tenant', user $As`: check targets.local.json targets.$Target.users.$As (password; the user's tenant: -Tenant) and auth.path. $(-join ("$($_.ErrorDetails.Message)" -replace '\s+', ' ' -replace $(if ($u[1]) { [regex]::Escape([string]$u[1]) } else { '(?!)' }), '[redacted]')[0..199])" }
+    if ($lc -eq 401) { Set-Content -LiteralPath $failMark "HTTP $lc" -NoNewline }   # 403 may be a WAF or rate limit: no hold
+    throw "$who`: login refused (HTTP $lc): check targets.local.json targets.$Target.users.$As (password; the user's tenant: -Tenant) and auth.path. $(-join ("$($_.ErrorDetails.Message)" -replace '\s+', ' ' -replace $(if ($u[1]) { [regex]::Escape([string]$u[1]) } else { '(?!)' }), '[redacted]')[0..199])" }
   $tok = Get-Field ($r.Content | ConvertFrom-Json) $(if ($a.tokenField) { $a.tokenField } else { 'access_token' })
   if (-not $tok) { throw "login to $Target as $As returned no token" }
+  Remove-Item -LiteralPath $failMark -ErrorAction SilentlyContinue
   $tok | Set-Content $cache -NoNewline
   $tok
 }
@@ -751,6 +758,7 @@ try { Invoke-KitLocked $rix { $ri = Read-KitState $rix; if (-not $ri) { $ri = [o
 "$Code report ($rtype): $docUrl"
 if ($script:qaFinPushed) { $script:qaFinPushed = $false; Pop-Location }
 $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, failed $($_.fail), new defects $([int]$_.newDefects), known $(@($_.known).Count), not tested $($_.notTested), out of scope $([int]$_.outOfScope), pending $($_.pending), bug $($_.bug), $(if ($_.closed) { 'closed' } elseif ($_.failedTesting) { "failed testing$(if ($_.statusFallback) { " (set $($_.statusFallback))" })" } elseif ($_.waitingFor) { "open (waiting for $(@($_.waitingFor) -join ', '))" } else { "open ($($_.keptOpen))" })" }
+'EXIT=0'; $global:LASTEXITCODE = 0   # an in-session & call kept a stale one; no exit: dot-sourced callers go on
 }
 
 # ---- retest: RETEST item for a live fix (same -Code replaces it)
@@ -797,7 +805,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
   switch ($__verb) {
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
-    'finalize' { Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1: Invoke-KitVerb
+    'finalize' { $KitVerbOnError = { 'EXIT=1' }; Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1 (Invoke-KitVerb), EXIT=1 first
     { $_ -in 'deployed', 'annotate', 'evidence' } {   # goodies (adapters/)
       $fn = @{ deployed = 'Invoke-Deployed'; annotate = 'Invoke-Annotate'; evidence = 'Invoke-Evidence' }[$__verb]
       if (Get-Command $fn -ErrorAction SilentlyContinue) { Invoke-KitVerb $fn $__rest }

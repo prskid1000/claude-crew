@@ -100,8 +100,9 @@ $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 Expect 'api: no answer exits 1 (status shown); ui, deployed, annotate without goodies exit 2 naming them; web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $uc -eq 2 -and $uo -match 'goody add android-swarm' -and $xo[0] -match '(?s)^2 .*goody add deploys' -and $xo[1] -match '(?s)^2 .*goody add android-swarm' -and $wo -match 'no api URL')
 Expect 'api -Save: a full path is split (api-auth goody too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 $api = Start-TestApi; & $J @{ targets = @{ tb = @{ api = "http://127.0.0.1:$($api.port)"; auth = @{ type = 'login'; path = '/bad' }; users = @{ admin = 'u', 'K9' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
-$lb = (Px $Q api -Target tb -Path '/l' 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $api.proc.Kill()
-Expect 'api: refused login names target, tenant, user' ($lb -match "\(HTTP 401\) on target tb, tenant '', user admin: .*targets\.tb\.users\.admin" -and $lb -notmatch 'K9')
+$lb = (Px $Q api -Target tb -Path '/l' 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $api.proc.Kill(); $lh = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String
+(Get-Item (Join-Path $k 'skills/pokey/targets.local.json')).LastWriteTime = Get-Date; $lr = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String
+Expect 'api: LOGIN-FAIL names target, tenant, user; held until targets.local.json changes' ($lb -match "LOGIN-FAIL target=tb tenant='' user=admin: login refused \(HTTP 401\): .*targets\.tb\.users\.admin" -and $lb -notmatch 'K9| char:' -and $lh -match 'not retried' -and $lr -notmatch 'not retried')
 # gate words (deploy, merge, close ...): a recorded person's answer, never relayed text
 $gcf = Join-Path (Kd) 'gate.contracts.md'; '# contracts' | Set-Content $gcf
 $nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE

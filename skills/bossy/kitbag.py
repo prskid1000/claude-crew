@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings,
 error or a command that needs a goody not installed (one line: `<feature> is a goody: run kitbag.py goody add <name>`).
 
 Sections: L33 paths · L84 state · L139 kitlog · L238 load · L634 lint · L1016 README graph · L1118 lint command · L1265 audit ·
-  L1374 registry · L1709 prose · L1854 sections · L1984 budget · L2008 goodies · L2515 state lint · L2587 main
+  L1374 registry · L1715 prose · L1860 sections · L1990 budget · L2014 goodies · L2521 state lint · L2593 main
 """
 import ast, contextlib, datetime, fnmatch, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback, zipfile
 import os.path as osp
@@ -1240,7 +1240,7 @@ def cmd_ui_check(a):
     os.makedirs(shots, exist_ok=True)
     stem = re.sub(r'\.html?$', '', osp.basename(rest[0]), flags=re.I)
     code, out, err = run(['node', '--input-type=module', '-e', PAGE_JS, Path(pokey, 'browser.mjs').as_uri(), osp.abspath(rest[0]), widths,
-                          json.dumps(states), shots, stem], cwd=pokey, timeout=600)
+                          json.dumps(states), shots, stem], cwd=pokey, timeout=kit_param('uiCheck.timeoutSec'))
     try:
         res = json.loads(out.splitlines()[-1])
     except (ValueError, IndexError):
@@ -1594,7 +1594,7 @@ def registry_lint(k, bad):
 # js regex, TODO-PARAM) ratchet down from _literals
 PARAMS_JSON = 'skills/bossy/params.registry.json'
 PARAM_HOWS = {'quantile', 'peak', 'ewma', 'aimd', 'config'}
-PARAM_SITE = re.compile(r"(Get-KitParam|&\s*\$gp|kitParam\(|Add-KitParamObs)\s*'([\w.]+)'(?:,?\s+(-?\d+(?:\.\d+)?)\b(?![.\w]))?")
+PARAM_SITE = re.compile(r"(Get-KitParam|&\s*\$gp|kitParam\(|kit_param\(|Add-KitParamObs)\s*'([\w.]+)'(?:,?\s+(-?\d+(?:\.\d+)?)\b(?![.\w]))?")
 PS_LITERALS = r'''$ErrorActionPreference = 'SilentlyContinue'; $L = 'System.Management.Automation.Language'
 $num = { param($a) $v = $null; if ($a -is "$L.ConstantExpressionAst" -and $a.Value -is [ValueType] -and $a.Value -isnot [bool]) { $v = [double]$a.Value } elseif ($a -is "$L.UnaryExpressionAst" -and $a.Child -is "$L.ConstantExpressionAst" -and $a.Child.Value -is [ValueType]) { $v = [double]$a.Child.Value }; $null -ne $v -and [math]::Abs($v) -gt 1 }
 $pred = { param($n)
@@ -1615,6 +1615,12 @@ def param_spec(s):
         return dict(s, how='config' if s.get('kind') not in (None, 'learn') else s.get('how', 'quantile'))
     w = str(s).split()
     return dict([('how', w[0] if w else '')] + [tuple((x.split('=', 1) + [''])[:2]) for x in w[1:]])
+
+def kit_param(key):
+    """A config param: KIT_PARAM_<KEY>, a kit.local.json pin at <key>, else the registry default (no param-state pins or learning)."""
+    pin = os.environ.get('KIT_PARAM_' + re.sub(r'\W', '_', key).upper()) or next((v for v in config_values(local_config(KIT_DIR, 'kit.local.json'), key)
+                                                                                    if isinstance(v, (int, float, str)) and v != ''), None)
+    return float(pin if pin is not None else param_spec(((load_json(osp.join(KIT_DIR, PARAMS_JSON))[0] or {}).get('params') or {}).get(key, ''))['default'])
 
 def params_lint(k, bad):
     """PARAM-REG (registry shape), PARAM-UNREG (a key read or observed in code but not registered), PARAM-DEFAULT (a site literal

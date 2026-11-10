@@ -265,7 +265,7 @@ function laneBlock(it, L) {
 // ---- test-prompt: test and audit prompts
 // finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
-const CHECK_FAILS = 'Its last line EXIT=1 (no EXIT line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, or duplicate check ids'
+const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, or duplicate check ids'
 
 function testPrompt(it, L) {
  return `You are checky (role test, kind ${it.retest ? 'regression' : 'task'}). Test ONE tester guide on the test environment and return a verdict per check.
@@ -353,7 +353,7 @@ function finalPrompt(it, res) {
 ${JSON.stringify(res)}
 2. Run in PowerShell: ${CHECK(it, ` -ExpectChecks ${res.checks.length}`)} (publishes nothing). ${CHECK_FAILS}, or fewer checks
  than sent (write step 1 again, complete): fix that data (step 3) and re-run it until exit 0.
- Then (timeout 600000): & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -ExpectChecks ${res.checks.length}
+ Then (timeout 600000): & '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -ExpectChecks ${res.checks.length} (last line EXIT=0 = published)
  It publishes the report (kit.local.json reports.type), comments on the tasks and applies the result rule (closed /
  failedTesting / one [Bug] per ask); it refuses while evidence listed in results.json is missing.
 3. If it errors, fix only data problems in results.json (drop a missing evidence file name, suffix a duplicate check id; an off-standard

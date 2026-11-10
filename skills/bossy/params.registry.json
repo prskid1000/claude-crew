@@ -28,7 +28,12 @@
   "goodies.pruneDays": "config default=30 unit=d",
   "tidy.judgeMinutes": "config default=3 unit=min",
   "tracker.duplicateScore": "config default=0.6 unit=share",
-  "prior.validHours": "config default=12 unit=h"
+  "prior.validHours": "config default=12 unit=h",
+  "qa.seatGB": "config default=1.5 unit=GB",
+  "supervise.statsDays": "config default=7 unit=d",
+  "board.rowHours": "config default=24 unit=h",
+  "uiCheck.timeoutSec": "config default=600 unit=s",
+  "api.loginHoldMinutes": "config default=30 unit=min"
  },
- "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 10, "skills/bossy/bossy.ps1": 43, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 8, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 34, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
+ "_literals": {"skills/bossy/adapters/supervise_resources.ps1": 10, "skills/bossy/bossy.ps1": 41, "skills/bossy/kitbag.py": 13, "skills/crafty/crafty.ps1": 8, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 34, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }

@@ -40,6 +40,8 @@ $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
 $wc = KtPy "k.load_json = lambda p: ({'commitStyle': 'free'}, 0); print(k.words('日本 wörd ok'), k.commit_rx())"
 Expect 'prose: CJK per char, any script''s words; commitStyle free' ("$wc" -eq '4 \S')
+$kpv = KtPy "import os; a = k.kit_param('uiCheck.timeoutSec'); os.environ['KIT_PARAM_UICHECK_TIMEOUTSEC'] = '5'; print(a, k.kit_param('uiCheck.timeoutSec'))"
+Expect "kit_param: the registry default, KIT_PARAM_<KEY> wins ($kpv)" ("$kpv" -eq '600.0 5.0')
 $yq = KtPy "print(len(k.yaml_problems('steps:\n  - name: Lint: x\n')) > 0, k.yaml_problems('steps:\n  - name: \'Lint: x\'\n  - run: |\n      a: b\n'), k.old_name_rx('pokey').search('see skills/pokey/pokey.ps1') is not None)"
 Expect 'lint YAML: an unquoted ": " in a workflow fails, quoted / block scalars pass; old names after a /' ("$yq" -eq 'True [] True')
 $pc = KtPy "print(k.ps_case('function A {\n  `$s = \'{\'\n  `$o = 1\n}\nfunction B {\n  `$O = 2\n}\n'), k.ps_case('function A {\n  `$o = 1\n  if (`$x) { `$O = 2 }\n}\n'))"

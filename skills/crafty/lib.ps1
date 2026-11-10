@@ -2,8 +2,8 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1113 supervise sweep ·
-  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1949 kitlog · L2067 params ·
-  L2373 entry-scripts
+  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1949 kitlog · L2069 params ·
+  L2375 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -445,7 +445,7 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   if (-not $s.report.at -or -not $s.nextBeat) { return }
   $last = [datetime]$s.report.at; $due = $last.AddMinutes([double]$s.nextBeat); $late = [int]($Now - $due).TotalMinutes
   $bm = [double](Get-KitParam 'idle.beatMinutes')
-  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt 6 -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
+  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
   if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now, then arm one one-shot (bossy E1)" }
 }
 # heartbeat prompt (bossy E1), re-armed word for word from supervise's stderr
@@ -1904,7 +1904,7 @@ function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target, [string]$
 }
 # track ignore: MRs the untracked-MR watch skips
 function Add-KitMrIgnore([string[]]$Mrs, [string]$Reason) {
-  if (-not ($Mrs.Count -and $Reason)) { [Console]::Error.WriteLine("usage: bossy.ps1 track ignore -Mrs '<repo>!<iid>' -Reason '<why>'"); exit 2 }
+  if (-not ($Mrs.Count -and $Reason)) { Stop-KitVerb "usage: bossy.ps1 track ignore -Mrs '<repo>!<iid>' -Reason '<why>'" }
   $f = Get-KitPath mr-ignore -Create
   Invoke-KitLocked $f { $m = [ordered]@{}; $o = Read-KitState $f; if ($o.mrs) { foreach ($n in $o.mrs.Keys) { $m[$n] = $o.mrs[$n] } }
     foreach ($r in $Mrs) { $m[$r] = [ordered]@{ reason = $Reason; at = (Get-Date).ToString('o') } }; Write-KitState $f ([ordered]@{ mrs = $m }) }
@@ -2030,7 +2030,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
   # calls stream: start, then end with rc (0, 1 crash, 2 bad parameters, 'exit' = the verb's own exit) and ms
   $script:KitLogOn = $Fn -notmatch '^Invoke-Guard'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards run on every tool call: they log only denials
-  $end = { param([string]$Why) if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($Why) { @{ error = $Why } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
+  $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
   # bad parameters: exit 2 with the usage line, never the host's prompt for a mandatory one
   $usage = { param([string]$why, [bool]$missing)
     $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $missing) { $why += " Verbs: $($vs -join ', ')." }    $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }
@@ -2041,7 +2041,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
     if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { & $usage "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)" ($_.Exception.ErrorId -eq 'MissingMandatoryParameter') }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end
-    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')"); exit 1 } } finally { & $end } }
+    if ($KitVerbOnError) { & $KitVerbOnError $_ }; [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', '') FAILED: $_$(if ($_.FullyQualifiedErrorId -ne "$($_.Exception.Message)") { ' ' + ($_.InvocationInfo.PositionMessage -replace '\s+', ' ') })"); exit 1 } } finally { & $end } }   # a thrown message alone: no code position
   if (-not $own.Count) { if ($Tokens.Count -and "$($Tokens[0])" -in '--help', '-h', '-?', '-help') { & $help }; & $run $Tokens @{}; return }
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
@@ -2064,6 +2064,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   if ($miss.Count) { & $usage "$($Fn -replace '^Invoke-', ''): missing -$($miss -join ', -')." $true }   # a host prompt would hang the tool call
   & $run $pos.ToArray() $named
 }
+# a verb's own refusal: the message to stderr and the calls log (tidy digest "Script errors"), then exit
+function Stop-KitVerb([string]$Msg, [int]$Code = 2) { $script:KitRc = $Code; $script:KitWhy = $Msg; [Console]::Error.WriteLine($Msg); exit $Code }
 # ---- params: tunable parameters (skills/bossy/params.registry.json; README "Configuration")
 $script:KitParamReg = try { (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot) 'bossy/params.registry.json') -Raw -ErrorAction Stop | ConvertFrom-Json).params } catch { $null }
 function Get-KitNow { if ($env:KIT_NOW) { [datetime]$env:KIT_NOW } else { Get-Date } }   # KIT_NOW: the tests' fake clock

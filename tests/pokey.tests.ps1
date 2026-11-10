@@ -112,8 +112,8 @@ $h = New-Run 'H' @(@{ code = 'H1'; task = 'T10'; checks = , @('C1', 'PASS') }, @
 $null = Fin $h 'H1'; $w = Rec $h 'H1'; $null = Fin $h 'H2'
 Expect 'shared task waits for its sibling, then failedTesting' ($w.waitingFor -contains 'H2' -and (Rec $h 'H2').failedTesting)
 # run with & after -Check's exit 0: a crashing publish must still exit 1
-$rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"" @($Q, $h)
-Expect "a crashing finalize publish exits 1 ($rc)" ("$rc" -match 'rc=1')
+$rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"; & `$args[0] finalize -RunDir `$args[1] -Code H1 | Select-Object -Last 1; `"rc=`$LASTEXITCODE`"" @($Q, $h)
+Expect "finalize publish ends EXIT=<its exit>: a crash 1, a publish 0 ($rc)" ("$rc" -match '(?s)EXIT=1.*rc=1.*EXIT=0.*rc=0')
 # finalize, fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest real
 $dt = Join-Path $k 'skills/crafty'
 function Use-FakeUploader([string]$Evidence, [scriptblock]$Run, [string]$Verbs = "'evidence'") {

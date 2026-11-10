@@ -783,7 +783,7 @@ param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ig
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
 # throw is swallowed under SilentlyContinue
-function Fail([string]$m) { [Console]::Error.WriteLine("track: $m"); exit 1 }
+function Fail([string]$m) { Stop-KitVerb "track: $m" 1 }
 if ($Action -eq 'ignore') { Add-KitMrIgnore @(Split-KitList $Mrs) $Reason; return }
 if ($Action -eq 'show') { $rows = (Read-KitTracking).tasks
   foreach ($id in @(if ($Task) { NormTask $Task } else { $rows.Values | Where-Object { -not $_.done } | ForEach-Object task })) { $o = $rows[$id]; if (-not $o) { Fail "show: $Task untracked" }
@@ -1381,7 +1381,7 @@ function Invoke-Report {
 param([Parameter(Mandatory)][string]$Run, [string]$Session, [switch]$Json, [switch]$Detail, [switch]$Stopped)
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = Get-KitWorkflowDirs $Session | Where-Object Name -eq $Run | Select-Object -First 1 -ExpandProperty FullName
-if (-not $dir) { [Console]::Error.WriteLine("wave-report: workflow $Run not found under $($KitConf.ClaudeProjectDir)"); exit 1 }  # swallowed under SilentlyContinue
+if (-not $dir) { Stop-KitVerb "wave-report: workflow $Run not found under $($KitConf.ClaudeProjectDir)" 1 }  # swallowed under SilentlyContinue
 $ev = @(Get-Content (Join-Path $dir 'journal.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
 $label = @{}; foreach ($e in $ev | Where-Object type -eq 'started') { $label[$e.agentId] = $e.label }
 $results = @($ev | Where-Object type -eq 'result' | ForEach-Object { [pscustomobject]@{ label = $label[$_.agentId]; r = $_.result } })
@@ -2163,7 +2163,7 @@ $retired = @($sig | Where-Object kind -eq 'retired' | ForEach-Object { [pscustom
 $back = @(foreach ($s in $new) { $w = Get-KitWordSet $s.text; $r = @($retired | Where-Object { $_.skill -eq $s.skill -and (Get-KitOverlap $_.words $w) -ge 0.4 } | Select-Object -First 1); if ($r) { "$($s.skill): $(& $cut $s.text 100) <- retired: $(& $cut $r[0].text 100)" } })   # TODO-PARAM (fixed default)
 $log = @(Read-KitLog -Since $from | Where-Object { [datetime]$_.at -gt $since })
 $by = { param($S, $E) @($log | Where-Object { $_.stream -eq $S -and $_.event -match $E }) }; $deny = & $by guard '^deny$'
-$errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error' -or "$($_.rc)" -eq '2') })
+$errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error' -or "$($_.rc)" -eq '2' -or ($_.event -eq 'end' -and $_.error)) })   # end + error: Stop-KitVerb
 $bld = & $by builds '^end$'
 $envF = & $by env 'fail'
 $runs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })
@@ -2179,7 +2179,7 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Single signals' @($groups | Where-Object n -lt 2 | Select-Object -First 30 | ForEach-Object { "$($_.skill) [$($_.kinds)] $(& $hit $_)" })
 & $part 'Retired lessons seen again (regression candidates)' @($back | Select-Object -First 10)
 & $part 'Guard blocks' (& $top $deny { & $cut $_.why 110 })
-& $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(& $cut $_.error 90)" })
+& $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(if ($_.error) { & $cut $_.error 90 } else { "exit $($_.rc), message on stderr only (not a crash)" })" })
 & $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
 & $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
 & $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(Get-KitQaRunGap $_.FullName)" }))
