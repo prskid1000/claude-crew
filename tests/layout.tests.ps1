@@ -1,6 +1,7 @@
 #Requires -Version 7
 <#
-layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks.
+layout.tests.ps1: the kit's place on disk: stray runtime folders (lint RUNTIME-STRAY), runtime resolution, the git hooks; the
+supervise page's Statistics tiles (the sweep's lines as tiles, no sweep log).
 Usage: pwsh -NoProfile -File <kit>/tests/layout.tests.ps1 (or tests/kit-tests.ps1 -Area layout).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -26,5 +27,22 @@ git init -q -b main $hookRepo; git -C $hookRepo config core.hooksPath $hookDir; 
 git -C $hookRepo commit -q --amend --allow-empty -m b2; $afterAmend = Test-Path "$hookRepo/.git/pm"
 git -C $hookRepo checkout -q main; git -C $hookRepo commit -q --allow-empty -m c; git -C $hookRepo checkout -q side; git -C $hookRepo rebase -q main 2>$null
 Expect "post-rewrite: a rebase runs post-merge, an amend does not (amend $afterAmend, rebase $(Test-Path "$hookRepo/.git/pm"))" (-not $afterAmend -and (Test-Path "$hookRepo/.git/pm"))
+# supervise page: sweep lines -> Statistics tiles (value, change vs the previous sample, 7 days); a silent board entry = its STUCK flag, no count lines
+$tilePage = (Invoke-PsTest tiles @'
+. $args[0]
+$sweepLines = @('workflow wf_a: 12 agents, 9 finished, 3 running', '  fix:W2T            idle 27 min', '  W1                 idle 1 min', 'memory: 61% used, 24.7 GB available', 'gate: 1 running (tsc), 2 queued, longest wait 4 min', 'qa seats: 1 taken of 12',
+  'disk C: 649.08 GB free, +0 GB/h (normal 0.54), not filling', 'disk D: 479.08 GB free, +1.71 GB/h (normal 0.55), full in 30.2 h', 'disk E: 9 GB free, +0.5 GB/h (normal 0.5), full in 90 h', 'slowest: wave reports 14.2 s, x 1.0 s', 'sweep: 34 s')
+$liveSamples = @([pscustomobject]@{ at = '2026-01-02T09:30:00'; run = 5; mem = 70; secs = 40; disks = [pscustomobject]@{ D = 480.5 } }, [pscustomobject]@{ at = '2026-01-02T10:00:00'; run = 3; mem = 61; secs = 34; disks = [pscustomobject]@{ D = 479.08 } })
+Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; stats = [pscustomobject]@{ now = (Get-KitSuperviseNow $sweepLines 20); live = $liveSamples } })
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
+$tileWant = @("st warn'><div class=k>Live agents</div><div class=v>3<small> running</small><span class='tr eq'>▼ 2", '9 of 12 done &#183; wf_a &#183; 1 stale: fix:W2T 27 min', "st warn'><div class=k>Disk D</div><div class=v>479.1<small> GB free</small><span class='tr bad'>▼ 1.4",
+  '+1.7 GB/h &#183; full in 30.2 h', "st '><div class=k>Disk E", 'QA seats</div><div class=v>1<small> / 12', 'Build gate</div><div class=v>1<small> running · </small>2', '7 days avg 65.5% &#183; peak 70%',
+  "st lo'><div class=k>Sweep time</div><div class=v>34<small> s</small><span class='tr good'>▼ 6</span></div><div class=s title='wave reports 14.2 s'")
+$tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
+$staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8
+$superviseOut = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -AutoFix -Json 2>$null | Out-String | ConvertFrom-Json
+$livePage = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
+Expect "supervise page: Statistics tiles (live agents + stale, memory, gate, QA seats, a disk each: full-in under 72 h only, sweep time), no sweep log; a silent board entry = STUCK flag, no board / shells count lines (missing: $($tileMissing -join ' | '))" (
+  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match 'This sweep</h3>.+Memory</div>.+Sweep time' -and $livePage -notmatch 'Sweep log')
 Remove-TestKit $k
 Complete-Tests

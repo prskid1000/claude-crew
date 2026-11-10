@@ -157,10 +157,12 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - tiles with sparklines: active agents, ACT, WATCH, auto-FIXED, RAM, disk free and fill rate;
 - flags as cards with the next step (ACT first), INFO below; RAM, disk and agents-by-state gauges;
 - agents grouped by run: state chip, since, last progress, the workflow's steps and tokens as bars; today's timeline;
-- statistics from the kit's logs (runs, agents spawned / finished / failed, average duration, tokens vs budget, auto-fixed %,
-  deploys, decisions, lessons): today vs yesterday, 7 days vs the 7 before; `—` = no source;
-- resources and leases, shells, `supervise` settings and learned changes, the sweep log; the last `supervise.historySweeps`
-  (12) sweeps as a stacked bar.
+- statistics: this sweep's tiles (live agents and stale ones, memory, build gate, QA seats, free GB per disk with "full in"
+  under 72 h, sweep time and its slowest section) vs the previous sample and over 7 days; from the kit's logs (runs, agents
+  spawned / finished / failed, average duration, tokens vs budget, auto-fixed %, deploys, decisions, lessons): today vs
+  yesterday, 7 days vs the 7 before; `—` = no source;
+- resources and leases, shells, `supervise` settings and learned changes; the last `supervise.historySweeps` (12) sweeps as a
+  stacked bar.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped.
 

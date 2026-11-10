@@ -23,9 +23,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Goodies (kitbag.py goody add <name>) install skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage.
 Sections: L31 init · L49 board · L224 budget · L252 launch · L518 recover · L601 pause · L645 resume · L703 program · L747 param ·
-  L753 track · L1067 supervise · L1367 report · L1446 audit · L1506 storage · L1716 bugbrief · L1818 cleanup · L1940 learn ·
-  L1970 decide · L2038 health · L2097 retro due · L2107 tidy · L2176 the kit origin's main and goodies · L2192 setup ·
-  L2259 guard-sendmessage
+  L753 track · L1067 supervise · L1366 report · L1445 audit · L1505 storage · L1715 bugbrief · L1817 cleanup · L1939 learn ·
+  L1969 decide · L2037 health · L2096 retro due · L2106 tidy · L2175 the kit origin's main and goodies · L2191 setup ·
+  L2258 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1162,7 +1162,6 @@ foreach ($e in @($entries | Where-Object { $_.status -ne 'left' -and (Test-KitHo
 }
 $bm = [double](Get-KitParam 'idle.beatMinutes'); $active = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -lt $bm })
 $stale = @($entries | Where-Object { $_.status -ne 'left' -and ($now - [datetime]$_.beat).TotalMinutes -ge $bm -and ($now - [datetime]$_.beat).TotalHours -lt 6 })
-L "board: $($active.Count) active, $($stale.Count) stale"
 # two waves may both have X1
 foreach ($g in $active | Group-Object { "$($_.run)/$($_.agent)" } | Where-Object Count -gt 1) {
   $byBeat = @($g.Group | Sort-Object { [datetime]$_.beat } -Descending); $newest = [datetime]$byBeat[0].beat
@@ -1190,7 +1189,7 @@ $calls = if (@($stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent -notin $doneNames }) {
   $sib = @($entries | Where-Object { $_.run -eq $s.run -and $_.session -ne $s.session })
   if ($AutoFix -and $s.run -and $sib.Count -and -not @($sib | Where-Object status -ne 'left').Count) { & $markLeft $s 'finished'; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) left: every other agent of its run left" 'Nothing to do.'; continue }
-  if ($s.agent -in $calls) { L "board: $($s.agent) has no beat but kit calls in the last $bm min (alive)"; continue }
+  if ($s.agent -in $calls) { continue }   # no beat but kit calls: alive (a silent one: its status row is STUCK, a flag)
   if ($AutoFix -and ($now - [datetime]$s.beat).TotalHours -ge 2) { & $markLeft $s; Flag 'INFO' "auto-fixed: board entry $($s.agent) ($($s.run)) silent $([int]($now - [datetime]$s.beat).TotalMinutes) min -> marked left" 'Nothing to do.'; continue }
 }
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
@@ -1348,9 +1347,9 @@ $next = Get-KitNextBeat $(if ($state.nextBeat) { [double]$state.nextBeat } else 
 $state.nextBeat = $next.min; $nextLine = "NEXT $($next.min) min ($($next.why))"
 L (Complete-KitSweep $kitSweep $state); $state.report = @{ at = $now.ToString('o') }; Write-KitAtomic $stateFile ($state | ConvertTo-Json -Depth 5)
 $report = [pscustomobject]@{ rows = $rows; at = $now; versions = $script:KitTxVersions; mem = $mem; keepFree = $keepFree; resources = @($res); shells = $script:KitShellRows; flags = @($flags); info = $script:ownerInfo }
-$page = Write-KitSuperviseHtml $report $lines $nextLine
 $secs = [int]((Get-Date) - $t0).TotalSeconds
-L "sweep: $secs s"
+L "sweep: $secs s"   # before the page: its Sweep time tile
+$page = Write-KitSuperviseHtml $report $lines $nextLine
 if ($Json) { [pscustomobject]@{ at = $now.ToString('o'); seconds = $secs; summary = @($lines); flags = @($flags); report = $report; nextBeat = $next } | ConvertTo-Json -Depth 5; exit 0 }
 if ($Brief) {   # pasted verbatim (supervise.output)
   $md = @(Format-KitReport $report)
