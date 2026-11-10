@@ -51,7 +51,8 @@ Remove-Item $f -Force
 # the page: no clipped label, no node or label off-screen or overlapping (window.uiBoxes) at 1366 / 900 / 390, light + dark,
 # as loaded, with each side tab open (key included) and in the Detail and Everything views
 $uiRt = Join-Path ([IO.Path]::GetTempPath()) "kit-flow-ui-rt-$PID"; $env:CLAUDE_RUNTIME = $uiRt   # own shots and stamp, never the kit's
-$ui = if (Test-Path (Join-Path $Kit 'skills/pokey/node_modules/puppeteer-core')) { @(& $py -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') ui-check $pgOut --click '.ri[data-t=key];.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code];#lv .b:nth-child(2);#lv .b:nth-child(3)' 2>&1); $LASTEXITCODE } else { 'SKIP flow-map page check: no puppeteer-core in the kit' }
+$uiKit = @($Kit, $env:KIT_TEST_CORE) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'skills/pokey/node_modules/puppeteer-core')) } | Select-Object -First 1   # goody test's kit copy has no node_modules: the core's
+$ui = @(if ($uiKit) { @(& $py -X utf8 (Join-Path $uiKit 'skills/bossy/kitbag.py') ui-check $pgOut --click '.ri[data-t=key];.ri[data-t=issues];.ri[data-t=loops];.ri[data-t=trace];.ri[data-t=code];#lv .b:nth-child(2);#lv .b:nth-child(3)' 2>&1); $LASTEXITCODE } else { 'SKIP flow-map page check: no puppeteer-core in the kit' })   # @(): a bare string's [-1] is its last letter
 Remove-Item Env:CLAUDE_RUNTIME; Remove-Item $pgOut, ($pgOut -replace '\.html$', '-src.js'), $uiRt -Recurse -Force -ErrorAction SilentlyContinue
 $pg = Get-Content -Raw (Join-Path $PSScriptRoot 'files/skills/bossy/kitbag_flow.py')
 $checks = [ordered]@{}
