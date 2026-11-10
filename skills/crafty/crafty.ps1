@@ -14,8 +14,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs (goody runtimes)
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1661 dir · L1671 checkpoint ·
-  L1695 prior · L1731 tracker · L1788 host
+Sections: L21 init · L27 wt · L304 stack · L484 gate · L752 check · L1008 pipes · L1058 guard · L1739 dir · L1749 checkpoint ·
+  L1773 prior · L1809 tracker · L1866 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1060,7 +1060,7 @@ function Invoke-Guard {
 param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($SelfTest) {
-  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'
+  $da = 'default desktop app'; $sx = 'Run it with python -X utf8'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'
   $cases = @(
   @('P', 'git stash', $true),
   @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
@@ -1216,23 +1216,35 @@ if ($SelfTest) {
   @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb),
   @('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
   @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
-  @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through')
+  @('B', 'npx tsc -p cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
+  # a file path as the command (G = Antigravity run_command; Codex sends Bash, also with PowerShell text)
+  @('B', '"{KIT}/goodies/task-rollup/GOODY.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
+  @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
+  @('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
+  @('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
+  @('P', '$g = Join-Path "{KIT}" ''goodies/task-rollup/GOODY.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
+  @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
+  @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
+  @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt)
   )
   $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
   $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
   foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
+  [IO.File]::WriteAllText("$cr/NOTICE", "text`n"); [IO.File]::WriteAllText("$cr/run", "#!/bin/sh`necho ok`n")   # an extensionless file a desktop app would open; a #! script
   $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
   $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $fail = 0
   foreach ($c in $cases) {
-    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch' }[$c[0]]
-    $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live)
+    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch'; G = 'run_command' }[$c[0]]
+    $v = $c[1].Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
     # cwd-independent results
-    $json = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) } | ConvertTo-Json -Compress -Depth 4
+    $hookIn = @{ tool_name = $tool; cwd = (Join-Path (Get-KitPath agents) 'guard-selftest'); tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
+    if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
+    $json = $hookIn | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
-    $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
+    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
     $ok = $denied -eq $c[2]
     if (-not $ok) { $fail++ }
     '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), ($c[1] -replace "`n", ' \n ')
@@ -1444,6 +1456,23 @@ function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
   $drive = '(?<![\w.:/~\\})\]])/(?<d>[a-zA-Z])/(?<r>[\w.$-][^\s''"`;|&<>(){}\[\],]*)'
   # a heredoc body is its opener's data
   if ($tool -eq 'Bash') { $text = [regex]::Replace($text, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$', { param($hd) "<<doc '" + ($hd.Groups[4].Value -replace "['\r\n]", ' ') + "'" + $hd.Groups[3].Value }) }
+  foreach ($seg in (Split-CommandSegments $text $tool)) {
+    if (-not ($seg -match $segRx)) { continue }
+    $pre = $Matches[1]; $rest = $Matches[3]; $leaf = $Matches[2].Trim('''"') -replace '^.*[\\/]', ''
+    if ($leaf -match '^((ba|z|da)?sh|pwsh|powershell|cmd)(\.exe)?$') {
+      $inTool = if ($leaf -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }
+      foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command|/c)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-MsysPath ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
+      continue
+    }
+    $chk = "$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' '
+    # curl: only file options and @file are paths
+    if ($leaf -match '^curl(\.exe)?$') { $chk = ' ' + (@([regex]::Matches($chk, '(?:(?<=\s)(?:-[a-zA-Z]*[oTK]|--output|--upload-file|--config)(?:\s+|=)?|@)[''"]?(?<f>/[^\s''"]+)') | ForEach-Object { $_.Groups['f'].Value }) -join ' ') }
+    if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and $chk -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
+  }
+}
+# shell text -> command segments (quote- and comment-aware); $segRx: 1 = prefix words, 2 = command word, 3 = rest
+$segRx = '(?s)^\s*((?:(?:\w+=(?:"[^"]*"|''[^'']*''|[^\s"''])*|do|then|else|elif|time|exec|nohup|env|xargs|timeout|command|sudo|\{|!|\d+[smh]?|-\S+)\s+)*)("[^"]+"|''[^'']+''|[^\s"'']+)(.*)$'
+function Split-CommandSegments([string]$text, [string]$tool) {
   $segs = [System.Collections.Generic.List[string]]::new(); $sb = [Text.StringBuilder]::new(); $quote = ''
   for ($i = 0; $i -lt $text.Length; $i++) {
     $ch = [string]$text[$i]
@@ -1457,19 +1486,7 @@ function Find-MsysPath([string]$text, [string]$tool, [int]$depth = 0) {
     [void]$sb.Append($ch)
   }
   $segs.Add($sb.ToString())
-  foreach ($seg in $segs) {
-    if (-not ($seg -match '(?s)^\s*((?:(?:\w+=(?:"[^"]*"|''[^'']*''|[^\s"''])*|do|then|else|elif|time|exec|nohup|env|xargs|timeout|command|sudo|\{|!|\d+[smh]?|-\S+)\s+)*)("[^"]+"|''[^'']+''|[^\s"'']+)(.*)$')) { continue }
-    $pre = $Matches[1]; $rest = $Matches[3]; $leaf = $Matches[2].Trim('''"') -replace '^.*[\\/]', ''
-    if ($leaf -match '^((ba|z|da)?sh|pwsh|powershell|cmd)(\.exe)?$') {
-      $inTool = if ($leaf -match '^(pwsh|powershell)') { 'PowerShell' } else { 'Bash' }
-      foreach ($im in [regex]::Matches($rest, '(?:^|\s)(?:-c|-Command|/c)\s+(?:"((?:[^"\\]|\\.)*)"|''([^'']*)'')')) { if (($hit = Find-MsysPath ($im.Groups[1].Value + $im.Groups[2].Value) $inTool ($depth + 1))) { return $hit } }
-      continue
-    }
-    $chk = "$pre $rest" -replace '(?<![\w"''])\d*(?:>>?|<)\s*[^\s;|&]+', ' '
-    # curl: only file options and @file are paths
-    if ($leaf -match '^curl(\.exe)?$') { $chk = ' ' + (@([regex]::Matches($chk, '(?:(?<=\s)(?:-[a-zA-Z]*[oTK]|--output|--upload-file|--config)(?:\s+|=)?|@)[''"]?(?<f>/[^\s''"]+)') | ForEach-Object { $_.Groups['f'].Value }) -join ' ') }
-    if ($leaf -match '^(node|python[\d.]*|py|java|mvn|mvnw|mvnd|npx|adb|ffmpeg|curl)(\.exe|\.cmd)?$' -and $chk -match $drive) { return @(($leaf -replace '\.(exe|cmd)$', ''), $Matches[0], "$($Matches.d.ToUpper()):/$($Matches.r)") }
-  }
+  , $segs
 }
 if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
 # Git for Windows opens help in the owner's browser
@@ -1581,8 +1598,69 @@ function Test-OpenDoc([string]$text, [string]$tool) {
 $od = Test-OpenDoc $raw $tn
 if ($od -eq 'script') {
   Deny "That runs a script file directly: Windows opens it with its file association (an editor on the owner's screen). Run it with python -X utf8 <script> / node <script> (.ps1: & <script> or pwsh -File <script>). $hl" }
-if ($od) {
-  Deny "That opens the file in its default desktop app instead of reading it. Read it with Get-Content <file> (PowerShell), cat (Bash) or the Read tool. $hl" }
+$readIt = "use the Read tool (offset / limit; Get-Content or cat in a script); run a script through its interpreter (python -X utf8, node, pwsh -File). $hl"
+if ($od) { Deny "That opens the file in its default desktop app instead of reading it: $readIt" }
+# a file path in command position (quoted, any extension, an existing file or folder) opens its associated app
+$docRx = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|ini|toml|cfg|conf|sql|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|svg)$'
+function Get-GuardPath([string]$word, [string]$base) {
+  if (-not $word -or $word -match '[$*?<>|`]') { return $null }
+  $p = $word -replace '^~(?=[\\/]|$)', $HOME -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'
+  if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return $null }; $p = Join-Path $base $p }
+  try { [IO.Path]::GetFullPath($p) } catch { $null }
+}
+function Test-RunsFile([string]$word, [string]$base, [string]$tool) {
+  if ($word -notmatch '[\\/]|^[A-Za-z]:' -or $word -match '^\w+=') { return $null }   # a bare name is a command lookup; X=path is data
+  if ($word -match $docRx -or ($tool -eq 'Bash' -and $word -match '\.(pyw?|ps[dm]?1|[cm]?js|ts)$')) { return $word }
+  if (-not ($p = Get-GuardPath $word $base)) { return $null }
+  if (Test-Path -LiteralPath $p -PathType Container) { return $(if ($tool -ne 'Bash') { $word }) }   # Bash: "Is a directory"
+  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $null }
+  $ext = [IO.Path]::GetExtension($p).TrimStart('.').ToLower()
+  if ($ext -in 'exe', 'com', 'bat', 'cmd') { return $null }
+  if ($tool -eq 'Bash') {
+    if ($ext -in 'sh', 'bash') { return $null }
+    $head = [byte[]]::new(4); try { $fs = [IO.File]::OpenRead($p); $n = $fs.Read($head, 0, 4); $fs.Dispose() } catch { $n = 0 }
+    $magic = [Text.Encoding]::Latin1.GetString($head, 0, [math]::Max(0, $n))
+    if ($magic -match "^(#!|MZ|`u{7f}ELF)") { return $null }   # #! script (gradlew, .bin/tsc) or a native binary
+  } elseif ($ext -eq 'ps1' -or (-not $ext -and (Get-ChildItem -LiteralPath (Split-Path $p) -Filter "$(Split-Path $p -Leaf).*" -File | Where-Object Extension -in '.ps1', '.cmd', '.bat', '.exe'))) { return $null }   # PowerShell picks the runnable sibling
+  $word
+}
+function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
+  $cdRx = '^(cd|pushd|Set-Location|Push-Location|sl|chdir)$'
+  $asts = if ($tool -ne 'Bash') { $tk = $null; $er = $null; $root = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er); if (-not @($er).Count) { $root } }
+  if (-not $asts) {
+    foreach ($seg in (Split-CommandSegments ((StripDocs $text) -replace '\\\r?\n', ' ') $tool)) {   # a \-continued line is one command
+      if (-not ($seg -match $segRx)) { continue }
+      $w0 = $Matches[2].Trim('''"'); $rest = $Matches[3].Trim()
+      $arg = if ($rest -match '^(?:-\S+\s+)*("[^"]+"|''[^'']+''|[^\s"'']+)') { $Matches[1].Trim('''"') }
+      if ($w0 -match $cdRx) { if (($to = Get-GuardPath $arg $base)) { $base = $to }; continue }
+      if (($hit = Test-RunsFile $w0 $base $tool)) { return $hit }
+      if ($w0 -match '^(start|Start-Process|saps)$' -and $arg -and ($hit = Test-RunsFile $arg $base 'PowerShell')) { return $hit }
+    }
+    return $null
+  }
+  # PowerShell: the AST knows what runs; a variable is looked up in its assignments
+  $sets = @($asts.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] }, $true))
+  # an element -> the file it names; a variable: the last string of its last assignment (Join-Path $k 'a.md')
+  $runsVia = { param($e)
+    if ($e -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $e -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) { return Test-RunsFile $e.Value $base $tool }
+    $from = if ($e -is [System.Management.Automation.Language.ParenExpressionAst]) { $e }   # (Join-Path $k 'a.md')
+            elseif ($e -is [System.Management.Automation.Language.VariableExpressionAst]) { $sets | Where-Object { $_.Left.VariablePath.UserPath -eq $e.VariablePath.UserPath -and $_.Extent.StartOffset -lt $e.Extent.StartOffset } | Select-Object -Last 1 | ForEach-Object Right }
+    $strs = if ($from) { @($from.FindAll({ param($n) ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.StringConstantType -ne 'BareWord') -or $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true)) }
+    if ($strs -and $strs[-1].Value -match $docRx) { "$($e.Extent.Text) ($($strs[-1].Value))" } }
+  foreach ($ca in @($asts.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+    $el = @($ca.CommandElements); if (-not $el.Count) { continue }
+    $w0 = if ($el[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $el[0].Value }
+    $args1 = @($el | Select-Object -Skip 1 | Where-Object { $_ -isnot [System.Management.Automation.Language.CommandParameterAst] })
+    if ($w0 -match $cdRx -and $args1 -and $args1[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) { if (($to = Get-GuardPath $args1[0].Value $base)) { $base = $to }; continue }
+    if (($hit = & $runsVia $el[0])) { return $hit }
+    if ($w0 -match '^(start|Start-Process|saps)$' -and $args1) {
+      $fp = [array]::FindIndex([object[]]$el, [Predicate[object]] { param($x) $x -is [System.Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -match '^(FilePath|Path|LiteralPath)$' })
+      if (($hit = & $runsVia $(if ($fp -gt 0 -and $fp + 1 -lt $el.Count) { $el[$fp + 1] } else { $args1[0] }))) { return $hit }
+    }
+  }
+  $null
+}
+if (($rf = Find-RunsFile $raw $tn $here)) { Deny "kit guard: $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
 foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {

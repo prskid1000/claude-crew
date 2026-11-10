@@ -193,7 +193,7 @@ scaffolding, the duel mode, evidence videos to a text index) live on the origin'
   it).
 - Move a core part out: `git grep` its callers, a seam at each, its files + tests to `goodies/<name>/`, README / Files rows /
   manifest updated; lint + tests on main, `goody test <name>` with it.
-- Publish: `git -C <kit> worktree add -b kit/goodies-<date> <dir> origin/goodies`, commit, `git push origin HEAD:goodies`.
+- Publish: `git -C <kit> worktree add -b kit/goodies-<date> <dir> origin/goodies`, commit, `git push origin HEAD:goodies` (its `.githooks/pre-push` runs the kit's pre-push gate).
 - `main` and `goodies` are protected: fast-forward pushes only (on a reject: fetch, rebase), never force or delete. The guard
   denies force, delete and move from the kit clone and its worktrees; `bossy.ps1 setup` sets it on the kit origin (host verb `branch.protect`;
   hosts without it: the by-hand line), `health` reports it missing.
@@ -268,7 +268,7 @@ One interface per kind, chosen by config; `command` = your CLI per verb (`{place
   after 3 d, `work/` 14 d, `cache/`, `logs/` 30 d; durable ones listed only), worktrees + local branches whose MR merged at the
   tip or whose tip is in origin's default branch (clean, unclaimed; `-WorktreesOnly`); Claude session temp: reported only.
 - The PreToolUse guard blocks `git stash`, `--no-verify`, force-pushes to shared branches, ungated builds, hand-started dev
-  servers, `adb kill-server`, Git Bash `/d/...` paths handed to Windows programs (node, python, java, curl, ...) and edits
+  servers, `adb kill-server`, a file or folder path as the command or opened by `start` / `ii` / `code` (a desktop app: use the Read tool), Git Bash `/d/...` paths handed to Windows programs (node, python, java, curl, ...) and edits
   to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1` in the session env or the command),
   a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
   task tracks (an MR with no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One

@@ -73,7 +73,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 `<kit>` = the `.claude` folder of the workspace (the directory Claude Code was started in); kit scripts find it themselves.
 These rules hold whatever the route:
 
-- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (it opens a desktop app); the top 40
+- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (it opens a desktop app; the guard denies it); the top 40
   lines (the section line map), then only the line range you need, never a whole large file.
 - Builds and tests go through `<kit>/skills/crafty/crafty.ps1 check` (stack auto-detected; the machine-wide memory gate queues
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
