@@ -18,6 +18,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Group agents by AREA (screens/packages), not item count; overlaps and contracts go into the brief; ~15 parallel devy fit the memory gate; each area gets its own file prefix and number range for new files; overlap checks list every path any branch commit touched, not the net diff. (2×)
 
 ## crafty
+- Bash tool heredocs over ~8 KB or holding backticks, odd quotes or backslashes fail (unexpected EOF) or get mangled: write files with the Write tool, or a scratchpad file passed to the interpreter. (5×)
 - A contract claim that an old consumer ignores a new param is tested against the deployed consumer (one call on staging) before merge; kwargs-strict handlers reject unknown params. (2x)
 - Long kit verbs (bossy deploy request, waits) via Bash: start with run_in_background or a timeout over 120 s, then read the output file; a foreground call cut at 120 s loses the plan (1x).
 - After wt new, check the dependency links (node_modules, linkPaths) exist before editing; a worktree without them fails wt remove and can empty the folder: save the diff first, recreate with wt new. (1×)
@@ -57,7 +58,6 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - Cross-repo contracts: quote producer validation verbatim; the producer accepts both spellings and opens its MR first; never invent limits or endpoints; a producer DTO change ships with its consumer in the same wave. (19×)
 - Before tightening validation grep every client caller for its real encoding; list each old-accepted input: tested or stated as newly rejected. (6×)
 - Forms rebuilding a payload from visible fields wipe stored values: prefill from the record; the API never clears absent fields; a PUT binding the raw entity resets unsent fields; a lookup after load keeps the stored derived value; never overwrite a typed user draft. (7×)
-- Side effects after a service call: reload and check; grep for an existing call before adding one; test the no-op branch; a queueing endpoint's 200 is not "on server". (3×)
 
 ## pokey
 - Before finalize, run finalize -Check -FixNames -ExpectChecks N: it renames the files and every reference in results.json (lists and text) (2x).
@@ -99,6 +99,7 @@ Active rules, one line each, newest first, `(n×)` = times seen. Read your skill
 - A restored snapshot can leave a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold`.
 
 ## kitty
+- ConvertFrom-Json turns ISO time strings into DateTime; interpolating drops fraction and offset (same-second ties broke ordering): compare as DateTimeOffset or read with -AsHashtable/-DateKind String. (1×)
 - A goody test that creates and drops tenants can fail once when kit-tests runs every area in parallel: rerun that area alone before calling it a regression (2x)
 - Test strings with regexes: put the regex in a here-string or a variable, never an unbalanced paren in a single-quoted string inside a subexpression of a double-quoted string (does not parse) (2x)
 - Kit tests remove only the fake files they wrote, never a whole folder (Remove-Item adapters -Recurse broke the bossy area for 2 days when a core function moved into adapters/). (1×)
