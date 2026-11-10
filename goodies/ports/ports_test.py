@@ -93,3 +93,52 @@ except RuntimeError as e:
 ok_wf = res is None or bad_ok and (res == {'x': {'got': 'p1'}, 'y': {'got': 'p2'}, 'z': None} and ('a', 'devy', 'inherit', 'inherit') in calls
     and ('b', 'self', 'inherit', 'flash') in calls and logs[:2] == ['P', 'hi 7'])
 print(f'ports-workflow:{ok_wf}')
+
+# ports.targets: every transition keeps the chosen target's copies and removes only the kit-written rest
+kit3 = tmp / 'ws3' / '.claude'; ws3 = kit3.parent
+for p3, txt in (('skills/s1/SKILL.md', 'x'), ('AGENTS.md', 'shared'), ('GEMINI.md', 'g'), ('.codex/agents/a.toml', 'c'), ('.agents/agents/a.md', 'ag')):
+    (kit3 / p3).parent.mkdir(parents=True, exist_ok=True); (kit3 / p3).write_text(txt, encoding='utf-8')
+pt.KIT, pt.WORKSPACE = kit3, ws3
+conf3 = {}
+pt.local_config = lambda k, f: {'ports': dict(conf3)}
+def deploy(t, **extra):
+    conf3.clear(); conf3.update(targets=t, **extra)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        pt.port_deploy()
+    return out.getvalue()
+WANT = {'both': {'AGENTS.md', 'AGENTS.override.md', 'GEMINI.md', '.codex/agents/a.toml', '.agents/agents/a.md', '.agents/skills/s1'},
+  'codex': {'AGENTS.md', 'AGENTS.override.md', '.codex/agents/a.toml', '.agents/skills/s1'},
+  'antigravity': {'AGENTS.md', 'GEMINI.md', '.agents/agents/a.md'}, 'none': set()}
+ALL = set().union(*WANT.values())
+bad_tr = []
+for a, b in (('both', 'none'), ('both', 'codex'), ('both', 'antigravity'), ('codex', 'both'), ('antigravity', 'both'), ('none', 'both'),
+             ('codex', 'antigravity'), ('antigravity', 'codex'), ('codex', 'none'), ('antigravity', 'none')):
+    deploy(a); deploy(b)
+    have = {r for r in ALL if (ws3 / r).exists()}
+    if have != WANT[b] or pt.deployed_stale() != [] or (b == 'none' and ((ws3 / '.codex').exists() or (ws3 / '.agents').exists())):
+        bad_tr.append(f'{a}->{b}: {sorted(have ^ WANT[b])} {pt.deployed_stale()}')
+print(f'ports-targets:{not bad_tr} {bad_tr}')
+# a deselected folder: empty -> gone; clutter only -> gone; an authored file -> folder kept, file kept and listed
+deploy('both')
+for c in ('Thumbs.db', 'x.swp', 'a~', 'n.bak', 'm.orig', 'r.log', 'q.tmp', 'q.temp', 'tmp/a', 'temp/b', 'cache/c', 'log/d', 'logs/e', 'sessions/s.jsonl', 'history.jsonl', 'empty.toml'):
+    (ws3 / '.codex' / c).parent.mkdir(parents=True, exist_ok=True); (ws3 / '.codex' / c).write_text('' if c == 'empty.toml' else 'z', encoding='utf-8')
+(ws3 / '.agents' / 'mine.toml').write_text('hand', encoding='utf-8')
+out_nf = deploy('none')
+ok_folders = not (ws3 / '.codex').exists() and (ws3 / '.agents' / 'mine.toml').read_text(encoding='utf-8') == 'hand' \
+    and not (ws3 / '.agents' / 'agents').exists() and '.agents/mine.toml' in out_nf and 'removed:' in out_nf and pt.deployed_stale() == []
+(ws3 / '.agents' / 'mine.toml').unlink()
+deploy('none')
+ok_folders = ok_folders and not (ws3 / '.agents').exists()
+# ports.clutter replaces the default list
+deploy('both'); (ws3 / '.codex' / 'x.keep').write_text('z', encoding='utf-8'); (ws3 / '.codex' / 'Thumbs.db').write_text('z', encoding='utf-8')
+out_cl = deploy('none', clutter=['*.keep'])
+ok_clutter = (ws3 / '.codex' / 'Thumbs.db').exists() and '.codex/Thumbs.db' in out_cl and '.codex/x.keep' not in out_cl \
+    and all(pt.is_clutter(c, 1, pt.CLUTTER) for c in ('a/Thumbs.db', 'a/x.swp', 'a/b~', 'a/n.bak', 'a/r.log', 'a/tmp/x.toml', 'a/history/h.md')) \
+    and not any(pt.is_clutter(c, 1, pt.CLUTTER) for c in ('a/mine.toml', 'a/notes.md', 'a/k.rules', 'a/run.py', 'a/c.json'))
+shutil.rmtree(ws3 / '.codex', ignore_errors=True)
+# a copy an older kit wrote (no header, other bytes): the manifest of the last deploy marks it kit-written
+deploy('both'); (kit3 / '.agents/agents/a.md').write_text('ag v2', encoding='utf-8')
+deploy('codex')
+ok_manifest = not (ws3 / '.agents/agents/a.md').exists() and (ws3 / '.agents/skills/s1').exists()
+print(f'ports-folders:{ok_folders and ok_clutter and ok_manifest} {ok_folders} {ok_clutter} {ok_manifest}')

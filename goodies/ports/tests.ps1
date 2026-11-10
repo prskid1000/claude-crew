@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-tests.ps1 (goody ports): TOML / YAML escaping, LF output, port_deploy keeps user files, port --check clean on a kit copy.
+tests.ps1 (goody ports): TOML / YAML escaping, LF output, port_deploy keeps user files, ports.targets transitions and cleanup, port --check clean on a kit copy.
 Usage: kitbag.py goody test ports (the plugin comes from files/ beside this file)
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -11,6 +11,8 @@ Expect 'ports: a quote and a backslash stay valid TOML / YAML, LF only' ($res -c
 Expect 'ports: port_deploy keeps user files, removes only stale generated ports' ($res -contains 'ports-deploy:True')
 Expect 'ports: hooks absolute, no double quotes (agy cmd /c); Codex cleanup async + KIT_TOOL; agy cleanup detached, hidden' ($res -contains 'ports-hooks:True')
 Expect 'ports: workspace skill links, org rules always-on (split under 24 KB) + AGENTS.override.md, none in the kit' ($res -contains 'ports-workspace:True')
+Expect "ports.targets: every transition (both/codex/antigravity/none) keeps the chosen copies, removes only kit-written ones ($($res -match '^ports-targets:'))" ($res -contains 'ports-targets:True []')
+Expect 'ports.targets: deselected folder gone when empty or clutter only, kept + listed with an authored file; clutter override; old copies by manifest' ($res -contains 'ports-folders:True True True True')
 Expect 'ports: run_workflow bridge runs the .js; agent() -> agentType, role, workspace inherit, haiku -> flash; a failed agent = null' ($res -contains 'ports-workflow:True')
 Expect 'ports: owner decisions: blocking -> request_user_input (Codex Plan mode) / ask_question when listed, else text; FYI list' ($res -contains 'ports-ask:True')
 # port --check on a copy of the kit (not named .claude: no workspace copy is compared)
