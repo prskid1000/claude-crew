@@ -21,7 +21,7 @@ import { inspect } from 'node:util'
 // ---- kit paths: bundles go to <runtime>/cache (kit.example.json _paths; runtime = $CLAUDE_RUNTIME, else <kit>/.runtime)
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const MAP = JSON.parse(readFileSync(join(KIT, 'skills', 'crafty', 'kit.example.json'), 'utf8'))._paths
-const cacheDir = join(process.env.CLAUDE_RUNTIME || join(KIT, MAP.runtimeDir), MAP.runtime.cache.replace(/\/$/, ''))
+const cacheDir = join(resolve(KIT, process.env.CLAUDE_RUNTIME || MAP.runtimeDir), MAP.runtime.cache.replace(/\/$/, ''))   // relative: from the kit
 
 // ---- spec shim: jasmine / jest-style globals for pure logic (no TestBed, DOM or fakeAsync): install() sets them, run() runs the
 // registered specs. Every matcher has .not; spies answer both jasmine (.and.*, .calls.*) and jest (.mock*) calls.
