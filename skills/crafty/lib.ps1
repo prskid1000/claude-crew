@@ -1,9 +1,9 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1114 supervise sweep ·
-  L1185 supervise report · L1281 tracker · L1597 prior · L1619 ask bugs · L1790 git-host · L1947 kitlog · L2065 params ·
-  L2371 entry-scripts
+Sections: L9 paths · L60 state · L129 config · L209 OS · L411 leases · L872 status · L1113 supervise sweep ·
+  L1184 supervise report · L1280 tracker · L1596 prior · L1618 ask bugs · L1789 git-host · L1946 kitlog · L2064 params ·
+  L2370 entry-scripts
 #>
 #Requires -Version 7
 # ---- paths: kit.example.json _paths
@@ -960,9 +960,8 @@ function Format-KitSessionStart([string]$Text, $Hook) {
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
 # the one activity source of every liveness check (STUCK rows, stale board rows, lease grace, shell owners): newest of board beat and transcript write (+ task outputs it names)
 function Get-KitLastActivity([string]$Tx, $Entry, [string]$Tool) {
-  $fi = if ($Tx) { Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue }   # one tail read per transcript write and process (sweeps ask per step, shell, lease)
-  $t = if ($fi) { $mk = "$($fi.FullName)|$($fi.LastWriteTimeUtc.Ticks)|$([long]((Get-Date).Ticks / 1.5e8))"; if (-not $script:KitActMemo -or $script:KitActMemo.Count -gt 300) { $script:KitActMemo = @{} }
-    if (-not $script:KitActMemo.ContainsKey($mk)) { $script:KitActMemo[$mk] = Invoke-KitAdapter transcript (Get-KitTranscriptKind $Tool) last @{ file = $Tx } }; $script:KitActMemo[$mk] }
+  $fi = if ($Tx) { Get-Item -LiteralPath $Tx -ErrorAction SilentlyContinue }   # one tail read per transcript write (sweeps ask per step, shell, lease)
+  $t = if ($fi) { Get-KitLiveCached "tx:$($fi.FullName)" { Invoke-KitAdapter transcript (Get-KitTranscriptKind $Tool) last @{ file = $Tx } } }
   @(@($t.at) + @($(if ($Entry.beat) { try { [datetime]$Entry.beat } catch {} })) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
 }
 # first that holds: STOPPED · FINISHED · WAITING · ACTIVE (progress within $StuckMin) · STUCK

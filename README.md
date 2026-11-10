@@ -166,7 +166,9 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 - resources and leases, shells, `supervise` settings and learned changes; the last `supervise.historySweeps` (12) sweeps as a
   stacked bar.
 
-One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped.
+One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
+short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: auto-fill, a min width per item,
+optional max across), never one full-width row per item; tables only for many-column rows (agents, shells, parameters).
 
 ## Goodies
 Optional parts (more trackers, git hosts, CI and report types, stack presets, the local env, phone lanes, deploys, kit admin and

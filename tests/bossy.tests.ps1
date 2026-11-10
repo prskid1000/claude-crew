@@ -253,8 +253,8 @@ $e3 = Read-Json $f3; $e3.holderPid = $PID; $e3.holderStart = & { . (Lib); Get-Ki
 $j4 = pwsh @np $O board join -Agent BY -Run rb | Out-String; $b3 = pwsh @np $O board beat -Session $s3 | Out-String
 Expect "board: a same-name agent in a live session is BY-2, no takeover ($j4)" ($j4 -match 'you are BY-2' -and $j4 -notmatch 'TAKEOVER|DUPLICATE' -and $b3 -notmatch 'TAKEN')
 # lease grace and shell owners: a quiet beat with a fresh transcript is live (lib.ps1 Get-KitLastActivity)
-foreach ($n in 1, 40) { $lf = Join-Path (Kd) "L$n.jsonl"; Set-Content $lf '{}'; (Get-Item $lf).LastWriteTime = (Get-Date).AddMinutes(-$n); & $J @{ session = "s-L$n"; agent = "L$n"; run = 'lr'; status = 'working'; beat = (Get-Date).AddMinutes(-30).ToString('o'); joined = (Get-Date).AddHours(-1).ToString('o'); transcript = $lf } (Join-Path (TkPath $k board -Create) "s-L$n.json") }
-$lv = Invoke-PsTest 'liveact' '. $args[0]; Test-KitLive @{ agent = "L1"; session = "s-L1" }; Test-KitLive @{ agent = "L40"; session = "s-L40" }; (Get-KitLastActivity $args[1] @{ beat = "2000-01-01" }) -gt (Get-Date).AddMinutes(-5)' @($O, (Join-Path (Kd) 'L1.jsonl'))
-Expect "Test-KitLive / Get-KitLastActivity: transcript activity counts like a beat ($($lv -join ','))" (($lv -join ',') -eq 'True,False,True')
+foreach ($n in 1, 40, 120) { $lf = Join-Path (Kd) "L$n.jsonl"; Set-Content $lf '{}'; (Get-Item $lf).LastWriteTime = (Get-Date).AddMinutes(-$n); & $J @{ session = "s-L$n"; agent = "L$n"; run = 'lr'; status = 'working'; beat = (Get-Date).AddMinutes(-[math]::Max(90, $n)).ToString('o'); joined = (Get-Date).AddHours(-3).ToString('o'); transcript = $lf } (Join-Path (TkPath $k board -Create) "s-L$n.json") }
+$lv = Invoke-PsTest 'liveact' '. $args[0]; Test-KitLive @{ agent = "L1"; session = "s-L1" }; Test-KitLive @{ agent = "L40"; session = "s-L40" }; (Get-KitLastActivity $args[1] @{ beat = "2000-01-01" }) -gt (Get-Date).AddMinutes(-5); Test-KitLive (New-KitLease L1); Test-KitLive (New-KitLease L120)' @($O, (Join-Path (Kd) 'L1.jsonl'))
+Expect "Test-KitLive / Get-KitLastActivity / phone lane lease (New-KitLease, no session): transcript activity counts like a beat ($($lv -join ','))" (($lv -join ',') -eq 'True,False,True,True,False')
 Remove-TestKit $k
 Complete-Tests
